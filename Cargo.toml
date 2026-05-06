@@ -1,5 +1,5 @@
 [package]
-name = "ling"
+name = "ling-lang"
 version = "2030.0.0"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
