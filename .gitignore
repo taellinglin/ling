@@ -1,0 +1,15 @@
+/target/
+**/*.rs.bk
+*.swp
+*.swo
+*.ll
+*.o
+*.bc
+*.wasm
+*.ling.bin
+*.墨.bin
+Cargo.lock
+.vscode/
+.idea/
+*.rs.bk
+/lexicons/generated
