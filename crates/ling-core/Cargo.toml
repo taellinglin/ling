@@ -4,6 +4,7 @@ version = "2030.0.0"
 edition = "2021"
 authors = ["Ling Lin <ling@ling-lang.org>"]
 description = "Core types, errors, and compiler infrastructure for Ling"
+license = "Ling Harmony License"
 
 [dependencies]
 thiserror = "1.0"
