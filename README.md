@@ -42,14 +42,71 @@ lingc hello.ling -o hello
 
 ## Roadmap 2030
 
-- [x] Core compiler (lex/ast/semantics/borrowck/mir/codegen)
+- [x] Core compiler pipeline (lex → ast → semantics → borrowck → mir → codegen)
 - [x] Polyglot lexicons (en/zh/ja/ko/ru/ar/hi/th/...)
-- [ ] LLM integration (code completion)
-- [ ] Game engine (bevy + physics)
-- [ ] UI framework (xilem + taffy)
+- [ ] LLM integration (code completion + semantic suggestions)
+- [ ] Game engine (bevy + physics + tooling)
+- [ ] UI framework (xilem + taffy + design system)
 
 See full [roadmap](ROADMAP.md).
+
+## Building & Running
+
+### Build the workspace
+
+```bash
+cargo build
+```
+
+### Run Ling
+
+This repo includes a small Rust CLI entry point. To run the default binary:
+
+```bash
+cargo run
+```
+
+To run the Ling REPL:
+
+```bash
+cargo run --bin ling-repl
+```
+
+To compile Ling source code (if enabled in your build configuration):
+
+```bash
+cargo run --bin lingc -- <input.ling> -o <output>
+```
+
+> Note: Some binaries/features may require additional feature flags depending on the selected backend (LLVM/WASM/etc.).
+
+### Run tests
+
+```bash
+cargo test
+```
+
+## Project Structure
+
+- `src/` — core compiler and language implementation
+- `crates/ling-core/` — core data structures and shared types
+- `crates/ling-lex/` (and lexicon files) — lexing/tokenization components
+- `crates/ling-polyglot/` — polyglot infrastructure
+- `crates/ling-mir/` — intermediate representation
+- `crates/ling-ai/`, `crates/ling-crypto/`, `crates/ling-net/`, `crates/ling-audio/`, `crates/ling-ui/` — feature domains
+
+## Contributing
+
+We welcome contributions. Typical workflow:
+
+1. Fork the repo
+2. Create a feature branch
+3. Implement + add tests
+4. Submit a pull request
+
+If you’re unsure where to start, check `TODO.md` and open issues.
 
 ## License
 
 Ling Harmony License 1.0
+
