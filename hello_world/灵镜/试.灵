@@ -1,0 +1,6 @@
+// Spirit Mirror/Test.ling - Mirror of the Realm
+
+bind test = do {
+spirit::assert(1 + 1 == 2, "The Dao flows")
+print("✨ All mirrors are clear ✨")
+}

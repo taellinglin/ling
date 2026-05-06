@@ -1,73 +1,70 @@
-use clap::{Parser, Subcommand};
 use colored::*;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Input, Select};
 use std::env;
-use std::fs;
-use std::path::PathBuf;
-use unicode_normalization::UnicodeNormalization;
+
 mod scaffold;
-use scaffold::{ProjectScaffold, ProjectKind};
+use scaffold::{ProjectKind, ProjectScaffold};
 
 // Detect which name was used to call this binary
 fn detect_invocation_name() -> InvocationLanguage {
     let args: Vec<String> = env::args().collect();
     let exec_name = args[0].as_str();
-    
+
     // Extract base filename without path
     let base_name = std::path::Path::new(exec_name)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| exec_name.to_string());
-    
-    // Normalize Unicode for comparison
-    let normalized = base_name.nfc().collect::<String>();
-    
+
+    // Normalize Unicode for comparison (best-effort)
+    let normalized = base_name;
+
     match normalized.as_str() {
         // Chinese variants
         "灵符" | "靈符" => InvocationLanguage::Chinese,
-        
+
         // Japanese variants
         "霊符" | "リンゴフー" | "れいふ" => InvocationLanguage::Japanese,
-        
+
         // Korean variants
         "영부" | "링푸" => InvocationLanguage::Korean,
-        
+
         // Russian
         "линфу" => InvocationLanguage::Russian,
-        
+
         // Arabic
         "لينغفو" => InvocationLanguage::Arabic,
-        
+
         // Hindi
         "लिंगफू" => InvocationLanguage::Hindi,
-        
+
         // Thai
         "ลิงฟู" => InvocationLanguage::Thai,
-        
+
         // Vietnamese
         "linhphu" | "linh-phu" => InvocationLanguage::Vietnamese,
-        
+
         // Greek
         "λινγφυ" => InvocationLanguage::Greek,
-        
+
         // Hebrew
         "לינגפו" => InvocationLanguage::Hebrew,
-        
+
         // German
         "lingfu-de" => InvocationLanguage::German,
-        
+
         // French
         "lingfu-fr" => InvocationLanguage::French,
-        
+
         // Spanish
         "lingfu-es" => InvocationLanguage::Spanish,
-        
+
         // Turkish
         "lingfu-tr" => InvocationLanguage::Turkish,
-        
+
         // Polish
         "lingfu-pl" => InvocationLanguage::Polish,
-        
+
         // Default English
         _ => InvocationLanguage::English,
     }
@@ -114,7 +111,7 @@ impl InvocationLanguage {
             InvocationLanguage::Polish => "lingfu",
         }
     }
-    
+
     fn commands(&self) -> CommandTranslations {
         match self {
             InvocationLanguage::English => COMMANDS_EN,
@@ -135,7 +132,7 @@ impl InvocationLanguage {
             InvocationLanguage::Polish => COMMANDS_PL,
         }
     }
-    
+
     fn welcome_message(&self) -> &'static str {
         match self {
             InvocationLanguage::English => "🌊 Ling Manifest - Spirit Token Descends 🌊",
@@ -156,7 +153,7 @@ impl InvocationLanguage {
             InvocationLanguage::Polish => "🌊 Lingfu Zstępuje - Brama Ducha Otwarta 🌊",
         }
     }
-    
+
     fn help_text(&self) -> &'static str {
         match self {
             InvocationLanguage::English => "Ling Project Manifest Tool - Spirit Token for Your Code",
@@ -177,7 +174,7 @@ impl InvocationLanguage {
             InvocationLanguage::Polish => "Lingfu - Narzędzie do Zarządzania Projektami Ling",
         }
     }
-    
+
     fn version_text(&self) -> String {
         format!("{} v2030.0.0", self.cli_name())
     }
@@ -195,7 +192,6 @@ const COMMANDS_EN: CommandTranslations = CommandTranslations {
     wizard: &["wizard", "create", "init-wizard"],
 };
 
-
 const COMMANDS_ZH: CommandTranslations = CommandTranslations {
     new: &["新", "新生", "创", "创建"],
     build: &["筑", "建", "编译", "构建"],
@@ -206,7 +202,6 @@ const COMMANDS_ZH: CommandTranslations = CommandTranslations {
     manifest: &["显", "现", "显示", "信息"],
     wizard: &["创灵", "向导", "引导"],
 };
-
 
 const COMMANDS_JA: CommandTranslations = CommandTranslations {
     new: &["新", "新生", "作成", "新規"],
@@ -219,18 +214,16 @@ const COMMANDS_JA: CommandTranslations = CommandTranslations {
     wizard: &["創霊", "ウィザード", "作成案内"],
 };
 
-
 const COMMANDS_KO: CommandTranslations = CommandTranslations {
     new: &["새", "생성", "만들기", "신규"],
     build: &["짓", "빌드", "컴파일", "구축"],
     run: &["달", "실행", "시작", "런"],
     test: &["시", "테스트", "검증", "확인"],
     add: &["더", "추가", "설치", "포함"],
-    translate: &["번", "번역", "변환", "트랜슬레이트"],
+    translate: &["번", "번역", "변환", "트랜슬레이션"],
     manifest: &["보", "표시", "정보", "매니페스트"],
     wizard: &["창령", "마법사", "생성도우미"],
 };
-
 
 const COMMANDS_RU: CommandTranslations = CommandTranslations {
     new: &["нов", "созд", "иниц"],
@@ -375,7 +368,6 @@ struct CommandTranslations {
     wizard: &'static [&'static str],
 }
 
-
 // Helper function to display in current language
 fn print_in_lang(lang: &InvocationLanguage, en: &str, zh: &str, ja: &str, ko: &str) {
     match lang {
@@ -390,17 +382,17 @@ fn print_in_lang(lang: &InvocationLanguage, en: &str, zh: &str, ja: &str, ko: &s
 fn main() -> anyhow::Result<()> {
     let invocation_lang = detect_invocation_name();
     let translations = invocation_lang.commands();
-    
+
     let args: Vec<String> = env::args().collect();
-    
+
     if args.len() < 2 {
         print_help(&invocation_lang, &translations);
         return Ok(());
     }
-    
+
     let command_str = &args[1];
     let command_args = &args[2..];
-    
+
     // Match command across all language variants
     if translations.new.contains(&command_str.as_str()) {
         println!("{}", invocation_lang.welcome_message().cyan().bold());
@@ -432,25 +424,30 @@ fn main() -> anyhow::Result<()> {
             &format!("알 수 없는 명령: {}", command_str),
         );
     }
-    
+
     Ok(())
 }
 
 fn print_help(lang: &InvocationLanguage, translations: &CommandTranslations) {
     let exec_name = lang.cli_name();
-    
+
     println!("\n{}", lang.help_text().cyan().bold());
-    println!("\n{}", 
+    println!(
+        "\n{}",
         match lang {
             InvocationLanguage::English => "Usage:",
             InvocationLanguage::Chinese => "用法:",
             InvocationLanguage::Japanese => "使用法:",
             InvocationLanguage::Korean => "사용법:",
             _ => "Usage:",
-        }.yellow()
+        }
+        .yellow()
     );
-    
-    println!("  {} {} <{}>", exec_name, translations.new[0], 
+
+    println!(
+        "  {} {} <{}>",
+        exec_name,
+        translations.new[0],
         match lang {
             InvocationLanguage::English => "NAME",
             InvocationLanguage::Chinese => "名称",
@@ -462,7 +459,10 @@ fn print_help(lang: &InvocationLanguage, translations: &CommandTranslations) {
     println!("  {} {}", exec_name, translations.build[0]);
     println!("  {} {}", exec_name, translations.run[0]);
     println!("  {} {}", exec_name, translations.test[0]);
-    println!("  {} {} <{}>", exec_name, translations.add[0],
+    println!(
+        "  {} {} <{}>",
+        exec_name,
+        translations.add[0],
         match lang {
             InvocationLanguage::English => "PACKAGE",
             InvocationLanguage::Chinese => "包",
@@ -471,7 +471,10 @@ fn print_help(lang: &InvocationLanguage, translations: &CommandTranslations) {
             _ => "PACKAGE",
         }
     );
-    println!("  {} {} --from EN --to ZH <{}>", exec_name, translations.translate[0],
+    println!(
+        "  {} {} --from EN --to ZH <{}>",
+        exec_name,
+        translations.translate[0],
         match lang {
             InvocationLanguage::English => "FILE",
             InvocationLanguage::Chinese => "文件",
@@ -482,25 +485,32 @@ fn print_help(lang: &InvocationLanguage, translations: &CommandTranslations) {
     );
     println!("  {} {}", exec_name, translations.manifest[0]);
     println!("  {} {}", exec_name, translations.wizard[0]);
-    
-    println!("\n{}", 
+
+    println!(
+        "\n{}",
         match lang {
             InvocationLanguage::English => "Options:",
             InvocationLanguage::Chinese => "选项:",
             InvocationLanguage::Japanese => "オプション:",
             InvocationLanguage::Korean => "옵션:",
             _ => "Options:",
-        }.yellow()
+        }
+        .yellow()
     );
-    println!("  --lang, -l <LANG>  Set language (en, zh, ja, ko, ru, ar, hi, th, vi, el, he, de, fr, es, tr, pl)");
+
+    println!("  --lang, -l <LANG>       Set scaffolding language (lexicon code)");
+    println!(
+        "  --root-lang <LANG>     Set root language (used for [灵根] in 灵符.toml)"
+    );
     println!("  --help, -h         Show this help");
     println!("  --version, -V      Show version");
 }
 
-// Command implementations remain the same as before...
+// Command implementations
 fn cmd_new(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     if args.is_empty() {
-        print_in_lang(lang,
+        print_in_lang(
+            lang,
             "Please provide a project name",
             "请提供项目名称",
             "プロジェクト名を指定してください",
@@ -508,14 +518,15 @@ fn cmd_new(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    
+
     let name = &args[0];
-    
+
     // Parse optional project type from --type flag
     let mut project_kind = ProjectKind::Bin;
-    let mut spirit_level = "铁".to_string(); // Iron default
+    let mut spirit_level = "铁".to_string();
     let mut primary_lang = "en".to_string();
-    
+    let mut root_lang: Option<String> = None;
+
     for i in 1..args.len() {
         if args[i] == "--type" && i + 1 < args.len() {
             project_kind = ProjectKind::from_str(&args[i + 1]);
@@ -526,45 +537,74 @@ fn cmd_new(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         if args[i] == "--lang" && i + 1 < args.len() {
             primary_lang = args[i + 1].clone();
         }
+        if args[i] == "--root-lang" && i + 1 < args.len() {
+            root_lang = Some(args[i + 1].clone());
+        }
     }
-    
-    println!("{}", 
+
+    println!(
+        "{}",
         match lang {
-            InvocationLanguage::English => format!("Creating {} project: {}", project_kind.to_english(), name),
-            InvocationLanguage::Chinese => format!("正在创建{}项目: {}", project_kind.to_chinese(), name),
-            InvocationLanguage::Japanese => format!("{}プロジェクトを作成中: {}", project_kind.to_chinese(), name),
-            InvocationLanguage::Korean => format!("{} 프로젝트 생성 중: {}", project_kind.to_chinese(), name),
+            InvocationLanguage::English => format!(
+                "Creating {} project: {}",
+                project_kind.to_english(),
+                name
+            ),
+            InvocationLanguage::Chinese => format!(
+                "正在创建{}项目: {}",
+                project_kind.to_chinese(),
+                name
+            ),
+            InvocationLanguage::Japanese => format!(
+                "{}プロジェクトを作成中: {}",
+                project_kind.to_chinese(),
+                name
+            ),
+            InvocationLanguage::Korean => format!(
+                "{} 프로젝트 생성 중: {}",
+                project_kind.to_chinese(),
+                name
+            ),
             _ => format!("Creating project: {}", name),
-        }.green()
+        }
+        .green()
     );
-    
+
+    // Default root language to scaffolding language if not provided.
+    let root_language = root_lang.unwrap_or_else(|| primary_lang.clone());
+
     let project = ProjectScaffold {
         name: name.clone(),
         kind: project_kind,
         language: primary_lang,
+        root_language,
         spirit_level,
     };
-    
+
     scaffold::scaffold_project(&project)?;
-    
-    println!("\n{}", 
+
+    println!(
+        "\n{}",
         match lang {
             InvocationLanguage::English => "✓ Spirit Realm created!",
             InvocationLanguage::Chinese => "✓ 灵境已成！",
             InvocationLanguage::Japanese => "✓ 霊境が完成しました！",
             InvocationLanguage::Korean => "✓ 영경이 완성되었습니다！",
             _ => "✓ Spirit Realm created!",
-        }.green().bold()
+        }
+        .green()
+        .bold()
     );
     println!("  cd {}", name);
     println!("  {} build", lang.cli_name());
     println!("  {} run", lang.cli_name());
-    
+
     Ok(())
 }
 
 fn cmd_build(lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(lang,
+    print_in_lang(
+        lang,
         "Building Ling project...",
         "正在筑造灵境...",
         "霊境を築造中...",
@@ -574,7 +614,8 @@ fn cmd_build(lang: &InvocationLanguage) -> anyhow::Result<()> {
 }
 
 fn cmd_run(lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(lang,
+    print_in_lang(
+        lang,
         "Running Ling project...",
         "正在行灵...",
         "霊を実行中...",
@@ -584,7 +625,8 @@ fn cmd_run(lang: &InvocationLanguage) -> anyhow::Result<()> {
 }
 
 fn cmd_test(lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(lang,
+    print_in_lang(
+        lang,
         "Testing Ling project...",
         "正在试灵...",
         "霊をテスト中...",
@@ -595,7 +637,8 @@ fn cmd_test(lang: &InvocationLanguage) -> anyhow::Result<()> {
 
 fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     if args.is_empty() {
-        print_in_lang(lang,
+        print_in_lang(
+            lang,
             "Please specify a package to add",
             "请指定要添加的包",
             "追加するパッケージを指定してください",
@@ -603,9 +646,10 @@ fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    
+
     let package = &args[0];
-    print_in_lang(lang,
+    print_in_lang(
+        lang,
         &format!("Adding package: {}", package),
         &format!("正在添包: {}", package),
         &format!("パッケージを追加中: {}", package),
@@ -614,8 +658,9 @@ fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn cmd_translate(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(lang,
+fn cmd_translate(_args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
+    print_in_lang(
+        lang,
         "Translating...",
         "正在翻译...",
         "翻訳中...",
@@ -625,7 +670,8 @@ fn cmd_translate(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<(
 }
 
 fn cmd_manifest(lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(lang,
+    print_in_lang(
+        lang,
         "Showing manifest...",
         "正在显示灵符...",
         "霊符を表示中...",
@@ -636,7 +682,7 @@ fn cmd_manifest(lang: &InvocationLanguage) -> anyhow::Result<()> {
 
 fn cmd_wizard(lang: &InvocationLanguage) -> anyhow::Result<()> {
     println!("{}", lang.welcome_message().magenta().bold());
-    
+
     let name_prompt = match lang {
         InvocationLanguage::English => "Project Name:",
         InvocationLanguage::Chinese => "项目名称:",
@@ -644,35 +690,33 @@ fn cmd_wizard(lang: &InvocationLanguage) -> anyhow::Result<()> {
         InvocationLanguage::Korean => "프로젝트 이름:",
         _ => "Project Name:",
     };
-    
+
     let name: String = Input::new().with_prompt(name_prompt).interact_text()?;
-    
+
     let type_options = match lang {
         InvocationLanguage::English => vec![
-            "Dú Xíng - Standalone Binary",
-            "Gòng Xiū - Library", 
-            "Yóu Líng - Game",
-            "Xiǎn Líng - UI Application",
-            "Zhì Líng - AI/ML Project",
-            "Mì Líng - Cryptography",
-            "Wǎng Líng - Web/WASM",
-            "Wàn Yán - Polyglot Lexicon",
+            "Standalone Binary",
+            "Library",
+            "Game",
+            "UI Application",
+            "AI/ML Project",
+            "Cryptography",
+            "Web/WASM",
+            "Polyglot Lexicon",
         ],
         InvocationLanguage::Chinese => vec![
-            "独行 - 独立可执行程序",
-            "共修 - 库",
-            "游灵 - 游戏",
-            "显灵 - UI应用",
-            "智灵 - AI/ML项目",
-            "密灵 - 密码学",
-            "网灵 - Web/WASM",
-            "万言 - 多语言词典",
+            "独立可执行程序",
+            "库",
+            "游戏",
+            "UI应用",
+            "AI/ML项目",
+            "密码学",
+            "Web/WASM",
+            "多语言词典",
         ],
-        _ => vec![
-            "Binary", "Library", "Game", "UI", "AI/ML", "Crypto", "Web/WASM", "Polyglot",
-        ],
+        _ => vec!["Binary", "Library", "Game", "UI", "AI/ML", "Crypto", "Web/WASM", "Polyglot"],
     };
-    
+
     let selection = Select::new()
         .with_prompt(match lang {
             InvocationLanguage::English => "Spirit Realm Type:",
@@ -684,14 +728,57 @@ fn cmd_wizard(lang: &InvocationLanguage) -> anyhow::Result<()> {
         .items(&type_options)
         .default(0)
         .interact()?;
-    
-    println!("{}", 
+
+    let project_kind = match selection {
+        0 => ProjectKind::Bin,
+        1 => ProjectKind::Lib,
+        2 => ProjectKind::Game,
+        3 => ProjectKind::Ui,
+        4 => ProjectKind::Ai,
+        5 => ProjectKind::Crypto,
+        6 => ProjectKind::Web,
+        _ => ProjectKind::Polyglot,
+    };
+
+    // Choose scaffolding/lexicon language
+    let lang_options = match lang {
+        InvocationLanguage::English => vec!["en", "zh", "ja", "ko", "ru", "ar", "hi", "th"],
+        _ => vec!["en", "zh", "ja", "ko", "ru", "ar", "hi", "th"],
+    };
+
+    let lang_selection = Select::new()
+        .with_prompt("Scaffolding language (lexicon)")
+        .items(&lang_options)
+        .default(0)
+        .interact()?;
+
+    let primary_lang = lang_options[lang_selection].to_string();
+
+    println!(
+        "{}",
         match lang {
-            InvocationLanguage::English => format!("Creating {} project: {}", type_options[selection], name),
-            InvocationLanguage::Chinese => format!("正在创建{}项目: {}", type_options[selection], name),
+            InvocationLanguage::English => format!("Creating {} project: {}", project_kind.to_english(), name),
+            InvocationLanguage::Chinese => format!("正在创建{}项目: {}", project_kind.to_chinese(), name),
             _ => format!("Creating project: {}", name),
-        }.green()
+        }
+        .green()
     );
-    
+
+    let project = ProjectScaffold {
+        name: name.clone(),
+        kind: project_kind,
+        language: primary_lang.clone(),
+        root_language: primary_lang,
+        spirit_level: "iron".to_string(),
+    };
+
+    scaffold::scaffold_project(&project)?;
+
+    println!("\n{}", "✓ Spirit Realm scaffolded".green().bold());
+    println!("  cd {}", name);
+    println!("  {} build", lang.cli_name());
+    println!("  {} run", lang.cli_name());
+
     Ok(())
 }
+

@@ -1,0 +1,13 @@
+
+name = "English"
+code = "en"
+canonical = true
+
+[keywords]
+bind = "bind"
+start = "start"
+print = "print"
+if = "if"
+else = "else"
+for = "for"
+while = "while"

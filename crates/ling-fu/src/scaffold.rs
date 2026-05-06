@@ -6,6 +6,7 @@ pub struct ProjectScaffold {
     pub name: String,
     pub kind: ProjectKind,
     pub language: String,
+    pub root_language: String,
     pub spirit_level: String,
 }
 
@@ -176,13 +177,15 @@ let content = format!(r#"
 灵级 = "{}"
 
 [灵根]
-灵核 = {{ 版 = "2030.0" }}
+灵核 = {{ 版本 = "2030.0", 语言 = "{}" }}
 "#,
 project.name,
 project.kind.to_chinese(),
 project.language,
-project.spirit_level
+project.spirit_level,
+project.root_language
 );
+
 
 fs::write(dir.join("灵符.toml"), content)?;
 Ok(())
