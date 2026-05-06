@@ -5,6 +5,8 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use unicode_normalization::UnicodeNormalization;
+mod scaffold;
+use scaffold::{ProjectScaffold, ProjectKind};
 
 // Detect which name was used to call this binary
 fn detect_invocation_name() -> InvocationLanguage {
@@ -508,17 +510,56 @@ fn cmd_new(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     }
     
     let name = &args[0];
+    
+    // Parse optional project type from --type flag
+    let mut project_kind = ProjectKind::Bin;
+    let mut spirit_level = "铁".to_string(); // Iron default
+    let mut primary_lang = "en".to_string();
+    
+    for i in 1..args.len() {
+        if args[i] == "--type" && i + 1 < args.len() {
+            project_kind = ProjectKind::from_str(&args[i + 1]);
+        }
+        if args[i] == "--spirit" && i + 1 < args.len() {
+            spirit_level = args[i + 1].clone();
+        }
+        if args[i] == "--lang" && i + 1 < args.len() {
+            primary_lang = args[i + 1].clone();
+        }
+    }
+    
     println!("{}", 
         match lang {
-            InvocationLanguage::English => format!("Creating project: {}", name),
-            InvocationLanguage::Chinese => format!("正在创建项目: {}", name),
-            InvocationLanguage::Japanese => format!("プロジェクトを作成中: {}", name),
-            InvocationLanguage::Korean => format!("프로젝트 생성 중: {}", name),
+            InvocationLanguage::English => format!("Creating {} project: {}", project_kind.to_english(), name),
+            InvocationLanguage::Chinese => format!("正在创建{}项目: {}", project_kind.to_chinese(), name),
+            InvocationLanguage::Japanese => format!("{}プロジェクトを作成中: {}", project_kind.to_chinese(), name),
+            InvocationLanguage::Korean => format!("{} 프로젝트 생성 중: {}", project_kind.to_chinese(), name),
             _ => format!("Creating project: {}", name),
         }.green()
     );
     
-    // Actual creation logic here
+    let project = ProjectScaffold {
+        name: name.clone(),
+        kind: project_kind,
+        language: primary_lang,
+        spirit_level,
+    };
+    
+    scaffold::scaffold_project(&project)?;
+    
+    println!("\n{}", 
+        match lang {
+            InvocationLanguage::English => "✓ Spirit Realm created!",
+            InvocationLanguage::Chinese => "✓ 灵境已成！",
+            InvocationLanguage::Japanese => "✓ 霊境が完成しました！",
+            InvocationLanguage::Korean => "✓ 영경이 완성되었습니다！",
+            _ => "✓ Spirit Realm created!",
+        }.green().bold()
+    );
+    println!("  cd {}", name);
+    println!("  {} build", lang.cli_name());
+    println!("  {} run", lang.cli_name());
+    
     Ok(())
 }
 
