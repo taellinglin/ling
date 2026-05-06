@@ -1,0 +1,12 @@
+[package]
+name = "ling-mir"
+version = "0.0.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Ling MIR - Mid-level Intermediate Representation for codegen backends"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+ling-ast = { path = "../ling-ast" }
+anyhow = "1.0"
+

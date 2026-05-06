@@ -1,0 +1,92 @@
+[package]
+name = "lingfu"
+version = "2030.0.0"
+edition = "2024"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "灵符 - The Ling Project Manifest Tool"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/lingfu"
+
+[[bin]]
+name = "lingfu"
+path = "src/main.rs"
+
+[[bin]]
+name = "灵符"
+path = "src/main.rs"
+
+[[bin]]
+name = "霊符"
+path = "src/main.rs"
+
+[[bin]]
+name = "영부"
+path = "src/main.rs"
+
+[[bin]]
+name = "линфу"
+path = "src/main.rs"
+
+[[bin]]
+name = "لينغفو"
+path = "src/main.rs"
+
+[[bin]]
+name = "लिंगफू"
+path = "src/main.rs"
+
+[[bin]]
+name = "ลิงฟู"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingfu-de"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingfu-fr"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingfu-es"
+path = "src/main.rs"
+
+[[bin]]
+name = "linhphu"
+path = "src/main.rs"
+
+[[bin]]
+name = "λινγφυ"
+path = "src/main.rs"
+
+[[bin]]
+name = "לינגפו"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingfu-tr"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingfu-pl"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive", "color"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+anyhow = "1.0"
+thiserror = "1.0"
+dialoguer = "0.11"
+colored = "2.0"
+walkdir = "2.4"
+git2 = "0.18"
+tempfile = "3.8"
+rayon = "1.10"
+unicode-normalization = "0.1"
+unicode-script = "0.5"
+
+[profile.release]
+lto = true
+codegen-units = 1

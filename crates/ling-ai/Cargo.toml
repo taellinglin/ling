@@ -1,0 +1,73 @@
+[package]
+name = "ling-ai"
+version = "2030.0.0"
+edition = "2024"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Tensor computation, neural networks, and LLM inference"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = ["cpu"]
+cpu = ["candle-core", "burn"]
+cuda = ["candle-core/cuda", "dfdx/cuda"]
+metal = ["candle-core/metal"]
+tensorrt = []
+llm = [ ]
+nlp = ["dep:rust-bert"]
+cnn = ["dep:dfdx"]
+rnn = []
+training = []
+
+[dependencies]
+ling-core = { workspace = true }
+
+# Tensor computation
+candle-core = { version = "0.6", optional = true, default-features = false }
+burn = { version = "0.14", optional = true, default-features = false }
+tract = { version = "0.21", optional = true }  # ONNX runtime
+dfdx = { version = "0.13", optional = true }
+
+# Neural network layers
+candle-nn = { version = "0.6", optional = true }
+burn-nn = { version = "0.21.0-pre.5", optional = true }
+
+# LLM inference
+# llama-cpp-rs = { version = "0.1", optional = true, features = ["cuda"] }
+# mistralrs currently disabled to prevent pulling reqwest/web-sys on non-wasm builds
+# (unblocks workspace compilation for the `ling` binary)
+# mistralrs = { version = "0.7.0-alpha.4", optional = true, default-features = false, features = [] }
+
+# phi-rs = { version = "0.2", optional = true }
+
+# NLP
+rust-bert = { version = "0.21", optional = true }
+# sentence-transformers = { version = "0.3", optional = true }
+
+# Computer Vision
+# candle-cnn = { version = "0.6", optional = true }
+
+# RNN layers
+# candle-rnn = { version = "0.6", optional = true }
+
+# Training
+# candle-training = { version = "0.6", optional = true }
+# burn-autodiff = { version = "0.14", optional = true }
+# dfdx-training = { version = "0.13", optional = true }
+
+# Data handling
+ndarray = "0.15"
+rand = "0.8"
+num-traits = "0.2"
+
+[lib]
+name = "ling_ai"
+path = "src/lib.rs"
+
+# [[example]]
+# name = "mnist"
+# required-features = ["cpu"]
+
+# [[example]]
+# name = "llm_chat"
+# required-features = ["llm"]

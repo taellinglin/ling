@@ -1,0 +1,24 @@
+# Clippy configuration
+
+disallowed-types = []
+disallowed-macros = []
+disallowed-lints = []
+
+avoid-breaking-exported-api = false
+
+#[lints]
+# Clippy lints
+clippy_all = { level = "warn", priority = -10 }
+clippy_pedantic = { level = "warn", priority = -10 }
+clippy_nursery = { level = "warn" }
+clippy_perf = "warn"
+clippy_complexity = "warn"
+clippy_correctness = "deny"
+clippy_suspicious = "warn"
+clippy_style = "warn"
+
+# Rust lints
+warnings = "warn"
+rust_2018_idioms = "warn"
+future_incompatible = "deny"
+

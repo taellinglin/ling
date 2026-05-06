@@ -1,0 +1,11 @@
+name = "日本語"
+code = "ja"
+canonical = false
+base = "en"
+
+[keywords]
+bind = "束縛"
+start = "開始"
+if = "もし"
+else = "でなければ"
+print = "印刷"

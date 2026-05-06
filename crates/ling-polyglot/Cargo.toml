@@ -1,0 +1,51 @@
+[package]
+name = "ling-polyglot"
+version = "2030.0.0"
+edition = "2024"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Polyglot lexicon system - 16+ human languages"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = ["full"]
+full = ["chinese", "japanese", "korean", "russian", "arabic", "hindi", "thai"]
+chinese = []
+japanese = []
+korean = []
+russian = []
+arabic = []
+hindi = []
+thai = []
+german = []
+french = []
+spanish = []
+greek = []
+hebrew = []
+vietnamese = []
+turkish = []
+polish = []
+
+[dependencies]
+ling-core = { workspace = true }
+
+# Unicode
+unicode-script = "0.5"
+unicode-normalization = "0.1"
+unicode-ident = "1.0"
+
+# Lexicon storage
+phf = { version = "0.11", features = ["macros"] }
+serde = { workspace = true }
+toml = "0.8"
+
+# Performance
+once_cell = "1.19"
+dashmap = "5.5"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
+
+[lib]
+name = "ling_polyglot"
+path = "src/lib.rs"

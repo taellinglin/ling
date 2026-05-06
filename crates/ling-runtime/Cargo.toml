@@ -1,0 +1,12 @@
+[package]
+name = "ling-runtime"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <ling@ling-lang.org>"]
+description = "Ling language runtime (GC, allocator, stdlib)"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+mimalloc = "0.1"
+object = "0.36"
+

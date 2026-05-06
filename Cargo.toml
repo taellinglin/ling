@@ -1,0 +1,109 @@
+[package]
+name = "ling"
+version = "2030.0.0"
+edition = "2021"
+description = "Ling - The Omniglot Systems Language"
+authors = [
+    "Ling Lin <taellinglin@gmail.com>",
+    "Sanny Lin <SannyLing53@gmail.com>"
+]
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+documentation = "https://docs.ling-lang.org"
+readme = "README.md"
+keywords = ["systems", "polyglot", "ai", "crypto", "game", "audio"]
+categories = ["compilers", "graphics", "game-development", "artificial-intelligence", "cryptography"]
+rust-version = "1.85"
+
+[workspace]
+members = [
+    "crates/ling-core",
+    "crates/ling-polyglot",
+    "crates/ling-ai",
+    "crates/ling-crypto",
+    "crates/ling-audio",
+    "crates/ling-net",
+    "crates/ling-mir",
+    "crates/ling-fu",
+]
+
+# Make `cargo run` build Ling itself (not lingfu) by default.
+# You can still run Lingfu with: cargo run -p lingfu --bin lingfu
+default-run = "ling"
+
+[lib]
+path = "src/lib.rs"
+
+[build-dependencies]
+
+
+# Needed by build.rs for generating parser grammar via lalrpop
+lalrpop = "0.22"
+
+
+
+[workspace.dependencies]
+# Core
+ling-core = { path = "crates/ling-core", version = "2030.0.0" }
+ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.0" }
+
+# Graphics & Game
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.0" }
+wgpu = "24.0"
+bevy = { version = "0.14", features = ["multi_threaded"] }
+rend3 = "0.41"
+
+# AI
+ling-ai = { path = "crates/ling-ai", version = "2030.0.0" }
+candle-core = "0.7"
+burn = "0.15"
+
+# Crypto
+ling-crypto = { path = "crates/ling-crypto", version = "2030.0.0" }
+aes-gcm = "0.10"
+curve25519-dalek = "4.1"
+blake3 = "1.5"
+
+# Audio
+ling-audio = { path = "crates/ling-audio", version = "2030.0.0" }
+cpal = "0.15"
+rodio = "0.17"
+hound = "3.5"
+
+# Networking
+ling-net = { path = "crates/ling-net", version = "2030.0.0" }
+tokio = { version = "1.37", features = ["full"] }
+quinn = "0.11"
+
+# WASM interop (used by reqwest/mistralrs + wgpu)
+web-sys = "0.3.74"
+
+
+
+
+js-sys = "0.3.72"
+wasm-bindgen = "0.2.95"
+
+
+# Shared
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+anyhow = "1.0"
+rayon = "1.9"
+async-trait = "0.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+debug = true
+
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]
+

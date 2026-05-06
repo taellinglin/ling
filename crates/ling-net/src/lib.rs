@@ -1,0 +1,6 @@
+//! ling-net - async networking scaffolding.
+
+pub fn version() -> &'static str {
+    "0.1.0"
+}
+

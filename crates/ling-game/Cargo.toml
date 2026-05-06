@@ -1,0 +1,15 @@
+[package]
+name = "ling-game"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <ling@ling-lang.org>"]
+description = "Ling game engine (Bevy integration)"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+ling-runtime = { path = "../ling-runtime" }
+ling-ui = { path = "../ling-ui", optional = true }
+bevy = { version = "0.13", optional = true, features = ["dynamic_linking"] }
+avian = "0.1"
+heron = "0.2"
+

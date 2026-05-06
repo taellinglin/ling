@@ -1,0 +1,32 @@
+// src/parser/grammar.lalrpop
+use crate::lexer::Token;
+use crate::parser::ast::*;
+
+grammar;
+
+extern {
+    type Token = Token;
+}
+
+pub Program: Vec<Item> = {
+    <items:Item*> => items
+};
+
+Item: Item = {
+    "bind" <name:Ident> "=" <expr:Expr> => Item::Bind(name, expr),
+    "form" <name:Ident> <fields:FormFields> => Item::Form(name, fields),
+    "choose" <name:Ident> <variants:ChoiceVariants> => Item::Choose(name, variants),
+    "can" <name:Ident> <methods:TraitMethods> => Item::Can(name, methods),
+    "give" <ty:Type> <impls:ImplBlock> => Item::Give(ty, impls),
+};
+
+Expr: Expr = {
+    <e:IfExpr> => e,
+    <e:MatchExpr> => e,
+    <e:BinaryExpr> => e,
+    <e:CallExpr> => e,
+};
+
+IfExpr: Expr = {
+    "if" <cond:Expr> <then:Block> "else" <else_:Block> => Expr::If(cond, then, else_),
+};

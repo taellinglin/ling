@@ -1,0 +1,14 @@
+[package]
+name = "ling-crypto"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <ling@ling-lang.org>"]
+description = "Ling cryptography library"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+aes-gcm = { version = "0.10", optional = true }
+ed25519-dalek = "2.1"
+blake3 = "1.5"
+zeroize = "1.8"
+

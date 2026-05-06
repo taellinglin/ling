@@ -1,0 +1,17 @@
+[package]
+name = "ling-codegen"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <ling@ling-lang.org>"]
+description = "Code generation backends: LLVM, Cranelift, WASM"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+ling-mir = { path = "../ling-mir" }
+inkwell = { version = "0.18", features = ["llvm18-0"] }
+cranelift = "0.120"
+cranelift-jit = "0.120"
+cranelift-module = "0.120"
+wasmtime = "18.0"
+anyhow = "1.0"
+

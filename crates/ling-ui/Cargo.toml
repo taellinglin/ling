@@ -1,0 +1,14 @@
+[package]
+name = "ling-ui"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <ling@ling-lang.org>"]
+description = "Ling UI framework (Xilem + Taffy)"
+
+[dependencies]
+ling-core = { path = "../ling-core" }
+ling-runtime = { path = "../ling-runtime" }
+wgpu = { version = "0.20", optional = true }
+xilem = "0.1"
+taffy = "0.5"
+
