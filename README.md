@@ -1,112 +1,210 @@
-# Ling – The Omniglot Systems Language
+# 🌐 Ling – The Omniglot Systems Language
 
-**UI/3D/Game • AI/LLM • Cryptography – in perfect harmony**
+[![Rust](https://img.shields.io/badge/rust-100%25-orange)](https://www.rust-lang.org/)
+[![License](https://img.shields.io/badge/license-Ling%20Harmony%201.0-blue)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/taellinglin/ling)](https://github.com/taellinglin/ling/stargazers)
 
-[![CI](https://github.com/taellinglin/ling/actions/workflows/ci.yml/badge.svg)](https://github.com/taellinglin/ling/actions)
-[![Docs](https://docs.rs/ling/badge.svg)](https://docs.rs/ling)
+**Write once, speak to everyone. Performance of Rust, poetry of human language.**
 
-## Overview
+Ling is a **polyglot systems programming language** that lets you write high-performance code using your native lexicon. Whether you think in English, 中文, 한국어, or ภาษาไทย – Ling understands you.
 
-Ling is a **polyglot systems language** designed for the next era of software:
+## ✨ The Vision
 
-```
-Pillar 1: Graphics & Game    • wgpu/bevy + xilem/taffy
-Pillar 2: AI/ML              • candle/burn + llama.cpp 
-Pillar 3: Cryptography       • post-quantum + ZK + FHE
-Core: Polyglot compiler     • English/中文/日本語/... unified
-```
+Three pillars. One language. Infinite possibilities.
 
-## Quick Start
+| Pillar | Domain | Technologies |
+|--------|--------|--------------|
+| 🎮 **Pillar 1** | Graphics & Games | wgpu, bevy, xilem, taffy |
+| 🧠 **Pillar 2** | AI/ML | candle, burn, llama.cpp |
+| 🔐 **Pillar 3** | Cryptography | Post-quantum, ZK, FHE |
+
+## 🚀 Quick Start
 
 ```bash
-# Install
+# Install from crates.io
 cargo install ling
 
-# Hello world (English)
-echo 'bind start = do { print("Hello!") }' | ling run
+# Run your first program (English)
+echo 'bind start = do { print("Hello, 世界!") }' | ling run
 
-# Hello world (中文)
-echo '令 启动 = 执行 { 印("你好!") }' | ling run
-
-# Compile
-lingc hello.ling -o hello
-./hello
+# Run your first program (中文)
+echo '令 启动 = 执行 { 印("你好，世界！") }' | ling run
 ```
 
-## Features
+# Code Examples in 4 Languages
+## Hello World & Fibonacci
+### English
+```
+// Hello World - English Lexicon
+bind start = do {
+    print("Hello, World!");
+    
+    // Fibonacci sequence
+    let fib = func (n) {
+        if n <= 1 {
+            return n;
+        } else {
+            return fib(n - 1) + fib(n - 2);
+        }
+    };
+    
+    print("First 10 Fibonacci numbers:");
+    for i in range(0, 10) {
+        print(fib(i));
+    }
+}
+```
+# 中文 (Chinese)
+```
+// 你好世界 - 中文词库
+令 启动 = 执行 {
+    印("你好，世界！");
+    
+    // 斐波那契数列
+    令 斐波那契 = 函数 (n) {
+        如果 n <= 1 {
+            返回 n;
+        } 否则 {
+            返回 斐波那契(n - 1) + 斐波那契(n - 2);
+        }
+    };
+    
+    印("前10个斐波那契数:");
+    对于 i 于 范围(0, 10) {
+        印(斐波那契(i));
+    }
+}
+```
+# 한국어 (Korean)
 
-- **16 lexicons** simultaneous (no `#lang`)
-- **Zero-cost** borrow checker + effects system
-- **LLVM/Cranelift/WASM** backends
-- **Full-stack** – UI/game/AI/crypto interop
+```
+// 헬로 월드 - 한국어 렉시콘
+바인드 시작 = 수행 {
+    인쇄("안녕하세요, 세계!");
+    
+    // 피보나치 수열
+    렛 피보나치 = 펑크 (n) {
+        이프 n <= 1 {
+            리턴 n;
+        } 엘스 {
+            리턴 피보나치(n - 1) + 피보나치(n - 2);
+        }
+    };
+    
+    인쇄("처음 10개의 피보나치 수:");
+    포 i 인 레인지(0, 10) {
+        인쇄(피보나치(i));
+    }
+}
 
-## Roadmap 2030
+## ภาษาไทย (Thai)
+```
+// สวัสดีชาวโลก - พจนานุกรมไทย
+ผูก เริ่มต้น = ทำ {
+    พิมพ์("สวัสดีชาวโลก!");
+    
+    // ลำดับฟีโบนัชชี
+    ให้ ฟีโบ = ฟังก์ชัน (n) {
+        ถ้า n <= 1 {
+            คืนค่า n;
+        } มิฉะนั้น {
+            คืนค่า ฟีโบ(n - 1) + ฟีโบ(n - 2);
+        }
+    };
+    
+    พิมพ์("ตัวเลขฟีโบนัชชี 10 ตัวแรก:");
+    สำหรับ i ใน พิสัย(0, 10) {
+        พิมพ์(ฟีโบ(i));
+    }
+}
+```
+## 🎯 Core Features
+### 1. 16 Native Lexicons (Simultaneous)
 
-- [x] Core compiler pipeline (lex → ast → semantics → borrowck → mir → codegen)
-- [x] Polyglot lexicons (en/zh/ja/ko/ru/ar/hi/th/...)
-- [ ] LLM integration (code completion + semantic suggestions)
-- [ ] Game engine (bevy + physics + tooling)
-- [ ] UI framework (xilem + taffy + design system)
+No #lang directives. No switching contexts. Write English functions alongside Chinese variables alongside Korean loops. All in the same file.
+### 2. Zero-Cost Abstractions
 
-See full [roadmap](ROADMAP.md).
+    Borrow checker with effects system
 
-## Building & Running
+    No garbage collection overhead
 
-### Build the workspace
+    Compiles to native code via LLVM/Cranelift/WASM
 
-```bash
+### 3. Full-Stack Ready
+```
+// Example: Game + AI + Crypto hybrid
+bind start = do {
+    let model = load_llm("llama.cpp");
+    let key = generate_post_quantum_key();
+    render_game_loop(model, key);
+}
+```
+# 📁 Project Structure
+
+ling/
+├── src/              # Core compiler
+├── crates/
+│   ├── ling-core/    # Data structures & types
+│   ├── ling-lex/     # Lexicon tokenization
+│   ├── ling-polyglot/# Multi-language infra
+│   ├── ling-mir/     # Intermediate representation
+│   ├── ling-ai/      # AI/LLM integration
+│   ├── ling-crypto/  # Cryptographic primitives
+│   └── ling-ui/      # UI/game framework
+├── lexicons/         # Language definitions
+└── examples/         # Sample programs
+
+# Building & Testing
+## Build the workspace
+```
 cargo build
 ```
 
-### Run Ling
-
-This repo includes a small Rust CLI entry point. To run the default binary:
-
-```bash
-cargo run
+# Run the REPL
 ```
-
-To run the Ling REPL:
-
-```bash
 cargo run --bin ling-repl
 ```
 
-To compile Ling source code (if enabled in your build configuration):
-
-```bash
-cargo run --bin lingc -- <input.ling> -o <output>
+# Run tests
 ```
-
-> Note: Some binaries/features may require additional feature flags depending on the selected backend (LLVM/WASM/etc.).
-
-### Run tests
-
-```bash
 cargo test
 ```
 
-## Project Structure
+# Compile a Ling file
+```
+cargo run --bin lingc -- program.ling -o output
+```
 
-- `src/` — core compiler and language implementation
-- `crates/ling-core/` — core data structures and shared types
-- `crates/ling-lex/` (and lexicon files) — lexing/tokenization components
-- `crates/ling-polyglot/` — polyglot infrastructure
-- `crates/ling-mir/` — intermediate representation
-- `crates/ling-ai/`, `crates/ling-crypto/`, `crates/ling-net/`, `crates/ling-audio/`, `crates/ling-ui/` — feature domains
+## 🗺️ Roadmap 2030
 
-## Contributing
+-    Core compiler pipeline (lex → ast → semantics → borrowck → mir → codegen)
 
-We welcome contributions. Typical workflow:
+-    Polyglot lexicons (en/zh/ja/ko/ru/ar/hi/th)
 
-1. Fork the repo
-2. Create a feature branch
-3. Implement + add tests
-4. Submit a pull request
+-    LLM integration (code completion + semantic suggestions)
 
-If you’re unsure where to start, check `TODO.md` and open issues.
+-    Game engine (bevy + physics + tooling)
 
-## License
+-    UI framework (xilem + taffy + design system)
 
-Ling Harmony License 1.0
+## 🤝 Contributing
 
+### We welcome contributions! Typical workflow:
+
+    Fork the repo
+
+    Create a feature branch (git checkout -b feature/amazing)
+
+    Implement + add tests
+
+    Submit a pull request
+
+Check TODO.md for open tasks and good first issues.
+📄 License
+
+Ling Harmony License 1.0 – Free for open-source and personal use. Commercial licensing available upon request.
+🌟 Show Your Support
+
+If you find Ling interesting, star the repository and spread the word!
+
+Built with 🦀 Rust and ❤️ for human languages
