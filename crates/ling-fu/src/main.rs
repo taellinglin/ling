@@ -610,17 +610,52 @@ fn cmd_build(lang: &InvocationLanguage) -> anyhow::Result<()> {
         "霊境を築造中...",
         "영경 건설 중...",
     );
+    let status = std::process::Command::new("cargo")
+        .arg("build")
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to invoke cargo: {e}"))?;
+    if !status.success() {
+        anyhow::bail!("build failed");
+    }
     Ok(())
 }
 
 fn cmd_run(lang: &InvocationLanguage) -> anyhow::Result<()> {
-    print_in_lang(
-        lang,
-        "Running Ling project...",
-        "正在行灵...",
-        "霊を実行中...",
-        "영 실행 중...",
-    );
+    // Try to find a .ling entry file; fall back to `cargo run`
+    let entry = find_ling_entry();
+    if let Some(path) = entry {
+        print_in_lang(
+            lang,
+            &format!("Running {}...", path.display()),
+            &format!("正在行灵 {}...", path.display()),
+            &format!("{}を実行中...", path.display()),
+            &format!("{} 실행 중...", path.display()),
+        );
+        let ling_bin = find_ling_binary();
+        let status = std::process::Command::new(ling_bin)
+            .arg("run")
+            .arg(&path)
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to invoke ling: {e}"))?;
+        if !status.success() {
+            anyhow::bail!("run failed");
+        }
+    } else {
+        print_in_lang(
+            lang,
+            "Running Ling project...",
+            "正在行灵...",
+            "霊を実行中...",
+            "영 실행 중...",
+        );
+        let status = std::process::Command::new("cargo")
+            .arg("run")
+            .status()
+            .map_err(|e| anyhow::anyhow!("Failed to invoke cargo: {e}"))?;
+        if !status.success() {
+            anyhow::bail!("run failed");
+        }
+    }
     Ok(())
 }
 
@@ -632,6 +667,13 @@ fn cmd_test(lang: &InvocationLanguage) -> anyhow::Result<()> {
         "霊をテスト中...",
         "영 테스트 중...",
     );
+    let status = std::process::Command::new("cargo")
+        .arg("test")
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to invoke cargo: {e}"))?;
+    if !status.success() {
+        anyhow::bail!("tests failed");
+    }
     Ok(())
 }
 
@@ -646,7 +688,6 @@ fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-
     let package = &args[0];
     print_in_lang(
         lang,
@@ -655,29 +696,89 @@ fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         &format!("パッケージを追加中: {}", package),
         &format!("패키지 추가 중: {}", package),
     );
+    let status = std::process::Command::new("cargo")
+        .arg("add")
+        .arg(package)
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to invoke cargo: {e}"))?;
+    if !status.success() {
+        anyhow::bail!("add failed");
+    }
     Ok(())
 }
 
 fn cmd_translate(_args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     print_in_lang(
         lang,
-        "Translating...",
-        "正在翻译...",
-        "翻訳中...",
-        "번역 중...",
+        "Translating source file (use --from <lang> --to <lang> <file>)...",
+        "正在翻译源文件...",
+        "ソースファイルを翻訳中...",
+        "소스 파일 번역 중...",
     );
     Ok(())
 }
 
 fn cmd_manifest(lang: &InvocationLanguage) -> anyhow::Result<()> {
+    // Show lingfu.toml or Cargo.toml content
+    let manifest_path = if std::path::Path::new("lingfu.toml").exists() {
+        "lingfu.toml"
+    } else if std::path::Path::new("Cargo.toml").exists() {
+        "Cargo.toml"
+    } else {
+        print_in_lang(
+            lang,
+            "No manifest found (lingfu.toml or Cargo.toml)",
+            "未找到灵符清单 (lingfu.toml 或 Cargo.toml)",
+            "マニフェストが見つかりません",
+            "매니페스트를 찾을 수 없습니다",
+        );
+        return Ok(());
+    };
     print_in_lang(
         lang,
-        "Showing manifest...",
-        "正在显示灵符...",
-        "霊符を表示中...",
-        "영부 표시 중...",
+        &format!("Manifest: {}", manifest_path),
+        &format!("灵符清单: {}", manifest_path),
+        &format!("マニフェスト: {}", manifest_path),
+        &format!("매니페스트: {}", manifest_path),
     );
+    let content = std::fs::read_to_string(manifest_path)?;
+    println!("{}", content);
     Ok(())
+}
+
+/// Find the main .ling entry file in common locations.
+fn find_ling_entry() -> Option<std::path::PathBuf> {
+    let candidates = [
+        "main.ling",
+        "src/main.ling",
+        "src/start.ling",
+        "start.ling",
+    ];
+    for c in &candidates {
+        let p = std::path::Path::new(c);
+        if p.exists() { return Some(p.to_path_buf()); }
+    }
+    // Search for any .ling file in current dir
+    if let Ok(entries) = std::fs::read_dir(".") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("ling") {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Find the `ling` binary: prefer same directory as this executable, then PATH.
+fn find_ling_binary() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.parent().unwrap_or(std::path::Path::new(".")).join("ling");
+        if sibling.exists() { return sibling; }
+        let sibling_exe = exe.parent().unwrap_or(std::path::Path::new(".")).join("ling.exe");
+        if sibling_exe.exists() { return sibling_exe; }
+    }
+    std::path::PathBuf::from("ling")
 }
 
 fn cmd_wizard(lang: &InvocationLanguage) -> anyhow::Result<()> {

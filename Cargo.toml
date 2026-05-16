@@ -27,6 +27,7 @@ members = [
     "crates/ling-net",
     "crates/ling-mir",
     "crates/ling-fu",
+    "crates/ling-graphics",
 ]
 
 # Make `cargo run` build Ling itself (not lingfu) by default.
