@@ -1,33 +1,24 @@
-// src/lexer/token.rs
+/// Canonical token set for the Ling language.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Declaration keywords
+    // Declaration
     Bind, Do, Fn, Mod, Type,
-
     // Control flow
     If, Else, While, For, In, Match, Return,
-
-    // Ownership / borrow semantics
+    // Ownership
     Own, Lend, Share, Move, Copy,
-
     // Concurrency
     Async, Wait,
-
     // Other keywords
     Post, Give, Fit, Form, Choose, Can, Change,
-    Stop, Again, Try, Sure, Maybe,
-    Pure, Spawn,
-
-    // Result / Option helpers
-    Ok, Bad, None,
-
-    // Type / trait helpers
+    Stop, Again, Try, Sure, Maybe, Pure, Spawn,
+    Ok, Bad, NoneKw,
     As, Where,
 
     // Identifiers & literals
     Ident(String),
     Number(String),
-    String(String),
+    Str(String),
     Char(char),
     Bool(bool),
 
@@ -36,15 +27,13 @@ pub enum Token {
     Eq, EqEq, Ne, Lt, Gt, Le, Ge,
     And, Or, Not,
     Arrow, FatArrow, Dot, DotDot,
-    Ampersand,
-
-    // Path / namespace
-    ColonColon,
+    Ampersand, ColonColon,
 
     // Punctuation
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Comma, Colon, Semicolon,
 
     // Special
-    Whitespace, Comment(std::string::String), Error(std::string::String), Eof,
+    Error(String),
+    Eof,
 }

@@ -19,6 +19,7 @@ rust-version = "1.85"
 [workspace]
 members = [
     "crates/ling-core",
+    "crates/ling-lex",
     "crates/ling-polyglot",
     "crates/ling-ai",
     "crates/ling-crypto",
@@ -33,7 +34,24 @@ members = [
 default-run = "ling"
 
 [lib]
+name = "ling"
 path = "src/lib.rs"
+
+[[bin]]
+name = "ling"
+path = "src/main.rs"
+
+[[bin]]
+name = "lingc"
+path = "src/bin/lingc.rs"
+
+[[bin]]
+name = "lx"
+path = "src/bin/lx.rs"
+
+[[bin]]
+name = "ling-repl"
+path = "src/bin/ling-repl.rs"
 
 [build-dependencies]
 

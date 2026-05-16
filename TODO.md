@@ -1,9 +1,11 @@
-# TODO
+# oTODO
 
-- [ ] Update `lingfu new` CLI to accept `--root-lang <LANG>`
-- [ ] Thread `root_lang` through `ProjectScaffold` to `scaffold_project()`
-- [ ] Persist root language into generated `灵符.toml` under `[灵根]` as `语言 = "<root_lang>"`
-- [ ] Default `root-lang` to `--lang` if omitted
-- [ ] Update help output
-- [ ] Build/test `ling-fu` crate
+## Ling: make `ling-lang examples/hello.ling` print output
+- [ ] Implement minimal lexer for subset used by examples/hello.ling (string literals, identifiers, keywords: bind/do/print/start)
+- [ ] Implement minimal parser for subset: `bind <name> = do { <stmts> }` with nested `bind <name> = <expr>` and `print(<expr>)`
+- [ ] Implement small interpreter that evaluates this subset and prints to stdout
+- [ ] Wire CLI `ling run <file>` (or equivalent) to the interpreter
+- [ ] Implement `src/bin/lingc.rs` driver to call interpreter for `run`
+- [ ] Add integration test that runs `examples/hello.ling` and asserts stdout contains `Hello, World!`
+
 
