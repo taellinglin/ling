@@ -9,6 +9,9 @@ pub mod scene;
 pub mod animation;
 pub mod font;
 pub mod renderer;
+pub mod viewport;
+pub mod window;
+
 
 pub use math::{Vec2, Vec3, Vec4, Mat3, Mat4, Quat, Vec4H, Mat5, Aabb, Ray3, Plane, Frustum};
 pub use color::{Color, BlendMode, ColorGradient};

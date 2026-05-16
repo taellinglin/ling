@@ -113,10 +113,17 @@ fn pixel(col, row) {
     // Cube — blue, axis-aligned box test
     bind bx = (col - B1CX) / B1W
     bind by = (row - B1CY) / B1H * 2.1
-    if bx > -1.0 && bx < 1.0 && by > -1.0 && by < 1.0 {
+    if bx > -1.0 {
+        if bx < 1.0 {
+            if by > -1.0 {
+                if by < 1.0 {
         bind bd = clamp(AMB + (1.0 - bx * bx - by * by * 0.25) * 0.68, 0.0, 1.0)
         return blue_char(bd)
+                }
+            }
+        }
     }
+
 
     // Checkerboard floor
     if row > FLOOR_ROW {
