@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.0.2"
+version = "2030.0.3"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
