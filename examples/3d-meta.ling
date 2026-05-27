@@ -1,0 +1,223 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 3d-meta.ling  —  Möbius Cube Ring + Sierpiński Stella Octangula
+#
+#  ┌─ กลาง ──────────────────────────────────────────────────────────────────┐
+#  │  Sierpiński stella octangula (สองพีระมิดพันกัน) หมุนด้วยสี 4 มิติ       │
+#  └─ ล้อมรอบ ───────────────────────────────────────────────────────────────┘
+#  ┌─ แหวน ──────────────────────────────────────────────────────────────────┐
+#  │  กล่อง 6 ใบเรียงหกเหลี่ยม แต่ละใบบิดแบบ Möbius (tw = θ/2)             │
+#  │  เส้นทะแยงมุมในกล่องสร้างดาว 3 มิติ                                     │
+#  └─────────────────────────────────────────────────────────────────────────┘
+#
+#  วิธีรัน:   ling run examples/3d-meta.ling
+#  กด Escape หรือปิดหน้าต่างเพื่อออก
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  PART 1: 3-D perspective triangle
+#  Parameters: 3 vertices (world space) + precomputed camera trig
+#  cry=cos(ry)  sry=sin(ry)  crx=cos(rx)  srx=sin(rx)
+# ──────────────────────────────────────────────────────────────────────────────
+fn tri3d(ax, ay, az, bx, by, bz, cx, cy, cz, cry, sry, crx, srx) {
+    ผูก ax1 = ax * cry - az * sry
+    ผูก az1 = ax * sry + az * cry
+    ผูก ay2 = ay * crx - az1 * srx
+    ผูก az2 = ay * srx + az1 * crx
+    ผูก sax = 400 + 460 * ax1 / (az2 + 6)
+    ผูก say = 350 + 460 * ay2 / (az2 + 6)
+    ผูก bx1 = bx * cry - bz * sry
+    ผูก bz1 = bx * sry + bz * cry
+    ผูก by2 = by * crx - bz1 * srx
+    ผูก bz2 = by * srx + bz1 * crx
+    ผูก sbx = 400 + 460 * bx1 / (bz2 + 6)
+    ผูก sby = 350 + 460 * by2 / (bz2 + 6)
+    ผูก cx1 = cx * cry - cz * sry
+    ผูก cz1 = cx * sry + cz * cry
+    ผูก cy2 = cy * crx - cz1 * srx
+    ผูก cz2 = cy * srx + cz1 * crx
+    ผูก scx = 400 + 460 * cx1 / (cz2 + 6)
+    ผูก scy = 350 + 460 * cy2 / (cz2 + 6)
+    วาดสามเหลี่ยม(sax, say, sbx, sby, scx, scy)
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  PART 2: 4-D serpentine color  (time × depth × face × breath-wave)
+# ──────────────────────────────────────────────────────────────────────────────
+fn สี4มิติ(ระดับ, หน้า, เฟรม) {
+    ผูก t = เฟรม * 0.025
+    ผูก p = ระดับ * 1.047 + หน้า * 0.785
+    ผูก w = sin(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
+    ผูก r = (sin(t + p)         * 127 + 128) * w
+    ผูก g = (sin(t + p + 2.094) * 127 + 128) * w
+    ผูก b = (sin(t + p + 4.189) * 127 + 128) * w
+    สีดินสอ(r, g, b)
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  PART 3: Sierpiński tetrahedron — paint large→small
+#  18 parameters: 4 vertices (12 coords) + depth/frame + camera trig (4)
+# ──────────────────────────────────────────────────────────────────────────────
+fn วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz,
+                   ระดับ, เฟรม, cry, sry, crx, srx) {
+    สี4มิติ(ระดับ, 0, เฟรม)
+    tri3d(ax, ay, az, bx, by, bz, cx, cy, cz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 1, เฟรม)
+    tri3d(ax, ay, az, bx, by, bz, dx, dy, dz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 2, เฟรม)
+    tri3d(ax, ay, az, cx, cy, cz, dx, dy, dz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 3, เฟรม)
+    tri3d(bx, by, bz, cx, cy, cz, dx, dy, dz, cry, sry, crx, srx)
+    ถ้า ระดับ > 0 {
+        ผูก ด = ระดับ - 1
+        ผูก mabx = (ax + bx) / 2   ผูก maby = (ay + by) / 2   ผูก mabz = (az + bz) / 2
+        ผูก macx = (ax + cx) / 2   ผูก macy = (ay + cy) / 2   ผูก macz = (az + cz) / 2
+        ผูก madx = (ax + dx) / 2   ผูก mady = (ay + dy) / 2   ผูก madz = (az + dz) / 2
+        ผูก mbcx = (bx + cx) / 2   ผูก mbcy = (by + cy) / 2   ผูก mbcz = (bz + cz) / 2
+        ผูก mbdx = (bx + dx) / 2   ผูก mbdy = (by + dy) / 2   ผูก mbdz = (bz + dz) / 2
+        ผูก mcdx = (cx + dx) / 2   ผูก mcdy = (cy + dy) / 2   ผูก mcdz = (cz + dz) / 2
+        วาดเซียร์3มิติ(ax,   ay,   az,   mabx, maby, mabz, macx, macy, macz, madx, mady, madz, ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(mabx, maby, mabz, bx,   by,   bz,   mbcx, mbcy, mbcz, mbdx, mbdy, mbdz, ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(macx, macy, macz, mbcx, mbcy, mbcz, cx,   cy,   cz,   mcdx, mcdy, mcdz, ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(madx, mady, madz, mbdx, mbdy, mbdz, mcdx, mcdy, mcdz, dx,   dy,   dz,   ด, เฟรม, cry, sry, crx, srx)
+    }
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  PART 4: Möbius cube ring
+#
+#  Each cube sits at ring angle θ.  Local vertices are twisted around the
+#  cube's local Y axis by tw = θ/2  (half-twist = Möbius property):
+#    x' = vx·cos(tw) − vz·sin(tw)
+#    z' = vx·sin(tw) + vz·cos(tw)
+#    y' = vy
+#  Then translated to ring position (qx, 0, qz) and camera-projected.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── color for ring cubes (position in ring + time) ──
+fn สีแหวน(i, เฟรม) {
+    ผูก t = เฟรม * 0.02
+    ผูก p = i * 1.047
+    ผูก w = sin(เฟรม * 0.05 + i * 2.094) * 0.28 + 0.72
+    ผูก r = (sin(t + p)         * 127 + 128) * w
+    ผูก g = (sin(t + p + 2.094) * 127 + 128) * w
+    ผูก b = (sin(t + p + 4.189) * 127 + 128) * w
+    สีดินสอ(r, g, b)
+}
+
+# ── one wireframe edge: local-space endpoints → Möbius twist → ring translate → camera → line ──
+# (lx,ly,lz) and (mx,my,mz): local vertices
+# ctw/stw:  cos/sin of Möbius twist angle
+# qx/qz:    ring center position in world XZ plane
+fn cube_edge(lx, ly, lz, mx, my, mz, ctw, stw, qx, qz, cry, sry, crx, srx) {
+    # ── vertex L: Möbius Y-rotation then translate to ring
+    ผูก lxt = lx * ctw - lz * stw
+    ผูก lzt = lx * stw + lz * ctw
+    ผูก lwx = lxt + qx
+    ผูก lwz = lzt + qz
+    # camera rotation Ry then Rx
+    ผูก lx1 = lwx * cry - lwz * sry
+    ผูก lz1 = lwx * sry + lwz * cry
+    ผูก ly2 = ly * crx - lz1 * srx
+    ผูก lz2 = ly * srx + lz1 * crx
+    ผูก slx = 400 + 460 * lx1 / (lz2 + 6)
+    ผูก sly = 350 + 460 * ly2 / (lz2 + 6)
+    # ── vertex M
+    ผูก mxt = mx * ctw - mz * stw
+    ผูก mzt = mx * stw + mz * ctw
+    ผูก mwx = mxt + qx
+    ผูก mwz = mzt + qz
+    ผูก mx1 = mwx * cry - mwz * sry
+    ผูก mz1 = mwx * sry + mwz * cry
+    ผูก my2 = my * crx - mz1 * srx
+    ผูก mz2 = my * srx + mz1 * crx
+    ผูก smx = 400 + 460 * mx1 / (mz2 + 6)
+    ผูก smy = 350 + 460 * my2 / (mz2 + 6)
+    วาดเส้น(slx, sly, smx, smy)
+}
+
+# ── 12 frame edges + 4 space diagonals = 16 lines per cube ──
+fn cube_wire(s, ctw, stw, qx, qz, cry, sry, crx, srx) {
+    # bottom face (y = −s)
+    cube_edge(-s, -s, -s,  s, -s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s, -s,  s, -s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s,  s, -s, -s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge(-s, -s,  s, -s, -s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    # top face (y = +s)
+    cube_edge(-s,  s, -s,  s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s,  s, -s,  s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s,  s,  s, -s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge(-s,  s,  s, -s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    # vertical pillars
+    cube_edge(-s, -s, -s, -s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s, -s,  s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s,  s,  s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge(-s, -s,  s, -s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    # 4 space diagonals (corner-to-corner through centre — creates inner star)
+    cube_edge(-s, -s, -s,  s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s, -s, -s,  s,  s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge(-s, -s,  s,  s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+    cube_edge( s, -s,  s, -s,  s, -s, ctw, stw, qx, qz, cry, sry, crx, srx)
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  MAIN
+# ──────────────────────────────────────────────────────────────────────────────
+ผูก เริ่ม = ทำ {
+    เปิดหน้าต่าง(800, 700, "3-D Meta: Möbius Ring + Sierpiński — Ling")
+
+    # ── Regular tetrahedron (r = 1.0) ──
+    ผูก r   = 1.0
+    ผูก v0x = 0.0             ผูก v0y = -r              ผูก v0z = 0.0
+    ผูก v1x = r * 0.9428      ผูก v1y = r * 0.3333      ผูก v1z = 0.0
+    ผูก v2x = 0 - r * 0.4714  ผูก v2y = r * 0.3333      ผูก v2z = r * 0.8165
+    ผูก v3x = 0 - r * 0.4714  ผูก v3y = r * 0.3333      ผูก v3z = 0 - r * 0.8165
+    # Dual (negated) — stella octangula when combined
+    ผูก n0x = 0.0             ผูก n0y = r               ผูก n0z = 0.0
+    ผูก n1x = 0 - r * 0.9428  ผูก n1y = 0 - r * 0.3333  ผูก n1z = 0.0
+    ผูก n2x = r * 0.4714      ผูก n2y = 0 - r * 0.3333  ผูก n2z = 0 - r * 0.8165
+    ผูก n3x = r * 0.4714      ผูก n3y = 0 - r * 0.3333  ผูก n3z = r * 0.8165
+
+    ผูก เฟรม = 0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(3, 2, 8)
+
+        # ── camera orbit ──
+        ผูก ry = เฟรม * 0.014
+        ผูก rx = sin(เฟรม * 0.009) * 0.6
+        ผูก cry = cos(ry)
+        ผูก sry = sin(ry)
+        ผูก crx = cos(rx)
+        ผูก srx = sin(rx)
+
+        # ══ Central Sierpiński stella octangula (depth 3) ════════════════════
+        วาดเซียร์3มิติ(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z,
+                        3, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(n0x, n0y, n0z, n1x, n1y, n1z, n2x, n2y, n2z, n3x, n3y, n3z,
+                        3, เฟรม + 80, cry, sry, crx, srx)
+
+        # ══ Möbius cube ring — 6 cubes, 6-fold symmetry ════════════════════
+        ผูก spin = เฟรม * 0.010
+        ผูก R    = 2.3
+        ผูก s    = 0.48
+
+        for i in 0..6 {
+            ผูก theta = i * 1.0472 + spin
+            ผูก tw    = theta / 2
+            ผูก ctw   = cos(tw)
+            ผูก stw   = sin(tw)
+            ผูก qx    = R * cos(theta)
+            ผูก qz    = R * sin(theta)
+            สีแหวน(i, เฟรม)
+            cube_wire(s, ctw, stw, qx, qz, cry, sry, crx, srx)
+        }
+
+        แสดงผล()
+        ผูก เฟรม = เฟรม + 1
+    }
+}

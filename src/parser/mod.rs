@@ -175,7 +175,7 @@ impl Parser {
                 Token::Eof => break,
                 Token::Lt => { depth += 1; result.push('<'); self.advance(); }
                 Token::Gt if depth > 0 => { depth -= 1; result.push('>'); self.advance(); }
-                Token::LBrace | Token::Where | Token::Eof if depth == 0 => break,
+                Token::LBrace | Token::Where if depth == 0 => break,
                 Token::RParen | Token::Comma | Token::Semicolon if depth == 0 => break,
                 Token::Arrow if depth == 0 => break,
                 tok => { result.push_str(&format!("{:?}", tok)); self.advance(); }
@@ -421,6 +421,7 @@ impl Parser {
             }
             Token::If => self.parse_if_expr(),
             Token::For => self.parse_for_expr(),
+            Token::While => self.parse_while_expr(),
             Token::Match => self.parse_match_expr(),
             Token::Return => {
                 self.advance();
@@ -527,6 +528,15 @@ impl Parser {
         }
 
         Ok(Expr::If { cond: Box::new(cond), then, elseifs, else_body })
+    }
+
+    fn parse_while_expr(&mut self) -> Result<Expr, String> {
+        self.advance(); // consume `while` / `ขณะที่`
+        let cond = self.parse_expr()?;
+        self.expect(&Token::LBrace)?;
+        let body = self.parse_block()?;
+        self.expect(&Token::RBrace)?;
+        Ok(Expr::While { cond: Box::new(cond), body })
     }
 
     fn parse_for_expr(&mut self) -> Result<Expr, String> {

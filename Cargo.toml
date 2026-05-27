@@ -54,6 +54,9 @@ path = "src/bin/lx.rs"
 name = "ling-repl"
 path = "src/bin/ling-repl.rs"
 
+[dependencies]
+minifb = "0.27"
+
 [build-dependencies]
 
 

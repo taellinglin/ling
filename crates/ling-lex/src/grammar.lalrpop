@@ -1,0 +1,35 @@
+// Ling language — LALRPOP grammar skeleton
+//
+// This file defines the grammar for the Ling programming language using the
+// LALRPOP parser-generator.  It is kept here as the canonical grammar
+// reference; the hand-written recursive-descent parser in
+// `src/parser/mod.rs` is used by the current interpreter and must stay in
+// sync with the rules below.
+//
+// To regenerate the parser: ensure `lalrpop` is listed in
+// `[build-dependencies]` and call `lalrpop::process_root()` from build.rs.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// Token aliases  (produced by src/lexer/mod.rs)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+//   Bind  Do  Fn  Mod  Type
+//   If  Else  While  For  In  Match  Return
+//   Own  Lend  Share  Move  Copy  Async  Wait
+//   Ok  Bad  None  As  Where
+//   Ident(String)  Number(String)  String(String)  Bool(bool)
+//   Plus  Minus  Star  Slash  Percent
+//   Eq  EqEq  Ne  Lt  Gt  Le  Ge  And  Or  Not
+//   Arrow  FatArrow  Dot  DotDot  Ampersand  ColonColon
+//   LParen  RParen  LBrace  RBrace  LBracket  RBracket
+//   Comma  Colon  Semicolon
+
+// NOTE: lalrpop requires an `extern { }` block mapping token types, plus
+// full grammar rules.  The complete implementation is left for a future
+// milestone; the hand-written parser is authoritative in the meantime.
+//
+// Minimal stub so lalrpop does not choke on this file:
+
+grammar;
+
+// (full grammar rules go here)

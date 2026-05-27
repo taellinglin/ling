@@ -45,6 +45,11 @@ pub enum Expr {
         iter: Box<Expr>,
         body: Vec<Stmt>,
     },
+    /// `while cond { body }` / `ขณะที่ cond { body }`
+    While {
+        cond: Box<Expr>,
+        body: Vec<Stmt>,
+    },
     /// `match expr { arms }`
     Match(Box<Expr>, Vec<MatchArm>),
     /// Normal call: `expr(args)`

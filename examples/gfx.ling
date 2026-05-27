@@ -1,217 +1,55 @@
-// examples/gfx.ling — ling-graphics terminal preview
-//
-// Renders a Lambert-shaded scene (sphere, icosphere, cube, floor)
-// as colored Unicode art, then prints the ling-graphics API reference.
-//
-//   ling run examples/gfx.ling
+# ════════════════════════════════════════════════════════════════════════════
+# gfx.ling — Ling graphics demo: coloured geometric shapes
+#
+# Run:  ling run examples/gfx.ling
+# Press Escape or close the window to quit.
+# ════════════════════════════════════════════════════════════════════════════
 
-// ── Global scene constants ────────────────────────────────────────────────────
+fn draw_frame(frame) {
+    # Dark background
+    fill(10, 10, 20)
 
-// Directional light (pointing toward the scene)
-bind LX = -0.45
-bind LY = -0.75
-bind LZ =  0.55
+    bind cx = 400
+    bind cy = 300
+    bind r1 = 200
+    bind r2 = 100
 
-// Ambient term
-bind AMB = 0.15
+    # Three overlapping coloured triangles
+    set_color(220, 60, 60)
+    triangle(cx,        cy - r1,
+             cx - r2,   cy + r1 / 2,
+             cx + r2,   cy + r1 / 2)
 
-// Canvas
-bind COLS = 56
-bind ROWS = 24
+    set_color(60, 220, 60)
+    triangle(cx,        cy + r1,
+             cx - r2,   cy - r1 / 2,
+             cx + r2,   cy - r1 / 2)
 
-// Object centres (canvas pixel coords) and radii
-bind S1CX = 28.0   bind S1CY = 12.0   bind S1R = 10.5  // main sphere   (red)
-bind S2CX = 46.0   bind S2CY = 12.0   bind S2R =  6.0  // icosphere     (gold)
-bind B1CX =  9.0   bind B1CY = 12.0   bind B1W =  5.5  bind B1H = 4.5   // cube (blue)
+    set_color(60, 60, 220)
+    triangle(cx - r1,   cy,
+             cx + r1 / 2, cy - r2,
+             cx + r1 / 2, cy + r2)
 
-// Floor starts at row 19
-bind FLOOR_ROW = 19.0
+    # Bright central diamond
+    set_color(255, 220, 60)
+    triangle(cx,       cy - 55,  cx - 55, cy,  cx + 55, cy)
+    triangle(cx,       cy + 55,  cx - 55, cy,  cx + 55, cy)
 
-// ── Math ─────────────────────────────────────────────────────────────────────
-
-fn clamp(v, lo, hi) {
-    if v < lo { return lo }
-    if v > hi { return hi }
-    return v
+    # Border
+    set_color(60, 200, 255)
+    line(0,   0,   799, 0)
+    line(799, 0,   799, 599)
+    line(799, 599, 0,   599)
+    line(0,   599, 0,   0)
 }
-
-// Newton-Raphson sqrt via recursion (12 iterations)
-fn sqr_iter(x, n, i) {
-    if i <= 0 { return x }
-    return sqr_iter((x + n / x) * 0.5, n, i - 1)
-}
-
-fn sqr(n) {
-    if n <= 0.0 { return 0.0 }
-    return sqr_iter(n * 0.5 + 0.5, n, 12)
-}
-
-// ── Shading ───────────────────────────────────────────────────────────────────
-
-// Map brightness [0,1] → ASCII density char
-fn luma(b) {
-    if b < 0.07 { return " " }
-    if b < 0.17 { return "." }
-    if b < 0.30 { return ":" }
-    if b < 0.43 { return "-" }
-    if b < 0.57 { return "+" }
-    if b < 0.70 { return "=" }
-    if b < 0.83 { return "#" }
-    return "@"
-}
-
-// Lambert diffuse + ambient for a unit sphere centred at (0,0).
-// px,py in [-1,1].  Returns brightness, or -1 on ray miss.
-fn sphere_shade(px, py) {
-    bind r2 = px * px + py * py
-    if r2 > 1.0 { return -1.0 }
-    bind pz  = sqr(1.0 - r2)
-    bind len = sqr(LX * LX + LY * LY + LZ * LZ)
-    bind lx  = LX / len
-    bind ly  = LY / len
-    bind lz  = LZ / len
-    bind ndl = px * lx + py * ly + pz * lz
-    return clamp(AMB + clamp(ndl, 0.0, 1.0) * (1.0 - AMB), 0.0, 1.0)
-}
-
-// ── Per-object colored chars (pre-baked ANSI levels) ─────────────────────────
-
-fn red_char(b) {
-    bind c = luma(b)
-    if b < 0.30 { return "\x1b[31m" + c + "\x1b[0m" }
-    if b < 0.60 { return "\x1b[91m" + c + "\x1b[0m" }
-    return "\x1b[97m" + c + "\x1b[0m"
-}
-
-fn gold_char(b) {
-    bind c = luma(b)
-    if b < 0.40 { return "\x1b[33m" + c + "\x1b[0m" }
-    return "\x1b[93m" + c + "\x1b[0m"
-}
-
-fn blue_char(b) {
-    bind c = luma(b)
-    if b < 0.45 { return "\x1b[34m" + c + "\x1b[0m" }
-    return "\x1b[94m" + c + "\x1b[0m"
-}
-
-// ── Per-pixel logic ───────────────────────────────────────────────────────────
-
-fn pixel(col, row) {
-    // Sphere 1 — red, centre (S1CX, S1CY)
-    bind p1x = (col - S1CX) / S1R
-    bind p1y = (row - S1CY) / S1R * 2.1
-    bind b1  = sphere_shade(p1x, p1y)
-    if b1 >= 0.0 { return red_char(b1) }
-
-    // Sphere 2 — gold, centre (S2CX, S2CY)
-    bind p2x = (col - S2CX) / S2R
-    bind p2y = (row - S2CY) / S2R * 2.1
-    bind b2  = sphere_shade(p2x, p2y)
-    if b2 >= 0.0 { return gold_char(b2) }
-
-    // Cube — blue, axis-aligned box test
-    bind bx = (col - B1CX) / B1W
-    bind by = (row - B1CY) / B1H * 2.1
-    if bx > -1.0 {
-        if bx < 1.0 {
-            if by > -1.0 {
-                if by < 1.0 {
-        bind bd = clamp(AMB + (1.0 - bx * bx - by * by * 0.25) * 0.68, 0.0, 1.0)
-        return blue_char(bd)
-                }
-            }
-        }
-    }
-
-
-    // Checkerboard floor
-    if row > FLOOR_ROW {
-        bind s = (col + row) % 2
-        if s < 0.5 { return "\x1b[90m░\x1b[0m" }
-        return "\x1b[90m·\x1b[0m"
-    }
-
-    // Sky — dim near horizon, empty above
-    if row > 16.0 { return "\x1b[90m·\x1b[0m" }
-    return " "
-}
-
-// ── Recursive row/column builders ─────────────────────────────────────────────
-
-fn build_row(col, row) {
-    if col >= COLS { return "" }
-    return pixel(col, row) + build_row(col + 1, row)
-}
-
-fn render(row) {
-    if row >= ROWS { return }
-    print("  \x1b[90m│\x1b[0m" + build_row(0, row) + "\x1b[90m│\x1b[0m")
-    render(row + 1)
-}
-
-// ── Entry point ───────────────────────────────────────────────────────────────
 
 bind start = do {
+    open_window(800, 600, "Ling Graphics Demo")
 
-    print("")
-    print("  \x1b[1;96m╔══════════════════════════════════════════════════════════╗\x1b[0m")
-    print("  \x1b[1;96m║\x1b[0m  \x1b[1mling-graphics\x1b[0m — 3D/4D Renderer & Scene Graph Engine  \x1b[1;96m║\x1b[0m")
-    print("  \x1b[1;96m╠══════════════════════════════════════════════════════════╣\x1b[0m")
-    print("  \x1b[1;96m║\x1b[0m  camera : Camera3D::perspective(fov=60, 16:9, z=0.1)    \x1b[1;96m║\x1b[0m")
-    print("  \x1b[1;96m║\x1b[0m  light  : directional(-0.45,-0.75, 0.55) + amb=0.15    \x1b[1;96m║\x1b[0m")
-    print("  \x1b[1;96m║\x1b[0m  shader : Lambert diffuse · alpha blend · emissive      \x1b[1;96m║\x1b[0m")
-    print("  \x1b[1;96m╚══════════════════════════════════════════════════════════╝\x1b[0m")
-    print("")
-    print("  Scene objects:")
-    print("    \x1b[1;31m◉\x1b[0m  sphere(r=1.0)        pos=( 0, 0, 0)   mat=matte_red")
-    print("    \x1b[1;33m◉\x1b[0m  icosphere(subs=3)    pos=( 3, 0, 1)   mat=gold_metal")
-    print("    \x1b[1;34m■\x1b[0m  cube(half=0.7)       pos=(-3, 0, 1)   mat=crystal_blue")
-    print("    \x1b[90m░\x1b[0m  plane(half=10,sub=8) pos=( 0,-1.5, 0) mat=checker_grey")
-    print("")
-    print("  \x1b[90m┌" + build_row(0, -99) + "┐\x1b[0m")
-
-    // — draw using border chars instead of build_row for the top/bottom bar —
-    print("  \x1b[90m┌──────────────────────────────────────────────────────────┐\x1b[0m")
-    render(0)
-    print("  \x1b[90m└──────────────────────────────────────────────────────────┘\x1b[0m")
-    print("")
-
-    // ── API reference ─────────────────────────────────────────────────────────
-
-    print("  \x1b[1mGeometry  (ling_graphics::geometry)\x1b[0m")
-    print("    cube(half)    sphere(r, rings, sectors)   icosphere(r, subdivisions)")
-    print("    cone(r, h)    pyramid(base, h)             cylinder(r, h, segs)")
-    print("    torus(R, r)   plane(half, subdivisions)")
-    print("")
-    print("  \x1b[1mCamera\x1b[0m")
-    print("    Camera3D::perspective(60.0, 16.0/9.0, 0.1, 1000.0)")
-    print("    Camera3D::orthographic(5.0, 1.0, 0.1, 100.0)")
-    print("    cam.look_at(target, up)   cam.orbit(target, yaw, pitch)")
-    print("    cam.unproject_ray(ndc_x, ndc_y)  →  Ray3")
-    print("")
-    print("  \x1b[1m4-D Hyperbolic Camera\x1b[0m")
-    print("    Camera4D::new(HyperModel::Klein)         // geodesics = straight lines")
-    print("    Camera4D::new(HyperModel::Poincare)      // angle-preserving")
-    print("    Camera4D::new(HyperModel::CrossSection { w_slice: 0.0 })")
-    print("    cam4d.move_by(direction, hyperbolic_dist) // Lorentz boost navigation")
-    print("")
-    print("  \x1b[1mAnimation\x1b[0m")
-    print("    Track::new()")
-    print("      .add(0.0,  Vec3::ZERO,  EaseFunction::Linear)")
-    print("      .add(1.0,  Vec3::Y,     EaseFunction::ElasticOut)")
-    print("      .add(2.5,  Vec3::ZERO,  EaseFunction::BounceOut)")
-    print("    timeline.tick(dt)   timeline.play()   timeline.stop()")
-    print("")
-    print("  \x1b[1mFont & text in 3D/4D\x1b[0m")
-    print("    bind atlas = FontAtlas::from_bytes(ttf_bytes, 1024)")
-    print("    bind mesh  = generate_text_mesh(atlas, \"Hello 4D!\", 48.0, Color::WHITE)")
-    print("    scene.spawn_mesh(\"label\", mesh, mat, Transform::from_translation(pos))")
-    print("")
-    print("  \x1b[1mBlend modes\x1b[0m")
-    print("    BlendMode::Normal   BlendMode::Additive   BlendMode::Multiply")
-    print("    BlendMode::Screen   BlendMode::Overlay    BlendMode::Subtract")
-    print("")
-    print("  \x1b[32m✓  ling-graphics v2030.0.0  ·  glam 0.28  ·  fontdue 0.9  ·  pure Rust\x1b[0m")
-    print("")
+    bind frame = 0
+    while window_is_open() {
+        draw_frame(frame)
+        present()
+        bind frame = frame + 1
+    }
 }

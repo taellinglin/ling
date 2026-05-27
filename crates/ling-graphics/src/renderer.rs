@@ -8,6 +8,7 @@ use crate::font::FontAtlas;
 
 // ── Frame buffer ──────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct FrameBuffer {
     pub width: u32,
     pub height: u32,
