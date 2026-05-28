@@ -1,62 +1,16 @@
 [package]
 name = "ling-audio"
 version = "2030.0.0"
-edition = "2024"
+edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
-description = "Audio playback, recording, synthesis, and spatial audio"
+description = "4D positional audio synthesis and WAV BGM for Ling"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
-[features]
-default = ["playback"]
-playback = ["dep:cpal", "dep:rodio"]
-recording = ["dep:cpal", "dep:hound"]
-synthesis = ["dep:dasp", "dep:fundsp"]
-spatial = ["dep:ambisonic"]
-midi = ["dep:midir"]
-streaming = ["dep:tokio"]
-
 [dependencies]
-ling-core = { workspace = true }
-
-# Audio I/O
-cpal = { version = "0.15", optional = true }
-rodio = { version = "0.17", optional = true, features = ["symphonia"] }
-hound = { version = "3.5", optional = true }
-
-# Audio synthesis
-dasp = { version = "0.11", optional = true }
-fundsp = { version = "0.12", optional = true }
-
-# Spatial audio
-ambisonic = { version = "0.4", optional = true }
-# hrir = { version = "0.4", optional = true }
-
-# MIDI
-midir = { version = "0.9", optional = true }
-
-# Formats
-symphonia = { version = "0.5", features = ["all-codecs"] }
-lewton = "0.10"  # OGG
-wav = "1.0"
-mp3 = { package = "minimp3", version = "0.5" }
-
-# DSP
-rustfft = "6.2"
-rubato = "0.14"
-
-# Streaming
-tokio = { workspace = true, optional = true }
-async-stream = "0.3"
+cpal  = "0.15"
+hound = "3.5"
 
 [lib]
 name = "ling_audio"
 path = "src/lib.rs"
-
-# [[example]]
-# name = "play_mp3"
-# required-features = ["playback"]
-
-# [[example]]
-# name = "spatial_audio"
-# required-features = ["playback", "spatial"]

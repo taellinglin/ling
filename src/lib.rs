@@ -8,8 +8,12 @@ pub mod mir;
 pub mod codegen;
 pub mod lexicon;
 pub mod polyglot;
+pub mod gfx;
 pub mod runtime;
 pub mod utils;
+
+// Re-export the audio crate so runtime/mod.rs can use `crate::audio`.
+pub use ling_audio;
 
 // Re-exports
 pub use core::{LingCompiler, CompilerConfig, OptimizationLevel};

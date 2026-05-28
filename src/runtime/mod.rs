@@ -1,7 +1,10 @@
-// src/runtime/mod.rs — tree-walking interpreter with 2-D graphics support
+// src/runtime/mod.rs — tree-walking interpreter with graphics support
 use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::parser::ast::*;
+use crate::gfx::{GfxState, Light};
+use crate::gfx::raster::{fill_triangle, draw_line};
+use ling_audio::{AudioEngine, ToneParams};
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 
@@ -60,28 +63,7 @@ impl From<String> for EvalErr {
 
 type EvalResult = Result<Value, EvalErr>;
 
-// ─── Graphics state ───────────────────────────────────────────────────────────
-
-struct GfxState {
-    window:  Option<minifb::Window>,
-    buffer:  Vec<u32>,
-    width:   usize,
-    height:  usize,
-    /// Current drawing colour as 0x00RRGGBB.
-    color:   u32,
-}
-
-impl GfxState {
-    fn new() -> Self {
-        Self {
-            window: None,
-            buffer: Vec::new(),
-            width:  0,
-            height: 0,
-            color:  0x00FFFFFF,
-        }
-    }
-}
+// GfxState is now defined in crate::gfx — see src/gfx/mod.rs.
 
 // ─── Interpreter ─────────────────────────────────────────────────────────────
 
@@ -90,15 +72,21 @@ pub struct Interpreter {
     functions: HashMap<String, FnDef>,
     modules:   HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
+    /// Optional audio engine — `None` if no audio device is available.
+    audio:     Option<AudioEngine>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        let audio = AudioEngine::new()
+            .map_err(|e| eprintln!("audio init failed (no sound): {e}"))
+            .ok();
         Self {
             globals:   HashMap::new(),
             functions: HashMap::new(),
             modules:   HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
+            audio,
         }
     }
 
@@ -533,13 +521,14 @@ impl Interpreter {
                         ..Default::default()
                     },
                 ).map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
-                // Cap update rate ~60 fps so the loop doesn't burn 100% CPU.
+                // Target 120 fps — software renderer is the bottleneck, not the timer.
                 #[allow(deprecated)]
-                win.limit_update_rate(Some(std::time::Duration::from_millis(16)));
+                win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
                 gfx.buffer = vec![0u32; w * h];
                 gfx.width  = w;
                 gfx.height = h;
                 gfx.window = Some(win);
+                gfx.sync_projection();   // auto-configure camera CX/CY/FOCAL
                 return Ok(Value::Unit);
             }
 
@@ -550,7 +539,7 @@ impl Interpreter {
                 let b = self.arg_num(&args, 2, 0.0)? as u32;
                 let c = (r << 16) | (g << 8) | b;
                 let mut gfx = self.gfx.borrow_mut();
-                for px in gfx.buffer.iter_mut() { *px = c; }
+                gfx.buffer.fill(c);
                 return Ok(Value::Unit);
             }
 
@@ -607,15 +596,23 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // ── แสดงผล() — present frame to screen ──
+            // ── แสดงผล() — flush depth queue, then present frame to screen ──
             "แสดงผล" | "present" | "gfx_present" | "show" => {
-                // Clone buffer data while holding *immutable* borrow, then drop
-                // it before taking the *mutable* borrow needed for the window.
-                let (buf, w, h) = {
-                    let gfx = self.gfx.borrow();
-                    (gfx.buffer.clone(), gfx.width, gfx.height)
-                };
                 let mut gfx = self.gfx.borrow_mut();
+                // Flush deferred 3-D draw calls (depth-sorted, painter's algorithm).
+                // Copy size to locals first — can't borrow gfx.width/height while
+                // gfx.buffer is mutably borrowed through the same reference.
+                if !gfx.depth_queue.is_empty() {
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    let queue = std::mem::take(&mut gfx.depth_queue);
+                    queue.flush(&mut gfx.buffer, w, h);
+                }
+                // Clone buffer for the window update (window.as_mut() needs &mut gfx
+                // which conflicts with &gfx.buffer — clone resolves that).
+                let buf = gfx.buffer.clone();
+                let w   = gfx.width;
+                let h   = gfx.height;
                 if let Some(win) = gfx.window.as_mut() {
                     win.update_with_buffer(&buf, w, h)
                         .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
@@ -640,11 +637,12 @@ impl Interpreter {
                     },
                 ).map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
                 #[allow(deprecated)]
-                win.limit_update_rate(Some(std::time::Duration::from_millis(16)));
+                win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
                 gfx.buffer = vec![0u32; w * h];
                 gfx.width  = w;
                 gfx.height = h;
                 gfx.window = Some(win);
+                gfx.sync_projection();   // auto-configure camera CX/CY/FOCAL
                 return Ok(Value::Unit);
             }
 
@@ -663,6 +661,417 @@ impl Interpreter {
                     .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
                     .unwrap_or(false);
                 return Ok(Value::Bool(open));
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // 3-D / 4-D DRAWING — camera, lights, depth-sorted geometry
+            // ══════════════════════════════════════════════════════════════════
+
+            // ── set_camera(cry, sry, crx, srx) — store precomputed camera trig ──
+            // Call once per frame after computing cos/sin of your rotation angles.
+            "set_camera" | "ตั้งกล้อง" => {
+                let cry = self.arg_num(&args, 0, 1.0)? as f32;
+                let sry = self.arg_num(&args, 1, 0.0)? as f32;
+                let crx = self.arg_num(&args, 2, 1.0)? as f32;
+                let srx = self.arg_num(&args, 3, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.camera.cry = cry; gfx.camera.sry = sry;
+                gfx.camera.crx = crx; gfx.camera.srx = srx;
+                return Ok(Value::Unit);
+            }
+
+            // ── set_projection(cx, cy, focal, zdist) — override projection params ──
+            // Automatically set when the window opens; override only if needed.
+            "set_projection" | "ตั้งโปรเจกชัน" => {
+                let cx    = self.arg_num(&args, 0, 960.0)? as f32;
+                let cy    = self.arg_num(&args, 1, 540.0)? as f32;
+                let focal = self.arg_num(&args, 2, 1080.0)? as f32;
+                let zdist = self.arg_num(&args, 3, 5.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.camera.cx    = cx;
+                gfx.camera.cy    = cy;
+                gfx.camera.focal = focal;
+                gfx.camera.zdist = zdist;
+                return Ok(Value::Unit);
+            }
+
+            // ── add_light(x, y, z, r, g, b, intensity, radius) ──
+            // Adds a point light in world space.  r/g/b in [0..1].
+            // radius == 0 → no distance falloff.
+            "add_light" | "เพิ่มแสง" => {
+                let x   = self.arg_num(&args, 0, 0.0)? as f32;
+                let y   = self.arg_num(&args, 1, -3.0)? as f32;
+                let z   = self.arg_num(&args, 2, 3.0)? as f32;
+                let r   = self.arg_num(&args, 3, 1.0)? as f32;
+                let g   = self.arg_num(&args, 4, 1.0)? as f32;
+                let b   = self.arg_num(&args, 5, 1.0)? as f32;
+                let intensity = self.arg_num(&args, 6, 1.0)? as f32;
+                let radius    = self.arg_num(&args, 7, 0.0)? as f32;
+                self.gfx.borrow_mut().lights.push(Light { x, y, z, r, g, b, intensity, radius });
+                return Ok(Value::Unit);
+            }
+
+            // ── clear_lights() — remove all lights ──
+            "clear_lights" | "ล้างแสง" => {
+                self.gfx.borrow_mut().lights.clear();
+                return Ok(Value::Unit);
+            }
+
+            // ── set_ambient(v) — ambient light level [0..1] ──
+            "set_ambient" | "ตั้งแสงรอบข้าง" => {
+                let v = self.arg_num(&args, 0, 0.15)? as f32;
+                self.gfx.borrow_mut().ambient = v;
+                return Ok(Value::Unit);
+            }
+
+            // ── วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, cx,cy,cz) ──
+            // Computes lighting from world-space normal + active lights (cel shading),
+            // projects via the stored camera, and pushes to the depth queue.
+            "วาดสามเหลี่ยม3มิติ" | "draw_triangle_3d" | "triangle3d" => {
+                let ax = self.arg_num(&args, 0, 0.0)? as f32;
+                let ay = self.arg_num(&args, 1, 0.0)? as f32;
+                let az = self.arg_num(&args, 2, 0.0)? as f32;
+                let bx = self.arg_num(&args, 3, 0.0)? as f32;
+                let by = self.arg_num(&args, 4, 0.0)? as f32;
+                let bz = self.arg_num(&args, 5, 0.0)? as f32;
+                let cx = self.arg_num(&args, 6, 0.0)? as f32;
+                let cy = self.arg_num(&args, 7, 0.0)? as f32;
+                let cz = self.arg_num(&args, 8, 0.0)? as f32;
+
+                let mut gfx = self.gfx.borrow_mut();
+
+                // World-space face normal  N = (B−A) × (C−A)
+                let ux = bx-ax; let uy = by-ay; let uz = bz-az;
+                let vx = cx-ax; let vy = cy-ay; let vz = cz-az;
+                let normal = [
+                    uy*vz - uz*vy,
+                    uz*vx - ux*vz,
+                    ux*vy - uy*vx,
+                ];
+                // World-space centroid
+                let centroid = [
+                    (ax+bx+cx)/3.0,
+                    (ay+by+cy)/3.0,
+                    (az+bz+cz)/3.0,
+                ];
+
+                // Cel-shaded colour
+                let lit_color = crate::gfx::light::compute_lit_color(
+                    gfx.color, normal, centroid, &gfx.lights, gfx.ambient,
+                );
+
+                // Near-plane cull — skip any triangle that has a vertex
+                // behind or at the camera near plane (avoids projected-to-infinity blowup).
+                let near = -gfx.camera.zdist + 0.05;
+                let da_raw = gfx.camera.depth(ax, ay, az);
+                let db_raw = gfx.camera.depth(bx, by, bz);
+                let dc_raw = gfx.camera.depth(cx, cy, cz);
+                if da_raw <= near || db_raw <= near || dc_raw <= near {
+                    return Ok(Value::Unit);
+                }
+
+                // Project to screen
+                let (sax, say, da) = gfx.camera.project(ax, ay, az);
+                let (sbx, sby, db) = gfx.camera.project(bx, by, bz);
+                let (scx, scy, dc) = gfx.camera.project(cx, cy, cz);
+
+                // Average camera depth (used for painter's sort)
+                let depth = (da + db + dc) / 3.0;
+
+                gfx.depth_queue.push_triangle(
+                    depth, lit_color,
+                    sax, say, sbx, sby, scx, scy,
+                );
+                return Ok(Value::Unit);
+            }
+
+            // ── วาดเส้น3มิติ(ax,ay,az, bx,by,bz) ──
+            // Projects two world-space points via the stored camera and pushes
+            // a line to the depth queue.
+            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" => {
+                let ax = self.arg_num(&args, 0, 0.0)? as f32;
+                let ay = self.arg_num(&args, 1, 0.0)? as f32;
+                let az = self.arg_num(&args, 2, 0.0)? as f32;
+                let bx = self.arg_num(&args, 3, 0.0)? as f32;
+                let by = self.arg_num(&args, 4, 0.0)? as f32;
+                let bz = self.arg_num(&args, 5, 0.0)? as f32;
+
+                let mut gfx = self.gfx.borrow_mut();
+                let color = gfx.color;
+                // Near-plane clip in 3-D before perspective divide
+                let near = -gfx.camera.zdist + 0.05;
+                let mut lax = ax; let mut lay = ay; let mut laz = az;
+                let mut lbx = bx; let mut lby = by; let mut lbz = bz;
+                let da_raw = gfx.camera.depth(lax, lay, laz);
+                let db_raw = gfx.camera.depth(lbx, lby, lbz);
+                if da_raw <= near && db_raw <= near {
+                    return Ok(Value::Unit);
+                }
+                if da_raw <= near {
+                    let t = (near - da_raw) / (db_raw - da_raw);
+                    lax += t * (lbx - lax);
+                    lay += t * (lby - lay);
+                    laz += t * (lbz - laz);
+                } else if db_raw <= near {
+                    let t = (near - da_raw) / (db_raw - da_raw);
+                    lbx = lax + t * (lbx - lax);
+                    lby = lay + t * (lby - lay);
+                    lbz = laz + t * (lbz - laz);
+                }
+                let (sax, say, da) = gfx.camera.project(lax, lay, laz);
+                let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
+                let depth = (da + db) / 2.0;
+                gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // VECTOR TEXTURE BUILTINS  (src/gfx/vtex.rs)
+            // All patterns are depth-biased so they appear on top of surfaces.
+            // Plane defined by: centre (cx,cy,cz) + U tangent + V tangent.
+            // Last two args always: fr (frame f32), hue (phase offset f32).
+            // ══════════════════════════════════════════════════════════════════
+
+            // vtex_grid(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cw,ch, fr,hue)
+            "vtex_grid" | "ลายตาราง" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let cols=self.arg_num(&args,9,10.)?as usize; let rows=self.arg_num(&args,10,10.)?as usize;
+                let cw=self.arg_num(&args,11,1.)?as f32;  let ch=self.arg_num(&args,12,1.)?as f32;
+                let fr=self.arg_num(&args,13,0.)?as f32;  let hue=self.arg_num(&args,14,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_grid(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cw,ch, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_rings(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_rings,n_sides, max_r,twist, fr,hue)
+            "vtex_rings" | "ลายวงซ้อน" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nr=self.arg_num(&args,9,6.)?as usize; let ns=self.arg_num(&args,10,6.)?as usize;
+                let mr=self.arg_num(&args,11,3.)?as f32;  let tw=self.arg_num(&args,12,0.)?as f32;
+                let fr=self.arg_num(&args,13,0.)?as f32;  let hue=self.arg_num(&args,14,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_rings(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nr,ns,mr,tw, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_star(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_pts,r_out,r_in, rot_speed, fr,hue)
+            "vtex_star" | "ลายดาว" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let np=self.arg_num(&args,9,6.)?as usize;
+                let ro=self.arg_num(&args,10,2.)?as f32; let ri=self.arg_num(&args,11,1.)?as f32;
+                let rs=self.arg_num(&args,12,0.01)?as f32;
+                let fr=self.arg_num(&args,13,0.)?as f32; let hue=self.arg_num(&args,14,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_star(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, np,ro,ri,rs, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_spiral(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_turns,max_r,steps, fr,hue)
+            "vtex_spiral" | "ลายเกลียว" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nt=self.arg_num(&args,9,3.)?as f32; let mr=self.arg_num(&args,10,3.)?as f32;
+                let st=self.arg_num(&args,11,120.)?as usize;
+                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_spiral(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,mr,st, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_flower(cx,cy,cz, ux,uy,uz, vx,vy,vz, radius,n_sides, fr,hue)
+            "vtex_flower" | "ลายดอก" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let r=self.arg_num(&args,9,1.)?as f32; let ns=self.arg_num(&args,10,24.)?as usize;
+                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_flower(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, r,ns, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_letter_rain(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_cols,n_vis, col_w,row_h, speed, fr,hue)
+            "vtex_letter_rain" | "ลายอักษรไหล" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nc=self.arg_num(&args,9,16.)?as usize; let nv=self.arg_num(&args,10,14.)?as usize;
+                let cw=self.arg_num(&args,11,0.65)?as f32; let rh=self.arg_num(&args,12,0.60)?as f32;
+                let sp=self.arg_num(&args,13,0.025)?as f32;
+                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_letter_rain(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nc,nv,cw,rh,sp, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_hyperbolic_uv(cx,cy,cz, ux,uy,uz, vx,vy,vz, max_r,n_circles,n_rays, fr,hue)
+            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let mr=self.arg_num(&args,9,5.)?as f32;
+                let nc=self.arg_num(&args,10,12.)?as usize; let nr=self.arg_num(&args,11,18.)?as usize;
+                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_hyperbolic_uv(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, mr,nc,nr, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_halftone(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell_w,cell_h, density, fr,hue)
+            "vtex_halftone" | "ลายจุด" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let cols=self.arg_num(&args,9,16.)?as usize; let rows=self.arg_num(&args,10,12.)?as usize;
+                let cw=self.arg_num(&args,11,0.5)?as f32; let ch=self.arg_num(&args,12,0.5)?as f32;
+                let dens=self.arg_num(&args,13,0.4)?as f32;
+                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_halftone(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cw,ch,dens, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_tessellated(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell, amplitude,freq, fr,hue)
+            "vtex_tessellated" | "ลายตาข่าย" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let cols=self.arg_num(&args,9,14.)?as usize; let rows=self.arg_num(&args,10,10.)?as usize;
+                let cell=self.arg_num(&args,11,0.6)?as f32;
+                let amp=self.arg_num(&args,12,0.25)?as f32; let freq=self.arg_num(&args,13,4.)?as f32;
+                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_tessellated(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cell,amp,freq, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_lotus(cx,cy,cz, ux,uy,uz, vx,vy,vz, r_inner,r_outer,n_petals, fr,hue)
+            "vtex_lotus" | "ลายดอกบัว" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let ri=self.arg_num(&args,9,1.)?as f32; let ro=self.arg_num(&args,10,2.)?as f32;
+                let np=self.arg_num(&args,11,12.)?as usize;
+                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_lotus(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, ri,ro,np, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_chakra(cx,cy,cz, ux,uy,uz, vx,vy,vz, r,n_spokes, fr,hue)
+            "vtex_chakra" | "ลายจักร" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let r=self.arg_num(&args,9,2.)?as f32; let ns=self.arg_num(&args,10,8.)?as usize;
+                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_chakra(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, r,ns, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_yantra(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_layers,max_r, fr,hue)
+            "vtex_yantra" | "ลายยันต์" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nl=self.arg_num(&args,9,4.)?as usize; let mr=self.arg_num(&args,10,3.)?as f32;
+                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_yantra(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nl,mr, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // AUDIO BUILTINS
+            // ══════════════════════════════════════════════════════════════════
+
+            // audio_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth)
+            // Place / update a 4-D positional sine tone.
+            // idx       — slot index (0-63)
+            // x,y,z     — world-space position of the sound source
+            // w         — 4th-dimension value driving cross-modulation
+            // freq      — carrier frequency in Hz
+            // amp       — amplitude 0..1
+            // lfo_rate  — vibrato rate in Hz
+            // lfo_depth — vibrato depth (fraction of freq, e.g. 0.03)
+            "audio_tone" | "เสียงโทน" => {
+                let idx  = self.arg_num(&args, 0, 0.0)? as usize;
+                let x    = self.arg_num(&args, 1, 0.0)? as f32;
+                let y    = self.arg_num(&args, 2, 0.0)? as f32;
+                let z    = self.arg_num(&args, 3, 0.0)? as f32;
+                let w    = self.arg_num(&args, 4, 1.0)? as f32;
+                let freq = self.arg_num(&args, 5, 220.0)? as f32;
+                let amp  = self.arg_num(&args, 6, 0.15)? as f32;
+                let lfo_rate  = self.arg_num(&args, 7, 0.5)? as f32;
+                let lfo_depth = self.arg_num(&args, 8, 0.02)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.set_tone(idx, ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth });
+                }
+                return Ok(Value::Unit);
+            }
+
+            // audio_listener(cry, sry, crx, srx)
+            // Sync listener orientation with the graphics camera each frame.
+            "audio_listener" | "ผู้ฟัง" => {
+                let cry = self.arg_num(&args, 0, 1.0)? as f32;
+                let sry = self.arg_num(&args, 1, 0.0)? as f32;
+                let crx = self.arg_num(&args, 2, 1.0)? as f32;
+                let srx = self.arg_num(&args, 3, 0.0)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.set_listener(cry, sry, crx, srx);
+                }
+                return Ok(Value::Unit);
+            }
+
+            // audio_bgm(path)  — load a WAV file and loop it as BGM
+            "audio_bgm" | "เพลงพื้นหลัง" => {
+                let path = match args.first() {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Ok(Value::Unit),
+                };
+                let vol = self.arg_num(&args, 1, 0.5)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.load_bgm(&path, vol);
+                }
+                return Ok(Value::Unit);
+            }
+
+            // audio_bgm_volume(vol)  — adjust BGM volume without reloading
+            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" => {
+                let vol = self.arg_num(&args, 0, 0.5)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.set_bgm_volume(vol);
+                }
+                return Ok(Value::Unit);
+            }
+
+            // audio_volume(vol)  — master volume (affects all tones + BGM)
+            "audio_volume" | "ระดับเสียง" => {
+                let vol = self.arg_num(&args, 0, 0.7)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.set_master_volume(vol);
+                }
+                return Ok(Value::Unit);
             }
 
             // ── รอหน้าต่าง() — block until window closed / Escape ──
@@ -912,68 +1321,4 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-// ─── Software 2-D rasterizer (no external deps) ──────────────────────────────
-
-/// Fill a triangle using barycentric edge-function rasterisation.
-/// `color` is 0x00RRGGBB.  `buf` is row-major, top-left origin.
-fn fill_triangle(
-    buf: &mut Vec<u32>,
-    width: usize, height: usize,
-    color: u32,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-    x2: f32, y2: f32,
-) {
-    if width == 0 || height == 0 { return; }
-
-    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
-    let max_x = x0.max(x1).max(x2).min(width  as f32 - 1.0) as i32;
-    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
-    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
-    if min_x > max_x || min_y > max_y { return; }
-
-    for py in min_y..=max_y {
-        for px in min_x..=max_x {
-            let fx = px as f32 + 0.5;
-            let fy = py as f32 + 0.5;
-            // Edge functions — positive on the same side as the interior
-            let e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx - x0);
-            let e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx - x1);
-            let e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx - x2);
-            if (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0)
-            || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0)
-            {
-                buf[py as usize * width + px as usize] = color;
-            }
-        }
-    }
-}
-
-/// Bresenham line drawing into a `0x00RRGGBB` pixel buffer.
-fn draw_line(
-    buf: &mut Vec<u32>,
-    width: usize, height: usize,
-    color: u32,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-) {
-    if width == 0 || height == 0 { return; }
-    let mut x = x0 as i32;
-    let mut y = y0 as i32;
-    let x2 = x1 as i32;
-    let y2 = y1 as i32;
-    let dx = (x2 - x).abs();
-    let dy = -((y2 - y).abs());
-    let sx: i32 = if x < x2 { 1 } else { -1 };
-    let sy: i32 = if y < y2 { 1 } else { -1 };
-    let mut err = dx + dy;
-    loop {
-        if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
-            buf[y as usize * width + x as usize] = color;
-        }
-        if x == x2 && y == y2 { break; }
-        let e2 = 2 * err;
-        if e2 >= dy { err += dy; x += sx; }
-        if e2 <= dx { err += dx; y += sy; }
-    }
-}
+// Rasteriser functions live in crate::gfx::raster — imported at top of file.
