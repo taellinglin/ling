@@ -11,8 +11,9 @@ pub mod polyglot;
 pub mod gfx;
 pub mod runtime;
 pub mod utils;
+pub mod visualize;
 
-// Re-export the audio crate so runtime/mod.rs can use `crate::audio`.
+#[cfg(not(target_arch = "wasm32"))]
 pub use ling_audio;
 
 // Re-exports

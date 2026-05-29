@@ -3,7 +3,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::parser::ast::*;
 use crate::gfx::{GfxState, Light};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::gfx::raster::{fill_triangle, draw_line};
+#[cfg(not(target_arch = "wasm32"))]
 use ling_audio::{AudioEngine, ToneParams};
 
 // ─── Values ──────────────────────────────────────────────────────────────────
@@ -73,11 +75,13 @@ pub struct Interpreter {
     modules:   HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
     /// Optional audio engine — `None` if no audio device is available.
+    #[cfg(not(target_arch = "wasm32"))]
     audio:     Option<AudioEngine>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let audio = AudioEngine::new()
             .map_err(|e| eprintln!("audio init failed (no sound): {e}"))
             .ok();
@@ -86,6 +90,7 @@ impl Interpreter {
             functions: HashMap::new(),
             modules:   HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
+            #[cfg(not(target_arch = "wasm32"))]
             audio,
         }
     }
@@ -511,24 +516,34 @@ impl Interpreter {
             "เปิดหน้าต่าง" | "open_window" | "gfx_window" => {
                 let w = self.arg_num(&args, 0, 800.0)? as usize;
                 let h = self.arg_num(&args, 1, 600.0)? as usize;
-                let title = args.get(2).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
-                let mut gfx = self.gfx.borrow_mut();
-                let mut win = minifb::Window::new(
-                    &title, w, h,
-                    minifb::WindowOptions {
-                        resize: false,
-                        scale: minifb::Scale::X1,
-                        ..Default::default()
-                    },
-                ).map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
-                // Target 120 fps — software renderer is the bottleneck, not the timer.
-                #[allow(deprecated)]
-                win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
-                gfx.buffer = vec![0u32; w * h];
-                gfx.width  = w;
-                gfx.height = h;
-                gfx.window = Some(win);
-                gfx.sync_projection();   // auto-configure camera CX/CY/FOCAL
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let title = args.get(2).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
+                    let mut gfx = self.gfx.borrow_mut();
+                    let mut win = minifb::Window::new(
+                        &title, w, h,
+                        minifb::WindowOptions {
+                            resize: false,
+                            scale: minifb::Scale::X1,
+                            ..Default::default()
+                        },
+                    ).map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
+                    #[allow(deprecated)]
+                    win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
+                    gfx.buffer = vec![0u32; w * h];
+                    gfx.width  = w;
+                    gfx.height = h;
+                    gfx.window = Some(win);
+                    gfx.sync_projection();
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.width  = w;
+                    gfx.height = h;
+                    gfx.sync_projection();
+                    crate::gfx::webgl::resize(w as u32, h as u32);
+                }
                 return Ok(Value::Unit);
             }
 
@@ -537,9 +552,18 @@ impl Interpreter {
                 let r = self.arg_num(&args, 0, 0.0)? as u32;
                 let g = self.arg_num(&args, 1, 0.0)? as u32;
                 let b = self.arg_num(&args, 2, 0.0)? as u32;
-                let c = (r << 16) | (g << 8) | b;
-                let mut gfx = self.gfx.borrow_mut();
-                gfx.buffer.fill(c);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let c = (r << 16) | (g << 8) | b;
+                    self.gfx.borrow_mut().buffer.fill(c);
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.fill_r = r as f32 / 255.0;
+                    gfx.fill_g = g as f32 / 255.0;
+                    gfx.fill_b = b as f32 / 255.0;
+                }
                 return Ok(Value::Unit);
             }
 
@@ -562,9 +586,14 @@ impl Interpreter {
                 let y2 = self.arg_num(&args, 5, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let color = gfx.color;
-                let w = gfx.width;
-                let h = gfx.height;
-                fill_triangle(&mut gfx.buffer, w, h, color, x0, y0, x1, y1, x2, y2);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    fill_triangle(&mut gfx.buffer, w, h, color, x0, y0, x1, y1, x2, y2);
+                }
+                #[cfg(target_arch = "wasm32")]
+                gfx.depth_queue.push_triangle(0.0, color, x0, y0, x1, y1, x2, y2);
                 return Ok(Value::Unit);
             }
 
@@ -576,9 +605,14 @@ impl Interpreter {
                 let y1 = self.arg_num(&args, 3, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let color = gfx.color;
-                let w = gfx.width;
-                let h = gfx.height;
-                draw_line(&mut gfx.buffer, w, h, color, x0, y0, x1, y1);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    draw_line(&mut gfx.buffer, w, h, color, x0, y0, x1, y1);
+                }
+                #[cfg(target_arch = "wasm32")]
+                gfx.depth_queue.push_line(0.0, color, x0, y0, x1, y1);
                 return Ok(Value::Unit);
             }
 
@@ -586,63 +620,105 @@ impl Interpreter {
             "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" => {
                 let px = self.arg_num(&args, 0, 0.0)? as i32;
                 let py = self.arg_num(&args, 1, 0.0)? as i32;
-                let mut gfx = self.gfx.borrow_mut();
-                let color = gfx.color;
-                let w = gfx.width;
-                let h = gfx.height;
-                if px >= 0 && py >= 0 && (px as usize) < w && (py as usize) < h {
-                    gfx.buffer[py as usize * w + px as usize] = color;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    let color = gfx.color;
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    if px >= 0 && py >= 0 && (px as usize) < w && (py as usize) < h {
+                        gfx.buffer[py as usize * w + px as usize] = color;
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // Render pixel as a 1×1 square via two triangles.
+                    let mut gfx = self.gfx.borrow_mut();
+                    let color = gfx.color;
+                    let x = px as f32; let y = py as f32;
+                    gfx.depth_queue.push_triangle(0.0, color, x, y, x+1.0, y, x+1.0, y+1.0);
+                    gfx.depth_queue.push_triangle(0.0, color, x, y, x+1.0, y+1.0, x, y+1.0);
                 }
                 return Ok(Value::Unit);
             }
 
             // ── แสดงผล() — flush depth queue, then present frame to screen ──
             "แสดงผล" | "present" | "gfx_present" | "show" => {
-                let mut gfx = self.gfx.borrow_mut();
-                // Flush deferred 3-D draw calls (depth-sorted, painter's algorithm).
-                // Copy size to locals first — can't borrow gfx.width/height while
-                // gfx.buffer is mutably borrowed through the same reference.
-                if !gfx.depth_queue.is_empty() {
-                    let w = gfx.width;
-                    let h = gfx.height;
-                    let queue = std::mem::take(&mut gfx.depth_queue);
-                    queue.flush(&mut gfx.buffer, w, h);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    if !gfx.depth_queue.is_empty() {
+                        let w = gfx.width;
+                        let h = gfx.height;
+                        let queue = std::mem::take(&mut gfx.depth_queue);
+                        queue.flush(&mut gfx.buffer, w, h);
+                    }
+                    let buf = gfx.buffer.clone();
+                    let w   = gfx.width;
+                    let h   = gfx.height;
+                    if let Some(win) = gfx.window.as_mut() {
+                        win.update_with_buffer(&buf, w, h)
+                            .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                    }
                 }
-                // Clone buffer for the window update (window.as_mut() needs &mut gfx
-                // which conflicts with &gfx.buffer — clone resolves that).
-                let buf = gfx.buffer.clone();
-                let w   = gfx.width;
-                let h   = gfx.height;
-                if let Some(win) = gfx.window.as_mut() {
-                    win.update_with_buffer(&buf, w, h)
-                        .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    let w  = gfx.width;
+                    let h  = gfx.height;
+                    let fr = gfx.fill_r;
+                    let fg = gfx.fill_g;
+                    let fb = gfx.fill_b;
+                    let queue = std::mem::take(&mut gfx.depth_queue);
+                    queue.flush_to_webgl(fr, fg, fb, w, h);
                 }
                 return Ok(Value::Unit);
             }
 
             // ── เปิดหน้าต่างเต็มจอ(title) — borderless fullscreen window ──
             "เปิดหน้าต่างเต็มจอ" | "open_fullscreen" | "fullscreen" => {
-                let title = args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
-                let w = args.get(1).map(|v| self.to_number(v).unwrap_or(1920.0) as usize).unwrap_or(1920);
-                let h = args.get(2).map(|v| self.to_number(v).unwrap_or(1080.0) as usize).unwrap_or(1080);
-                let mut gfx = self.gfx.borrow_mut();
-                let mut win = minifb::Window::new(
-                    &title, w, h,
-                    minifb::WindowOptions {
-                        borderless: true,
-                        title:      false,
-                        resize:     false,
-                        scale:      minifb::Scale::X1,
-                        ..Default::default()
-                    },
-                ).map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
-                #[allow(deprecated)]
-                win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
-                gfx.buffer = vec![0u32; w * h];
-                gfx.width  = w;
-                gfx.height = h;
-                gfx.window = Some(win);
-                gfx.sync_projection();   // auto-configure camera CX/CY/FOCAL
+                // In WASM the canvas defines the viewport; use its current size
+                // as the default so the projection matches what's actually visible.
+                #[cfg(target_arch = "wasm32")]
+                let (default_w, default_h) = {
+                    let (cw, ch) = crate::gfx::webgl::canvas_size();
+                    (cw as f64, ch as f64)
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                let (default_w, default_h) = (1920.0_f64, 1080.0_f64);
+
+                let w = args.get(1).map(|v| self.to_number(v).unwrap_or(default_w) as usize).unwrap_or(default_w as usize);
+                let h = args.get(2).map(|v| self.to_number(v).unwrap_or(default_h) as usize).unwrap_or(default_h as usize);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let title = args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
+                    let mut gfx = self.gfx.borrow_mut();
+                    let mut win = minifb::Window::new(
+                        &title, w, h,
+                        minifb::WindowOptions {
+                            borderless: true,
+                            title:      false,
+                            resize:     false,
+                            scale:      minifb::Scale::X1,
+                            ..Default::default()
+                        },
+                    ).map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
+                    #[allow(deprecated)]
+                    win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
+                    gfx.buffer = vec![0u32; w * h];
+                    gfx.width  = w;
+                    gfx.height = h;
+                    gfx.window = Some(win);
+                    gfx.sync_projection();
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.width  = w;
+                    gfx.height = h;
+                    gfx.sync_projection();
+                    crate::gfx::webgl::resize(w as u32, h as u32);
+                }
                 return Ok(Value::Unit);
             }
 
@@ -656,11 +732,16 @@ impl Interpreter {
 
             // ── หน้าต่างเปิดอยู่() → bool — is the window still open? ──
             "หน้าต่างเปิดอยู่" | "window_is_open" | "gfx_is_open" | "is_open" => {
-                let gfx = self.gfx.borrow();
-                let open = gfx.window.as_ref()
-                    .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
-                    .unwrap_or(false);
-                return Ok(Value::Bool(open));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let gfx = self.gfx.borrow();
+                    let open = gfx.window.as_ref()
+                        .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
+                        .unwrap_or(false);
+                    return Ok(Value::Bool(open));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(true));
             }
 
             // ══════════════════════════════════════════════════════════════════
@@ -1006,14 +1087,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // audio_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth)
-            // Place / update a 4-D positional sine tone.
-            // idx       — slot index (0-63)
-            // x,y,z     — world-space position of the sound source
-            // w         — 4th-dimension value driving cross-modulation
-            // freq      — carrier frequency in Hz
-            // amp       — amplitude 0..1
-            // lfo_rate  — vibrato rate in Hz
-            // lfo_depth — vibrato depth (fraction of freq, e.g. 0.03)
+            #[cfg(not(target_arch = "wasm32"))]
             "audio_tone" | "เสียงโทน" => {
                 let idx  = self.arg_num(&args, 0, 0.0)? as usize;
                 let x    = self.arg_num(&args, 1, 0.0)? as f32;
@@ -1030,8 +1104,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // audio_listener(cry, sry, crx, srx)
-            // Sync listener orientation with the graphics camera each frame.
+            #[cfg(not(target_arch = "wasm32"))]
             "audio_listener" | "ผู้ฟัง" => {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
@@ -1043,7 +1116,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // audio_bgm(path)  — load a WAV file and loop it as BGM
+            #[cfg(not(target_arch = "wasm32"))]
             "audio_bgm" | "เพลงพื้นหลัง" => {
                 let path = match args.first() {
                     Some(Value::Str(s)) => s.clone(),
@@ -1056,7 +1129,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // audio_bgm_volume(vol)  — adjust BGM volume without reloading
+            #[cfg(not(target_arch = "wasm32"))]
             "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 if let Some(audio) = &self.audio {
@@ -1065,7 +1138,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // audio_volume(vol)  — master volume (affects all tones + BGM)
+            #[cfg(not(target_arch = "wasm32"))]
             "audio_volume" | "ระดับเสียง" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 if let Some(audio) = &self.audio {
@@ -1074,10 +1147,58 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // WASM audio builtins — delegate to Web Audio API
+            #[cfg(target_arch = "wasm32")]
+            "audio_tone" | "เสียงโทน" => {
+                let idx  = self.arg_num(&args, 0, 0.0)? as usize;
+                let x    = self.arg_num(&args, 1, 0.0)? as f32;
+                let y    = self.arg_num(&args, 2, 0.0)? as f32;
+                let z    = self.arg_num(&args, 3, 0.0)? as f32;
+                let w    = self.arg_num(&args, 4, 1.0)? as f32;
+                let freq = self.arg_num(&args, 5, 220.0)? as f32;
+                let amp  = self.arg_num(&args, 6, 0.15)? as f32;
+                let lfo_rate  = self.arg_num(&args, 7, 0.5)? as f32;
+                let lfo_depth = self.arg_num(&args, 8, 0.02)? as f32;
+                crate::gfx::audio_web::set_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth);
+                return Ok(Value::Unit);
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            "audio_listener" | "ผู้ฟัง" => {
+                let cry = self.arg_num(&args, 0, 1.0)? as f32;
+                let sry = self.arg_num(&args, 1, 0.0)? as f32;
+                let crx = self.arg_num(&args, 2, 1.0)? as f32;
+                let srx = self.arg_num(&args, 3, 0.0)? as f32;
+                crate::gfx::audio_web::set_listener(cry, sry, crx, srx);
+                return Ok(Value::Unit);
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            "audio_bgm" | "เพลงพื้นหลัง" => {
+                let path = self.arg_str(&args, 0, "");
+                let vol  = self.arg_num(&args, 1, 0.5)? as f32;
+                crate::gfx::audio_web::load_bgm(&path, vol);
+                return Ok(Value::Unit);
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" => {
+                let vol = self.arg_num(&args, 0, 0.5)? as f32;
+                crate::gfx::audio_web::set_bgm_volume(vol);
+                return Ok(Value::Unit);
+            }
+
+            #[cfg(target_arch = "wasm32")]
+            "audio_volume" | "ระดับเสียง" => {
+                let vol = self.arg_num(&args, 0, 0.7)? as f32;
+                crate::gfx::audio_web::set_master_volume(vol);
+                return Ok(Value::Unit);
+            }
+
             // ── รอหน้าต่าง() — block until window closed / Escape ──
             "รอหน้าต่าง" | "wait_window" | "gfx_wait" => {
+                #[cfg(not(target_arch = "wasm32"))]
                 loop {
-                    // Check open status (immutable borrow, dropped at end of block)
                     let still_open = {
                         let gfx = self.gfx.borrow();
                         gfx.window.as_ref()
@@ -1085,20 +1206,159 @@ impl Interpreter {
                             .unwrap_or(false)
                     };
                     if !still_open { break; }
-
-                    // Extract buffer while holding immutable borrow, then drop it
                     let (buf, w, h) = {
                         let gfx = self.gfx.borrow();
                         (gfx.buffer.clone(), gfx.width, gfx.height)
                     };
-
-                    // Update window (mutable borrow) — now safe, immutable borrow gone
                     let mut gfx = self.gfx.borrow_mut();
                     if let Some(win) = gfx.window.as_mut() {
                         if win.update_with_buffer(&buf, w, h).is_err() { break; }
                     }
                 }
                 return Ok(Value::Unit);
+            }
+
+            // ── File I/O ──────────────────────────────────────────────────────
+            "read_file" | "อ่านไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                return std::fs::read_to_string(&path)
+                    .map(Value::Str)
+                    .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
+            }
+            "write_file" | "เขียนไฟล์" => {
+                let path    = self.arg_str(&args, 0, "");
+                let content = self.arg_str(&args, 1, "");
+                std::fs::write(&path, content.as_bytes())
+                    .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
+                return Ok(Value::Unit);
+            }
+            "print_file" | "พิมพ์ไฟล์" => {
+                let content = self.arg_str(&args, 0, "");
+                print!("{content}");
+                return Ok(Value::Unit);
+            }
+
+            // ── CLI arguments ─────────────────────────────────────────────────
+            "get_args" | "รับอาร์กิวเมนต์" => {
+                let v: Vec<Value> = std::env::args().map(Value::Str).collect();
+                return Ok(Value::List(v));
+            }
+
+            // ── String utilities ──────────────────────────────────────────────
+            "split" | "str_split" | "แยก" => {
+                let s   = self.arg_str(&args, 0, "");
+                let sep = self.arg_str(&args, 1, "\n");
+                let sep = if sep.is_empty() { "\n".into() } else { sep };
+                let parts: Vec<Value> = s.split(sep.as_str())
+                    .map(|p| Value::Str(p.to_string())).collect();
+                return Ok(Value::List(parts));
+            }
+            "trim" | "str_trim" | "ตัดช่องว่าง" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.trim().to_string()));
+            }
+            "starts_with" | "str_starts_with" | "เริ่มด้วย" => {
+                let s      = self.arg_str(&args, 0, "");
+                let prefix = self.arg_str(&args, 1, "");
+                return Ok(Value::Bool(s.starts_with(prefix.as_str())));
+            }
+            "ends_with" | "str_ends_with" | "ลงท้ายด้วย" => {
+                let s      = self.arg_str(&args, 0, "");
+                let suffix = self.arg_str(&args, 1, "");
+                return Ok(Value::Bool(s.ends_with(suffix.as_str())));
+            }
+            "str_replace" | "แทนสตริง" => {
+                let s    = self.arg_str(&args, 0, "");
+                let from = self.arg_str(&args, 1, "");
+                let to   = self.arg_str(&args, 2, "");
+                return Ok(Value::Str(s.replace(from.as_str(), to.as_str())));
+            }
+            "str_find" | "หาในสตริง" => {
+                let s      = self.arg_str(&args, 0, "");
+                let needle = self.arg_str(&args, 1, "");
+                // Return char index (not byte index) for consistency with substr
+                let pos = s.find(needle.as_str())
+                    .map(|byte_i| s[..byte_i].chars().count() as f64)
+                    .unwrap_or(-1.0);
+                return Ok(Value::Number(pos));
+            }
+            "substr" | "str_slice" | "ส่วนสตริง" => {
+                let s     = self.arg_str(&args, 0, "");
+                let start = self.arg_num(&args, 1, 0.0)? as usize;
+                let len   = args.get(2)
+                    .map(|v| self.to_number(v).unwrap_or(999999.0) as usize)
+                    .unwrap_or_else(|| s.chars().count().saturating_sub(start));
+                let chars: Vec<char> = s.chars().collect();
+                let end   = (start + len).min(chars.len());
+                let slice: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
+                return Ok(Value::Str(slice));
+            }
+            "to_str" | "str" | "num_str" | "แปลงสตริง" => {
+                let v = args.into_iter().next().unwrap_or(Value::Unit);
+                return Ok(Value::Str(v.to_string()));
+            }
+            "str_repeat" | "ทำซ้ำสตริง" => {
+                let s = self.arg_str(&args, 0, "");
+                let n = self.arg_num(&args, 1, 1.0)? as usize;
+                return Ok(Value::Str(s.repeat(n)));
+            }
+            "str_upper" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.to_uppercase()));
+            }
+            "str_lower" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.to_lowercase()));
+            }
+            "str_len" | "len" | "ความยาว" => {
+                match args.first() {
+                    Some(Value::Str(s))  => return Ok(Value::Number(s.chars().count() as f64)),
+                    Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
+                    _ => return Ok(Value::Number(0.0)),
+                }
+            }
+
+            // ── FNV-1a hash (deterministic, normalized 0.0–1.0) ──────────────
+            "hash_str" | "แฮช" => {
+                let s = self.arg_str(&args, 0, "");
+                let mut h: u64 = 14695981039346656037_u64;
+                for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(1099511628211); }
+                return Ok(Value::Number((h & 0xFFFFFF) as f64 / 16777215.0));
+            }
+            "hash_int" | "แฮชจำนวน" => {
+                let s = self.arg_str(&args, 0, "");
+                let n = self.arg_num(&args, 1, 100.0)? as u64;
+                let mut h: u64 = 14695981039346656037_u64;
+                for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(1099511628211); }
+                return Ok(Value::Number((h % n.max(1)) as f64));
+            }
+
+            // ── List utilities ────────────────────────────────────────────────
+            "list_new" | "รายการใหม่" => {
+                return Ok(Value::List(Vec::new()));
+            }
+            "list_push" | "เพิ่มรายการ" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                let val = args.get(1).cloned().unwrap_or(Value::Unit);
+                if let Value::List(mut v) = lst { v.push(val); return Ok(Value::List(v)); }
+                return Ok(Value::List(vec![val]));
+            }
+            "list_get" | "รับรายการ" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                let i   = self.arg_num(&args, 1, 0.0)? as usize;
+                if let Value::List(v) = lst {
+                    return Ok(v.get(i).cloned().unwrap_or(Value::Str(String::new())));
+                }
+                return Ok(Value::Str(String::new()));
+            }
+            "list_join" | "join" | "รวมรายการ" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                let sep = args.get(1).map(|v| v.to_string()).unwrap_or_default();
+                if let Value::List(v) = lst {
+                    return Ok(Value::Str(v.iter().map(|x| x.to_string())
+                        .collect::<Vec<_>>().join(&sep)));
+                }
+                return Ok(Value::Str(String::new()));
             }
 
             _ => {}
@@ -1239,6 +1499,10 @@ impl Interpreter {
             Some(v) => self.to_number(v),
             None    => Ok(default),
         }
+    }
+
+    fn arg_str(&self, args: &[Value], n: usize, default: &str) -> String {
+        args.get(n).map(|v| v.to_string()).unwrap_or_else(|| default.to_string())
     }
 
     fn apply_binop(&self, op: &BinOp, l: Value, r: Value) -> EvalResult {

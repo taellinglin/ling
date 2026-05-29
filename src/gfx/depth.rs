@@ -8,6 +8,7 @@
 // Painter's algorithm is exact for convex non-intersecting geometry and
 // produces plausible results for the Sierpiński fractal + tesseract wireframe.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::gfx::raster;
 
 /// Tagged draw call stored in the queue.
@@ -57,6 +58,7 @@ impl DepthQueue {
 
     /// Sort back-to-front and rasterise everything into `buf`.
     /// Consumes `self` — call site does `mem::take` to avoid borrow conflict.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn flush(mut self, buf: &mut Vec<u32>, width: usize, height: usize) {
         // Sort largest depth first (furthest → painted first, nearest on top)
         self.calls.sort_unstable_by(|a, b| {
@@ -76,4 +78,23 @@ impl DepthQueue {
     }
 
     pub fn is_empty(&self) -> bool { self.calls.is_empty() }
+
+    /// Consume the queue and send all draw calls to the WebGL backend.
+    /// Only compiled for wasm32 targets.
+    #[cfg(target_arch = "wasm32")]
+    pub fn flush_to_webgl(mut self, fill_r: f32, fill_g: f32, fill_b: f32, width: usize, height: usize) {
+        // Sort back-to-front (painter's algorithm) — same as the native path.
+        self.calls.sort_unstable_by(|a, b| {
+            b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for call in &self.calls {
+            match call.kind {
+                DrawKind::Triangle { x0, y0, x1, y1, x2, y2 } =>
+                    crate::gfx::webgl::push_triangle(call.color, x0, y0, x1, y1, x2, y2, call.depth),
+                DrawKind::Line { x0, y0, x1, y1 } =>
+                    crate::gfx::webgl::push_line(call.color, x0, y0, x1, y1, call.depth),
+            }
+        }
+        crate::gfx::webgl::flush(fill_r, fill_g, fill_b, width, height);
+    }
 }
