@@ -275,23 +275,11 @@
 # ════════════════════════════════════════════════════════════════════════════
 束縛 start = 実行 {
     เปิดหน้าต่างเต็มจอ("Enso Zen Meditation Hall — 円相禅堂")
-    capture_mouse()
     set_ambient(0.04)    # near-total darkness — Ma (間) principle
 
     init_audio()
 
     束縛 齣 = 0    # 齣 = koma (frame), Japanese film/manga term
-
-    令 cam_px = 0.0
-    令 cam_py = 0.0
-    令 cam_pz = 0.0
-    令 cam_zdist = 2.0
-    令 cam_ry_off = 0.0
-    令 cam_rx_off = 0.0
-    令 cam_idle = 0
-    令 cam_manual = 0
-    令 cam_ry_snap = 0.0
-    令 cam_rx_snap = 0.0
 
     一方 หน้าต่างเปิดอยู่() {
         เติม(0, 0, 0)    # 墨 sumi ink black — pure emptiness
@@ -301,62 +289,9 @@
         # Vertical   ±0.06 rad ( 3°), period ~5500 frames
         束縛 ry  = sin(齣 * 0.00030) * 0.16
         束縛 rx  = sin(齣 * 0.00018) * 0.06
-        令 mdx = mouse_dx()
-        令 mdy = mouse_dy()
-        令 any_input = 0
-        若 key_down("w")      { 令 any_input = 1 }
-        若 key_down("s")      { 令 any_input = 1 }
-        若 key_down("a")      { 令 any_input = 1 }
-        若 key_down("d")      { 令 any_input = 1 }
-        若 key_down("space")  { 令 any_input = 1 }
-        若 key_down("lshift") { 令 any_input = 1 }
-        若 key_down("left")   { 令 any_input = 1 }
-        若 key_down("right")  { 令 any_input = 1 }
-        若 key_down("up")     { 令 any_input = 1 }
-        若 key_down("down")   { 令 any_input = 1 }
-        若 mdx * mdx + mdy * mdy > 0.25 { 令 any_input = 1 }
-        若 any_input == 1 { 令 cam_manual = 1; 令 cam_idle = 0 }
-        若 cam_manual == 1 {
-            令 cam_idle = cam_idle + 1
-            若 cam_idle > 300 { 令 cam_manual = 0; 令 cam_idle = 0 }
-        }
-        若 cam_manual == 1 {
-            令 cam_ry_off = cam_ry_off + mdx * 0.0022
-            令 cam_rx_off = cam_rx_off + mdy * 0.0022
-            若 cam_rx_off > 3.14159  { 令 cam_rx_off = 3.14159 }
-            若 cam_rx_off < -3.14159 { 令 cam_rx_off = -3.14159 }
-            若 key_down("left")  { 令 cam_ry_off = cam_ry_off - 0.018 }
-            若 key_down("right") { 令 cam_ry_off = cam_ry_off + 0.018 }
-            若 key_down("up")    { 令 cam_rx_off = cam_rx_off - 0.018 }
-            若 key_down("down")  { 令 cam_rx_off = cam_rx_off + 0.018 }
-            令 fwd_x = sin(cam_ry_snap + cam_ry_off)
-            令 fwd_z = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_x = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
-            令 spd = 0.12
-            若 key_down("w") { 令 cam_px = cam_px + fwd_x * spd; 令 cam_pz = cam_pz + fwd_z * spd }
-            若 key_down("s") { 令 cam_px = cam_px - fwd_x * spd; 令 cam_pz = cam_pz - fwd_z * spd }
-            若 key_down("a") { 令 cam_px = cam_px - rgt_x * spd; 令 cam_pz = cam_pz - rgt_z * spd }
-            若 key_down("d") { 令 cam_px = cam_px + rgt_x * spd; 令 cam_pz = cam_pz + rgt_z * spd }
-            若 key_down("space")  { 令 cam_py = cam_py + spd }
-            若 key_down("lshift") { 令 cam_py = cam_py - spd }
-            若 key_pressed("numpad+") { 令 cam_zdist = cam_zdist + 0.5 }
-            若 key_pressed("numpad-") { 令 cam_zdist = cam_zdist - 0.5; 若 cam_zdist < 0.5 { 令 cam_zdist = 0.5 } }
-        }
-        若 cam_manual == 0 {
-            令 cam_ry_snap = ry
-            令 cam_rx_snap = rx
-            令 cam_ry_off = cam_ry_off * 0.97
-            令 cam_rx_off = cam_rx_off * 0.97
-            令 cam_px = cam_px * 0.97
-            令 cam_py = cam_py * 0.97
-            令 cam_pz = cam_pz * 0.97
-        }
-        束縛 cry = cos(cam_ry_snap + cam_ry_off)   束縛 sry = sin(cam_ry_snap + cam_ry_off)
-        束縛 crx = cos(cam_rx_snap + cam_rx_off)   束縛 srx = sin(cam_rx_snap + cam_rx_off)
+        束縛 cry = cos(ry)   束縛 sry = sin(ry)
+        束縛 crx = cos(rx)   束縛 srx = sin(rx)
         set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
         audio_listener(cry, sry, crx, srx)
 
         setup_lights(齣)

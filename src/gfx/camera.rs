@@ -17,6 +17,9 @@ pub struct Camera3D {
     /// Z offset added before the perspective divide (keeps objects in front of
     /// the camera; typical value 4–6).
     pub zdist: f32,
+    /// World-space camera position — subtracted from every point before rotation.
+    /// Move the camera with set_camera_pos / move_camera.
+    pub tx: f32, pub ty: f32, pub tz: f32,
 }
 
 impl Default for Camera3D {
@@ -27,27 +30,31 @@ impl Default for Camera3D {
             cx:  960.0, cy: 540.0,
             focal: 1080.0,
             zdist: 5.0,
+            tx: 0.0, ty: 0.0, tz: 0.0,
         }
     }
 }
 
 impl Camera3D {
-    /// Project a world-space point to (screen_x, screen_y, camera_depth).
-    ///
-    /// Pipeline: Y-rotation → X-rotation → perspective divide.
-    /// `camera_depth` is the z-coordinate after rotation and can be used for
-    /// depth sorting (painter's algorithm).
     /// Camera-space depth only — cheaper than a full project() when you only
     /// need to test whether a point is in front of the camera.
     #[inline]
     pub fn depth(&self, wx: f32, wy: f32, wz: f32) -> f32 {
+        let wx = wx - self.tx;
+        let wy = wy - self.ty;
+        let wz = wz - self.tz;
         let rz1 = wx * self.sry + wz * self.cry;
         let rz  = wy * self.srx + rz1 * self.crx;
         rz
     }
 
+    /// Project a world-space point to (screen_x, screen_y, camera_depth).
+    /// Pipeline: translate → Y-rotation → X-rotation → perspective divide.
     #[inline]
     pub fn project(&self, wx: f32, wy: f32, wz: f32) -> (f32, f32, f32) {
+        let wx = wx - self.tx;
+        let wy = wy - self.ty;
+        let wz = wz - self.tz;
         // — Y rotation —
         let rx  =  wx * self.cry - wz * self.sry;
         let rz1 =  wx * self.sry + wz * self.cry;

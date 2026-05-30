@@ -101,7 +101,28 @@ impl Interpreter {
         }
         let entry = self.find_entry()
             .ok_or("no entry point — need `bind start = do {...}` or `ผูก เริ่ม = ทำ {...}`")?;
+        // Seed the entry env with non-Do globals so top-level `令` bindings
+        // are visible in the main Do block (same two-pass logic as call_named).
         let mut env = Env::new();
+        let non_do: Vec<_> = self.globals.iter()
+            .filter(|(_, e)| !matches!(e, Expr::Do(_)))
+            .map(|(k, e)| (k.clone(), e.clone()))
+            .collect();
+        let mut pending: Vec<(String, Expr)> = Vec::new();
+        for (k, expr) in &non_do {
+            let mut tmp = Env::new();
+            if let Ok(v) = self.eval_expr(expr, &mut tmp) {
+                env.insert(k.clone(), v);
+            } else {
+                pending.push((k.clone(), expr.clone()));
+            }
+        }
+        for (k, expr) in &pending {
+            let mut tmp = env.clone();
+            if let Ok(v) = self.eval_expr(expr, &mut tmp) {
+                env.insert(k.clone(), v);
+            }
+        }
         self.eval_expr(&entry, &mut env).map(|_| ()).map_err(|e| match e {
             EvalErr::Runtime(s) => s,
             EvalErr::Return(_)  => "unexpected top-level return".to_string(),
@@ -188,18 +209,15 @@ impl Interpreter {
 
             Expr::If { cond, then, elseifs, else_body } => {
                 if self.is_truthy(&self.eval_expr(cond, env)?) {
-                    let mut local = env.clone();
-                    return Ok(self.exec_block(then, &mut local)?.unwrap_or(Value::Unit));
+                    return Ok(self.exec_block(then, env)?.unwrap_or(Value::Unit));
                 }
                 for (ei_cond, ei_body) in elseifs {
                     if self.is_truthy(&self.eval_expr(ei_cond, env)?) {
-                        let mut local = env.clone();
-                        return Ok(self.exec_block(ei_body, &mut local)?.unwrap_or(Value::Unit));
+                        return Ok(self.exec_block(ei_body, env)?.unwrap_or(Value::Unit));
                     }
                 }
                 if let Some(eb) = else_body {
-                    let mut local = env.clone();
-                    return Ok(self.exec_block(eb, &mut local)?.unwrap_or(Value::Unit));
+                    return Ok(self.exec_block(eb, env)?.unwrap_or(Value::Unit));
                 }
                 Ok(Value::Unit)
             }
@@ -415,6 +433,14 @@ impl Interpreter {
             "cos" | "โคไซน์" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cos()));
             }
+
+            // ── Hyperbolic functions ──
+            // Hyperbolic tangent
+            "tanh" | "tanhf" => {
+                return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tanh()));
+            }
+
+
             "tan" | "แทนเจนต์" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tan()));
             }
@@ -646,19 +672,68 @@ impl Interpreter {
             "แสดงผล" | "present" | "gfx_present" | "show" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let mut gfx = self.gfx.borrow_mut();
-                    if !gfx.depth_queue.is_empty() {
-                        let w = gfx.width;
-                        let h = gfx.height;
-                        let queue = std::mem::take(&mut gfx.depth_queue);
-                        queue.flush(&mut gfx.buffer, w, h);
+                    // Flush depth queue and present — release borrow before reading mouse.
+                    {
+                        let mut gfx = self.gfx.borrow_mut();
+                        if !gfx.depth_queue.is_empty() {
+                            let w = gfx.width;
+                            let h = gfx.height;
+                            let queue = std::mem::take(&mut gfx.depth_queue);
+                            queue.flush(&mut gfx.buffer, w, h);
+                        }
+                        let buf = gfx.buffer.clone();
+                        let w   = gfx.width;
+                        let h   = gfx.height;
+                        if let Some(win) = gfx.window.as_mut() {
+                            win.update_with_buffer(&buf, w, h)
+                                .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                        }
                     }
-                    let buf = gfx.buffer.clone();
-                    let w   = gfx.width;
-                    let h   = gfx.height;
-                    if let Some(win) = gfx.window.as_mut() {
-                        win.update_with_buffer(&buf, w, h)
-                            .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                    // Read mouse AFTER update_with_buffer so events are processed.
+                    let mouse_pos = {
+                        let gfx = self.gfx.borrow();
+                        gfx.window.as_ref()
+                            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+                    };
+                    let mut gfx = self.gfx.borrow_mut();
+                    if gfx.mouse_captured {
+                        if let Some((mx, my)) = mouse_pos {
+                            if gfx.last_mx.is_nan() {
+                                gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                            } else {
+                                gfx.mouse_dx = mx - gfx.last_mx;
+                                gfx.mouse_dy = my - gfx.last_my;
+                            }
+                            gfx.last_mx = mx; gfx.last_my = my;
+                        } else {
+                            gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                        }
+                        // Clip cursor to window bounds so it can't escape.
+                        #[cfg(windows)]
+                        unsafe {
+                            #[repr(C)]
+                            struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+                            extern "system" {
+                                fn ClipCursor(lpRect: *const RECT) -> i32;
+                                fn GetForegroundWindow() -> isize;
+                                fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
+                            }
+                            let hwnd = GetForegroundWindow();
+                            let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                            if GetWindowRect(hwnd, &mut rect) != 0 {
+                                ClipCursor(&rect);
+                            }
+                        }
+                    } else if let Some((mx, my)) = mouse_pos {
+                        if gfx.last_mx.is_nan() {
+                            gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                        } else {
+                            gfx.mouse_dx = mx - gfx.last_mx;
+                            gfx.mouse_dy = my - gfx.last_my;
+                        }
+                        gfx.last_mx = mx; gfx.last_my = my;
+                    } else {
+                        gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -742,6 +817,111 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(true));
+            }
+
+            // ── key_down(name) → bool — is a key held? ──
+            "key_down" | "กดค้าง" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let name = self.arg_str(&args, 0, "");
+                    let gfx  = self.gfx.borrow();
+                    let down = gfx.window.as_ref()
+                        .and_then(|w| str_to_minifb_key(&name).map(|k| w.is_key_down(k)))
+                        .unwrap_or(false);
+                    return Ok(Value::Bool(down));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+            }
+
+            // ── key_pressed(name) → bool — was a key pressed this frame? ──
+            "key_pressed" | "กดปุ่ม" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let name = self.arg_str(&args, 0, "");
+                    let gfx  = self.gfx.borrow();
+                    let pressed = gfx.window.as_ref()
+                        .and_then(|w| str_to_minifb_key(&name)
+                            .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No)))
+                        .unwrap_or(false);
+                    return Ok(Value::Bool(pressed));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+            }
+
+            // ── mouse_dx() / mouse_dy() → f64 — delta since last frame ──
+            "mouse_dx" | "เมาส์X" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            "mouse_dy" | "เมาส์Y" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+
+            // ── set_camera_pos(x, y, z) — move camera to world position ──
+            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" => {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.camera.tx = x; gfx.camera.ty = y; gfx.camera.tz = z;
+                return Ok(Value::Unit);
+            }
+
+            // ── move_camera(dx, dy, dz) — translate camera by delta ──
+            "move_camera" => {
+                let dx = self.arg_num(&args, 0, 0.0)? as f32;
+                let dy = self.arg_num(&args, 1, 0.0)? as f32;
+                let dz = self.arg_num(&args, 2, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.camera.tx += dx; gfx.camera.ty += dy; gfx.camera.tz += dz;
+                return Ok(Value::Unit);
+            }
+
+            // ── set_zdist(d) — set perspective z-offset (field-of-view taper) ──
+            "set_zdist" | "ตั้งระยะห่าง" => {
+                let d = self.arg_num(&args, 0, 5.0)? as f32;
+                self.gfx.borrow_mut().camera.zdist = d;
+                return Ok(Value::Unit);
+            }
+
+            // ── capture_mouse() — hide cursor and warp to centre each frame ──
+            "capture_mouse" | "จับเมาส์" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.mouse_captured = true;
+                    gfx.last_mx = f32::NAN;
+                    if let Some(win) = gfx.window.as_mut() {
+                        win.set_cursor_visibility(false);
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+
+            // ── release_mouse() — restore cursor and remove clip region ──
+            "release_mouse" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.mouse_captured = false;
+                    gfx.last_mx = f32::NAN;
+                    if let Some(win) = gfx.window.as_mut() {
+                        win.set_cursor_visibility(true);
+                    }
+                    #[cfg(windows)]
+                    unsafe {
+                        extern "system" { fn ClipCursor(lpRect: *const u8) -> i32; }
+                        ClipCursor(std::ptr::null());
+                    }
+                }
+                return Ok(Value::Unit);
             }
 
             // ══════════════════════════════════════════════════════════════════
@@ -1590,6 +1770,58 @@ impl Interpreter {
         }
         Ok(result)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
+    use minifb::Key;
+    Some(match name {
+        "numpad0" | "kp0" => Key::NumPad0,
+        "numpad1" | "kp1" => Key::NumPad1,
+        "numpad2" | "kp2" => Key::NumPad2,
+        "numpad3" | "kp3" => Key::NumPad3,
+        "numpad4" | "kp4" => Key::NumPad4,
+        "numpad5" | "kp5" => Key::NumPad5,
+        "numpad6" | "kp6" => Key::NumPad6,
+        "numpad7" | "kp7" => Key::NumPad7,
+        "numpad8" | "kp8" => Key::NumPad8,
+        "numpad9" | "kp9" => Key::NumPad9,
+        "numpad+" | "kp+" => Key::NumPadPlus,
+        "numpad-" | "kp-" => Key::NumPadMinus,
+        "numpad*" | "kp*" => Key::NumPadAsterisk,
+        "numpad/" | "kp/" => Key::NumPadSlash,
+        "left"   => Key::Left,
+        "right"  => Key::Right,
+        "up"     => Key::Up,
+        "down"   => Key::Down,
+        "space"  => Key::Space,
+        "enter"  => Key::Enter,
+        "escape" => Key::Escape,
+        "pageup" => Key::PageUp,
+        "pagedown" => Key::PageDown,
+        "lshift" | "leftshift"  => Key::LeftShift,
+        "rshift" | "rightshift" => Key::RightShift,
+        "lctrl"  | "leftctrl"   => Key::LeftCtrl,
+        "rctrl"  | "rightctrl"  => Key::RightCtrl,
+        "tab"    => Key::Tab,
+        "backspace" => Key::Backspace,
+        "delete" => Key::Delete,
+        "insert" => Key::Insert,
+        "home"   => Key::Home,
+        "end"    => Key::End,
+        "a" => Key::A, "b" => Key::B, "c" => Key::C, "d" => Key::D,
+        "e" => Key::E, "f" => Key::F, "g" => Key::G, "h" => Key::H,
+        "i" => Key::I, "j" => Key::J, "k" => Key::K, "l" => Key::L,
+        "m" => Key::M, "n" => Key::N, "o" => Key::O, "p" => Key::P,
+        "q" => Key::Q, "r" => Key::R, "s" => Key::S, "t" => Key::T,
+        "u" => Key::U, "v" => Key::V, "w" => Key::W, "x" => Key::X,
+        "y" => Key::Y, "z" => Key::Z,
+        "0" => Key::Key0, "1" => Key::Key1, "2" => Key::Key2,
+        "3" => Key::Key3, "4" => Key::Key4, "5" => Key::Key5,
+        "6" => Key::Key6, "7" => Key::Key7, "8" => Key::Key8,
+        "9" => Key::Key9,
+        _ => return None,
+    })
 }
 
 fn values_equal(a: &Value, b: &Value) -> bool {

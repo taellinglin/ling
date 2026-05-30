@@ -150,7 +150,6 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
 # ════════════════════════════════════════════════════════════════════════════
 ผูก เริ่ม = ทำ {
     เปิดหน้าต่างเต็มจอ("3-D Meta — Hypercube Mirror Room of Pyramids")
-    capture_mouse()
 
     # Ambient light — dim purple fill so shadow sides stay visible
     set_ambient(0.12)
@@ -168,80 +167,17 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
 
     ผูก เฟรม = 0
 
-    ผูก cam_px = 0.0
-    ผูก cam_py = 0.0
-    ผูก cam_pz = 0.0
-    ผูก cam_zdist = 2.0
-    ผูก cam_ry_off = 0.0
-    ผูก cam_rx_off = 0.0
-    ผูก cam_idle = 0
-    ผูก cam_manual = 0
-    ผูก cam_ry_snap = 0.0
-    ผูก cam_rx_snap = 0.0
-
     ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(2, 1, 6)
 
         # ── camera ──────────────────────────────────────────────────────────
         ผูก ry  = เฟรม * 0.013
         ผูก rx  = sin(เฟรม * 0.009) * 0.55
-        ผูก mdx = mouse_dx()
-        ผูก mdy = mouse_dy()
-        ผูก any_input = 0
-        ถ้า key_down("w")      { ผูก any_input = 1 }
-        ถ้า key_down("s")      { ผูก any_input = 1 }
-        ถ้า key_down("a")      { ผูก any_input = 1 }
-        ถ้า key_down("d")      { ผูก any_input = 1 }
-        ถ้า key_down("space")  { ผูก any_input = 1 }
-        ถ้า key_down("lshift") { ผูก any_input = 1 }
-        ถ้า key_down("left")   { ผูก any_input = 1 }
-        ถ้า key_down("right")  { ผูก any_input = 1 }
-        ถ้า key_down("up")     { ผูก any_input = 1 }
-        ถ้า key_down("down")   { ผูก any_input = 1 }
-        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
-        ถ้า any_input == 1 { ผูก cam_manual = 1; ผูก cam_idle = 0 }
-        ถ้า cam_manual == 1 {
-            ผูก cam_idle = cam_idle + 1
-            ถ้า cam_idle > 300 { ผูก cam_manual = 0; ผูก cam_idle = 0 }
-        }
-        ถ้า cam_manual == 1 {
-            ผูก cam_ry_off = cam_ry_off + mdx * 0.0022
-            ผูก cam_rx_off = cam_rx_off + mdy * 0.0022
-            ถ้า cam_rx_off > 3.14159  { ผูก cam_rx_off = 3.14159 }
-            ถ้า cam_rx_off < -3.14159 { ผูก cam_rx_off = -3.14159 }
-            ถ้า key_down("left")  { ผูก cam_ry_off = cam_ry_off - 0.018 }
-            ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
-            ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
-            ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
-            ผูก fwd_x = sin(cam_ry_snap + cam_ry_off)
-            ผูก fwd_z = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_x = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
-            ผูก spd = 0.12
-            ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
-            ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
-            ถ้า key_down("a") { ผูก cam_px = cam_px - rgt_x * spd; ผูก cam_pz = cam_pz - rgt_z * spd }
-            ถ้า key_down("d") { ผูก cam_px = cam_px + rgt_x * spd; ผูก cam_pz = cam_pz + rgt_z * spd }
-            ถ้า key_down("space")  { ผูก cam_py = cam_py + spd }
-            ถ้า key_down("lshift") { ผูก cam_py = cam_py - spd }
-            ถ้า key_pressed("numpad+") { ผูก cam_zdist = cam_zdist + 0.5 }
-            ถ้า key_pressed("numpad-") { ผูก cam_zdist = cam_zdist - 0.5; ถ้า cam_zdist < 0.5 { ผูก cam_zdist = 0.5 } }
-        }
-        ถ้า cam_manual == 0 {
-            ผูก cam_ry_snap = ry
-            ผูก cam_rx_snap = rx
-            ผูก cam_ry_off = cam_ry_off * 0.97
-            ผูก cam_rx_off = cam_rx_off * 0.97
-            ผูก cam_px = cam_px * 0.97
-            ผูก cam_py = cam_py * 0.97
-            ผูก cam_pz = cam_pz * 0.97
-        }
-        ผูก cry = cos(cam_ry_snap + cam_ry_off)   ผูก sry = sin(cam_ry_snap + cam_ry_off)
-        ผูก crx = cos(cam_rx_snap + cam_rx_off)   ผูก srx = sin(cam_rx_snap + cam_rx_off)
+        ผูก cry = cos(ry)   ผูก sry = sin(ry)
+        ผูก crx = cos(rx)   ผูก srx = sin(rx)
+
         # Store camera in GfxState — all 3D draw calls use it automatically
         set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
 
         # ── 4D rotation angles ───────────────────────────────────────────────
         ผูก ca = cos(เฟรม * 0.017)   ผูก sa = sin(เฟรม * 0.017)

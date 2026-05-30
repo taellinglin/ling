@@ -41,6 +41,12 @@ pub struct GfxState {
     pub ambient:     f32,
     /// Depth-sorted draw queue — flushed by `แสดงผล` / `present`.
     pub depth_queue: DepthQueue,
+    /// Mouse position delta since last frame (pixels).
+    pub mouse_dx: f32, pub mouse_dy: f32,
+    /// Previous mouse position for delta computation; NaN = no prior sample.
+    pub last_mx: f32, pub last_my: f32,
+    /// When true: cursor is hidden and reset to center every frame for infinite rotation.
+    pub mouse_captured: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,6 +62,11 @@ impl GfxState {
             lights:      Vec::new(),
             ambient:     0.15,
             depth_queue: DepthQueue::default(),
+            mouse_dx:       0.0,
+            mouse_dy:       0.0,
+            last_mx:        f32::NAN,
+            last_my:        f32::NAN,
+            mouse_captured: false,
         }
     }
 

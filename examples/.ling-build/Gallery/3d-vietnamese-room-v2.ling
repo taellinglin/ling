@@ -1,5 +1,7 @@
 # ════════════════════════════════════════════════════════════════════════════
-# 3d-vietnamese-room.ling — 靈臺五行殿  Linh Đài · Palace of Five Elements
+# 3d-vietnamese-room-v2.ling — 靈臺五行殿  Linh Đài · Palace of Five Elements
+#
+#  v2: fixes vtex_yantra arg count (n_layers added to floor call).
 #
 #  Written in Chữ Hán (漢字) — the classical script of Vietnamese
 #  scholarship before romanisation.  Variable names, frame counter, and
@@ -26,7 +28,7 @@
 #    Fast 木 elements (×2.20) create wide fan-ghosts; slow 土 (×0.12)
 #    elements leave tight chromatic halos — both simultaneously visible.
 #
-#  Run:  ling run examples/3d-vietnamese-room.ling
+#  Run:  ling run examples/3d-vietnamese-room-v2.ling
 #  Quit: Escape or close window
 # ════════════════════════════════════════════════════════════════════════════
 
@@ -107,7 +109,8 @@
     vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  8, 64,  5.5, 0.0,                  土, hd + 0.0)
     # 8-petal Sen lotus
     vtex_flower(0, cy, fmid,  1,0,0,  0,0,1,  2.2, 8,                           FR, hd + 1.5)
-    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  4.8,                              FR, hd + 3.0)
+    # vtex_yantra: n_layers=4, max_r=4.8
+    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  4, 4.8,                           FR, hd + 3.0)
     vtex_grid(0, cy, fmid,  1,0,0,  0,0,1,  28, 22,  0.68, 0.68,               FR, hd + 4.5)
 }
 
@@ -149,7 +152,7 @@
     令 土 = FR * 0.12
     令 火 = FR * 1.50
     vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  32, 20,  0.60, 0.54,  0.020,  FR, hd + 2.2)
-    # Yantra innermost gate (deepest layer)
+    # Yantra innermost gate (deepest layer) — n_layers=4, max_r=5.0
     vtex_yantra(0, 0, FZ,  1,0,0,  0,1,0,  4, 5.0,                             FR, hd + 0.0)
     # 6-layer portal halo
     vtex_rings(0, 0, FZ,  1,0,0,  0,1,0,  6, 64,  5.8, 0.0,                   土, hd + 0.0)
@@ -277,23 +280,11 @@
 
 令 启 = 执 {
     เปิดหน้าต่างเต็มจอ("Linh Đài — 靈臺五行殿 — Palace of Five Elements")
-    capture_mouse()
     set_ambient(0.04)
 
     init_audio()
 
     令 靈 = 0    # 靈 = linh · spirit-frame counter
-
-    令 cam_px = 0.0
-    令 cam_py = 0.0
-    令 cam_pz = 0.0
-    令 cam_zdist = 2.0
-    令 cam_ry_off = 0.0
-    令 cam_rx_off = 0.0
-    令 cam_idle = 0
-    令 cam_manual = 0
-    令 cam_ry_snap = 0.0
-    令 cam_rx_snap = 0.0
 
     循 หน้าต่างเปิดอยู่() {
         เติม(6, 0, 10)   # deep DMT violet-indigo
@@ -303,62 +294,9 @@
         # Vertical   ±0.10 rad, period ~3900 frames
         令 ry  = sin(靈 * 0.00048) * 0.24
         令 rx  = sin(靈 * 0.00032) * 0.10
-        令 mdx = mouse_dx()
-        令 mdy = mouse_dy()
-        令 any_input = 0
-        若 key_down("w")      { 令 any_input = 1 }
-        若 key_down("s")      { 令 any_input = 1 }
-        若 key_down("a")      { 令 any_input = 1 }
-        若 key_down("d")      { 令 any_input = 1 }
-        若 key_down("space")  { 令 any_input = 1 }
-        若 key_down("lshift") { 令 any_input = 1 }
-        若 key_down("left")   { 令 any_input = 1 }
-        若 key_down("right")  { 令 any_input = 1 }
-        若 key_down("up")     { 令 any_input = 1 }
-        若 key_down("down")   { 令 any_input = 1 }
-        若 mdx * mdx + mdy * mdy > 0.25 { 令 any_input = 1 }
-        若 any_input == 1 { 令 cam_manual = 1; 令 cam_idle = 0 }
-        若 cam_manual == 1 {
-            令 cam_idle = cam_idle + 1
-            若 cam_idle > 300 { 令 cam_manual = 0; 令 cam_idle = 0 }
-        }
-        若 cam_manual == 1 {
-            令 cam_ry_off = cam_ry_off + mdx * 0.0022
-            令 cam_rx_off = cam_rx_off + mdy * 0.0022
-            若 cam_rx_off > 3.14159  { 令 cam_rx_off = 3.14159 }
-            若 cam_rx_off < -3.14159 { 令 cam_rx_off = -3.14159 }
-            若 key_down("left")  { 令 cam_ry_off = cam_ry_off - 0.018 }
-            若 key_down("right") { 令 cam_ry_off = cam_ry_off + 0.018 }
-            若 key_down("up")    { 令 cam_rx_off = cam_rx_off - 0.018 }
-            若 key_down("down")  { 令 cam_rx_off = cam_rx_off + 0.018 }
-            令 fwd_x = sin(cam_ry_snap + cam_ry_off)
-            令 fwd_z = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_x = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
-            令 spd = 0.12
-            若 key_down("w") { 令 cam_px = cam_px + fwd_x * spd; 令 cam_pz = cam_pz + fwd_z * spd }
-            若 key_down("s") { 令 cam_px = cam_px - fwd_x * spd; 令 cam_pz = cam_pz - fwd_z * spd }
-            若 key_down("a") { 令 cam_px = cam_px - rgt_x * spd; 令 cam_pz = cam_pz - rgt_z * spd }
-            若 key_down("d") { 令 cam_px = cam_px + rgt_x * spd; 令 cam_pz = cam_pz + rgt_z * spd }
-            若 key_down("space")  { 令 cam_py = cam_py + spd }
-            若 key_down("lshift") { 令 cam_py = cam_py - spd }
-            若 key_pressed("numpad+") { 令 cam_zdist = cam_zdist + 0.5 }
-            若 key_pressed("numpad-") { 令 cam_zdist = cam_zdist - 0.5; 若 cam_zdist < 0.5 { 令 cam_zdist = 0.5 } }
-        }
-        若 cam_manual == 0 {
-            令 cam_ry_snap = ry
-            令 cam_rx_snap = rx
-            令 cam_ry_off = cam_ry_off * 0.97
-            令 cam_rx_off = cam_rx_off * 0.97
-            令 cam_px = cam_px * 0.97
-            令 cam_py = cam_py * 0.97
-            令 cam_pz = cam_pz * 0.97
-        }
-        令 cry = cos(cam_ry_snap + cam_ry_off)   令 sry = sin(cam_ry_snap + cam_ry_off)
-        令 crx = cos(cam_rx_snap + cam_rx_off)   令 srx = sin(cam_rx_snap + cam_rx_off)
+        令 cry = cos(ry)   令 sry = sin(ry)
+        令 crx = cos(rx)   令 srx = sin(rx)
         set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
         audio_listener(cry, sry, crx, srx)
 
         setup_lights(靈)
