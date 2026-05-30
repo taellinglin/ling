@@ -1367,10 +1367,27 @@ impl Interpreter {
         // User-defined function
         if let Some(def) = self.functions.get(name).cloned() {
             let mut call_env = Env::new();
-            // Seed env with non-Do globals (skip entry-point blocks to avoid infinite recursion)
-            for (k, expr) in &self.globals {
-                if matches!(expr, Expr::Do(_)) { continue; }
+            // Seed env with non-Do globals (skip entry-point blocks to avoid infinite recursion).
+            // Pass 1: evaluate each global with the call-site env — simple literals succeed.
+            // Pass 2: retry failed globals with the partially-built call_env so that compound
+            //         globals (e.g. `FM = (NZ + FZ) / 2.0`) can resolve their dependencies.
+            let non_do_globals: Vec<_> = self.globals.iter()
+                .filter(|(_, expr)| !matches!(expr, Expr::Do(_)))
+                .map(|(k, e)| (k.clone(), e.clone()))
+                .collect();
+            let mut pending: Vec<(String, Expr)> = Vec::new();
+            for (k, expr) in &non_do_globals {
                 let mut tmp = env.clone();
+                if let Ok(v) = self.eval_expr(expr, &mut tmp) {
+                    call_env.insert(k.clone(), v);
+                } else {
+                    pending.push((k.clone(), expr.clone()));
+                }
+            }
+            // Second pass: retry compound globals now that literals are in call_env.
+            for (k, expr) in &pending {
+                let mut tmp = env.clone();
+                tmp.extend(call_env.clone());
                 if let Ok(v) = self.eval_expr(expr, &mut tmp) {
                     call_env.insert(k.clone(), v);
                 }

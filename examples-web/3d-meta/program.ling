@@ -1,0 +1,249 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 3d-meta.ling — Hypercube-Möbius Mirror Room of Pyramids
+#
+#  ┌── CORE ──────────────────────────────────────────────────────────────────┐
+#  │  Sierpiński stella octangula (two interlocked tetrahedra) — depth 3      │
+#  │  Framed inside a rotating 4-D tesseract (hypercube, 32 glowing edges)    │
+#  └── RING ──────────────────────────────────────────────────────────────────┘
+#  │  6 satellite stella-fractals (depth 1) orbiting on a Möbius path         │
+#  └──────────────────────────────────────────────────────────────────────────┘
+#
+#  Rendering pipeline (new):
+#    set_camera   → stores cos/sin trig in GfxState
+#    วาดสามเหลี่ยม3มิติ → computes cel-shaded lighting, projects, depth-queues
+#    วาดเส้น3มิติ       → projects + depth-queues line (used for tesseract)
+#    แสดงผล       → sorts depth queue back→front, flushes, presents
+#
+#  Fullscreen:  ling run examples/3d-meta.ling
+#  Escape / close window to quit.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+# ── Screen globals — seeded into every function automatically ─────────────────
+bind CX    = get_width()  / 2
+bind CY    = get_height() / 2
+bind FOCAL = get_height()
+bind ZDIST = 5.0
+bind D4    = 3.5
+
+
+# ── 4-D serpentine colour ─────────────────────────────────────────────────────
+fn สี4มิติ(ระดับ, หน้า, เฟรม) {
+    bind t = เฟรม * 0.025
+    bind p = ระดับ * 1.047 + หน้า * 0.785
+    bind w = sin(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
+    bind r = (sin(t + p)         * 127 + 128) * w
+    bind g = (sin(t + p + 2.094) * 127 + 128) * w
+    bind b = (sin(t + p + 4.189) * 127 + 128) * w
+    สีดินสอ(r, g, b)
+}
+
+
+# ── Sierpiński tetrahedron — paint large→small, uses depth+lighting pipeline ──
+# No camera params needed — set_camera is called once per frame.
+fn วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, ระดับ, เฟรม) {
+    สี4มิติ(ระดับ, 0, เฟรม)
+    วาดสามเหลี่ยม3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz)
+    สี4มิติ(ระดับ, 1, เฟรม)
+    วาดสามเหลี่ยม3มิติ(ax, ay, az, bx, by, bz, dx, dy, dz)
+    สี4มิติ(ระดับ, 2, เฟรม)
+    วาดสามเหลี่ยม3มิติ(ax, ay, az, cx, cy, cz, dx, dy, dz)
+    สี4มิติ(ระดับ, 3, เฟรม)
+    วาดสามเหลี่ยม3มิติ(bx, by, bz, cx, cy, cz, dx, dy, dz)
+
+    ถ้า ระดับ > 0 {
+        bind ด = ระดับ - 1
+        bind mabx = (ax+bx)/2   bind maby = (ay+by)/2   bind mabz = (az+bz)/2
+        bind macx = (ax+cx)/2   bind macy = (ay+cy)/2   bind macz = (az+cz)/2
+        bind madx = (ax+dx)/2   bind mady = (ay+dy)/2   bind madz = (az+dz)/2
+        bind mbcx = (bx+cx)/2   bind mbcy = (by+cy)/2   bind mbcz = (bz+cz)/2
+        bind mbdx = (bx+dx)/2   bind mbdy = (by+dy)/2   bind mbdz = (bz+dz)/2
+        bind mcdx = (cx+dx)/2   bind mcdy = (cy+dy)/2   bind mcdz = (cz+dz)/2
+        วาดเซียร์3มิติ(ax,   ay,   az,   mabx, maby, mabz, macx, macy, macz, madx, mady, madz, ด, เฟรม)
+        วาดเซียร์3มิติ(mabx, maby, mabz, bx,   by,   bz,   mbcx, mbcy, mbcz, mbdx, mbdy, mbdz, ด, เฟรม)
+        วาดเซียร์3มิติ(macx, macy, macz, mbcx, mbcy, mbcz, cx,   cy,   cz,   mcdx, mcdy, mcdz, ด, เฟรม)
+        วาดเซียร์3มิติ(madx, mady, madz, mbdx, mbdy, mbdz, mcdx, mcdy, mcdz, dx,   dy,   dz,   ด, เฟรม)
+    }
+}
+
+
+# ── 4-D tesseract edge — 4D rotate → 4D→3D stereo → วาดเส้น3มิติ ───────────
+# ca/sa = XW rotation,  cb/sb = YW rotation.
+# After 4D→3D projection the 3D coords go straight into วาดเส้น3มิติ which
+# applies the stored camera and queues the line for depth-sorted drawing.
+fn tesseract_edge(ax, ay, az, aw, bx, by, bz, bw, ca, sa, cb, sb) {
+    # vertex A: 4D XW rotation
+    bind ax4 = ax * ca - aw * sa
+    bind aw4 = ax * sa + aw * ca
+    # vertex A: 4D YW rotation
+    bind ay4 = ay * cb - aw4 * sb
+    bind aw5 = ay * sb + aw4 * cb
+    # vertex A: 4D→3D stereographic
+    bind ad  = aw5 + D4
+    bind ax3 = ax4 / ad
+    bind ay3 = ay4 / ad
+    bind az3 = az  / ad
+    # vertex B: same pipeline
+    bind bx4 = bx * ca - bw * sa
+    bind bw4 = bx * sa + bw * ca
+    bind by4 = by * cb - bw4 * sb
+    bind bw5 = by * sb + bw4 * cb
+    bind bd  = bw5 + D4
+    bind bx3 = bx4 / bd
+    bind by3 = by4 / bd
+    bind bz3 = bz  / bd
+    # Depth-queued line — camera applied inside วาดเส้น3มิติ
+    วาดเส้น3มิติ(ax3, ay3, az3, bx3, by3, bz3)
+}
+
+
+# ── 12 edges of one cubic hyperface at w = cw ─────────────────────────────────
+fn cube4d(s, cw, ca, sa, cb, sb) {
+    tesseract_edge(-s,-s,-s,cw,  s,-s,-s,cw, ca,sa,cb,sb)
+    tesseract_edge( s,-s,-s,cw,  s, s,-s,cw, ca,sa,cb,sb)
+    tesseract_edge( s, s,-s,cw, -s, s,-s,cw, ca,sa,cb,sb)
+    tesseract_edge(-s, s,-s,cw, -s,-s,-s,cw, ca,sa,cb,sb)
+    tesseract_edge(-s,-s, s,cw,  s,-s, s,cw, ca,sa,cb,sb)
+    tesseract_edge( s,-s, s,cw,  s, s, s,cw, ca,sa,cb,sb)
+    tesseract_edge( s, s, s,cw, -s, s, s,cw, ca,sa,cb,sb)
+    tesseract_edge(-s, s, s,cw, -s,-s, s,cw, ca,sa,cb,sb)
+    tesseract_edge(-s,-s,-s,cw, -s,-s, s,cw, ca,sa,cb,sb)
+    tesseract_edge( s,-s,-s,cw,  s,-s, s,cw, ca,sa,cb,sb)
+    tesseract_edge( s, s,-s,cw,  s, s, s,cw, ca,sa,cb,sb)
+    tesseract_edge(-s, s,-s,cw, -s, s, s,cw, ca,sa,cb,sb)
+}
+
+
+# ── Full tesseract: outer (w=+s) warm + inner (w=−s) cool + 8 connectors ──────
+fn draw_tesseract(s, ca, sa, cb, sb, fr) {
+    bind tw = fr * 0.023
+    # outer cube — warm cycling hues
+    bind ro = sin(tw)         * 100 + 155
+    bind go = sin(tw + 2.094) * 100 + 155
+    bind bo = sin(tw + 4.189) * 100 + 155
+    สีดินสอ(ro, go, bo)
+    cube4d(s,  s, ca, sa, cb, sb)
+    # inner cube — complementary cool hues (π phase shift)
+    bind ri = sin(tw + pi)         * 100 + 155
+    bind gi = sin(tw + pi + 2.094) * 100 + 155
+    bind bi = sin(tw + pi + 4.189) * 100 + 155
+    สีดินสอ(ri, gi, bi)
+    cube4d(s, -s, ca, sa, cb, sb)
+    # 8 connector edges — bright, faster oscillation
+    bind rc = sin(tw * 1.4)         * 90 + 165
+    bind gc = sin(tw * 1.4 + 2.094) * 90 + 165
+    bind bc = sin(tw * 1.4 + 4.189) * 90 + 165
+    สีดินสอ(rc, gc, bc)
+    tesseract_edge(-s,-s,-s, s, -s,-s,-s,-s, ca,sa,cb,sb)
+    tesseract_edge( s,-s,-s, s,  s,-s,-s,-s, ca,sa,cb,sb)
+    tesseract_edge( s, s,-s, s,  s, s,-s,-s, ca,sa,cb,sb)
+    tesseract_edge(-s, s,-s, s, -s, s,-s,-s, ca,sa,cb,sb)
+    tesseract_edge(-s,-s, s, s, -s,-s, s,-s, ca,sa,cb,sb)
+    tesseract_edge( s,-s, s, s,  s,-s, s,-s, ca,sa,cb,sb)
+    tesseract_edge( s, s, s, s,  s, s, s,-s, ca,sa,cb,sb)
+    tesseract_edge(-s, s, s, s, -s, s, s,-s, ca,sa,cb,sb)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════════
+ผูก เริ่ม = ทำ {
+    เปิดหน้าต่างเต็มจอ("3-D Meta — Hypercube Mirror Room of Pyramids")
+
+    # Ambient light — dim purple fill so shadow sides stay visible
+    set_ambient(0.12)
+
+    # Regular tetrahedron (r = 1.8) + dual (stella octangula)
+    ผูก r   = 1.8
+    ผูก v0x = 0.0            ผูก v0y = 0 - r           ผูก v0z = 0.0
+    ผูก v1x = r * 0.9428     ผูก v1y = r * 0.3333      ผูก v1z = 0.0
+    ผูก v2x = 0 - r * 0.4714 ผูก v2y = r * 0.3333      ผูก v2z = r * 0.8165
+    ผูก v3x = 0 - r * 0.4714 ผูก v3y = r * 0.3333      ผูก v3z = 0 - r * 0.8165
+    ผูก n0x = 0.0            ผูก n0y = r               ผูก n0z = 0.0
+    ผูก n1x = 0 - r * 0.9428 ผูก n1y = 0 - r * 0.3333 ผูก n1z = 0.0
+    ผูก n2x = r * 0.4714     ผูก n2y = 0 - r * 0.3333 ผูก n2z = 0 - r * 0.8165
+    ผูก n3x = r * 0.4714     ผูก n3y = 0 - r * 0.3333 ผูก n3z = r * 0.8165
+
+    ผูก เฟรม = 0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(2, 1, 6)
+
+        # ── camera ──────────────────────────────────────────────────────────
+        ผูก ry  = เฟรม * 0.013
+        ผูก rx  = sin(เฟรม * 0.009) * 0.55
+        ผูก cry = cos(ry)   ผูก sry = sin(ry)
+        ผูก crx = cos(rx)   ผูก srx = sin(rx)
+
+        # Store camera in GfxState — all 3D draw calls use it automatically
+        set_camera(cry, sry, crx, srx)
+
+        # ── 4D rotation angles ───────────────────────────────────────────────
+        ผูก ca = cos(เฟรม * 0.017)   ผูก sa = sin(เฟรม * 0.017)
+        ผูก cb = cos(เฟรม * 0.011)   ผูก sb = sin(เฟรม * 0.011)
+
+        # ── lights (updated each frame so they orbit with the scene) ─────────
+        # Key light — warm white, orbiting above-right
+        clear_lights()
+        add_light(
+            sin(เฟรม * 0.017) * 4.0,
+            0 - 3.5,
+            cos(เฟรม * 0.017) * 4.0,
+            1.0, 0.92, 0.80,    # warm white
+            2.2, 9.0            # intensity, radius
+        )
+        # Fill light — cool blue, from the left
+        add_light(
+            0 - 3.0,
+            1.5,
+            2.0,
+            0.35, 0.55, 1.0,    # cool blue
+            1.0, 7.0
+        )
+        # Accent — magenta rim from behind
+        add_light(
+            0 - sin(เฟรม * 0.011) * 3.5,
+            1.0,
+            0 - cos(เฟรม * 0.011) * 3.5,
+            1.0, 0.25, 0.8,     # magenta
+            0.8, 5.5
+        )
+
+        # ══ Tesseract wireframe (32 depth-sorted glowing edges) ══════════════
+        draw_tesseract(2.2, ca, sa, cb, sb, เฟรม)
+
+        # ══ Central stella octangula (depth 3) ═══════════════════════════════
+        วาดเซียร์3มิติ(v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z, v3x, v3y, v3z,
+                        3, เฟรม)
+        วาดเซียร์3มิติ(n0x, n0y, n0z, n1x, n1y, n1z, n2x, n2y, n2z, n3x, n3y, n3z,
+                        3, เฟรม + 80)
+
+        # ══ Ring — 6 satellite stella fractals (depth 1) ═════════════════════
+        ผูก RR   = 3.1
+        ผูก sc   = 0.38
+        ผูก spin = เฟรม * 0.010
+
+        for k in 0..6 {
+            ผูก theta = k * 1.0472 + spin
+            ผูก tx = RR * cos(theta)
+            ผูก tz = RR * sin(theta)
+            ผูก p0x = v0x * sc + tx   ผูก p0y = v0y * sc   ผูก p0z = v0z * sc + tz
+            ผูก p1x = v1x * sc + tx   ผูก p1y = v1y * sc   ผูก p1z = v1z * sc + tz
+            ผูก p2x = v2x * sc + tx   ผูก p2y = v2y * sc   ผูก p2z = v2z * sc + tz
+            ผูก p3x = v3x * sc + tx   ผูก p3y = v3y * sc   ผูก p3z = v3z * sc + tz
+            ผูก q0x = n0x * sc + tx   ผูก q0y = n0y * sc   ผูก q0z = n0z * sc + tz
+            ผูก q1x = n1x * sc + tx   ผูก q1y = n1y * sc   ผูก q1z = n1z * sc + tz
+            ผูก q2x = n2x * sc + tx   ผูก q2y = n2y * sc   ผูก q2z = n2z * sc + tz
+            ผูก q3x = n3x * sc + tx   ผูก q3y = n3y * sc   ผูก q3z = n3z * sc + tz
+            วาดเซียร์3มิติ(p0x, p0y, p0z, p1x, p1y, p1z, p2x, p2y, p2z, p3x, p3y, p3z,
+                            1, เฟรม + k * 20)
+            วาดเซียร์3มิติ(q0x, q0y, q0z, q1x, q1y, q1z, q2x, q2y, q2z, q3x, q3y, q3z,
+                            1, เฟรม + k * 20 + 80)
+        }
+
+        # แสดงผล: depth-sorts all queued triangles+lines, then presents ─────
+        แสดงผล()
+        ผูก เฟรม = เฟรม + 1
+    }
+}
