@@ -13,3 +13,4 @@ Cargo.lock
 .idea/
 *.rs.bk
 /lexicons/generated
+./examples/.ling-build/
