@@ -11,6 +11,8 @@ pub enum Item {
     Fn(FnDef),
     Mod(String, Vec<Item>),
     TypeAlias(String, String), // type Name = RawType
+    /// `use "path/to/module"` or `use "path" as ns`
+    Use { path: String, alias: Option<String> },
 }
 
 #[derive(Debug, Clone)]

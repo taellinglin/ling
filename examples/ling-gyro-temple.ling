@@ -1,0 +1,375 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 混沌殿  Hùndùn Diàn — Palace of Chaos and Order
+#
+# An octagonal void-chamber (Room A) linked by a hallway to its warm
+# mirror twin (Room B).  The camera gyrates on three incommensurable
+# axes — like riding a gyroscope — and slowly drifts between the rooms.
+#
+# Room A  Void / Cosmos       deep-blue · silver · aurora · plasma
+#   ·  8 walls — mirrored mandalas (pairs counter-rotate)
+#   ·  Octagonal floor mandala
+#   ·  Dome: zig-zag spiked-cog rings + centrifugal star bursts + mesh fill
+#   ·  Central pillar with enclosed soul orb (triple-plane rings)
+#   ·  8 vertex pillars
+#
+# Room B  Fire / Order        gold · jade · crimson · ivory
+#   ·  Mirror-image of Room A in a warm palette
+#
+# Hallway  letter-rain corridor connecting O and O
+#
+# Camera: 3 incommensurable gyro oscillations + slow sine room traversal
+# Budget: ~82 vtex calls / frame  (no tex_* calls)
+# ════════════════════════════════════════════════════════════════════════════
+
+令 PI  = 3.14159265
+令 PI4 = 0.7854        # PI/4
+令 PI8 = 0.3927        # PI/8
+
+令 H   = 5.0           # room half-height
+令 OR  = 11.0          # octagon inradius  (wall midpoint distance)
+令 OC  = 11.90         # octagon circumradius (vertex distance ≈ OR/cos(PI8))
+
+令 OA  = 0.0           # Room A centre z
+令 OB  = 40.0          # Room B centre z
+令 HMZ = 20.0          # hallway midpoint z
+令 HAW = 3.0           # hallway half-width
+令 HHL = 9.0           # hallway half-length (opens at z = HMZ ± HHL)
+
+# ── Room A palette: void / cosmos ──────────────────────────────────────────
+令 VOID   = 4.71
+令 SILVER = 5.50
+令 AURORA = 0.80
+令 PLASMA = 1.10
+
+# ── Room B palette: fire / order ───────────────────────────────────────────
+令 GOLD    = 1.57
+令 JADE    = 3.50
+令 CRIMSON = 2.10
+令 IVORY   = 0.30
+
+
+# ── Colour helper ──────────────────────────────────────────────────────────
+函 col(FR, h, drift) {
+    สีดินสอ(
+        (sin(FR * 0.005 + h + drift)         * 90 + 165),
+        (sin(FR * 0.005 + h + drift + 2.094) * 90 + 165),
+        (sin(FR * 0.005 + h + drift + 4.189) * 90 + 165)
+    )
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# SOUL ORB  —  three mutually-perpendicular ring planes enclosing a
+#              lotus-chakra heart  (gives a glowing 3-D orb silhouette)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_soul(FR, sx, sz, hue_a, hue_b) {
+    令 r = sin(FR * 0.007) * 0.10 + 0.90
+
+    # Outer triple-ring sphere
+    vtex_rings(sx, 0, sz,  1,0,0,  0,1,0,  3, 32,  r, 0.0,   FR * 0.0009,  hue_a)
+    vtex_rings(sx, 0, sz,  1,0,0,  0,0,1,  3, 32,  r, 0.0,   0 - FR * 0.0007, hue_a)
+    vtex_rings(sx, 0, sz,  0,0,1,  0,1,0,  3, 32,  r, 0.0,   FR * 0.0011,  hue_a)
+
+    # Inner lotus-heart
+    vtex_lotus(sx, 0, sz,  1,0,0,  0,1,0,  r * 0.25, r * 0.62, 8,  FR * 0.0006, hue_b)
+
+    # Central chakra crown
+    vtex_chakra(sx, 0, sz,  1,0,0,  0,0,1,  r * 0.48, 8,  FR * 0.0005, hue_b)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CENTRAL PILLAR  (vertical vase + cog caps + soul orb)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_center_pillar(FR, oz, hue_p, hue_s) {
+    # Vase profile: 4 horizontal rings
+    vtex_rings(0, 0 - H*0.78, oz,  1,0,0,  0,0,1,  1, 12,  0.40, 0.0,  FR*0.0003, hue_p)
+    vtex_rings(0, 0 - H*0.30, oz,  1,0,0,  0,0,1,  1, 12,  0.68, 0.0,  FR*0.0003, hue_p)
+    vtex_rings(0,  H*0.30,    oz,  1,0,0,  0,0,1,  1, 12,  0.68, 0.0,  FR*0.0003, hue_p)
+    vtex_rings(0,  H*0.78,    oz,  1,0,0,  0,0,1,  1, 12,  0.40, 0.0,  FR*0.0003, hue_p)
+
+    # Spiked-cog capitals (top and bottom)
+    vtex_spiked_cog(0,  H*0.82, oz,  1,0,0,  0,0,1,  12, 0.56, 0.80, 0.14, 6,   FR*0.0005, hue_p + 1.0)
+    vtex_spiked_cog(0, 0-H*0.82, oz, 1,0,0,  0,0,1,  12, 0.56, 0.80, 0.14, 6,  0-FR*0.0005, hue_p + 1.0)
+
+    draw_soul(FR, 0, oz, hue_s, hue_s + 1.5)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# OCTAGONAL WALLS + VERTEX PILLARS
+# Wall i centred at angle i*PI4 on the octagon perimeter.
+# Opposite walls (i vs i+4) counter-rotate as a mirror pair.
+# Vertex pillar placed at angle (i*PI4 + PI8).
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_oct_room_a(FR, oz) {
+    令 i = 0
+    循 i < 8 {
+        令 wang = i * PI4
+        令 wx   = OR * cos(wang)
+        令 wz   = oz + OR * sin(wang)
+        令 ux   = 0 - sin(wang)
+        令 uz   = cos(wang)
+
+        # Mirror spin: walls 0-3 CW, walls 4-7 CCW
+        令 dir  = 1.0 - 2.0 * trunc(i / 4.0)
+        令 spn  = FR * 0.00032 * dir
+
+        # Wall mandala: chakra + rings (mirrored pair reads as one composition)
+        vtex_chakra(wx, 0, wz,  ux,0,uz,  0,1,0,  2.20, 8,  spn, VOID + i * 0.14)
+        vtex_rings( wx, 0, wz,  ux,0,uz,  0,1,0,  2, 22,  2.55, 0.0,  spn * 0.45, SILVER)
+
+        # Vertex pillar (between wall i and wall i+1)
+        令 pang = wang + PI8
+        令 px   = OC * cos(pang)
+        令 pz   = oz + OC * sin(pang)
+        vtex_rings(px, 0, pz,  1,0,0,  0,0,1,  1, 8,  0.28, 0.0,  FR*0.0003, AURORA + i*0.10)
+
+        令 i = i + 1
+    }
+}
+
+函 draw_oct_room_b(FR, oz) {
+    令 i = 0
+    循 i < 8 {
+        令 wang = i * PI4
+        令 wx   = OR * cos(wang)
+        令 wz   = oz + OR * sin(wang)
+        令 ux   = 0 - sin(wang)
+        令 uz   = cos(wang)
+        令 dir  = 1.0 - 2.0 * trunc(i / 4.0)
+        令 spn  = FR * 0.00028 * dir
+
+        vtex_chakra(wx, 0, wz,  ux,0,uz,  0,1,0,  2.20, 8,  spn, GOLD + i * 0.16)
+        vtex_rings( wx, 0, wz,  ux,0,uz,  0,1,0,  2, 22,  2.55, 0.0,  spn * 0.45, IVORY)
+
+        令 pang = wang + PI8
+        令 px   = OC * cos(pang)
+        令 pz   = oz + OC * sin(pang)
+        vtex_rings(px, 0, pz,  1,0,0,  0,0,1,  1, 8,  0.28, 0.0,  FR*0.0003, JADE + i*0.08)
+
+        令 i = i + 1
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# OCTAGONAL FLOOR MANDALA
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_floor_a(FR, oz) {
+    令 cy = 0 - H
+
+    # Zig-zag spiked-cog border (40 teeth ≈ continuous zig-zag)
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  40, OR*0.82, OR*0.93, 0.0, 0,  FR*0.00020, VOID)
+
+    # 8-fold chakra
+    vtex_chakra(0, cy, oz,  1,0,0,  0,0,1,  OR * 0.70, 8,  FR * 0.00010, SILVER)
+
+    # Yantra (nested triangles)
+    vtex_yantra(0, cy, oz,  1,0,0,  0,0,1,  3, OR * 0.65,  FR * 0.00012, AURORA)
+
+    # Inner lotus
+    vtex_lotus(0, cy, oz,  1,0,0,  0,0,1,  1.20, 3.00, 8,  FR * 0.00042, PLASMA)
+}
+
+函 draw_floor_b(FR, oz) {
+    令 cy = 0 - H
+
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  40, OR*0.82, OR*0.93, 0.0, 0,  FR*0.00020, GOLD)
+    vtex_chakra(0, cy, oz,  1,0,0,  0,0,1,  OR * 0.70, 8,  FR * 0.00010, JADE)
+    vtex_yantra(0, cy, oz,  1,0,0,  0,0,1,  3, OR * 0.65,  FR * 0.00012, IVORY)
+    vtex_lotus( 0, cy, oz,  1,0,0,  0,0,1,  1.20, 3.00, 8,  FR * 0.00042, CRIMSON)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# DOME CEILING
+# Zig-zag = spiked-cog rings at 3 radii (many teeth → continuous zig-zag)
+# Centrifugal = radially-outward star bursts (NOT spiral)
+# Filled = tessellated mesh underlay
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_dome_a(FR, oz) {
+    令 cy = H
+
+    # Triangle-mesh fill (gives a "filled dome" texture)
+    vtex_tessellated(0, cy, oz,  1,0,0,  0,0,1,  14, 14,  0.78, 0.10, 2.8,  FR*0.00012, VOID)
+
+    # Zig-zag ring 1: outer (56 teeth = dense zig-zag line)
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  56, OR*0.76, OR*0.90, 0.0, 0,  FR*0.00022, SILVER)
+
+    # Zig-zag ring 2: mid
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  40, OR*0.50, OR*0.62, 0.0, 0,  0 - FR*0.00028, VOID + 0.55)
+
+    # Zig-zag ring 3: inner
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  24, OR*0.26, OR*0.36, 0.0, 0,  FR*0.00038, AURORA)
+
+    # Centrifugal burst 1 (outer, many points)
+    vtex_star(0, cy, oz,  1,0,0,  0,0,1,  24, OR*0.84, OR*0.28, 0.00028,  FR, PLASMA)
+
+    # Centrifugal burst 2 (inner, fewer points)
+    vtex_star(0, cy, oz,  1,0,0,  0,0,1,  12, OR*0.56, OR*0.13, 0.00038,  FR, SILVER)
+
+    # Central chakra crown
+    vtex_chakra(0, cy, oz,  1,0,0,  0,0,1,  OR*0.18, 8,  FR*0.00055, AURORA)
+}
+
+函 draw_dome_b(FR, oz) {
+    令 cy = H
+
+    vtex_tessellated(0, cy, oz,  1,0,0,  0,0,1,  14, 14,  0.78, 0.10, 2.8,  FR*0.00012, GOLD)
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  56, OR*0.76, OR*0.90, 0.0, 0,  FR*0.00022, IVORY)
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  40, OR*0.50, OR*0.62, 0.0, 0,  0 - FR*0.00028, GOLD + 0.55)
+    vtex_spiked_cog(0, cy, oz,  1,0,0,  0,0,1,  24, OR*0.26, OR*0.36, 0.0, 0,  FR*0.00038, CRIMSON)
+    vtex_star(0, cy, oz,  1,0,0,  0,0,1,  24, OR*0.84, OR*0.28, 0.00028,  FR, GOLD)
+    vtex_star(0, cy, oz,  1,0,0,  0,0,1,  12, OR*0.56, OR*0.13, 0.00038,  FR, JADE)
+    vtex_chakra(0, cy, oz,  1,0,0,  0,0,1,  OR*0.18, 8,  FR*0.00055, CRIMSON)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# HALLWAY  —  corridor between the two O-shaped rooms
+# Letter-rain on both walls, grid floor, ring ceiling trim
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_hallway(FR) {
+    令 hmid = HMZ
+    令 hlen = HHL * 0.28    # col_w for letter-rain: scales columns to corridor depth
+
+    # Left-wall letter rain  (U along z-axis so columns run depth-wise)
+    vtex_letter_rain(0 - HAW, 0, hmid,  0,0,1,  0,1,0,  7, 6,  hlen, 0.60,  0.0050,  FR, AURORA)
+
+    # Right-wall letter rain
+    vtex_letter_rain( HAW,    0, hmid,  0,0,1,  0,1,0,  7, 6,  hlen, 0.60,  0.0050,  FR, PLASMA)
+
+    # Floor grid strip
+    vtex_grid(0, 0 - H, hmid,  1,0,0,  0,0,1,  3, 8,  HAW*0.95, HHL*0.35,  FR*0.00010, SILVER)
+
+    # Ceiling ring trim
+    vtex_rings(0, H, hmid,  1,0,0,  0,0,1,  2, 14,  HAW*0.88, 0.0,  FR*0.00032, VOID)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# LIGHTS
+# ════════════════════════════════════════════════════════════════════════════
+
+函 setup_lights(FR) {
+    clear_lights()
+
+    # Room A: orbiting void-blue overhead light
+    add_light(
+        sin(FR * 0.0031) * OR * 0.40, H * 0.65,
+        OA + cos(FR * 0.0031) * OR * 0.40,
+        0.22, 0.28, 1.0,  3.0, 22.0
+    )
+    # Room A: silver floor glow
+    add_light(0, 0 - H * 0.70, OA,  0.50, 0.62, 1.0,  1.8, 14.0)
+
+    # Room B: warm golden orbit
+    add_light(
+        sin(FR * 0.0024) * 2.8, H * 0.75, OB,
+        1.0, 0.85, 0.30,  2.8, 20.0
+    )
+    # Room B: crimson altar uplight
+    add_light(0, 0 - H * 0.60, OB,  0.80, 0.18, 0.05,  1.8, 10.0)
+
+    # Hallway: cool mid-blue fill light
+    add_light(0, 0, HMZ,  0.42, 0.48, 0.78,  1.2, 14.0)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# AUDIO  —  Room A: eerie minor  ·  Room B: pentatonic bright
+# ════════════════════════════════════════════════════════════════════════════
+
+函 init_audio() {
+    # Room A tones (minor / eerie)
+    audio_tone(0,   0,  0, OA,  2.0,  220.00, 0.06, 0.05, 0.004)  # A3
+    audio_tone(1,   4,  0, OA,  1.5,  261.63, 0.05, 0.08, 0.006)  # C4
+    audio_tone(2, -4,   0, OA,  1.5,  293.66, 0.04, 0.06, 0.005)  # D4
+    audio_tone(3,   0,  0, OA,  0.8,  174.61, 0.03, 0.12, 0.008)  # F3 sub
+
+    # Room B tones (pentatonic / bright)
+    audio_tone(4,   0,  0, OB,  1.5,  261.63, 0.05, 0.08, 0.006)  # C4
+    audio_tone(5,   4,  0, OB,  1.5,  329.63, 0.04, 0.06, 0.005)  # E4
+    audio_tone(6, -4,   0, OB,  1.5,  392.00, 0.04, 0.10, 0.007)  # G4
+    audio_tone(7,   0,  H, OB,  0.5,  440.00, 0.03, 0.14, 0.008)  # A4
+
+    audio_volume(0.28)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════════
+
+令 启 = 执 {
+    เปิดหน้าต่างเต็มจอ("混沌殿  Hùndùn Diàn — Palace of Chaos and Order")
+    capture_mouse()
+    set_ambient(0.09)
+    init_audio()
+
+    令 帧 = 0
+
+    循 หน้าต่างเปิดอยู่() {
+
+        # Deep void background
+        เติม(1, 1, 6)
+
+        # ── Gyroscope: three incommensurable oscillation axes ──────────────
+        # Incommensurable ratios ensure the pattern never exactly repeats.
+        令 g_roll  = sin(帧 * 0.00037) * 0.82     # slowest  (~17 000 fr period)
+        令 g_pitch = sin(帧 * 0.00019) * 0.44     # slowest  (~33 000 fr period)
+        令 g_yaw   = sin(帧 * 0.00071) * 1.22     # faster   (~ 8 800 fr period)
+
+        # ── Room traversal: smooth sine oscillation (O—hallway—O) ─────────
+        # Period ≈ 2π / 0.00180 ≈ 3491 frames ≈ 58 s at 60 fps
+        令 room_t      = sin(帧 * 0.00180)                          # -1 = Room A, +1 = Room B
+        令 room_base_z = (OA + OB) * 0.5 + room_t * (OB - OA) * 0.5
+
+        # ── Hallway blend: damp gyro amplitude while in the corridor ──────
+        令 hall_dist   = abs(room_base_z - HMZ)
+        令 hall_blend  = max(0.0, 1.0 - hall_dist / HHL)    # 0 = in room, 1 = hallway
+        令 gyro_scale  = 1.0 - hall_blend * 0.72
+
+        # ── Camera position ───────────────────────────────────────────────
+        # Orbits within the room like a gyroscope; dampens in the hallway
+        令 cam_x = sin(g_roll)  * 2.80 * gyro_scale
+        令 cam_y = sin(g_pitch) * 1.85
+        令 cam_z = room_base_z  + cos(g_pitch) * 1.20
+
+        令 ry = g_yaw   * gyro_scale
+        令 rx = g_pitch
+
+        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
+        set_camera_pos(cam_x, cam_y, cam_z)
+        set_zdist(1.8)
+        audio_listener(cos(ry), sin(ry), cos(rx), sin(rx))
+
+        setup_lights(帧)
+
+        # ── Draw scene ────────────────────────────────────────────────────
+        # Room A — Void / Cosmos
+        draw_oct_room_a(帧, OA)
+        draw_floor_a(帧, OA)
+        draw_dome_a(帧, OA)
+        draw_center_pillar(帧, OA, SILVER, VOID)
+
+        # Room B — Fire / Order
+        draw_oct_room_b(帧, OB)
+        draw_floor_b(帧, OB)
+        draw_dome_b(帧, OB)
+        draw_center_pillar(帧, OB, GOLD, CRIMSON)
+
+        # Connecting hallway
+        draw_hallway(帧)
+
+        แสดงผล()
+        令 帧 = 帧 + 1
+    }
+}

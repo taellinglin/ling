@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 // ── AudioEngine ───────────────────────────────────────────────────────────────
 
-#[pyclass(name = "AudioEngine")]
+#[pyclass(name = "AudioEngine", unsendable)]
 struct PyAudioEngine {
     inner: ling_audio::AudioEngine,
 }

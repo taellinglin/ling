@@ -1,210 +1,253 @@
-# 🌐 Ling – The Omniglot Systems Language
+# Ling — The Omniglot Systems Language
 
-[![Rust](https://img.shields.io/badge/rust-100%25-orange)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-Ling%20Harmony%201.0-blue)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/taellinglin/ling)](https://github.com/taellinglin/ling/stargazers)
+[![crates.io](https://img.shields.io/crates/v/ling-lang.svg)](https://crates.io/crates/ling-lang)
+[![docs.rs](https://docs.rs/ling-lang/badge.svg)](https://docs.rs/ling-lang)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue)](LICENSE)
+[![GitHub](https://img.shields.io/github/stars/taellinglin/ling)](https://github.com/taellinglin/ling)
 
-**Write once, speak to everyone. Performance of Rust, poetry of human language.**
+**Write in your language. Run everywhere.**
 
-Ling is a **polyglot systems programming language** that lets you write high-performance code using your native lexicon. Whether you think in English, 中文, 한국어, or ภาษาไทย – Ling understands you.
+Ling is a polyglot scripting and systems language whose keywords and builtins are
+available in 16+ human languages simultaneously — Chinese, Thai, Korean, Japanese,
+English, Arabic, Hebrew, Russian, and more — in the same source file, with no
+`#lang` pragmas or context switches.
 
-## ✨ The Vision
+---
 
-Three pillars. One language. Infinite possibilities.
-
-| Pillar | Domain | Technologies |
-|--------|--------|--------------|
-| 🎮 **Pillar 1** | Graphics & Games | wgpu, bevy, xilem, taffy |
-| 🧠 **Pillar 2** | AI/ML | candle, burn, llama.cpp |
-| 🔐 **Pillar 3** | Cryptography | Post-quantum, ZK, FHE |
-
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-# Install from crates.io
-cargo install ling
-
-# Run your first program (English)
-echo 'bind start = do { print("Hello, 世界!") }' | ling run
-
-# Run your first program (中文)
-echo '令 启动 = 执行 { 印("你好，世界！") }' | ling run
+cargo install ling-lang
+ling run examples/hello.ling
 ```
 
-# Code Examples in 4 Languages
-## Hello World & Fibonacci
-### English
-```
-// Hello World - English Lexicon
-bind start = do {
-    print("Hello, World!");
-    
-    // Fibonacci sequence
-    let fib = func (n) {
-        if n <= 1 {
-            return n;
-        } else {
-            return fib(n - 1) + fib(n - 2);
-        }
-    };
-    
-    print("First 10 Fibonacci numbers:");
-    for i in range(0, 10) {
-        print(fib(i));
-    }
-}
-```
-# 中文 (Chinese)
-```
-// 你好世界 - 中文词库
-令 启动 = 执行 {
-    印("你好，世界！");
-    
-    // 斐波那契数列
-    令 斐波那契 = 函数 (n) {
-        如果 n <= 1 {
-            返回 n;
-        } 否则 {
-            返回 斐波那契(n - 1) + 斐波那契(n - 2);
-        }
-    };
-    
-    印("前10个斐波那契数:");
-    对于 i 于 范围(0, 10) {
-        印(斐波那契(i));
-    }
-}
-```
-# 한국어 (Korean)
+Or from source:
 
+```bash
+git clone https://github.com/taellinglin/ling
+cd ling
+cargo run --bin ling -- run examples/hello.ling
 ```
-// 헬로 월드 - 한국어 렉시콘
-바인드 시작 = 수행 {
-    인쇄("안녕하세요, 세계!");
-    
-    // 피보나치 수열
-    렛 피보나치 = 펑크 (n) {
-        이프 n <= 1 {
-            리턴 n;
-        } 엘스 {
-            리턴 피보나치(n - 1) + 피보나치(n - 2);
-        }
-    };
-    
-    인쇄("처음 10개의 피보나치 수:");
-    포 i 인 레인지(0, 10) {
-        인쇄(피보나치(i));
-    }
+
+---
+
+## Hello World in four lexicons
+
+```ling
+# Chinese
+令 启 = 执 { 印("你好世界") }
+
+# Thai
+令 เริ่ม = ดำเนินการ { พิมพ์("สวัสดีโลก") }
+
+# English
+bind start = do { print("Hello, World!") }
+
+# Korean
+바인드 시작 = 수행 { 인쇄("안녕하세요") }
+```
+
+All four are valid in a single `.ling` file.
+
+---
+
+## Language Overview
+
+### Core syntax
+
+| Concept | Chinese | Thai | English | Korean |
+|---------|---------|------|---------|--------|
+| Bind | `令` | `ให้` | `bind` | `바인드` |
+| Function | `函` | `ฟังก์ชัน` | `func` | `펑크` |
+| If | `若` | `ถ้า` | `if` | `이프` |
+| While | `循` | `ขณะที่` | `while` | `동안` |
+| Do block | `执` | `ดำเนินการ` | `do` | `수행` |
+| Return | `返` | `คืนค่า` | `return` | `리턴` |
+| Print | `印` | `พิมพ์` | `print` | `인쇄` |
+
+### Values
+
+```ling
+令 x = 42
+令 s = "hello"
+令 b = true
+令 lst = list_new()
+令 lst = list_push(lst, 1)
+```
+
+### Functions
+
+```ling
+函 add(a, b) {
+    返 a + b
 }
 
-## ภาษาไทย (Thai)
+令 结果 = add(3, 4)
 ```
-// สวัสดีชาวโลก - พจนานุกรมไทย
-ผูก เริ่มต้น = ทำ {
-    พิมพ์("สวัสดีชาวโลก!");
-    
-    // ลำดับฟีโบนัชชี
-    ให้ ฟีโบ = ฟังก์ชัน (n) {
-        ถ้า n <= 1 {
-            คืนค่า n;
-        } มิฉะนั้น {
-            คืนค่า ฟีโบ(n - 1) + ฟีโบ(n - 2);
-        }
-    };
-    
-    พิมพ์("ตัวเลขฟีโบนัชชี 10 ตัวแรก:");
-    สำหรับ i ใน พิสัย(0, 10) {
-        พิมพ์(ฟีโบ(i));
-    }
+
+### Control flow
+
+```ling
+若 x > 10 {
+    印("large")
+} 否则 {
+    印("small")
+}
+
+令 i = 0
+循 i < 5 {
+    印(i)
+    令 i = i + 1
 }
 ```
-## 🎯 Core Features
-### 1. 16 Native Lexicons (Simultaneous)
 
-No #lang directives. No switching contexts. Write English functions alongside Chinese variables alongside Korean loops. All in the same file.
-### 2. Zero-Cost Abstractions
+---
 
-    Borrow checker with effects system
+## 3D/Visual Builtins
 
-    No garbage collection overhead
+Ling has a built-in software renderer for interactive 3D rooms and visualisations.
+All drawing builtins are multilingual (Thai names shown alongside English).
 
-    Compiles to native code via LLVM/Cranelift/WASM
+### Window & camera
 
-### 3. Full-Stack Ready
+```ling
+เปิดหน้าต่างเต็มจอ("My Room")   # open fullscreen window
+set_camera(cry, sry, crx, srx)   # orient camera
+set_camera_pos(x, y, z)
+set_zdist(2.0)
+set_ambient(0.1)
+แสดงผล()                         # flush depth queue → screen
 ```
-// Example: Game + AI + Crypto hybrid
-bind start = do {
-    let model = load_llm("llama.cpp");
-    let key = generate_post_quantum_key();
-    render_game_loop(model, key);
-}
-```
-# 📁 Project Structure
 
+### Vector geometry (`vtex_*`)
+
+All vtex calls draw line-based 3D geometry on a plane defined by centre + two tangent
+vectors. They are fast (no pixel fills) and depth-sorted automatically.
+
+```ling
+# vtex_grid(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cw,ch, fr,hue)
+vtex_grid(0, -4, 8,  1,0,0,  0,0,1,  12, 8,  1.0, 1.0,  FR, 0.0)
+
+# vtex_rings(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_rings,n_sides, max_r,twist, fr,hue)
+vtex_rings(0, 0, 8,  1,0,0,  0,1,0,  4, 32,  2.0, 0.08,  FR, 1.57)
+
+# vtex_spiked_cog(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_teeth,r_body,r_spike,r_hub,n_spokes, fr,hue)
+vtex_spiked_cog(0, 0, 8,  1,0,0,  0,1,0,  16, 1.5, 2.0, 0.3, 8,  FR, 1.57)
+
+# vtex_torii(cx,cy,cz, ux,uy,uz, vx,vy,vz, width,height, fr,hue)
+vtex_torii(0, 0, 14,  1,0,0,  0,1,0,  6.0, 5.0,  FR, 2.1)
+
+# vtex_pagoda(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_tiers,base_w,tier_h,taper,eave, fr,hue)
+vtex_pagoda(0, 0, 14,  1,0,0,  0,1,0,  5, 2.5, 1.0, 0.72, 0.28,  FR, 1.57)
+```
+
+Full vtex reference: **[docs/src/reference/vtex.md](docs/src/reference/vtex.md)**
+
+### Procedural pixel textures (`tex_*`)
+
+```ling
+tex_noise(x, y, w, h,  scale, octaves, seed, "psychedelic")
+tex_julia(x, y, w, h,  c_re, c_im, max_iter, "neon")
+tex_mandelbrot(x, y, w, h,  zoom, cx, cy, max_iter, "fire")
+tex_voronoi(x, y, w, h,  cells, seed, "ocean")
+tex_freq_map(x, y, w, h,  time, speed, "rainbow")   # audio-reactive
+```
+
+Full tex reference: **[docs/src/reference/tex.md](docs/src/reference/tex.md)**
+
+### Audio
+
+```ling
+# 4D spatial tone synthesis
+audio_tone(slot, x, y, z, w, freq_hz, amp, lfo_rate, lfo_depth)
+audio_volume(0.5)
+
+# FFT analysis
+fft_push(samples_list)
+令 bands = fft_bands(32)   # returns list of 32 magnitudes
+```
+
+---
+
+## Workspace Crates
+
+| Crate | crates.io | Purpose |
+|-------|-----------|---------|
+| `ling-core` | [![](https://img.shields.io/crates/v/ling-core.svg)](https://crates.io/crates/ling-core) | Core types and errors |
+| `ling-lex` | [![](https://img.shields.io/crates/v/ling-lex.svg)](https://crates.io/crates/ling-lex) | Polyglot tokenizer |
+| `ling-ast` | [![](https://img.shields.io/crates/v/ling-ast.svg)](https://crates.io/crates/ling-ast) | AST types |
+| `ling-mir` | [![](https://img.shields.io/crates/v/ling-mir.svg)](https://crates.io/crates/ling-mir) | Mid-level IR |
+| `ling-codegen` | [![](https://img.shields.io/crates/v/ling-codegen.svg)](https://crates.io/crates/ling-codegen) | Code generation |
+| `ling-runtime` | [![](https://img.shields.io/crates/v/ling-runtime.svg)](https://crates.io/crates/ling-runtime) | GC and stdlib |
+| `ling-audio` | [![](https://img.shields.io/crates/v/ling-audio.svg)](https://crates.io/crates/ling-audio) | 4D spatial audio + FFT |
+| `ling-graphics` | [![](https://img.shields.io/crates/v/ling-graphics.svg)](https://crates.io/crates/ling-graphics) | 3D/4D rendering |
+| `ling-game` | [![](https://img.shields.io/crates/v/ling-game.svg)](https://crates.io/crates/ling-game) | ECS + physics |
+| `ling-crypto` | [![](https://img.shields.io/crates/v/ling-crypto.svg)](https://crates.io/crates/ling-crypto) | Hashing, encryption |
+| `ling-net` | [![](https://img.shields.io/crates/v/ling-net.svg)](https://crates.io/crates/ling-net) | Async networking |
+| `ling-ai` | [![](https://img.shields.io/crates/v/ling-ai.svg)](https://crates.io/crates/ling-ai) | Neural networks / LLM |
+| `ling-py` | [![](https://img.shields.io/crates/v/ling-py.svg)](https://crates.io/crates/ling-py) | Python bindings |
+| `ling-wasm` | [![](https://img.shields.io/crates/v/ling-wasm.svg)](https://crates.io/crates/ling-wasm) | WebGL2 WASM target |
+
+---
+
+## Project Structure
+
+```
 ling/
-├── src/              # Core compiler
-├── crates/
-│   ├── ling-core/    # Data structures & types
-│   ├── ling-lex/     # Lexicon tokenization
-│   ├── ling-polyglot/# Multi-language infra
-│   ├── ling-mir/     # Intermediate representation
-│   ├── ling-ai/      # AI/LLM integration
-│   ├── ling-crypto/  # Cryptographic primitives
-│   └── ling-ui/      # UI/game framework
-├── lexicons/         # Language definitions
-└── examples/         # Sample programs
-
-# Building & Testing
-## Build the workspace
+├── src/                  # Main interpreter + renderer
+│   ├── runtime/mod.rs    # Builtins, eval loop
+│   ├── gfx/vtex.rs       # Vector texture primitives
+│   └── parser/           # Lexer + grammar
+├── crates/               # Library workspace members
+│   ├── ling-audio/       # FFT + synthesis
+│   ├── ling-game/        # ECS, mesh, physics
+│   └── ...
+├── examples/             # .ling demo rooms
+│   ├── ling-dao-chamber.ling   # Chinese shrine
+│   ├── Garden.ling
+│   └── ...
+├── lexicons/             # Language definition files
+│   ├── th.ling           # Thai
+│   ├── zh.ling           # Chinese
+│   └── ...
+└── docs/                 # mdBook documentation
+    ├── book.toml
+    └── src/
+        ├── SUMMARY.md
+        ├── index.md
+        └── reference/
 ```
+
+---
+
+## Building
+
+```bash
+# Debug build
 cargo build
+
+# Release binary
+cargo build --release
+
+# Run a room
+cargo run --bin ling -- run examples/ling-dao-chamber.ling
+
+# Build docs (requires mdbook)
+cargo install mdbook
+mdbook build docs/
+mdbook serve docs/
 ```
 
-# Run the REPL
-```
-cargo run --bin ling-repl
-```
+---
 
-# Run tests
-```
-cargo test
-```
+## Documentation
 
-# Compile a Ling file
-```
-cargo run --bin lingc -- program.ling -o output
-```
+- **Online reference**: [docs.rs/ling-lang](https://docs.rs/ling-lang)
+- **mdBook guide**: [taellinglin.github.io/ling](https://taellinglin.github.io/ling) *(auto-built from `docs/`)*
+- **Builtin reference** (multilingual): [docs/src/reference/builtins.md](docs/src/reference/builtins.md)
 
-## 🗺️ Roadmap 2030
+---
 
--    Core compiler pipeline (lex → ast → semantics → borrowck → mir → codegen)
+## License
 
--    Polyglot lexicons (en/zh/ja/ko/ru/ar/hi/th)
-
--    LLM integration (code completion + semantic suggestions)
-
--    Game engine (bevy + physics + tooling)
-
--    UI framework (xilem + taffy + design system)
-
-## 🤝 Contributing
-
-### We welcome contributions! Typical workflow:
-
-    Fork the repo
-
-    Create a feature branch (git checkout -b feature/amazing)
-
-    Implement + add tests
-
-    Submit a pull request
-
-Check TODO.md for open tasks and good first issues.
-📄 License
-
-Ling Harmony License 1.0 – Free for open-source and personal use. Commercial licensing available upon request.
-🌟 Show Your Support
-
-If you find Ling interesting, star the repository and spread the word!
-
-Built with 🦀 Rust and ❤️ for human languages
+Licensed under either of Apache License 2.0 or MIT license at your option.

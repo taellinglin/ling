@@ -545,6 +545,228 @@ fn draw_bhupura(
     }
 }
 
+// ── draw_spiked_cog ───────────────────────────────────────────────────────────
+/// A mechanical gear with sharp triangular spike teeth.
+/// Draws: outer spike crown, body ring, inner hub ring, spokes.
+///
+/// `n_teeth`  — number of spikes around the crown
+/// `r_body`   — radius of the flat gear body ring
+/// `r_spike`  — radius of spike tips (> r_body)
+/// `r_hub`    — inner hub radius
+/// `n_spokes` — spokes from hub to body (0 = none)
+pub fn draw_spiked_cog(
+    q: &mut DepthQueue, cam: &Camera3D,
+    cx:f32,cy:f32,cz:f32,
+    ux:f32,uy:f32,uz:f32,
+    vx:f32,vy:f32,vz:f32,
+    n_teeth:usize, r_body:f32, r_spike:f32, r_hub:f32, n_spokes:usize,
+    fr:f32, hue:f32,
+) {
+    let rot   = fr * 0.007;
+    let arc   = TAU / n_teeth as f32;
+    let half  = arc * 0.38; // base half-width of each tooth
+
+    let c_body  = cycle(fr * 0.018 + hue);
+    let c_spike = cycle(fr * 0.018 + hue + 1.05);
+    let c_hub   = cycle(fr * 0.018 + hue + 2.10);
+
+    // Spike teeth: triangles from body ring to spike tip
+    for i in 0..n_teeth {
+        let a_mid = rot + i as f32 * arc;
+        let a_l   = a_mid - half;
+        let a_r   = a_mid + half;
+
+        // Base-left → tip
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a_l.cos()*r_body, a_l.sin()*r_body);
+        let (tx,ty,tz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a_mid.cos()*r_spike, a_mid.sin()*r_spike);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a_r.cos()*r_body, a_r.sin()*r_body);
+        push_seg(q, cam, c_spike, ax,ay,az, tx,ty,tz);
+        push_seg(q, cam, c_spike, tx,ty,tz, bx,by,bz);
+        // Base between teeth (body ring arc segment)
+        push_seg(q, cam, c_body, bx,by,bz, ax,ay,az);
+    }
+
+    // Inner body ring (smooth polygon)
+    let sides_body = (n_teeth * 3).max(24);
+    for i in 0..sides_body {
+        let a0 = rot + i     as f32 * TAU / sides_body as f32;
+        let a1 = rot + (i+1) as f32 * TAU / sides_body as f32;
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a0.cos()*r_body*0.72, a0.sin()*r_body*0.72);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a1.cos()*r_body*0.72, a1.sin()*r_body*0.72);
+        push_seg(q, cam, c_body, ax,ay,az, bx,by,bz);
+    }
+
+    // Hub ring
+    let sides_hub = 16usize;
+    for i in 0..sides_hub {
+        let a0 = rot + i     as f32 * TAU / sides_hub as f32;
+        let a1 = rot + (i+1) as f32 * TAU / sides_hub as f32;
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a0.cos()*r_hub, a0.sin()*r_hub);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a1.cos()*r_hub, a1.sin()*r_hub);
+        push_seg(q, cam, c_hub, ax,ay,az, bx,by,bz);
+    }
+
+    // Spokes
+    for i in 0..n_spokes {
+        let a = rot + i as f32 * TAU / n_spokes as f32;
+        let c = cycle(fr * 0.018 + hue + i as f32 * (TAU / n_spokes as f32));
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a.cos()*r_hub, a.sin()*r_hub);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, a.cos()*r_body*0.70, a.sin()*r_body*0.70);
+        push_seg(q, cam, c, ax,ay,az, bx,by,bz);
+    }
+}
+
+// ── draw_torii ────────────────────────────────────────────────────────────────
+/// A Japanese torii gate silhouette drawn on a plane (U=right, V=up).
+/// `width` = total gate width, `height` = pillar height.
+/// Draws two pillars, a straight nuki crossbar, and a curved kasagi (top beam).
+pub fn draw_torii(
+    q: &mut DepthQueue, cam: &Camera3D,
+    cx:f32,cy:f32,cz:f32,
+    ux:f32,uy:f32,uz:f32,
+    vx:f32,vy:f32,vz:f32,
+    width:f32, height:f32,
+    fr:f32, hue:f32,
+) {
+    let hw  = width  * 0.5;
+    let hh  = height * 0.5;
+    let rot = fr * 0.0003; // very slow drift
+    let overhang = width * 0.14; // kasagi extends beyond pillars
+    let nuki_v   = hh * 0.55;   // nuki crossbar height (55% up)
+
+    let c0 = cycle(fr * 0.012 + hue);
+    let c1 = cycle(fr * 0.012 + hue + 1.2);
+    let c2 = cycle(fr * 0.012 + hue + 2.4);
+
+    // Left pillar
+    {
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - hw, -hh);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - hw,  hh);
+        push_seg(q, cam, c0, ax,ay,az, bx,by,bz);
+    }
+    // Right pillar
+    {
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + hw, -hh);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + hw,  hh);
+        push_seg(q, cam, c0, ax,ay,az, bx,by,bz);
+    }
+
+    // Nuki — straight crossbar at 55% height
+    {
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - hw, nuki_v);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + hw, nuki_v);
+        push_seg(q, cam, c1, ax,ay,az, bx,by,bz);
+    }
+
+    // Kasagi — curved top beam (arc approximated as polyline)
+    let n_seg = 20usize;
+    let kasagi_v = hh + height * 0.06; // slightly above pillar tops
+    let sag      = height * 0.04;      // upward curve at ends
+    let mut prev: Option<(f32,f32,f32)> = None;
+    for i in 0..=n_seg {
+        let t  = i as f32 / n_seg as f32;
+        let u  = rot + (t - 0.5) * (width + overhang * 2.0);
+        // Parabolic uplift at both ends
+        let up = sag * (1.0 - 4.0 * (t - 0.5) * (t - 0.5));
+        let v  = kasagi_v + up;
+        let (wx,wy,wz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, u, v);
+        let color = cycle(fr * 0.012 + hue + 2.4 + t * 0.8);
+        if let Some((px,py,pz)) = prev {
+            push_seg(q, cam, color, px,py,pz, wx,wy,wz);
+        }
+        prev = Some((wx,wy,wz));
+    }
+
+    // Kasagi bottom edge (straight)
+    {
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - hw - overhang, kasagi_v - height * 0.05);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + hw + overhang, kasagi_v - height * 0.05);
+        push_seg(q, cam, c2, ax,ay,az, bx,by,bz);
+    }
+
+    // Shimagi (rectangular beam between kasagi and nuki)
+    {
+        let sv = hh + height * 0.01;
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - hw, sv);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + hw, sv);
+        push_seg(q, cam, c1, ax,ay,az, bx,by,bz);
+    }
+}
+
+// ── draw_pagoda ───────────────────────────────────────────────────────────────
+/// Multi-tiered pagoda silhouette drawn on a plane (U=right, V=up).
+/// Each tier is narrower than the one below. Eaves overhang at each tier top.
+///
+/// `n_tiers`  — number of storeys (3–7)
+/// `base_w`   — half-width of the bottom tier
+/// `tier_h`   — height of each tier
+/// `taper`    — width reduction factor per tier (0.65–0.80)
+/// `eave_out` — eave overhang as fraction of tier half-width (0.2–0.4)
+pub fn draw_pagoda(
+    q: &mut DepthQueue, cam: &Camera3D,
+    cx:f32,cy:f32,cz:f32,
+    ux:f32,uy:f32,uz:f32,
+    vx:f32,vy:f32,vz:f32,
+    n_tiers:usize, base_w:f32, tier_h:f32, taper:f32, eave_out:f32,
+    fr:f32, hue:f32,
+) {
+    let mut w    = base_w;
+    let mut v0   = -(n_tiers as f32 * tier_h * 0.5); // bottom of pagoda
+    let rot      = fr * 0.0002;
+
+    for tier in 0..n_tiers {
+        let tf   = tier as f32;
+        let v1   = v0 + tier_h;                   // top of this tier
+        let eave = w * eave_out;
+        let c_wall = cycle(fr * 0.010 + hue + tf * 0.62);
+        let c_eave = cycle(fr * 0.010 + hue + tf * 0.62 + 1.8);
+
+        // Left wall
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - w, v0);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - w, v1);
+        push_seg(q, cam, c_wall, ax,ay,az, bx,by,bz);
+        // Right wall
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + w, v0);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + w, v1);
+        push_seg(q, cam, c_wall, ax,ay,az, bx,by,bz);
+        // Floor of this tier
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - w, v0);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + w, v0);
+        push_seg(q, cam, c_wall, ax,ay,az, bx,by,bz);
+
+        // Eave: slightly wider than tier, with upturned corners
+        let e_y   = v1 + tier_h * 0.08;  // eave sits above tier top
+        let e_tip = e_y + tier_h * 0.06; // upturned corner lift
+        let ew    = w + eave;
+
+        // Left eave: left tip → centre
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - ew, e_tip);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot,      e_y);
+        push_seg(q, cam, c_eave, ax,ay,az, bx,by,bz);
+        // Right eave: centre → right tip
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot,      e_y);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + ew, e_tip);
+        push_seg(q, cam, c_eave, ax,ay,az, bx,by,bz);
+        // Eave soffit (underside, horizontal)
+        let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - ew, e_y - tier_h * 0.03);
+        let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + ew, e_y - tier_h * 0.03);
+        push_seg(q, cam, c_eave, ax,ay,az, bx,by,bz);
+
+        v0  = v1;
+        w  *= taper;
+    }
+
+    // Finial spire above the top tier
+    let spire_h = tier_h * 1.4;
+    let c_spire = cycle(fr * 0.010 + hue + 4.5);
+    let (ax,ay,az) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot - w, v0);
+    let (bx,by,bz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot + w, v0);
+    let (sx,sy,sz) = p2w(cx,cy,cz, ux,uy,uz, vx,vy,vz, rot,      v0 + spire_h);
+    push_seg(q, cam, c_spire, ax,ay,az, sx,sy,sz);
+    push_seg(q, cam, c_spire, sx,sy,sz, bx,by,bz);
+    push_seg(q, cam, c_spire, ax,ay,az, bx,by,bz);
+}
+
 // ── Thai letter glyph table ───────────────────────────────────────────────────
 // 8 simplified Thai-inspired stroke shapes.
 // Coordinates are in [-0.45, 0.45] cell-space (u=right, v=up).

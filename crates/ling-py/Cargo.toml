@@ -17,6 +17,6 @@ ling-physics = { path = "../ling-physics", version = "2030.0.0" }
 glam         = "0.28"
 
 # Async WebSocket for netplay
-tokio             = { version = "1", features = ["rt", "time", "net", "sync"] }
+tokio             = { version = "1", features = ["rt", "time", "net", "sync", "macros"] }
 tokio-tungstenite = { version = "0.21" }
 futures-util      = "0.3"

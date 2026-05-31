@@ -176,6 +176,10 @@ pub struct Interpreter {
     modules:   HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
     svg:       RefCell<Option<SvgWriter>>,
+    /// Directory of the primary source file, for relative `use` resolution.
+    pub source_dir: Option<std::path::PathBuf>,
+    /// Files already loaded — prevents circular imports.
+    loaded_files: std::collections::HashSet<String>,
     /// Optional audio engine — `None` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
     audio:     Option<AudioEngine>,
@@ -196,6 +200,8 @@ impl Interpreter {
             modules:   HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
             svg:       RefCell::new(None),
+            source_dir: None,
+            loaded_files: std::collections::HashSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
             audio,
             #[cfg(not(target_arch = "wasm32"))]
@@ -256,7 +262,70 @@ impl Interpreter {
                 }
             }
             Item::TypeAlias(_, _) => {}
+            Item::Use { path, alias } => {
+                self.load_module(path, alias.as_deref(), ns)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Resolve `path` relative to `source_dir`, load and parse it, then
+    /// register all its definitions.  If `alias` is given, every name is
+    /// prefixed with `<parent_ns>::<alias>`.  Circular imports are silently
+    /// skipped.
+    fn load_module(&mut self, path: &str, alias: Option<&str>, parent_ns: &str) -> Result<(), String> {
+        // Build candidate file paths (.ling extension variants)
+        let base_dir = self.source_dir.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let raw = std::path::Path::new(path);
+        let candidates: Vec<std::path::PathBuf> = vec![
+            base_dir.join(format!("{}.ling", path)),
+            base_dir.join(format!("{}.灵", path)),
+            base_dir.join(format!("{}.령", path)),
+            base_dir.join(format!("{}.霊", path)),
+            base_dir.join(format!("{}.ลิง", path)),
+            // exact path if already has extension
+            base_dir.join(raw),
+            std::path::PathBuf::from(format!("{}.ling", path)),
+            std::path::PathBuf::from(path),
+        ];
+
+        let resolved = candidates.into_iter().find(|p| p.exists())
+            .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
+
+        let canonical = resolved.canonicalize()
+            .unwrap_or_else(|_| resolved.clone())
+            .to_string_lossy()
+            .to_string();
+
+        // Skip if already loaded (circular import guard)
+        if self.loaded_files.contains(&canonical) {
+            return Ok(());
+        }
+        self.loaded_files.insert(canonical.clone());
+
+        let source = std::fs::read_to_string(&resolved)
+            .map_err(|e| format!("use: failed to read '{path}': {e}"))?;
+
+        // Save/restore source_dir for nested relative imports
+        let prev_dir = self.source_dir.clone();
+        self.source_dir = resolved.parent().map(|p| p.to_path_buf());
+
+        let program = crate::parser::parse(&source)
+            .map_err(|e| format!("use: parse error in '{path}': {e}"))?;
+
+        // Compute target namespace: parent_ns :: alias (or just alias, or just parent_ns)
+        let target_ns = match (parent_ns.is_empty(), alias) {
+            (_, Some(a)) if !parent_ns.is_empty() => format!("{parent_ns}::{a}"),
+            (_, Some(a)) => a.to_string(),
+            (false, None) => parent_ns.to_string(),
+            (true,  None) => String::new(),
+        };
+
+        for item in &program.items {
+            self.register_item(&target_ns, item)?;
+        }
+
+        self.source_dir = prev_dir;
         Ok(())
     }
 
@@ -1228,7 +1297,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // vtex_grid(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cw,ch, fr,hue)
-            "vtex_grid" | "ลายตาราง" => {
+            "vtex_grid" | "ลายตาราง" | "纹格" | "格子模様" | "격자무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1242,7 +1311,7 @@ impl Interpreter {
             }
 
             // vtex_rings(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_rings,n_sides, max_r,twist, fr,hue)
-            "vtex_rings" | "ลายวงซ้อน" => {
+            "vtex_rings" | "ลายวงซ้อน" | "纹环" | "同心円" | "동심원" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1256,7 +1325,7 @@ impl Interpreter {
             }
 
             // vtex_star(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_pts,r_out,r_in, rot_speed, fr,hue)
-            "vtex_star" | "ลายดาว" => {
+            "vtex_star" | "ลายดาว" | "纹星" | "星模様" | "별무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1271,7 +1340,7 @@ impl Interpreter {
             }
 
             // vtex_spiral(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_turns,max_r,steps, fr,hue)
-            "vtex_spiral" | "ลายเกลียว" => {
+            "vtex_spiral" | "ลายเกลียว" | "纹螺" | "螺旋" | "나선" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1285,7 +1354,7 @@ impl Interpreter {
             }
 
             // vtex_flower(cx,cy,cz, ux,uy,uz, vx,vy,vz, radius,n_sides, fr,hue)
-            "vtex_flower" | "ลายดอก" => {
+            "vtex_flower" | "ลายดอก" | "纹花" | "花模様" | "꽃무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1298,7 +1367,7 @@ impl Interpreter {
             }
 
             // vtex_letter_rain(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_cols,n_vis, col_w,row_h, speed, fr,hue)
-            "vtex_letter_rain" | "ลายอักษรไหล" => {
+            "vtex_letter_rain" | "ลายอักษรไหล" | "纹字雨" | "文字雨" | "글자비" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1313,7 +1382,7 @@ impl Interpreter {
             }
 
             // vtex_hyperbolic_uv(cx,cy,cz, ux,uy,uz, vx,vy,vz, max_r,n_circles,n_rays, fr,hue)
-            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" => {
+            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" | "纹曲面" | "双曲線" | "쌍곡선" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1327,7 +1396,7 @@ impl Interpreter {
             }
 
             // vtex_halftone(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell_w,cell_h, density, fr,hue)
-            "vtex_halftone" | "ลายจุด" => {
+            "vtex_halftone" | "ลายจุด" | "纹半调" | "網点模様" | "망점" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1342,7 +1411,7 @@ impl Interpreter {
             }
 
             // vtex_tessellated(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell, amplitude,freq, fr,hue)
-            "vtex_tessellated" | "ลายตาข่าย" => {
+            "vtex_tessellated" | "ลายตาข่าย" | "纹镶嵌" | "網目模様" | "격자망" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1357,7 +1426,7 @@ impl Interpreter {
             }
 
             // vtex_lotus(cx,cy,cz, ux,uy,uz, vx,vy,vz, r_inner,r_outer,n_petals, fr,hue)
-            "vtex_lotus" | "ลายดอกบัว" => {
+            "vtex_lotus" | "ลายดอกบัว" | "纹莲" | "蓮模様" | "연꽃무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1371,7 +1440,7 @@ impl Interpreter {
             }
 
             // vtex_chakra(cx,cy,cz, ux,uy,uz, vx,vy,vz, r,n_spokes, fr,hue)
-            "vtex_chakra" | "ลายจักร" => {
+            "vtex_chakra" | "ลายจักร" | "纹轮" | "輪模様" | "바퀴무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1384,7 +1453,7 @@ impl Interpreter {
             }
 
             // vtex_yantra(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_layers,max_r, fr,hue)
-            "vtex_yantra" | "ลายยันต์" => {
+            "vtex_yantra" | "ลายยันต์" | "纹咒" | "護符模様" | "부적무늬" => {
                 let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
                 let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
                 let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
@@ -1393,6 +1462,49 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
                 crate::gfx::vtex::draw_yantra(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nl,mr, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_spiked_cog(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_teeth,r_body,r_spike,r_hub,n_spokes, fr,hue)
+            "vtex_spiked_cog" | "ฟันเฟืองหนาม" | "纹棘轮" | "歯車模様" | "톱니바퀴" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nt=self.arg_num(&args,9,12.)?as usize; let rb=self.arg_num(&args,10,1.)?as f32;
+                let rs=self.arg_num(&args,11,1.3)?as f32; let rh=self.arg_num(&args,12,0.2)?as f32;
+                let ns=self.arg_num(&args,13,6.)?as usize;
+                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_spiked_cog(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,rb,rs,rh,ns, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_torii(cx,cy,cz, ux,uy,uz, vx,vy,vz, width,height, fr,hue)
+            "vtex_torii" | "ประตูโทริอิ" | "纹鸟居" | "鳥居" | "도리이" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let w=self.arg_num(&args,9,4.)?as f32; let h=self.arg_num(&args,10,5.)?as f32;
+                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_torii(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, w,h, fr,hue);
+                return Ok(Value::Unit);
+            }
+
+            // vtex_pagoda(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_tiers,base_w,tier_h,taper,eave_out, fr,hue)
+            "vtex_pagoda" | "เจดีย์" | "纹塔" | "塔" | "탑" => {
+                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
+                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
+                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
+                let nt=self.arg_num(&args,9,5.)?as usize; let bw=self.arg_num(&args,10,2.)?as f32;
+                let th=self.arg_num(&args,11,1.)?as f32; let tp=self.arg_num(&args,12,0.72)?as f32;
+                let eo=self.arg_num(&args,13,0.28)?as f32;
+                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let cam = gfx.camera.clone();
+                crate::gfx::vtex::draw_pagoda(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,bw,th,tp,eo, fr,hue);
                 return Ok(Value::Unit);
             }
 

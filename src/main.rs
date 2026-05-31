@@ -64,7 +64,8 @@ fn run_file(path: &str) {
     if lang != "English" {
         eprintln!("[detected language: {}]", lang);
     }
-    if let Err(e) = ling::run(&source) {
+    let src_dir = resolved.parent().map(|p| p.to_path_buf());
+    if let Err(e) = ling::run_file(&source, src_dir) {
         eprintln!("{e}");
         std::process::exit(1);
     }

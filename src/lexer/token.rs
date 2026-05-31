@@ -3,6 +3,8 @@
 pub enum Token {
     // Declaration keywords
     Bind, Do, Fn, Mod, Type,
+    // Module imports
+    Use,
 
     // Control flow
     If, Else, While, For, In, Match, Return,

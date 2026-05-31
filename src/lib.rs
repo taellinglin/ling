@@ -27,9 +27,15 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Run a Ling source string through the interpreter.
 /// Lexes → parses → executes the `start` binding.
 pub fn run(source: &str) -> Result<(), String> {
+    run_file(source, None)
+}
+
+/// Run with an optional source directory for relative `use` imports.
+pub fn run_file(source: &str, source_dir: Option<std::path::PathBuf>) -> Result<(), String> {
     let program = parser::parse(source)
         .map_err(|e| format!("parse error: {e}"))?;
     let mut interp = runtime::Interpreter::new();
+    interp.source_dir = source_dir;
     interp.run_program(&program)
         .map_err(|e| format!("runtime error: {e}"))
 }

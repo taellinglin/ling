@@ -122,6 +122,8 @@ impl<'a> Lexer<'a> {
             "fn"     | "函"          => Token::Fn,
             "mod"    | "核"          => Token::Mod,
             "type"   | "符"          => Token::Type,
+            // Module imports: use / 载 (zh) / 使う (ja) / 사용 (ko) / ใช้ / นำเข้า (th)
+            "use" | "载" | "引" | "사용" | "使う" | "ใช้" | "นำเข้า" | "importar" | "nutzen" | "utiliser" => Token::Use,
             "if"     | "若" | "如"   => Token::If,
             "else"   | "否则" | "否" => Token::Else,
             "while"  | "循" | "当"   => Token::While,

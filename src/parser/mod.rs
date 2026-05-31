@@ -116,6 +116,22 @@ impl Parser {
                 let ty = self.parse_type_str();
                 Ok(Item::TypeAlias(name, ty))
             }
+            Token::Use => {
+                self.advance();
+                // Expect a string path: use "path/to/module"
+                let path = match self.advance() {
+                    Token::String(s) => s,
+                    tok => return Err(format!("use: expected string path, got {:?}", tok)),
+                };
+                // Optional `as name` alias
+                let alias = if matches!(self.peek(), Token::As) {
+                    self.advance();
+                    Some(self.parse_name()?)
+                } else {
+                    None
+                };
+                Ok(Item::Use { path, alias })
+            }
             tok => Err(format!("unexpected token at top level: {:?}", tok)),
         }
     }
@@ -632,6 +648,7 @@ fn token_to_name(tok: &Token) -> Option<&'static str> {
         Token::Maybe  => Some("maybe"),  Token::Pure   => Some("pure"),
         Token::Spawn  => Some("spawn"),  Token::Ok     => Some("ok"),
         Token::Bad    => Some("bad"),    Token::None   => Some("none"),
+        Token::Use    => Some("use"),
         _ => None,
     }
 }

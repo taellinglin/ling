@@ -1,0 +1,21 @@
+/* Ling Language Reference — custom styles */
+:root {
+    --sidebar-width: 280px;
+}
+
+.content main {
+    max-width: 860px;
+}
+
+code {
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+}
+
+table {
+    width: 100%;
+    margin-bottom: 1.2em;
+}
+
+th {
+    background: var(--sidebar-bg);
+}
