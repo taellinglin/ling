@@ -6,7 +6,7 @@ use crate::gfx::{GfxState, Light};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gfx::raster::{fill_triangle, draw_line};
 #[cfg(not(target_arch = "wasm32"))]
-use ling_audio::{AudioEngine, ToneParams};
+use ling_audio::{AudioEngine, ToneParams, FftAnalyzer};
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 
@@ -126,6 +126,48 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
+// ─── Procedural texture helpers ───────────────────────────────────────────────
+
+fn tex_hash(x: i32, y: i32, seed: u32) -> f32 {
+    let mut h = (x as u32).wrapping_add((y as u32).wrapping_mul(2654435769)).wrapping_add(seed.wrapping_mul(1234567891));
+    h ^= h >> 16; h = h.wrapping_mul(0x45d9f3b); h ^= h >> 16;
+    h as f32 / u32::MAX as f32
+}
+
+fn tex_vnoise(x: f32, y: f32, seed: u32) -> f32 {
+    let xi = x.floor() as i32; let yi = y.floor() as i32;
+    let sm = |t: f32| t * t * (3.0 - 2.0 * t);
+    let xf = sm(x - xi as f32); let yf = sm(y - yi as f32);
+    let a = tex_hash(xi, yi, seed); let b = tex_hash(xi+1, yi, seed);
+    let c = tex_hash(xi, yi+1, seed); let d = tex_hash(xi+1, yi+1, seed);
+    a + (b-a)*xf + (c-a)*yf + (a-b-c+d)*xf*yf
+}
+
+fn tex_fbm(x: f32, y: f32, octaves: u32, seed: u32) -> f32 {
+    let mut v = 0.0f32; let mut amp = 0.5f32; let mut f = 1.0f32;
+    for i in 0..octaves {
+        v += tex_vnoise(x * f, y * f, seed.wrapping_add(i * 7919)) * amp;
+        amp *= 0.5; f *= 2.0;
+    }
+    v
+}
+
+fn tex_palette(name: &str, t: f32) -> [f32; 3] {
+    let (a, b, c, d): ([f32;3],[f32;3],[f32;3],[f32;3]) = match name {
+        "fire"        => ([0.8,0.4,0.1],[0.7,0.3,0.1],[1.0,0.5,0.3],[0.0,0.5,0.8]),
+        "ocean"       => ([0.1,0.4,0.7],[0.3,0.3,0.4],[0.8,1.0,0.5],[0.3,0.0,0.6]),
+        "psychedelic" => ([0.5,0.5,0.5],[0.8,0.8,0.8],[1.0,1.3,0.7],[0.0,0.15,0.3]),
+        "neon"        => ([0.5,0.5,0.5],[0.5,0.5,0.5],[2.0,1.0,0.0],[0.5,0.2,0.25]),
+        "forest"      => ([0.3,0.5,0.2],[0.2,0.3,0.1],[1.0,0.5,0.8],[0.1,0.3,0.6]),
+        _             => ([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,1.0],[0.0,0.333,0.667]),
+    };
+    [0,1,2].map(|i| (a[i] + b[i] * (std::f32::consts::TAU * (c[i] * t + d[i])).cos()).clamp(0.0, 1.0))
+}
+
+fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
+    ((r * 255.0) as u32) << 16 | ((g * 255.0) as u32) << 8 | (b * 255.0) as u32
+}
+
 // ─── Interpreter ─────────────────────────────────────────────────────────────
 
 pub struct Interpreter {
@@ -137,6 +179,9 @@ pub struct Interpreter {
     /// Optional audio engine — `None` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
     audio:     Option<AudioEngine>,
+    #[cfg(not(target_arch = "wasm32"))]
+    fft:       RefCell<FftAnalyzer>,
+    fft_bands_cache: RefCell<Vec<f32>>,
 }
 
 impl Interpreter {
@@ -153,6 +198,9 @@ impl Interpreter {
             svg:       RefCell::new(None),
             #[cfg(not(target_arch = "wasm32"))]
             audio,
+            #[cfg(not(target_arch = "wasm32"))]
+            fft: RefCell::new(FftAnalyzer::new(2048, 44100)),
+            fft_bands_cache: RefCell::new(vec![]),
         }
     }
 
@@ -1728,6 +1776,297 @@ impl Interpreter {
                 return Ok(Value::Str(hsl_to_hex(h, s, l)));
             }
 
+            // ══════════════════════════════════════════════════════════════════
+            // FFT / AUDIO ANALYSIS BUILTINS  (native only)
+            // ══════════════════════════════════════════════════════════════════
+
+            // fft_push(samples_list) — feed raw audio samples and run FFT
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_push" | "วิเคราะห์เสียง" => {
+                if let Some(Value::List(v)) = args.first() {
+                    let samples: Vec<f32> = v.iter()
+                        .filter_map(|x| if let Value::Number(n) = x { Some(*n as f32) } else { None })
+                        .collect();
+                    self.fft.borrow_mut().push_samples(&samples);
+                }
+                return Ok(Value::Unit);
+            }
+
+            // fft_bands(n) → list of n log-spaced magnitude bands (0..1)
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_bands" | "แถบความถี่" => {
+                let n = self.arg_num(&args, 0, 32.0)? as usize;
+                let bands = self.fft.borrow().freq_bands(n);
+                *self.fft_bands_cache.borrow_mut() = bands.clone();
+                return Ok(Value::List(bands.into_iter().map(|v| Value::Number(v as f64)).collect()));
+            }
+
+            // fft_beat() → bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_beat" | "จังหวะเสียง" => {
+                return Ok(Value::Bool(self.fft.borrow().is_beat()));
+            }
+
+            // fft_beat_ratio() → f64  (1.0 = at threshold, >1 = strong beat)
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_beat_ratio" | "อัตราจังหวะ" => {
+                return Ok(Value::Number(self.fft.borrow().beat_ratio() as f64));
+            }
+
+            // fft_rms() → f64
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_rms" | "ระดับRMS" => {
+                return Ok(Value::Number(self.fft.borrow().rms() as f64));
+            }
+
+            // fft_dominant_freq() → f64  in Hz
+            #[cfg(not(target_arch = "wasm32"))]
+            "fft_dominant_freq" | "ความถี่หลัก" => {
+                return Ok(Value::Number(self.fft.borrow().dominant_freq() as f64));
+            }
+
+            // ── wasm32 stubs: fft builtins are no-ops on web ───────────────
+            #[cfg(target_arch = "wasm32")]
+            "fft_push" | "วิเคราะห์เสียง" => { return Ok(Value::Unit); }
+            #[cfg(target_arch = "wasm32")]
+            "fft_bands" | "แถบความถี่" => {
+                let n = self.arg_num(&args, 0, 32.0)? as usize;
+                return Ok(Value::List(vec![Value::Number(0.0); n]));
+            }
+            #[cfg(target_arch = "wasm32")]
+            "fft_beat" | "จังหวะเสียง" => { return Ok(Value::Bool(false)); }
+            #[cfg(target_arch = "wasm32")]
+            "fft_beat_ratio" | "อัตราจังหวะ" => { return Ok(Value::Number(1.0)); }
+            #[cfg(target_arch = "wasm32")]
+            "fft_rms" | "ระดับRMS" => { return Ok(Value::Number(0.0)); }
+            #[cfg(target_arch = "wasm32")]
+            "fft_dominant_freq" | "ความถี่หลัก" => { return Ok(Value::Number(0.0)); }
+
+            // ══════════════════════════════════════════════════════════════════
+            // PROCEDURAL TEXTURE BLIT BUILTINS  (screen-space)
+            // All: name(dst_x, dst_y, width, height, ...params, palette)
+            // palette: "rainbow" | "fire" | "ocean" | "psychedelic" | "neon" | "forest"
+            // ══════════════════════════════════════════════════════════════════
+
+            // tex_checkerboard(x, y, w, h, tiles, r1,g1,b1, r2,g2,b2)
+            "tex_checkerboard" | "ลายตารางหมากรุก" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let tiles = self.arg_num(&args, 4, 8.0)? as u32;
+                let (r1,g1,b1) = (self.arg_num(&args,5,255.)? as u32, self.arg_num(&args,6,255.)? as u32, self.arg_num(&args,7,255.)? as u32);
+                let (r2,g2,b2) = (self.arg_num(&args,8,0.)? as u32,   self.arg_num(&args,9,0.)? as u32,   self.arg_num(&args,10,0.)? as u32);
+                let c1 = (r1<<16)|(g1<<8)|b1; let c2 = (r2<<16)|(g2<<8)|b2;
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let cx = col as u32 * tiles / tw as u32;
+                    let cy = row as u32 * tiles / th as u32;
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = if (cx+cy)%2==0 { c1 } else { c2 }; }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_gradient(x, y, w, h, angle_deg, r1,g1,b1, r2,g2,b2)
+            "tex_gradient" | "ลายไล่สี" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let angle = self.arg_num(&args, 4, 0.0)? as f32;
+                let (r1,g1,b1) = (self.arg_num(&args,5,0.)? as f32/255., self.arg_num(&args,6,0.)? as f32/255., self.arg_num(&args,7,0.)? as f32/255.);
+                let (r2,g2,b2) = (self.arg_num(&args,8,255.)? as f32/255., self.arg_num(&args,9,255.)? as f32/255., self.arg_num(&args,10,255.)? as f32/255.);
+                let (ca, sa) = (angle.to_radians().cos(), angle.to_radians().sin());
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let nx = col as f32/tw as f32 - 0.5; let ny = row as f32/th as f32 - 0.5;
+                    let t = ((nx*ca + ny*sa + 0.707)/1.414).clamp(0.,1.);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r1+(r2-r1)*t, g1+(g2-g1)*t, b1+(b2-b1)*t); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_noise(x, y, w, h, scale, octaves, seed, palette)
+            "tex_noise" | "ลายนอยส์" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let scale   = self.arg_num(&args, 4, 4.0)? as f32;
+                let octaves = self.arg_num(&args, 5, 4.0)? as u32;
+                let seed    = self.arg_num(&args, 6, 0.0)? as u32;
+                let palette = self.arg_str(&args, 7, "rainbow");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let v = tex_fbm(col as f32*scale/tw as f32, row as f32*scale/th as f32, octaves, seed);
+                    let [r,g,b] = tex_palette(&palette, v);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r, g, b); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_freq_map(x, y, w, h, time, speed, palette)
+            // Uses bands written by the last fft_bands() call.
+            "tex_freq_map" | "ลายความถี่" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let time    = self.arg_num(&args, 4, 0.0)? as f32;
+                let speed   = self.arg_num(&args, 5, 0.3)? as f32;
+                let palette = self.arg_str(&args, 6, "rainbow");
+                let bands: Vec<f32> = {
+                    let c = self.fft_bands_cache.borrow();
+                    if c.is_empty() { vec![0.0; 32] } else { c.clone() }
+                };
+                let n = bands.len().max(1);
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let band_idx = (col * n / tw.max(1)).min(n-1);
+                    let mag = bands[band_idx].clamp(0.,1.);
+                    let fill_y = (mag * th as f32) as usize;
+                    if row >= th.saturating_sub(fill_y) {
+                        let t = (col as f32/tw as f32 + time*speed) % 1.0;
+                        let [r,g,b] = tex_palette(&palette, t);
+                        let bright = mag * (1.0 - row as f32/th as f32 * 0.5);
+                        let (dx, dy) = (tx+col, ty+row);
+                        if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r*bright, g*bright, b*bright); }
+                    }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_spiral(x, y, w, h, freq, bands, time, palette)
+            "tex_spiral" | "ลายเกลียวหมุน" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let freq    = self.arg_num(&args, 4, 5.0)? as f32;
+                let n_bands = self.arg_num(&args, 5, 8.0)? as f32;
+                let time    = self.arg_num(&args, 6, 0.0)? as f32;
+                let palette = self.arg_str(&args, 7, "rainbow");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let nx = col as f32/tw as f32 - 0.5; let ny = row as f32/th as f32 - 0.5;
+                    let r  = (nx*nx + ny*ny).sqrt();
+                    let theta = ny.atan2(nx);
+                    let t = ((r*freq - theta/std::f32::consts::TAU + time*0.5) * n_bands % 1.0).abs();
+                    let [cr,cg,cb] = tex_palette(&palette, t);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_ripple(x, y, w, h, freq, cx, cy, time, palette)
+            "tex_ripple" | "ลายระลอก" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let freq    = self.arg_num(&args, 4, 10.0)? as f32;
+                let rcx     = self.arg_num(&args, 5, 0.5)? as f32;
+                let rcy     = self.arg_num(&args, 6, 0.5)? as f32;
+                let time    = self.arg_num(&args, 7, 0.0)? as f32;
+                let palette = self.arg_str(&args, 8, "ocean");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let nx = col as f32/tw as f32 - rcx; let ny = row as f32/th as f32 - rcy;
+                    let r = (nx*nx + ny*ny).sqrt();
+                    let t = ((r*freq - time) % 1.0).abs();
+                    let [cr,cg,cb] = tex_palette(&palette, t);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_mandelbrot(x, y, w, h, zoom, cx, cy, max_iter, palette)
+            "tex_mandelbrot" | "ลายแมนเดลบรอต" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let zoom     = self.arg_num(&args, 4, 1.0)?;
+                let mcx      = self.arg_num(&args, 5, -0.5)?;
+                let mcy      = self.arg_num(&args, 6, 0.0)?;
+                let max_iter = self.arg_num(&args, 7, 64.0)? as u32;
+                let palette  = self.arg_str(&args, 8, "psychedelic");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let zx0 = (col as f64/tw as f64 - 0.5)/zoom + mcx;
+                    let zy0 = (row as f64/th as f64 - 0.5)/zoom + mcy;
+                    let mut x = 0.0f64; let mut y = 0.0f64; let mut i = 0u32;
+                    while i < max_iter && x*x+y*y < 4.0 { let t=x*x-y*y+zx0; y=2.0*x*y+zy0; x=t; i+=1; }
+                    let t = if i==max_iter { 0.0f32 } else {
+                        (i as f32 - (x as f32*x as f32+y as f32*y as f32).ln().ln()/2.0f32.ln()) / max_iter as f32
+                    };
+                    let [cr,cg,cb] = tex_palette(&palette, t.clamp(0.,1.));
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_julia(x, y, w, h, c_re, c_im, max_iter, palette)
+            "tex_julia" | "ลายจูเลีย" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let c_re     = self.arg_num(&args, 4, -0.7)?;
+                let c_im     = self.arg_num(&args, 5, 0.27)?;
+                let max_iter = self.arg_num(&args, 6, 64.0)? as u32;
+                let palette  = self.arg_str(&args, 7, "neon");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let mut zx = (col as f64/tw as f64 - 0.5)*3.5;
+                    let mut zy = (row as f64/th as f64 - 0.5)*3.5;
+                    let mut i = 0u32;
+                    while i < max_iter && zx*zx+zy*zy < 4.0 { let t=zx*zx-zy*zy+c_re; zy=2.0*zx*zy+c_im; zx=t; i+=1; }
+                    let t = i as f32 / max_iter as f32;
+                    let [cr,cg,cb] = tex_palette(&palette, t);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_voronoi(x, y, w, h, cells, seed, palette)
+            "tex_voronoi" | "ลายโวโรนอย" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let cells   = self.arg_num(&args, 4, 16.0)? as u32;
+                let seed    = self.arg_num(&args, 5, 42.0)? as u32;
+                let palette = self.arg_str(&args, 6, "rainbow");
+                let pts: Vec<[f32;2]> = (0..cells).map(|i| [tex_hash(i as i32,0,seed), tex_hash(i as i32,1,seed+999)]).collect();
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let (fx, fy) = (col as f32/tw as f32, row as f32/th as f32);
+                    let (min_d, nearest) = pts.iter().enumerate().fold((f32::MAX,0usize), |(d,idx),(i,&[cx,cy])| {
+                        let dd = (fx-cx).powi(2)+(fy-cy).powi(2);
+                        if dd < d { (dd,i) } else { (d,idx) }
+                    });
+                    let t = (nearest as f32/cells as f32 + min_d*4.0) % 1.0;
+                    let [cr,cg,cb] = tex_palette(&palette, t);
+                    let (dx, dy) = (tx+col, ty+row);
+                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                }}
+                return Ok(Value::Unit);
+            }
+
+            // tex_halftone(x, y, w, h, dot_size, time, palette)
+            "tex_halftone" | "ลายฮาล์ฟโทน" => {
+                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let dot_size = self.arg_num(&args, 4, 0.05)? as f32;
+                let time     = self.arg_num(&args, 5, 0.0)? as f32;
+                let palette  = self.arg_str(&args, 6, "rainbow");
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                for row in 0..th { for col in 0..tw {
+                    let (fx, fy) = (col as f32/tw as f32, row as f32/th as f32);
+                    let gx = (fx/dot_size).floor(); let gy = (fy/dot_size).floor();
+                    let lx = (fx/dot_size - gx - 0.5)*2.0; let ly = (fy/dot_size - gy - 0.5)*2.0;
+                    let r = (lx*lx + ly*ly).sqrt();
+                    let t = (gx/(1.0/dot_size) + time*0.1) % 1.0;
+                    let a = if r < 0.7 { ((0.7-r)/0.7).clamp(0.,1.) } else { 0.0 };
+                    if a > 0.0 {
+                        let [cr,cg,cb] = tex_palette(&palette, t);
+                        let (dx, dy) = (tx+col, ty+row);
+                        if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                    }
+                }}
+                return Ok(Value::Unit);
+            }
+
             _ => {}
         }
 
@@ -1887,6 +2226,15 @@ impl Interpreter {
 
     fn arg_str(&self, args: &[Value], n: usize, default: &str) -> String {
         args.get(n).map(|v| v.to_string()).unwrap_or_else(|| default.to_string())
+    }
+
+    /// Parse (dst_x, dst_y, width, height) from the first four args of a tex_* builtin.
+    fn tex_rect(&self, args: &[Value]) -> Result<(usize, usize, usize, usize), EvalErr> {
+        let tx = self.arg_num(args, 0, 0.0)? as usize;
+        let ty = self.arg_num(args, 1, 0.0)? as usize;
+        let tw = self.arg_num(args, 2, 256.0)? as usize;
+        let th = self.arg_num(args, 3, 256.0)? as usize;
+        Ok((tx, ty, tw.max(1), th.max(1)))
     }
 
     fn apply_binop(&self, op: &BinOp, l: Value, r: Value) -> EvalResult {

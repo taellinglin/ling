@@ -1,0 +1,693 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 灵道玄境  Líng Dào Xuán Jìng — The Mysterious Realm of the Ling Way
+#
+# Ancient Chinese Religion (道家·佛家·儒家) through the DMT lens of 灵.
+# Every surface fractalises; every shape rotates in Bagua symmetry.
+#
+# ── COSMOLOGY ────────────────────────────────────────────────────────────────
+#   道 Dào       — the unnameable Way; the void-purple background itself
+#   气 Qì        — life-force; the ripple and noise living on every surface
+#   八卦 Bāguà   — eight trigrams govern ALL symmetry:
+#                  乾 Heaven · 坤 Earth · 震 Thunder · 巽 Wind
+#                  坎 Water  · 离 Fire  · 艮 Mountain · 兑 Lake
+#   五行 Wǔxíng  — Five Elements tint the lights:
+#                  木 Wood (jade) · 火 Fire (crimson) · 土 Earth (ochre)
+#                  金 Metal (silver) · 水 Water (blue)
+#   法轮 Fǎlún   — Dharma Turbine: the central engine
+#                  5-layer counter-rotating lotus-gear, with 8 dragon arms
+#
+# ── GEOMETRY INVENTORY ───────────────────────────────────────────────────────
+#   Centre      — 法轮 5-layer counter-rotating engine
+#                  → inner yin-yang seed (opposing rings)
+#                  → 8-spoke dharma-wheel disc (chakra)
+#                  → 16-blade turbine blades (counter-chakra)
+#                  → 12-petal lotus crown
+#                  → outer 64-tooth gear ring (star)
+#                  → 8 dragon-arm spirals at 45° each
+#
+#   八柱 Ring    — 8 lathe-turned turbine pillars at r=5.5, 45° step:
+#                  → 6 lathe rings per pillar (vase profile)
+#                  → gear body (chakra + star teeth)
+#                  → lotus heart + counter-ring
+#                  → ascending dragon spiral
+#                  → flower-petal crown
+#
+#   四仪象 Rack  — 4 diagonal gear mechanisms (NE·NW·SE·SW at r=3.8):
+#                  → 32-blade turbine disc
+#                  → lotus mandala
+#                  → gear-tooth star crown
+#
+#   Floor       — 铜钱 Cash-coin mandala:
+#                  → mandelbrot fractal background (slow zoom)
+#                  → freq-map audio spectrum strip (reactive)
+#                  → 8-layer yantra sacred squares
+#                  → 6-band concentric cash-coin rings
+#                  → 8-petal lotus (full width)
+#                  → Dong Son drum tessellated wave field
+#                  → hyperbolic infinity tiling
+#                  → perspective stone-tile grid
+#                  → halftone dot field
+#
+#   Ceiling     — 天门 Celestial Gate:
+#                  → julia fractal background (cycling parameters)
+#                  → spiral overlay (qi vortex)
+#                  → Poincaré hyperbolic cosmos disc
+#                  → 8-petal heavenly lotus
+#                  → 16-point star (double Bagua)
+#                  → concentric lantern rings
+#                  → 8-spoke chakra disc
+#                  → Flower of Life (24 petals)
+#                  → 6-layer yantra
+#                  → 4 lotus medallions at NESW
+#
+#   Walls (×4)  — 道德经 DDJ character rain + fractal/voronoi backgrounds:
+#                  → noise (walls) / voronoi (side) backgrounds
+#                  → ripple qi-flow
+#                  → character rain
+#                  → lotus + yantra panels
+#                  → dharma chakra medallions (×2 per side wall)
+#                  → freq-map strip (right wall)
+#
+# ── AUDIO  八卦音  Eight-Trigram Pentatonic Circle ─────────────────────────
+#   乾 C5 523.25 Hz  坤 C4 261.63 Hz  震 G4 392.00 Hz  巽 F4 349.23 Hz
+#   坎 D4 293.66 Hz  离 A4 440.00 Hz  艮 E4 329.63 Hz  兑 A3 220.00 Hz
+#   Sub-bass 大地 C2 65.41 Hz  Overtone 天 C6 1046.50 Hz
+#
+# ── FFT SYNTHESIS ─────────────────────────────────────────────────────────────
+#   Synthetic pentatonic waveform pushed each frame → fft_bands_cache
+#   Drives tex_freq_map strips on floor and right wall.
+#
+# ── CAMERA  Lissajous hyperbolic orbit ─────────────────────────────────────
+#   Two incommensurable horizontal speeds + one vertical → spirograph path
+#   Always looks at the 法轮 centre; covers all 8-way views over time.
+#
+# ── FRAMEFADE  Three echo layers ──────────────────────────────────────────
+#   −96fr amber-gold · −48fr jade-teal · −24fr rose
+#   = DMT-style trailing phosphene geometry smear
+#
+# Run:  ling run examples/ling-dao-chamber.ling
+# Quit: Escape or close window
+# ════════════════════════════════════════════════════════════════════════════
+
+令 W    = 10.0      # 半宽   half-width
+令 H    =  5.0      # 半高   half-height
+令 FZ   = 18.0      # 远壁   far-wall z
+令 NZ   =  1.4      # 近壁   near-wall z
+令 PZ   =  9.5      # 法轮轴 dharma-turbine z-centre
+令 PR   =  1.3      # 核心半径 core radius
+令 RNGR =  5.5      # 八柱环半径 eight-pillar ring radius
+令 DNGR =  3.8      # 四仪象半径 four-diagonal gear radius
+令 PI4  =  0.7854   # π/4 = 45°  Bagua angular step
+令 PI   =  3.14159265
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 色彩助手  COLOUR HELPERS
+# ════════════════════════════════════════════════════════════════════════════
+
+函 col(t, p) {
+    สีดินสอ(
+        sin(t + p)         * 127 + 128,
+        sin(t + p + 2.094) * 127 + 128,
+        sin(t + p + 4.189) * 127 + 128
+    )
+}
+
+函 col_dim(t, p, b) {
+    สีดินสอ(
+        (sin(t + p)         * 127 + 128) * b,
+        (sin(t + p + 2.094) * 127 + 128) * b,
+        (sin(t + p + 4.189) * 127 + 128) * b
+    )
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# FFT SYNTHESIS  (virtual pentatonic signal → fft_bands_cache → tex_freq_map)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 update_fft(FR) {
+    令 smp = list_new()
+    令 k = 0
+    循 k < 64 {
+        令 ph = FR * 0.026 + k * 0.019
+        # Simulated pentatonic chord: 宫·商·角·徵·羽 ratios + sub-bass pulse
+        令 s =  sin(ph * 1.000) * 0.18
+             + sin(ph * 1.260) * 0.14
+             + sin(ph * 1.500) * 0.11
+             + sin(ph * 2.000) * 0.09
+             + sin(ph * 2.520) * 0.07
+             + sin(ph * 0.250) * 0.10
+        令 smp = list_push(smp, s)
+        令 k = k + 1
+    }
+    fft_push(smp)
+    fft_bands(32)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 背景纹理  BACKGROUND TEXTURES  (screen-space, before depth queue)
+# These show through every gap in the line-based 3-D geometry —
+# fractal + noise layer underpins all the spinning mandalas.
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_bg(FR, SCW, SCH) {
+    令 hw  = SCW / 2
+    令 hh  = SCH / 2
+    令 qw  = SCW / 4
+    令 qh  = SCH / 4
+    令 t   = FR * 0.006
+
+    # ── 1. Base: psychedelic noise across the entire screen ─────────────────
+    tex_noise(0, 0, SCW, SCH,  2.4 + sin(FR * 0.0017) * 1.0, 4, FR / 55, "psychedelic")
+
+    # ── 2. Ceiling half: julia set (c-parameter orbits in c-plane) ──────────
+    令 cre = 0 - 0.4 + sin(FR * 0.0038) * 0.55
+    令 cim = 0.6 + cos(FR * 0.0031) * 0.38
+    tex_julia(0, 0, SCW, hh,  cre, cim,  36, "neon")
+
+    # ── 3. Floor half: mandelbrot (slow zoom + drift) ────────────────────────
+    令 mz  = 1.0 + sin(FR * 0.0021) * 0.6
+    令 mpx = 0 - 0.5 + sin(FR * 0.0008) * 0.12
+    令 mpy = sin(FR * 0.0006) * 0.07
+    tex_mandelbrot(0, hh, SCW, hh,  mz, mpx, mpy,  32, "psychedelic")
+
+    # ── 4. Left wall strip: voronoi 木火 (Wood-Fire — jade/crimson) ──────────
+    tex_voronoi(0, qh, qw, hh,  22, FR / 38, "fire")
+
+    # ── 5. Right wall strip: voronoi 水金 (Water-Metal — blue/silver) ────────
+    tex_voronoi(SCW - qw, qh, qw, hh,  22, FR / 38 + 83, "ocean")
+
+    # ── 6. Floor frequency-map strip (audio-reactive, uses fft_bands_cache) ──
+    tex_freq_map(qw, hh + qh, hw, qh,  t, 0.45, "rainbow")
+
+    # ── 7. Halftone dot panels at ceiling corners (四角点阵) ─────────────────
+    令 ds = 0.024 + sin(FR * 0.011) * 0.007
+    tex_halftone(0, 0, qw, qh,  ds, FR * 0.007, "neon")
+    tex_halftone(SCW - qw, 0, qw, qh,  ds, FR * 0.007 + 1.571, "neon")
+    tex_halftone(0, SCH - qh, qw, qh,  ds, FR * 0.007 + 3.142, "neon")
+    tex_halftone(SCW - qw, SCH - qh, qw, qh,  ds, FR * 0.007 + 4.712, "neon")
+
+    # ── 8. Ripple (氣流 qi flow) centred on middle of screen ─────────────────
+    令 rf = 7.0 + sin(FR * 0.009) * 2.8
+    tex_ripple(qw, qh, hw, hh,  rf, 0.5, 0.5, FR * 0.0042, "ocean")
+
+    # ── 9. Spiral (旋涡 vortex) on floor centre — over the freq map ──────────
+    令 sf = 4.5 + sin(FR * 0.006) * 1.8
+    tex_spiral(qw, hh + qh / 2, hw, qh / 2,  sf, 8.0, FR * 0.0035, "psychedelic")
+
+    # ── 10. Gradient curtain fading into the portal (back wall glow) ─────────
+    tex_gradient(hw - 120, hh - 120, 240, 240,  FR * 0.03,  0,0,0,  40,0,80)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 法轮  DHARMA TURBINE — the 5-layer central engine
+#
+#  Layer 1 · yin-yang seed : innermost opposing ring pair
+#  Layer 2 · 8-spoke wheel : 法轮辐 (dharma spokes), yang clockwise
+#  Layer 3 · 16-blade turb : counter-rotating turbine blades, yin
+#  Layer 4 · 12-petal crown: lotus engine crown
+#  Layer 5 · outer gear    : 64-tooth gear ring + 16-point star teeth
+#  + 8 dragon-arm spirals  : 龙臂 at every 45°
+#  + vertical axis ring    : 天柱 celestial pillar
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_falun(FR, hd) {
+    令 bob = sin(FR * 0.014) * 0.30
+
+    # Layer 1 — yin-yang seed (two opposing ring-pairs)
+    vtex_rings(0, bob, PZ,  1,0,0,  0,0,1,  1, 12,  PR * 0.26, 0.0,    0 - FR, 0.0 + hd)
+    vtex_lotus(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.08, PR * 0.28, 12,  FR,     0.4 + hd)
+
+    # Layer 2 — 8-spoke dharma-wheel disc (yang)
+    vtex_chakra(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.62, 8,   FR, 1.2 + hd)
+    vtex_rings (0, bob, PZ,  1,0,0,  0,0,1,  3, 24,  PR * 0.66, 0.0,    FR, 2.0 + hd)
+
+    # Layer 3 — 16-blade turbine (counter-rotating, yin)
+    vtex_chakra(0, bob, PZ,  1,0,0,  0,0,1,  PR * 1.04, 16,  0 - FR, 3.8 + hd)
+    vtex_rings (0, bob, PZ,  1,0,0,  0,0,1,  2, 48,  PR * 1.10, 0.12,   0 - FR, 5.6 + hd)
+
+    # Layer 4 — 12-petal lotus crown + outer flower
+    vtex_lotus (0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.52, PR * 1.40, 12, FR, 4.2 + hd)
+    vtex_flower(0, bob, PZ,  1,0,0,  0,0,1,  PR * 1.44, 24,         FR, 0.8 + hd)
+
+    # Layer 5 — outer 64-tooth gear ring + 16-point star teeth
+    vtex_rings(0, bob, PZ,  1,0,0,  0,0,1,  5, 64,  PR * 1.74, 0.05,   FR, 6.0 + hd)
+    vtex_star (0, bob, PZ,  1,0,0,  0,0,1,  16, PR * 1.80, PR * 1.58, 0.04, FR, 1.0 + hd)
+
+    # Vertical axis ring — 天柱 celestial pillar
+    vtex_rings(0, 0, PZ,  0,1,0,  0,0,1,  2, 32,  0.34, 0.0,  FR, 2.6 + hd)
+
+    # Yantra mandala under the engine (蜘蛛坛城)
+    vtex_yantra(0, bob, PZ,  1,0,0,  0,0,1,  5, PR * 1.95, FR, 7.0 + hd)
+
+    # 8 dragon-arm spirals (龙臂) at every 45°
+    令 i = 0
+    循 i < 8 {
+        令 ang = i * PI4
+        令 dpx = sin(ang) * PR * 2.5
+        令 dpz = PZ + cos(ang) * PR * 0.65
+        vtex_spiral(dpx, bob, dpz,  1,0,0,  0,0,1,  3.0, 0.90, 72,  FR, hd + ang)
+        vtex_lotus(dpx, bob, dpz,   1,0,0,  0,0,1,  0.12, 0.38, 6,  FR, hd + ang + 1.6)
+        令 i = i + 1
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 八柱  EIGHT LATHE-TURBINE PILLARS  (one per Bagua trigram, r=5.5, 45° step)
+#
+#  Each pillar is a lathe-turned vase shape (6 rings at varying radii/heights)
+#  topped and threaded with:
+#    · gear body   (chakra spokes + star teeth)
+#    · lotus heart + counter-ring
+#    · ascending dragon spiral
+#    · flower-petal crown
+#    · horizontal halo ring
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_8_pillars(FR, hd) {
+    令 i = 0
+    循 i < 8 {
+        令 ang = i * PI4
+        令 px  = sin(ang) * RNGR
+        令 pz  = PZ + cos(ang) * RNGR * 0.40
+        令 ph  = hd + ang * 1.273
+
+        # ── Lathe profile (6 rings — narrow base, wide belly, narrow top) ──
+        vtex_rings(px, 0 - H * 0.88, pz,  1,0,0,  0,0,1,  1, 6,  0.18, 0.0, FR, ph + 0.0)
+        vtex_rings(px, 0 - H * 0.55, pz,  1,0,0,  0,0,1,  1, 8,  0.34, 0.0, FR, ph + 0.5)
+        vtex_rings(px, 0 - H * 0.18, pz,  1,0,0,  0,0,1,  1, 8,  0.54, 0.0, FR, ph + 1.0)
+        vtex_rings(px,  H * 0.18, pz,     1,0,0,  0,0,1,  1, 8,  0.50, 0.0, FR, ph + 1.5)
+        vtex_rings(px,  H * 0.55, pz,     1,0,0,  0,0,1,  1, 8,  0.32, 0.0, FR, ph + 2.0)
+        vtex_rings(px,  H * 0.88, pz,     1,0,0,  0,0,1,  1, 6,  0.16, 0.0, FR, ph + 2.5)
+
+        # ── Gear body at waist (chakra + star teeth) ──────────────────────
+        vtex_chakra(px, 0, pz,  1,0,0,  0,0,1,  0.62, 8,   FR, ph + 1.2)
+        vtex_star  (px, 0, pz,  1,0,0,  0,0,1,  8, 0.60, 0.48, 0.06, FR, ph + 1.2)
+
+        # ── Lotus heart + yin counter-ring ────────────────────────────────
+        vtex_lotus (px, 0, pz,  1,0,0,  0,0,1,  0.14, 0.44, 8,   FR, ph + 2.4)
+        vtex_rings (px, 0, pz,  1,0,0,  0,0,1,  2, 12, 0.26, 0.14, 0 - FR, ph + 3.6)
+
+        # ── Ascending dragon spiral (龙升) ────────────────────────────────
+        vtex_spiral(px, 0, pz,  1,0,0,  0,0,1,  1.9, 0.72, 60,  FR, ph + 4.8)
+
+        # ── Flower-petal crown ────────────────────────────────────────────
+        vtex_flower(px, 0, pz,  1,0,0,  0,0,1,  0.80, 8,  FR, ph + 0.6)
+
+        # ── Horizontal halo ring ──────────────────────────────────────────
+        vtex_rings(px, 0, pz,  1,0,0,  0,1,0,  1, 16, 0.20, 0.0, FR, ph + 5.5)
+
+        令 i = i + 1
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 四仪象  FOUR DIAGONAL GEAR MECHANISMS  (NE · NW · SE · SW  at r=3.8)
+#
+#  Each: 32-blade turbine disc + lotus mandala + star gear crown
+#  Placed at the four diagonal Bagua points between the 8 pillars.
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_4_diag_gears(FR, hd) {
+    # NE  震·巽  (Thunder·Wind)
+    令 d = DNGR * 0.707
+    令 gpz = PZ + d * 0.36
+
+    # NE
+    vtex_chakra(d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  1.28, 32,  0 - FR, hd + 0.0)
+    vtex_lotus (d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  0.38, 1.18, 12, FR, hd + 1.0)
+    vtex_star  (d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  12, 1.32, 1.10, 0.06, FR, hd + 0.0)
+    vtex_rings (d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  2, 24, 1.22, 0.12, FR, hd + 2.0)
+
+    # NW
+    vtex_chakra(0 - d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  1.28, 32,  FR, hd + PI4)
+    vtex_lotus (0 - d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  0.38, 1.18, 12, 0 - FR, hd + PI4 + 1.0)
+    vtex_star  (0 - d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  12, 1.32, 1.10, 0.06, FR, hd + PI4)
+    vtex_rings (0 - d, 0, PZ + d * 0.36,  1,0,0,  0,0,1,  2, 24, 1.22, 0.12, 0 - FR, hd + PI4 + 2.0)
+
+    # SE
+    vtex_chakra(d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  1.28, 32,  FR, hd + PI)
+    vtex_lotus (d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  0.38, 1.18, 12, FR, hd + PI + 1.0)
+    vtex_star  (d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  12, 1.32, 1.10, 0.06, 0 - FR, hd + PI)
+    vtex_rings (d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  2, 24, 1.22, 0.12, FR, hd + PI + 2.0)
+
+    # SW
+    vtex_chakra(0 - d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  1.28, 32,  0 - FR, hd + PI + PI4)
+    vtex_lotus (0 - d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  0.38, 1.18, 12, FR, hd + PI + PI4 + 1.0)
+    vtex_star  (0 - d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  12, 1.32, 1.10, 0.06, FR, hd + PI + PI4)
+    vtex_rings (0 - d, 0, PZ - d * 0.36,  1,0,0,  0,0,1,  2, 24, 1.22, 0.12, 0 - FR, hd + PI + PI4 + 2.0)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 地板  FLOOR  — 铜钱无尽坛城 (infinite cash-coin mandala)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_floor(FR, hd) {
+    令 cy   = 0 - H
+    令 fmid = FZ / 2
+
+    # 8-layer yantra (nested sacred squares, gold)
+    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  8, 9.0,  FR, 0.5 + hd)
+
+    # 6-band concentric cash-coin rings (铜钱 48-spoke)
+    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  7, 48,  9.0, 0.08,  FR, 1.8 + hd)
+
+    # 8-petal lotus (full-width)
+    vtex_lotus(0, cy, fmid,  1,0,0,  0,0,1,  2.2, 7.8, 8,  FR, 3.0 + hd)
+
+    # Dong Son drum tessellated wave field
+    vtex_tessellated(0, cy, fmid,  1,0,0,  0,0,1,  22, 18,  0.60, 0.24, 5.2,  FR, 0.0 + hd)
+
+    # Hyperbolic infinity tiling (无限镶嵌)
+    vtex_hyperbolic_uv(0, cy, fmid,  1,0,0,  0,0,1,  9.0, 18, 24,  FR, 2.0 + hd)
+
+    # Perspective stone-tile grid (石板地)
+    vtex_grid(0, cy, fmid,  1,0,0,  0,0,1,  36, 28,  0.70, 0.70,  FR, 4.0 + hd)
+
+    # Halftone dot field (网点)
+    vtex_halftone(0, cy, fmid,  1,0,0,  0,0,1,  26, 22,  0.52, 0.52, 0.42,  FR, 6.0 + hd)
+
+    # 8 small lotuses at Bagua positions on the floor ring
+    令 i = 0
+    循 i < 8 {
+        令 ang = i * PI4
+        令 fpx = sin(ang) * 5.2
+        令 fpz = fmid + cos(ang) * 2.2
+        vtex_lotus(fpx, cy, fpz,  1,0,0,  0,0,1,  0.4, 1.2, 8,  FR, hd + ang * 0.8)
+        令 i = i + 1
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 天花  CEILING  — 天门 Celestial Gate (the cosmic sky above the temple)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_ceiling(FR, hd) {
+    令 cy   = H
+    令 fmid = FZ / 2
+
+    # Poincaré hyperbolic cosmos disc
+    vtex_hyperbolic_uv(0, cy, fmid,  1,0,0,  0,0,1,  9.0, 18, 24,  FR, 3.0 + hd)
+
+    # 8-petal heavenly lotus
+    vtex_lotus(0, cy, fmid,  1,0,0,  0,0,1,  2.0, 7.5, 8,  FR, 1.4 + hd)
+
+    # 16-point star (double Bagua — 8×2)
+    vtex_star(0, cy, fmid,  1,0,0,  0,0,1,  16, 8.5, 3.8, 0.05,  FR, 0.2 + hd)
+
+    # Concentric lantern rings (5 bands)
+    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  5, 40,  8.5, 0.06,  FR, 0.4 + hd)
+
+    # 8-spoke chakra disc
+    vtex_chakra(0, cy, fmid,  1,0,0,  0,0,1,  5.8, 8,  FR, 2.8 + hd)
+
+    # Flower of Life (生命之花 — 24 petals)
+    vtex_flower(0, cy, fmid,  1,0,0,  0,0,1,  8.2, 24,  FR, 5.2 + hd)
+
+    # 6-layer yantra (蜘蛛坛城)
+    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  6, 7.8,  FR, 4.0 + hd)
+
+    # Outer corona
+    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  1, 64,  9.8, 0.0,  FR, 5.6 + hd)
+
+    # 4 lotus medallions at NESW ceiling points
+    vtex_lotus(0 - 4.5, cy, fmid,       1,0,0,  0,0,1,  0.7, 2.2, 8,  FR, hd + 1.0)
+    vtex_lotus( 4.5,    cy, fmid,       1,0,0,  0,0,1,  0.7, 2.2, 8,  FR, hd + 2.0)
+    vtex_lotus(0, cy, fmid - 4.5,       1,0,0,  0,0,1,  0.7, 2.2, 8,  FR, hd + 3.0)
+    vtex_lotus(0, cy, fmid + 4.5,       1,0,0,  0,0,1,  0.7, 2.2, 8,  FR, hd + 4.0)
+
+    # 4 small chakra seals at diagonal ceiling points
+    vtex_chakra(0 - 3.2, cy, fmid + 3.2,  1,0,0,  0,0,1,  0.9, 8,  FR, hd + 5.0)
+    vtex_chakra( 3.2,    cy, fmid + 3.2,  1,0,0,  0,0,1,  0.9, 8,  FR, hd + 6.0)
+    vtex_chakra(0 - 3.2, cy, fmid - 3.2,  1,0,0,  0,0,1,  0.9, 8,  FR, hd + 7.0)
+    vtex_chakra( 3.2,    cy, fmid - 3.2,  1,0,0,  0,0,1,  0.9, 8,  FR, hd + 8.0)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 四壁  FOUR WALLS  — 道德经 DDJ character rain + sacred geometry
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_front_wall(FR, hd) {
+    # Front wall: near-side portal (entrance gate)
+    vtex_letter_rain(0, 0, NZ,  1,0,0,  0,1,0,  24, 14,  0.66, 0.60,  0.010,  FR, 0.0 + hd)
+    vtex_yantra(0, 0, NZ,  1,0,0,  0,1,0,  4, 4.5,  FR, 1.5 + hd)
+    vtex_rings(0, 0, NZ,  1,0,0,  0,1,0,  2, 24,  3.8, 0.06,  FR, 0.8 + hd)
+}
+
+函 draw_back_wall(FR, hd) {
+    # Back wall: grand Dao portal with full mandala stack
+    vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  28, 16,  0.66, 0.60,  0.014,  FR, 1.6 + hd)
+    vtex_star  (0, 0, FZ,  1,0,0,  0,1,0,  16, 8.8, 3.6, 0.04,  FR, 0.2 + hd)
+    vtex_rings (0, 0, FZ,  1,0,0,  0,1,0,  4, 56,  8.0, 0.05,  FR, 2.4 + hd)
+    vtex_lotus (0, 0, FZ,  1,0,0,  0,1,0,  2.2, 7.0, 12,  FR, 0.6 + hd)
+    vtex_chakra(0, 0, FZ,  1,0,0,  0,1,0,  5.2, 8,   FR, 3.2 + hd)
+    vtex_yantra(0, 0, FZ,  1,0,0,  0,1,0,  5, 7.5,   FR, 4.0 + hd)
+    vtex_flower(0, 0, FZ,  1,0,0,  0,1,0,  9.5, 24,  FR, 5.5 + hd)
+    # Lotus crown at mid-height
+    vtex_lotus (0, H * 0.5, FZ,  1,0,0,  0,1,0,  0.8, 2.5, 8,  FR, hd + 6.0)
+    vtex_lotus (0, 0-H * 0.5, FZ, 1,0,0,  0,1,0,  0.8, 2.5, 8,  FR, hd + 7.0)
+}
+
+函 draw_left_wall(FR, hd) {
+    令 cx   = 0 - W
+    令 fmid = (NZ + FZ) / 2
+
+    vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  22, 14,  0.64, 0.58,  0.016,  FR, 3.0 + hd)
+    vtex_lotus (cx, 0, fmid,       0,0,1,  0,1,0,  1.5, 4.0, 8,  FR, 1.0 + hd)
+    vtex_yantra(cx, 0, fmid,       0,0,1,  0,1,0,  4, 3.5,  FR, 2.5 + hd)
+    vtex_rings (cx, 0, fmid,       0,0,1,  0,1,0,  3, 32,  4.2, 0.08,  FR, 0.5 + hd)
+
+    # Two dharma-wheel medallions at ±3 z offset (木/水 flanking)
+    vtex_chakra(cx, 0, fmid - 3.2,  0,0,1,  0,1,0,  1.9, 8,  FR, hd + 5.0)
+    vtex_lotus (cx, 0, fmid - 3.2,  0,0,1,  0,1,0,  0.5, 1.6, 8, FR, hd + 5.8)
+    vtex_chakra(cx, 0, fmid + 3.2,  0,0,1,  0,1,0,  1.9, 8,  FR, hd + 6.0)
+    vtex_lotus (cx, 0, fmid + 3.2,  0,0,1,  0,1,0,  0.5, 1.6, 8, FR, hd + 6.8)
+
+    # Halftone curtain strip
+    vtex_halftone(cx, 0, fmid,  0,0,1,  0,1,0,  18, 14,  0.48, 0.48, 0.38,  FR, hd + 3.5)
+}
+
+函 draw_right_wall(FR, hd) {
+    令 cx   = W
+    令 fmid = (NZ + FZ) / 2
+
+    vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  22, 14,  0.64, 0.58,  0.014,  FR, 5.0 + hd)
+    vtex_lotus (cx, 0, fmid,       0,0,1,  0,1,0,  1.5, 4.0, 8,  FR, 4.0 + hd)
+    vtex_yantra(cx, 0, fmid,       0,0,1,  0,1,0,  4, 3.5,  FR, 3.5 + hd)
+    vtex_rings (cx, 0, fmid,       0,0,1,  0,1,0,  3, 32,  4.2, 0.08,  FR, 3.0 + hd)
+
+    # Mirror dharma medallions
+    vtex_chakra(cx, 0, fmid - 3.2,  0,0,1,  0,1,0,  1.9, 8,  FR, hd + 7.0)
+    vtex_lotus (cx, 0, fmid - 3.2,  0,0,1,  0,1,0,  0.5, 1.6, 8, FR, hd + 7.8)
+    vtex_chakra(cx, 0, fmid + 3.2,  0,0,1,  0,1,0,  1.9, 8,  FR, hd + 8.0)
+    vtex_lotus (cx, 0, fmid + 3.2,  0,0,1,  0,1,0,  0.5, 1.6, 8, FR, hd + 8.8)
+
+    vtex_halftone(cx, 0, fmid,  0,0,1,  0,1,0,  18, 14,  0.48, 0.48, 0.38,  FR, hd + 4.5)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 八卦灯  LIGHTS — five-element coloured point lights
+# ════════════════════════════════════════════════════════════════════════════
+
+函 setup_lights(FR) {
+    clear_lights()
+
+    # 乾/金 Heaven-Metal (gold): overhead, slow orbit around 法轮 axis
+    add_light(
+        sin(FR * 0.0058) * 3.2,
+        4.4,
+        PZ + cos(FR * 0.0058) * 2.0,
+        1.0, 0.86, 0.22,  3.2, 14.0
+    )
+
+    # 坎/水 Water (deep blue): sweeping floor-level east arc
+    add_light(
+        cos(FR * 0.0074) * 4.5,
+        0 - 2.2,
+        PZ + sin(FR * 0.0074) * 2.2,
+        0.08, 0.38, 1.0,  1.9, 10.0
+    )
+
+    # 离/火 Fire (crimson): high west, counter-orbit
+    add_light(
+        0 - sin(FR * 0.0051) * 3.8,
+        3.2,
+        PZ + cos(FR * 0.0051) * 2.2,
+        1.0, 0.11, 0.05,  2.4, 12.0
+    )
+
+    # 震/木 Thunder-Wood (jade): pulsing ground east
+    令 wb = sin(FR * 0.0188) * 0.4 + 0.6
+    add_light(3.2, 0 - 1.8, PZ,  0.04 * wb, 0.88 * wb, 0.44 * wb,  1.5, 9.0)
+
+    # 巽/风 Wind (silver-violet): ceiling, right side, flicker
+    令 wf = sin(FR * 0.034) * 0.15 + 0.82
+    add_light(5.5, 4.0, PZ,  0.72 * wf, 0.68 * wf, 1.0 * wf,  1.2, 11.0)
+
+    # 坤/土 Earth (ochre): deep floor centre
+    add_light(0, 0 - 4.8, FZ / 2,  0.75, 0.50, 0.08,  0.9, 8.0)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 八卦音  AUDIO — eight-trigram pentatonic circle + bass + shimmer
+# ════════════════════════════════════════════════════════════════════════════
+
+函 init_audio() {
+    # slot   x               y          z             w     Hz       amp  lfoHz  depth
+    # 乾 Heaven — overhead centre
+    audio_tone(0,  0,              4.4,       PZ,           1.5,  523.25, 0.09, 0.12, 0.010)
+    # 坤 Earth — floor centre
+    audio_tone(1,  0,              0 - H,     FZ / 2,       1.0,  261.63, 0.08, 0.08, 0.008)
+    # 震 Thunder — east pillar ring
+    audio_tone(2,  RNGR,           0,         PZ,           1.5,  392.00, 0.07, 0.22, 0.014)
+    # 巽 Wind — northeast
+    audio_tone(3,  RNGR * 0.707,   0,         PZ,           1.5,  349.23, 0.07, 0.18, 0.012)
+    # 坎 Water — north
+    audio_tone(4,  0,              0,         PZ + RNGR,    1.5,  293.66, 0.07, 0.14, 0.010)
+    # 离 Fire — west
+    audio_tone(5,  0 - RNGR,       0,         PZ,           1.5,  440.00, 0.07, 0.28, 0.016)
+    # 艮 Mountain — southwest
+    audio_tone(6,  0 - RNGR * 0.707, 0,       PZ,           1.5,  329.63, 0.07, 0.16, 0.011)
+    # 兑 Lake — south
+    audio_tone(7,  0,              0,         PZ - RNGR,    1.5,  220.00, 0.07, 0.20, 0.013)
+    # 大地 Sub-bass (earth pulse)
+    audio_tone(8,  0,              0 - 2.2,   PZ,           0.5,   65.41, 0.06, 0.05, 0.005)
+    # 天 Overtone shimmer
+    audio_tone(9,  0,              H,         FZ / 2,       0.3, 1046.50, 0.03, 0.50, 0.025)
+    audio_volume(0.50)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# ECHO PASS — sparse temporal phosphene trail (three depth passes)
+# ════════════════════════════════════════════════════════════════════════════
+
+函 draw_echo(FR, hd) {
+    令 cy_f = 0 - H
+    令 cy_c = H
+    令 fm   = FZ / 2
+
+    # Floor core
+    vtex_yantra(0, cy_f, fm,  1,0,0,  0,0,1,  8, 9.0,    FR, 0.5 + hd)
+    vtex_rings (0, cy_f, fm,  1,0,0,  0,0,1,  7, 48, 9.0, 0.08, FR, 1.8 + hd)
+    vtex_lotus (0, cy_f, fm,  1,0,0,  0,0,1,  2.2, 7.8, 8, FR, 3.0 + hd)
+
+    # Ceiling core
+    vtex_lotus (0, cy_c, fm,  1,0,0,  0,0,1,  2.0, 7.5, 8,  FR, 1.4 + hd)
+    vtex_rings (0, cy_c, fm,  1,0,0,  0,0,1,  5, 40, 8.5, 0.06, FR, 0.4 + hd)
+    vtex_chakra(0, cy_c, fm,  1,0,0,  0,0,1,  5.8, 8,   FR, 2.8 + hd)
+
+    # Back portal
+    vtex_star  (0, 0, FZ,  1,0,0,  0,1,0,  16, 8.8, 3.6, 0.04, FR, 0.2 + hd)
+    vtex_rings (0, 0, FZ,  1,0,0,  0,1,0,   4, 56, 8.0, 0.05,  FR, 2.4 + hd)
+
+    # Central turbine (sparse silhouette)
+    令 bob = sin(FR * 0.014) * 0.30
+    vtex_chakra(0, bob, PZ,  1,0,0,  0,0,1,  PR * 1.04, 16,  0 - FR, 3.8 + hd)
+    vtex_lotus (0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.52, PR * 1.40, 12, FR, 4.2 + hd)
+    vtex_rings (0, bob, PZ,  1,0,0,  0,0,1,  5, 64, PR * 1.74, 0.05,  FR, 6.0 + hd)
+
+    # Pillar silhouettes
+    令 i = 0
+    循 i < 8 {
+        令 ang = i * PI4
+        令 px  = sin(ang) * RNGR
+        令 pz  = PZ + cos(ang) * RNGR * 0.40
+        vtex_chakra(px, 0, pz,  1,0,0,  0,0,1,  0.62, 8, FR, hd + ang * 1.273 + 1.2)
+        令 i = i + 1
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 主  MAIN ENTRY POINT  启
+# ════════════════════════════════════════════════════════════════════════════
+
+令 启 = 执 {
+    เปิดหน้าต่างเต็มจอ("灵道玄境 — Líng Dào Xuán Jìng")
+    capture_mouse()
+    set_ambient(0.06)
+    init_audio()
+
+    令 帧 = 0
+
+    # Dual-axis Lissajous orbit params
+    令 orbit_h = 7.8
+    令 orbit_v = 3.5
+    令 spd_h1  = 0.00070
+    令 spd_h2  = 0.00114
+    令 spd_v   = 0.00093
+
+    循 หน้าต่างเปิดอยู่() {
+        # Void-purple background (道 — the uncarved block)
+        เติม(3, 0, 8)
+
+        令 SCW = get_width()
+        令 SCH = get_height()
+        令 hd  = 帧 * 0.046
+
+        # ── FFT: push synthetic pentatonic signal, update bands cache ──────
+        update_fft(帧)
+
+        # ── Screen-space background textures (behind all 3-D lines) ────────
+        draw_bg(帧, SCW, SCH)
+
+        # ── Camera: dual Lissajous hyperbolic orbit ─────────────────────────
+        令 t1 = 帧 * spd_h1
+        令 t2 = 帧 * spd_h2
+        令 t3 = 帧 * spd_v
+
+        令 cam_px = sin(t1) * orbit_h * 0.82 + sin(t2 * 1.73) * orbit_h * 0.20
+        令 cam_pz = PZ + sin(t1 * 1.41) * orbit_h * 0.58 + cos(t2 * 1.21) * orbit_h * 0.19
+        令 cam_py = sin(t3 * 1.64) * orbit_v * 0.72 + cos(t3 * 0.89) * orbit_v * 0.24
+
+        # Look-at: always face 法轮 centre
+        令 dx = 0.0 - cam_px
+        令 dy = 0.0 - cam_py
+        令 dz = PZ  - cam_pz
+        令 dist = sqrt(dx * dx + dy * dy + dz * dz)
+        若 dist > 0.001 {
+            令 dx = dx / dist
+            令 dy = dy / dist
+            令 dz = dz / dist
+        }
+        令 ry = atan2(dx, dz)
+        令 rx = asin(dy)
+
+        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
+        set_camera_pos(cam_px, cam_py, cam_pz)
+        set_zdist(2.2)
+        audio_listener(cos(ry), sin(ry), cos(rx), sin(rx))
+
+        setup_lights(帧)
+
+        # ── Temporal echo passes — phosphene geometry trails ────────────────
+        draw_echo(帧 - 96,  3.80)    # oldest  → amber-gold
+        draw_echo(帧 - 48,  6.28)    # middle  → jade-teal (2π offset)
+        draw_echo(帧 - 24,  2.10)    # recent  → rose-pink
+
+        # ── Current frame: full scene ───────────────────────────────────────
+        draw_floor(帧, 0.0)
+        draw_ceiling(帧, 0.0)
+        draw_front_wall(帧, 0.0)
+        draw_back_wall(帧, 0.0)
+        draw_left_wall(帧, 0.0)
+        draw_right_wall(帧, 0.0)
+        draw_4_diag_gears(帧, 0.0)
+        draw_8_pillars(帧, 0.0)
+        draw_falun(帧, 0.0)
+
+        แสดงผล()
+        令 帧 = 帧 + 1
+    }
+}

@@ -8,9 +8,10 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [dependencies]
-cpal  = "0.15"
-hound = "3.5"
-half  = "2"
+cpal     = "0.15"
+hound    = "3.5"
+half     = "2"
+rustfft  = "6.2"
 
 [lib]
 name = "ling_audio"

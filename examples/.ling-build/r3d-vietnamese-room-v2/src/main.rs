@@ -1,3 +1,6 @@
+// Built by ling build — no console window on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 fn main() {
     const SOURCE: &str = include_str!("../3d-vietnamese-room-v2.ling");
     let lang = ling::detect_language(SOURCE);
