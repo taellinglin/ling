@@ -173,7 +173,7 @@ impl<'a> Lexer<'a> {
             "待つ"         => Token::Wait,
             "非同期"       => Token::Async,
             "起動"         => Token::Spawn,
-            "停止"         => Token::Stop,
+            "止まれ" | "停め" => Token::Stop,
             "継続"         => Token::Again,
             // Booleans — shared across Chinese, Japanese, Korean, Thai (already in Thai section)
             "true"  | "真" => Token::Bool(true),

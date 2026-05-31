@@ -6,7 +6,7 @@ mod scope;
 
 use crate::parser::ast::Program;
 use crate::semantic::typeck::TypeChecker;
-use crate::core::{LingError, LingResult};
+use crate::core::LingResult;
 
 // Semantic pipeline is WIP; provide a stub so the crate builds.
 #[derive(Clone, Debug, Default)]

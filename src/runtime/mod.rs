@@ -9,7 +9,7 @@ use crate::gfx::raster::{fill_triangle, draw_line};
 use ling_audio::{AudioEngine, ToneParams};
 
 #[cfg(not(target_arch = "wasm32"))]
-use ling_audio::fft::FftAnalyzer;
+use ling_audio::FftAnalyzer;
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 

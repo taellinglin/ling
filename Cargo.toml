@@ -67,6 +67,10 @@ path = "src/bin/lx.rs"
 name = "ling-repl"
 path = "src/bin/ling-repl.rs"
 
+[features]
+# Enable LLVM-backed native codegen (requires LLVM toolchain)
+llvm = []
+
 [dependencies]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

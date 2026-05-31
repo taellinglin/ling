@@ -7,7 +7,7 @@
 // sidebar.  The entry-point card is highlighted in gold.
 
 use crate::parser::ast::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::Write;
 
 // ── Layout constants ─────────────────────────────────────────────────────────
