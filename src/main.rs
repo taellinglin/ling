@@ -48,10 +48,18 @@ fn main() {
 }
 
 fn run_file(path: &str) {
+    eprintln!("[ling] reading source file: {path}");
+    let resolved = std::path::Path::new(path);
+    if !resolved.exists() {
+        eprintln!("[ling] error: file does not exist: {}", resolved.display());
+        std::process::exit(1);
+    }
+
     let source = std::fs::read_to_string(path).unwrap_or_else(|e| {
         eprintln!("error reading '{}': {}", path, e);
         std::process::exit(1);
     });
+
     let lang = ling::detect_language(&source);
     if lang != "English" {
         eprintln!("[detected language: {}]", lang);
@@ -123,8 +131,8 @@ fn discover_project(target: &str) -> LingProject {
 
     if path.is_file() {
         // Single .ling file
-        let name = path.file_stem().unwrap_or_default()
-            .to_string_lossy().into_owned();
+        let name = sanitise_name(&path.file_stem().unwrap_or_default()
+            .to_string_lossy());
         let source_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let build_dir  = source_dir.join(".ling-build").join(&name);
         LingProject { name, version: "0.1.0".into(), kind: ProjKind::Bin,
@@ -266,12 +274,17 @@ fn toml_kv(line: &str, key: &str) -> Option<String> {
 }
 
 fn sanitise_name(s: &str) -> String {
-    // Cargo package names: alphanumeric + hyphen/underscore
+    // Cargo package names: alphanumeric + hyphen/underscore, must not start with a digit
     let out: String = s.chars().map(|c| {
         if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }
     }).collect();
     let out = out.trim_matches('-').to_string();
-    if out.is_empty() { "app".into() } else { out }
+    let out = if out.is_empty() { "app".into() } else { out };
+    if out.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+        format!("r{}", out)
+    } else {
+        out
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -496,7 +509,10 @@ panic = "abort"
 
 fn gen_main_rs(entry_file: &str) -> String {
     format!(
-r#"fn main() {{
+r#"// Built by ling build — no console window on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+fn main() {{
     const SOURCE: &str = include_str!("../{entry_file}");
     let lang = ling::detect_language(SOURCE);
     if lang != "English" {{

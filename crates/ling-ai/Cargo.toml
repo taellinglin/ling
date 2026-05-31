@@ -8,7 +8,7 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [features]
-default = ["cpu"]
+default = []
 cpu = ["candle-core", "burn"]
 cuda = ["candle-core/cuda", "dfdx/cuda"]
 metal = ["candle-core/metal"]

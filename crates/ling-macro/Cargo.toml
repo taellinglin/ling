@@ -2,14 +2,15 @@
 name = "ling-macro"
 version = "2030.0.0"
 edition = "2021"
-authors = ["Ling Lin <ling@ling-lang.org>"]
-description = "Procedural macros for Ling"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Procedural macros for the Ling language ecosystem"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
 
 [lib]
 proc-macro = true
 
 [dependencies]
 proc-macro2 = "1.0"
-quote = "1.0"
-syn = "2.0"
-
+quote       = "1.0"
+syn         = { version = "2.0", features = ["full"] }

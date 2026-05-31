@@ -67,6 +67,65 @@ type EvalResult = Result<Value, EvalErr>;
 
 // GfxState is now defined in crate::gfx — see src/gfx/mod.rs.
 
+// ─── SVG writer ───────────────────────────────────────────────────────────────
+
+struct SvgWriter {
+    path:     String,
+    width:    f64,
+    height:   f64,
+    elements: Vec<String>,
+}
+
+impl SvgWriter {
+    fn new(path: String, width: f64, height: f64) -> Self {
+        let bg = format!(
+            "<rect width=\"{width}\" height=\"{height}\" fill=\"#0a0a0a\"/>"
+        );
+        Self { path, width, height, elements: vec![bg] }
+    }
+
+    fn save(&self) -> std::io::Result<()> {
+        let w = self.width;
+        let h = self.height;
+        let mut out = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <svg xmlns=\"http://www.w3.org/2000/svg\" \
+             width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\">\n"
+        );
+        for elem in &self.elements {
+            out.push_str("  ");
+            out.push_str(elem);
+            out.push('\n');
+        }
+        out.push_str("</svg>\n");
+        // Create parent directory if it doesn't exist.
+        if let Some(parent) = std::path::Path::new(&self.path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        std::fs::write(&self.path, out.as_bytes())
+    }
+}
+
+fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
+    let s = s / 100.0;
+    let l = l / 100.0;
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r1, g1, b1) = if h < 60.0       { (c, x, 0.0) }
+                       else if h < 120.0  { (x, c, 0.0) }
+                       else if h < 180.0  { (0.0, c, x) }
+                       else if h < 240.0  { (0.0, x, c) }
+                       else if h < 300.0  { (x, 0.0, c) }
+                       else               { (c, 0.0, x) };
+    let r = ((r1 + m) * 255.0).round() as u8;
+    let g = ((g1 + m) * 255.0).round() as u8;
+    let b = ((b1 + m) * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
 // ─── Interpreter ─────────────────────────────────────────────────────────────
 
 pub struct Interpreter {
@@ -74,6 +133,7 @@ pub struct Interpreter {
     functions: HashMap<String, FnDef>,
     modules:   HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
+    svg:       RefCell<Option<SvgWriter>>,
     /// Optional audio engine — `None` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
     audio:     Option<AudioEngine>,
@@ -90,6 +150,7 @@ impl Interpreter {
             functions: HashMap::new(),
             modules:   HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
+            svg:       RefCell::new(None),
             #[cfg(not(target_arch = "wasm32"))]
             audio,
         }
@@ -561,6 +622,7 @@ impl Interpreter {
                     gfx.height = h;
                     gfx.window = Some(win);
                     gfx.sync_projection();
+                    hide_console_window();
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -590,6 +652,20 @@ impl Interpreter {
                     gfx.fill_g = g as f32 / 255.0;
                     gfx.fill_b = b as f32 / 255.0;
                 }
+                return Ok(Value::Unit);
+            }
+
+            // ── set_color_hsl(h, s, l) — set drawing colour from HSL ──
+            // h: 0–360 degrees, s: 0–100 saturation, l: 0–100 lightness
+            "set_color_hsl" | "颜色HSL" | "สีHSLวาด" => {
+                let h = self.arg_num(&args, 0, 0.0)?;
+                let s = self.arg_num(&args, 1, 70.0)?;
+                let l = self.arg_num(&args, 2, 50.0)?;
+                let hex = hsl_to_hex(h, s, l);
+                let r = u32::from_str_radix(&hex[1..3], 16).unwrap_or(255);
+                let g = u32::from_str_radix(&hex[3..5], 16).unwrap_or(255);
+                let b = u32::from_str_radix(&hex[5..7], 16).unwrap_or(255);
+                self.gfx.borrow_mut().color = (r << 16) | (g << 8) | b;
                 return Ok(Value::Unit);
             }
 
@@ -750,7 +826,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
-            // ── เปิดหน้าต่างเต็มจอ(title) — borderless fullscreen window ──
+            // ── เปิดหน้าต่างเต็มจอ(title) — true native-res fullscreen window ──
             "เปิดหน้าต่างเต็มจอ" | "open_fullscreen" | "fullscreen" => {
                 // In WASM the canvas defines the viewport; use its current size
                 // as the default so the projection matches what's actually visible.
@@ -759,8 +835,14 @@ impl Interpreter {
                     let (cw, ch) = crate::gfx::webgl::canvas_size();
                     (cw as f64, ch as f64)
                 };
-                #[cfg(not(target_arch = "wasm32"))]
-                let (default_w, default_h) = (1920.0_f64, 1080.0_f64);
+                // On native: query the actual primary monitor resolution.
+                #[cfg(all(not(target_arch = "wasm32"), windows))]
+                let (default_w, default_h) = unsafe {
+                    extern "system" { fn GetSystemMetrics(nIndex: i32) -> i32; }
+                    (GetSystemMetrics(0) as f64, GetSystemMetrics(1) as f64)
+                };
+                #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+                let (default_w, default_h) = native_screen_size();
 
                 let w = args.get(1).map(|v| self.to_number(v).unwrap_or(default_w) as usize).unwrap_or(default_w as usize);
                 let h = args.get(2).map(|v| self.to_number(v).unwrap_or(default_h) as usize).unwrap_or(default_h as usize);
@@ -785,6 +867,10 @@ impl Interpreter {
                     gfx.height = h;
                     gfx.window = Some(win);
                     gfx.sync_projection();
+                    // Snap to top-left, cover full screen, bring above taskbar.
+                    #[cfg(windows)]
+                    reposition_fullscreen(w as i32, h as i32);
+                    hide_console_window();
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -1541,6 +1627,107 @@ impl Interpreter {
                 return Ok(Value::Str(String::new()));
             }
 
+            // ══════════════════════════════════════════════════════════════════
+            // SVG EXPORT  (svg_begin / svg_rect / svg_circle / svg_line /
+            //              svg_polyline / svg_text / svg_end / hsl_color)
+            // Chinese aliases: 开始SVG 结束SVG SVG矩形 SVG圆形 SVG线段 SVG折线 SVG文本 HSL颜色
+            // Thai aliases:    เริ่มSVG จบSVG SVGสี่เหลี่ยม SVGวงกลม SVGเส้น SVGเส้นหัก SVGข้อความ สีHSL
+            // ══════════════════════════════════════════════════════════════════
+
+            "svg_begin" | "开始SVG" | "เริ่มSVG" => {
+                let path   = self.arg_str(&args, 0, "output.svg");
+                let width  = self.arg_num(&args, 1, 800.0)?;
+                let height = self.arg_num(&args, 2, 600.0)?;
+                *self.svg.borrow_mut() = Some(SvgWriter::new(path, width, height));
+                return Ok(Value::Unit);
+            }
+
+            "svg_rect" | "SVG矩形" | "SVGสี่เหลี่ยม" => {
+                let x    = self.arg_num(&args, 0, 0.0)?;
+                let y    = self.arg_num(&args, 1, 0.0)?;
+                let w    = self.arg_num(&args, 2, 10.0)?;
+                let h    = self.arg_num(&args, 3, 10.0)?;
+                let fill = self.arg_str(&args, 4, "#ffffff");
+                if let Some(svg) = self.svg.borrow_mut().as_mut() {
+                    svg.elements.push(format!(
+                        "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" \
+                         height=\"{h:.1}\" fill=\"{fill}\"/>"));
+                }
+                return Ok(Value::Unit);
+            }
+
+            "svg_circle" | "SVG圆形" | "SVGวงกลม" => {
+                let cx   = self.arg_num(&args, 0, 0.0)?;
+                let cy   = self.arg_num(&args, 1, 0.0)?;
+                let r    = self.arg_num(&args, 2, 5.0)?;
+                let fill = self.arg_str(&args, 3, "#ffffff");
+                if let Some(svg) = self.svg.borrow_mut().as_mut() {
+                    svg.elements.push(format!(
+                        "<circle cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"{r:.1}\" fill=\"{fill}\"/>"));
+                }
+                return Ok(Value::Unit);
+            }
+
+            "svg_line" | "SVG线段" | "SVGเส้น" => {
+                let x1     = self.arg_num(&args, 0, 0.0)?;
+                let y1     = self.arg_num(&args, 1, 0.0)?;
+                let x2     = self.arg_num(&args, 2, 0.0)?;
+                let y2     = self.arg_num(&args, 3, 0.0)?;
+                let stroke = self.arg_str(&args, 4, "#ffffff");
+                let sw     = self.arg_num(&args, 5, 1.0)?;
+                if let Some(svg) = self.svg.borrow_mut().as_mut() {
+                    svg.elements.push(format!(
+                        "<line x1=\"{x1:.1}\" y1=\"{y1:.1}\" x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
+                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"));
+                }
+                return Ok(Value::Unit);
+            }
+
+            "svg_polyline" | "SVG折线" | "SVGเส้นหัก" => {
+                let pts    = self.arg_str(&args, 0, "");
+                let stroke = self.arg_str(&args, 1, "#ffffff");
+                let sw     = self.arg_num(&args, 2, 1.0)?;
+                if let Some(svg) = self.svg.borrow_mut().as_mut() {
+                    svg.elements.push(format!(
+                        "<polyline points=\"{pts}\" fill=\"none\" \
+                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"));
+                }
+                return Ok(Value::Unit);
+            }
+
+            "svg_text" | "SVG文本" | "SVGข้อความ" => {
+                let x    = self.arg_num(&args, 0, 0.0)?;
+                let y    = self.arg_num(&args, 1, 0.0)?;
+                let text = self.arg_str(&args, 2, "");
+                let fill = self.arg_str(&args, 3, "#ffffff");
+                let size = self.arg_num(&args, 4, 12.0)?;
+                if let Some(svg) = self.svg.borrow_mut().as_mut() {
+                    let safe = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                    svg.elements.push(format!(
+                        "<text x=\"{x:.1}\" y=\"{y:.1}\" fill=\"{fill}\" \
+                         font-family=\"monospace\" font-size=\"{size:.0}\">{safe}</text>"));
+                }
+                return Ok(Value::Unit);
+            }
+
+            "svg_end" | "结束SVG" | "จบSVG" => {
+                {
+                    let borrow = self.svg.borrow();
+                    if let Some(svg) = borrow.as_ref() {
+                        svg.save().map_err(|e| EvalErr::from(format!("svg_end: {e}")))?;
+                    }
+                }
+                *self.svg.borrow_mut() = None;
+                return Ok(Value::Unit);
+            }
+
+            "hsl_color" | "HSL颜色" | "สีHSL" => {
+                let h = self.arg_num(&args, 0, 0.0)?;
+                let s = self.arg_num(&args, 1, 70.0)?;
+                let l = self.arg_num(&args, 2, 50.0)?;
+                return Ok(Value::Str(hsl_to_hex(h, s, l)));
+            }
+
             _ => {}
         }
 
@@ -1835,3 +2022,50 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 }
 
 // Rasteriser functions live in crate::gfx::raster — imported at top of file.
+
+// ── Window platform helpers ────────────────────────────────────────────────────
+
+/// Hide the console window that the OS auto-attaches to console-subsystem
+/// processes. No-op on non-Windows and when no console is present.
+#[cfg(not(target_arch = "wasm32"))]
+fn hide_console_window() {
+    #[cfg(windows)]
+    unsafe {
+        extern "system" {
+            fn GetConsoleWindow() -> isize;
+            fn ShowWindow(hwnd: isize, nCmdShow: i32) -> i32;
+        }
+        let hwnd = GetConsoleWindow();
+        if hwnd != 0 {
+            ShowWindow(hwnd, 0); // SW_HIDE = 0
+        }
+    }
+}
+
+/// Move and resize the foreground window so it fills the primary monitor
+/// (0,0 → screen_w × screen_h) and sits above the taskbar (HWND_TOPMOST).
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn reposition_fullscreen(screen_w: i32, screen_h: i32) {
+    unsafe {
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+            fn SetWindowPos(hwnd: isize, insert_after: isize,
+                            x: i32, y: i32, cx: i32, cy: i32,
+                            flags: u32) -> i32;
+        }
+        let hwnd = GetForegroundWindow();
+        if hwnd != 0 {
+            // HWND_TOPMOST = -1, SWP_SHOWWINDOW = 0x0040
+            SetWindowPos(hwnd, -1isize, 0, 0, screen_w, screen_h, 0x0040);
+        }
+    }
+}
+
+/// Query the primary display resolution on non-Windows platforms.
+/// Falls back to 1920×1080 if the size cannot be determined.
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn native_screen_size() -> (f64, f64) {
+    // On Linux/macOS we don't have an easy dependency-free call; return a
+    // sensible default. Callers can always pass explicit dimensions.
+    (1920.0, 1080.0)
+}

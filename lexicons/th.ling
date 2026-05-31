@@ -4,6 +4,7 @@ canonical = false
 base = "en"
 
 [keywords]
+fn = "ฟังก์ชัน"
 bind = "ผูก"
 start = "เริ่ม"
 post = "ส่ง"
@@ -135,3 +136,84 @@ audio_volume = "ระดับเสียง"
 audio_listener = "ผู้ฟัง"
 audio_bgm = "เพลงพื้นหลัง"
 audio_bgm_volume = "ระดับเสียงพื้นหลัง"
+
+# ── Color helpers ────────────────────────────────────────────────────────────
+set_color_hsl = "สีHSLวาด"
+
+# ── SVG export ────────────────────────────────────────────────────────────────
+svg_begin = "เริ่มSVG"
+svg_rect = "SVGสี่เหลี่ยม"
+svg_circle = "SVGวงกลม"
+svg_line = "SVGเส้น"
+svg_polyline = "SVGเส้นหัก"
+svg_text = "SVGข้อความ"
+svg_end = "จบSVG"
+hsl_color = "สีHSL"
+
+# ── Aliases matching canonical English names ──────────────────────────────────
+draw_line = "วาดเส้น"
+draw_pixel = "วาดจุด"
+draw_rect = "วาดสี่เหลี่ยม"
+draw_circle = "วาดวงกลม"
+draw_text = "วาดข้อความ"
+mouse_x = "เมาส์X"
+mouse_y = "เมาส์Y"
+mouse_button = "ปุ่มเมาส์"
+camera_pos = "ตำแหน่งกล้อง"
+camera_look = "ทิศทางกล้อง"
+camera_fov = "มุมมองกล้อง"
+draw_mesh = "วาดตาข่าย"
+tone = "เสียงโทน"
+play_wav = "เล่นWAV"
+stop_audio = "หยุดเสียง"
+set_volume = "ปรับระดับเสียง"
+mic_open = "เปิดไมค์"
+mic_peak = "ค่าสูงสุดไมค์"
+mic_rms = "ค่าเฉลี่ยไมค์"
+
+# ── Math ──────────────────────────────────────────────────────────────────────
+sin = "ซายน์"
+cos = "โคซายน์"
+tan = "แทนเจนต์"
+sqrt = "รากที่สอง"
+abs = "ค่าสัมบูรณ์"
+floor = "ปัดลง"
+ceil = "ปัดขึ้น"
+round = "ปัดเศษ"
+pow = "ยกกำลัง"
+log = "ลอการิทึม"
+min = "ค่าต่ำสุด"
+max = "ค่าสูงสุด"
+clamp = "จำกัด"
+pi = "พาย"
+tau = "ทาว"
+
+# ── Collections ────────────────────────────────────────────────────────────────
+len = "ความยาว"
+push = "ต่อท้าย"
+pop = "ดึงออก"
+new_list = "รายการใหม่"
+new_map = "แผนที่ใหม่"
+keys = "ชุดคีย์"
+values = "ชุดค่า"
+contains = "มีอยู่"
+
+# ── Time ───────────────────────────────────────────────────────────────────────
+time = "เวลา"
+sleep = "นอนหลับ"
+
+# ── Network (ling-net) ─────────────────────────────────────────────────────────
+http_get = "ดึงHTTP"
+http_post = "ส่งHTTP"
+ws_connect = "เชื่อมWS"
+
+# ── AI (ling-ai) ───────────────────────────────────────────────────────────────
+ai_chat = "สนทนาAI"
+ai_embed = "ฝังAI"
+
+# ── Crypto (ling-crypto) ───────────────────────────────────────────────────────
+hash = "แฮช"
+encrypt = "เข้ารหัส"
+decrypt = "ถอดรหัส"
+sign = "ลายเซ็น"
+verify = "ยืนยัน"

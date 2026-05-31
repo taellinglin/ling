@@ -1,0 +1,55 @@
+# ════════════════════════════════════════════════════════════════════════════
+# gfx.ling — Ling graphics demo: coloured geometric shapes
+#
+# Run:  ling run examples/gfx.ling
+# Press Escape or close the window to quit.
+# ════════════════════════════════════════════════════════════════════════════
+
+fn draw_frame(frame) {
+    # Dark background
+    fill(10, 10, 20)
+
+    bind cx = 400
+    bind cy = 300
+    bind r1 = 200
+    bind r2 = 100
+
+    # Three overlapping coloured triangles
+    set_color(220, 60, 60)
+    triangle(cx,        cy - r1,
+             cx - r2,   cy + r1 / 2,
+             cx + r2,   cy + r1 / 2)
+
+    set_color(60, 220, 60)
+    triangle(cx,        cy + r1,
+             cx - r2,   cy - r1 / 2,
+             cx + r2,   cy - r1 / 2)
+
+    set_color(60, 60, 220)
+    triangle(cx - r1,   cy,
+             cx + r1 / 2, cy - r2,
+             cx + r1 / 2, cy + r2)
+
+    # Bright central diamond
+    set_color(255, 220, 60)
+    triangle(cx,       cy - 55,  cx - 55, cy,  cx + 55, cy)
+    triangle(cx,       cy + 55,  cx - 55, cy,  cx + 55, cy)
+
+    # Border
+    set_color(60, 200, 255)
+    line(0,   0,   799, 0)
+    line(799, 0,   799, 599)
+    line(799, 599, 0,   599)
+    line(0,   599, 0,   0)
+}
+
+bind start = do {
+    open_window(800, 600, "Ling Graphics Demo")
+
+    bind frame = 0
+    while window_is_open() {
+        draw_frame(frame)
+        present()
+        bind frame = frame + 1
+    }
+}

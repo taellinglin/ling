@@ -1,0 +1,3 @@
+[identifiers]
+allow_unicode = true
+unicode_ranges = ["Thai", "Latin"]

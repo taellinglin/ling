@@ -123,7 +123,7 @@ enum RawToken {
     #[token("असत्य",     |_| false)]
     #[token("صحيح",      |_| true)]
     #[token("خطأ",       |_| false)]
-    Bool(bool),
+    BoolLit(bool),
     
     // ──────────────────────────────────────────────────────────────────────────
     // STRING LITERALS
@@ -164,7 +164,6 @@ enum RawToken {
     // ──────────────────────────────────────────────────────────────────────────
     // IDENTIFIERS (ASCII + Unicode)
     // ──────────────────────────────────────────────────────────────────────────
-    #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     #[regex(r"[\p{L}_][\p{L}\p{N}_]*", |lex| lex.slice().to_string())]
     Ident(String),
     
@@ -283,7 +282,7 @@ impl From<RawToken> for Token {
             RawToken::Use => Token::Use,
             
             // Literals
-            RawToken::Bool(b) => Token::BoolLit(b),
+            RawToken::BoolLit(b) => Token::BoolLit(b),
             RawToken::Str(s) => Token::Str(s),
             RawToken::Number(n) => Token::Number(n),
             RawToken::Char(c) => Token::Char(c),

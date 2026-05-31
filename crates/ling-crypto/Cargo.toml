@@ -2,13 +2,22 @@
 name = "ling-crypto"
 version = "2030.0.0"
 edition = "2021"
-authors = ["Ling Lin <ling@ling-lang.org>"]
-description = "Ling cryptography library"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Cryptography primitives for Ling — hashing, signing, and symmetric encryption"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = ["symmetric"]
+symmetric = ["dep:aes-gcm"]
 
 [dependencies]
-ling-core = { path = "../ling-core" }
-aes-gcm = { version = "0.10", optional = true }
+ling-core     = { workspace = true }
+blake3        = { workspace = true }
+aes-gcm       = { workspace = true, optional = true }
 ed25519-dalek = "2.1"
-blake3 = "1.5"
-zeroize = "1.8"
+zeroize       = "1.8"
 
+[lib]
+name = "ling_crypto"
+path = "src/lib.rs"

@@ -1,0 +1,15 @@
+#!/usr/bin/env ling
+
+bind fib = (n: number) -> number {
+    if n <= 1 {
+        post n
+    } else {
+        post fib(n - 1) + fib(n - 2)
+    }
+}
+
+bind start = do {
+    for i in 0..10 {
+        print("fib(", i, ") = ", fib(i))
+    }
+}

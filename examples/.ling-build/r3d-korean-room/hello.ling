@@ -1,0 +1,6 @@
+#!/usr/bin/env ling
+
+bind start = do {
+    bind message = "Hello, World!"
+    print(message)
+}

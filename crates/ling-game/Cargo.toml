@@ -2,14 +2,28 @@
 name = "ling-game"
 version = "2030.0.0"
 edition = "2021"
-authors = ["Ling Lin <ling@ling-lang.org>"]
-description = "Ling game engine (Bevy integration)"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Ling game engine — ECS, physics, and scene management"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = []
+# Full Bevy integration: cargo build --features bevy
+bevy = ["dep:bevy"]
+# 2-D physics via Avian
+physics2d = ["dep:avian2d"]
+# 3-D physics via Avian
+physics3d = ["dep:avian3d"]
 
 [dependencies]
-ling-core = { path = "../ling-core" }
-ling-runtime = { path = "../ling-runtime" }
-ling-ui = { path = "../ling-ui", optional = true }
-bevy = { version = "0.13", optional = true, features = ["dynamic_linking"] }
-avian = "0.1"
-heron = "0.2"
+ling-core    = { workspace = true }
+ling-runtime = { workspace = true }
+ling-ui      = { workspace = true, optional = true }
+bevy         = { version = "0.14", optional = true, default-features = false }
+avian2d      = { version = "0.1",  optional = true }
+avian3d      = { version = "0.1",  optional = true }
 
+[lib]
+name = "ling_game"
+path = "src/lib.rs"

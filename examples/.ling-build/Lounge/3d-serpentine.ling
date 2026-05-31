@@ -1,0 +1,248 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 3d-serpentine.ling  —  สามเหลี่ยมพีระมิดเซียร์พินสกี้ 4 มิติ
+#                        4-D Sierpiński Sierpentine — Animated DMT Sculpture
+#
+# วิธีรัน:
+#   ling run examples/3d-serpentine.ling
+#
+# อัลกอริธึม:
+#   • Sierpiński tetrahedron สองตัวพันกัน (stella octangula — ดาว 3 มิติ)
+#   • ทาจากใหญ่ → เล็ก: แต่ละระดับเขียนทับมุมด้วยสีใหม่
+#   • สี 4 มิติ:  t=เวลา  d=ความลึก  f=หน้า  w=คลื่นหายใจ
+#   • Perspective projection + หมุนลื่นไหล
+#   • กด Escape หรือปิดหน้าต่างเพื่อออก
+# ════════════════════════════════════════════════════════════════════════════
+
+# ─── 3-D projected triangle ──────────────────────────────────────────────────
+# รับ cos/sin ที่คำนวณล่วงหน้า 1 ครั้งต่อเฟรม เพื่อความเร็ว
+# cry=cos(ry)  sry=sin(ry)  crx=cos(rx)  srx=sin(rx)
+fn tri3d(ax, ay, az,
+         bx, by, bz,
+         cx, cy, cz,
+         cry, sry, crx, srx) {
+    # ─ หมุน Y แล้ว X  จุด A
+    ผูก ax1 = ax * cry - az * sry
+    ผูก az1 = ax * sry + az * cry
+    ผูก ay2 = ay * crx - az1 * srx
+    ผูก az2 = ay * srx + az1 * crx
+    ผูก sax = 400 + 500 * ax1 / (az2 + 6)
+    ผูก say = 350 + 500 * ay2 / (az2 + 6)
+    # ─ จุด B
+    ผูก bx1 = bx * cry - bz * sry
+    ผูก bz1 = bx * sry + bz * cry
+    ผูก by2 = by * crx - bz1 * srx
+    ผูก bz2 = by * srx + bz1 * crx
+    ผูก sbx = 400 + 500 * bx1 / (bz2 + 6)
+    ผูก sby = 350 + 500 * by2 / (bz2 + 6)
+    # ─ จุด C
+    ผูก cx1 = cx * cry - cz * sry
+    ผูก cz1 = cx * sry + cz * cry
+    ผูก cy2 = cy * crx - cz1 * srx
+    ผูก cz2 = cy * srx + cz1 * crx
+    ผูก scx = 400 + 500 * cx1 / (cz2 + 6)
+    ผูก scy = 350 + 500 * cy2 / (cz2 + 6)
+    วาดสามเหลี่ยม(sax, say, sbx, sby, scx, scy)
+}
+
+# ─── สี 4 มิติ แบบ serpentine dither ──────────────────────────────────────────
+# มิติ 1: t  = เฟรม * 0.025           (เวลา — หมุนสีช้าๆ)
+# มิติ 2: ระดับ * 1.047               (ความลึก fractal — เหลื่อม 60°)
+# มิติ 3: หน้า * 0.785                (หน้าพีระมิด 0–3 — เหลื่อม 45°)
+# มิติ 4: คลื่น w ที่ความถี่ต่างกัน   (ความสว่าง "หายใจ" เป็นพัลส์)
+fn สี4มิติ(ระดับ, หน้า, เฟรม) {
+    ผูก t = เฟรม * 0.025
+    ผูก p = ระดับ * 1.047 + หน้า * 0.785
+    ผูก w = sin(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
+    ผูก r = (sin(t + p)         * 127 + 128) * w
+    ผูก g = (sin(t + p + 2.094) * 127 + 128) * w
+    ผูก b = (sin(t + p + 4.189) * 127 + 128) * w
+    สีดินสอ(r, g, b)
+}
+
+# ─── Sierpiński tetrahedron แบบ "ทาจากใหญ่ → เล็ก" ───────────────────────────
+# a b c d = 4 มุมของพีระมิด
+# วาดพีระมิดใหญ่ก่อน → recurse ลงไปใน 4 มุมย่อย ซึ่งเขียนทับ
+# ช่องว่างกลาง (octahedron) จะเก็บสีระดับแม่ไว้ — สร้างแพทเทิร์น fractal
+fn วาดเซียร์3มิติ(ax, ay, az,
+                   bx, by, bz,
+                   cx, cy, cz,
+                   dx, dy, dz,
+                   ระดับ, เฟรม,
+                   cry, sry, crx, srx) {
+    # วาด 4 หน้าของพีระมิดนี้ (หนึ่งสีต่อหน้า)
+    สี4มิติ(ระดับ, 0, เฟรม)
+    tri3d(ax, ay, az, bx, by, bz, cx, cy, cz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 1, เฟรม)
+    tri3d(ax, ay, az, bx, by, bz, dx, dy, dz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 2, เฟรม)
+    tri3d(ax, ay, az, cx, cy, cz, dx, dy, dz, cry, sry, crx, srx)
+    สี4มิติ(ระดับ, 3, เฟรม)
+    tri3d(bx, by, bz, cx, cy, cz, dx, dy, dz, cry, sry, crx, srx)
+
+    ถ้า ระดับ > 0 {
+        ผูก ด = ระดับ - 1
+        # จุดกึ่งกลางของ 6 edges
+        ผูก mabx = (ax + bx) / 2
+        ผูก maby = (ay + by) / 2
+        ผูก mabz = (az + bz) / 2
+        ผูก macx = (ax + cx) / 2
+        ผูก macy = (ay + cy) / 2
+        ผูก macz = (az + cz) / 2
+        ผูก madx = (ax + dx) / 2
+        ผูก mady = (ay + dy) / 2
+        ผูก madz = (az + dz) / 2
+        ผูก mbcx = (bx + cx) / 2
+        ผูก mbcy = (by + cy) / 2
+        ผูก mbcz = (bz + cz) / 2
+        ผูก mbdx = (bx + dx) / 2
+        ผูก mbdy = (by + dy) / 2
+        ผูก mbdz = (bz + dz) / 2
+        ผูก mcdx = (cx + dx) / 2
+        ผูก mcdy = (cy + dy) / 2
+        ผูก mcdz = (cz + dz) / 2
+        # 4 sub-tetrahedra ที่มุม a, b, c, d
+        วาดเซียร์3มิติ(ax,   ay,   az,
+                        mabx, maby, mabz,
+                        macx, macy, macz,
+                        madx, mady, madz,
+                        ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(mabx, maby, mabz,
+                        bx,   by,   bz,
+                        mbcx, mbcy, mbcz,
+                        mbdx, mbdy, mbdz,
+                        ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(macx, macy, macz,
+                        mbcx, mbcy, mbcz,
+                        cx,   cy,   cz,
+                        mcdx, mcdy, mcdz,
+                        ด, เฟรม, cry, sry, crx, srx)
+        วาดเซียร์3มิติ(madx, mady, madz,
+                        mbdx, mbdy, mbdz,
+                        mcdx, mcdy, mcdz,
+                        dx,   dy,   dz,
+                        ด, เฟรม, cry, sry, crx, srx)
+    }
+}
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
+ผูก เริ่ม = ทำ {
+    เปิดหน้าต่าง(800, 700, "3-D Sierpiński Serpentine — สามเหลี่ยมพีระมิด 4 มิติ")
+    capture_mouse()
+
+    # Regular tetrahedron inscribed in unit sphere, scaled by r=1.5
+    # v0 = apex  v1/v2/v3 = equilateral base
+    #   v0 = (0,        −1,         0)
+    #   v1 = (2√2/3,    +1/3,       0)      ≈ (0.9428,  0.3333,  0)
+    #   v2 = (−√2/3,    +1/3,  +√6/3)      ≈ (−0.4714, 0.3333,  0.8165)
+    #   v3 = (−√2/3,    +1/3,  −√6/3)      ≈ (−0.4714, 0.3333, −0.8165)
+    ผูก r   = 1.5
+    ผูก v0x = 0.0              ผูก v0y = -r               ผูก v0z = 0.0
+    ผูก v1x = r * 0.9428       ผูก v1y = r * 0.3333       ผูก v1z = 0.0
+    ผูก v2x = 0 - r * 0.4714   ผูก v2y = r * 0.3333       ผูก v2z = r * 0.8165
+    ผูก v3x = 0 - r * 0.4714   ผูก v3y = r * 0.3333       ผูก v3z = 0 - r * 0.8165
+
+    # Dual tetrahedron (negated coords) — interpenetrates to form stella octangula
+    ผูก n0x = 0.0              ผูก n0y = r                ผูก n0z = 0.0
+    ผูก n1x = 0 - r * 0.9428   ผูก n1y = 0 - r * 0.3333  ผูก n1z = 0.0
+    ผูก n2x = r * 0.4714       ผูก n2y = 0 - r * 0.3333  ผูก n2z = 0 - r * 0.8165
+    ผูก n3x = r * 0.4714       ผูก n3y = 0 - r * 0.3333  ผูก n3z = r * 0.8165
+
+    ผูก เฟรม = 0
+
+    ผูก cam_px = 0.0
+    ผูก cam_py = 0.0
+    ผูก cam_pz = 0.0
+    ผูก cam_zdist = 2.0
+    ผูก cam_ry_off = 0.0
+    ผูก cam_rx_off = 0.0
+    ผูก cam_idle = 0
+    ผูก cam_manual = 0
+    ผูก cam_ry_snap = 0.0
+    ผูก cam_rx_snap = 0.0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        # ล้างหน้าจอ — สีดำลึก
+        เติม(3, 2, 8)
+
+        # วงโคจรหมุน: Y หมุนรอบต่อเนื่อง, X แกว่งเป็นไซน์
+        ผูก ry = เฟรม * 0.018
+        ผูก rx = sin(เฟรม * 0.011) * 0.75
+        ผูก mdx = mouse_dx()
+        ผูก mdy = mouse_dy()
+        ผูก any_input = 0
+        ถ้า key_down("w")      { ผูก any_input = 1 }
+        ถ้า key_down("s")      { ผูก any_input = 1 }
+        ถ้า key_down("a")      { ผูก any_input = 1 }
+        ถ้า key_down("d")      { ผูก any_input = 1 }
+        ถ้า key_down("space")  { ผูก any_input = 1 }
+        ถ้า key_down("lshift") { ผูก any_input = 1 }
+        ถ้า key_down("left")   { ผูก any_input = 1 }
+        ถ้า key_down("right")  { ผูก any_input = 1 }
+        ถ้า key_down("up")     { ผูก any_input = 1 }
+        ถ้า key_down("down")   { ผูก any_input = 1 }
+        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
+        ถ้า any_input == 1 { ผูก cam_manual = 1; ผูก cam_idle = 0 }
+        ถ้า cam_manual == 1 {
+            ผูก cam_idle = cam_idle + 1
+            ถ้า cam_idle > 300 { ผูก cam_manual = 0; ผูก cam_idle = 0 }
+        }
+        ถ้า cam_manual == 1 {
+            ผูก cam_ry_off = cam_ry_off + mdx * 0.0022
+            ผูก cam_rx_off = cam_rx_off + mdy * 0.0022
+            ถ้า cam_rx_off > 3.14159  { ผูก cam_rx_off = 3.14159 }
+            ถ้า cam_rx_off < -3.14159 { ผูก cam_rx_off = -3.14159 }
+            ถ้า key_down("left")  { ผูก cam_ry_off = cam_ry_off - 0.018 }
+            ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
+            ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
+            ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
+            ผูก fwd_x = sin(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = cos(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = cos(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
+            ผูก spd = 0.12
+            ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
+            ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
+            ถ้า key_down("a") { ผูก cam_px = cam_px - rgt_x * spd; ผูก cam_pz = cam_pz - rgt_z * spd }
+            ถ้า key_down("d") { ผูก cam_px = cam_px + rgt_x * spd; ผูก cam_pz = cam_pz + rgt_z * spd }
+            ถ้า key_down("space")  { ผูก cam_py = cam_py + spd }
+            ถ้า key_down("lshift") { ผูก cam_py = cam_py - spd }
+            ถ้า key_pressed("numpad+") { ผูก cam_zdist = cam_zdist + 0.5 }
+            ถ้า key_pressed("numpad-") { ผูก cam_zdist = cam_zdist - 0.5; ถ้า cam_zdist < 0.5 { ผูก cam_zdist = 0.5 } }
+        }
+        ถ้า cam_manual == 0 {
+            ผูก cam_ry_snap = ry
+            ผูก cam_rx_snap = rx
+            ผูก cam_ry_off = cam_ry_off * 0.97
+            ผูก cam_rx_off = cam_rx_off * 0.97
+            ผูก cam_px = cam_px * 0.97
+            ผูก cam_py = cam_py * 0.97
+            ผูก cam_pz = cam_pz * 0.97
+        }
+        # คำนวณ cos/sin เพียงครั้งเดียวต่อเฟรม (ประหยัดเวลา)
+        ผูก cry = cos(cam_ry_snap + cam_ry_off)
+        ผูก sry = sin(cam_ry_snap + cam_ry_off)
+        ผูก crx = cos(cam_rx_snap + cam_rx_off)
+        ผูก srx = sin(cam_rx_snap + cam_rx_off)
+        set_camera(cry, sry, crx, srx)
+        set_camera_pos(cam_px, cam_py, cam_pz)
+        set_zdist(cam_zdist)
+
+        # ══ พีระมิดที่ 1: Sierpiński tetrahedron ════════════════════════════
+        วาดเซียร์3มิติ(v0x, v0y, v0z,
+                        v1x, v1y, v1z,
+                        v2x, v2y, v2z,
+                        v3x, v3y, v3z,
+                        3, เฟรม, cry, sry, crx, srx)
+
+        # ══ พีระมิดที่ 2: dual tetrahedron (สอดประสาน = stella octangula) ══
+        # เลื่อน เฟรม+80 เพื่อสีที่ต่างออกไป — สร้างแพทเทิร์นสีตัดกัน
+        วาดเซียร์3มิติ(n0x, n0y, n0z,
+                        n1x, n1y, n1z,
+                        n2x, n2y, n2z,
+                        n3x, n3y, n3z,
+                        3, เฟรม + 80, cry, sry, crx, srx)
+
+        แสดงผล()
+        ผูก เฟรม = เฟรม + 1
+    }
+}

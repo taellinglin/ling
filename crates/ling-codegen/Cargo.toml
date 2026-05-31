@@ -2,16 +2,23 @@
 name = "ling-codegen"
 version = "2030.0.0"
 edition = "2021"
-authors = ["Ling Lin <ling@ling-lang.org>"]
-description = "Code generation backends: LLVM, Cranelift, WASM"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Code generation backends for Ling (bytecode, WASM, native)"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = []
+# To enable the LLVM backend, add inkwell manually:
+#   inkwell = { version = "0.4", features = ["llvm18-0"] }
+# and add it to the llvm feature below, then compile with --features llvm.
+llvm = []
 
 [dependencies]
-ling-core = { path = "../ling-core" }
-ling-mir = { path = "../ling-mir" }
-inkwell = { version = "0.18", features = ["llvm18-0"] }
-cranelift = "0.120"
-cranelift-jit = "0.120"
-cranelift-module = "0.120"
-wasmtime = "18.0"
-anyhow = "1.0"
+ling-core = { workspace = true }
+ling-mir  = { workspace = true }
+anyhow    = "1.0"
 
+[lib]
+name = "ling_codegen"
+path = "src/lib.rs"

@@ -1,0 +1,354 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# sakohn.ling — สกลนคร · โซ่วงแหวน 4-5D
+#
+#  Sacred room of Sakon Nakhon with an interlocking torus chain at its heart.
+#  Three tori interlock (horizontal ↔ vertical ↔ horizontal) and breathe at
+#  the 4:5 resonant frequency ratio (major third / Pythagorean pulsation).
+#
+#  Thai taste palette mapped to spatial zones:
+#    Floor     — หวาน (sweet)    — saffron gold
+#    Ceiling   — หอม  (fragrant) — emerald green
+#    Back wall — เปรี้ยว (sour)  — indigo
+#    Left wall — เผ็ด  (hot)     — vermilion
+#    Right wall— เค็ม  (salty)   — cobalt blue
+#
+#  Run:  ling run examples/sakohn.ling
+#  Quit: Escape or close window
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ผูก W  = 9.0
+ผูก H  = 4.5
+ผูก FZ = 16.0
+ผูก NZ = 1.4
+ผูก PZ = 8.0
+ผูก PR = 1.6
+ผูก Pr = 0.38
+
+# ── Sine-wave RGB (smooth hue cycling) ──────────────────────────────────────
+ฟังก์ชัน สีคลื่น(ฮิว, sat, lit, dim) {
+    ผูก h = ฮิว * 3.14159 / 180.0
+    ผูก r = clamp((sin(h)         * sat + lit) * dim, 0.0, 255.0)
+    ผูก g = clamp((sin(h + 2.094) * sat + lit) * dim, 0.0, 255.0)
+    ผูก b = clamp((sin(h + 4.189) * sat + lit) * dim, 0.0, 255.0)
+    สีดินสอ(r, g, b)
+}
+
+# ── Single torus — wireframe line grid ──────────────────────────────────────
+# center (cx,cy,cz), axis unit vector (ax,ay,az),
+# ring-plane basis (ex,ey,ez) and (fx,fy,fz),
+# major radius R, minor radius r.
+# 4D warp: R breathes at 4× longitudinal frequency modulated by t4.
+# 5D twist: v phase advances at t5 (5th harmonic of t4).
+ฟังก์ชัน วงแหวน(cx, cy, cz, ax, ay, az, ex, ey, ez, fx, fy, fz, R, r, เฟรม, ฮิว0) {
+    ผูก Nu  = 24
+    ผูก Nv  = 12
+    ผูก tau = 6.283185
+    ผูก t4  = เฟรม * 0.0040
+    ผูก t5  = เฟรม * 0.0050
+
+    ผูก iu = 0
+    ขณะที่ iu < Nu {
+        ผูก iv = 0
+        ขณะที่ iv < Nv {
+            ผูก u0 = iu * tau / Nu
+            ผูก u1 = (iu + 1) * tau / Nu
+            ผูก v0 = iv * tau / Nv + t5
+            ผูก v1 = (iv + 1) * tau / Nv + t5
+
+            # 4D resonance warp — R varies at 4× angular frequency
+            ผูก Rw  = R + sin(u0 * 4.0 + t4 * 4.0) * 0.07
+            ผูก Rw1 = R + sin(u1 * 4.0 + t4 * 4.0) * 0.07
+
+            ผูก cu0 = cos(u0)   ผูก su0 = sin(u0)
+            ผูก cu1 = cos(u1)   ผูก su1 = sin(u1)
+            ผูก cv0 = cos(v0)   ผูก sv0 = sin(v0)
+            ผูก cv1 = cos(v1)   ผูก sv1 = sin(v1)
+
+            # Torus points: center + (R+r·cos v)·(cos u·e + sin u·f) + r·sin v·a
+            ผูก q0x = cx + (Rw  + r*cv0)*(cu0*ex + su0*fx) + r*sv0*ax
+            ผูก q0y = cy + (Rw  + r*cv0)*(cu0*ey + su0*fy) + r*sv0*ay
+            ผูก q0z = cz + (Rw  + r*cv0)*(cu0*ez + su0*fz) + r*sv0*az
+            ผูก q1x = cx + (Rw1 + r*cv0)*(cu1*ex + su1*fx) + r*sv0*ax
+            ผูก q1y = cy + (Rw1 + r*cv0)*(cu1*ey + su1*fy) + r*sv0*ay
+            ผูก q1z = cz + (Rw1 + r*cv0)*(cu1*ez + su1*fz) + r*sv0*az
+            ผูก q2x = cx + (Rw  + r*cv1)*(cu0*ex + su0*fx) + r*sv1*ax
+            ผูก q2y = cy + (Rw  + r*cv1)*(cu0*ey + su0*fy) + r*sv1*ay
+            ผูก q2z = cz + (Rw  + r*cv1)*(cu0*ez + su0*fz) + r*sv1*az
+
+            ผูก ฮิวi = ฮิว0 + iu * 15.0 + iv * 8.0 + เฟรม * 0.25
+            สีคลื่น(ฮิวi, 110.0, 60.0, 1.0)
+            วาดเส้น3มิติ(q0x, q0y, q0z,  q1x, q1y, q1z)
+            วาดเส้น3มิติ(q0x, q0y, q0z,  q2x, q2y, q2z)
+
+            ผูก iv = iv + 1
+        }
+        ผูก iu = iu + 1
+    }
+}
+
+# ── Three interlocking tori ──────────────────────────────────────────────────
+# Layout along the chain axis (which slowly spins):
+#   Torus 1 — horizontal ring (axis = Y),  center offset -sep along chain
+#   Torus 2 — vertical ring   (axis = chain direction), center at PZ
+#   Torus 3 — horizontal ring (axis = Y),  center offset +sep along chain
+# sep = PR*1.1 so the rings pass through each other's holes.
+ฟังก์ชัน โซ่(เฟรม) {
+    ผูก R    = PR
+    ผูก r    = Pr
+    ผูก sep  = R * 1.1
+    ผูก spin = เฟรม * 0.0035
+    ผูก cs   = cos(spin)
+    ผูก ss   = sin(spin)
+    ผูก tz   = PZ
+
+    # Torus 1 — axis Y, ring in XZ rotated by spin
+    ผูก c1x = 0.0 - sep * cs
+    ผูก c1z = tz  - sep * ss
+    วงแหวน(c1x, 0.0, c1z,
+             0.0, 1.0, 0.0,
+             cs,  0.0, ss,
+             0.0 - ss, 0.0, cs,
+             R, r, เฟรม, 30.0)
+
+    # Torus 2 — axis along chain direction (cs,0,ss), ring perp to it
+    วงแหวน(0.0, 0.0, tz,
+             cs,  0.0, ss,
+             0.0, 1.0, 0.0,
+             0.0 - ss, 0.0, cs,
+             R, r, เฟรม, 150.0)
+
+    # Torus 3 — axis Y, mirrored from Torus 1
+    ผูก c3x = sep * cs
+    ผูก c3z = tz  + sep * ss
+    วงแหวน(c3x, 0.0, c3z,
+             0.0, 1.0, 0.0,
+             cs,  0.0, ss,
+             0.0 - ss, 0.0, cs,
+             R, r, เฟรม, 270.0)
+}
+
+# ── Room surfaces ────────────────────────────────────────────────────────────
+
+ฟังก์ชัน draw_พื้น(FR, hd) {
+    ผูก cy  = 0 - H
+    ผูก fm  = FZ / 2
+    ผูก ช้า = FR * 0.14
+    vtex_tessellated(0, cy, fm,  1,0,0,  0,0,1,  24,18,  0.68,0.20,4.5,  FR, hd + 30.0)
+    vtex_rings(0, cy, fm,  1,0,0,  0,0,1,  5,36,  5.0,0.0,  ช้า, hd + 0.0)
+    vtex_yantra(0, cy, fm,  1,0,0,  0,0,1,  4,4.6,  FR, hd + 10.0)
+    vtex_lotus(0, cy, fm,  1,0,0,  0,0,1,  0.8,2.5,12,  ช้า, hd + 20.0)
+}
+
+ฟังก์ชัน draw_เพดาน(FR, hd) {
+    ผูก cy  = H
+    ผูก fm  = FZ / 2
+    ผูก ช้า = FR * 0.14
+    vtex_hyperbolic_uv(0, cy, fm,  1,0,0,  0,0,1,  5.8,14,18,  FR, hd + 110.0)
+    vtex_flower(0, cy, fm,  1,0,0,  0,0,1,  2.4,16,  FR, hd + 120.0)
+    vtex_rings(0, cy, fm,  1,0,0,  0,0,1,  2,36,  6.0,0.0,  ช้า, hd + 130.0)
+}
+
+ฟังก์ชัน draw_ผนังหลัง(FR, hd) {
+    ผูก เร็ว = FR * 0.88
+    vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  28,16,  0.64,0.58,  0.026,  FR, hd + 200.0)
+    vtex_yantra(0, 0, FZ,  1,0,0,  0,1,0,  4,3.8,  FR, hd + 210.0)
+    vtex_chakra(0, 0, FZ,  1,0,0,  0,1,0,  4.2,8,  เร็ว, hd + 200.0)
+    vtex_star(0, 0, FZ,  1,0,0,  0,1,0,  8,4.5,2.4,0.0,  เร็ว, hd + 205.0)
+}
+
+ฟังก์ชัน draw_ผนังซ้าย(FR, hd) {
+    ผูก cx  = 0 - W
+    ผูก fm  = (NZ + FZ) / 2
+    ผูก กลาง = FR * 0.50
+    vtex_letter_rain(cx, 0, fm,  0,0,1,  0,1,0,  24,16,  0.64,0.58,  0.024,  FR, hd + 5.0)
+    vtex_spiral(cx, 0, fm,  0,0,1,  0,1,0,  2.2,2.0,72,  กลาง, hd + 0.0)
+}
+
+ฟังก์ชัน draw_ผนังขวา(FR, hd) {
+    ผูก cx  = W
+    ผูก fm  = (NZ + FZ) / 2
+    ผูก กลาง = FR * 0.50
+    vtex_letter_rain(cx, 0, fm,  0,0,1,  0,1,0,  24,16,  0.64,0.58,  0.024,  FR, hd + 210.0)
+    vtex_spiral(cx, 0, fm,  0,0,1,  0,1,0,  2.2,2.0,72,  กลาง, hd + 220.0)
+}
+
+ฟังก์ชัน draw_ปรางค์(FR, hd) {
+    ผูก ช้า  = FR * 0.14
+    ผูก กลาง = FR * 0.50
+    ผูก เร็ว = FR * 0.88
+    ผูก bob  = sin(FR * 0.013) * 0.22
+    vtex_lotus(0, 0-H+0.5, PZ,  1,0,0,  0,0,1,  0.9,2.8,12,  ช้า, hd)
+    vtex_chakra(0, 0-2.5, PZ,  1,0,0,  0,0,1,  2.2,4,  กลาง, hd + 0.5)
+    vtex_chakra(0, 0-1.2, PZ,  1,0,0,  0,0,1,  1.8,4,  กลาง, hd + 1.5)
+    vtex_chakra(0, bob,   PZ,  1,0,0,  0,0,1,  1.4,8,  กลาง, hd + 2.5)
+    vtex_yantra(0, bob,   PZ,  1,0,0,  0,0,1,  3,1.2,  กลาง, hd + 3.0)
+    vtex_chakra(0, 1.5,   PZ,  1,0,0,  0,0,1,  1.0,4,  เร็ว, hd + 3.5)
+    vtex_star(0, H-0.5,   PZ,  1,0,0,  0,0,1,  4,1.10,0.52,0.0,  เร็ว, hd + 5.0)
+    vtex_spiral(0-3.5, 0, PZ-1.5,  1,0,0,  0,0,1,  2.2,2.0,72,  กลาง, hd + 0.8)
+    vtex_spiral( 3.5,  0, PZ-1.5,  1,0,0,  0,0,1,  2.2,2.0,72,  กลาง, hd + 4.1)
+}
+
+# ── Framefade echo pass ──────────────────────────────────────────────────────
+ฟังก์ชัน draw_เงา(FR, hd) {
+    ผูก cy_f = 0 - H
+    ผูก cy_c = H
+    ผูก fm   = FZ / 2
+    ผูก ช้า  = FR * 0.14
+    ผูก กลาง = FR * 0.50
+    ผูก เร็ว = FR * 0.88
+    vtex_rings(0, cy_f, fm,  1,0,0,  0,0,1,  5,36,  5.0,0.0,  ช้า, hd + 0.0)
+    vtex_yantra(0, cy_f, fm,  1,0,0,  0,0,1,  4,4.6,  FR, hd + 1.5)
+    vtex_flower(0, cy_c, fm,  1,0,0,  0,0,1,  2.4,16,  FR, hd + 0.2)
+    vtex_rings(0, cy_c, fm,  1,0,0,  0,0,1,  2,36,  6.0,0.0,  ช้า, hd + 4.5)
+    vtex_star(0, 0, FZ,  1,0,0,  0,1,0,  8,4.5,2.4,0.0,  เร็ว, hd + 1.5)
+    ผูก bob = sin(FR * 0.013) * 0.22
+    vtex_chakra(0, bob, PZ,  1,0,0,  0,0,1,  1.4,8,  กลาง, hd + 2.5)
+}
+
+# ── Lights ───────────────────────────────────────────────────────────────────
+ฟังก์ชัน แสง(FR) {
+    clear_lights()
+    ผูก t   = FR * 0.006
+    ผูก t4  = FR * 0.004
+    ผูก t5  = FR * 0.005
+    add_light(sin(t)*3.0, 3.0, PZ+cos(t)*2.0,  1.0,0.76,0.18,  2.2,12.0)
+    add_light(0.0-5.0, 1.2, PZ,  0.10,0.80,0.42,  1.0,10.0)
+    add_light(sin(FR*0.004)*2.5, 0.2, PZ,  0.90,0.28,0.04,  0.8,8.0)
+    add_light(0.0, 0.0-3.5, PZ,  0.30,0.38,0.70,  0.5,7.0)
+    # Torus resonance glow — pulses at 4:5 beat frequency
+    add_light(sin(t4)*PR, cos(t5)*0.8, PZ,  0.80,0.60,1.00,  1.4,5.0)
+}
+
+# ── Audio — Isaan pentatonic + 4:5 resonant pair ────────────────────────────
+ฟังก์ชัน เสียง() {
+    audio_tone(0,  0.0,  0.0-H, PZ,  1.8,   98.00, 0.10, 0.10, 0.008)
+    audio_tone(1,  0.0,  0.0-H, FZ,  2.0,  110.00, 0.10, 0.14, 0.009)
+    audio_tone(2,  0.0-W, 0.0,  PZ,  1.6,  123.47, 0.09, 0.18, 0.010)
+    audio_tone(3,  W,    0.0,   PZ,  1.6,  146.83, 0.09, 0.22, 0.010)
+    audio_tone(4,  0.0,  H,     PZ,  0.5,  164.81, 0.07, 0.26, 0.011)
+    audio_tone(5,  0.0-PR, 0.0, PZ,  0.8,  196.00, 0.07, 0.04, 0.006)
+    audio_tone(6,  PR,    0.0,  PZ,  0.8,  245.00, 0.07, 0.05, 0.006)
+    audio_volume(0.55)
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ผูก เริ่ม = ทำ {
+    เปิดหน้าต่างเต็มจอ("สกลนคร · โซ่วงแหวน 4-5D")
+    จับเมาส์()
+    set_ambient(0.05)
+    เสียง()
+
+    ผูก กรอบ       = 0
+    ผูก cam_px     = 0.0
+    ผูก cam_py     = 0.0
+    ผูก cam_pz     = 0.0
+    ผูก cam_zdist  = 2.0
+    ผูก cam_ry_off = 0.0
+    ผูก cam_rx_off = 0.0
+    ผูก cam_manual = 0
+    ผูก cam_idle   = 0
+    ผูก cam_ry_snap = 0.0
+    ผูก cam_rx_snap = 0.0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(4, 1, 8)
+
+        ผูก ry = sin(กรอบ * 0.00044) * 0.22
+        ผูก rx = sin(กรอบ * 0.00028) * 0.08
+
+        ผูก mdx = mouse_dx()
+        ผูก mdy = mouse_dy()
+        ผูก any_input = 0
+        ถ้า key_down("w")      { ผูก any_input = 1 }
+        ถ้า key_down("s")      { ผูก any_input = 1 }
+        ถ้า key_down("a")      { ผูก any_input = 1 }
+        ถ้า key_down("d")      { ผูก any_input = 1 }
+        ถ้า key_down("space")  { ผูก any_input = 1 }
+        ถ้า key_down("lshift") { ผูก any_input = 1 }
+        ถ้า key_down("left")   { ผูก any_input = 1 }
+        ถ้า key_down("right")  { ผูก any_input = 1 }
+        ถ้า key_down("up")     { ผูก any_input = 1 }
+        ถ้า key_down("down")   { ผูก any_input = 1 }
+        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
+        ถ้า any_input == 1 {
+            ผูก cam_manual = 1
+            ผูก cam_idle   = 0
+        }
+        ถ้า cam_manual == 1 {
+            ผูก cam_idle = cam_idle + 1
+            ถ้า cam_idle > 300 {
+                ผูก cam_manual = 0
+                ผูก cam_idle   = 0
+            }
+        }
+        ถ้า cam_manual == 1 {
+            ผูก cam_ry_off = cam_ry_off + mdx * 0.0022
+            ผูก cam_rx_off = cam_rx_off + mdy * 0.0022
+            ถ้า cam_rx_off >  3.14159 { ผูก cam_rx_off =  3.14159 }
+            ถ้า cam_rx_off < -3.14159 { ผูก cam_rx_off = -3.14159 }
+            ถ้า key_down("left")  { ผูก cam_ry_off = cam_ry_off - 0.018 }
+            ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
+            ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
+            ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
+            ผูก fwd_x = sin(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = cos(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = cos(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
+            ผูก spd   = 0.12
+            ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x*spd; ผูก cam_pz = cam_pz + fwd_z*spd }
+            ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x*spd; ผูก cam_pz = cam_pz - fwd_z*spd }
+            ถ้า key_down("a") { ผูก cam_px = cam_px - rgt_x*spd; ผูก cam_pz = cam_pz - rgt_z*spd }
+            ถ้า key_down("d") { ผูก cam_px = cam_px + rgt_x*spd; ผูก cam_pz = cam_pz + rgt_z*spd }
+            ถ้า key_down("space")  { ผูก cam_py = cam_py + spd }
+            ถ้า key_down("lshift") { ผูก cam_py = cam_py - spd }
+            ถ้า key_pressed("numpad+") { ผูก cam_zdist = cam_zdist + 0.5 }
+            ถ้า key_pressed("numpad-") {
+                ผูก cam_zdist = cam_zdist - 0.5
+                ถ้า cam_zdist < 0.5 { ผูก cam_zdist = 0.5 }
+            }
+        }
+        ถ้า cam_manual == 0 {
+            ผูก cam_ry_snap = ry
+            ผูก cam_rx_snap = rx
+            ผูก cam_ry_off  = cam_ry_off * 0.97
+            ผูก cam_rx_off  = cam_rx_off * 0.97
+            ผูก cam_px      = cam_px     * 0.97
+            ผูก cam_py      = cam_py     * 0.97
+            ผูก cam_pz      = cam_pz     * 0.97
+        }
+
+        ผูก cry = cos(cam_ry_snap + cam_ry_off)
+        ผูก sry = sin(cam_ry_snap + cam_ry_off)
+        ผูก crx = cos(cam_rx_snap + cam_rx_off)
+        ผูก srx = sin(cam_rx_snap + cam_rx_off)
+        set_camera(cry, sry, crx, srx)
+        set_camera_pos(cam_px, cam_py, cam_pz)
+        set_zdist(cam_zdist)
+        audio_listener(cry, sry, crx, srx)
+
+        แสง(กรอบ)
+
+        ผูก ฮิว = กรอบ * 0.4
+
+        # Echo framefade passes
+        draw_เงา(กรอบ - 48, 2.0)
+        draw_เงา(กรอบ - 24, 1.0)
+
+        # Room surfaces (taste-zone palette)
+        draw_พื้น(กรอบ,      ฮิว)
+        draw_เพดาน(กรอบ,     ฮิว)
+        draw_ผนังหลัง(กรอบ,  ฮิว)
+        draw_ผนังซ้าย(กรอบ,  ฮิว)
+        draw_ผนังขวา(กรอบ,   ฮิว)
+        draw_ปรางค์(กรอบ,    ฮิว)
+
+        # Torus chain — three interlocking rings at 4:5 resonance
+        โซ่(กรอบ)
+
+        แสดงผล()
+        ผูก กรอบ = กรอบ + 1
+    }
+}

@@ -10,6 +10,7 @@ repository = "https://github.com/taellinglin/ling"
 [dependencies]
 cpal  = "0.15"
 hound = "3.5"
+half  = "2"
 
 [lib]
 name = "ling_audio"

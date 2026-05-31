@@ -1,0 +1,16 @@
+[package]
+name = "ling-mic"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Microphone input and real-time audio capture for Ling"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cpal  = { workspace = true }
+hound = { workspace = true }
+
+[lib]
+name = "ling_mic"
+path = "src/lib.rs"

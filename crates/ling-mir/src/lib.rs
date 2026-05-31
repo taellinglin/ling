@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct ValueId(pub u32);
 
 /// A simple, stable identifier for basic blocks.
-#[derive(Clone, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockId(pub u32);
 
 /// A simple, stable identifier for functions.

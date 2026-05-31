@@ -1,0 +1,159 @@
+# ling_map.ling — convert any .ling source file into a cryptographic SVG map
+# Usage:  cargo run examples/ling_map.ling [path/to/file.ling]
+# Each line of source becomes a visual region; pattern and color are derived
+# from FNV-1a hashes of the line content, mirroring the Python AI_PatternCryptoFill.
+
+令 启 = 执 {
+    令 参数 = get_args()
+    令 路径 = "examples/3d-family-room.ling"
+    若 len(参数) > 2 {
+        令 路径 = list_get(参数, 2)
+    }
+    令 输出 = str_replace(路径, ".ling", "_map.svg")
+
+    令 源码 = read_file(路径)
+    令 行列 = split(源码, "\n")
+    令 行数 = len(行列)
+
+    令 宽 = 900.0
+    令 行高 = 14.0
+    令 高 = 行数 * 行高 + 50.0
+    若 高 < 400.0 {
+        令 高 = 400.0
+    }
+
+    print("Mapping: ")
+    print(路径)
+    print(" → ")
+    print(输出)
+
+    svg_begin(输出, 宽, 高)
+
+    令 i = 0
+    循 i < 行数 {
+        令 行 = list_get(行列, i)
+        令 修剪行 = trim(行)
+
+        令 色调 = hash_int(行, 360)
+        令 图案 = hash_int(行, 6)
+        令 动态 = hash_str(行)
+        令 调和 = hash_int(行, 12)
+        令 颜色 = hsl_color(色调, 75.0, 50.0)
+        令 暗色 = hsl_color(色调, 40.0, 30.0)
+
+        令 y = i * 行高 + 30.0
+
+        # Pattern 0 — rhythmic grid dots (encodes timing)
+        若 图案 == 0 {
+            令 j = 0
+            循 j < 16 {
+                令 x = 30.0 + j * 52.5
+                令 偏移 = 动态 * 10.0 - 5.0
+                令 半径 = 1.5 + 动态 * 2.0
+                svg_circle(x + 偏移, y, 半径, 颜色)
+                令 j = j + 1
+            }
+        }
+
+        # Pattern 1 — waveform (encodes melody)
+        若 图案 == 1 {
+            令 振幅 = 3.0 + 动态 * 4.0
+            令 频率 = 1.0 + hash_int(行, 4)
+            令 点串 = ""
+            令 k = 0
+            循 k < 17 {
+                令 t = k / 16.0
+                令 x = 30.0 + t * 840.0
+                令 oy = sin(t * pi * 2.0 * 频率) * 振幅
+                令 px = floor(x * 10.0) / 10.0
+                令 py = floor((y + oy) * 10.0) / 10.0
+                令 点串 = 点串 + to_str(px) + "," + to_str(py) + " "
+                令 k = k + 1
+            }
+            svg_polyline(点串, 颜色, 1.0 + 动态 * 1.5)
+        }
+
+        # Pattern 2 — spectral harmonic grid (encodes chords)
+        若 图案 == 2 {
+            令 j = 0
+            循 j < 8 {
+                若 (调和 + j) % 12 < 6 {
+                    令 x = 30.0 + j * 105.0
+                    svg_rect(x, y - 4.0, 90.0, 8.0, 颜色)
+                }
+                令 j = j + 1
+            }
+        }
+
+        # Pattern 3 — radial rings (encodes spatial position)
+        若 图案 == 3 {
+            令 cx = 30.0 + 动态 * 840.0
+            令 ring = 1
+            循 ring < 4 {
+                令 半径 = ring * 4.0 + 动态 * 3.0
+                令 点数 = ring * 6
+                令 k = 0
+                循 k < 点数 {
+                    令 角 = k / 点数 * pi * 2.0
+                    svg_circle(cx + cos(角) * 半径, y + sin(角) * 半径 * 0.4, 1.2, 颜色)
+                    令 k = k + 1
+                }
+                令 ring = ring + 1
+            }
+        }
+
+        # Pattern 4 — hash barcode (raw entropy)
+        若 图案 == 4 {
+            令 j = 0
+            循 j < 30 {
+                令 位 = hash_int(行 + to_str(j), 2)
+                令 x = 30.0 + j * 28.0
+                令 宽度 = 12.0 + 位 * 15.0
+                svg_rect(x, y - 4.5, 宽度, 9.0, 颜色)
+                令 j = j + 1
+            }
+        }
+
+        # Pattern 5 — line-length bar (structural density)
+        若 图案 == 5 {
+            令 长度 = len(修剪行) * 9.0
+            若 长度 > 840.0 {
+                令 长度 = 840.0
+            }
+            若 长度 > 0.0 {
+                svg_rect(30.0, y - 2.5, 长度, 5.0, 颜色)
+                # Accent dot at start showing dynamic level
+                svg_circle(30.0, y, 2.0 + 动态 * 2.0, 暗色)
+            }
+        }
+
+        令 i = i + 1
+    }
+
+    # Title bar
+    svg_rect(0.0, 0.0, 宽, 22.0, "#111111")
+    svg_text(30.0, 15.0, 路径, "#FFD700", 11.0)
+    svg_text(宽 - 160.0, 15.0, to_str(行数) + " lines", "#888888", 9.0)
+
+    # Registration marks at corners
+    令 m = 8.0
+    svg_circle(m, m, 3.5, "#FFD700")
+    svg_line(m - 12.0, m, m + 12.0, m, "#FFD700", 0.6)
+    svg_line(m, m - 12.0, m, m + 12.0, "#FFD700", 0.6)
+
+    svg_circle(宽 - m, m, 3.5, "#FFD700")
+    svg_line(宽 - m - 12.0, m, 宽 - m + 12.0, m, "#FFD700", 0.6)
+    svg_line(宽 - m, m - 12.0, 宽 - m, m + 12.0, "#FFD700", 0.6)
+
+    svg_circle(m, 高 - m, 3.5, "#FFD700")
+    svg_line(m - 12.0, 高 - m, m + 12.0, 高 - m, "#FFD700", 0.6)
+    svg_line(m, 高 - m - 12.0, m, 高 - m + 12.0, "#FFD700", 0.6)
+
+    svg_circle(宽 - m, 高 - m, 3.5, "#FFD700")
+    svg_line(宽 - m - 12.0, 高 - m, 宽 - m + 12.0, 高 - m, "#FFD700", 0.6)
+    svg_line(宽 - m, 高 - m - 12.0, 宽 - m, 高 - m + 12.0, "#FFD700", 0.6)
+
+    svg_end()
+    print("\nDone: ")
+    print(输出)
+}

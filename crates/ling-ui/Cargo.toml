@@ -2,13 +2,22 @@
 name = "ling-ui"
 version = "2030.0.0"
 edition = "2021"
-authors = ["Ling Lin <ling@ling-lang.org>"]
-description = "Ling UI framework (Xilem + Taffy)"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "Ling UI framework — retained-mode widgets and flex layout"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = ["layout"]
+layout  = ["dep:taffy"]
+gpu     = ["dep:wgpu"]
 
 [dependencies]
-ling-core = { path = "../ling-core" }
-ling-runtime = { path = "../ling-runtime" }
-wgpu = { version = "0.20", optional = true }
-xilem = "0.1"
-taffy = "0.5"
+ling-core    = { workspace = true }
+ling-runtime = { workspace = true }
+taffy        = { version = "0.5", optional = true }
+wgpu         = { version = "22.0", optional = true }
 
+[lib]
+name = "ling_ui"
+path = "src/lib.rs"

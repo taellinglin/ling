@@ -1,72 +1,35 @@
 [package]
 name = "ling-net"
 version = "2030.0.0"
-edition = "2024"
+edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
-description = "Async networking, HTTP/2, WebSocket, QUIC, and WebRTC"
+description = "Async networking — HTTP, WebSocket, QUIC, and peer-to-peer"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [features]
 default = ["http"]
-http = ["dep:axum", "dep:reqwest"]
-websocket = ["dep:tokio-tungstenite"]
-quic = ["dep:quinn", "dep:rustls"]
-webrtc = []
-grpc = ["dep:tonic", "dep:prost"]
-p2p = ["dep:libp2p"]
+http      = ["dep:axum", "dep:reqwest", "dep:tokio"]
+websocket = ["dep:tokio-tungstenite", "dep:tokio"]
+quic      = ["dep:quinn", "dep:tokio"]
+grpc      = ["dep:tonic", "dep:prost", "dep:tokio"]
 
 [dependencies]
-ling-core = { workspace = true }
+ling-core   = { workspace = true }
 ling-crypto = { workspace = true }
+serde       = { version = "1.0", features = ["derive"] }
+serde_json  = "1.0"
+anyhow      = "1.0"
+thiserror   = "1.0"
 
-# Async runtime
-tokio = { workspace = true, optional = true, features = ["rt", "net"] }
-async-std = { version = "1.13", optional = true }
-
-# HTTP
-axum = { version = "0.7", optional = true, features = ["ws"] }
-reqwest = { version = "0.12", optional = true, features = ["json", "stream"] }
-hyper = { version = "1.1", features = ["server", "client"] }
-
-# WebSocket
+tokio             = { version = "1.37", features = ["rt", "net", "io-util", "macros"], optional = true }
+axum              = { version = "0.7", optional = true }
+reqwest           = { version = "0.12", features = ["json"], optional = true }
 tokio-tungstenite = { version = "0.21", optional = true }
-
-# QUIC
-quinn = { version = "0.11", optional = true }
-rustls = { version = "0.23", optional = true, features = ["ring"] }
-
-# WebRTC
-# webrtc-rs = { version = "0.9", optional = true }
-
-# gRPC
-tonic = { version = "0.11", optional = true }
-prost = { version = "0.12", optional = true }
-
-# P2P
-libp2p = { version = "0.53", optional = true, default-features = false }
-
-# Serialization
-serde = { workspace = true }
-json = { package = "serde_json", version = "1.0" }
-msgpack = { package = "rmp-serde", version = "1.1" }
-
-# TLS
-native-tls = "0.2"
-rustls-native-certs = "0.7"
-
-[dev-dependencies]
-tower = "0.4"
-tracing = "0.1"
+quinn             = { version = "0.11", optional = true }
+tonic             = { version = "0.11", optional = true }
+prost             = { version = "0.12", optional = true }
 
 [lib]
 name = "ling_net"
 path = "src/lib.rs"
-
-# [[example]]
-# name = "http_server"
-# required-features = ["http"]
-
-# [[example]]
-# name = "quic_chat"
-# required-features = ["quic"]
