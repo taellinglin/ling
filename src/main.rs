@@ -26,8 +26,10 @@ fn main() {
                 eprintln!("Usage: ling run <file.ling>");
                 std::process::exit(1);
             });
+            eprintln!("[ling] argv1={:?} argv2={:?} argv3={:?}", args.get(1), args.get(2), args.get(3));
             run_file(file);
         }
+
         Some("build") => {
             let target = args.get(2).map(|s| s.as_str()).unwrap_or(".");
             let out     = flag_value(&args, "--out").unwrap_or_else(|| "dist".into());

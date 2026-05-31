@@ -6,7 +6,10 @@ use crate::gfx::{GfxState, Light};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gfx::raster::{fill_triangle, draw_line};
 #[cfg(not(target_arch = "wasm32"))]
-use ling_audio::{AudioEngine, ToneParams, FftAnalyzer};
+use ling_audio::{AudioEngine, ToneParams};
+
+#[cfg(not(target_arch = "wasm32"))]
+use ling_audio::fft::FftAnalyzer;
 
 // ─── Values ──────────────────────────────────────────────────────────────────
 
