@@ -40,6 +40,7 @@ const SIDEBAR_BG:&str = "#0d0d22";
 // ── Call category ────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[allow(dead_code)]
 enum Cat {
     Rings, Spiral, Star, Flower, Lotus, Chakra, Yantra,
     Hyper, Tess, Rain, Grid, Halftone,
@@ -163,6 +164,7 @@ struct Document {
     filename: String,
     globals:  Vec<GlobalConst>,
     funcs:    Vec<FuncCard>,
+    #[allow(dead_code)]
     fn_names: HashSet<String>,
 }
 

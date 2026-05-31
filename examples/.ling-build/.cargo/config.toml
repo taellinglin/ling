@@ -1,3 +1,0 @@
-# Shared build cache for all room builds — avoids re-compiling ling-lang each time.
-[build]
-target-dir = "../../.ling-shared-target"

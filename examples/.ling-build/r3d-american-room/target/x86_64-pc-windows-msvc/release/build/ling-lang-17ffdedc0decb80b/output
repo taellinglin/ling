@@ -1,4 +1,0 @@
-cargo:rerun-if-changed=src/parser/grammar.lalrpop
-cargo:rerun-if-changed=lexicons/
-processing file `C:\Users\User\Programs\ling\crates\ling-lex\src\grammar.lalrpop`
-Error: no public symbols declared in grammar

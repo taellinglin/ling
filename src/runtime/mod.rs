@@ -176,7 +176,7 @@ fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
 pub struct Interpreter {
     globals:   HashMap<String, Expr>,
     functions: HashMap<String, FnDef>,
-    modules:   HashMap<String, Vec<FnDef>>,
+    _modules:  HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
     svg:       RefCell<Option<SvgWriter>>,
     /// Directory of the primary source file, for relative `use` resolution.
@@ -200,7 +200,7 @@ impl Interpreter {
         Self {
             globals:   HashMap::new(),
             functions: HashMap::new(),
-            modules:   HashMap::new(),
+            _modules:  HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
             svg:       RefCell::new(None),
             source_dir: None,
@@ -910,14 +910,14 @@ impl Interpreter {
                             #[repr(C)]
                             struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
                             extern "system" {
-                                fn ClipCursor(lpRect: *const RECT) -> i32;
+                                fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32;
                                 fn GetForegroundWindow() -> isize;
                                 fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
                             }
                             let hwnd = GetForegroundWindow();
                             let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                             if GetWindowRect(hwnd, &mut rect) != 0 {
-                                ClipCursor(&rect);
+                                ClipCursor(&rect as *const RECT as *const std::ffi::c_void);
                             }
                         }
                     } else if let Some((mx, my)) = mouse_pos {
@@ -1123,7 +1123,8 @@ impl Interpreter {
                     }
                     #[cfg(windows)]
                     unsafe {
-                        extern "system" { fn ClipCursor(lpRect: *const u8) -> i32; }
+                        // Null releases the clip; reuse the RECT-typed declaration above.
+                        extern "system" { fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32; }
                         ClipCursor(std::ptr::null());
                     }
                 }

@@ -6,6 +6,7 @@ impl TypeChecker {
         Self
     }
 
+    #[allow(dead_code)]
     pub fn check(&self, _program: &crate::parser::ast::Program) -> Result<(), crate::core::LingError> {
         Ok(())
     }

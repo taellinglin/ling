@@ -28,7 +28,7 @@ mod once_cell_stub {
         pub const fn new() -> Self {
             Self(OnceLock::new())
         }
-        pub fn get_or_init(&'static self, f: impl FnOnce() -> T) -> &T {
+        pub fn get_or_init(&'static self, f: impl FnOnce() -> T) -> &'static T {
             self.0.get_or_init(f)
         }
     }

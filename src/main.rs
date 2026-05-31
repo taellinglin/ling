@@ -111,6 +111,7 @@ fn native_platform() -> &'static str {
 enum ProjKind { Bin, Web, Game, Ui, Ai, Crypto, Lib, Polyglot }
 
 impl ProjKind {
+    #[allow(dead_code)]
     fn default_platforms(&self) -> Vec<&'static str> {
         match self {
             ProjKind::Web => vec!["web"],

@@ -40,7 +40,27 @@ members = [
     "crates/ling-py",
 ]
 exclude = [
+    # Build artifacts
     "examples/.ling-build",
+    "examples/.ling-build/**",
+    ".ling-shared-target",
+    ".ling-shared-target/**",
+    # Pre-built binaries
+    "dist",
+    "dist/**",
+    "examples/sakohn",
+    "examples/sakohn/**",
+    # Generated / large output files
+    "examples/*_map.svg",
+    "examples/ling_map.ling",
+    # Editor / tooling
+    ".claude",
+    ".claude/**",
+    ".vscode",
+    ".idea",
+    # Web demo (separate repo concern)
+    "chinese-room-web",
+    "chinese-room-web/**",
 ]
 
 # Make `cargo run` build Ling itself (not lingfu) by default.

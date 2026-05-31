@@ -1,16 +1,55 @@
+# ── Rust build artifacts ───────────────────────────────────────────────────────
 /target/
+.ling-shared-target/
+**/target/
 **/*.rs.bk
-*.swp
-*.swo
 *.ll
 *.o
 *.bc
+*.pdb
+*.d
+*.rlib
+*.rmeta
+
+# ── Ling build outputs ─────────────────────────────────────────────────────────
+examples/.ling-build/
+examples/sakohn/
+**/.ling-build/
+
+# ── Generated / compiled binaries ─────────────────────────────────────────────
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
 *.wasm
 *.ling.bin
 *.墨.bin
-Cargo.lock
+
+# ── Generated map / visualization files ───────────────────────────────────────
+examples/*_map.svg
+examples/ling_map.ling
+
+# ── Audio / media ──────────────────────────────────────────────────────────────
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# ── Editor / IDE ───────────────────────────────────────────────────────────────
+*.swp
+*.swo
 .vscode/
 .idea/
-*.rs.bk
+*.iml
+
+# ── Claude Code ────────────────────────────────────────────────────────────────
+.claude/
+
+# ── Generated lexicons ─────────────────────────────────────────────────────────
 /lexicons/generated
-./examples/.ling-build/
+
+# ── Cargo ─────────────────────────────────────────────────────────────────────
+Cargo.lock

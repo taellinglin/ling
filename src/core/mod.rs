@@ -19,7 +19,7 @@ impl LingCompiler {
         Self { config }
     }
     
-    pub fn compile<P: AsRef<std::path::Path>>(&self, input: P, output: P) -> LingResult<()> {
+    pub fn compile<P: AsRef<std::path::Path>>(&self, _input: P, _output: P) -> LingResult<()> {
         // Main compilation pipeline
         Ok(())
     }

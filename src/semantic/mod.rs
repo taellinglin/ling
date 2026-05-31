@@ -9,6 +9,7 @@ use crate::semantic::typeck::TypeChecker;
 use crate::core::LingResult;
 
 // Semantic pipeline is WIP; provide a stub so the crate builds.
+#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct SemanticAnalyzer {
     type_checker: TypeChecker,
