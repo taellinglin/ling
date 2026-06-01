@@ -3,6 +3,7 @@ use dialoguer::{Input, Select};
 use std::env;
 
 mod scaffold;
+mod normalize;
 use scaffold::{ProjectKind, ProjectScaffold, ScaffoldLang, dir_names};
 
 // ─── Invocation language detection ───────────────────────────────────────────
@@ -153,8 +154,9 @@ struct CommandTranslations {
     login:    &'static [&'static str],
     logout:   &'static [&'static str],
     translate: &'static [&'static str],
-    manifest: &'static [&'static str],
-    wizard:   &'static [&'static str],
+    manifest:  &'static [&'static str],
+    wizard:    &'static [&'static str],
+    normalize: &'static [&'static str],
 }
 
 // English
@@ -179,6 +181,7 @@ const COMMANDS_EN: CommandTranslations = CommandTranslations {
     translate: &["translate", "trans", "convert"],
     manifest:  &["manifest", "show", "info"],
     wizard:    &["wizard", "guide", "create-wizard"],
+    normalize: &["normalize", "norm", "localize"],
 };
 
 // Chinese (中文)
@@ -203,6 +206,7 @@ const COMMANDS_ZH: CommandTranslations = CommandTranslations {
     translate: &["译", "翻", "转换", "翻译"],
     manifest:  &["显", "现", "显示", "信息"],
     wizard:    &["创灵", "向导", "引导"],
+    normalize: &["规范", "规范化", "本地化"],
 };
 
 // Japanese (日本語)
@@ -227,6 +231,7 @@ const COMMANDS_JA: CommandTranslations = CommandTranslations {
     translate: &["訳", "翻訳", "変換", "トランスレート"],
     manifest:  &["示", "表示", "情報", "マニフェスト"],
     wizard:    &["創霊", "ウィザード", "作成案内"],
+    normalize: &["正規化", "言語統一", "ローカライズ"],
 };
 
 // Korean (한국어)
@@ -251,6 +256,7 @@ const COMMANDS_KO: CommandTranslations = CommandTranslations {
     translate: &["번", "번역", "변환", "트랜슬레이션"],
     manifest:  &["보", "표시", "정보", "매니페스트"],
     wizard:    &["창령", "마법사", "생성도우미"],
+    normalize: &["정규화", "언어통일", "로컬라이즈"],
 };
 
 // Russian (русский)
@@ -275,6 +281,7 @@ const COMMANDS_RU: CommandTranslations = CommandTranslations {
     translate: &["пер", "перев", "конв"],
     manifest:  &["показ", "инфо", "маниф"],
     wizard:    &["создДух", "мастер", "гид"],
+    normalize: &["нормализовать", "норм", "локализовать"],
 };
 
 // Arabic (العربية)
@@ -299,6 +306,7 @@ const COMMANDS_AR: CommandTranslations = CommandTranslations {
     translate: &["ترجمة", "تحويل", "نقل"],
     manifest:  &["إظهار", "معلومات", "بيان"],
     wizard:    &["ساحر", "دليل", "منشئ"],
+    normalize: &["توحيد", "تطبيع", "توطين"],
 };
 
 // Hindi (हिन्दी)
@@ -323,6 +331,7 @@ const COMMANDS_HI: CommandTranslations = CommandTranslations {
     translate: &["अनुवाद", "रूपांतरित", "बदलें"],
     manifest:  &["दिखाएं", "जानकारी", "प्रकट"],
     wizard:    &["जादूगर", "मार्गदर्शक", "सृजक"],
+    normalize: &["सामान्यीकरण", "नॉर्म", "स्थानीयकरण"],
 };
 
 // Thai (ภาษาไทย)
@@ -347,6 +356,7 @@ const COMMANDS_TH: CommandTranslations = CommandTranslations {
     translate: &["แปล", "แปลง", "เปลี่ยน"],
     manifest:  &["แสดง", "ข้อมูล", "แจ้ง"],
     wizard:    &["ตัวช่วย", "แนะนำ", "สร้าง"],
+    normalize: &["ปรับภาษา", "ปรับ", "แปลงภาษา"],
 };
 
 // Vietnamese (Tiếng Việt)
@@ -371,6 +381,7 @@ const COMMANDS_VI: CommandTranslations = CommandTranslations {
     translate: &["dịch", "chuyển_đổi", "biến_đổi"],
     manifest:  &["hiển_thị", "thông_tin", "bày"],
     wizard:    &["phù_thủy", "hướng_dẫn", "tạo"],
+    normalize: &["chuẩn_hóa", "chuẩn", "bản_địa_hóa"],
 };
 
 // Greek (Ελληνικά)
@@ -395,6 +406,7 @@ const COMMANDS_EL: CommandTranslations = CommandTranslations {
     translate: &["μετάφρασε", "μετέτρεψε", "άλλαξε"],
     manifest:  &["δείξε", "πληροφορίες", "φανέρωσε"],
     wizard:    &["μάγο", "οδηγό", "δημιουργέ"],
+    normalize: &["κανονικοποίηση", "νόρμ", "τοπικοποίηση"],
 };
 
 // Hebrew (עברית)
@@ -419,6 +431,7 @@ const COMMANDS_HE: CommandTranslations = CommandTranslations {
     translate: &["תרגם", "המר", "שנה"],
     manifest:  &["הצג", "מידע", "גלה"],
     wizard:    &["אשף", "מדריך", "יוצר"],
+    normalize: &["נרמול", "תקנן", "לוקליזציה"],
 };
 
 // German (Deutsch)
@@ -443,6 +456,7 @@ const COMMANDS_DE: CommandTranslations = CommandTranslations {
     translate: &["übersetzen", "konvertieren", "trans"],
     manifest:  &["zeigen", "info", "manifest"],
     wizard:    &["assistent", "führer", "ersteller"],
+    normalize: &["normalisieren", "norm", "lokalisieren"],
 };
 
 // French (Français)
@@ -467,6 +481,7 @@ const COMMANDS_FR: CommandTranslations = CommandTranslations {
     translate: &["traduire", "convertir", "trans"],
     manifest:  &["afficher", "info", "manifeste"],
     wizard:    &["assistant", "guide", "créateur"],
+    normalize: &["normaliser", "norm", "localiser"],
 };
 
 // Spanish (Español)
@@ -491,6 +506,7 @@ const COMMANDS_ES: CommandTranslations = CommandTranslations {
     translate: &["traducir", "convertir", "trans"],
     manifest:  &["mostrar", "información", "manifiesto"],
     wizard:    &["asistente", "crear", "guía"],
+    normalize: &["normalizar", "norm", "localizar"],
 };
 
 // Turkish (Türkçe)
@@ -515,6 +531,7 @@ const COMMANDS_TR: CommandTranslations = CommandTranslations {
     translate: &["çevir", "dönüştür", "tercüme_et"],
     manifest:  &["göster", "bilgi", "manifest"],
     wizard:    &["sihirbaz", "rehber", "oluşturucu"],
+    normalize: &["normalleştir", "norm", "yerelleştir"],
 };
 
 // Polish (Polski)
@@ -539,6 +556,7 @@ const COMMANDS_PL: CommandTranslations = CommandTranslations {
     translate: &["tłumacz", "konwertuj", "przekształć"],
     manifest:  &["pokaż", "informacje", "manifest"],
     wizard:    &["kreator", "przewodnik", "twórca"],
+    normalize: &["normalizuj", "norm", "lokalizuj"],
 };
 
 // ─── Localized string helpers ─────────────────────────────────────────────────
@@ -665,6 +683,8 @@ fn main() -> anyhow::Result<()> {
         cmd_manifest(&invocation_lang)?;
     } else if matches_cmd!(tr.wizard) {
         cmd_wizard(&invocation_lang)?;
+    } else if matches_cmd!(tr.normalize) {
+        cmd_normalize(rest, &invocation_lang)?;
     } else if cmd == "--version" || cmd == "-V" || cmd == "version" {
         println!("{}", invocation_lang.version_text());
     } else if cmd == "--help" || cmd == "-h" || cmd == "help" {
@@ -723,6 +743,7 @@ fn print_help(lang: &InvocationLanguage, tr: &CommandTranslations) {
         (tr.translate[0], file_ph),
         (tr.manifest[0], ""),
         (tr.wizard[0],   ""),
+        (tr.normalize[0], t(lang, "LANG", "语言", "言語", "언어", "ภาษา", "LANG")),
     ];
 
     for (cmd, arg) in cmds {
@@ -1483,4 +1504,91 @@ fn has_ling_ext(path: &std::path::Path) -> bool {
         Some("ling" | "灵" | "霊" | "령" | "ลิง") => true,
         _ => false,
     }
+}
+
+// ─── cmd_normalize ────────────────────────────────────────────────────────────
+
+fn cmd_normalize(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
+    // Parse flags
+    let dry_run      = args.iter().any(|a| a == "--dry-run" || a == "-n");
+    let content_only = args.iter().any(|a| a == "--content-only");
+    let files_only   = args.iter().any(|a| a == "--files-only");
+
+    // Find target language: positional or --lang / -l flag
+    let mut target_lang_str: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--lang" | "-l" if i + 1 < args.len() => {
+                target_lang_str = Some(&args[i + 1]);
+                i += 2;
+            }
+            s if !s.starts_with('-') => {
+                target_lang_str = Some(s);
+                i += 1;
+            }
+            _ => { i += 1; }
+        }
+    }
+
+    let target = match target_lang_str.and_then(normalize::Lang::from_str) {
+        Some(l) => l,
+        None => {
+            // Interactive prompt if no language specified
+            let opts = &["en  — English", "zh  — 中文", "ja  — 日本語", "ko  — 한국어", "th  — ภาษาไทย"];
+            let prompt = t(lang, "Target language:", "目标语言:", "対象言語:", "대상 언어:", "ภาษาเป้าหมาย:", "Target language:");
+            let sel = dialoguer::Select::new()
+                .with_prompt(prompt)
+                .items(opts)
+                .default(0)
+                .interact()?;
+            [normalize::Lang::En, normalize::Lang::Zh, normalize::Lang::Ja, normalize::Lang::Ko, normalize::Lang::Th][sel]
+        }
+    };
+
+    println!("{} {} {}{}",
+        t(lang, "Normalizing to", "规范化至", "正規化:", "정규화:", "ปรับภาษาเป็น:", "Normalizing to"),
+        target.name().cyan().bold(),
+        if dry_run { " [dry-run]".yellow().to_string() } else { String::new() },
+        if content_only { " [content only]".dimmed().to_string() }
+        else if files_only { " [files only]".dimmed().to_string() }
+        else { String::new() },
+    );
+
+    let root = std::path::Path::new(".");
+    match normalize::normalize_project(root, target, dry_run, content_only, files_only) {
+        Ok(stats) => {
+            println!();
+            if dry_run {
+                println!("{}", t(lang,
+                    "Dry run complete — no files changed.",
+                    "模拟完成 — 未修改任何文件。",
+                    "ドライランが完了しました — 変更なし。",
+                    "드라이 런 완료 — 변경 없음.",
+                    "ทดลองเสร็จสิ้น — ไม่มีไฟล์ถูกเปลี่ยน",
+                    "Dry run complete — no files changed.",
+                ).dimmed());
+            }
+            println!("  {} {} {}",
+                "✓".green(),
+                stats.files_rewritten,
+                t(lang, "file(s) rewritten", "文件已重写", "ファイル書き換え済み", "파일 재작성됨", "ไฟล์ถูกเขียนใหม่", "file(s) rewritten"),
+            );
+            println!("  {} {} {}",
+                "~".yellow(),
+                stats.files_renamed,
+                t(lang, "file(s) renamed", "文件已重命名", "ファイル名変更済み", "파일 이름 변경됨", "ไฟล์ถูกเปลี่ยนชื่อ", "file(s) renamed"),
+            );
+            println!("  {} {} {}",
+                "↕".magenta(),
+                stats.dirs_renamed,
+                t(lang, "folder(s) renamed", "文件夹已重命名", "フォルダ名変更済み", "폴더 이름 변경됨", "โฟลเดอร์ถูกเปลี่ยนชื่อ", "folder(s) renamed"),
+            );
+        }
+        Err(e) => {
+            eprintln!("{}: {}", "error".red(), e);
+            std::process::exit(1);
+        }
+    }
+    Ok(())
 }
