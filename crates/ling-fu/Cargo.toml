@@ -1,6 +1,6 @@
 [package]
 name = "lingfu"
-version = "2030.1.0"
+version = "2030.1.1"
 edition = "2024"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
 description = "灵符 — The Ling project manager. lingfu new/build/run/normalize and more."
