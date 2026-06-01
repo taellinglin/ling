@@ -53,3 +53,9 @@ examples/ling_map.ling
 
 # ── Cargo ─────────────────────────────────────────────────────────────────────
 Cargo.lock
+
+# ── Website (published separately, not part of crate) ─────────────────────────
+ling-lang.org/
+
+# ── Temp screenshots ───────────────────────────────────────────────────────────
+ling-lang.org-tmp-*.png
