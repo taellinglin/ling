@@ -3,13 +3,17 @@ title = "Ling Language Reference"
 description = "The Omniglot Systems Language — multilingual scripting and 3D visual programming"
 authors = ["Ling Lin", "Sanny Lin"]
 language = "en"
-multilingual = false
 src = "src"
 
 [output.html]
-site-url = "/ling/"
+site-url = "/"
 git-repository-url = "https://github.com/taellinglin/ling"
-git-repository-icon = "fa-github"
+# git-repository-icon disabled because bundled mdBook FontAwesome build
+# doesn't include a valid `regular` icon named here.
+# git-repository-icon = ""
+
+
+
 edit-url-template = "https://github.com/taellinglin/ling/edit/master/docs/src/{path}"
 additional-css = ["custom.css"]
 no-section-label = false
