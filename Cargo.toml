@@ -61,6 +61,9 @@ exclude = [
     # Web demo (separate repo concern)
     "chinese-room-web",
     "chinese-room-web/**",
+    # Docs build output (large fonts/woff2, rebuilt by CI)
+    "docs/book",
+    "docs/book/**",
 ]
 
 # Make `cargo run` build Ling itself (not lingfu) by default.

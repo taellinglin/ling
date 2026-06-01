@@ -19,3 +19,9 @@ table {
 th {
     background: var(--sidebar-bg);
 }
+
+/* mdBook FontAwesome: avoid hard failures when icon set lacks 'github' (regular). */
+.fa-github::before {
+    content: "\f09b"; /* 'github' fallback from Font Awesome v6 */
+}
+

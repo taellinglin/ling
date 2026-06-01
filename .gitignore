@@ -57,5 +57,8 @@ Cargo.lock
 # ── Website (published separately, not part of crate) ─────────────────────────
 ling-lang.org/
 
+# ── Docs build output (rebuilt by CI) ─────────────────────────────────────────
+docs/book/
+
 # ── Temp screenshots ───────────────────────────────────────────────────────────
 ling-lang.org-tmp-*.png
