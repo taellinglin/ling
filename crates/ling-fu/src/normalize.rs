@@ -138,30 +138,145 @@ static BUILTINS_OTHER: &[Entry] = &[
     (&["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"],      ["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"]),
 ];
 
-// Folder name translations: [en, zh, ja, ko, th]
-static FOLDER_NAMES: &[([&str; 5], &[&str])] = &[
-    (["src","源码","ソース","소스","ต้นฉบับ"],     &["src","源码","ソース","소스","ต้นฉบับ","source","sources"]),
-    (["lib","库","ライブラリ","라이브러리","ไลบรารี"],&["lib","库","ライブラリ","라이브러리","ไลบรารี","library"]),
-    (["tests","测试","テスト","테스트","ทดสอบ"],   &["tests","test","测试","テスト","테스트","ทดสอบ"]),
-    (["examples","示例","サンプル","예제","ตัวอย่าง"],&["examples","example","示例","サンプル","예제","ตัวอย่าง"]),
-    (["docs","文档","ドキュメント","문서","เอกสาร"], &["docs","doc","文档","ドキュメント","문서","เอกสาร"]),
-    (["assets","资源","アセット","에셋","ทรัพยากร"], &["assets","asset","资源","アセット","에셋","ทรัพยากร"]),
-    (["scenes","场景","シーン","장면","ฉาก"],       &["scenes","scene","场景","シーン","장면","ฉาก"]),
-    (["rooms","房间","部屋","방","ห้อง"],           &["rooms","room","房间","部屋","방","ห้อง"]),
-    (["garden","花园","庭園","정원","สวน"],         &["garden","花园","庭園","정원","สวน"]),
-    (["gallery","画廊","ギャラリー","갤러리","แกลเลอรี"],&["gallery","画廊","ギャラリー","갤러리","แกลเลอรี"]),
+// ─── Vocabulary — project/domain words used in filenames and folder names ─────
+//
+// These supplement KEYWORDS and BUILTINS_* — they are also included in the
+// content replacement map so they translate in code identifiers too.
+// Format: (all_aliases_any_lang, [en, zh, ja, ko, th])
+static VOCABULARY: &[Entry] = &[
+    // ── Media & creative ─────────────────────────────────────────────────────
+    (&["music","音乐","音楽","음악","เพลง","song","歌","歌","노래"],          ["music","音乐","音楽","음악","เพลง"]),
+    (&["audio","音频","音声","오디오","เสียง","sound","声音","音","소리"],     ["audio","音频","音声","오디오","เสียง"]),
+    (&["font","字体","フォント","폰트","ฟอนต์","fonts","字型"],               ["font","字体","フォント","폰트","ฟอนต์"]),
+    (&["image","图像","画像","이미지","ภาพ","images","图片","画","그림"],      ["image","图像","画像","이미지","ภาพ"]),
+    (&["video","视频","映像","비디오","วิดีโอ"],                              ["video","视频","映像","비디오","วิดีโอ"]),
+    (&["sprite","精灵","スプライト","스프라이트","สไปรท์"],                    ["sprite","精灵","スプライト","스프라이트","สไปรท์"]),
+    (&["texture","纹理","テクスチャ","텍스처","พื้นผิว"],                     ["texture","纹理","テクスチャ","텍스처","พื้นผิว"]),
+    (&["shader","着色器","シェーダー","쉐이더","เชดเดอร์"],                    ["shader","着色器","シェーダー","쉐이더","เชดเดอร์"]),
+    (&["animation","动画","アニメーション","애니메이션","แอนิเมชัน","anim"],   ["animation","动画","アニメーション","애니메이션","แอนิเมชัน"]),
+    (&["particle","粒子","パーティクル","파티클","อนุภาค"],                    ["particle","粒子","パーティクル","파티클","อนุภาค"]),
+    (&["color","颜色","色","색상","สี","colour","colours","colors"],           ["color","颜色","色","색상","สี"]),
+    (&["shape","形状","形","모양","รูปทรง","shapes"],                          ["shape","形状","形","모양","รูปทรง"]),
+    (&["symbol","符号","シンボル","심볼","สัญลักษณ์","symbols","象征"],        ["symbol","符号","シンボル","심볼","สัญลักษณ์"]),
+    (&["text","文字","テキスト","텍스트","ข้อความ","texts"],                   ["text","文字","テキスト","텍스트","ข้อความ"]),
+    (&["glyph","字形","グリフ","글리프","ตัวอักษร","glyphs"],                  ["glyph","字形","グリフ","글리프","ตัวอักษร"]),
+    (&["icon","图标","アイコン","아이콘","ไอคอน","icons"],                     ["icon","图标","アイコン","아이콘","ไอคอน"]),
+
+    // ── Music / audio domain ─────────────────────────────────────────────────
+    (&["melody","旋律","メロディ","멜로디","ทำนอง"],                           ["melody","旋律","メロディ","멜로디","ทำนอง"]),
+    (&["rhythm","节奏","リズム","리듬","จังหวะ"],                              ["rhythm","节奏","リズム","리듬","จังหวะ"]),
+    (&["harmony","和声","ハーモニー","화음","ความสอดคล้อง"],                   ["harmony","和声","ハーモニー","화음","ความสอดคล้อง"]),
+    (&["beat","节拍","ビート","박자","บีต"],                                    ["beat","节拍","ビート","박자","บีต"]),
+    (&["note","音符","音符","음표","โน้ต"],                                    ["note","音符","音符","음표","โน้ต"]),
+    (&["chord","和弦","コード","코드","คอร์ด"],                                ["chord","和弦","コード","코드","คอร์ด"]),
+    (&["scale","音阶","スケール","음계","สเกล"],                               ["scale","音阶","スケール","음계","สเกล"]),
+    (&["track","音轨","トラック","트랙","แทร็ก"],                               ["track","音轨","トラック","트랙","แทร็ก"]),
+    (&["sample","采样","サンプル","샘플","ตัวอย่าง"],                           ["sample","采样","サンプル","샘플","ตัวอย่าง"]),
+    (&["synth","合成器","シンセ","신스","ซินธ์","synthesizer","合成"],           ["synth","合成器","シンセ","신스","ซินธ์"]),
+    (&["bass","低音","バス","베이스","เบส"],                                    ["bass","低音","バス","베이스","เบส"]),
+    (&["treble","高音","トレブル","트레블","เทรเบิล"],                          ["treble","高音","トレブル","트레블","เทรเบิล"]),
+    (&["piano","钢琴","ピアノ","피아노","เปียโน"],                              ["piano","钢琴","ピアノ","피아노","เปียโน"]),
+    (&["drum","鼓","ドラム","드럼","กลอง","drums"],                             ["drum","鼓","ドラム","드럼","กลอง"]),
+    (&["instrument","乐器","楽器","악기","เครื่องดนตรี"],                        ["instrument","乐器","楽器","악기","เครื่องดนตรี"]),
+    (&["symphony","交响乐","シンフォニー","교향악","ซิมโฟนี"],                   ["symphony","交响乐","シンフォニー","교향악","ซิมโฟนี"]),
+    (&["concert","音乐会","コンサート","콘서트","คอนเสิร์ต"],                   ["concert","音乐会","コンサート","콘서트","คอนเสิร์ต"]),
+
+    // ── Game domain ──────────────────────────────────────────────────────────
+    (&["game","游戏","ゲーム","게임","เกม"],                                    ["game","游戏","ゲーム","게임","เกม"]),
+    (&["player","玩家","プレイヤー","플레이어","ผู้เล่น"],                       ["player","玩家","プレイヤー","플레이어","ผู้เล่น"]),
+    (&["enemy","敌人","敵","적","ศัตรู","enemies"],                             ["enemy","敌人","敵","적","ศัตรู"]),
+    (&["boss","首领","ボス","보스","บอส"],                                      ["boss","首领","ボス","보스","บอส"]),
+    (&["level","等级","レベル","레벨","ระดับ","levels"],                         ["level","等级","レベル","레벨","ระดับ"]),
+    (&["stage","阶段","ステージ","스테이지","ด่าน","stages"],                    ["stage","阶段","ステージ","스테이지","ด่าน"]),
+    (&["score","分数","スコア","점수","คะแนน"],                                  ["score","分数","スコア","점수","คะแนน"]),
+    (&["life","生命","ライフ","생명","ชีวิต"],                                   ["life","生命","ライフ","생명","ชีวิต"]),
+    (&["health","健康","ヘルス","체력","สุขภาพ"],                                ["health","健康","ヘルス","체력","สุขภาพ"]),
+    (&["inventory","库存","インベントリ","인벤토리","ไอเทม"],                     ["inventory","库存","インベントリ","인벤토리","ไอเทม"]),
+    (&["map","地图","マップ","지도","แผนที่"],                                   ["map","地图","マップ","지도","แผนที่"]),
+    (&["world","世界","世界","세계","โลก"],                                     ["world","世界","世界","세계","โลก"]),
+    (&["play","播放","プレイ","플레이","เล่น"],                                  ["play","播放","プレイ","플레이","เล่น"]),
+    (&["title","标题","タイトル","제목","ชื่อเรื่อง"],                            ["title","标题","タイトル","제목","ชื่อเรื่อง"]),
+    (&["menu","菜单","メニュー","메뉴","เมนู"],                                  ["menu","菜单","メニュー","메뉴","เมนู"]),
+    (&["pause","暂停","ポーズ","일시정지","หยุดชั่วคราว"],                        ["pause","暂停","ポーズ","일시정지","หยุดชั่วคราว"]),
+    (&["win","胜利","ウィン","승리","ชนะ"],                                      ["win","胜利","ウィン","승리","ชนะ"]),
+    (&["lose","失败","ルーズ","패배","แพ้"],                                     ["lose","失败","ルーズ","패배","แพ้"]),
+    (&["input","输入","インプット","입력","อินพุต"],                               ["input","输入","インプット","입력","อินพุต"]),
+    (&["output","输出","アウトプット","출력","เอาต์พุต"],                          ["output","输出","アウトプット","출력","เอาต์พุต"]),
+    (&["physics","物理","物理","물리","ฟิสิกส์"],                                ["physics","物理","物理","물리","ฟิสิกส์"]),
+    (&["collider","碰撞器","コライダー","충돌체","คอลไลเดอร์"],                   ["collider","碰撞器","コライダー","충돌체","คอลไลเดอร์"]),
+    (&["camera","摄像机","カメラ","카메라","กล้อง"],                              ["camera","摄像机","カメラ","카메라","กล้อง"]),
+    (&["light","灯光","ライト","조명","แสง"],                                    ["light","灯光","ライト","조명","แสง"]),
+
+    // ── Project structure ────────────────────────────────────────────────────
+    (&["src","源码","ソース","소스","ต้นฉบับ","source"],                         ["src","源码","ソース","소스","ต้นฉบับ"]),
+    (&["lib","库","ライブラリ","라이브러리","ไลบรารี","library"],                 ["lib","库","ライブラリ","라이브러리","ไลบรารี"]),
+    (&["tests","测试","テスト","테스트","ทดสอบ","test"],                         ["tests","测试","テスト","테스트","ทดสอบ"]),
+    (&["examples","示例","サンプル","예제","ตัวอย่าง","example"],                ["examples","示例","サンプル","예제","ตัวอย่าง"]),
+    (&["docs","文档","ドキュメント","문서","เอกสาร","doc"],                       ["docs","文档","ドキュメント","문서","เอกสาร"]),
+    (&["assets","资源","アセット","에셋","ทรัพยากร","asset"],                    ["assets","资源","アセット","에셋","ทรัพยากร"]),
+    (&["config","配置","設定","설정","ตั้งค่า","configuration","conf"],           ["config","配置","設定","설정","ตั้งค่า"]),
+    (&["build","构建","ビルド","빌드","สร้าง"],                                   ["build","构建","ビルド","빌드","สร้าง"]),
+    (&["tools","工具","ツール","도구","เครื่องมือ","tool"],                       ["tools","工具","ツール","도구","เครื่องมือ"]),
+    (&["scripts","脚本","スクリプト","스크립트","สคริปต์","script"],              ["scripts","脚本","スクリプト","스크립트","สคริปต์"]),
+    (&["data","数据","データ","데이터","ข้อมูล"],                                 ["data","数据","データ","데이터","ข้อมูล"]),
+    (&["scenes","场景","シーン","장면","ฉาก","scene"],                            ["scenes","场景","シーン","장면","ฉาก"]),
+    (&["rooms","房间","部屋","방","ห้อง","room"],                                 ["rooms","房间","部屋","방","ห้อง"]),
+    (&["gallery","画廊","ギャラリー","갤러리","แกลเลอรี"],                        ["gallery","画廊","ギャラリー","갤러리","แกลเลอรี"]),
+    (&["misc","其他","その他","기타","อื่นๆ","other","others"],                   ["misc","其他","その他","기타","อื่นๆ"]),
+    (&["shared","共享","共有","공유","ร่วมกัน"],                                  ["shared","共享","共有","공유","ร่วมกัน"]),
+    (&["common","通用","共通","공통","ทั่วไป"],                                   ["common","通用","共通","공통","ทั่วไป"]),
+
+    // ── People / narrative ───────────────────────────────────────────────────
+    (&["hero","英雄","ヒーロー","영웅","วีรบุรุษ"],                               ["hero","英雄","ヒーロー","영웅","วีรบุรุษ"]),
+    (&["demon","恶魔","デーモン","악마","ปีศาจ"],                                 ["demon","恶魔","デーモン","악마","ปีศาจ"]),
+    (&["spirit","精神","スピリット","정신","วิญญาณ"],                              ["spirit","精神","スピリット","정신","วิญญาณ"]),
+    (&["soul","灵魂","ソウル","영혼","วิญญาณ"],                                   ["soul","灵魂","ソウル","영혼","วิญญาณ"]),
+    (&["dream","梦","夢","꿈","ความฝัน"],                                         ["dream","梦","夢","꿈","ความฝัน"]),
+    (&["story","故事","ストーリー","이야기","เรื่องราว"],                          ["story","故事","ストーリー","이야기","เรื่องราว"]),
+    (&["chapter","章","チャプター","챕터","บท"],                                  ["chapter","章","チャプター","챕터","บท"]),
+
+    // ── Spatial / visual ─────────────────────────────────────────────────────
+    (&["chakra","脉轮","チャクラ","차크라","จักร"],                               ["chakra","脉轮","チャクラ","차크라","จักร"]),
+    (&["lotus","莲花","蓮","연꽃","ดอกบัว"],                                     ["lotus","莲花","蓮","연꽃","ดอกบัว"]),
+    (&["mandala","曼陀罗","マンダラ","만다라","มณฑล"],                            ["mandala","曼陀罗","マンダラ","만다라","มณฑล"]),
+    (&["spiral","螺旋","スパイラル","나선","เกลียว"],                              ["spiral","螺旋","スパイラル","나선","เกลียว"]),
+    (&["grid","网格","グリッド","격자","ตาราง"],                                  ["grid","网格","グリッド","격자","ตาราง"]),
+    (&["wave","波","波","파","คลื่น"],                                           ["wave","波","波","파","คลื่น"]),
+    (&["ring","环","リング","링","วงแหวน"],                                      ["ring","环","リング","링","วงแหวน"]),
+    (&["star","星","星","별","ดาว"],                                             ["star","星","星","별","ดาว"]),
+    (&["flower","花","花","꽃","ดอกไม้"],                                        ["flower","花","花","꽃","ดอกไม้"]),
+
+    // ── Common file stems ────────────────────────────────────────────────────
+    (&["main","主","メイン","메인","หลัก"],                                       ["main","主","メイン","메인","หลัก"]),
+    (&["init","初始化","初期化","초기화","เริ่มต้น"],                              ["init","初始化","初期化","초기화","เริ่มต้น"]),
+    (&["setup","设置","セットアップ","설정","ตั้งค่า"],                             ["setup","设置","セットアップ","설정","ตั้งค่า"]),
+    (&["hello","你好","こんにちは","안녕","สวัสดี"],                               ["hello","你好","こんにちは","안녕","สวัสดี"]),
+    (&["core","核心","コア","코어","แกนกลาง"],                                    ["core","核心","コア","코어","แกนกลาง"]),
+    (&["util","工具","ユーティリティ","유틸","ยูทิลิตี้","utils","utility"],        ["util","工具","ユーティリティ","유틸","ยูทิลิตี้"]),
+    (&["helper","助手","ヘルパー","헬퍼","ตัวช่วย","helpers"],                    ["helper","助手","ヘルパー","헬퍼","ตัวช่วย"]),
+    (&["manager","管理器","マネージャー","매니저","ตัวจัดการ"],                    ["manager","管理器","マネージャー","매니저","ตัวจัดการ"]),
+    (&["loader","加载器","ローダー","로더","ตัวโหลด"],                             ["loader","加载器","ローダー","로더","ตัวโหลด"]),
+    (&["renderer","渲染器","レンダラー","렌더러","ตัวเรนเดอร์"],                   ["renderer","渲染器","レンダラー","렌더러","ตัวเรนเดอร์"]),
+    (&["parser","解析器","パーサー","파서","ตัวแยกวิเคราะห์"],                    ["parser","解析器","パーサー","파서","ตัวแยกวิเคราะห์"]),
+    (&["router","路由器","ルーター","라우터","เราเตอร์"],                          ["router","路由器","ルーター","라우터","เราเตอร์"]),
+    (&["server","服务器","サーバー","서버","เซิร์ฟเวอร์"],                        ["server","服务器","サーバー","서버","เซิร์ฟเวอร์"]),
+    (&["client","客户端","クライアント","클라이언트","ไคลเอนต์"],                  ["client","客户端","クライアント","클라이언트","ไคลเอนต์"]),
+    (&["network","网络","ネットワーク","네트워크","เครือข่าย"],                    ["network","网络","ネットワーク","네트워크","เครือข่าย"]),
+    (&["database","数据库","データベース","데이터베이스","ฐานข้อมูล","db"],         ["database","数据库","データベース","데이터베이스","ฐานข้อมูล"]),
+    (&["event","事件","イベント","이벤트","เหตุการณ์","events"],                   ["event","事件","イベント","이벤트","เหตุการณ์"]),
+    (&["timer","定时器","タイマー","타이머","ตัวจับเวลา"],                         ["timer","定时器","タイマー","타이머","ตัวจับเวลา"]),
+    (&["math","数学","数学","수학","คณิตศาสตร์"],                                 ["math","数学","数学","수학","คณิตศาสตร์"]),
 ];
 
 // ─── Content normalization ────────────────────────────────────────────────────
 
-/// Collect all entries into a sorted replacement map: alias → target_form.
-/// Sorted longest-first to prevent shorter aliases shadowing longer ones.
-fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
+/// Build a replacement map from the given table slices.
+/// Sorted longest-first so shorter aliases never shadow longer ones.
+fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
     let idx = target.idx();
     let mut map: Vec<(String, String)> = Vec::new();
-
-    for entries in [KEYWORDS, BUILTINS_VTEX, BUILTINS_OTHER] {
-        for (aliases, forms) in entries.iter() {
+    for table in tables {
+        for (aliases, forms) in table.iter() {
             let target_form = forms[idx];
             for alias in *aliases {
                 if *alias != target_form {
@@ -170,11 +285,20 @@ fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
             }
         }
     }
-
-    // Longest alias first — prevents "fn" matching inside "ฟังก์ชัน"
     map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
     map.dedup_by(|a, b| a.0 == b.0);
     map
+}
+
+/// Map used for rewriting .ling source content — includes builtins.
+fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_OTHER, VOCABULARY])
+}
+
+/// Map used for renaming files/folders — keywords + vocabulary only.
+/// Builtin function names (audio_tone, vtex_grid, …) should NOT rename folders.
+fn build_name_map(target: Lang) -> Vec<(String, String)> {
+    build_map_from(target, &[KEYWORDS, VOCABULARY])
 }
 
 /// True if character is a word constituent (can appear inside an identifier).
@@ -255,45 +379,12 @@ pub fn normalize_content(source: &str, target: Lang) -> String {
 
 // ─── File / folder renaming ───────────────────────────────────────────────────
 
-fn translate_folder_name(name: &str, target: Lang) -> Option<String> {
-    let idx = target.idx();
-    for (forms, aliases) in FOLDER_NAMES {
-        if aliases.contains(&name) {
-            let form = forms[idx];
-            if form != name { return Some(form.to_string()); }
-        }
-    }
-    None
-}
-
-/// Translate a .ling filename stem to target lang.
-/// e.g. "main" → "หลัก" (Thai), "garden" → "庭園" (Japanese)
-fn translate_file_stem(stem: &str, target: Lang) -> Option<String> {
-    // Filename stems reuse the folder table (most overlap)
-    let idx = target.idx();
-    // Extra per-file stems
-    static STEMS: &[([&str; 5], &[&str])] = &[
-        (["main","主","メイン","메인","หลัก"],      &["main","主","メイン","메인","หลัก"]),
-        (["hello","你好","こんにちは","안녕","สวัสดี"],&["hello","you_good","你好","こんにちは","안녕","สวัสดี"]),
-        (["room","房间","部屋","방","ห้อง"],         &["room","房间","部屋","방","ห้อง"]),
-        (["garden","花园","庭園","정원","สวน"],      &["garden","花园","庭園","정원","สวน"]),
-        (["lounge","休息室","ラウンジ","라운지","ห้องพัก"],&["lounge","休息室","ラウンジ","라운지","ห้องพัก"]),
-        (["scene","场景","シーン","장면","ฉาก"],     &["scene","场景","シーン","장면","ฉาก"]),
-        (["lib","库","ライブラリ","라이브러리","ไลบรารี"],&["lib","库","ライブラリ","라이브러리","ไลบรารี"]),
-        (["test","测试","テスト","테스트","ทดสอบ"],  &["test","测试","テスト","테스트","ทดสอบ"]),
-        (["util","工具","ユーティリティ","유틸","ยูทิลิตี้"],&["util","utils","工具","ユーティリティ","유틸","ยูทิลิตี้"]),
-    ];
-    for (forms, aliases) in STEMS {
-        if aliases.contains(&stem) {
-            let form = forms[idx];
-            if form != stem { return Some(form.to_string()); }
-        }
-    }
-    // Also try the folder table
-    for (forms, aliases) in FOLDER_NAMES {
-        if aliases.contains(&stem) {
-            let form = forms[idx];
-            if form != stem { return Some(form.to_string()); }
+/// Translate any name (folder, file stem) using the full word map.
+/// Tries the whole name as an exact lookup — same vocabulary as content rewrite.
+fn translate_name(name: &str, map: &[(String, String)]) -> Option<String> {
+    for (alias, target_form) in map {
+        if name == alias.as_str() {
+            return Some(target_form.clone());
         }
     }
     None
@@ -323,12 +414,19 @@ pub fn normalize_project(
 ) -> io::Result<NormalizeStats> {
     let mut stats = NormalizeStats::default();
 
-    // Collect all .ling files and directories first (before any renaming)
-    let mut ling_files: Vec<PathBuf> = Vec::new();
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    collect_ling_paths(root, &mut ling_files, &mut dirs)?;
+    // Separate maps: builtins translate in code but shouldn't rename folders
+    let name_map = build_name_map(target);
 
-    // ── 1. Normalize file contents ──────────────────────────────────────────
+    // Collect all files and directories before any renaming
+    let mut all_files: Vec<PathBuf> = Vec::new();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    collect_paths(root, &mut all_files, &mut dirs)?;
+
+    let ling_files: Vec<&PathBuf> = all_files.iter().filter(|p| {
+        p.file_name().and_then(|n| n.to_str()).map(has_ling_ext).unwrap_or(false)
+    }).collect();
+
+    // ── 1. Normalize .ling file contents ────────────────────────────────────
     if !files_only {
         for path in &ling_files {
             let source = fs::read_to_string(path)?;
@@ -348,17 +446,22 @@ pub fn normalize_project(
         }
     }
 
-    // ── 2. Rename .ling files ───────────────────────────────────────────────
     if !content_only {
-        // Sort deepest paths first so renames don't invalidate parent paths
+        // ── 2. Rename ALL files whose stem has a known translation ───────────
         let mut rename_files: Vec<(PathBuf, PathBuf)> = Vec::new();
-        for path in &ling_files {
+        for path in &all_files {
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                let (stem, ext) = split_ling_ext(file_name);
-                if let Some(new_stem) = translate_file_stem(stem, target) {
-                    let new_name = format!("{}{}", new_stem, ext);
-                    let new_path = path.with_file_name(&new_name);
-                    rename_files.push((path.clone(), new_path));
+                // Split at first '.' to get stem + full extension(s)
+                let (stem, exts) = if let Some(dot) = file_name.find('.') {
+                    (&file_name[..dot], &file_name[dot..])
+                } else {
+                    (file_name, "")
+                };
+                if let Some(new_stem) = translate_name(stem, &name_map) {
+                    let new_name = format!("{}{}", new_stem, exts);
+                    if new_name != file_name {
+                        rename_files.push((path.clone(), path.with_file_name(&new_name)));
+                    }
                 }
             }
         }
@@ -374,24 +477,25 @@ pub fn normalize_project(
             stats.files_renamed += 1;
         }
 
-        // ── 3. Rename directories ─────────────────────────────────────────
-        // Sort by depth (deepest first) to rename leaves before parents
+        // ── 3. Rename directories (deepest first) ────────────────────────────
         let mut dirs_sorted = dirs;
         dirs_sorted.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
 
         for dir in dirs_sorted {
             if let Some(dir_name) = dir.file_name().and_then(|n| n.to_str()) {
-                if let Some(new_name) = translate_folder_name(dir_name, target) {
-                    let new_path = dir.with_file_name(&new_name);
-                    let rel_from = dir.strip_prefix(root).unwrap_or(&dir);
-                    let rel_to   = new_path.strip_prefix(root).unwrap_or(&new_path);
-                    if dry_run {
-                        println!("  {} {} → {}", "mv".magenta(), rel_from.display(), rel_to.display());
-                    } else {
-                        fs::rename(&dir, &new_path)?;
-                        println!("  {} {} → {}", "mv".magenta(), rel_from.display(), rel_to.display());
+                if let Some(new_name) = translate_name(dir_name, &name_map) {
+                    if new_name != dir_name {
+                        let new_path = dir.with_file_name(&new_name);
+                        let rel_from = dir.strip_prefix(root).unwrap_or(&dir);
+                        let rel_to   = new_path.strip_prefix(root).unwrap_or(&new_path);
+                        if dry_run {
+                            println!("  {} {} → {}", "mv".magenta(), rel_from.display(), rel_to.display());
+                        } else {
+                            fs::rename(&dir, &new_path)?;
+                            println!("  {} {} → {}", "mv".magenta(), rel_from.display(), rel_to.display());
+                        }
+                        stats.dirs_renamed += 1;
                     }
-                    stats.dirs_renamed += 1;
                 }
             }
         }
@@ -400,29 +504,19 @@ pub fn normalize_project(
     Ok(stats)
 }
 
-fn collect_ling_paths(root: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) -> io::Result<()> {
+fn collect_paths(root: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name().into_string().unwrap_or_default();
-        // Skip hidden dirs and target/
         if name.starts_with('.') || name == "target" || name == ".ling-build" { continue; }
         if path.is_dir() {
             dirs.push(path.clone());
-            collect_ling_paths(&path, files, dirs)?;
-        } else if has_ling_ext(&name) {
+            collect_paths(&path, files, dirs)?;
+        } else {
             files.push(path);
         }
     }
     Ok(())
 }
 
-/// Split "hello.ling" → ("hello", ".ling")
-fn split_ling_ext(name: &str) -> (&str, &str) {
-    for ext in &[".ling", ".灵", ".霊", ".령", ".ลิง"] {
-        if name.ends_with(ext) {
-            return (&name[..name.len() - ext.len()], ext);
-        }
-    }
-    (name, "")
-}
