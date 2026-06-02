@@ -121,7 +121,7 @@
 
     # ── Apex: 8-point star crown ──────────────────────────────────────────
     ลายดาว(0, H-0.6, tz,  1,0,0,  0,0,1,  8, 1.4, 0.60, 0.045,  FR, 0.5)
-    ลายดอกไม้(0, H-0.6, tz,  1,0,0,  0,0,1,  0.75, 12,  FR, 3.0)
+    ลายดอก(0, H-0.6, tz,  1,0,0,  0,0,1,  0.75, 12,  FR, 3.0)
 
     # ── Garuda wings — outward spirals on the XZ plane ───────────────────
     # Left wing: spiral centred at (-4, 0, MZ)
@@ -236,23 +236,23 @@
     # Each tone: audio_tone(slot, x, y, z, w,  freq,   amp, lfo_rate, lfo_depth)
     # Harmonic A-series: 55·2^n Hz   (A1 → A5) with inter-harmonic rationals
     #  0  Merkaba core      (0,    0,    MZ)   A2   110 Hz  — beating heart of room
-    เสียง(0,   0,    0,    MZ,  1.0,   110.0, 0.12, 0.30, 0.040)
+    เสียงโทน(0,   0,    0,    MZ,  1.0,   110.0, 0.12, 0.30, 0.040)
     #  1  Floor yantra      (0,  -H,    MZ)   A1    55 Hz  — sub, grounding
-    เสียง(1,   0,  0-H,   MZ,  1.5,    55.0, 0.10, 0.18, 0.030)
+    เสียงโทน(1,   0,  0-H,   MZ,  1.5,    55.0, 0.10, 0.18, 0.030)
     #  2  Ceiling disc      (0,  +H,    MZ)   E5   660 Hz  — ethereal shimmer
-    เสียง(2,   0,   H,    MZ,  0.5,   660.0, 0.07, 0.70, 0.018)
+    เสียงโทน(2,   0,   H,    MZ,  0.5,   660.0, 0.07, 0.70, 0.018)
     #  3  Left wall         (-W,  0,    MZ)   A3   220 Hz  — warm left pan
-    เสียง(3, 0-W,   0,    MZ,  2.0,   220.0, 0.10, 0.42, 0.050)
+    เสียงโทน(3, 0-W,   0,    MZ,  2.0,   220.0, 0.10, 0.42, 0.050)
     #  4  Right wall        (+W,  0,    MZ)   D4   293 Hz  — natural right pan
-    เสียง(4,  W,    0,    MZ,  2.0,   293.0, 0.10, 0.55, 0.038)
+    เสียงโทน(4,  W,    0,    MZ,  2.0,   293.0, 0.10, 0.55, 0.038)
     #  5  Back portal       (0,   0,    FZ)   E4   330 Hz  — deep-space drone
-    เสียง(5,   0,   0,    FZ,  1.2,   330.0, 0.09, 0.62, 0.028)
+    เสียงโทน(5,   0,   0,    FZ,  1.2,   330.0, 0.09, 0.62, 0.028)
     #  6  Left Garuda wing  (-4,  0,    MZ)   E3   165 Hz  — wing rush left
-    เสียง(6, 0-4,   0,    MZ,  3.0,   165.0, 0.08, 0.80, 0.060)
+    เสียงโทน(6, 0-4,   0,    MZ,  3.0,   165.0, 0.08, 0.80, 0.060)
     #  7  Right Garuda wing (+4,  0,    MZ)   A4   440 Hz  — wing rush right
-    เสียง(7,  4,    0,    MZ,  3.0,   440.0, 0.08, 0.88, 0.048)
+    เสียงโทน(7,  4,    0,    MZ,  3.0,   440.0, 0.08, 0.88, 0.048)
     #  8  Front wall        (0,   0,    NZ)   C#5  550 Hz  — presence / breath
-    เสียง(8,   0,   0,    NZ,  0.8,   550.0, 0.07, 1.10, 0.035)
+    เสียงโทน(8,   0,   0,    NZ,  0.8,   550.0, 0.07, 1.10, 0.035)
     ระดับเสียง(0.65)
 }
 

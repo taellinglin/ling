@@ -51,13 +51,13 @@
 }
 
 ฟังก์ชัน init_audio() {
-    เสียง(0 0 0 center_z 8.0 FC4 0.22 0.000 0.000)
-    เสียง(1 -4.0 1.5 center_z 3.0 F1_m_a 0.12 0.000 0.000)
-    เสียง(2 -4.0 1.5 center_z 3.0 F2_m_a 0.12 0.000 0.000)
-    เสียง(3 -4.0 1.5 center_z 3.0 F3_m_a 0.08 0.000 0.000)
-    เสียง(4 4.0 1.5 center_z 3.0 F1_f_a 0.12 0.000 0.000)
-    เสียง(5 4.0 1.5 center_z 3.0 F2_f_a 0.12 0.000 0.000)
-    เสียง(6 4.0 1.5 center_z 3.0 F3_f_a 0.08 0.000 0.000)
+    เสียงโทน(0 0 0 center_z 8.0 FC4 0.22 0.000 0.000)
+    เสียงโทน(1 -4.0 1.5 center_z 3.0 F1_m_a 0.12 0.000 0.000)
+    เสียงโทน(2 -4.0 1.5 center_z 3.0 F2_m_a 0.12 0.000 0.000)
+    เสียงโทน(3 -4.0 1.5 center_z 3.0 F3_m_a 0.08 0.000 0.000)
+    เสียงโทน(4 4.0 1.5 center_z 3.0 F1_f_a 0.12 0.000 0.000)
+    เสียงโทน(5 4.0 1.5 center_z 3.0 F2_f_a 0.12 0.000 0.000)
+    เสียงโทน(6 4.0 1.5 center_z 3.0 F3_f_a 0.08 0.000 0.000)
     ระดับเสียง(0.55)
 }
 
@@ -142,7 +142,7 @@
         vtex_hyperbolic_uv(x y z-0.05 1 0 0 0 1 0 eye_width*1.2 4 6 FR*0.02 hue+3.8)
         ลายวงซ้อน(x y-0.08 z-0.05 0 1 0 1 0 0 2 4 eye_width*1.1 0.02 FR*0.01 hue+3.5)
     } มิฉะนั้น {
-        ลายดอกไม้(x y z-0.05 1 0 0 0 1 0 eye_width*1.15 6 FR*0.03 hue+4.0)
+        ลายดอก(x y z-0.05 1 0 0 0 1 0 eye_width*1.15 6 FR*0.03 hue+4.0)
         ลายจักร(x y-0.05 z-0.05 1 0 0 0 1 0 eye_width*1.0 1 FR*0.01 hue+3.8)
     }
     ผูก eyeball_r = eye_width * 0.48 * open
@@ -191,7 +191,7 @@
     ถ้า is_male == 1 {
         vtex_hyperbolic_uv(x brow_y z-0.02 1 0 0 0 0 1 eye_width*1.2 3 5 FR*0.04 hue+3.2)
     } มิฉะนั้น {
-        ลายดอกไม้(x brow_y z-0.02 1 0 0 0 1 0 eye_width*1.1 5 FR*0.05 hue+3.5)
+        ลายดอก(x brow_y z-0.02 1 0 0 0 1 0 eye_width*1.1 5 FR*0.05 hue+3.5)
         ลายดาว(x brow_y-0.03 z-0.01 1 0 0 0 1 0 3 eye_width*0.9 eye_width*0.35 0.02 FR*0.06 hue+3.8)
     }
 }
@@ -217,7 +217,7 @@
 }
 
 ฟังก์ชัน draw_yin_face(x y z hue FR breath blink pupil_dilate mouth_open vowel_shape) {
-    ลายดอกไม้(x y z 1 0 0 0 1 0 1.75 12 FR*0.012 hue+2.5)
+    ลายดอก(x y z 1 0 0 0 1 0 1.75 12 FR*0.012 hue+2.5)
     vtex_hyperbolic_uv(x y z 1 0 0 0 1 0 1.6 8 10 FR*0.01 hue+2.2)
     ลายวงซ้อน(x-0.55 y-0.18 z+0.02 1 0 0 0 1 0 2 6 0.38 0.01 FR*0.02 hue+3.0)
     ลายวงซ้อน(x+0.55 y-0.18 z+0.02 1 0 0 0 1 0 2 6 0.38 0.01 FR*0.02 hue+3.0)
@@ -230,7 +230,7 @@
     ผูก mouth_y = y - 0.40
     ลายดอกบัว(x mouth_y z+0.06 1 0 0 0 1 0 mouth_height*0.7 mouth_width 6 FR*0.09 hue+3.2)
     ลายวงซ้อน(x mouth_y z+0.05 1 0 0 0 1 0 2 12 mouth_width 0.02 FR*0.07 hue+2.8)
-    ลายดอกไม้(x mouth_y-0.02 z+0.04 1 0 0 0 1 0 mouth_width*0.9 8 FR*0.08 hue+3.0)
+    ลายดอก(x mouth_y-0.02 z+0.04 1 0 0 0 1 0 mouth_width*0.9 8 FR*0.08 hue+3.0)
     vtex_hyperbolic_uv(x mouth_y-0.06 z+0.03 1 0 0 0 1 0 mouth_width*0.7 3 4 FR*0.055 hue+2.6)
 }
 
