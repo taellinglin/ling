@@ -1,0 +1,179 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Hyperbolic World — an H²×ℝ block walker (Hypermine-flavoured)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# You stand on the HYPERBOLIC PLANE (the Poincaré disk) with ordinary vertical
+# gravity — the simplest cousin of Hypermine's H³ world ("H²×ℝ" geometry).
+# Blocks tile the plane; because space is hyperbolic, ever more of them crowd
+# toward the horizon (the disk boundary = infinity) and shrink as they go.
+#
+# Movement is by HYPERBOLIC TRANSLATION (Möbius transforms): you stay at the
+# disk centre and the whole world slides under you. Walk in a "square" loop and
+# you'll come back rotated — that's hyperbolic holonomy, the real thing.
+#
+# Controls:
+#   W / S   walk forward / back        A / D   strafe left / right
+#   Q / E   turn left / right          SPACE   jump (gravity pulls you back)
+#
+# Block "textures" are generated procedurally from each cell's lattice id
+# (hash → block type → colour), shaded with the holographic cel renderer.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+令 R   = 8.0      # disk → ground-plane spread
+令 ZC  = 9.0      # ground centre depth in front of camera
+令 BS  = 0.9      # base block size at the disk centre
+令 STEP = 0.035   # hyperbolic step per frame while moving
+令 TURN = 0.03    # rotation per frame while turning
+令 G    = 22.0    # gravity
+令 JUMP = 7.5     # jump impulse
+
+# ── fract(sin) hash → pseudo-random 0..1 ─────────────────────────────────────
+函 hash01(a, b) {
+    令 s = sin(a*12.9898 + b*78.233) * 43758.5453
+    s - floor(s)
+}
+
+# ── main ─────────────────────────────────────────────────────────────────────
+bind start = do {
+    open_fullscreen("Hyperbolic World — H²×ℝ walker")
+    capture_mouse()
+    set_ambient(0.22)
+    set_shade_mode(2)
+    set_cel_bands(4)
+    set_shadow_color(24, 30, 74)
+    set_rim(0.6, 120, 210, 255)
+
+    ระดับเสียง(0.3)
+    เสียงโทน(0, 0.0, 0.0, ZC, 6.0, 70.0, 0.05, 0.5, 0.02)
+
+    # ── generate the hyperbolic block lattice (rings of growing count) ───────
+    令 bu = list_new()       # block disk-u
+    令 bv = list_new()       # block disk-v
+    令 bt = list_new()       # block type 0..3
+    令 bh = list_new()       # block height (in block units)
+
+    令 ring = 1
+    ขณะที่ ring <= 4 {
+        令 er = ring / 5.0 * 0.92        # euclidean radius in the disk
+        令 cells = 6 * ring               # more cells per outer ring → crowding
+        令 k = 0
+        ขณะที่ k < cells {
+            令 ang = (k / cells) * 6.28318
+            令 bu = list_push(bu, er * cos(ang))
+            令 bv = list_push(bv, er * sin(ang))
+            令 t  = floor(hash01(ring, k) * 4.0)
+            令 bt = list_push(bt, t)
+            令 bh = list_push(bh, 1.0 + floor(hash01(k, ring) * 3.0))
+            令 k = k + 1
+        }
+        令 ring = ring + 1
+    }
+    # one block right under the player (home tile)
+    令 bu = list_push(bu, 0.0)
+    令 bv = list_push(bv, 0.0)
+    令 bt = list_push(bt, 0.0)
+    令 bh = list_push(bh, 1.0)
+
+    令 n = len(bu)
+
+    # player vertical state
+    令 pyh = 0.0       # height above ground (up = -Y on screen)
+    令 vy  = 0.0
+    令 FR  = 0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(3, 4, 12)
+        令 dt = 0.0166667
+
+        # ── build this frame's movement as a disk translation + rotation ─────
+        令 ax = 0.0
+        令 ay = 0.0
+        若 key_down("w") { 令 ay = ay - STEP }   # walk forward (world slides toward −v)
+        若 key_down("s") { 令 ay = ay + STEP }
+        若 key_down("a") { 令 ax = ax + STEP }   # strafe
+        若 key_down("d") { 令 ax = ax - STEP }
+
+        令 rot = 0.0
+        若 key_down("q") { 令 rot = TURN }
+        若 key_down("e") { 令 rot = 0.0 - TURN }
+        令 cr = cos(rot)
+        令 sr = sin(rot)
+
+        # ── gravity + jump (vertical, Euclidean) ─────────────────────────────
+        令 grounded = 0
+        若 pyh < 0.001 { 令 grounded = 1 }
+        若 key_down("space") {
+            若 grounded > 0 { 令 vy = JUMP }
+        }
+        令 vy = vy - G * dt
+        令 pyh = pyh + vy * dt
+        若 pyh < 0.0 { 令 pyh = 0.0   令 vy = 0.0 }
+
+        # ── lights swing overhead ────────────────────────────────────────────
+        clear_lights()
+        add_light(cos(FR*0.01)*5.0, 0.0-7.0, ZC,  1.0, 0.82, 0.6,  1.6, 0.0)
+        add_light(0.0, 0.0-4.0, ZC-4.0,  0.47, 0.67, 1.0,  1.1, 0.0)
+
+        # camera: at origin, tilted down to look across the hyperbolic ground
+        set_camera(1.0, 0.0, 0.86, 0.51)   # pitch ~ look down
+        set_zdist(1.4)
+
+        # ── transform every block by the frame's translation + rotation, then
+        #    draw it; rebuild the coordinate lists in place ─────────────────────
+        令 nbu = list_new()
+        令 nbv = list_new()
+        令 i = 0
+        ขณะที่ i < n {
+            令 u = list_get(bu, i)
+            令 v = list_get(bv, i)
+
+            # hyperbolic translation (Möbius) inlined:  (z+a)/(1+ā z)
+            令 nx = u + ax
+            令 ny = v + ay
+            令 qx = 1.0 + ax*u + ay*v
+            令 qy = ax*v - ay*u
+            令 den = qx*qx + qy*qy
+            令 mu = (nx*qx + ny*qy) / den
+            令 mv = (ny*qx - nx*qy) / den
+            # then rotation about the centre
+            令 u2 = mu*cr - mv*sr
+            令 v2 = mu*sr + mv*cr
+
+            令 nbu = list_push(nbu, u2)
+            令 nbv = list_push(nbv, v2)
+
+            # conformal factor: blocks shrink toward the boundary (=infinity)
+            令 rr = u2*u2 + v2*v2
+            若 rr < 0.965 {
+                令 conf = 1.0 - rr
+                令 size = BS * conf
+                令 wx = u2 * R
+                令 wz = ZC + v2 * R
+                令 ht = list_get(bh, i) * size
+
+                # procedural "texture" → colour by block type (0..3)
+                令 ty = list_get(bt, i)
+                set_color(120, 220, 255)              # crystal (default / type 3)
+                若 ty < 0.5 { set_color(90, 200, 90) }    # grass
+                若 ty > 0.5 { 若 ty < 1.5 { set_color(150, 150, 165) } }  # stone
+                若 ty > 1.5 { 若 ty < 2.5 { set_color(155, 110, 70) } }   # dirt
+
+                # block sits on the ground (y=0), rising "up" (−Y); jump lifts world
+                令 cyc = 0.0 - ht + pyh
+                cube(wx, cyc, wz,  size, ht, size,  0.0, 0.0, 0.0,  0)
+            }
+
+            令 i = i + 1
+        }
+        令 bu = nbu
+        令 bv = nbv
+
+        # ── you: a small avatar capsule at the disk centre ───────────────────
+        set_color(255, 240, 180)
+        令 ph = 0.0 - 0.7 + pyh
+        capsule(0.0, ph, ZC,  0.28, 0.5, 0.28,  0.0, 0.0, 0.0,  2,  10, 4)
+
+        แสดงผล()
+        令 FR = FR + 1
+    }
+}

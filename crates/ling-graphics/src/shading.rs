@@ -126,11 +126,12 @@ pub fn lit_vertex(
     }
 
     // Holographic normal-gradient sheen: iridescent hue tied to normal dir.
+    // Modulated by the base colour so it tints rather than washing to white.
     if p.holo {
-        let s = 0.12;
-        acc[0] += (0.5 + 0.5 * n[0]) * s;
-        acc[1] += (0.5 + 0.5 * n[1]) * s;
-        acc[2] += (0.5 + 0.5 * n[2]) * s;
+        let s = 0.07;
+        acc[0] += (0.5 + 0.5 * n[0]) * s * (0.4 + 0.6*base[0]);
+        acc[1] += (0.5 + 0.5 * n[1]) * s * (0.4 + 0.6*base[1]);
+        acc[2] += (0.5 + 0.5 * n[2]) * s * (0.4 + 0.6*base[2]);
     }
 
     [acc[0].min(1.0), acc[1].min(1.0), acc[2].min(1.0)]

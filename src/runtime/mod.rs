@@ -1170,9 +1170,12 @@ impl Interpreter {
                 let x   = self.arg_num(&args, 0, 0.0)? as f32;
                 let y   = self.arg_num(&args, 1, -3.0)? as f32;
                 let z   = self.arg_num(&args, 2, 3.0)? as f32;
-                let r   = self.arg_num(&args, 3, 1.0)? as f32;
-                let g   = self.arg_num(&args, 4, 1.0)? as f32;
-                let b   = self.arg_num(&args, 5, 1.0)? as f32;
+                let mut r   = self.arg_num(&args, 3, 1.0)? as f32;
+                let mut g   = self.arg_num(&args, 4, 1.0)? as f32;
+                let mut b   = self.arg_num(&args, 5, 1.0)? as f32;
+                // Forgive 0-255 colour values: if any channel is clearly > 1,
+                // treat the triple as 0-255 and normalise. Keeps 0-1 callers exact.
+                if r > 1.5 || g > 1.5 || b > 1.5 { r/=255.0; g/=255.0; b/=255.0; }
                 let intensity = self.arg_num(&args, 6, 1.0)? as f32;
                 let radius    = self.arg_num(&args, 7, 0.0)? as f32;
                 self.gfx.borrow_mut().lights.push(Light { x, y, z, r, g, b, intensity, radius });

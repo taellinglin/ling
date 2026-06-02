@@ -35,3 +35,4 @@
 
 - [道场 — Shrine Room](examples/dao-chamber.md)
 - [Garden](examples/garden.md)
+- [Hyperbolic World (H²×ℝ)](examples/hyperbolic-world.md)

@@ -31,9 +31,10 @@ bind start = do {
         令 a = FR * 0.012
 
         # two coloured lights swinging through the scene
+        # add_light(x,y,z,  r,g,b (0-1),  intensity, radius)
         clear_lights()
-        add_light(cos(a) * 6.0, -3.0, 8.0 + sin(a) * 3.0, 4.0, 255, 180, 120)   # warm
-        add_light(-5.0, 3.0, 6.0, 3.0, 120, 160, 255)                            # cool
+        add_light(cos(a) * 6.0, -3.0, 8.0 + sin(a) * 3.0,  1.0, 0.72, 0.45,  1.5, 0.0)  # warm
+        add_light(-5.0, 3.0, 6.0,  0.45, 0.62, 1.0,  1.1, 0.0)                           # cool
 
         令 ry = sin(FR * 0.006) * 0.12
         set_camera(cos(ry), sin(ry), 1.0, 0.0)
