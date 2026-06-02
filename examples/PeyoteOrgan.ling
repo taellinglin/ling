@@ -49,36 +49,36 @@
 #   rx = sin(2t)·0.22 + 0.06  →  figure-eight vertical + upward bias
 # ════════════════════════════════════════════════════════════════════════════
 
-令 W   = 14.0
-令 H   = 7.0
-令 FZ  = 28.0
-令 NZ  = 1.5
-令 MZ  = 14.75    # (NZ + FZ) / 2
+ผูก W   = 14.0
+ผูก H   = 7.0
+ผูก FZ  = 28.0
+ผูก NZ  = 1.5
+ผูก MZ  = 14.75    # (NZ + FZ) / 2
 
-令 SX  = 0.0      # spine / cactus centre x
-令 SZ  = 11.0     # spine / cactus centre z
+ผูก SX  = 0.0      # spine / cactus centre x
+ผูก SZ  = 11.0     # spine / cactus centre z
 
 # Chakra frequencies — 7 nodes + cosmic + Venus + Jupiter
-令 FC2  = 65.41   # C2 root rumble
-令 FG2  = 98.00   # G2 sacral water
-令 FC3  = 130.81  # C3 solar plexus fire
-令 FF3  = 174.61  # F3 heart / OM
-令 FG3  = 196.00  # G3 throat sound
-令 FA4  = 440.00  # A4 ajna  (universal tuning A)
-令 FB4  = 493.88  # B4 crown
-令 FC5  = 523.25  # C5 cosmic overflow
-令 FVen = 329.63  # E4 Venus  — inner mirror benefic
-令 FJup = 293.66  # D4 Jupiter — outer mirror benefic
+ผูก FC2  = 65.41   # C2 root rumble
+ผูก FG2  = 98.00   # G2 sacral water
+ผูก FC3  = 130.81  # C3 solar plexus fire
+ผูก FF3  = 174.61  # F3 heart / OM
+ผูก FG3  = 196.00  # G3 throat sound
+ผูก FA4  = 440.00  # A4 ajna  (universal tuning A)
+ผูก FB4  = 493.88  # B4 crown
+ผูก FC5  = 523.25  # C5 cosmic overflow
+ผูก FVen = 329.63  # E4 Venus  — inner mirror benefic
+ผูก FJup = 293.66  # D4 Jupiter — outer mirror benefic
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # SM2 HASH
 # ════════════════════════════════════════════════════════════════════════════
 
-函 sm2_hash(cx, ry, a, b) {
-    令 p = cx * 2166136261.0 + ry * 16777619.0
-    令 s = sin(p * 0.0000031 + a) * 0.5 + 0.5
-    令 c = cos(p * 0.0000059 - b) * 0.5 + 0.5
+ฟังก์ชัน sm2_hash(cx, ry, a, b) {
+    ผูก p = cx * 2166136261.0 + ry * 16777619.0
+    ผูก s = ไซน์(p * 0.0000031 + a) * 0.5 + 0.5
+    ผูก c = โคไซน์(p * 0.0000059 - b) * 0.5 + 0.5
     s * 0.618 + c * 0.382
 }
 
@@ -87,17 +87,17 @@
 # AUDIO  — chakra tones placed along the spine, Venus/Jupiter on walls
 # ════════════════════════════════════════════════════════════════════════════
 
-函 init_audio() {
+ฟังก์ชัน init_audio() {
     # slot  x     y           z     w    freq   amp   lfo_hz  depth
-    audio_tone(0, SX, 0-H,       SZ, 5.5, FC2,  0.14, 0.012, 0.015)   # root
-    audio_tone(1, SX, 0-H+2.0,  SZ, 4.5, FG2,  0.12, 0.019, 0.025)   # sacral
-    audio_tone(2, SX, 0-H+4.0,  SZ, 4.0, FC3,  0.11, 0.028, 0.038)   # solar plexus
-    audio_tone(3, SX, 0-H+6.0,  SZ, 4.5, FF3,  0.11, 0.022, 0.030)   # heart / OM
-    audio_tone(4, SX, 0-H+8.0,  SZ, 3.5, FG3,  0.10, 0.035, 0.050)   # throat
-    audio_tone(5, SX, 0-H+10.0, SZ, 3.0, FA4,  0.09, 0.048, 0.075)   # ajna
-    audio_tone(6, SX, 0-H+12.0, SZ, 2.5, FB4,  0.08, 0.063, 0.120)   # crown
-    audio_tone(7, 0,  H,         MZ, 5.0, FC5,  0.07, 0.038, 0.060)   # cosmic
-    audio_volume(0.50)
+    เสียงโทน(0, SX, 0-H,       SZ, 5.5, FC2,  0.14, 0.012, 0.015)   # root
+    เสียงโทน(1, SX, 0-H+2.0,  SZ, 4.5, FG2,  0.12, 0.019, 0.025)   # sacral
+    เสียงโทน(2, SX, 0-H+4.0,  SZ, 4.0, FC3,  0.11, 0.028, 0.038)   # solar plexus
+    เสียงโทน(3, SX, 0-H+6.0,  SZ, 4.5, FF3,  0.11, 0.022, 0.030)   # heart / OM
+    เสียงโทน(4, SX, 0-H+8.0,  SZ, 3.5, FG3,  0.10, 0.035, 0.050)   # throat
+    เสียงโทน(5, SX, 0-H+10.0, SZ, 3.0, FA4,  0.09, 0.048, 0.075)   # ajna
+    เสียงโทน(6, SX, 0-H+12.0, SZ, 2.5, FB4,  0.08, 0.063, 0.120)   # crown
+    เสียงโทน(7, 0,  H,         MZ, 5.0, FC5,  0.07, 0.038, 0.060)   # cosmic
+    ระดับเสียง(0.50)
 }
 
 
@@ -105,37 +105,37 @@
 # LIGHTS
 # ════════════════════════════════════════════════════════════════════════════
 
-函 setup_lights(FR) {
-    clear_lights()
+ฟังก์ชัน setup_lights(FR) {
+    ล้างแสง()
 
     # Heart-sun: warm gold overhead, slow drift around centre
-    令 th = FR * 0.0018
-    add_light(
-        cos(th) * 6.5,  H * 0.88,  MZ + sin(th) * 3.5,
+    ผูก th = FR * 0.0018
+    เพิ่มแสง(
+        โคไซน์(th) * 6.5,  H * 0.88,  MZ + ไซน์(th) * 3.5,
         0.95, 0.80, 0.44,   4.5, 18.0
     )
 
     # Venus light: cool silver-blue from left wall, gentle sway
-    令 tv = FR * 0.0026
-    add_light(
-        0-W*0.72,  H*0.35 + sin(tv)*1.2,  MZ + cos(tv)*2.0,
+    ผูก tv = FR * 0.0026
+    เพิ่มแสง(
+        0-W*0.72,  H*0.35 + ไซน์(tv)*1.2,  MZ + โคไซน์(tv)*2.0,
         0.76, 0.88, 1.00,   2.8, 12.0
     )
 
     # Jupiter light: warm amber from right — mirrors Venus exactly
-    令 tj = tv + 3.14159
-    add_light(
-        W*0.72,  H*0.35 + sin(tj)*1.2,  MZ + cos(tj)*2.0,
+    ผูก tj = tv + 3.14159
+    เพิ่มแสง(
+        W*0.72,  H*0.35 + ไซน์(tj)*1.2,  MZ + โคไซน์(tj)*2.0,
         1.00, 0.84, 0.32,   2.8, 12.0
     )
 
     # Earth core: deep blue-green rising from ground at spine
-    add_light(SX, 0-H-1.2, SZ,   0.20, 0.55, 0.42,   1.5, 8.0)
+    เพิ่มแสง(SX, 0-H-1.2, SZ,   0.20, 0.55, 0.42,   1.5, 8.0)
 
     # Peyote shimmer: cycling green near the cactus field
-    令 tp = FR * 0.055
-    add_light(
-        sin(tp)*3.2,  0-H+0.4,  SZ + cos(tp)*2.2,
+    ผูก tp = FR * 0.055
+    เพิ่มแสง(
+        ไซน์(tp)*3.2,  0-H+0.4,  SZ + โคไซน์(tp)*2.2,
         0.30, 0.78, 0.52,   1.8, 6.0
     )
 }
@@ -146,30 +146,30 @@
 # 9-rib chakra disc + sinusoidal moiré growth signal rising upward
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_peyote(px, py, pz, r, FR, hue) {
-    令 br  = sin(FR * 0.028 + pz * 0.31) * 0.35 + 0.65
-    令 br2 = sin(FR * 0.021 + pz * 0.47 + 1.57) * 0.35 + 0.65
+ฟังก์ชัน draw_peyote(px, py, pz, r, FR, hue) {
+    ผูก br  = ไซน์(FR * 0.028 + pz * 0.31) * 0.35 + 0.65
+    ผูก br2 = ไซน์(FR * 0.021 + pz * 0.47 + 1.57) * 0.35 + 0.65
 
     # Horizontal disc body — 9-rib pattern (best seen from above, XZ plane)
-    vtex_chakra(px, py, pz,  1,0,0, 0,0,1,  r*br, 9,  FR*0.018, hue)
-    vtex_rings(px, py, pz,   1,0,0, 0,0,1,  4, 9,  r*1.20*br, 0.05,  FR*0.024, hue+0.22)
+    ลายจักร(px, py, pz,  1,0,0, 0,0,1,  r*br, 9,  FR*0.018, hue)
+    ลายวงซ้อน(px, py, pz,   1,0,0, 0,0,1,  4, 9,  r*1.20*br, 0.05,  FR*0.024, hue+0.22)
 
     # Central tuft visible from front (XY plane)
-    vtex_lotus(px, py+r*0.06, pz,  1,0,0, 0,1,0,  r*0.10, r*0.32, 9,  FR*0.58, hue+0.55)
+    ลายดอกบัว(px, py+r*0.06, pz,  1,0,0, 0,1,0,  r*0.10, r*0.32, 9,  FR*0.58, hue+0.55)
 
     # SINUSOIDAL MOIRE — coprime ring counts (7/11 vs 9/13) + different phase speeds
-    令 m1 = sin(FR * 0.031 + pz * 0.42) * 0.40 + 0.60
-    令 m2 = sin(FR * 0.023 + pz * 0.63 + 2.09) * 0.40 + 0.60
+    ผูก m1 = ไซน์(FR * 0.031 + pz * 0.42) * 0.40 + 0.60
+    ผูก m2 = ไซน์(FR * 0.023 + pz * 0.63 + 2.09) * 0.40 + 0.60
     vtex_hyperbolic_uv(px, py, pz,  1,0,0, 0,0,1,  r*m1, 7, 11,  FR*0.031, hue+0.12)
     vtex_hyperbolic_uv(px, py, pz,  1,0,0, 0,0,1,  r*m2*1.14, 9, 13,  FR*0.023, hue+0.52)
 
     # Growth signal rising upward — two layers of elevation (XY)
-    令 gs = sin(FR * 0.055 + pz * 0.77) * 0.40 + 0.60
+    ผูก gs = ไซน์(FR * 0.055 + pz * 0.77) * 0.40 + 0.60
     vtex_hyperbolic_uv(px, py+r*0.7, pz,  1,0,0, 0,1,0,  r*gs*0.58, 4, 7,  FR*0.044, hue+0.35)
     vtex_hyperbolic_uv(px, py+r*1.5, pz,  1,0,0, 0,1,0,  r*gs*0.34, 3, 5,  FR*0.033, hue+0.72)
 
     # Side-view disc (YZ) — seen as a flat disc from the side
-    vtex_flower(px, py, pz,  0,0,1, 0,1,0,  r*br2*0.88, 9,  FR*0.032, hue+0.68)
+    ลายดอกบัว(px, py, pz,  0,0,1, 0,1,0,  r*br2*0.88, 9,  FR*0.032, hue+0.68)
 }
 
 
@@ -177,28 +177,28 @@
 # PEYOTE GARDEN  — SM2 earth floor + 5 buttons + root chakra mandala
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_peyote_garden(FR, hd) {
-    令 gy  = 0 - H
-    令 gfz = FZ * 0.50
+ฟังก์ชัน draw_peyote_garden(FR, hd) {
+    ผูก gy  = 0 - H
+    ผูก gfz = FZ * 0.50
 
     # SM2-seeded ground tessellation (root chakra earth pattern)
-    令 hg1 = sm2_hash(4.0, 8.0,  FR*0.0028, FR*0.0040)
-    令 hg2 = sm2_hash(8.0, 4.0,  FR*0.0040, FR*0.0028)
+    ผูก hg1 = sm2_hash(4.0, 8.0,  FR*0.0028, FR*0.0040)
+    ผูก hg2 = sm2_hash(8.0, 4.0,  FR*0.0040, FR*0.0028)
     vtex_tessellated(0, gy, gfz,  1,0,0, 0,0,1,  26, 20,  0.42+hg1*0.15, 0.09+hg2*0.06, 4.5,  FR, hd+2.2)
 
     # Root chakra mandala inlaid in floor
-    vtex_chakra(0, gy, gfz,  1,0,0, 0,0,1,  7.0, 4,  FR*0.006, hd+0.6)
-    vtex_yantra(0, gy, gfz,  1,0,0, 0,0,1,  4, 6.0,  FR*0.008, hd+0.0)
-    vtex_rings(0, gy, gfz,   1,0,0, 0,0,1,  3, 4,  6.4, 0.12,  FR*0.004, hd+1.0)
+    ลายจักร(0, gy, gfz,  1,0,0, 0,0,1,  7.0, 4,  FR*0.006, hd+0.6)
+    ลายยันต์(0, gy, gfz,  1,0,0, 0,0,1,  4, 6.0,  FR*0.008, hd+0.0)
+    ลายวงซ้อน(0, gy, gfz,   1,0,0, 0,0,1,  3, 4,  6.4, 0.12,  FR*0.004, hd+1.0)
 
     # Ground moiré growth field (sinusoidal interference on earth surface)
-    令 pm1 = sm2_hash(3.0, 9.0,  FR*0.0015, FR*0.0020)
-    令 pm2 = sm2_hash(9.0, 3.0,  FR*0.0020, FR*0.0015)
+    ผูก pm1 = sm2_hash(3.0, 9.0,  FR*0.0015, FR*0.0020)
+    ผูก pm2 = sm2_hash(9.0, 3.0,  FR*0.0020, FR*0.0015)
     vtex_hyperbolic_uv(0, gy, gfz,     1,0,0, 0,0,1,  10.0, 6,10,  FR*(0.010+pm1*0.005), hd+3.5)
     vtex_hyperbolic_uv(0, gy, gfz+2.0, 1,0,0, 0,0,1,   8.0, 7,12,  FR*(0.014+pm2*0.004), hd+4.2)
 
     # Five peyote buttons — varying positions and sizes
-    令 gy2 = gy + 0.04
+    ผูก gy2 = gy + 0.04
     draw_peyote( 0.0,  gy2, SZ-1.5, 1.10, FR, hd)
     draw_peyote(0-2.8, gy2, SZ+0.5, 0.72, FR, hd+1.8)
     draw_peyote( 2.8,  gy2, SZ+0.5, 0.76, FR, hd+3.6)
@@ -213,111 +213,111 @@
 # Each node: three orientation planes for angle-dependent geometry
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_chakra_spine(FR, hd) {
-    令 tx = SX
-    令 tz = SZ
-    令 gy = 0 - H
+ฟังก์ชัน draw_chakra_spine(FR, hd) {
+    ผูก tx = SX
+    ผูก tz = SZ
+    ผูก gy = 0 - H
 
     # ── NODE 0: ROOT — Muladhara (4-fold earth, C2) ──
-    令 br0 = sin(FR * 0.013 + 0.00) * 0.42 + 0.58
-    令 n0y = gy + 0.5
-    令 m0a = sin(FR * 0.031 + 0.5) * 0.40 + 0.60
-    令 m0b = sin(FR * 0.022 + 2.6) * 0.40 + 0.60
-    vtex_lotus(tx, n0y, tz,  1,0,0, 0,0,1,  0.36*br0, 1.10*br0, 4,  FR, hd)
-    vtex_rings(tx, n0y, tz,  1,0,0, 0,0,1,  3, 4,  2.20*br0, 0.08,  FR*0.020, hd+0.1)
-    vtex_chakra(tx, n0y, tz, 1,0,0, 0,1,0,  1.80*br0, 4,  FR*0.016, hd+0.2)
+    ผูก br0 = ไซน์(FR * 0.013 + 0.00) * 0.42 + 0.58
+    ผูก n0y = gy + 0.5
+    ผูก m0a = ไซน์(FR * 0.031 + 0.5) * 0.40 + 0.60
+    ผูก m0b = ไซน์(FR * 0.022 + 2.6) * 0.40 + 0.60
+    ลายดอกบัว(tx, n0y, tz,  1,0,0, 0,0,1,  0.36*br0, 1.10*br0, 4,  FR, hd)
+    ลายวงซ้อน(tx, n0y, tz,  1,0,0, 0,0,1,  3, 4,  2.20*br0, 0.08,  FR*0.020, hd+0.1)
+    ลายจักร(tx, n0y, tz, 1,0,0, 0,1,0,  1.80*br0, 4,  FR*0.016, hd+0.2)
     vtex_hyperbolic_uv(tx, n0y, tz,  1,0,0, 0,0,1,  2.0*m0a, 4,8,  FR*0.031, hd)
     vtex_hyperbolic_uv(tx, n0y, tz,  1,0,0, 0,0,1,  2.3*m0b, 5,9,  FR*0.022, hd+0.4)
 
-    vtex_rings(tx, gy+1.2, tz,  0,1,0, 1,0,0,  1, 4,  0.55, 0.0,  FR*0.05, hd+0.05)
-    vtex_rings(tx, gy+1.7, tz,  0,1,0, 1,0,0,  1, 4,  0.52, 0.0,  FR*0.05, hd+0.08)
+    ลายวงซ้อน(tx, gy+1.2, tz,  0,1,0, 1,0,0,  1, 4,  0.55, 0.0,  FR*0.05, hd+0.05)
+    ลายวงซ้อน(tx, gy+1.7, tz,  0,1,0, 1,0,0,  1, 4,  0.52, 0.0,  FR*0.05, hd+0.08)
 
     # ── NODE 1: SACRAL — Svadhisthana (6-fold water, G2) ──
-    令 br1 = sin(FR * 0.019 + 1.00) * 0.42 + 0.58
-    令 n1y = gy + 2.0
-    令 m1a = sin(FR * 0.031 + 1.0) * 0.40 + 0.60
-    令 m1b = sin(FR * 0.022 + 3.6) * 0.40 + 0.60
-    vtex_flower(tx, n1y, tz,  1,0,0, 0,1,0,  1.60*br1, 6,  FR*0.50, hd+0.15)
-    vtex_lotus(tx, n1y, tz,   1,0,0, 0,0,1,  0.30*br1, 1.00*br1, 6,  FR, hd+0.18)
-    vtex_rings(tx, n1y, tz,   1,0,0, 0,0,1,  3, 6,  2.10*br1, 0.07,  FR*0.025, hd+0.12)
+    ผูก br1 = ไซน์(FR * 0.019 + 1.00) * 0.42 + 0.58
+    ผูก n1y = gy + 2.0
+    ผูก m1a = ไซน์(FR * 0.031 + 1.0) * 0.40 + 0.60
+    ผูก m1b = ไซน์(FR * 0.022 + 3.6) * 0.40 + 0.60
+    ลายดอกบัว(tx, n1y, tz,  1,0,0, 0,1,0,  1.60*br1, 6,  FR*0.50, hd+0.15)
+    ลายดอกบัว(tx, n1y, tz,   1,0,0, 0,0,1,  0.30*br1, 1.00*br1, 6,  FR, hd+0.18)
+    ลายวงซ้อน(tx, n1y, tz,   1,0,0, 0,0,1,  3, 6,  2.10*br1, 0.07,  FR*0.025, hd+0.12)
     vtex_hyperbolic_uv(tx, n1y, tz,  1,0,0, 0,1,0,  1.8*m1a, 5,9,  FR*0.028, hd+0.12)
     vtex_hyperbolic_uv(tx, n1y, tz,  1,0,0, 0,0,1,  2.0*m1b, 6,10,  FR*0.020, hd+0.50)
 
-    vtex_rings(tx, gy+2.8, tz,  0,1,0, 1,0,0,  1, 6,  0.50, 0.0,  FR*0.05, hd+0.12)
-    vtex_rings(tx, gy+3.3, tz,  0,1,0, 1,0,0,  1, 6,  0.48, 0.0,  FR*0.05, hd+0.14)
-    vtex_spiral(tx, gy+2.9, tz,  0,1,0, 1,0,0,  0.08, 0.46, 18,  FR*0.18, hd+0.13)
+    ลายวงซ้อน(tx, gy+2.8, tz,  0,1,0, 1,0,0,  1, 6,  0.50, 0.0,  FR*0.05, hd+0.12)
+    ลายวงซ้อน(tx, gy+3.3, tz,  0,1,0, 1,0,0,  1, 6,  0.48, 0.0,  FR*0.05, hd+0.14)
+    ลายเกลียว(tx, gy+2.9, tz,  0,1,0, 1,0,0,  0.08, 0.46, 18,  FR*0.18, hd+0.13)
 
     # ── NODE 2: SOLAR PLEXUS — Manipura (10-fold fire, C3) ──
-    令 br2 = sin(FR * 0.027 + 2.00) * 0.42 + 0.58
-    令 n2y = gy + 4.0
-    令 m2a = sin(FR * 0.035 + 2.0) * 0.40 + 0.60
-    令 m2b = sin(FR * 0.027 + 4.7) * 0.40 + 0.60
-    vtex_star(tx, n2y, tz,   1,0,0, 0,1,0,  10, 1.80*br2, 0.72*br2, 0.04,  FR*0.040, hd+0.28)
-    vtex_chakra(tx, n2y, tz, 1,0,0, 0,1,0,  1.70*br2, 10,  FR*0.025, hd+0.25)
-    vtex_rings(tx, n2y, tz,  1,0,0, 0,0,1,  3, 10,  2.00*br2, 0.06,  FR*0.032, hd+0.22)
+    ผูก br2 = ไซน์(FR * 0.027 + 2.00) * 0.42 + 0.58
+    ผูก n2y = gy + 4.0
+    ผูก m2a = ไซน์(FR * 0.035 + 2.0) * 0.40 + 0.60
+    ผูก m2b = ไซน์(FR * 0.027 + 4.7) * 0.40 + 0.60
+    ลายดาว(tx, n2y, tz,   1,0,0, 0,1,0,  10, 1.80*br2, 0.72*br2, 0.04,  FR*0.040, hd+0.28)
+    ลายจักร(tx, n2y, tz, 1,0,0, 0,1,0,  1.70*br2, 10,  FR*0.025, hd+0.25)
+    ลายวงซ้อน(tx, n2y, tz,  1,0,0, 0,0,1,  3, 10,  2.00*br2, 0.06,  FR*0.032, hd+0.22)
     vtex_hyperbolic_uv(tx, n2y, tz,  1,0,0, 0,1,0,  1.6*m2a, 6,10,  FR*0.035, hd+0.22)
     vtex_hyperbolic_uv(tx, n2y, tz,  1,0,0, 0,0,1,  1.9*m2b, 7,11,  FR*0.026, hd+0.60)
 
-    vtex_rings(tx, gy+4.8, tz,  0,1,0, 1,0,0,  1, 8,  0.44, 0.0,  FR*0.05, hd+0.22)
-    vtex_rings(tx, gy+5.3, tz,  0,1,0, 1,0,0,  1, 8,  0.42, 0.0,  FR*0.05, hd+0.25)
-    vtex_spiral(tx, gy+4.9, tz,  0,1,0, 1,0,0,  0.07, 0.40, 20,  FR*0.22, hd+0.24)
+    ลายวงซ้อน(tx, gy+4.8, tz,  0,1,0, 1,0,0,  1, 8,  0.44, 0.0,  FR*0.05, hd+0.22)
+    ลายวงซ้อน(tx, gy+5.3, tz,  0,1,0, 1,0,0,  1, 8,  0.42, 0.0,  FR*0.05, hd+0.25)
+    ลายเกลียว(tx, gy+4.9, tz,  0,1,0, 1,0,0,  0.07, 0.40, 20,  FR*0.22, hd+0.24)
 
     # ── NODE 3: HEART — Anahata (12-fold air+water, F3/OM — 3 planes = water lens) ──
-    令 br3 = sin(FR * 0.022 + 3.00) * 0.42 + 0.58
-    令 n3y = gy + 6.0
-    令 m3a = sin(FR * 0.028 + 3.0) * 0.40 + 0.60
-    令 m3b = sin(FR * 0.020 + 5.7) * 0.40 + 0.60
-    vtex_lotus(tx, n3y, tz,  1,0,0, 0,1,0,  0.36*br3, 1.28*br3, 12,  FR, hd+0.35)
-    vtex_lotus(tx, n3y, tz,  0,0,1, 0,1,0,  0.28*br3, 1.00*br3, 12,  FR, hd+0.38)
-    vtex_rings(tx, n3y, tz,  1,0,0, 0,0,1,  4, 12,  2.40*br3, 0.06,  FR*0.028, hd+0.33)
+    ผูก br3 = ไซน์(FR * 0.022 + 3.00) * 0.42 + 0.58
+    ผูก n3y = gy + 6.0
+    ผูก m3a = ไซน์(FR * 0.028 + 3.0) * 0.40 + 0.60
+    ผูก m3b = ไซน์(FR * 0.020 + 5.7) * 0.40 + 0.60
+    ลายดอกบัว(tx, n3y, tz,  1,0,0, 0,1,0,  0.36*br3, 1.28*br3, 12,  FR, hd+0.35)
+    ลายดอกบัว(tx, n3y, tz,  0,0,1, 0,1,0,  0.28*br3, 1.00*br3, 12,  FR, hd+0.38)
+    ลายวงซ้อน(tx, n3y, tz,  1,0,0, 0,0,1,  4, 12,  2.40*br3, 0.06,  FR*0.028, hd+0.33)
     vtex_hyperbolic_uv(tx, n3y, tz,  1,0,0, 0,1,0,  2.0*m3a, 8,12,  FR*0.028, hd+0.35)
     vtex_hyperbolic_uv(tx, n3y, tz,  0,0,1, 0,1,0,  1.7*m3b, 9,13,  FR*0.020, hd+0.72)
     vtex_hyperbolic_uv(tx, n3y, tz,  1,0,0, 0,0,1,  1.5*m3a, 6,10,  FR*0.024, hd+1.08)
 
-    vtex_rings(tx, gy+6.8, tz,  0,1,0, 1,0,0,  1, 10, 0.38, 0.0,  FR*0.05, hd+0.34)
-    vtex_rings(tx, gy+7.3, tz,  0,1,0, 1,0,0,  1, 10, 0.36, 0.0,  FR*0.05, hd+0.36)
-    vtex_spiral(tx, gy+6.9, tz,  0,1,0, 1,0,0,  0.06, 0.34, 24,  FR*0.26, hd+0.35)
+    ลายวงซ้อน(tx, gy+6.8, tz,  0,1,0, 1,0,0,  1, 10, 0.38, 0.0,  FR*0.05, hd+0.34)
+    ลายวงซ้อน(tx, gy+7.3, tz,  0,1,0, 1,0,0,  1, 10, 0.36, 0.0,  FR*0.05, hd+0.36)
+    ลายเกลียว(tx, gy+6.9, tz,  0,1,0, 1,0,0,  0.06, 0.34, 24,  FR*0.26, hd+0.35)
 
     # ── NODE 4: THROAT — Vishuddha (16-fold sound, G3) ──
-    令 br4 = sin(FR * 0.034 + 4.00) * 0.42 + 0.58
-    令 n4y = gy + 8.0
-    令 m4a = sin(FR * 0.042 + 4.0) * 0.40 + 0.60
-    令 m4b = sin(FR * 0.033 + 6.8) * 0.40 + 0.60
-    vtex_flower(tx, n4y, tz,  1,0,0, 0,1,0,  1.80*br4, 16,  FR*0.60, hd+0.48)
-    vtex_chakra(tx, n4y, tz,  0,0,1, 0,1,0,  1.40*br4, 16,  FR*0.048, hd+0.50)
-    vtex_rings(tx, n4y, tz,   1,0,0, 0,0,1,  3, 16,  2.00*br4, 0.05,  FR*0.042, hd+0.46)
+    ผูก br4 = ไซน์(FR * 0.034 + 4.00) * 0.42 + 0.58
+    ผูก n4y = gy + 8.0
+    ผูก m4a = ไซน์(FR * 0.042 + 4.0) * 0.40 + 0.60
+    ผูก m4b = ไซน์(FR * 0.033 + 6.8) * 0.40 + 0.60
+    ลายดอกบัว(tx, n4y, tz,  1,0,0, 0,1,0,  1.80*br4, 16,  FR*0.60, hd+0.48)
+    ลายจักร(tx, n4y, tz,  0,0,1, 0,1,0,  1.40*br4, 16,  FR*0.048, hd+0.50)
+    ลายวงซ้อน(tx, n4y, tz,   1,0,0, 0,0,1,  3, 16,  2.00*br4, 0.05,  FR*0.042, hd+0.46)
     vtex_hyperbolic_uv(tx, n4y, tz,  1,0,0, 0,1,0,  1.5*m4a, 9,13,  FR*0.042, hd+0.48)
     vtex_hyperbolic_uv(tx, n4y, tz,  0,0,1, 0,1,0,  1.3*m4b, 8,12,  FR*0.033, hd+0.85)
 
-    vtex_rings(tx, gy+8.8, tz,  0,1,0, 1,0,0,  1, 12, 0.32, 0.0,  FR*0.06, hd+0.47)
-    vtex_rings(tx, gy+9.2, tz,  0,1,0, 1,0,0,  1, 12, 0.30, 0.0,  FR*0.06, hd+0.49)
-    vtex_spiral(tx, gy+8.9, tz,  0,1,0, 1,0,0,  0.05, 0.28, 28,  FR*0.32, hd+0.48)
+    ลายวงซ้อน(tx, gy+8.8, tz,  0,1,0, 1,0,0,  1, 12, 0.32, 0.0,  FR*0.06, hd+0.47)
+    ลายวงซ้อน(tx, gy+9.2, tz,  0,1,0, 1,0,0,  1, 12, 0.30, 0.0,  FR*0.06, hd+0.49)
+    ลายเกลียว(tx, gy+8.9, tz,  0,1,0, 1,0,0,  0.05, 0.28, 28,  FR*0.32, hd+0.48)
 
     # ── NODE 5: AJNA — Third Eye (2-fold mind + 6-fold star, A4/440Hz) ──
-    令 br5 = sin(FR * 0.046 + 5.00) * 0.42 + 0.58
-    令 n5y = gy + 10.0
-    令 m5a = sin(FR * 0.055 + 5.0) * 0.40 + 0.60
-    vtex_lotus(tx, n5y, tz,  1,0,0, 0,1,0,  0.28*br5, 0.92*br5, 2,  FR, hd+0.58)
-    vtex_star(tx, n5y, tz,   1,0,0, 0,1,0,  6, 1.60*br5, 0.64*br5, 0.04,  FR*0.068, hd+0.60)
+    ผูก br5 = ไซน์(FR * 0.046 + 5.00) * 0.42 + 0.58
+    ผูก n5y = gy + 10.0
+    ผูก m5a = ไซน์(FR * 0.055 + 5.0) * 0.40 + 0.60
+    ลายดอกบัว(tx, n5y, tz,  1,0,0, 0,1,0,  0.28*br5, 0.92*br5, 2,  FR, hd+0.58)
+    ลายดาว(tx, n5y, tz,   1,0,0, 0,1,0,  6, 1.60*br5, 0.64*br5, 0.04,  FR*0.068, hd+0.60)
     vtex_hyperbolic_uv(tx, n5y, tz,  1,0,0, 0,1,0,  1.4*br5, 2, 4,  FR*0.055, hd+0.58)
     vtex_hyperbolic_uv(tx, n5y, tz,  1,0,0, 0,0,1,  1.2*m5a, 3, 6,  FR*0.046, hd+0.95)
-    vtex_rings(tx, n5y, tz,   1,0,0, 0,0,1,  2, 2,  1.60*br5, 0.04,  FR*0.058, hd+0.62)
+    ลายวงซ้อน(tx, n5y, tz,   1,0,0, 0,0,1,  2, 2,  1.60*br5, 0.04,  FR*0.058, hd+0.62)
 
-    vtex_rings(tx, gy+10.8, tz,  0,1,0, 1,0,0,  1, 2, 0.26, 0.0,  FR*0.07, hd+0.59)
-    vtex_spiral(tx, gy+10.5, tz,  0,1,0, 1,0,0,  0.04, 0.24, 32,  FR*0.40, hd+0.60)
+    ลายวงซ้อน(tx, gy+10.8, tz,  0,1,0, 1,0,0,  1, 2, 0.26, 0.0,  FR*0.07, hd+0.59)
+    ลายเกลียว(tx, gy+10.5, tz,  0,1,0, 1,0,0,  0.04, 0.24, 32,  FR*0.40, hd+0.60)
 
     # ── NODE 6: CROWN — Sahasrara (1000-fold cosmos, B4) — fastest pulse ──
-    令 br6  = sin(FR * 0.063 + 6.00) * 0.42 + 0.58
-    令 n6y  = gy + 12.0
-    令 m6a  = sin(FR * 0.075 + 6.0) * 0.40 + 0.60
-    令 n6ty = n6y + 0.80
-    vtex_lotus(tx, n6y, tz,  1,0,0, 0,1,0,  0.24*br6, 0.80*br6, 1000,  FR, hd+0.72)
+    ผูก br6  = ไซน์(FR * 0.063 + 6.00) * 0.42 + 0.58
+    ผูก n6y  = gy + 12.0
+    ผูก m6a  = ไซน์(FR * 0.075 + 6.0) * 0.40 + 0.60
+    ผูก n6ty = n6y + 0.80
+    ลายดอกบัว(tx, n6y, tz,  1,0,0, 0,1,0,  0.24*br6, 0.80*br6, 1000,  FR, hd+0.72)
     vtex_hyperbolic_uv(tx, n6y, tz,  1,0,0, 0,1,0,  1.8*br6, 5,10,  FR*0.072, hd+0.72)
     vtex_hyperbolic_uv(tx, n6y, tz,  0,0,1, 0,1,0,  1.4*br6, 4, 8,  FR*0.063, hd+0.74)
     vtex_hyperbolic_uv(tx, n6y, tz,  1,0,0, 0,0,1,  1.2*br6, 3, 7,  FR*0.055, hd+0.76)
-    vtex_star(tx, n6y, tz,   1,0,0, 0,1,0,  8, 1.60*br6, 0.64*br6, 0.05,  FR*0.088, hd+0.70)
-    vtex_rings(tx, n6y, tz,  1,0,0, 0,0,1,  5, 8,  2.20*br6, 0.04,  FR*0.080, hd+0.73)
-    vtex_flower(tx, n6ty, tz,  1,0,0, 0,1,0,  1.20*m6a, 12,  FR*0.90, hd+0.78)
+    ลายดาว(tx, n6y, tz,   1,0,0, 0,1,0,  8, 1.60*br6, 0.64*br6, 0.05,  FR*0.088, hd+0.70)
+    ลายวงซ้อน(tx, n6y, tz,  1,0,0, 0,0,1,  5, 8,  2.20*br6, 0.04,  FR*0.080, hd+0.73)
+    ลายดอกบัว(tx, n6ty, tz,  1,0,0, 0,1,0,  1.20*m6a, 12,  FR*0.90, hd+0.78)
     vtex_hyperbolic_uv(tx, n6ty+0.8, tz,  1,0,0, 0,1,0,  0.90*m6a, 4, 8,  FR*0.10, hd+0.82)
 }
 
@@ -329,65 +329,65 @@
 # Earth/Ling = the water-lens pineal — largest, most detailed, 3-layer moiré
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_solar_mandala(FR, hd) {
-    令 wy = 0.0
-    令 wz = FZ
+ฟังก์ชัน draw_solar_mandala(FR, hd) {
+    ผูก wy = 0.0
+    ผูก wz = FZ
 
     # ── Saturn (far left — root/time, 3-fold, cold grey-blue) ──
-    令 sx   = 0-W*0.80
-    令 hsat = sm2_hash(1.0, 1.0,  FR*0.0008, FR*0.0012)
-    令 brs  = sin(FR * 0.008 + 0.5) * 0.35 + 0.65
-    vtex_rings(sx, wy, wz,  1,0,0, 0,1,0,  6, 3,  3.40*brs, 0.14,  FR*0.014, hd+5.5)
+    ผูก sx   = 0-W*0.80
+    ผูก hsat = sm2_hash(1.0, 1.0,  FR*0.0008, FR*0.0012)
+    ผูก brs  = ไซน์(FR * 0.008 + 0.5) * 0.35 + 0.65
+    ลายวงซ้อน(sx, wy, wz,  1,0,0, 0,1,0,  6, 3,  3.40*brs, 0.14,  FR*0.014, hd+5.5)
     vtex_hyperbolic_uv(sx, wy, wz,  1,0,0, 0,1,0,  (2.80 + hsat*0.42)*brs, 3,7,  FR*0.010, hd+5.2)
-    vtex_chakra(sx, wy, wz,  1,0,0, 0,1,0,  1.80*brs, 3,  FR*0.012, hd+5.0)
+    ลายจักร(sx, wy, wz,  1,0,0, 0,1,0,  1.80*brs, 3,  FR*0.012, hd+5.0)
 
     # ── Mars (left-centre — solar plexus fire, 5-fold, orange-red) ──
-    令 mx   = 0-W*0.42
-    令 hmar = sm2_hash(3.0, 5.0,  FR*0.0015, FR*0.0022)
-    令 brm  = sin(FR * 0.015 + 1.5) * 0.35 + 0.65
-    vtex_flower(mx, wy, wz,  1,0,0, 0,1,0,  2.40*brm, 5,  FR*0.45, hd+0.22)
+    ผูก mx   = 0-W*0.42
+    ผูก hmar = sm2_hash(3.0, 5.0,  FR*0.0015, FR*0.0022)
+    ผูก brm  = ไซน์(FR * 0.015 + 1.5) * 0.35 + 0.65
+    ลายดอกบัว(mx, wy, wz,  1,0,0, 0,1,0,  2.40*brm, 5,  FR*0.45, hd+0.22)
     vtex_hyperbolic_uv(mx, wy, wz,  1,0,0, 0,1,0,  (2.00 + hmar*0.40)*brm, 5,8,  FR*0.018, hd+0.25)
-    vtex_star(mx, wy, wz,    1,0,0, 0,1,0,  5, 2.00*brm, 0.80*brm, 0.04,  FR*0.025, hd+0.28)
+    ลายดาว(mx, wy, wz,    1,0,0, 0,1,0,  5, 2.00*brm, 0.80*brm, 0.04,  FR*0.025, hd+0.28)
 
     # ── Venus (center-left — beauty, 8-fold silver, sister of Jupiter) ──
-    令 vx   = 0-W*0.18
-    令 hven = sm2_hash(5.0, 8.0,  FR*0.0018, FR*0.0028)
-    令 brv  = sin(FR * 0.022 + 2.5) * 0.38 + 0.62
-    vtex_lotus(vx, wy, wz,   1,0,0, 0,1,0,  0.44*brv, 1.60*brv, 8,  FR, hd+4.6)
-    vtex_rings(vx, wy, wz,   1,0,0, 0,1,0,  5, 8,  2.80*brv, 0.08,  FR*0.030, hd+4.8)
+    ผูก vx   = 0-W*0.18
+    ผูก hven = sm2_hash(5.0, 8.0,  FR*0.0018, FR*0.0028)
+    ผูก brv  = ไซน์(FR * 0.022 + 2.5) * 0.38 + 0.62
+    ลายดอกบัว(vx, wy, wz,   1,0,0, 0,1,0,  0.44*brv, 1.60*brv, 8,  FR, hd+4.6)
+    ลายวงซ้อน(vx, wy, wz,   1,0,0, 0,1,0,  5, 8,  2.80*brv, 0.08,  FR*0.030, hd+4.8)
     vtex_hyperbolic_uv(vx, wy, wz,  1,0,0, 0,1,0,  (2.40 + hven*0.44)*brv, 8,12,  FR*0.022, hd+4.4)
-    vtex_flower(vx, wy, wz,  1,0,0, 0,1,0,  2.00*brv, 8,  FR*0.55, hd+4.2)
+    ลายดอกบัว(vx, wy, wz,  1,0,0, 0,1,0,  2.00*brv, 8,  FR*0.55, hd+4.2)
 
     # ── EARTH / LING — water lens pineal (centre, 12-fold, blue-green, 3 planes) ──
-    令 hear = sm2_hash(6.0, 6.0,  FR*0.0010, FR*0.0010)
-    令 bre  = sin(FR * 0.018 + 3.14) * 0.38 + 0.62
-    令 brem = bre * (0.88 + hear*0.12)
+    ผูก hear = sm2_hash(6.0, 6.0,  FR*0.0010, FR*0.0010)
+    ผูก bre  = ไซน์(FR * 0.018 + 3.14) * 0.38 + 0.62
+    ผูก brem = bre * (0.88 + hear*0.12)
     # Three hyperbolic layers — water-lens diffraction moiré
     vtex_hyperbolic_uv(0, wy, wz,  1,0,0, 0,1,0,  4.50*brem, 9,14,  FR*0.014, hd+1.8)
     vtex_hyperbolic_uv(0, wy, wz,  1,0,0, 0,1,0,  3.00*brem, 6,10,  FR*0.022, hd+3.6)
     vtex_hyperbolic_uv(0, wy, wz,  1,0,0, 0,1,0,  2.00*brem, 4, 8,  FR*0.030, hd+5.4)
-    vtex_lotus(0, wy, wz,   1,0,0, 0,1,0,  0.55*bre, 2.00*bre, 12,  FR, hd+1.2)
-    vtex_rings(0, wy, wz,   1,0,0, 0,1,0,  6, 12,  3.80*bre, 0.06,  FR*0.018, hd+0.9)
-    vtex_yantra(0, wy, wz,  1,0,0, 0,1,0,  4, 5.00*brem,  FR*0.010, hd+2.5)
+    ลายดอกบัว(0, wy, wz,   1,0,0, 0,1,0,  0.55*bre, 2.00*bre, 12,  FR, hd+1.2)
+    ลายวงซ้อน(0, wy, wz,   1,0,0, 0,1,0,  6, 12,  3.80*bre, 0.06,  FR*0.018, hd+0.9)
+    ลายยันต์(0, wy, wz,  1,0,0, 0,1,0,  4, 5.00*brem,  FR*0.010, hd+2.5)
     # Pineal core dot (single-spoke chakra = the eye of Earth)
-    vtex_chakra(0, wy, wz,  1,0,0, 0,1,0,  0.42*bre, 1,  FR, hd+0.5)
+    ลายจักร(0, wy, wz,  1,0,0, 0,1,0,  0.42*bre, 1,  FR, hd+0.5)
 
     # ── Jupiter (center-right — expansion, 12-fold gold, brother of Venus) ──
-    令 jx   = W*0.18
-    令 hjup = sm2_hash(8.0, 5.0,  FR*0.0018, FR*0.0028)
-    令 brj  = sin(FR * 0.022 + 2.5 + 3.14159) * 0.38 + 0.62
-    vtex_lotus(jx, wy, wz,   1,0,0, 0,1,0,  0.44*brj, 1.60*brj, 12,  FR, hd+0.8)
-    vtex_rings(jx, wy, wz,   1,0,0, 0,1,0,  5, 12,  2.80*brj, 0.08,  FR*0.030, hd+1.0)
+    ผูก jx   = W*0.18
+    ผูก hjup = sm2_hash(8.0, 5.0,  FR*0.0018, FR*0.0028)
+    ผูก brj  = ไซน์(FR * 0.022 + 2.5 + 3.14159) * 0.38 + 0.62
+    ลายดอกบัว(jx, wy, wz,   1,0,0, 0,1,0,  0.44*brj, 1.60*brj, 12,  FR, hd+0.8)
+    ลายวงซ้อน(jx, wy, wz,   1,0,0, 0,1,0,  5, 12,  2.80*brj, 0.08,  FR*0.030, hd+1.0)
     vtex_hyperbolic_uv(jx, wy, wz,  1,0,0, 0,1,0,  (2.40 + hjup*0.44)*brj, 12,16,  FR*0.022, hd+0.6)
-    vtex_flower(jx, wy, wz,  1,0,0, 0,1,0,  2.00*brj, 12,  FR*0.55, hd+0.4)
+    ลายดอกบัว(jx, wy, wz,  1,0,0, 0,1,0,  2.00*brj, 12,  FR*0.55, hd+0.4)
 
     # ── Neptune (far right — cosmic mystery, 7-fold, deep indigo) ──
-    令 npx  = W*0.80
-    令 hnep = sm2_hash(9.0, 1.0,  FR*0.0008, FR*0.0012)
-    令 brnp = sin(FR * 0.010 + 5.0) * 0.35 + 0.65
-    vtex_rings(npx, wy, wz,  1,0,0, 0,1,0,  4, 7,  3.20*brnp, 0.12,  FR*0.012, hd+4.0)
+    ผูก npx  = W*0.80
+    ผูก hnep = sm2_hash(9.0, 1.0,  FR*0.0008, FR*0.0012)
+    ผูก brnp = ไซน์(FR * 0.010 + 5.0) * 0.35 + 0.65
+    ลายวงซ้อน(npx, wy, wz,  1,0,0, 0,1,0,  4, 7,  3.20*brnp, 0.12,  FR*0.012, hd+4.0)
     vtex_hyperbolic_uv(npx, wy, wz,  1,0,0, 0,1,0,  (2.60 + hnep*0.42)*brnp, 7,11,  FR*0.008, hd+4.3)
-    vtex_lotus(npx, wy, wz,  1,0,0, 0,1,0,  0.32*brnp, 1.10*brnp, 7,  FR, hd+4.6)
+    ลายดอกบัว(npx, wy, wz,  1,0,0, 0,1,0,  0.32*brnp, 1.10*brnp, 7,  FR, hd+4.6)
 }
 
 
@@ -397,46 +397,46 @@
 # The sacred geometry of respiratory exchange made visible
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_breath_portal(FR, hd) {
-    令 bwz = (NZ + FZ) / 2.0
-    令 bx  = 0 - W
+ฟังก์ชัน draw_breath_portal(FR, hd) {
+    ผูก bwz = (NZ + FZ) / 2.0
+    ผูก bx  = 0 - W
 
     # Breath rhythm: slow sinusoid, ~150-frame period
-    令 breath = sin(FR * 0.042) * 0.45 + 0.55
-    令 antibreath = sin(FR * 0.042 + 3.14159) * 0.45 + 0.55
+    ผูก breath = ไซน์(FR * 0.042) * 0.45 + 0.55
+    ผูก antibreath = ไซน์(FR * 0.042 + 3.14159) * 0.45 + 0.55
 
     # Sinusoidal moiré background — the waveform of breath itself
-    令 hb1 = sm2_hash(1.0, 7.0,  FR*0.0022, FR*0.0035)
-    令 hb2 = sm2_hash(7.0, 1.0,  FR*0.0035, FR*0.0022)
+    ผูก hb1 = sm2_hash(1.0, 7.0,  FR*0.0022, FR*0.0035)
+    ผูก hb2 = sm2_hash(7.0, 1.0,  FR*0.0035, FR*0.0022)
     vtex_hyperbolic_uv(bx, 0.0, bwz,  0,0,1, 0,1,0,  6.0*breath, 6,10,  FR*0.042, hd+2.0)
     vtex_hyperbolic_uv(bx, 0.0, bwz,  0,0,1, 0,1,0,  5.0*(1.0 + hb1*0.15), 7,11,  FR*0.032, hd+2.8)
     vtex_hyperbolic_uv(bx, 0.0, bwz,  0,0,1, 0,1,0,  4.0*(0.90 + hb2*0.10), 5, 9,  FR*0.054, hd+1.5)
 
     # Left lung spiral (expands/contracts with breath)
-    令 lly = 0 - H * 0.28
-    令 llz = bwz - 2.2
-    vtex_spiral(bx, lly, llz,  0,0,1, 0,1,0,  0.30*breath, 2.40*breath, 24,  FR*0.30, hd+2.5)
-    vtex_rings(bx, lly, llz,   0,0,1, 0,1,0,  3, 6,  2.20*breath, 0.10,  FR*0.042, hd+2.2)
-    vtex_lotus(bx, lly, llz,   0,0,1, 0,1,0,  0.22*breath, 0.72*breath, 6,  FR, hd+2.8)
+    ผูก lly = 0 - H * 0.28
+    ผูก llz = bwz - 2.2
+    ลายเกลียว(bx, lly, llz,  0,0,1, 0,1,0,  0.30*breath, 2.40*breath, 24,  FR*0.30, hd+2.5)
+    ลายวงซ้อน(bx, lly, llz,   0,0,1, 0,1,0,  3, 6,  2.20*breath, 0.10,  FR*0.042, hd+2.2)
+    ลายดอกบัว(bx, lly, llz,   0,0,1, 0,1,0,  0.22*breath, 0.72*breath, 6,  FR, hd+2.8)
 
     # Right lung spiral (reciprocal phase — exhale while left inhales)
-    令 rly = 0 - H * 0.28
-    令 rlz = bwz + 2.2
-    vtex_spiral(bx, rly, rlz,  0,0,1, 0,1,0,  0.30*antibreath, 2.40*antibreath, 24,  FR*0.30, hd+2.5)
-    vtex_rings(bx, rly, rlz,   0,0,1, 0,1,0,  3, 6,  2.20*antibreath, 0.10,  FR*0.042, hd+2.2)
-    vtex_lotus(bx, rly, rlz,   0,0,1, 0,1,0,  0.22*antibreath, 0.72*antibreath, 6,  FR, hd+2.8)
+    ผูก rly = 0 - H * 0.28
+    ผูก rlz = bwz + 2.2
+    ลายเกลียว(bx, rly, rlz,  0,0,1, 0,1,0,  0.30*antibreath, 2.40*antibreath, 24,  FR*0.30, hd+2.5)
+    ลายวงซ้อน(bx, rly, rlz,   0,0,1, 0,1,0,  3, 6,  2.20*antibreath, 0.10,  FR*0.042, hd+2.2)
+    ลายดอกบัว(bx, rly, rlz,   0,0,1, 0,1,0,  0.22*antibreath, 0.72*antibreath, 6,  FR, hd+2.8)
 
     # Nose portal (9-petal lotus — fine nasal air at top)
-    vtex_lotus(bx, H*0.55, bwz,  0,0,1, 0,1,0,  0.20, 0.62, 9,  FR*0.55, hd+1.2)
-    vtex_rings(bx, H*0.55, bwz,  0,0,1, 0,1,0,  2, 9,  0.85, 0.05,  FR*0.055, hd+1.5)
+    ลายดอกบัว(bx, H*0.55, bwz,  0,0,1, 0,1,0,  0.20, 0.62, 9,  FR*0.55, hd+1.2)
+    ลายวงซ้อน(bx, H*0.55, bwz,  0,0,1, 0,1,0,  2, 9,  0.85, 0.05,  FR*0.055, hd+1.5)
 
     # Trachea — central vertical spiral (the air column)
-    vtex_spiral(bx, 0-H*0.08, bwz,  0,1,0, 0,0,1,  0.10, 0.42, 14,  FR*0.48, hd+1.8)
+    ลายเกลียว(bx, 0-H*0.08, bwz,  0,1,0, 0,0,1,  0.10, 0.42, 14,  FR*0.48, hd+1.8)
 
     # Mouth portal (12-fold flower — wider, stronger breath of speech and song)
-    vtex_flower(bx, 0-H*0.52, bwz,  0,0,1, 0,1,0,  1.40, 12,  FR*0.40, hd+0.8)
-    vtex_rings(bx, 0-H*0.52, bwz,   0,0,1, 0,1,0,  2, 12,  1.60, 0.06,  FR*0.038, hd+1.0)
-    vtex_chakra(bx, 0-H*0.52, bwz,  0,0,1, 0,1,0,  1.20, 12,  FR*0.045, hd+1.2)
+    ลายดอกบัว(bx, 0-H*0.52, bwz,  0,0,1, 0,1,0,  1.40, 12,  FR*0.40, hd+0.8)
+    ลายวงซ้อน(bx, 0-H*0.52, bwz,   0,0,1, 0,1,0,  2, 12,  1.60, 0.06,  FR*0.038, hd+1.0)
+    ลายจักร(bx, 0-H*0.52, bwz,  0,0,1, 0,1,0,  1.20, 12,  FR*0.045, hd+1.2)
 }
 
 
@@ -446,40 +446,40 @@
 # The digestive/metabolic energy cycle as sacred spiral geometry
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_energy_portal(FR, hd) {
-    令 ewz = (NZ + FZ) / 2.0
-    令 ex  = W
+ฟังก์ชัน draw_energy_portal(FR, hd) {
+    ผูก ewz = (NZ + FZ) / 2.0
+    ผูก ex  = W
 
     # Background: SM2-hash metabolic energy field
-    令 he1 = sm2_hash(2.0, 8.0,  FR*0.0025, FR*0.0038)
-    令 he2 = sm2_hash(8.0, 2.0,  FR*0.0038, FR*0.0025)
+    ผูก he1 = sm2_hash(2.0, 8.0,  FR*0.0025, FR*0.0038)
+    ผูก he2 = sm2_hash(8.0, 2.0,  FR*0.0038, FR*0.0025)
     vtex_hyperbolic_uv(ex, 0.0, ewz,  0,0,1, 0,1,0,  5.5, 7,11,  FR*0.038, hd+0.8)
     vtex_hyperbolic_uv(ex, 0.0, ewz,  0,0,1, 0,1,0,  4.0*(0.88+he1*0.12), 8,12,  FR*0.028, hd+1.6)
 
     # Intake portal — yantra + star (sun-door: where energy enters)
-    vtex_yantra(ex, H*0.65, ewz,  0,0,1, 0,1,0,  3, 2.80,  FR*0.018, hd+0.2)
-    vtex_lotus(ex, H*0.65, ewz,   0,0,1, 0,1,0,  0.36, 1.20, 8,  FR, hd+0.5)
-    vtex_star(ex, H*0.65, ewz,    0,0,1, 0,1,0,  8, 1.60, 0.64, 0.04,  FR*0.038, hd+0.3)
+    ลายยันต์(ex, H*0.65, ewz,  0,0,1, 0,1,0,  3, 2.80,  FR*0.018, hd+0.2)
+    ลายดอกบัว(ex, H*0.65, ewz,   0,0,1, 0,1,0,  0.36, 1.20, 8,  FR, hd+0.5)
+    ลายดาว(ex, H*0.65, ewz,    0,0,1, 0,1,0,  8, 1.60, 0.64, 0.04,  FR*0.038, hd+0.3)
 
     # Primary descending galaxy spiral (the stomach / first transformation)
-    令 es1 = sin(FR * 0.022 + 1.0) * 0.35 + 0.65
-    vtex_spiral(ex, H*0.15, ewz,  0,0,1, 0,1,0,  0.28*es1, 2.20*es1, 22,  FR*0.18, hd+0.9)
+    ผูก es1 = ไซน์(FR * 0.022 + 1.0) * 0.35 + 0.65
+    ลายเกลียว(ex, H*0.15, ewz,  0,0,1, 0,1,0,  0.28*es1, 2.20*es1, 22,  FR*0.18, hd+0.9)
 
     # Sacral transformation (water-fire interface at mid-wall)
-    令 swb = sin(FR * 0.027 + 2.0) * 0.38 + 0.62
-    vtex_rings(ex, 0-H*0.10, ewz,   0,0,1, 0,1,0,  4, 6,  2.40*swb, 0.08,  FR*0.030, hd+1.8)
-    vtex_flower(ex, 0-H*0.10, ewz,  0,0,1, 0,1,0,  2.00*swb, 6,  FR*0.55, hd+2.0)
+    ผูก swb = ไซน์(FR * 0.027 + 2.0) * 0.38 + 0.62
+    ลายวงซ้อน(ex, 0-H*0.10, ewz,   0,0,1, 0,1,0,  4, 6,  2.40*swb, 0.08,  FR*0.030, hd+1.8)
+    ลายดอกบัว(ex, 0-H*0.10, ewz,  0,0,1, 0,1,0,  2.00*swb, 6,  FR*0.55, hd+2.0)
 
     # Nested inner spirals — second brain / intestinal coils as galaxy arms
-    令 es2 = sin(FR * 0.031 + 3.0) * 0.35 + 0.65
-    vtex_spiral(ex, 0-H*0.22, ewz-1.5,  0,0,1, 0,1,0,  0.16, 1.20, 28,  FR*0.32, hd+1.5)
-    vtex_spiral(ex, 0-H*0.22, ewz+1.5,  0,0,1, 0,1,0,  0.14, 1.00, 24,  FR*0.38, hd+0.6)
-    vtex_spiral(ex, 0-H*0.35, ewz,  0,0,1, 0,1,0,  0.22*es2, 1.80*es2, 18,  FR*0.24, hd+1.2)
+    ผูก es2 = ไซน์(FR * 0.031 + 3.0) * 0.35 + 0.65
+    ลายเกลียว(ex, 0-H*0.22, ewz-1.5,  0,0,1, 0,1,0,  0.16, 1.20, 28,  FR*0.32, hd+1.5)
+    ลายเกลียว(ex, 0-H*0.22, ewz+1.5,  0,0,1, 0,1,0,  0.14, 1.00, 24,  FR*0.38, hd+0.6)
+    ลายเกลียว(ex, 0-H*0.35, ewz,  0,0,1, 0,1,0,  0.22*es2, 1.80*es2, 18,  FR*0.24, hd+1.2)
 
     # Root return portal — water/earth cycle completion at base (SFW: rain → river → ocean → cloud)
-    令 rrb = sin(FR * 0.015 + 4.0) * 0.35 + 0.65
-    vtex_chakra(ex, 0-H*0.68, ewz,  0,0,1, 0,1,0,  2.20*rrb, 4,  FR*0.022, hd+2.8)
-    vtex_yantra(ex, 0-H*0.68, ewz,  0,0,1, 0,1,0,  3, 2.60*rrb,  FR*0.016, hd+3.0)
+    ผูก rrb = ไซน์(FR * 0.015 + 4.0) * 0.35 + 0.65
+    ลายจักร(ex, 0-H*0.68, ewz,  0,0,1, 0,1,0,  2.20*rrb, 4,  FR*0.022, hd+2.8)
+    ลายยันต์(ex, 0-H*0.68, ewz,  0,0,1, 0,1,0,  3, 2.60*rrb,  FR*0.016, hd+3.0)
     vtex_hyperbolic_uv(ex, 0-H*0.68, ewz,  0,0,1, 0,1,0,  (1.80+he2*0.30)*rrb, 4, 8,  FR*0.018, hd+3.2)
 }
 
@@ -488,9 +488,9 @@
 # COSMIC CEILING  — Crown / Sahasrara / the stellar overflow
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_cosmic_ceiling(FR, hd) {
-    令 cy = H
-    令 cz = FZ * 0.48
+ฟังก์ชัน draw_cosmic_ceiling(FR, hd) {
+    ผูก cy = H
+    ผูก cz = FZ * 0.48
 
     # Primary crown dome (three-layer depth)
     vtex_hyperbolic_uv(0, cy, cz,        1,0,0, 0,0,1,  12.0, 9,14,  FR*0.012, hd+5.5)
@@ -498,17 +498,17 @@
     vtex_hyperbolic_uv(0, cy+1.0, cz+2.0, 1,0,0, 0,0,1,  6.0, 5, 8,  FR*0.024, hd+6.2)
 
     # Crown lotus (1000-petal Sahasrara)
-    vtex_lotus(0, cy, cz,  1,0,0, 0,0,1,  0.60, 2.20, 1000,  FR, hd+6.0)
-    vtex_rings(0, cy, cz,  1,0,0, 0,0,1,  5, 8,  4.20, 0.08,  FR*0.010, hd+5.8)
+    ลายดอกบัว(0, cy, cz,  1,0,0, 0,0,1,  0.60, 2.20, 1000,  FR, hd+6.0)
+    ลายวงซ้อน(0, cy, cz,  1,0,0, 0,0,1,  5, 8,  4.20, 0.08,  FR*0.010, hd+5.8)
 
     # Star field — pentatonic constellations
-    vtex_star(0-5.2, cy+1.5, cz-2.0,  1,0,0, 0,0,1,  5, 0.90, 0.36, 0.025,  FR*0.42, hd+0.5)
-    vtex_star( 5.5,  cy+2.0, cz+1.8,  1,0,0, 0,0,1,  5, 0.70, 0.28, 0.030,  FR*0.38, hd+2.1)
-    vtex_star(0-3.0, cy+2.5, cz+3.0,  1,0,0, 0,0,1,  5, 0.55, 0.22, 0.035,  FR*0.48, hd+4.2)
-    vtex_star( 4.0,  cy+2.2, cz-3.5,  1,0,0, 0,0,1,  8, 0.45, 0.18, 0.040,  FR*0.52, hd+6.0)
+    ลายดาว(0-5.2, cy+1.5, cz-2.0,  1,0,0, 0,0,1,  5, 0.90, 0.36, 0.025,  FR*0.42, hd+0.5)
+    ลายดาว( 5.5,  cy+2.0, cz+1.8,  1,0,0, 0,0,1,  5, 0.70, 0.28, 0.030,  FR*0.38, hd+2.1)
+    ลายดาว(0-3.0, cy+2.5, cz+3.0,  1,0,0, 0,0,1,  5, 0.55, 0.22, 0.035,  FR*0.48, hd+4.2)
+    ลายดาว( 4.0,  cy+2.2, cz-3.5,  1,0,0, 0,0,1,  8, 0.45, 0.18, 0.040,  FR*0.52, hd+6.0)
 
     # Horizon bloom (crown-to-throat boundary glow)
-    vtex_flower(0, cy-1.2, FZ,  1,0,0, 0,0,1,  10.0, 8,  FR*0.015, hd+4.5)
+    ลายดอกบัว(0, cy-1.2, FZ,  1,0,0, 0,0,1,  10.0, 8,  FR*0.015, hd+4.5)
 }
 
 
@@ -516,9 +516,9 @@
 # AMBIENT WALLS  — back wall letter-rain for spatial depth
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_ambient_walls(FR, hd) {
-    令 ha1 = sm2_hash(4.0, 6.0,  FR*0.0030, FR*0.0020)
-    令 ha2 = sm2_hash(6.0, 4.0,  FR*0.0020, FR*0.0030)
+ฟังก์ชัน draw_ambient_walls(FR, hd) {
+    ผูก ha1 = sm2_hash(4.0, 6.0,  FR*0.0030, FR*0.0020)
+    ผูก ha2 = sm2_hash(6.0, 4.0,  FR*0.0020, FR*0.0030)
     vtex_letter_rain(0, 0, FZ,  1,0,0, 0,1,0,  28, 18,  0.64, 0.58,  0.012+ha1*0.006,  FR,        hd+1.0)
     vtex_letter_rain(0, 0, FZ,  1,0,0, 0,1,0,  28, 18,  0.64, 0.58,  0.018+ha2*0.006,  FR*0.62, hd+3.5)
 }
@@ -528,25 +528,25 @@
 # ECHO TRAILS  — anchor shapes from each zone, colour-offset ghost
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_echo(FR, hd) {
-    令 gy  = 0 - H
+ฟังก์ชัน draw_echo(FR, hd) {
+    ผูก gy  = 0 - H
 
     # Peyote ground moiré anchor
-    令 pm = sin(FR * 0.031) * 0.40 + 0.60
+    ผูก pm = ไซน์(FR * 0.031) * 0.40 + 0.60
     vtex_hyperbolic_uv(0, gy, FZ*0.50,  1,0,0, 0,0,1,  9.0*pm, 7,11,  FR*0.031, hd)
 
     # Heart chakra (strongest spine node)
-    令 br3e = sin(FR * 0.022 + 3.00) * 0.42 + 0.58
-    令 n3ye = gy + 6.0
-    vtex_lotus(SX, n3ye, SZ,  1,0,0, 0,1,0,  0.32*br3e, 1.20*br3e, 12,  FR, hd)
+    ผูก br3e = ไซน์(FR * 0.022 + 3.00) * 0.42 + 0.58
+    ผูก n3ye = gy + 6.0
+    ลายดอกบัว(SX, n3ye, SZ,  1,0,0, 0,1,0,  0.32*br3e, 1.20*br3e, 12,  FR, hd)
 
     # Crown overflow anchor
-    令 br6e = sin(FR * 0.063 + 6.00) * 0.42 + 0.58
-    令 n6ye = gy + 12.0
-    vtex_star(SX, n6ye, SZ,  1,0,0, 0,1,0,  5, 1.50*br6e, 0.60*br6e, 0.04,  FR*0.088, hd)
+    ผูก br6e = ไซน์(FR * 0.063 + 6.00) * 0.42 + 0.58
+    ผูก n6ye = gy + 12.0
+    ลายดาว(SX, n6ye, SZ,  1,0,0, 0,1,0,  5, 1.50*br6e, 0.60*br6e, 0.04,  FR*0.088, hd)
 
     # Earth/Ling water-lens anchor on back wall
-    令 bree = sin(FR * 0.018 + 3.14) * 0.38 + 0.62
+    ผูก bree = ไซน์(FR * 0.018 + 3.14) * 0.38 + 0.62
     vtex_hyperbolic_uv(0, 0.0, FZ,  1,0,0, 0,1,0,  3.80*bree, 6,10,  FR*0.014, hd)
 }
 
@@ -555,137 +555,137 @@
 # MAIN — Floating Hyperspace Camera (always points to organism center)
 # ════════════════════════════════════════════════════════════════════════════
 
-令 启 = 执 {
+ผูก สร้าง = ทำ {
     เปิดหน้าต่างเต็มจอ("PeyoteOrgan — The Higher-Dimensional Organism · Floating Vision")
     capture_mouse()
-    set_ambient(0.05)
+    ตั้งแสงรอบข้าง(0.05)
     init_audio()
 
-    令 帧 = 0
+    ผูก 帧 = 0
 
     # Camera target — center of the organism (chakra spine root)
-    令 target_x = 0.0
-    令 target_y = 3.0      # Center of the spine
-    令 target_z = 8.0      # Garden center
+    ผูก target_x = 0.0
+    ผูก target_y = 3.0      # Center of the spine
+    ผูก target_z = 8.0      # Garden center
 
     # Floating orbit parameters (exaggerated hyperbolic)
-    令 orbit_radius_horiz = 14.0      # Wide horizontal sweep
-    令 orbit_radius_vert  = 7.0       # Extreme vertical range
-    令 orbit_speed_horiz1 = 0.0007    # Primary horizontal drift
-    令 orbit_speed_horiz2 = 0.0011    # Secondary harmonic
-    令 orbit_speed_vert   = 0.0018    # Fast vertical figure-8
-    令 roll_amplitude     = 0.15      # Camera roll (radians)
-    令 roll_speed         = 0.0009
-    令 spiral_intensity   = 1.8       # Hyperbolic spiral strength
+    ผูก orbit_radius_horiz = 14.0      # Wide horizontal sweep
+    ผูก orbit_radius_vert  = 7.0       # Extreme vertical range
+    ผูก orbit_speed_horiz1 = 0.0007    # Primary horizontal drift
+    ผูก orbit_speed_horiz2 = 0.0011    # Secondary harmonic
+    ผูก orbit_speed_vert   = 0.0018    # Fast vertical figure-8
+    ผูก roll_amplitude     = 0.15      # Camera roll (radians)
+    ผูก roll_speed         = 0.0009
+    ผูก spiral_intensity   = 1.8       # Hyperbolic spiral strength
 
     # Auto-cinematic mode — no manual controls
     # (Full autonomous floating experience)
 
-    循 หน้าต่างเปิดอยู่() {
+    ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(1, 2, 8)
 
-        令 hd = 帧 * 0.055
+        ผูก hd = 帧 * 0.055
 
         # ── HYPERBOLIC FLOATING CAMERA PATH ────────────────────────────────
         # Multi-layered hyperbolic orbit for psychedelic effect
         
-        令 t1 = 帧 * orbit_speed_horiz1
-        令 t2 = 帧 * orbit_speed_horiz2
-        令 t3 = 帧 * orbit_speed_vert
+        ผูก t1 = 帧 * orbit_speed_horiz1
+        ผูก t2 = 帧 * orbit_speed_horiz2
+        ผูก t3 = 帧 * orbit_speed_vert
         
         # Hyperbolic XZ position: lemniscate + spiral harmonics
-        令 cam_px = target_x + sin(t1) * orbit_radius_horiz * 0.9
-        令 cam_px = cam_px + sin(t2 * 1.7) * orbit_radius_horiz * 0.4 * cos(t1 * 0.8)
-        令 cam_pz = target_z + sin(t1 * 1.3) * orbit_radius_horiz * 0.85
-        令 cam_pz = cam_pz + cos(t2 * 2.1) * orbit_radius_horiz * 0.35
+        ผูก cam_px = target_x + ไซน์(t1) * orbit_radius_horiz * 0.9
+        ผูก cam_px = cam_px + ไซน์(t2 * 1.7) * orbit_radius_horiz * 0.4 * โคไซน์(t1 * 0.8)
+        ผูก cam_pz = target_z + ไซน์(t1 * 1.3) * orbit_radius_horiz * 0.85
+        ผูก cam_pz = cam_pz + โคไซน์(t2 * 2.1) * orbit_radius_horiz * 0.35
         
         # Vertical motion: figure-8 with hyperbolic amplitude
-        令 cam_py = target_y + sin(t3 * 1.5) * orbit_radius_vert * 0.7
-        令 cam_py = cam_py + cos(t3 * 0.8) * 3.0
-        令 cam_py = cam_py + sin(帧 * 0.0004) * 1.2  # Slow drift
+        ผูก cam_py = target_y + ไซน์(t3 * 1.5) * orbit_radius_vert * 0.7
+        ผูก cam_py = cam_py + โคไซน์(t3 * 0.8) * 3.0
+        ผูก cam_py = cam_py + ไซน์(帧 * 0.0004) * 1.2  # Slow drift
         
         # Hyperbolic spiral augmentation (creates infinity symbol in 3D)
-        令 spiral_t = 帧 * 0.00045
-        令 cam_px = cam_px + sin(spiral_t * 2.3) * spiral_intensity
-        令 cam_pz = cam_pz + cos(spiral_t * 1.9) * spiral_intensity
-        令 cam_py = cam_py + sin(spiral_t * 3.7) * 1.0
+        ผูก spiral_t = 帧 * 0.00045
+        ผูก cam_px = cam_px + ไซน์(spiral_t * 2.3) * spiral_intensity
+        ผูก cam_pz = cam_pz + โคไซน์(spiral_t * 1.9) * spiral_intensity
+        ผูก cam_py = cam_py + ไซน์(spiral_t * 3.7) * 1.0
         
         # Extra dimension: hyperbolic tangent modulation for sudden swoops
-        令 swoop = tanh(sin(帧 * 0.00022) * 2.0)
-        令 cam_px = cam_px + swoop * 2.5
-        令 cam_py = cam_py + swoop * 1.8
+        ผูก swoop = tanh(ไซน์(帧 * 0.00022) * 2.0)
+        ผูก cam_px = cam_px + swoop * 2.5
+        ผูก cam_py = cam_py + swoop * 1.8
         
         # ── LOOK-AT: Always point to organism center ───────────────────────
         # Compute direction from camera to target
-        令 dx = target_x - cam_px
-        令 dy = target_y - cam_py
-        令 dz = target_z - cam_pz
-        令 len = sqrt(dx*dx + dy*dy + dz*dz)
+        ผูก dx = target_x - cam_px
+        ผูก dy = target_y - cam_py
+        ผูก dz = target_z - cam_pz
+        ผูก ความยาว = รากที่สอง(dx*dx + dy*dy + dz*dz)
         
-        若 len > 0.0001 {
-            令 dx = dx / len
-            令 dy = dy / len
-            令 dz = dz / len
+        ถ้า ความยาว > 0.0001 {
+            ผูก dx = dx / ความยาว
+            ผูก dy = dy / ความยาว
+            ผูก dz = dz / ความยาว
         }
         
         # Convert to yaw (ry) and pitch (rx)
-        令 ry = atan2(dx, dz)           # Horizontal angle
-        令 rx = asin(dy)                # Vertical angle
+        ผูก ry = atan2(dx, dz)           # Horizontal angle
+        ผูก rx = asin(dy)                # Vertical angle
         
         # ── CINEMATIC ROLL (tilt) for psychedelic feel ─────────────────────
         # Roll creates the sensation of floating through higher dimensions
-        令 roll_angle = sin(帧 * roll_speed) * roll_amplitude
-        令 roll_angle = roll_angle + sin(帧 * 0.0014) * 0.05  # Secondary roll harmonic
+        ผูก roll_angle = ไซน์(帧 * roll_speed) * roll_amplitude
+        ผูก roll_angle = roll_angle + ไซน์(帧 * 0.0014) * 0.05  # Secondary roll harmonic
         
         # ── SLOW MANUAL OVERRIDE DETECTION (optional) ──────────────────────
         # If user moves mouse or presses keys, briefly interrupt auto-camera
         # and then smoothly blend back to hyperbolic path
         
-        令 mdx = mouse_dx()
-        令 mdy = mouse_dy()
-        令 any_input = 0
+        ผูก mdx = mouse_dx()
+        ผูก mdy = mouse_dy()
+        ผูก any_input = 0
         
-        若 key_down("w")      { 令 any_input = 1 }
-        若 key_down("s")      { 令 any_input = 1 }
-        若 key_down("a")      { 令 any_input = 1 }
-        若 key_down("d")      { 令 any_input = 1 }
-        若 key_down("space")  { 令 any_input = 1 }
-        若 key_down("lshift") { 令 any_input = 1 }
-        若 key_down("left")   { 令 any_input = 1 }
-        若 key_down("right")  { 令 any_input = 1 }
-        若 key_down("up")     { 令 any_input = 1 }
-        若 key_down("down")   { 令 any_input = 1 }
-        若 mdx * mdx + mdy * mdy > 0.25 { 令 any_input = 1 }
+        ถ้า key_down("w")      { ผูก any_input = 1 }
+        ถ้า key_down("s")      { ผูก any_input = 1 }
+        ถ้า key_down("a")      { ผูก any_input = 1 }
+        ถ้า key_down("d")      { ผูก any_input = 1 }
+        ถ้า key_down("space")  { ผูก any_input = 1 }
+        ถ้า key_down("lshift") { ผูก any_input = 1 }
+        ถ้า key_down("left")   { ผูก any_input = 1 }
+        ถ้า key_down("right")  { ผูก any_input = 1 }
+        ถ้า key_down("up")     { ผูก any_input = 1 }
+        ถ้า key_down("down")   { ผูก any_input = 1 }
+        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
         
         # Static variables for smooth blending
-        令 cam_manual = 0
-        令 cam_ry_off = 0.0
-        令 cam_rx_off = 0.0
-        令 cam_px_offset = 0.0
-        令 cam_py_offset = 0.0
-        令 cam_pz_offset = 0.0
-        令 blend_factor = 0.0
+        ผูก cam_manual = 0
+        ผูก cam_ry_off = 0.0
+        ผูก cam_rx_off = 0.0
+        ผูก cam_px_offset = 0.0
+        ผูก cam_py_offset = 0.0
+        ผูก cam_pz_offset = 0.0
+        ผูก blend_factor = 0.0
         
         # For simplicity in this example, we'll use pure auto-camera
         # To re-enable manual control, uncomment the blending logic from original
         
         # Set camera orientation (yaw + pitch)
-        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
+        ตั้งกล้อง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
         
         # Apply roll if supported by framework
-        若 roll_supported() {
+        ถ้า roll_supported() {
             set_camera_roll(roll_angle)
         }
         
         # Set camera position
-        set_camera_pos(cam_px, cam_py, cam_pz)
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
         
         # Dynamic zoom distance — pulses with the organism's breath
-        令 breath_zoom = 2.0 + sin(帧 * 0.008) * 0.3
-        set_zdist(breath_zoom)
+        ผูก breath_zoom = 2.0 + ไซน์(帧 * 0.008) * 0.3
+        ตั้งระยะห่าง(breath_zoom)
         
         # Update audio listener orientation
-        audio_listener(cos(ry), sin(ry), cos(rx), sin(rx))
+        ผู้ฟัง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
         
         # ── LIGHTS ─────────────────────────────────────────────────────────
         setup_lights(帧)
@@ -708,22 +708,22 @@
         draw_ambient_walls(帧, hd)
         
         แสดงผล()
-        令 帧 = 帧 + 1
+        ผูก 帧 = 帧 + 1
     }
 }
 
 # Helper function to check if roll is supported
-函 roll_supported() {
-    真
+ฟังก์ชัน roll_supported() {
+    จริง
 }
 
 # Optional: Set camera roll if framework supports it
-函 set_camera_roll(roll) {
+ฟังก์ชัน set_camera_roll(roll) {
     # Implementation depends on your rendering engine
     # Typical: set_camera_up(sin(roll), cos(roll), 0.0)
 }
 
 # Optional: Smooth blend function for returning to auto-camera
-函 smooth_blend(current, target, factor) {
+ฟังก์ชัน smooth_blend(current, target, factor) {
     current * (1.0 - factor) + target * factor
 }
