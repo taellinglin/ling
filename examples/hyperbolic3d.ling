@@ -295,21 +295,48 @@ bind start = do {
         set_zdist(150.0)
 
         # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
-        # Solid ground plane (MASSIVE - 8x)
-        set_color(40, 35, 60)
-        cube(0.0, 4.8, ZC,  148.0, 4.8, 148.0,  0.0, 0.0, 0.0,  0)
+        # Solid ground plane with checkerboard pattern (MASSIVE - 8x)
+        bind gx = 0.0 - 148.0
+        while gx < 148.0 {
+            bind gz = 0.0 - 148.0
+            while gz < 148.0 {
+                bind checker = int((gx / 10.0 + gz / 10.0)) % 2
+                if checker > 0 {
+                    set_color(35, 30, 50)
+                } else {
+                    set_color(50, 42, 75)
+                }
+                cube(gx + 5.0, 4.8, ZC + gz + 5.0,  5.0, 4.8, 5.0,  0.0, 0.0, 0.0,  0)
+                bind gz = gz + 10.0
+            }
+            bind gx = gx + 10.0
+        }
 
-        # Tray walls (wireframe boundary) - MASSIVE
-        set_color(80, 70, 120)
+        # Tray walls (solid + wireframe) - MASSIVE
         # North wall
+        set_color(100, 85, 140)
+        cube(0.0, 48.0, ZC + 148.0,  148.0, 48.0, 4.0,  0.0, 0.0, 0.0,  0)
+        set_color(80, 70, 120)
         draw_wireframe_box(0.0, 48.0, ZC + 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
         # South wall
+        set_color(100, 85, 140)
+        cube(0.0, 48.0, ZC - 148.0,  148.0, 48.0, 4.0,  0.0, 0.0, 0.0,  0)
+        set_color(80, 70, 120)
         draw_wireframe_box(0.0, 48.0, ZC - 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
         # East wall
+        set_color(110, 95, 150)
+        cube(148.0, 48.0, ZC,  4.0, 48.0, 148.0,  0.0, 0.0, 0.0,  0)
+        set_color(80, 70, 120)
         draw_wireframe_box(148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
         # West wall
+        set_color(110, 95, 150)
+        cube(0.0 - 148.0, 48.0, ZC,  4.0, 48.0, 148.0,  0.0, 0.0, 0.0,  0)
+        set_color(80, 70, 120)
         draw_wireframe_box(0.0 - 148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
         # Ceiling
+        set_color(70, 60, 100)
+        cube(0.0, 0.0 - 48.0, ZC,  148.0, 4.0, 148.0,  0.0, 0.0, 0.0,  0)
+        set_color(80, 70, 120)
         draw_wireframe_box(0.0, 0.0 - 48.0, ZC,  148.0, 4.0, 148.0,  80, 70, 120)
 
         # ── H³ BOOST ───────────────────────────────────────────────────────────
@@ -371,7 +398,23 @@ bind start = do {
                 bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
 
                 if i == 0 {
-                    # ── CENTRE ATRIUM (MASSIVE - 8x) ──────────────────────────
+                    # ── CENTRE ATRIUM (MASSIVE - 8x) with grid pattern ──────────
+                    bind gx = 0
+                    while gx < 16 {
+                        bind gz = 0
+                        while gz < 16 {
+                            bind checker = (gx + gz) % 2
+                            if checker > 0 {
+                                set_color(col_r - 10, col_g - 10, col_b + 5)
+                            } else {
+                                set_color(col_r + 10, col_g + 10, col_b - 5)
+                            }
+                            cube(wx - 80.0 + gx * 10.0 + 5.0, wy, wz - 80.0 + gz * 10.0 + 5.0,  5.0, 0.5, 5.0,  0.0, 0.0, 0.0,  0)
+                            bind gz = gz + 1
+                        }
+                        bind gx = gx + 1
+                    }
+
                     set_color(col_r, col_g, col_b)
                     bind gx = 0
                     while gx < 16 {
@@ -406,11 +449,17 @@ bind start = do {
                     bind hw_cx = wx + spoke_dx * hw_len * 0.5
                     bind hw_cz = wz + spoke_dz * hw_len * 0.5
 
+                    # Hallway with solid filled geometry + wireframe
+                    set_color(col_r - 15, col_g - 15, col_b + 10)
+                    cube(hw_cx, wy, hw_cz,  HALLWAY_W * conf, HALLWAY_H * conf, hw_len * 0.5,  0.0, 0.0, 0.0,  0)
                     draw_wireframe_box(hw_cx, wy, hw_cz,  HALLWAY_W * conf, HALLWAY_H * conf, hw_len * 0.5,  col_r, col_g, col_b)
 
                     bind alcove_cx = wx + spoke_dx * hw_len
                     bind alcove_cz = wz + spoke_dz * hw_len
 
+                    # Alcove with solid fill + wireframe
+                    set_color(col_r + 20, col_g + 10, col_b - 10)
+                    cube(alcove_cx, wy, alcove_cz,  1.6 * conf, 2.0 * conf, 1.6 * conf,  0.0, 0.0, 0.0,  0)
                     draw_wireframe_box(alcove_cx, wy, alcove_cz,  1.6 * conf, 2.0 * conf, 1.6 * conf,  col_r + 30, col_g + 20, col_b - 20)
 
                     set_color(col_r - 40, col_g + 60, col_b + 80)
