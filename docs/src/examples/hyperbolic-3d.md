@@ -1,8 +1,10 @@
-# Hyperbolic 3D — an H³ mandala temple
+# Hyperbolic 3D DOOM — Wireframe Maze in H³
 
-`examples/hyperbolic3d.ling` is a fully 3-dimensional hyperbolic space walker,
-implementing the **hyperboloid model** (Minkowski space) with **Lorentz boosts**
-for movement. It's the full H³ cousin to the earlier [H²×ℝ Hyperbolic World](./hyperbolic-world.md).
+`examples/hyperbolic3d.ling` is a playable symmetrical maze in **hyperbolic 3D space** using
+the **hyperboloid model** (Minkowski geometry). Navigate wireframe hallways and alcove rooms
+connected by prominent archways. Roll a physics ball through a "hyperbolic doom" temple.
+
+It's the game-like cousin to the earlier [H²×ℝ Hyperbolic World](./hyperbolic-world.md).
 
 ```
 ling run examples/hyperbolic3d.ling
@@ -26,40 +28,39 @@ Rendering uses the **Poincaré ball projection**:
 - **Conformal factor**: `conf = 1 - (bx²+by²+bz²)` — objects shrink toward the horizon
 - Rooms beyond `conf < 0.03` are culled; distant rooms (`conf < 0.5`) render wireframe-only
 
-## The temple
+## The Maze
 
-A **9-room mandala** floats in H³ space:
-- **1 centre room** at the H³ origin
-- **8 satellite rooms** along axial and diagonal directions at hyperbolic distance 1.2
-  - 4 axial: ±X, ±Z axes
-  - 4 diagonal: ±(X, Z) at 45° angles
+A **symmetrical 8-spoke maze** in H³ hyperbolic space:
+- **1 central atrium** at the H³ origin (mandala floor pattern with concentric hexagons)
+- **8 radial spokes** extending outward (cardinal N/S/E/W + diagonals NE/NW/SE/SW)
+- **Hallways** connecting center to alcove rooms (wireframe, proportional scaling)
+- **Alcove rooms** at the end of each spoke (small wireframe chambers)
+- **Archways** (FILLED, cyan/blue) serving as doorways into each alcove
 
-Each room has:
-- **Floor and ceiling** slabs (scale by conformal factor, drawn with LOD)
-- **4 walls** (only when conf > 0.15)
-- **Arched doorways** on each wall (conf > 0.2)
-- **Central pedestal** with a spinning **Platonic dice** (tetrahedron, octahedron, icosahedron, dodecahedron, or cube; randomly selected by room type)
-- **Alchemy symbol** (`vtex_yantra`) on the back wall
+Visual style:
+- **Wireframe architecture** (clean, minimal, shows structure clearly)
+- **Ground plane** at y=0.2 (the walkable floor)
+- **Archways only** are rendered filled (prominent, visible doorways)
+- **Decorative mandala circles** in each alcove (concentric rings)
 
-Colors are **procedurally hashed** from each room's type index, cycling smoothly via sine waves.
+Colors are **procedurally hashed** per-spoke, shifting via sine waves with frame time.
 
 ## Controls
 
 | Key | Action |
 |-----|--------|
-| `W` / `S` | move forward / back (very slow hyperbolic) |
-| `A` / `D` | strafe left / right (very slow hyperbolic) |
+| `W` / `S` | move forward / back (FASTER hyperbolic) |
+| `A` / `D` | strafe left / right (FASTER hyperbolic) |
 | `Q` / `E` | turn left / right (Euclidean yaw) |
-| `SPACE` | charged jump (hold longer for higher jump; releases on key-up) |
+| `SPACE` | charged jump (hold to build impulse; release to jump) |
 
-Movement in the XZ plane is **slowly hyperbolic** (rapidity 0.008 per frame, about 7× slower than earlier
-versions). This deliberate slowness reveals the subtle geometry of hyperbolic space as you navigate.
-Vertical motion (Y) uses **Euclidean gravity** — the ball bounces with elasticity (0.86) and damping (0.995).
-Jumping feels natural even in curved space.
+Movement in the XZ plane is **hyperbolic with moderate speed** (rapidity 0.025 per frame).
+Fast enough to navigate the maze efficiently, yet slow enough to appreciate the hyperbolic geometry.
+Vertical motion (Y) uses **Euclidean gravity** — the ball bounces with elasticity (0.86) and realistic damping (0.995).
 
-**The Player**: a large physics ball (radius 1.6) rendered as a spinning gyro. The ball's size
-makes the H³ temple geometry feel monumental around you. Color intensity modulates with kinetic energy
-(brighter when fast, dimmer at rest).
+**The Player**: a large physics ball (radius 1.4) rendered as a rotating gyro (spinning rings).
+The ball morphs colors based on speed: **cyan when slow, red when fast** (energy indicator).
+Velocity arrow (cyan line) shows momentum direction.
 
 ## What makes it hyperbolic
 
@@ -74,38 +75,40 @@ makes the H³ temple geometry feel monumental around you. Color intensity modula
 
 ## Physics-Encoded Audio
 
-The ball emits a continuous tone that **encodes its physics state**:
-- **Pitch** ← height (low when near floor, rises toward ceiling) + speed + impact spikes on bounce
-- **Amplitude** ← speed (faster ball = louder tone; resting ball = quiet)
-- **Pan** ← horizontal X position (ball on left → left speaker, right → right speaker)
+The ball emits a continuous drone tone that **encodes its physics state in real time**:
+- **Pitch** ← ball height (low near floor, rises as you jump/climb) + speed + impact spikes on bounces
+- **Amplitude** ← kinetic energy (faster = louder; resting = quiet)
+- **Pan** ← horizontal X position for **spatial audio** (left/right speaker follows ball)
 
-This creates an immersive **physical feedback loop**: you hear the geometry and motion encoded as sound.
-A bounce sounds like a sharp frequency spike; accelerating sounds like a rising tone; quiet zones in the
-temple feel acoustically dead.
+Result: sound becomes **physical feedback**. Bounces produce frequency spikes. Acceleration is audible.
+Silence indicates you're at rest. The audio landscape reflects the maze geometry.
 
 ## Lighting & appearance
 
-The scene uses **cel shading** (smooth vertices → posterized bands, no holographic sheen):
-- **Warm overhead light** (yellow, slowly drifting around the scene)
-- **Cool fill** from the front-left (cyan, wide area light)
-- **Purple ball-tracking light** (follows the physics ball, providing specular highlight as it moves)
-- **Crisp cel bands** (5 posterization levels for clean, flat toon appearance)
-- **Coloured shadows** (deep indigo in unlit regions)
-- **Subtle purple rim** (small Fresnel edge highlight, toned down for clean look)
+**Cel shading** (smooth vertices → posterized bands):
+- **Warm overhead drift light** (yellow, slowly orbits the scene)
+- **Cool ambient fill** (cyan, subtle background light)
+- **Purple ball-tracking light** (follows player position, provides dynamic highlight)
+- **4-level posterization** (crisp, flat toon bands for clean maze readability)
+- **Deep indigo shadows** (unlit areas tinted cool for atmosphere)
+- **Minimal rim light** (subtle edge highlight, doesn't wash out geometry)
+
+The wireframe + cel shading combination creates a **clean, architectural aesthetic**—like a blueprint
+that's alive and animated. Archways pop out (filled, brightly lit). Hallways recede (wireframe, subtle).
 
 Each room's color hue is **independently procedural** — no texture assets, just per-room
 hash-based RGB cycling.
 
 ## Implementation notes
 
-- **No list_set**: room positions are rebuilt every frame using parallel lists (`rx`, `ry`,
-  `rz`, `rw`) and `list_push` (the proven pattern from H²×ℝ).
-- **Inline Lorentz math**: the boost formula is unrolled inline (no function call) to avoid
-  the Ling interpreter's list-return quirk.
-- **Normalization**: after each boost, the hyperboloid equation `-nw²+nx²+ny²+nz² = -1` 
-  is re-normalized to prevent numerical drift: `n = sqrt(nw²-nx²-ny²-nz²)`, divide all by n.
-- **Function restrictions**: helper functions return scalars only (cosh, sinh, hash) using
-  direct expressions (no local variables).
+- **H³ geometry**: 9 rooms (1 center + 8 spokes) positioned via Lorentz boosts at distance ~1.5
+- **Wireframe drawing**: custom `draw_wireframe_box()` function renders hallway/room geometry with 12 line calls per box
+- **Archways**: only filled geometry; everything else is wireframe (visual clarity)
+- **Lorentz transforms**: inlined scalar arithmetic (no functions that return lists) to avoid interpreter quirks
+- **Hyperboloid normalization**: after each boost, `n = sqrt(nw²-nx²-ny²-nz²)` re-normalizes to prevent drift
+- **Conformal scaling**: all maze geometry scales by `conf = 1 - (bx²+by²+bz²)`, making distant rooms shrink
+- **Physics**: ball bounces elastically (0.86) with air damping (0.995), collision with boundary box
+- **List pattern**: room coordinates rebuilt each frame using `list_push` (no list_set in Ling)
 
 ## Extending the demo
 
