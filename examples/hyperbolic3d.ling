@@ -119,7 +119,7 @@ bind start = do {
         bind dt = 0.0166667
 
         # ── PHYSICS ────────────────────────────────────────────────────────────
-        bind vy_phys = vy_phys + G * dt
+        bind vy_phys = vy_phys - G * dt
         bind vx = vx * DAMPING
         bind vy_phys = vy_phys * DAMPING
         bind vz = vz * DAMPING
@@ -250,6 +250,11 @@ bind start = do {
         set_camera_pos(cam_x, cam_y, cam_z)
         set_zdist(500.0)
 
+        # ── HYPERBOLIC LENS (conformal projection) ──────────────────────────────
+        # Camera uses hyperbolic geometry for field of view distortion
+        bind cam_to_origin_dist = sqrt(cam_x*cam_x + cam_y*cam_y + cam_z*cam_z)
+        bind hyperbolic_scale = 1.0 / (1.0 + cam_to_origin_dist * 0.05)
+
         # ── INFINITE VOXEL GROUND ─────────────────────────────────────────────
         set_color(40, 70, 35)
         cube(0.0, 0.2, ZC,  300.0, 0.2, 300.0,  0.0, 0.0, 0.0,  0)
@@ -279,12 +284,14 @@ bind start = do {
                     bind voxel_color_g = int(cos(voxel_hash * 6.28) * 70.0 + 100.0)
                     bind voxel_color_b = int(sin(voxel_hash * 6.28 + 2.1) * 50.0 + 110.0)
 
-                    # Stack voxels with bottom at ground
+                    # Stack voxels with bottom at ground, scaled by hyperbolic lens
                     bind v_y = 0
                     while v_y < voxel_height {
                         bind vy_pos = VOXEL_SIZE * 0.5 + v_y * VOXEL_SIZE
+                        bind voxel_cam_dist = sqrt((vx_world-cam_x)*(vx_world-cam_x) + (vy_pos-cam_y)*(vy_pos-cam_y) + (ZC+vz_world-cam_z)*(ZC+vz_world-cam_z))
+                        bind voxel_hyperbolic_scale = 1.0 / (1.0 + voxel_cam_dist * 0.02)
                         set_color(voxel_color_r - v_y * 8, voxel_color_g - v_y * 8, voxel_color_b - v_y * 8)
-                        cube(vx_world, vy_pos, ZC + vz_world,  VOXEL_SIZE, VOXEL_SIZE, VOXEL_SIZE,  0.0, 0.0, 0.0,  0)
+                        cube(vx_world, vy_pos, ZC + vz_world,  VOXEL_SIZE * voxel_hyperbolic_scale, VOXEL_SIZE * voxel_hyperbolic_scale, VOXEL_SIZE * voxel_hyperbolic_scale,  0.0, 0.0, 0.0,  0)
                         bind v_y = v_y + 1
                     }
                 }
