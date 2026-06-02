@@ -16,18 +16,18 @@ bind JUMP   = 60.0
 bind HDIST  = 1.5
 bind NROOMS = 6
 
-bind BALL_R = 0.35
+bind BALL_R = 1.5
 bind DAMPING = 0.995
 bind ELASTICITY = 0.86
 bind MOVE_ACCEL = 200.0
 
-# Pentagonal castle (4x scale)
-bind ROOM_W = 25.0
-bind ROOM_H = 30.0
+# Pentagonal castle (balanced scale)
+bind ROOM_W = 14.0
+bind ROOM_H = 16.0
 
 # Orbital camera
-bind CAM_DIST_INIT = 12.5
-bind CAM_DIST_MIN = 2.0
+bind CAM_DIST_INIT = 20.0
+bind CAM_DIST_MIN = 5.0
 bind CAM_DIST_MAX = 400.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
@@ -179,7 +179,7 @@ bind start = do {
             bind px = list_get(portal_x, p)
             bind pz = list_get(portal_z, p)
             bind dist_to_portal = sqrt((bx - px)*(bx - px) + (bz - ZC - pz)*(bz - ZC - pz))
-            if dist_to_portal < 2.0 {
+            if dist_to_portal < 3.5 {
                 # Teleport to random other portal
                 bind target = int(hash01(FR, p) * 4.999)
                 bind new_px = list_get(portal_x, target)
