@@ -25,23 +25,23 @@
 #  Quit:  Escape or close window
 # ════════════════════════════════════════════════════════════════════════════
 
-bind W   = 9.0     # half-width   (side walls at x = ±W)
-bind H   = 4.5     # half-height  (floor y=-H, ceiling y=+H)
-bind FZ  = 16.0    # far z        (back wall)
-bind NZ  = 1.4     # near z       (front wall — close, frames view)
-bind MZ  = 8.0     # totem / merkaba z-centre
-bind MR  = 1.30    # merkaba radius
+ผูก W   = 9.0     # half-width   (side walls at x = ±W)
+ผูก H   = 4.5     # half-height  (floor y=-H, ceiling y=+H)
+ผูก FZ  = 16.0    # far z        (back wall)
+ผูก NZ  = 1.4     # near z       (front wall — close, frames view)
+ผูก MZ  = 8.0     # totem / merkaba z-centre
+ผูก MR  = 1.30    # merkaba radius
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # COLOUR HELPER
 # ════════════════════════════════════════════════════════════════════════════
 
-fn col(t, p) {
+ฟังก์ชัน col(t, p) {
     สีดินสอ(
-        sin(t + p)         * 127 + 128,
-        sin(t + p + 2.094) * 127 + 128,
-        sin(t + p + 4.189) * 127 + 128
+        ไซน์(t + p)         * 127 + 128,
+        ไซน์(t + p + 2.094) * 127 + 128,
+        ไซน์(t + p + 4.189) * 127 + 128
     )
 }
 
@@ -50,40 +50,40 @@ fn col(t, p) {
 # MERKABA CORE  (tetrahedra at the heart of the totem)
 # ════════════════════════════════════════════════════════════════════════════
 
-fn tetra(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, t) {
+ฟังก์ชัน tetra(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, t) {
     col(t, 0.0)   วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, cx,cy,cz)
     col(t, 0.78)  วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, dx,dy,dz)
     col(t, 1.57)  วาดสามเหลี่ยม3มิติ(ax,ay,az, cx,cy,cz, dx,dy,dz)
     col(t, 2.36)  วาดสามเหลี่ยม3มิติ(bx,by,bz, cx,cy,cz, dx,dy,dz)
 }
 
-fn draw_merkaba_core(FR) {
-    bind mr   = MR
-    bind mrot = FR * 0.011
-    bind mc   = cos(mrot)
-    bind ms   = sin(mrot)
-    bind bob  = sin(FR * 0.028) * 0.35
-    bind oy   = bob
-    bind t    = FR * 0.020
+ฟังก์ชัน draw_merkaba_core(FR) {
+    ผูก mr   = MR
+    ผูก mrot = FR * 0.011
+    ผูก mc   = โคไซน์(mrot)
+    ผูก ms   = ไซน์(mrot)
+    ผูก bob  = ไซน์(FR * 0.028) * 0.35
+    ผูก oy   = bob
+    ผูก t    = FR * 0.020
 
-    bind v0x = 0.0              bind v0y = mr + oy          bind v0z = MZ
-    bind v1x = mr * 0.9428 * mc bind v1y = 0-mr*0.3333 + oy bind v1z = 0-mr*0.9428*ms + MZ
-    bind v2x = 0-mr*0.4714*mc + mr*0.8165*ms
-    bind v2y = 0-mr*0.3333 + oy
-    bind v2z = mr*0.4714*ms + mr*0.8165*mc + MZ
-    bind v3x = 0-mr*0.4714*mc - mr*0.8165*ms
-    bind v3y = 0-mr*0.3333 + oy
-    bind v3z = mr*0.4714*ms - mr*0.8165*mc + MZ
+    ผูก v0x = 0.0              ผูก v0y = mr + oy          ผูก v0z = MZ
+    ผูก v1x = mr * 0.9428 * mc ผูก v1y = 0-mr*0.3333 + oy ผูก v1z = 0-mr*0.9428*ms + MZ
+    ผูก v2x = 0-mr*0.4714*mc + mr*0.8165*ms
+    ผูก v2y = 0-mr*0.3333 + oy
+    ผูก v2z = mr*0.4714*ms + mr*0.8165*mc + MZ
+    ผูก v3x = 0-mr*0.4714*mc - mr*0.8165*ms
+    ผูก v3y = 0-mr*0.3333 + oy
+    ผูก v3z = mr*0.4714*ms - mr*0.8165*mc + MZ
     tetra(v0x,v0y,v0z, v1x,v1y,v1z, v2x,v2y,v2z, v3x,v3y,v3z, t)
 
-    bind u0x = 0.0               bind u0y = 0-mr + oy         bind u0z = MZ
-    bind u1x = 0-mr*0.9428*mc   bind u1y = mr*0.3333 + oy    bind u1z = mr*0.9428*ms + MZ
-    bind u2x = mr*0.4714*mc - mr*0.8165*ms
-    bind u2y = mr*0.3333 + oy
-    bind u2z = 0-mr*0.4714*ms - mr*0.8165*mc + MZ
-    bind u3x = mr*0.4714*mc + mr*0.8165*ms
-    bind u3y = mr*0.3333 + oy
-    bind u3z = 0-mr*0.4714*ms + mr*0.8165*mc + MZ
+    ผูก u0x = 0.0               ผูก u0y = 0-mr + oy         ผูก u0z = MZ
+    ผูก u1x = 0-mr*0.9428*mc   ผูก u1y = mr*0.3333 + oy    ผูก u1z = mr*0.9428*ms + MZ
+    ผูก u2x = mr*0.4714*mc - mr*0.8165*ms
+    ผูก u2y = mr*0.3333 + oy
+    ผูก u2z = 0-mr*0.4714*ms - mr*0.8165*mc + MZ
+    ผูก u3x = mr*0.4714*mc + mr*0.8165*ms
+    ผูก u3y = mr*0.3333 + oy
+    ผูก u3z = 0-mr*0.4714*ms + mr*0.8165*mc + MZ
     tetra(u0x,u0y,u0z, u1x,u1y,u1z, u2x,u2y,u2z, u3x,u3y,u3z, t + 1.5)
 }
 
@@ -92,56 +92,56 @@ fn draw_merkaba_core(FR) {
 # THAI TOTEM POLE WITH GARUDA WINGS
 # ════════════════════════════════════════════════════════════════════════════
 
-fn draw_totem(FR) {
-    bind tz = MZ
+ฟังก์ชัน draw_totem(FR) {
+    ผูก tz = MZ
 
     # ── Merkaba at the core ───────────────────────────────────────────────
     draw_merkaba_core(FR)
 
     # ── Base: grand lotus bloom at floor level ────────────────────────────
-    vtex_lotus(0, 0-H+0.5, tz,  1,0,0,  0,0,1,  1.2, 3.2, 16,  FR, 0.0)
+    ลายดอกบัว(0, 0-H+0.5, tz,  1,0,0,  0,0,1,  1.2, 3.2, 16,  FR, 0.0)
 
     # ── Tier -3: wide chakra at y=-3 (hovering above floor) ──────────────
-    vtex_chakra(0, 0-3.0, tz,  1,0,0,  0,0,1,  2.2, 8,  FR, 0.8)
+    ลายจักร(0, 0-3.0, tz,  1,0,0,  0,0,1,  2.2, 8,  FR, 0.8)
 
     # ── Tier -2: yantra at y=-1.8 ────────────────────────────────────────
-    vtex_yantra(0, 0-1.8, tz,  1,0,0,  0,0,1,  3, 1.6,  FR, 1.8)
+    ลายยันต์(0, 0-1.8, tz,  1,0,0,  0,0,1,  3, 1.6,  FR, 1.8)
 
     # ── Tier -1: chakra (body lower) ─────────────────────────────────────
-    vtex_chakra(0, 0-0.6, tz,  1,0,0,  0,0,1,  1.2, 12,  FR, 2.8)
+    ลายจักร(0, 0-0.6, tz,  1,0,0,  0,0,1,  1.2, 12,  FR, 2.8)
 
     # ── Tier 0: yantra (body centre) ─────────────────────────────────────
-    vtex_yantra(0, 0.6, tz,  1,0,0,  0,0,1,  2, 1.0,  FR, 3.8)
+    ลายยันต์(0, 0.6, tz,  1,0,0,  0,0,1,  2, 1.0,  FR, 3.8)
 
     # ── Tier +1: lotus mid ────────────────────────────────────────────────
-    vtex_lotus(0, 1.8, tz,  1,0,0,  0,0,1,  0.55, 1.6, 12,  FR, 4.8)
+    ลายดอกบัว(0, 1.8, tz,  1,0,0,  0,0,1,  0.55, 1.6, 12,  FR, 4.8)
 
     # ── Tier +2: spinning chakra (fast) ──────────────────────────────────
-    vtex_chakra(0, 3.0, tz,  1,0,0,  0,0,1,  1.1, 16,  FR, 5.8)
+    ลายจักร(0, 3.0, tz,  1,0,0,  0,0,1,  1.1, 16,  FR, 5.8)
 
     # ── Apex: 8-point star crown ──────────────────────────────────────────
-    vtex_star(0, H-0.6, tz,  1,0,0,  0,0,1,  8, 1.4, 0.60, 0.045,  FR, 0.5)
-    vtex_flower(0, H-0.6, tz,  1,0,0,  0,0,1,  0.75, 12,  FR, 3.0)
+    ลายดาว(0, H-0.6, tz,  1,0,0,  0,0,1,  8, 1.4, 0.60, 0.045,  FR, 0.5)
+    ลายดอกไม้(0, H-0.6, tz,  1,0,0,  0,0,1,  0.75, 12,  FR, 3.0)
 
     # ── Garuda wings — outward spirals on the XZ plane ───────────────────
     # Left wing: spiral centred at (-4, 0, MZ)
-    vtex_spiral(0-4.0, 0, tz,  1,0,0,  0,0,1,  3.5, 3.2, 90,  FR, 1.0)
+    ลายเกลียว(0-4.0, 0, tz,  1,0,0,  0,0,1,  3.5, 3.2, 90,  FR, 1.0)
     # Right wing: mirrored (phase +π)
-    vtex_spiral( 4.0, 0, tz,  1,0,0,  0,0,1,  3.5, 3.2, 90,  FR, 1.0 + 3.14159)
+    ลายเกลียว( 4.0, 0, tz,  1,0,0,  0,0,1,  3.5, 3.2, 90,  FR, 1.0 + 3.14159)
 
     # ── Wing ring stacks (like feathered naga wings) ──────────────────────
     # Left rings at y=0 (same height as merkaba)
-    vtex_rings(0-4.5, 0, tz,  1,0,0,  0,0,1,  3, 20,  2.0, 0.28,  FR, 2.2)
-    vtex_rings( 4.5, 0, tz,  1,0,0,  0,0,1,  3, 20,  2.0, 0.28,  FR, 5.4)
+    ลายวงซ้อน(0-4.5, 0, tz,  1,0,0,  0,0,1,  3, 20,  2.0, 0.28,  FR, 2.2)
+    ลายวงซ้อน( 4.5, 0, tz,  1,0,0,  0,0,1,  3, 20,  2.0, 0.28,  FR, 5.4)
 
     # Upper wing arcs (secondary feathers)
-    vtex_rings(0-3.2, 1.5, tz,  1,0,0,  0,0,1,  2, 12,  1.3, 0.35,  FR, 3.0)
-    vtex_rings( 3.2, 1.5, tz,  1,0,0,  0,0,1,  2, 12,  1.3, 0.35,  FR, 0.2)
+    ลายวงซ้อน(0-3.2, 1.5, tz,  1,0,0,  0,0,1,  2, 12,  1.3, 0.35,  FR, 3.0)
+    ลายวงซ้อน( 3.2, 1.5, tz,  1,0,0,  0,0,1,  2, 12,  1.3, 0.35,  FR, 0.2)
 
     # ── Totem aura: lotus + chakra halos around totem centre ─────────────
-    vtex_lotus(0, 0, MZ,  1,0,0,  0,1,0,  1.55, 2.4, 12,  FR, 5.5)
-    vtex_chakra(0, 0, MZ,  1,0,0,  0,0,1,  2.2, 8,  FR, 2.8)
-    vtex_rings(0, 0, MZ,  1,0,0,  0,1,0,  3, 36,  2.6, 0.13,  FR, 6.1)
+    ลายดอกบัว(0, 0, MZ,  1,0,0,  0,1,0,  1.55, 2.4, 12,  FR, 5.5)
+    ลายจักร(0, 0, MZ,  1,0,0,  0,0,1,  2.2, 8,  FR, 2.8)
+    ลายวงซ้อน(0, 0, MZ,  1,0,0,  0,1,0,  3, 36,  2.6, 0.13,  FR, 6.1)
 }
 
 
@@ -149,82 +149,82 @@ fn draw_totem(FR) {
 # ROOM SURFACES
 # ════════════════════════════════════════════════════════════════════════════
 
-fn wall_params(FR) {
+ฟังก์ชัน wall_params(FR) {
     # Shared letter-rain sizing:
     #   side walls  — U along Z (depth), V along Y (height)
     #   front/back  — U along X (width),  V along Y (height)
     # All walls use same col_w / row_h
-    bind col_w = 0.64
-    bind row_h = 0.58
+    ผูก col_w = 0.64
+    ผูก row_h = 0.58
 }
 
-fn draw_floor(FR) {
-    bind cy   = 0 - H
-    bind fmid = FZ / 2
+ฟังก์ชัน draw_floor(FR) {
+    ผูก cy   = 0 - H
+    ผูก fmid = FZ / 2
 
     # Yantra + grid — the ground feels inscribed and vast
-    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  4, 4.8,  FR, 0.0)
-    vtex_grid(0, cy, fmid,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5)
+    ลายยันต์(0, cy, fmid,  1,0,0,  0,0,1,  4, 4.8,  FR, 0.0)
+    ลายตาราง(0, cy, fmid,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5)
 }
 
-fn draw_ceiling(FR) {
-    bind cy   = H
-    bind fmid = FZ / 2
+ฟังก์ชัน draw_ceiling(FR) {
+    ผูก cy   = H
+    ผูก fmid = FZ / 2
     # Poincaré-disc hyperbolic UV: 14 rings, 20 rays
     vtex_hyperbolic_uv(0, cy, fmid,  1,0,0,  0,0,1,  5.8, 14, 20,  FR, 1.0)
     # Outer ring to frame the ceiling disc
-    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  2, 36,  6.2, 0.02,  FR, 4.5)
+    ลายวงซ้อน(0, cy, fmid,  1,0,0,  0,0,1,  2, 36,  6.2, 0.02,  FR, 4.5)
 }
 
-fn draw_front_wall(FR) {
+ฟังก์ชัน draw_front_wall(FR) {
     # Near wall (z=NZ=1.4) — close, fills the frame
     # 28 cols × 0.64 = 17.9 ≥ 2W=18; 16 rows × 0.58 = 9.28 ≥ 2H=9
     vtex_letter_rain(0, 0, NZ,  1,0,0,  0,1,0,  28, 16,  0.64, 0.58,  0.022,  FR, 0.0)
 }
 
-fn draw_back_wall(FR) {
+ฟังก์ชัน draw_back_wall(FR) {
     # Far wall — letter rain forms the deep portal
     vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  28, 16,  0.64, 0.58,  0.028,  FR, 2.1)
     # Chakra portal glows through the rain
-    vtex_chakra(0, 0, FZ,  1,0,0,  0,1,0,  4.2, 12,  FR, 0.5)
-    vtex_rings(0, 0, FZ,  1,0,0,  0,1,0,  3, 36,  4.8, 0.03,  FR, 3.5)
+    ลายจักร(0, 0, FZ,  1,0,0,  0,1,0,  4.2, 12,  FR, 0.5)
+    ลายวงซ้อน(0, 0, FZ,  1,0,0,  0,1,0,  3, 36,  4.8, 0.03,  FR, 3.5)
 }
 
-fn draw_left_wall(FR) {
-    bind cx   = 0 - W
-    bind fmid = (NZ + FZ) / 2   # z centre of the side wall
+ฟังก์ชัน draw_left_wall(FR) {
+    ผูก cx   = 0 - W
+    ผูก fmid = (NZ + FZ) / 2   # z centre of the side wall
     # 24 cols × 0.64 = 15.36 ≥ FZ-NZ=14.6; 16 rows × 0.58 = 9.28 ≥ 2H=9
     vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  24, 16,  0.64, 0.58,  0.025,  FR, 4.2)
 }
 
-fn draw_right_wall(FR) {
-    bind cx   = W
-    bind fmid = (NZ + FZ) / 2
+ฟังก์ชัน draw_right_wall(FR) {
+    ผูก cx   = W
+    ผูก fmid = (NZ + FZ) / 2
     vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  24, 16,  0.64, 0.58,  0.020,  FR, 1.6)
 }
 
-fn setup_lights(FR) {
-    clear_lights()
+ฟังก์ชัน setup_lights(FR) {
+    ล้างแสง()
     # Warm gold — orbits above totem
-    add_light(
-        sin(FR * 0.010) * 4.5,
+    เพิ่มแสง(
+        ไซน์(FR * 0.010) * 4.5,
         4.0,
-        cos(FR * 0.010) * 2.5 + MZ,
+        โคไซน์(FR * 0.010) * 2.5 + MZ,
         1.0, 0.88, 0.65,
         3.0, 14.0
     )
     # Cool teal fill: from above-left
-    add_light(0-4.0, 2.0, MZ, 0.30, 0.80, 1.0, 1.5, 10.0)
+    เพิ่มแสง(0-4.0, 2.0, MZ, 0.30, 0.80, 1.0, 1.5, 10.0)
     # Magenta rim: from behind-right
-    add_light(
-        sin(FR * 0.007) * 3.5,
+    เพิ่มแสง(
+        ไซน์(FR * 0.007) * 3.5,
         0.5,
-        0-cos(FR * 0.007) * 2.5 + MZ,
+        0-โคไซน์(FR * 0.007) * 2.5 + MZ,
         1.0, 0.20, 0.90,
         1.0, 8.0
     )
     # Deep violet under-fill (floor glow)
-    add_light(0, 0-3.0, MZ, 0.55, 0.10, 1.0, 0.6, 7.0)
+    เพิ่มแสง(0, 0-3.0, MZ, 0.55, 0.10, 1.0, 0.6, 7.0)
 }
 
 
@@ -232,28 +232,28 @@ fn setup_lights(FR) {
 # AUDIO — 4D positional sine tones, one per room object
 # ════════════════════════════════════════════════════════════════════════════
 
-fn init_audio() {
+ฟังก์ชัน init_audio() {
     # Each tone: audio_tone(slot, x, y, z, w,  freq,   amp, lfo_rate, lfo_depth)
     # Harmonic A-series: 55·2^n Hz   (A1 → A5) with inter-harmonic rationals
     #  0  Merkaba core      (0,    0,    MZ)   A2   110 Hz  — beating heart of room
-    audio_tone(0,   0,    0,    MZ,  1.0,   110.0, 0.12, 0.30, 0.040)
+    เสียง(0,   0,    0,    MZ,  1.0,   110.0, 0.12, 0.30, 0.040)
     #  1  Floor yantra      (0,  -H,    MZ)   A1    55 Hz  — sub, grounding
-    audio_tone(1,   0,  0-H,   MZ,  1.5,    55.0, 0.10, 0.18, 0.030)
+    เสียง(1,   0,  0-H,   MZ,  1.5,    55.0, 0.10, 0.18, 0.030)
     #  2  Ceiling disc      (0,  +H,    MZ)   E5   660 Hz  — ethereal shimmer
-    audio_tone(2,   0,   H,    MZ,  0.5,   660.0, 0.07, 0.70, 0.018)
+    เสียง(2,   0,   H,    MZ,  0.5,   660.0, 0.07, 0.70, 0.018)
     #  3  Left wall         (-W,  0,    MZ)   A3   220 Hz  — warm left pan
-    audio_tone(3, 0-W,   0,    MZ,  2.0,   220.0, 0.10, 0.42, 0.050)
+    เสียง(3, 0-W,   0,    MZ,  2.0,   220.0, 0.10, 0.42, 0.050)
     #  4  Right wall        (+W,  0,    MZ)   D4   293 Hz  — natural right pan
-    audio_tone(4,  W,    0,    MZ,  2.0,   293.0, 0.10, 0.55, 0.038)
+    เสียง(4,  W,    0,    MZ,  2.0,   293.0, 0.10, 0.55, 0.038)
     #  5  Back portal       (0,   0,    FZ)   E4   330 Hz  — deep-space drone
-    audio_tone(5,   0,   0,    FZ,  1.2,   330.0, 0.09, 0.62, 0.028)
+    เสียง(5,   0,   0,    FZ,  1.2,   330.0, 0.09, 0.62, 0.028)
     #  6  Left Garuda wing  (-4,  0,    MZ)   E3   165 Hz  — wing rush left
-    audio_tone(6, 0-4,   0,    MZ,  3.0,   165.0, 0.08, 0.80, 0.060)
+    เสียง(6, 0-4,   0,    MZ,  3.0,   165.0, 0.08, 0.80, 0.060)
     #  7  Right Garuda wing (+4,  0,    MZ)   A4   440 Hz  — wing rush right
-    audio_tone(7,  4,    0,    MZ,  3.0,   440.0, 0.08, 0.88, 0.048)
+    เสียง(7,  4,    0,    MZ,  3.0,   440.0, 0.08, 0.88, 0.048)
     #  8  Front wall        (0,   0,    NZ)   C#5  550 Hz  — presence / breath
-    audio_tone(8,   0,   0,    NZ,  0.8,   550.0, 0.07, 1.10, 0.035)
-    audio_volume(0.65)
+    เสียง(8,   0,   0,    NZ,  0.8,   550.0, 0.07, 1.10, 0.035)
+    ระดับเสียง(0.65)
 }
 
 
@@ -263,23 +263,23 @@ fn init_audio() {
 ผูก เริ่ม = ทำ {
     เปิดหน้าต่างเต็มจอ("Thai Matrix Cathedral — อาสนวิหารเมทริกซ์ไทย")
     capture_mouse()
-    set_ambient(0.06)
+    ตั้งแสงรอบข้าง(0.06)
 
     # Boot the 4D audio landscape.
     init_audio()
 
     ผูก FR = 0
 
-    令 cam_px = 0.0
-    令 cam_py = 0.0
-    令 cam_pz = 0.0
-    令 cam_zdist = 2.0
-    令 cam_ry_off = 0.0
-    令 cam_rx_off = 0.0
-    令 cam_idle = 0
-    令 cam_manual = 0
-    令 cam_ry_snap = 0.0
-    令 cam_rx_snap = 0.0
+    ผูก cam_px = 0.0
+    ผูก cam_py = 0.0
+    ผูก cam_pz = 0.0
+    ผูก cam_zdist = 2.0
+    ผูก cam_ry_off = 0.0
+    ผูก cam_rx_off = 0.0
+    ผูก cam_idle = 0
+    ผูก cam_manual = 0
+    ผูก cam_ry_snap = 0.0
+    ผูก cam_rx_snap = 0.0
 
     ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(1, 0, 5)    # near-black deep violet
@@ -288,67 +288,67 @@ fn init_audio() {
         # Two horizontal frequencies → camera visits walls + back portal
         # Two vertical frequencies  → ceiling + floor cycle through view
         # Max ry ≈ 0.50+0.18 = 0.68 rad (39°) — side walls always in front
-        ผูก ry  = sin(FR * 0.00220) * 0.50 + sin(FR * 0.00091) * 0.18
-        ผูก rx  = sin(FR * 0.00160) * 0.42 + sin(FR * 0.00077) * 0.18
-        令 mdx = mouse_dx()
-        令 mdy = mouse_dy()
-        令 any_input = 0
-        若 key_down("w")      { 令 any_input = 1 }
-        若 key_down("s")      { 令 any_input = 1 }
-        若 key_down("a")      { 令 any_input = 1 }
-        若 key_down("d")      { 令 any_input = 1 }
-        若 key_down("space")  { 令 any_input = 1 }
-        若 key_down("lshift") { 令 any_input = 1 }
-        若 key_down("left")   { 令 any_input = 1 }
-        若 key_down("right")  { 令 any_input = 1 }
-        若 key_down("up")     { 令 any_input = 1 }
-        若 key_down("down")   { 令 any_input = 1 }
-        若 mdx * mdx + mdy * mdy > 0.25 { 令 any_input = 1 }
-        若 any_input == 1 { 令 cam_manual = 1; 令 cam_idle = 0 }
-        若 cam_manual == 1 {
-            令 cam_idle = cam_idle + 1
-            若 cam_idle > 300 { 令 cam_manual = 0; 令 cam_idle = 0 }
+        ผูก ry  = ไซน์(FR * 0.00220) * 0.50 + ไซน์(FR * 0.00091) * 0.18
+        ผูก rx  = ไซน์(FR * 0.00160) * 0.42 + ไซน์(FR * 0.00077) * 0.18
+        ผูก mdx = mouse_dx()
+        ผูก mdy = mouse_dy()
+        ผูก any_input = 0
+        ถ้า key_down("w")      { ผูก any_input = 1 }
+        ถ้า key_down("s")      { ผูก any_input = 1 }
+        ถ้า key_down("a")      { ผูก any_input = 1 }
+        ถ้า key_down("d")      { ผูก any_input = 1 }
+        ถ้า key_down("space")  { ผูก any_input = 1 }
+        ถ้า key_down("lshift") { ผูก any_input = 1 }
+        ถ้า key_down("left")   { ผูก any_input = 1 }
+        ถ้า key_down("right")  { ผูก any_input = 1 }
+        ถ้า key_down("up")     { ผูก any_input = 1 }
+        ถ้า key_down("down")   { ผูก any_input = 1 }
+        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
+        ถ้า any_input == 1 { ผูก cam_manual = 1; ผูก cam_idle = 0 }
+        ถ้า cam_manual == 1 {
+            ผูก cam_idle = cam_idle + 1
+            ถ้า cam_idle > 300 { ผูก cam_manual = 0; ผูก cam_idle = 0 }
         }
-        若 cam_manual == 1 {
-            令 cam_ry_off = cam_ry_off + mdx * 0.0022
-            令 cam_rx_off = cam_rx_off + mdy * 0.0022
-            若 cam_rx_off > 3.14159  { 令 cam_rx_off = 3.14159 }
-            若 cam_rx_off < -3.14159 { 令 cam_rx_off = -3.14159 }
-            若 key_down("left")  { 令 cam_ry_off = cam_ry_off - 0.018 }
-            若 key_down("right") { 令 cam_ry_off = cam_ry_off + 0.018 }
-            若 key_down("up")    { 令 cam_rx_off = cam_rx_off - 0.018 }
-            若 key_down("down")  { 令 cam_rx_off = cam_rx_off + 0.018 }
-            令 fwd_x = sin(cam_ry_snap + cam_ry_off)
-            令 fwd_z = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_x = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
-            令 spd = 0.12
-            若 key_down("w") { 令 cam_px = cam_px + fwd_x * spd; 令 cam_pz = cam_pz + fwd_z * spd }
-            若 key_down("s") { 令 cam_px = cam_px - fwd_x * spd; 令 cam_pz = cam_pz - fwd_z * spd }
-            若 key_down("a") { 令 cam_px = cam_px - rgt_x * spd; 令 cam_pz = cam_pz - rgt_z * spd }
-            若 key_down("d") { 令 cam_px = cam_px + rgt_x * spd; 令 cam_pz = cam_pz + rgt_z * spd }
-            若 key_down("space")  { 令 cam_py = cam_py + spd }
-            若 key_down("lshift") { 令 cam_py = cam_py - spd }
-            若 key_pressed("numpad+") { 令 cam_zdist = cam_zdist + 0.5 }
-            若 key_pressed("numpad-") { 令 cam_zdist = cam_zdist - 0.5; 若 cam_zdist < 0.5 { 令 cam_zdist = 0.5 } }
+        ถ้า cam_manual == 1 {
+            ผูก cam_ry_off = cam_ry_off + mdx * 0.0022
+            ผูก cam_rx_off = cam_rx_off + mdy * 0.0022
+            ถ้า cam_rx_off > 3.14159  { ผูก cam_rx_off = 3.14159 }
+            ถ้า cam_rx_off < -3.14159 { ผูก cam_rx_off = -3.14159 }
+            ถ้า key_down("left")  { ผูก cam_ry_off = cam_ry_off - 0.018 }
+            ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
+            ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
+            ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
+            ผูก fwd_x = ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก spd = 0.12
+            ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
+            ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
+            ถ้า key_down("a") { ผูก cam_px = cam_px - rgt_x * spd; ผูก cam_pz = cam_pz - rgt_z * spd }
+            ถ้า key_down("d") { ผูก cam_px = cam_px + rgt_x * spd; ผูก cam_pz = cam_pz + rgt_z * spd }
+            ถ้า key_down("space")  { ผูก cam_py = cam_py + spd }
+            ถ้า key_down("lshift") { ผูก cam_py = cam_py - spd }
+            ถ้า key_pressed("numpad+") { ผูก cam_zdist = cam_zdist + 0.5 }
+            ถ้า key_pressed("numpad-") { ผูก cam_zdist = cam_zdist - 0.5; ถ้า cam_zdist < 0.5 { ผูก cam_zdist = 0.5 } }
         }
-        若 cam_manual == 0 {
-            令 cam_ry_snap = ry
-            令 cam_rx_snap = rx
-            令 cam_ry_off = cam_ry_off * 0.97
-            令 cam_rx_off = cam_rx_off * 0.97
-            令 cam_px = cam_px * 0.97
-            令 cam_py = cam_py * 0.97
-            令 cam_pz = cam_pz * 0.97
+        ถ้า cam_manual == 0 {
+            ผูก cam_ry_snap = ry
+            ผูก cam_rx_snap = rx
+            ผูก cam_ry_off = cam_ry_off * 0.97
+            ผูก cam_rx_off = cam_rx_off * 0.97
+            ผูก cam_px = cam_px * 0.97
+            ผูก cam_py = cam_py * 0.97
+            ผูก cam_pz = cam_pz * 0.97
         }
-        ผูก cry = cos(cam_ry_snap + cam_ry_off)   ผูก sry = sin(cam_ry_snap + cam_ry_off)
-        ผูก crx = cos(cam_rx_snap + cam_rx_off)   ผูก srx = sin(cam_rx_snap + cam_rx_off)
-        set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
+        ผูก cry = โคไซน์(cam_ry_snap + cam_ry_off)   ผูก sry = ไซน์(cam_ry_snap + cam_ry_off)
+        ผูก crx = โคไซน์(cam_rx_snap + cam_rx_off)   ผูก srx = ไซน์(cam_rx_snap + cam_rx_off)
+        ตั้งกล้อง(cry, sry, crx, srx)
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
+        ตั้งระยะห่าง(cam_zdist)
 
         # ── Sync audio listener to camera ─────────────────────────────────
-        audio_listener(cry, sry, crx, srx)
+        ผู้ฟัง(cry, sry, crx, srx)
 
         setup_lights(FR)
 

@@ -34,20 +34,20 @@
 # Camera: yaw + pitch, 320-frame period (gentle lounge survey).
 # ════════════════════════════════════════════════════════════════════════════
 
-令 W   = 6.2
-令 H   = 4.0
-令 FZ  = 14.0
-令 NZ  = 1.5
-令 MZ  = 7.75      # (NZ + FZ) / 2  — computed constant, safe after runtime fix
-令 PHI = 1.618
+ผูก W   = 6.2
+ผูก H   = 4.0
+ผูก FZ  = 14.0
+ผูก NZ  = 1.5
+ผูก MZ  = 7.75      # (NZ + FZ) / 2  — computed constant, safe after runtime fix
+ผูก PHI = 1.618
 
 # ── Pentatonic C major frequencies ───────────────────────────────────────────
-令 PC1 = 130.81    # C3  — DOT tone      (stable)
-令 PC2 = 146.83    # D3  — SPACE / walls (ambient hiss)
-令 PC3 = 164.81    # E3  — LINE slide    (medium sweep)
-令 PC4 = 196.00    # G3  — CURVE nested  (wild sweep)
-令 PC5 = 220.00    # A3  — CHORD shimmer (overtone)
-令 PC6 = 261.63    # C4  — shrine candle (pure high C)
+ผูก PC1 = 130.81    # C3  — DOT tone      (stable)
+ผูก PC2 = 146.83    # D3  — SPACE / walls (ambient hiss)
+ผูก PC3 = 164.81    # E3  — LINE slide    (medium sweep)
+ผูก PC4 = 196.00    # G3  — CURVE nested  (wild sweep)
+ผูก PC5 = 220.00    # A3  — CHORD shimmer (overtone)
+ผูก PC6 = 261.63    # C4  — shrine candle (pure high C)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -59,10 +59,10 @@
 # each wall its own independent random field.
 # ════════════════════════════════════════════════════════════════════════════
 
-函 sm2_hash(cx, ry, a, b) {
-    令 p = cx * 2166136261.0 + ry * 16777619.0
-    令 s = sin(p * 0.0000031 + a) * 0.5 + 0.5
-    令 c = cos(p * 0.0000059 - b) * 0.5 + 0.5
+ฟังก์ชัน sm2_hash(cx, ry, a, b) {
+    ผูก p = cx * 2166136261.0 + ry * 16777619.0
+    ผูก s = ไซน์(p * 0.0000031 + a) * 0.5 + 0.5
+    ผูก c = โคไซน์(p * 0.0000059 - b) * 0.5 + 0.5
     s * 0.618 + c * 0.382
 }
 
@@ -77,15 +77,15 @@
 #   CURVE → high LFO + depth (nested pitch slide / vibrato)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 init_audio() {
+ฟังก์ชัน init_audio() {
     # slot  x        y         z       w     freq   amp   lfo_hz  depth
-    audio_tone(0,  0-1.8,  0-H+1.7,  MZ,    1.5,  PC1,  0.09,  0.05,  0.002)
-    audio_tone(1,  0,      0,        FZ,    4.0,  PC2,  0.07,  0.10,  0.005)
-    audio_tone(2,  0-1.8,  0-H+1.7,  MZ,    2.0,  PC3,  0.10,  0.36,  0.042)
-    audio_tone(3,  W-0.8,  0,        MZ,    2.5,  PC4,  0.09,  0.70,  0.088)
-    audio_tone(4,  0,      H-0.5,    MZ,    3.0,  PC5,  0.08,  0.20,  0.016)
-    audio_tone(5,  W-0.8,  0-H+2.2,  MZ,    2.0,  PC6,  0.07,  0.13,  0.007)
-    audio_volume(0.50)
+    เสียง(0,  0-1.8,  0-H+1.7,  MZ,    1.5,  PC1,  0.09,  0.05,  0.002)
+    เสียง(1,  0,      0,        FZ,    4.0,  PC2,  0.07,  0.10,  0.005)
+    เสียง(2,  0-1.8,  0-H+1.7,  MZ,    2.0,  PC3,  0.10,  0.36,  0.042)
+    เสียง(3,  W-0.8,  0,        MZ,    2.5,  PC4,  0.09,  0.70,  0.088)
+    เสียง(4,  0,      H-0.5,    MZ,    3.0,  PC5,  0.08,  0.20,  0.016)
+    เสียง(5,  W-0.8,  0-H+2.2,  MZ,    2.0,  PC6,  0.07,  0.13,  0.007)
+    ระดับเสียง(0.50)
 }
 
 
@@ -93,30 +93,30 @@
 # LIGHTS
 # ════════════════════════════════════════════════════════════════════════════
 
-函 setup_lights(FR) {
-    clear_lights()
+ฟังก์ชัน setup_lights(FR) {
+    ล้างแสง()
 
     # Warm overhead lamp — lounge ambience, slow drift
-    令 ta = FR * 0.0085
-    add_light(
-        sin(ta) * 2.2,  H - 0.3,  cos(ta) * 1.6 + MZ,
+    ผูก ta = FR * 0.0085
+    เพิ่มแสง(
+        ไซน์(ta) * 2.2,  H - 0.3,  โคไซน์(ta) * 1.6 + MZ,
         0.98, 0.90, 0.68,   3.0, 13.0
     )
 
     # Cool desk lamp — blue-white from the left
-    add_light(0-1.8,  0-H+2.9,  MZ*0.78,   0.26, 0.52, 0.98,   1.5, 8.0)
+    เพิ่มแสง(0-1.8,  0-H+2.9,  MZ*0.78,   0.26, 0.52, 0.98,   1.5, 8.0)
 
     # Shrine candle — warm amber flicker
-    令 tc = FR * 0.018
-    add_light(
-        W - 0.8 + sin(tc) * 0.10,
+    ผูก tc = FR * 0.018
+    เพิ่มแสง(
+        W - 0.8 + ไซน์(tc) * 0.10,
         0-H + 2.7,
-        MZ + 1.6 + cos(tc) * 0.07,
+        MZ + 1.6 + โคไซน์(tc) * 0.07,
         1.00, 0.62, 0.12,   2.0, 5.5
     )
 
     # Soft floor bounce — warm fill from below
-    add_light(0,  0-H+0.1,  MZ,   0.40, 0.28, 0.16,   0.6, 9.0)
+    เพิ่มแสง(0,  0-H+0.1,  MZ,   0.40, 0.28, 0.16,   0.6, 9.0)
 }
 
 
@@ -124,24 +124,24 @@
 # FLOOR  — SM2-hash tessellation + pentatonic compass rose
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_floor(FR, hd) {
-    令 fy = 0 - H
-    令 fz = FZ * 0.50
+ฟังก์ชัน draw_floor(FR, hd) {
+    ผูก fy = 0 - H
+    ผูก fz = FZ * 0.50
 
     # SM2-hash phase drives tessellation density variation
-    令 h1 = sm2_hash(3.0, 7.0,  FR * 0.0031,  FR * 0.0019)
-    令 h2 = sm2_hash(7.0, 3.0,  FR * 0.0019,  FR * 0.0031)
+    ผูก h1 = sm2_hash(3.0, 7.0,  FR * 0.0031,  FR * 0.0019)
+    ผูก h2 = sm2_hash(7.0, 3.0,  FR * 0.0019,  FR * 0.0031)
     vtex_tessellated(0, fy, fz,  1,0,0,  0,0,1,  22, 18,  0.38 + h1*0.14, 0.11 + h2*0.06, 3.6,  FR, hd + 2.2)
 
     # 5-spoke pentatonic compass (DOT/LINE mix — C3+E3)
-    vtex_chakra(0, fy, fz,   1,0,0,  0,0,1,  5.8, 5,   FR, hd + 0.8)
-    vtex_rings(0, fy, fz,    1,0,0,  0,0,1,  3, 5,   5.2, 0.10,  FR, hd + 0.2)
+    ลายจักร(0, fy, fz,   1,0,0,  0,0,1,  5.8, 5,   FR, hd + 0.8)
+    ลายวงซ้อน(0, fy, fz,    1,0,0,  0,0,1,  3, 5,   5.2, 0.10,  FR, hd + 0.2)
 
     # Yantra inlay (LINE → pitch slide)
-    vtex_yantra(0, fy, fz,   1,0,0,  0,0,1,  4, 4.8,  FR, hd + 0.0)
+    ลายยันต์(0, fy, fz,   1,0,0,  0,0,1,  4, 4.8,  FR, hd + 0.0)
 
     # Grid field (LINE → pitch slide)
-    vtex_grid(0, fy, fz,     1,0,0,  0,0,1,  20, 16,  0.52, 0.52,  FR, hd + 3.6)
+    ลายตาราง(0, fy, fz,     1,0,0,  0,0,1,  20, 16,  0.52, 0.52,  FR, hd + 3.6)
 }
 
 
@@ -149,19 +149,19 @@
 # CEILING  — cosmos: 5-point star + spinning lotus + hyperbolic dome
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_ceiling(FR, hd) {
-    令 cy = H
-    令 fz = FZ * 0.50
+ฟังก์ชัน draw_ceiling(FR, hd) {
+    ผูก cy = H
+    ผูก fz = FZ * 0.50
 
     vtex_hyperbolic_uv(0, cy, fz,  1,0,0,  0,0,1,  5.6, 8, 12,  FR, hd + 4.6)
     # Pentatonic 5-ring (LINE rings)
-    vtex_rings(0, cy, fz,   1,0,0,  0,0,1,  2, 5,  3.8, 0.0,  FR, hd + 1.4)
+    ลายวงซ้อน(0, cy, fz,   1,0,0,  0,0,1,  2, 5,  3.8, 0.0,  FR, hd + 1.4)
     # 5-point star (DOT nodes at tips)
-    vtex_star(0, cy, fz,    1,0,0,  0,0,1,  5, 2.0, 0.80, 0.05,  FR, hd + 0.0)
+    ลายดาว(0, cy, fz,    1,0,0,  0,0,1,  5, 2.0, 0.80, 0.05,  FR, hd + 0.0)
     # Spinning lotus crown (CURVE — G3)
-    vtex_lotus(0, cy, fz,   1,0,0,  0,0,1,  0.50, 1.80, 10,  FR, hd + 2.8)
+    ลายดอกบัว(0, cy, fz,   1,0,0,  0,0,1,  0.50, 1.80, 10,  FR, hd + 2.8)
     # Ceiling flower (CHORD — A3)
-    vtex_flower(0, cy, fz,  1,0,0,  0,0,1,  3.4, 8,  FR * 0.8, hd + 3.6)
+    ลายดอกไม้(0, cy, fz,  1,0,0,  0,0,1,  3.4, 8,  FR * 0.8, hd + 3.6)
 }
 
 
@@ -169,10 +169,10 @@
 # BACK WALL  — three SM2-hash glyph cascades, phase-staggered
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_back_wall(FR, hd) {
-    令 h1 = sm2_hash(1.0, 9.0,  FR * 0.0028,  FR * 0.0041)
-    令 h2 = sm2_hash(9.0, 1.0,  FR * 0.0041,  FR * 0.0028)
-    令 h3 = sm2_hash(5.0, 5.0,  FR * 0.0016,  FR * 0.0055)
+ฟังก์ชัน draw_back_wall(FR, hd) {
+    ผูก h1 = sm2_hash(1.0, 9.0,  FR * 0.0028,  FR * 0.0041)
+    ผูก h2 = sm2_hash(9.0, 1.0,  FR * 0.0041,  FR * 0.0028)
+    ผูก h3 = sm2_hash(5.0, 5.0,  FR * 0.0016,  FR * 0.0055)
 
     # Three cascades — each hash gives a distinct fall speed and hue offset
     vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  26, 16,  0.62, 0.56,  0.010 + h1*0.006,  FR,        hd + 0.4)
@@ -180,8 +180,8 @@
     vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  26, 16,  0.62, 0.56,  0.022 + h3*0.006,  FR * 0.42, hd + 3.2)
 
     # Back-wall centrepiece: 5-point star + pentatonic rings (DOT+LINE)
-    vtex_star(0, 0, FZ,   1,0,0,  0,1,0,  5, 4.4, 1.75, 0.04,  FR, hd + 4.0)
-    vtex_rings(0, 0, FZ,  1,0,0,  0,1,0,  2, 5,   5.0, 0.04,   FR, hd + 5.0)
+    ลายดาว(0, 0, FZ,   1,0,0,  0,1,0,  5, 4.4, 1.75, 0.04,  FR, hd + 4.0)
+    ลายวงซ้อน(0, 0, FZ,  1,0,0,  0,1,0,  2, 5,   5.0, 0.04,   FR, hd + 5.0)
 }
 
 
@@ -189,18 +189,18 @@
 # LEFT WALL  — SM2 glyph columns + curve spiral + flower
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_left_wall(FR, hd) {
-    令 fmid = (NZ + FZ) / 2.0
-    令 h1 = sm2_hash(2.0, 6.0,  FR * 0.0035,  FR * 0.0022)
-    令 h2 = sm2_hash(6.0, 2.0,  FR * 0.0022,  FR * 0.0035)
+ฟังก์ชัน draw_left_wall(FR, hd) {
+    ผูก fmid = (NZ + FZ) / 2.0
+    ผูก h1 = sm2_hash(2.0, 6.0,  FR * 0.0035,  FR * 0.0022)
+    ผูก h2 = sm2_hash(6.0, 2.0,  FR * 0.0022,  FR * 0.0035)
 
     vtex_letter_rain(0-W, 0, fmid,  0,0,1,  0,1,0,  18, 14,  0.62, 0.58,  0.013 + h1*0.007,  FR,        hd + 2.0)
     vtex_letter_rain(0-W, 0, fmid,  0,0,1,  0,1,0,  18, 14,  0.62, 0.58,  0.021 + h2*0.007,  FR * 0.52, hd + 3.8)
 
     # Large spiral (CURVE — G3 nested pitch slide)
-    vtex_spiral(0-W, 0, fmid,  0,0,1,  0,1,0,  0.9, 3.0, 64,  FR, hd + 1.5)
+    ลายเกลียว(0-W, 0, fmid,  0,0,1,  0,1,0,  0.9, 3.0, 64,  FR, hd + 1.5)
     # Flower (CHORD — A3 shimmer)
-    vtex_flower(0-W, 0, fmid,  0,0,1,  0,1,0,  3.6, 10,  FR * 0.55, hd + 0.8)
+    ลายดอกไม้(0-W, 0, fmid,  0,0,1,  0,1,0,  3.6, 10,  FR * 0.55, hd + 0.8)
 }
 
 
@@ -208,8 +208,8 @@
 # FRONT WALL  — SM2 glyph, viewed as you enter
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_front_wall(FR, hd) {
-    令 h1 = sm2_hash(4.0, 8.0,  FR * 0.0024,  FR * 0.0047)
+ฟังก์ชัน draw_front_wall(FR, hd) {
+    ผูก h1 = sm2_hash(4.0, 8.0,  FR * 0.0024,  FR * 0.0047)
     vtex_letter_rain(0, 0, NZ,  1,0,0,  0,1,0,  24, 14,  0.62, 0.58,  0.008 + h1*0.005,  FR, hd + 0.0)
 }
 
@@ -218,15 +218,15 @@
 # RIGHT WALL  — closet entrance portal + SM2 glyphs (front half only)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_right_wall(FR, hd) {
+ฟังก์ชัน draw_right_wall(FR, hd) {
     # Front half of right wall (closet occupies back half)
-    令 ffront = (NZ + FZ * 0.52) / 2.0
-    令 h1 = sm2_hash(8.0, 4.0,  FR * 0.0030,  FR * 0.0018)
+    ผูก ffront = (NZ + FZ * 0.52) / 2.0
+    ผูก h1 = sm2_hash(8.0, 4.0,  FR * 0.0030,  FR * 0.0018)
     vtex_letter_rain(W, 0, ffront,  0,0,1,  0,1,0,  12, 14,  0.62, 0.58,  0.011 + h1*0.005,  FR, hd + 5.0)
 
     # Closet portal arch: 8-petal flower + rings (CHORD — A3)
-    vtex_flower(W, 0, FZ * 0.54,  0,0,1,  0,1,0,  3.4, 8,  FR * 0.30, hd + 4.2)
-    vtex_rings(W, 0, FZ * 0.54,   0,0,1,  0,1,0,  1, 8,  3.7, 0.0,  FR * 0.30, hd + 3.4)
+    ลายดอกไม้(W, 0, FZ * 0.54,  0,0,1,  0,1,0,  3.4, 8,  FR * 0.30, hd + 4.2)
+    ลายวงซ้อน(W, 0, FZ * 0.54,   0,0,1,  0,1,0,  1, 8,  3.7, 0.0,  FR * 0.30, hd + 3.4)
 }
 
 
@@ -240,49 +240,49 @@
 #    Book shelf    y = -H + 1.05
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_closet(FR, hd) {
-    令 cx  = W - 0.75
-    令 cmz = FZ * 0.73    # closet mid-depth
-    令 cfz = FZ * 0.88    # closet back wall z
+ฟังก์ชัน draw_closet(FR, hd) {
+    ผูก cx  = W - 0.75
+    ผูก cmz = FZ * 0.73    # closet mid-depth
+    ผูก cfz = FZ * 0.88    # closet back wall z
 
     # ── Closet back wall: own SM2 hash cascade ──
-    令 hb = sm2_hash(9.0, 9.0,  FR * 0.0044,  FR * 0.0026)
+    ผูก hb = sm2_hash(9.0, 9.0,  FR * 0.0044,  FR * 0.0026)
     vtex_letter_rain(cx, 0, cfz,  0,0,1,  0,1,0,  10, 12,  0.52, 0.48,  0.018 + hb*0.008,  FR, hd + 6.0)
 
     # ── Clothes rod (LINE shape — E3 pitch slide) ──
-    vtex_rings(cx, H - 0.42, cmz,  0,0,1,  0,1,0,  1, 4,  0.60, 0.0,  FR * 0.08, hd + 3.4)
+    ลายวงซ้อน(cx, H - 0.42, cmz,  0,0,1,  0,1,0,  1, 4,  0.60, 0.0,  FR * 0.08, hd + 3.4)
 
     # ── Hanging clothes: three spirals (CURVE — G3 nested slide) ──
-    vtex_spiral(cx - 0.38, 0.18, cmz - 0.28,  0,0,1,  0,1,0,  0.12, 0.58, 22,  FR * 0.13, hd + 4.4)
-    vtex_spiral(cx - 0.12, 0.18, cmz,          0,0,1,  0,1,0,  0.10, 0.52, 18,  FR * 0.13, hd + 5.4)
-    vtex_spiral(cx + 0.14, 0.18, cmz + 0.28,  0,0,1,  0,1,0,  0.11, 0.50, 16,  FR * 0.13, hd + 6.4)
+    ลายเกลียว(cx - 0.38, 0.18, cmz - 0.28,  0,0,1,  0,1,0,  0.12, 0.58, 22,  FR * 0.13, hd + 4.4)
+    ลายเกลียว(cx - 0.12, 0.18, cmz,          0,0,1,  0,1,0,  0.10, 0.52, 18,  FR * 0.13, hd + 5.4)
+    ลายเกลียว(cx + 0.14, 0.18, cmz + 0.28,  0,0,1,  0,1,0,  0.11, 0.50, 16,  FR * 0.13, hd + 6.4)
 
     # ── Mini shrine on shelf ──
-    令 sy   = 0 - H + 2.25
-    令 shrz = cmz + 0.2
+    ผูก sy   = 0 - H + 2.25
+    ผูก shrz = cmz + 0.2
 
     # Shelf slab (LINE — E3)
-    vtex_grid(cx, sy - 0.13, shrz,  0,0,1,  0,1,0,  4, 1,  0.44, 0.07,  FR, hd + 2.4)
+    ลายตาราง(cx, sy - 0.13, shrz,  0,0,1,  0,1,0,  4, 1,  0.44, 0.07,  FR, hd + 2.4)
 
     # Shrine lotus (CURVE — G3)
-    vtex_lotus(cx, sy, shrz,  0,0,1,  0,1,0,  0.13, 0.42, 8,  FR, hd + 0.5)
+    ลายดอกบัว(cx, sy, shrz,  0,0,1,  0,1,0,  0.13, 0.42, 8,  FR, hd + 0.5)
     # Shrine aura rings (LINE — E3)
-    vtex_rings(cx, sy, shrz,  0,0,1,  0,1,0,  2, 8,  0.28, 0.0,  FR * 0.55, hd + 1.3)
+    ลายวงซ้อน(cx, sy, shrz,  0,0,1,  0,1,0,  2, 8,  0.28, 0.0,  FR * 0.55, hd + 1.3)
     # Shrine candle dot (DOT — C3)
-    vtex_chakra(cx, sy + 0.36, shrz,  0,0,1,  0,1,0,  0.06, 1,  FR, hd + 0.1)
+    ลายจักร(cx, sy + 0.36, shrz,  0,0,1,  0,1,0,  0.06, 1,  FR, hd + 0.1)
     # Incense smoke: tiny spiral above candle (CURVE)
-    vtex_spiral(cx, sy + 0.55, shrz,  0,0,1,  0,1,0,  0.04, 0.18, 24,  FR * 0.35, hd + 1.8)
+    ลายเกลียว(cx, sy + 0.55, shrz,  0,0,1,  0,1,0,  0.04, 0.18, 24,  FR * 0.35, hd + 1.8)
 
     # ── Books on lower shelf: 5 books = 5 pentatonic notes ──
-    令 by = 0 - H + 1.05
+    ผูก by = 0 - H + 1.05
     # Each book is a LINE shape (grid slab) offset along z — E3 pitch slide
-    vtex_grid(cx, by, cfz - 0.45,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 1.0)
-    vtex_grid(cx, by, cfz - 0.62,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 2.0)
-    vtex_grid(cx, by, cfz - 0.79,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 3.0)
-    vtex_grid(cx, by, cfz - 0.96,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 4.0)
-    vtex_grid(cx, by, cfz - 1.13,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 5.0)
+    ลายตาราง(cx, by, cfz - 0.45,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 1.0)
+    ลายตาราง(cx, by, cfz - 0.62,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 2.0)
+    ลายตาราง(cx, by, cfz - 0.79,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 3.0)
+    ลายตาราง(cx, by, cfz - 0.96,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 4.0)
+    ลายตาราง(cx, by, cfz - 1.13,  0,0,1,  0,1,0,  1, 6,  0.07, 0.26,  FR, hd + 5.0)
     # Book shelf slab
-    vtex_grid(cx, by - 0.11, cfz - 0.8,  0,0,1,  0,1,0,  6, 1,  0.55, 0.07,  FR, hd + 2.5)
+    ลายตาราง(cx, by - 0.11, cfz - 0.8,  0,0,1,  0,1,0,  6, 1,  0.55, 0.07,  FR, hd + 2.5)
 }
 
 
@@ -295,57 +295,57 @@
 #    Picture of trees — slow hyperbolic/yantra in a 4-ring frame
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_desk(FR, hd) {
-    令 dx  = 0 - 1.8
-    令 dz  = FZ * 0.41
-    令 dsy = 0 - H + 1.7    # desk surface y
-    令 mfz = dz + 0.22      # monitor face z
+ฟังก์ชัน draw_desk(FR, hd) {
+    ผูก dx  = 0 - 1.8
+    ผูก dz  = FZ * 0.41
+    ผูก dsy = 0 - H + 1.7    # desk surface y
+    ผูก mfz = dz + 0.22      # monitor face z
 
     # ── Desk surface (LINE — tessellated, E3) ──
     vtex_tessellated(dx, dsy, dz,  1,0,0,  0,0,1,  10, 4,  0.40, 0.09, 2.0,  FR, hd + 2.8)
 
     # Desk legs (DOT — four tiny chakras, C3)
-    vtex_chakra(dx - 0.82, 0-H+0.86, dz - 0.32,  0,0,1,  0,1,0,  0.04, 4,  FR, hd + 1.6)
-    vtex_chakra(dx + 0.82, 0-H+0.86, dz - 0.32,  0,0,1,  0,1,0,  0.04, 4,  FR, hd + 1.6)
+    ลายจักร(dx - 0.82, 0-H+0.86, dz - 0.32,  0,0,1,  0,1,0,  0.04, 4,  FR, hd + 1.6)
+    ลายจักร(dx + 0.82, 0-H+0.86, dz - 0.32,  0,0,1,  0,1,0,  0.04, 4,  FR, hd + 1.6)
 
     # ── Monitor ──
-    令 my = dsy + 0.94
+    ผูก my = dsy + 0.94
     # Frame: yantra + 4-ring (LINE — E3)
-    vtex_yantra(dx, my, mfz,         1,0,0,  0,1,0,  2, 0.84,  FR, hd + 1.1)
-    vtex_rings(dx, my, mfz,          1,0,0,  0,1,0,  1, 4,  0.86, 0.0,  FR * 0.5, hd + 0.7)
+    ลายยันต์(dx, my, mfz,         1,0,0,  0,1,0,  2, 0.84,  FR, hd + 1.1)
+    ลายวงซ้อน(dx, my, mfz,          1,0,0,  0,1,0,  1, 4,  0.86, 0.0,  FR * 0.5, hd + 0.7)
     # Screen: SM2-hash letter rain (hashes the monitor address uniquely)
-    令 hs = sm2_hash(3.7, 6.3,  FR * 0.0038,  FR * 0.0062)
+    ผูก hs = sm2_hash(3.7, 6.3,  FR * 0.0038,  FR * 0.0062)
     vtex_letter_rain(dx, my, mfz,    1,0,0,  0,1,0,  10, 7,  0.53, 0.46,  0.024 + hs*0.010,  FR, hd + 2.6)
     # Screen glow dot (DOT — C3 stable tone)
-    vtex_chakra(dx, my, mfz,         1,0,0,  0,1,0,  0.11, 1,  FR, hd + 0.5)
+    ลายจักร(dx, my, mfz,         1,0,0,  0,1,0,  0.11, 1,  FR, hd + 0.5)
 
     # ── Japanese Geisha Doll  (right of monitor) ──
-    令 gx = dx + 1.58
-    令 gy = dsy + 0.64
+    ผูก gx = dx + 1.58
+    ผูก gy = dsy + 0.64
     # Body: spiral (CURVE — G3 nested slide) — kimono silhouette
-    vtex_spiral(gx, gy,        dz,  1,0,0,  0,1,0,  0.09, 0.32, 48,  FR * 0.38, hd + 5.4)
+    ลายเกลียว(gx, gy,        dz,  1,0,0,  0,1,0,  0.09, 0.32, 48,  FR * 0.38, hd + 5.4)
     # Kimono: lotus petals (CURVE)
-    vtex_lotus(gx, gy + 0.07,  dz,  1,0,0,  0,1,0,  0.09, 0.30, 12,  FR * 0.48, hd + 4.9)
+    ลายดอกบัว(gx, gy + 0.07,  dz,  1,0,0,  0,1,0,  0.09, 0.30, 12,  FR * 0.48, hd + 4.9)
     # Obi sash: single ring (LINE — E3)
-    vtex_rings(gx, gy - 0.11,  dz,  1,0,0,  0,1,0,  1, 8,  0.13, 0.0,  FR * 0.28, hd + 6.1)
+    ลายวงซ้อน(gx, gy - 0.11,  dz,  1,0,0,  0,1,0,  1, 8,  0.13, 0.0,  FR * 0.28, hd + 6.1)
     # Head: small chakra dot (DOT — C3)
-    vtex_chakra(gx, gy + 0.44, dz,  1,0,0,  0,1,0,  0.08, 1,  FR, hd + 0.3)
+    ลายจักร(gx, gy + 0.44, dz,  1,0,0,  0,1,0,  0.08, 1,  FR, hd + 0.3)
     # Kanzashi headdress flower (CHORD — A3)
-    vtex_flower(gx, gy + 0.54, dz,  1,0,0,  0,1,0,  0.20, 8,  FR * 0.55, hd + 4.7)
+    ลายดอกไม้(gx, gy + 0.54, dz,  1,0,0,  0,1,0,  0.20, 8,  FR * 0.55, hd + 4.7)
 
     # ── Picture of Trees  (left of monitor) ──
-    令 px = dx - 1.76
-    令 py = my
+    ผูก px = dx - 1.76
+    ผูก py = my
     # Frame: 4-ring border (LINE — E3)
-    vtex_rings(px, py, mfz - 0.06,  1,0,0,  0,1,0,  1, 4,  0.78, 0.0,  FR, hd + 2.1)
+    ลายวงซ้อน(px, py, mfz - 0.06,  1,0,0,  0,1,0,  1, 4,  0.78, 0.0,  FR, hd + 2.1)
     # Tree canopy: slow hyperbolic — organic branching (CURVE — very slow FR)
     vtex_hyperbolic_uv(px, py, mfz - 0.06,  1,0,0,  0,1,0,  0.66, 7, 14,  FR * 0.048, hd + 2.7)
     # Tree trunk: single yantra (LINE — near-static)
-    vtex_yantra(px, py, mfz - 0.06,          1,0,0,  0,1,0,  3, 0.72,  FR * 0.038, hd + 1.9)
+    ลายยันต์(px, py, mfz - 0.06,          1,0,0,  0,1,0,  3, 0.72,  FR * 0.038, hd + 1.9)
     # Crown silhouette lotus (CURVE — slow, very natural)
-    vtex_lotus(px, py + 0.24, mfz - 0.06,   1,0,0,  0,1,0,  0.20, 0.62, 5,  FR * 0.042, hd + 3.1)
+    ลายดอกบัว(px, py + 0.24, mfz - 0.06,   1,0,0,  0,1,0,  0.20, 0.62, 5,  FR * 0.042, hd + 3.1)
     # Trunk dot (DOT — near-static C3)
-    vtex_chakra(px, py - 0.28, mfz - 0.06,  1,0,0,  0,1,0,  0.05, 1,  FR * 0.042, hd + 2.0)
+    ลายจักร(px, py - 0.28, mfz - 0.06,  1,0,0,  0,1,0,  0.05, 1,  FR * 0.042, hd + 2.0)
 }
 
 
@@ -354,35 +354,35 @@
 # Cheap subset: anchor shapes only (no letter-rain — would flicker badly)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_echo(FR, hd) {
-    令 fz = FZ * 0.50
-    令 fmid = (NZ + FZ) / 2.0
+ฟังก์ชัน draw_echo(FR, hd) {
+    ผูก fz = FZ * 0.50
+    ผูก fmid = (NZ + FZ) / 2.0
 
     # Floor compass echo
-    vtex_chakra(0, 0-H, fz,   1,0,0,  0,0,1,  5.8, 5,  FR, hd + 0.8)
-    vtex_rings(0, 0-H, fz,    1,0,0,  0,0,1,  3, 5,  5.2, 0.10,  FR, hd + 0.2)
+    ลายจักร(0, 0-H, fz,   1,0,0,  0,0,1,  5.8, 5,  FR, hd + 0.8)
+    ลายวงซ้อน(0, 0-H, fz,    1,0,0,  0,0,1,  3, 5,  5.2, 0.10,  FR, hd + 0.2)
 
     # Ceiling star echo
-    vtex_star(0, H, fz,       1,0,0,  0,0,1,  5, 2.0, 0.80, 0.05,  FR, hd + 0.0)
-    vtex_lotus(0, H, fz,      1,0,0,  0,0,1,  0.50, 1.80, 10,  FR, hd + 2.8)
+    ลายดาว(0, H, fz,       1,0,0,  0,0,1,  5, 2.0, 0.80, 0.05,  FR, hd + 0.0)
+    ลายดอกบัว(0, H, fz,      1,0,0,  0,0,1,  0.50, 1.80, 10,  FR, hd + 2.8)
 
     # Back wall star echo
-    vtex_star(0, 0, FZ,       1,0,0,  0,1,0,  5, 4.4, 1.75, 0.04,  FR, hd + 4.0)
+    ลายดาว(0, 0, FZ,       1,0,0,  0,1,0,  5, 4.4, 1.75, 0.04,  FR, hd + 4.0)
 
     # Left wall spiral echo
-    vtex_spiral(0-W, 0, fmid, 0,0,1,  0,1,0,  0.9, 3.0, 64,  FR, hd + 1.5)
+    ลายเกลียว(0-W, 0, fmid, 0,0,1,  0,1,0,  0.9, 3.0, 64,  FR, hd + 1.5)
 
     # Shrine echo
-    vtex_rings(W-0.75, 0-H+2.25, FZ*0.73+0.2,  0,0,1,  0,1,0,  2, 8,  0.28, 0.0,  FR * 0.55, hd + 1.3)
+    ลายวงซ้อน(W-0.75, 0-H+2.25, FZ*0.73+0.2,  0,0,1,  0,1,0,  2, 8,  0.28, 0.0,  FR * 0.55, hd + 1.3)
 
     # Closet hanging spiral echo
-    vtex_spiral(W-0.75-0.12, 0.18, FZ*0.73,  0,0,1,  0,1,0,  0.10, 0.52, 18,  FR * 0.13, hd + 5.4)
+    ลายเกลียว(W-0.75-0.12, 0.18, FZ*0.73,  0,0,1,  0,1,0,  0.10, 0.52, 18,  FR * 0.13, hd + 5.4)
 
     # Monitor dot echo
-    vtex_chakra(0-1.8, 0-H+2.64, FZ*0.41+0.22,  1,0,0,  0,1,0,  0.11, 1,  FR, hd + 0.5)
+    ลายจักร(0-1.8, 0-H+2.64, FZ*0.41+0.22,  1,0,0,  0,1,0,  0.11, 1,  FR, hd + 0.5)
 
     # Geisha flower echo
-    vtex_flower(0-1.8+1.58, 0-H+1.7+1.18, FZ*0.41,  1,0,0,  0,1,0,  0.20, 8,  FR * 0.55, hd + 4.7)
+    ลายดอกไม้(0-1.8+1.58, 0-H+1.7+1.18, FZ*0.41,  1,0,0,  0,1,0,  0.20, 8,  FR * 0.55, hd + 4.7)
 }
 
 
@@ -390,57 +390,57 @@
 # MAIN
 # ════════════════════════════════════════════════════════════════════════════
 
-令 启 = 执 {
+ผูก สร้าง = ทำ {
     เปิดหน้าต่างเต็มจอ("Lounge — The Synesthetic Room")
     capture_mouse()
-    set_ambient(0.08)
+    ตั้งแสงรอบข้าง(0.08)
     init_audio()
 
-    令 帧 = 0
+    ผูก 帧 = 0
 
     # Camera target — centre of the lounge
-    令 target_x = 0.0
-    令 target_y = 0.3
-    令 target_z = MZ
+    ผูก target_x = 0.0
+    ผูก target_y = 0.3
+    ผูก target_z = MZ
 
     # Hyperbolic orbit: intimate room — gentle floating survey
-    令 orbit_h  = 5.8
-    令 orbit_v  = 3.2
-    令 speed_h1 = 0.00120
-    令 speed_h2 = 0.00190
-    令 speed_v  = 0.00160
+    ผูก orbit_h  = 5.8
+    ผูก orbit_v  = 3.2
+    ผูก speed_h1 = 0.00120
+    ผูก speed_h2 = 0.00190
+    ผูก speed_v  = 0.00160
 
-    循 หน้าต่างเปิดอยู่() {
+    ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(4, 3, 10)    # deep indigo-violet night lounge
 
         # Rapid multi-hue cycling — full spectrum every ~114 frames
-        令 hd = 帧 * 0.055
+        ผูก hd = 帧 * 0.055
 
         # ── Hyperbolic floating orbit around lounge centre ────────────────
-        令 t1 = 帧 * speed_h1
-        令 t2 = 帧 * speed_h2
-        令 t3 = 帧 * speed_v
-        令 cam_px = target_x + sin(t1) * orbit_h * 0.85 + sin(t2 * 1.6) * orbit_h * 0.22
-        令 cam_pz = target_z + sin(t1 * 1.8) * orbit_h * 0.65 + cos(t2 * 1.3) * orbit_h * 0.20
-        令 cam_py = target_y + sin(t3 * 1.5) * orbit_v * 0.65 + cos(t3 * 0.8) * orbit_v * 0.28
+        ผูก t1 = 帧 * speed_h1
+        ผูก t2 = 帧 * speed_h2
+        ผูก t3 = 帧 * speed_v
+        ผูก cam_px = target_x + ไซน์(t1) * orbit_h * 0.85 + ไซน์(t2 * 1.6) * orbit_h * 0.22
+        ผูก cam_pz = target_z + ไซน์(t1 * 1.8) * orbit_h * 0.65 + โคไซน์(t2 * 1.3) * orbit_h * 0.20
+        ผูก cam_py = target_y + ไซน์(t3 * 1.5) * orbit_v * 0.65 + โคไซน์(t3 * 0.8) * orbit_v * 0.28
 
         # ── Look-at: always face lounge centre ────────────────────────────
-        令 dx = target_x - cam_px
-        令 dy = target_y - cam_py
-        令 dz = target_z - cam_pz
-        令 dist = sqrt(dx*dx + dy*dy + dz*dz)
-        若 dist > 0.0001 {
-            令 dx = dx / dist
-            令 dy = dy / dist
-            令 dz = dz / dist
+        ผูก dx = target_x - cam_px
+        ผูก dy = target_y - cam_py
+        ผูก dz = target_z - cam_pz
+        ผูก dist = รากที่สอง(dx*dx + dy*dy + dz*dz)
+        ถ้า dist > 0.0001 {
+            ผูก dx = dx / dist
+            ผูก dy = dy / dist
+            ผูก dz = dz / dist
         }
-        令 ry = atan2(dx, dz)
-        令 rx = asin(dy)
+        ผูก ry = atan2(dx, dz)
+        ผูก rx = asin(dy)
 
-        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(2.0)
-        audio_listener(cos(ry), sin(ry), cos(rx), sin(rx))
+        ตั้งกล้อง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
+        ตั้งระยะห่าง(2.0)
+        ผู้ฟัง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
 
         setup_lights(帧)
 
@@ -459,6 +459,6 @@
         draw_desk(帧, hd)
 
         แสดงผล()
-        令 帧 = 帧 + 1
+        ผูก 帧 = 帧 + 1
     }
 }

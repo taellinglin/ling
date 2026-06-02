@@ -5,14 +5,14 @@
 # Press Escape or close the window to quit.
 # ════════════════════════════════════════════════════════════════════════════
 
-fn draw_frame(frame) {
+ฟังก์ชัน draw_frame(frame) {
     # Dark background
     fill(10, 10, 20)
 
-    bind cx = 400
-    bind cy = 300
-    bind r1 = 200
-    bind r2 = 100
+    ผูก cx = 400
+    ผูก cy = 300
+    ผูก r1 = 200
+    ผูก r2 = 100
 
     # Three overlapping coloured triangles
     set_color(220, 60, 60)
@@ -43,13 +43,13 @@ fn draw_frame(frame) {
     line(0,   599, 0,   0)
 }
 
-bind start = do {
+ผูก start = ทำ {
     open_window(800, 600, "Ling Graphics Demo")
 
-    bind frame = 0
-    while window_is_open() {
+    ผูก frame = 0
+    ขณะที่ window_is_open() {
         draw_frame(frame)
-        present()
-        bind frame = frame + 1
+        แสดง()
+        ผูก frame = frame + 1
     }
 }

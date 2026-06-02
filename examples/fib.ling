@@ -1,15 +1,15 @@
 #!/usr/bin/env ling
 
-bind fib = (n: number) -> number {
-    if n <= 1 {
+ผูก fib = (n: number) -> number {
+    ถ้า n <= 1 {
         post n
-    } else {
+    } มิฉะนั้น {
         post fib(n - 1) + fib(n - 2)
     }
 }
 
-bind start = do {
-    for i in 0..10 {
-        print("fib(", i, ") = ", fib(i))
+ผูก start = ทำ {
+    สำหรับ i ใน 0..10 {
+        พิมพ์("fib(", i, ") = ", fib(i))
     }
 }

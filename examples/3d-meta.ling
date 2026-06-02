@@ -20,28 +20,28 @@
 
 
 # ── Screen globals — seeded into every function automatically ─────────────────
-bind CX    = get_width()  / 2
-bind CY    = get_height() / 2
-bind FOCAL = get_height()
-bind ZDIST = 5.0
-bind D4    = 3.5
+ผูก CX    = get_width()  / 2
+ผูก CY    = get_height() / 2
+ผูก FOCAL = get_height()
+ผูก ZDIST = 5.0
+ผูก D4    = 3.5
 
 
 # ── 4-D serpentine colour ─────────────────────────────────────────────────────
-fn สี4มิติ(ระดับ, หน้า, เฟรม) {
-    bind t = เฟรม * 0.025
-    bind p = ระดับ * 1.047 + หน้า * 0.785
-    bind w = sin(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
-    bind r = (sin(t + p)         * 127 + 128) * w
-    bind g = (sin(t + p + 2.094) * 127 + 128) * w
-    bind b = (sin(t + p + 4.189) * 127 + 128) * w
+ฟังก์ชัน สี4มิติ(ระดับ, หน้า, เฟรม) {
+    ผูก t = เฟรม * 0.025
+    ผูก p = ระดับ * 1.047 + หน้า * 0.785
+    ผูก w = ไซน์(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
+    ผูก r = (ไซน์(t + p)         * 127 + 128) * w
+    ผูก g = (ไซน์(t + p + 2.094) * 127 + 128) * w
+    ผูก b = (ไซน์(t + p + 4.189) * 127 + 128) * w
     สีดินสอ(r, g, b)
 }
 
 
 # ── Sierpiński tetrahedron — paint large→small, uses depth+lighting pipeline ──
 # No camera params needed — set_camera is called once per frame.
-fn วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, ระดับ, เฟรม) {
+ฟังก์ชัน วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz, ระดับ, เฟรม) {
     สี4มิติ(ระดับ, 0, เฟรม)
     วาดสามเหลี่ยม3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz)
     สี4มิติ(ระดับ, 1, เฟรม)
@@ -52,13 +52,13 @@ fn วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, 
     วาดสามเหลี่ยม3มิติ(bx, by, bz, cx, cy, cz, dx, dy, dz)
 
     ถ้า ระดับ > 0 {
-        bind ด = ระดับ - 1
-        bind mabx = (ax+bx)/2   bind maby = (ay+by)/2   bind mabz = (az+bz)/2
-        bind macx = (ax+cx)/2   bind macy = (ay+cy)/2   bind macz = (az+cz)/2
-        bind madx = (ax+dx)/2   bind mady = (ay+dy)/2   bind madz = (az+dz)/2
-        bind mbcx = (bx+cx)/2   bind mbcy = (by+cy)/2   bind mbcz = (bz+cz)/2
-        bind mbdx = (bx+dx)/2   bind mbdy = (by+dy)/2   bind mbdz = (bz+dz)/2
-        bind mcdx = (cx+dx)/2   bind mcdy = (cy+dy)/2   bind mcdz = (cz+dz)/2
+        ผูก ด = ระดับ - 1
+        ผูก mabx = (ax+bx)/2   ผูก maby = (ay+by)/2   ผูก mabz = (az+bz)/2
+        ผูก macx = (ax+cx)/2   ผูก macy = (ay+cy)/2   ผูก macz = (az+cz)/2
+        ผูก madx = (ax+dx)/2   ผูก mady = (ay+dy)/2   ผูก madz = (az+dz)/2
+        ผูก mbcx = (bx+cx)/2   ผูก mbcy = (by+cy)/2   ผูก mbcz = (bz+cz)/2
+        ผูก mbdx = (bx+dx)/2   ผูก mbdy = (by+dy)/2   ผูก mbdz = (bz+dz)/2
+        ผูก mcdx = (cx+dx)/2   ผูก mcdy = (cy+dy)/2   ผูก mcdz = (cz+dz)/2
         วาดเซียร์3มิติ(ax,   ay,   az,   mabx, maby, mabz, macx, macy, macz, madx, mady, madz, ด, เฟรม)
         วาดเซียร์3มิติ(mabx, maby, mabz, bx,   by,   bz,   mbcx, mbcy, mbcz, mbdx, mbdy, mbdz, ด, เฟรม)
         วาดเซียร์3มิติ(macx, macy, macz, mbcx, mbcy, mbcz, cx,   cy,   cz,   mcdx, mcdy, mcdz, ด, เฟรม)
@@ -71,34 +71,34 @@ fn วาดเซียร์3มิติ(ax, ay, az, bx, by, bz, cx, cy, cz, 
 # ca/sa = XW rotation,  cb/sb = YW rotation.
 # After 4D→3D projection the 3D coords go straight into วาดเส้น3มิติ which
 # applies the stored camera and queues the line for depth-sorted drawing.
-fn tesseract_edge(ax, ay, az, aw, bx, by, bz, bw, ca, sa, cb, sb) {
+ฟังก์ชัน tesseract_edge(ax, ay, az, aw, bx, by, bz, bw, ca, sa, cb, sb) {
     # vertex A: 4D XW rotation
-    bind ax4 = ax * ca - aw * sa
-    bind aw4 = ax * sa + aw * ca
+    ผูก ax4 = ax * ca - aw * sa
+    ผูก aw4 = ax * sa + aw * ca
     # vertex A: 4D YW rotation
-    bind ay4 = ay * cb - aw4 * sb
-    bind aw5 = ay * sb + aw4 * cb
+    ผูก ay4 = ay * cb - aw4 * sb
+    ผูก aw5 = ay * sb + aw4 * cb
     # vertex A: 4D→3D stereographic
-    bind ad  = aw5 + D4
-    bind ax3 = ax4 / ad
-    bind ay3 = ay4 / ad
-    bind az3 = az  / ad
+    ผูก ad  = aw5 + D4
+    ผูก ax3 = ax4 / ad
+    ผูก ay3 = ay4 / ad
+    ผูก az3 = az  / ad
     # vertex B: same pipeline
-    bind bx4 = bx * ca - bw * sa
-    bind bw4 = bx * sa + bw * ca
-    bind by4 = by * cb - bw4 * sb
-    bind bw5 = by * sb + bw4 * cb
-    bind bd  = bw5 + D4
-    bind bx3 = bx4 / bd
-    bind by3 = by4 / bd
-    bind bz3 = bz  / bd
+    ผูก bx4 = bx * ca - bw * sa
+    ผูก bw4 = bx * sa + bw * ca
+    ผูก by4 = by * cb - bw4 * sb
+    ผูก bw5 = by * sb + bw4 * cb
+    ผูก bd  = bw5 + D4
+    ผูก bx3 = bx4 / bd
+    ผูก by3 = by4 / bd
+    ผูก bz3 = bz  / bd
     # Depth-queued line — camera applied inside วาดเส้น3มิติ
     วาดเส้น3มิติ(ax3, ay3, az3, bx3, by3, bz3)
 }
 
 
 # ── 12 edges of one cubic hyperface at w = cw ─────────────────────────────────
-fn cube4d(s, cw, ca, sa, cb, sb) {
+ฟังก์ชัน cube4d(s, cw, ca, sa, cb, sb) {
     tesseract_edge(-s,-s,-s,cw,  s,-s,-s,cw, ca,sa,cb,sb)
     tesseract_edge( s,-s,-s,cw,  s, s,-s,cw, ca,sa,cb,sb)
     tesseract_edge( s, s,-s,cw, -s, s,-s,cw, ca,sa,cb,sb)
@@ -115,24 +115,24 @@ fn cube4d(s, cw, ca, sa, cb, sb) {
 
 
 # ── Full tesseract: outer (w=+s) warm + inner (w=−s) cool + 8 connectors ──────
-fn draw_tesseract(s, ca, sa, cb, sb, fr) {
-    bind tw = fr * 0.023
+ฟังก์ชัน draw_tesseract(s, ca, sa, cb, sb, fr) {
+    ผูก tw = fr * 0.023
     # outer cube — warm cycling hues
-    bind ro = sin(tw)         * 100 + 155
-    bind go = sin(tw + 2.094) * 100 + 155
-    bind bo = sin(tw + 4.189) * 100 + 155
+    ผูก ro = ไซน์(tw)         * 100 + 155
+    ผูก go = ไซน์(tw + 2.094) * 100 + 155
+    ผูก bo = ไซน์(tw + 4.189) * 100 + 155
     สีดินสอ(ro, go, bo)
     cube4d(s,  s, ca, sa, cb, sb)
     # inner cube — complementary cool hues (π phase shift)
-    bind ri = sin(tw + pi)         * 100 + 155
-    bind gi = sin(tw + pi + 2.094) * 100 + 155
-    bind bi = sin(tw + pi + 4.189) * 100 + 155
+    ผูก ri = ไซน์(tw + pi)         * 100 + 155
+    ผูก gi = ไซน์(tw + pi + 2.094) * 100 + 155
+    ผูก bi = ไซน์(tw + pi + 4.189) * 100 + 155
     สีดินสอ(ri, gi, bi)
     cube4d(s, -s, ca, sa, cb, sb)
     # 8 connector edges — bright, faster oscillation
-    bind rc = sin(tw * 1.4)         * 90 + 165
-    bind gc = sin(tw * 1.4 + 2.094) * 90 + 165
-    bind bc = sin(tw * 1.4 + 4.189) * 90 + 165
+    ผูก rc = ไซน์(tw * 1.4)         * 90 + 165
+    ผูก gc = ไซน์(tw * 1.4 + 2.094) * 90 + 165
+    ผูก bc = ไซน์(tw * 1.4 + 4.189) * 90 + 165
     สีดินสอ(rc, gc, bc)
     tesseract_edge(-s,-s,-s, s, -s,-s,-s,-s, ca,sa,cb,sb)
     tesseract_edge( s,-s,-s, s,  s,-s,-s,-s, ca,sa,cb,sb)
@@ -153,7 +153,7 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
     capture_mouse()
 
     # Ambient light — dim purple fill so shadow sides stay visible
-    set_ambient(0.12)
+    ตั้งแสงรอบข้าง(0.12)
 
     # Regular tetrahedron (r = 1.8) + dual (stella octangula)
     ผูก r   = 1.8
@@ -184,7 +184,7 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
 
         # ── camera ──────────────────────────────────────────────────────────
         ผูก ry  = เฟรม * 0.013
-        ผูก rx  = sin(เฟรม * 0.009) * 0.55
+        ผูก rx  = ไซน์(เฟรม * 0.009) * 0.55
         ผูก mdx = mouse_dx()
         ผูก mdy = mouse_dy()
         ผูก any_input = 0
@@ -213,10 +213,10 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
             ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
             ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
             ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
-            ผูก fwd_x = sin(cam_ry_snap + cam_ry_off)
-            ผูก fwd_z = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_x = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
+            ผูก fwd_x = ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - ไซน์(cam_ry_snap + cam_ry_off)
             ผูก spd = 0.12
             ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
             ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
@@ -236,29 +236,29 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
             ผูก cam_py = cam_py * 0.97
             ผูก cam_pz = cam_pz * 0.97
         }
-        ผูก cry = cos(cam_ry_snap + cam_ry_off)   ผูก sry = sin(cam_ry_snap + cam_ry_off)
-        ผูก crx = cos(cam_rx_snap + cam_rx_off)   ผูก srx = sin(cam_rx_snap + cam_rx_off)
+        ผูก cry = โคไซน์(cam_ry_snap + cam_ry_off)   ผูก sry = ไซน์(cam_ry_snap + cam_ry_off)
+        ผูก crx = โคไซน์(cam_rx_snap + cam_rx_off)   ผูก srx = ไซน์(cam_rx_snap + cam_rx_off)
         # Store camera in GfxState — all 3D draw calls use it automatically
-        set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
+        ตั้งกล้อง(cry, sry, crx, srx)
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
+        ตั้งระยะห่าง(cam_zdist)
 
         # ── 4D rotation angles ───────────────────────────────────────────────
-        ผูก ca = cos(เฟรม * 0.017)   ผูก sa = sin(เฟรม * 0.017)
-        ผูก cb = cos(เฟรม * 0.011)   ผูก sb = sin(เฟรม * 0.011)
+        ผูก ca = โคไซน์(เฟรม * 0.017)   ผูก sa = ไซน์(เฟรม * 0.017)
+        ผูก cb = โคไซน์(เฟรม * 0.011)   ผูก sb = ไซน์(เฟรม * 0.011)
 
         # ── lights (updated each frame so they orbit with the scene) ─────────
         # Key light — warm white, orbiting above-right
-        clear_lights()
-        add_light(
-            sin(เฟรม * 0.017) * 4.0,
+        ล้างแสง()
+        เพิ่มแสง(
+            ไซน์(เฟรม * 0.017) * 4.0,
             0 - 3.5,
-            cos(เฟรม * 0.017) * 4.0,
+            โคไซน์(เฟรม * 0.017) * 4.0,
             1.0, 0.92, 0.80,    # warm white
             2.2, 9.0            # intensity, radius
         )
         # Fill light — cool blue, from the left
-        add_light(
+        เพิ่มแสง(
             0 - 3.0,
             1.5,
             2.0,
@@ -266,10 +266,10 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
             1.0, 7.0
         )
         # Accent — magenta rim from behind
-        add_light(
-            0 - sin(เฟรม * 0.011) * 3.5,
+        เพิ่มแสง(
+            0 - ไซน์(เฟรม * 0.011) * 3.5,
             1.0,
-            0 - cos(เฟรม * 0.011) * 3.5,
+            0 - โคไซน์(เฟรม * 0.011) * 3.5,
             1.0, 0.25, 0.8,     # magenta
             0.8, 5.5
         )
@@ -288,10 +288,10 @@ fn draw_tesseract(s, ca, sa, cb, sb, fr) {
         ผูก sc   = 0.38
         ผูก spin = เฟรม * 0.010
 
-        for k in 0..6 {
+        สำหรับ k ใน 0..6 {
             ผูก theta = k * 1.0472 + spin
-            ผูก tx = RR * cos(theta)
-            ผูก tz = RR * sin(theta)
+            ผูก tx = RR * โคไซน์(theta)
+            ผูก tz = RR * ไซน์(theta)
             ผูก p0x = v0x * sc + tx   ผูก p0y = v0y * sc   ผูก p0z = v0z * sc + tz
             ผูก p1x = v1x * sc + tx   ผูก p1y = v1y * sc   ผูก p1z = v1z * sc + tz
             ผูก p2x = v2x * sc + tx   ผูก p2y = v2y * sc   ผูก p2z = v2z * sc + tz

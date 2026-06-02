@@ -19,28 +19,28 @@
 # ════════════════════════════════════════════════════════════════════════════
 
 # ── World constants ───────────────────────────────────────────────────────────
-令 W   = 9.0      # half-width of room
-令 H   = 4.5      # half-height of room
-令 FZ  = 16.0     # far-wall z
-令 NZ  = 1.2      # near-wall z
-令 AZ  = FZ * 0.55  # altar z (mid-back)
-令 PI  = 3.14159265
-令 PI2 = 1.5708    # π/2
-令 PI4 = 0.7854    # π/4
+ผูก W   = 9.0      # half-width of room
+ผูก H   = 4.5      # half-height of room
+ผูก FZ  = 16.0     # far-wall z
+ผูก NZ  = 1.2      # near-wall z
+ผูก AZ  = FZ * 0.55  # altar z (mid-back)
+ผูก PI  = 3.14159265
+ผูก PI2 = 1.5708    # π/2
+ผูก PI4 = 0.7854    # π/4
 
 # Hue anchors for cultural palette
-令 GOLD    = 1.57    # warm gold / amber
-令 JADE    = 3.50    # jade green
-令 CRIMSON = 2.10    # deep crimson
-令 IVORY   = 0.30    # near-white ivory
+ผูก GOLD    = 1.57    # warm gold / amber
+ผูก JADE    = 3.50    # jade green
+ผูก CRIMSON = 2.10    # deep crimson
+ผูก IVORY   = 0.30    # near-white ivory
 
 
 # ── Colour helper (dim, fixed tone around a hue anchor) ──────────────────────
-函 col(FR, anchor, drift) {
+ฟังก์ชัน col(FR, anchor, drift) {
     สีดินสอ(
-        (sin(FR * 0.005 + anchor + drift)         * 90 + 165),
-        (sin(FR * 0.005 + anchor + drift + 2.094) * 90 + 165),
-        (sin(FR * 0.005 + anchor + drift + 4.189) * 90 + 165)
+        (ไซน์(FR * 0.005 + anchor + drift)         * 90 + 165),
+        (ไซน์(FR * 0.005 + anchor + drift + 2.094) * 90 + 165),
+        (ไซน์(FR * 0.005 + anchor + drift + 4.189) * 90 + 165)
     )
 }
 
@@ -50,20 +50,20 @@
 # Centred on the altar platform, facing outward (vertical disc)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_altar_mandala(FR) {
-    令 bob = sin(FR * 0.008) * 0.12     # gentle breathing float
+ฟังก์ชัน draw_altar_mandala(FR) {
+    ผูก bob = ไซน์(FR * 0.008) * 0.12     # gentle breathing float
 
     # Outer spiked cog (18 teeth, gold)
-    vtex_spiked_cog(0, bob, AZ,  1,0,0,  0,1,0,  18, 1.60, 2.00, 0.28, 9,  FR * 0.0004, GOLD)
+    ฟันเฟืองหนาม(0, bob, AZ,  1,0,0,  0,1,0,  18, 1.60, 2.00, 0.28, 9,  FR * 0.0004, GOLD)
 
     # Dharma wheel inside the cog (jade, counter-slow)
-    vtex_chakra(0, bob, AZ,  1,0,0,  0,1,0,  1.30, 8,  0 - FR * 0.0003, JADE)
+    ลายจักร(0, bob, AZ,  1,0,0,  0,1,0,  1.30, 8,  0 - FR * 0.0003, JADE)
 
     # Inner lotus (crimson)
-    vtex_lotus(0, bob, AZ,  1,0,0,  0,1,0,  0.38, 1.08, 8,  FR * 0.0005, CRIMSON)
+    ลายดอกบัว(0, bob, AZ,  1,0,0,  0,1,0,  0.38, 1.08, 8,  FR * 0.0005, CRIMSON)
 
     # Innermost dot rings — the jewel at the centre
-    vtex_rings(0, bob, AZ,  1,0,0,  0,1,0,  2, 24,  0.20, 0.0,  0 - FR * 0.0006, IVORY)
+    ลายวงซ้อน(0, bob, AZ,  1,0,0,  0,1,0,  2, 24,  0.20, 0.0,  0 - FR * 0.0006, IVORY)
 }
 
 
@@ -71,14 +71,14 @@
 # ALTAR PLATFORM — a raised stone dais beneath the mandala
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_altar_platform(FR) {
-    令 dy = 0 - H * 0.65    # altar sits on the floor
+ฟังก์ชัน draw_altar_platform(FR) {
+    ผูก dy = 0 - H * 0.65    # altar sits on the floor
 
     # Stone dais: nested square frames (floor plane)
-    vtex_yantra(0, dy, AZ,  1,0,0,  0,0,1,  3, 2.20,  FR * 0.0001, GOLD)
+    ลายยันต์(0, dy, AZ,  1,0,0,  0,0,1,  3, 2.20,  FR * 0.0001, GOLD)
 
     # Altar top ring (horizontal disc above yantra)
-    vtex_rings(0, dy, AZ,  1,0,0,  0,0,1,  2, 32,  1.80, 0.0,  FR * 0.0002, IVORY)
+    ลายวงซ้อน(0, dy, AZ,  1,0,0,  0,0,1,  2, 32,  1.80, 0.0,  FR * 0.0002, IVORY)
 }
 
 
@@ -87,27 +87,27 @@
 # Positions: four quadrant corners just inside the walls
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_pillar(FR, px, pz, phase) {
+ฟังก์ชัน draw_pillar(FR, px, pz, phase) {
     # Vase silhouette: 6 horizontal rings at varying radii
-    vtex_rings(px, 0 - H * 0.85, pz,  1,0,0,  0,0,1,  1, 8,  0.22, 0.0,  FR * 0.0003, GOLD + phase)
-    vtex_rings(px, 0 - H * 0.50, pz,  1,0,0,  0,0,1,  1, 8,  0.42, 0.0,  FR * 0.0003, GOLD + phase)
-    vtex_rings(px, 0 - H * 0.10, pz,  1,0,0,  0,0,1,  1, 8,  0.52, 0.0,  FR * 0.0003, GOLD + phase)
-    vtex_rings(px,  H * 0.10, pz,     1,0,0,  0,0,1,  1, 8,  0.48, 0.0,  FR * 0.0003, GOLD + phase)
-    vtex_rings(px,  H * 0.50, pz,     1,0,0,  0,0,1,  1, 8,  0.36, 0.0,  FR * 0.0003, GOLD + phase)
-    vtex_rings(px,  H * 0.85, pz,     1,0,0,  0,0,1,  1, 8,  0.20, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px, 0 - H * 0.85, pz,  1,0,0,  0,0,1,  1, 8,  0.22, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px, 0 - H * 0.50, pz,  1,0,0,  0,0,1,  1, 8,  0.42, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px, 0 - H * 0.10, pz,  1,0,0,  0,0,1,  1, 8,  0.52, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px,  H * 0.10, pz,     1,0,0,  0,0,1,  1, 8,  0.48, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px,  H * 0.50, pz,     1,0,0,  0,0,1,  1, 8,  0.36, 0.0,  FR * 0.0003, GOLD + phase)
+    ลายวงซ้อน(px,  H * 0.85, pz,     1,0,0,  0,0,1,  1, 8,  0.20, 0.0,  FR * 0.0003, GOLD + phase)
 
     # Spiked cog capital (top of pillar)
-    vtex_spiked_cog(px, H * 0.88, pz,  1,0,0,  0,0,1,  12, 0.36, 0.52, 0.12, 6,  FR * 0.0005 + phase, JADE + phase)
+    ฟันเฟืองหนาม(px, H * 0.88, pz,  1,0,0,  0,0,1,  12, 0.36, 0.52, 0.12, 6,  FR * 0.0005 + phase, JADE + phase)
 
     # Lotus foot (bottom of pillar)
-    vtex_lotus(px, 0 - H * 0.88, pz,  1,0,0,  0,0,1,  0.10, 0.28, 8,  FR * 0.0004, CRIMSON + phase)
+    ลายดอกบัว(px, 0 - H * 0.88, pz,  1,0,0,  0,0,1,  0.10, 0.28, 8,  FR * 0.0004, CRIMSON + phase)
 }
 
-函 draw_4_pillars(FR) {
-    令 px1 =  W * 0.70
-    令 px2 = 0 - W * 0.70
-    令 pz1 = AZ - W * 0.55
-    令 pz2 = AZ + W * 0.55
+ฟังก์ชัน draw_4_pillars(FR) {
+    ผูก px1 =  W * 0.70
+    ผูก px2 = 0 - W * 0.70
+    ผูก pz1 = AZ - W * 0.55
+    ผูก pz2 = AZ + W * 0.55
 
     draw_pillar(FR,  px1, pz1, 0.0)
     draw_pillar(FR,  px1, pz2, PI4)
@@ -120,19 +120,19 @@
 # TORII GATE + PAGODA — the far wall focal point
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_far_shrine(FR) {
+ฟังก์ชัน draw_far_shrine(FR) {
     # Torii gate on the back wall (vertical plane: U=right, V=up)
-    vtex_torii(0, 0, FZ,  1,0,0,  0,1,0,  6.0, H * 1.4,  FR * 0.0001, CRIMSON)
+    ประตูโทริอิ(0, 0, FZ,  1,0,0,  0,1,0,  6.0, H * 1.4,  FR * 0.0001, CRIMSON)
 
     # 5-tier pagoda behind the gate (slightly recessed, centred)
-    vtex_pagoda(0, 0, FZ,  1,0,0,  0,1,0,  5, 2.2, H * 0.38, 0.72, 0.30,  FR * 0.0001, GOLD)
+    เจดีย์(0, 0, FZ,  1,0,0,  0,1,0,  5, 2.2, H * 0.38, 0.72, 0.30,  FR * 0.0001, GOLD)
 
     # Flanking lanterns on back wall (pair of ring clusters)
-    vtex_rings(0 - 4.0, 0, FZ,  1,0,0,  0,1,0,  3, 16,  0.50, 0.04,  FR * 0.0004, GOLD)
-    vtex_rings( 4.0,    0, FZ,  1,0,0,  0,1,0,  3, 16,  0.50, 0.04,  FR * 0.0004, GOLD)
+    ลายวงซ้อน(0 - 4.0, 0, FZ,  1,0,0,  0,1,0,  3, 16,  0.50, 0.04,  FR * 0.0004, GOLD)
+    ลายวงซ้อน( 4.0,    0, FZ,  1,0,0,  0,1,0,  3, 16,  0.50, 0.04,  FR * 0.0004, GOLD)
 
     # Inscription star at gate apex
-    vtex_star(0, H * 0.72, FZ,  1,0,0,  0,1,0,  8, 0.70, 0.32, 0.0002,  FR, IVORY)
+    ลายดาว(0, H * 0.72, FZ,  1,0,0,  0,1,0,  8, 0.70, 0.32, 0.0002,  FR, IVORY)
 }
 
 
@@ -140,15 +140,15 @@
 # FLOOR — stone-tile grid + yantra border
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_floor(FR) {
-    令 cy  = 0 - H
-    令 fmid = FZ / 2
+ฟังก์ชัน draw_floor(FR) {
+    ผูก cy  = 0 - H
+    ผูก fmid = FZ / 2
 
     # Stone-tile grid (8 cols × 6 rows, 2.0 × 2.5 per tile)
-    vtex_grid(0, cy, fmid,  1,0,0,  0,0,1,  8, 6,  2.0, 2.5,  FR * 0.0001, IVORY)
+    ลายตาราง(0, cy, fmid,  1,0,0,  0,0,1,  8, 6,  2.0, 2.5,  FR * 0.0001, IVORY)
 
     # Yantra border around the floor perimeter
-    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  4, W * 0.92,  FR * 0.0001, JADE)
+    ลายยันต์(0, cy, fmid,  1,0,0,  0,0,1,  4, W * 0.92,  FR * 0.0001, JADE)
 }
 
 
@@ -156,15 +156,15 @@
 # CEILING — hanging lantern chandelier
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_ceiling(FR) {
-    令 cy   = H
-    令 fmid = FZ / 2
+ฟังก์ชัน draw_ceiling(FR) {
+    ผูก cy   = H
+    ผูก fmid = FZ / 2
 
     # Central star lantern
-    vtex_star(0, cy, fmid,  1,0,0,  0,0,1,  16, W * 0.80, W * 0.38, 0.0001,  FR, GOLD)
+    ลายดาว(0, cy, fmid,  1,0,0,  0,0,1,  16, W * 0.80, W * 0.38, 0.0001,  FR, GOLD)
 
     # Three concentric rings (ceiling beams)
-    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  3, 36,  W * 0.72, 0.0,  FR * 0.0002, IVORY)
+    ลายวงซ้อน(0, cy, fmid,  1,0,0,  0,0,1,  3, 36,  W * 0.72, 0.0,  FR * 0.0002, IVORY)
 }
 
 
@@ -172,16 +172,16 @@
 # SIDE WALLS — brushwork ink panels
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_walls(FR) {
-    令 fmid = (NZ + FZ) / 2
+ฟังก์ชัน draw_walls(FR) {
+    ผูก fmid = (NZ + FZ) / 2
 
     # Left wall: sparse kanji/brushwork rain + lotus medallion
     vtex_letter_rain(0 - W, 0, fmid,  0,0,1,  0,1,0,  16, 10,  0.68, 0.62,  0.006,  FR, IVORY)
-    vtex_lotus(0 - W, 0, fmid,  0,0,1,  0,1,0,  0.8, 2.4, 8,  FR * 0.0003, JADE)
+    ลายดอกบัว(0 - W, 0, fmid,  0,0,1,  0,1,0,  0.8, 2.4, 8,  FR * 0.0003, JADE)
 
     # Right wall: mirror
     vtex_letter_rain( W, 0, fmid,  0,0,1,  0,1,0,  16, 10,  0.68, 0.62,  0.006,  FR, IVORY)
-    vtex_lotus( W, 0, fmid,  0,0,1,  0,1,0,  0.8, 2.4, 8,  FR * 0.0003, CRIMSON)
+    ลายดอกบัว( W, 0, fmid,  0,0,1,  0,1,0,  0.8, 2.4, 8,  FR * 0.0003, CRIMSON)
 }
 
 
@@ -189,16 +189,16 @@
 # AUDIO — five-tone pentatonic bell circle (very quiet, slow LFO)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 init_audio() {
+ฟังก์ชัน init_audio() {
     # Pentatonic: 宫(C4) 商(D4) 角(E4) 徵(G4) 羽(A4)
-    audio_tone(0,  0,       0,  AZ,      1.5,  261.63, 0.06, 0.08, 0.006)
-    audio_tone(1,  W*0.7,   0,  AZ,      1.5,  293.66, 0.05, 0.06, 0.005)
-    audio_tone(2,  0 - W*0.7, 0, AZ,    1.5,  329.63, 0.05, 0.06, 0.005)
-    audio_tone(3,  0,       0,  AZ + 3,  1.5,  392.00, 0.05, 0.10, 0.007)
-    audio_tone(4,  0,       H,  FZ / 2,  0.8,  440.00, 0.04, 0.14, 0.008)
+    เสียง(0,  0,       0,  AZ,      1.5,  261.63, 0.06, 0.08, 0.006)
+    เสียง(1,  W*0.7,   0,  AZ,      1.5,  293.66, 0.05, 0.06, 0.005)
+    เสียง(2,  0 - W*0.7, 0, AZ,    1.5,  329.63, 0.05, 0.06, 0.005)
+    เสียง(3,  0,       0,  AZ + 3,  1.5,  392.00, 0.05, 0.10, 0.007)
+    เสียง(4,  0,       H,  FZ / 2,  0.8,  440.00, 0.04, 0.14, 0.008)
     # Sub-bass earth pulse (very faint)
-    audio_tone(5,  0, 0 - H,  FZ / 2,  0.3,   65.41, 0.03, 0.04, 0.003)
-    audio_volume(0.35)
+    เสียง(5,  0, 0 - H,  FZ / 2,  0.3,   65.41, 0.03, 0.04, 0.003)
+    ระดับเสียง(0.35)
 }
 
 
@@ -206,27 +206,27 @@
 # LIGHTS — five-element calm lighting
 # ════════════════════════════════════════════════════════════════════════════
 
-函 setup_lights(FR) {
-    clear_lights()
+ฟังก์ชัน setup_lights(FR) {
+    ล้างแสง()
 
     # Overhead gold — main shrine lamp, slow orbit
-    add_light(
-        sin(FR * 0.0025) * 2.0, 4.0, AZ,
+    เพิ่มแสง(
+        ไซน์(FR * 0.0025) * 2.0, 4.0, AZ,
         1.0, 0.85, 0.30,  2.8, 18.0
     )
 
     # Altar glow — warm uplight from the dais
-    add_light(0, 0 - H * 0.5, AZ,  0.90, 0.60, 0.10,  1.5, 8.0)
+    เพิ่มแสง(0, 0 - H * 0.5, AZ,  0.90, 0.60, 0.10,  1.5, 8.0)
 
     # Left pillar — jade accent
-    令 jb = sin(FR * 0.0088) * 0.12 + 0.88
-    add_light(0 - W * 0.6, 0, AZ - 1.0,  0.05 * jb, 0.75 * jb, 0.30 * jb,  1.2, 9.0)
+    ผูก jb = ไซน์(FR * 0.0088) * 0.12 + 0.88
+    เพิ่มแสง(0 - W * 0.6, 0, AZ - 1.0,  0.05 * jb, 0.75 * jb, 0.30 * jb,  1.2, 9.0)
 
     # Right pillar — crimson accent (mirror)
-    add_light( W * 0.6, 0, AZ - 1.0,  0.80, 0.10, 0.06,  1.2, 9.0)
+    เพิ่มแสง( W * 0.6, 0, AZ - 1.0,  0.80, 0.10, 0.06,  1.2, 9.0)
 
     # Gate lamp (back, high)
-    add_light(0, H * 0.8, FZ - 1.0,  1.0, 0.90, 0.40,  1.0, 12.0)
+    เพิ่มแสง(0, H * 0.8, FZ - 1.0,  1.0, 0.90, 0.40,  1.0, 12.0)
 }
 
 
@@ -234,37 +234,37 @@
 # MAIN
 # ════════════════════════════════════════════════════════════════════════════
 
-令 启 = 执 {
+ผูก สร้าง = ทำ {
     เปิดหน้าต่างเต็มจอ("道场 — Dàochǎng  Temple of the Way")
     capture_mouse()
-    set_ambient(0.12)
+    ตั้งแสงรอบข้าง(0.12)
     init_audio()
 
-    令 帧 = 0
+    ผูก 帧 = 0
 
     # Slow pendulum camera: gentle arc around the altar
-    令 orbit_r   = 6.5
-    令 orbit_spd = 0.00025
-    令 bob_spd   = 0.00055
+    ผูก orbit_r   = 6.5
+    ผูก orbit_spd = 0.00025
+    ผูก bob_spd   = 0.00055
 
-    循 หน้าต่างเปิดอยู่() {
+    ขณะที่ หน้าต่างเปิดอยู่() {
         # Deep ink-black background
         เติม(4, 2, 10)
 
-        令 hd = 帧 * 0.003    # very slow global hue drift
+        ผูก hd = 帧 * 0.003    # very slow global hue drift
 
         # ── Camera: gentle pendulum arc ──────────────────────────────────────
-        令 ry = sin(帧 * orbit_spd) * 0.52   # ±30° swing
-        令 rx = sin(帧 * bob_spd)   * 0.14   # slight vertical nod
+        ผูก ry = ไซน์(帧 * orbit_spd) * 0.52   # ±30° swing
+        ผูก rx = ไซน์(帧 * bob_spd)   * 0.14   # slight vertical nod
 
-        令 cam_x = sin(ry) * orbit_r
-        令 cam_z = AZ - cos(ry) * orbit_r
-        令 cam_y = sin(rx) * 1.5
+        ผูก cam_x = ไซน์(ry) * orbit_r
+        ผูก cam_z = AZ - โคไซน์(ry) * orbit_r
+        ผูก cam_y = ไซน์(rx) * 1.5
 
-        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
-        set_camera_pos(cam_x, cam_y, cam_z)
-        set_zdist(2.0)
-        audio_listener(cos(ry), sin(ry), cos(rx), sin(rx))
+        ตั้งกล้อง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
+        ตั้งตำแหน่งกล้อง(cam_x, cam_y, cam_z)
+        ตั้งระยะห่าง(2.0)
+        ผู้ฟัง(โคไซน์(ry), ไซน์(ry), โคไซน์(rx), ไซน์(rx))
 
         setup_lights(帧)
 
@@ -278,6 +278,6 @@
         draw_altar_mandala(帧)
 
         แสดงผล()
-        令 帧 = 帧 + 1
+        ผูก 帧 = 帧 + 1
     }
 }

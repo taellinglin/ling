@@ -16,7 +16,7 @@
 # ─── 3-D projected triangle ──────────────────────────────────────────────────
 # รับ cos/sin ที่คำนวณล่วงหน้า 1 ครั้งต่อเฟรม เพื่อความเร็ว
 # cry=cos(ry)  sry=sin(ry)  crx=cos(rx)  srx=sin(rx)
-fn tri3d(ax, ay, az,
+ฟังก์ชัน tri3d(ax, ay, az,
          bx, by, bz,
          cx, cy, cz,
          cry, sry, crx, srx) {
@@ -49,13 +49,13 @@ fn tri3d(ax, ay, az,
 # มิติ 2: ระดับ * 1.047               (ความลึก fractal — เหลื่อม 60°)
 # มิติ 3: หน้า * 0.785                (หน้าพีระมิด 0–3 — เหลื่อม 45°)
 # มิติ 4: คลื่น w ที่ความถี่ต่างกัน   (ความสว่าง "หายใจ" เป็นพัลส์)
-fn สี4มิติ(ระดับ, หน้า, เฟรม) {
+ฟังก์ชัน สี4มิติ(ระดับ, หน้า, เฟรม) {
     ผูก t = เฟรม * 0.025
     ผูก p = ระดับ * 1.047 + หน้า * 0.785
-    ผูก w = sin(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
-    ผูก r = (sin(t + p)         * 127 + 128) * w
-    ผูก g = (sin(t + p + 2.094) * 127 + 128) * w
-    ผูก b = (sin(t + p + 4.189) * 127 + 128) * w
+    ผูก w = ไซน์(เฟรม * 0.071 + ระดับ * 2.094) * 0.35 + 0.65
+    ผูก r = (ไซน์(t + p)         * 127 + 128) * w
+    ผูก g = (ไซน์(t + p + 2.094) * 127 + 128) * w
+    ผูก b = (ไซน์(t + p + 4.189) * 127 + 128) * w
     สีดินสอ(r, g, b)
 }
 
@@ -63,7 +63,7 @@ fn สี4มิติ(ระดับ, หน้า, เฟรม) {
 # a b c d = 4 มุมของพีระมิด
 # วาดพีระมิดใหญ่ก่อน → recurse ลงไปใน 4 มุมย่อย ซึ่งเขียนทับ
 # ช่องว่างกลาง (octahedron) จะเก็บสีระดับแม่ไว้ — สร้างแพทเทิร์น fractal
-fn วาดเซียร์3มิติ(ax, ay, az,
+ฟังก์ชัน วาดเซียร์3มิติ(ax, ay, az,
                    bx, by, bz,
                    cx, cy, cz,
                    dx, dy, dz,
@@ -166,7 +166,7 @@ fn วาดเซียร์3มิติ(ax, ay, az,
 
         # วงโคจรหมุน: Y หมุนรอบต่อเนื่อง, X แกว่งเป็นไซน์
         ผูก ry = เฟรม * 0.018
-        ผูก rx = sin(เฟรม * 0.011) * 0.75
+        ผูก rx = ไซน์(เฟรม * 0.011) * 0.75
         ผูก mdx = mouse_dx()
         ผูก mdy = mouse_dy()
         ผูก any_input = 0
@@ -195,10 +195,10 @@ fn วาดเซียร์3มิติ(ax, ay, az,
             ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
             ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
             ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
-            ผูก fwd_x = sin(cam_ry_snap + cam_ry_off)
-            ผูก fwd_z = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_x = cos(cam_ry_snap + cam_ry_off)
-            ผูก rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
+            ผูก fwd_x = ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - ไซน์(cam_ry_snap + cam_ry_off)
             ผูก spd = 0.12
             ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
             ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
@@ -219,13 +219,13 @@ fn วาดเซียร์3มิติ(ax, ay, az,
             ผูก cam_pz = cam_pz * 0.97
         }
         # คำนวณ cos/sin เพียงครั้งเดียวต่อเฟรม (ประหยัดเวลา)
-        ผูก cry = cos(cam_ry_snap + cam_ry_off)
-        ผูก sry = sin(cam_ry_snap + cam_ry_off)
-        ผูก crx = cos(cam_rx_snap + cam_rx_off)
-        ผูก srx = sin(cam_rx_snap + cam_rx_off)
-        set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
+        ผูก cry = โคไซน์(cam_ry_snap + cam_ry_off)
+        ผูก sry = ไซน์(cam_ry_snap + cam_ry_off)
+        ผูก crx = โคไซน์(cam_rx_snap + cam_rx_off)
+        ผูก srx = ไซน์(cam_rx_snap + cam_rx_off)
+        ตั้งกล้อง(cry, sry, crx, srx)
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
+        ตั้งระยะห่าง(cam_zdist)
 
         # ══ พีระมิดที่ 1: Sierpiński tetrahedron ════════════════════════════
         วาดเซียร์3มิติ(v0x, v0y, v0z,

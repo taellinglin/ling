@@ -25,31 +25,31 @@
 #  Quit: Escape or close window
 # ════════════════════════════════════════════════════════════════════════════
 
-令 W  = 9.0     # 半宽  half-width  (side walls x = ±W)
-令 H  = 4.5     # 半高  half-height (floor y=-H, ceiling y=+H)
-令 FZ = 16.0    # 远壁  far-wall z
-令 NZ = 1.4     # 近壁  near-wall z
-令 PZ = 8.0     # 宝塔轴 pagoda axis z-centre
-令 PR = 1.10    # 宝塔核半径 pagoda core radius
+ผูก W  = 9.0     # 半宽  half-width  (side walls x = ±W)
+ผูก H  = 4.5     # 半高  half-height (floor y=-H, ceiling y=+H)
+ผูก FZ = 16.0    # 远壁  far-wall z
+ผูก NZ = 1.4     # 近壁  near-wall z
+ผูก PZ = 8.0     # 宝塔轴 pagoda axis z-centre
+ผูก PR = 1.10    # 宝塔核半径 pagoda core radius
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # 颜色助手  COLOUR HELPERS
 # ════════════════════════════════════════════════════════════════════════════
 
-函 col(t, p) {
+ฟังก์ชัน col(t, p) {
     สีดินสอ(
-        sin(t + p)         * 127 + 128,
-        sin(t + p + 2.094) * 127 + 128,
-        sin(t + p + 4.189) * 127 + 128
+        ไซน์(t + p)         * 127 + 128,
+        ไซน์(t + p + 2.094) * 127 + 128,
+        ไซน์(t + p + 4.189) * 127 + 128
     )
 }
 
-函 col_dim(t, p, b) {
+ฟังก์ชัน col_dim(t, p, b) {
     สีดินสอ(
-        (sin(t + p)         * 127 + 128) * b,
-        (sin(t + p + 2.094) * 127 + 128) * b,
-        (sin(t + p + 4.189) * 127 + 128) * b
+        (ไซน์(t + p)         * 127 + 128) * b,
+        (ไซน์(t + p + 2.094) * 127 + 128) * b,
+        (ไซน์(t + p + 4.189) * 127 + 128) * b
     )
 }
 
@@ -58,17 +58,17 @@
 # 太极核心  TAIJI CORE  (yin-yang counter-rotating ring pair)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_taiji(FR, hd) {
-    令 bob = sin(FR * 0.022) * 0.30
+ฟังก์ชัน draw_taiji(FR, hd) {
+    ผูก bob = ไซน์(FR * 0.022) * 0.30
 
     # Yang rings — clockwise, warm gold hue
-    vtex_rings(0, bob, PZ,  1,0,0,  0,0,1,  4, 32,  PR, 0.0,  FR, 1.2 + hd)
+    ลายวงซ้อน(0, bob, PZ,  1,0,0,  0,0,1,  4, 32,  PR, 0.0,  FR, 1.2 + hd)
     # Yin rings — counter-clockwise (0-FR), jade-green hue
-    vtex_rings(0, bob, PZ,  1,0,0,  0,0,1,  4, 32,  PR, 0.15,  0-FR, 5.8 + hd)
+    ลายวงซ้อน(0, bob, PZ,  1,0,0,  0,0,1,  4, 32,  PR, 0.15,  0-FR, 5.8 + hd)
     # Central lotus
-    vtex_lotus(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.28, PR * 0.72, 12,  FR, 0.5 + hd)
+    ลายดอกบัว(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.28, PR * 0.72, 12,  FR, 0.5 + hd)
     # Outer petal crown
-    vtex_flower(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.48, 24,  FR, 3.2 + hd)
+    ลายดอกไม้(0, bob, PZ,  1,0,0,  0,0,1,  PR * 0.48, 24,  FR, 3.2 + hd)
 }
 
 
@@ -76,10 +76,10 @@
 # 宝塔层  SINGLE PAGODA TIER  (chakra disc + lotus ring + halo)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 tier(y, r, sp, FR, hd) {
-    vtex_chakra(0, y, PZ,  1,0,0,  0,0,1,  r, sp,  FR, 1.1 + hd)
-    vtex_lotus(0, y, PZ,  1,0,0,  0,0,1,  r * 0.44, r * 0.88, sp,  FR, 0.0 + hd)
-    vtex_rings(0, y, PZ,  1,0,0,  0,0,1,  1, 36,  r * 1.08, 0.0,  FR, 4.5 + hd)
+ฟังก์ชัน tier(y, r, sp, FR, hd) {
+    ลายจักร(0, y, PZ,  1,0,0,  0,0,1,  r, sp,  FR, 1.1 + hd)
+    ลายดอกบัว(0, y, PZ,  1,0,0,  0,0,1,  r * 0.44, r * 0.88, sp,  FR, 0.0 + hd)
+    ลายวงซ้อน(0, y, PZ,  1,0,0,  0,0,1,  1, 36,  r * 1.08, 0.0,  FR, 4.5 + hd)
 }
 
 
@@ -87,11 +87,11 @@
 # 宝塔柱  FULL PAGODA COLUMN  (7 tiers + crown + dragon arms)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_pagoda(FR, hd) {
+ฟังก์ชัน draw_pagoda(FR, hd) {
     draw_taiji(FR, hd)
 
     # Grand lotus at floor base
-    vtex_lotus(0, 0-H+0.5, PZ,  1,0,0,  0,0,1,  1.1, 2.9, 16,  FR, 0.0 + hd)
+    ลายดอกบัว(0, 0-H+0.5, PZ,  1,0,0,  0,0,1,  1.1, 2.9, 16,  FR, 0.0 + hd)
 
     # 7 ascending tiers — (y, radius, spokes)
     tier(0-3.2, 2.20, 8,  FR, hd)
@@ -103,24 +103,24 @@
     tier( H-0.6, 0.58, 8, FR, hd)
 
     # Crown: 8-point star (北极星 North Star) + flower
-    vtex_star(0, H-0.3, PZ,  1,0,0,  0,0,1,  8, 1.18, 0.48, 0.038,  FR, 0.6 + hd)
-    vtex_flower(0, H-0.3, PZ,  1,0,0,  0,0,1,  0.62, 16,  FR, 2.5 + hd)
+    ลายดาว(0, H-0.3, PZ,  1,0,0,  0,0,1,  8, 1.18, 0.48, 0.038,  FR, 0.6 + hd)
+    ลายดอกไม้(0, H-0.3, PZ,  1,0,0,  0,0,1,  0.62, 16,  FR, 2.5 + hd)
 
     # 4 dragon arm spirals — cardinal diagonals (naga serpent heads)
-    vtex_spiral(0-3.5, 0, PZ-2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 0.8 + hd)
-    vtex_spiral( 3.5,  0, PZ-2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 0.8 + hd + 3.14159)
-    vtex_spiral(0-3.5, 0, PZ+2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 2.0 + hd)
-    vtex_spiral( 3.5,  0, PZ+2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 2.0 + hd + 3.14159)
+    ลายเกลียว(0-3.5, 0, PZ-2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 0.8 + hd)
+    ลายเกลียว( 3.5,  0, PZ-2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 0.8 + hd + 3.14159)
+    ลายเกลียว(0-3.5, 0, PZ+2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 2.0 + hd)
+    ลายเกลียว( 3.5,  0, PZ+2.5,  1,0,0,  0,0,1,  3.0, 2.8, 72,  FR, 2.0 + hd + 3.14159)
 
     # Dragon ring stacks (naga scale rings)
-    vtex_rings(0-3.5, 0, PZ-2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 1.5 + hd)
-    vtex_rings( 3.5,  0, PZ-2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 4.7 + hd)
-    vtex_rings(0-3.5, 0, PZ+2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 2.9 + hd)
-    vtex_rings( 3.5,  0, PZ+2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 6.1 + hd)
+    ลายวงซ้อน(0-3.5, 0, PZ-2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 1.5 + hd)
+    ลายวงซ้อน( 3.5,  0, PZ-2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 4.7 + hd)
+    ลายวงซ้อน(0-3.5, 0, PZ+2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 2.9 + hd)
+    ลายวงซ้อน( 3.5,  0, PZ+2.5,  1,0,0,  0,0,1,  2, 18,  1.6, 0.22,  FR, 6.1 + hd)
 
     # Pagoda aura: equatorial lotus halo + ring corona
-    vtex_lotus(0, 0, PZ,  1,0,0,  0,1,0,  1.4, 2.2, 12,  FR, 5.2 + hd)
-    vtex_rings(0, 0, PZ,  1,0,0,  0,1,0,  3, 40,  2.4, 0.10,  FR, 6.0 + hd)
+    ลายดอกบัว(0, 0, PZ,  1,0,0,  0,1,0,  1.4, 2.2, 12,  FR, 5.2 + hd)
+    ลายวงซ้อน(0, 0, PZ,  1,0,0,  0,1,0,  3, 40,  2.4, 0.10,  FR, 6.0 + hd)
 }
 
 
@@ -128,48 +128,48 @@
 # 殿堂面  ROOM SURFACES
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_floor(FR, hd) {
-    令 cy   = 0 - H
-    令 fmid = FZ / 2
+ฟังก์ชัน draw_floor(FR, hd) {
+    ผูก cy   = 0 - H
+    ผูก fmid = FZ / 2
     # Tessellated wave field — Đông Sơn drum / paddy-field ripple
     vtex_tessellated(0, cy, fmid,  1,0,0,  0,0,1,  18, 14,  0.70, 0.28, 5.0,  FR, 1.2 + hd)
     # Mandala yantra (bhupura + interlocked triangles)
-    vtex_yantra(0, cy, fmid,  1,0,0,  0,0,1,  4, 4.6,  FR, 0.0 + hd)
+    ลายยันต์(0, cy, fmid,  1,0,0,  0,0,1,  4, 4.6,  FR, 0.0 + hd)
     # Perspective grid
-    vtex_grid(0, cy, fmid,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5 + hd)
+    ลายตาราง(0, cy, fmid,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5 + hd)
 }
 
-函 draw_ceiling(FR, hd) {
-    令 cy   = H
-    令 fmid = FZ / 2
+ฟังก์ชัน draw_ceiling(FR, hd) {
+    ผูก cy   = H
+    ผูก fmid = FZ / 2
     # Bagua cosmic disc — Poincaré-disc hyperbolic UV
     vtex_hyperbolic_uv(0, cy, fmid,  1,0,0,  0,0,1,  6.0, 14, 16,  FR, 2.5 + hd)
     # Flower of Life 八花
-    vtex_flower(0, cy, fmid,  1,0,0,  0,0,1,  2.2, 8,  FR, 1.0 + hd)
+    ลายดอกไม้(0, cy, fmid,  1,0,0,  0,0,1,  2.2, 8,  FR, 1.0 + hd)
     # Outer cosmos ring
-    vtex_rings(0, cy, fmid,  1,0,0,  0,0,1,  2, 40,  6.4, 0.02,  FR, 4.2 + hd)
+    ลายวงซ้อน(0, cy, fmid,  1,0,0,  0,0,1,  2, 40,  6.4, 0.02,  FR, 4.2 + hd)
 }
 
-函 draw_front_wall(FR, hd) {
+ฟังก์ชัน draw_front_wall(FR, hd) {
     vtex_letter_rain(0, 0, NZ,  1,0,0,  0,1,0,  28, 16,  0.64, 0.58,  0.018,  FR, 0.0 + hd)
 }
 
-函 draw_back_wall(FR, hd) {
+ฟังก์ชัน draw_back_wall(FR, hd) {
     vtex_letter_rain(0, 0, FZ,  1,0,0,  0,1,0,  28, 16,  0.64, 0.58,  0.024,  FR, 2.1 + hd)
     # Angkor portal glyph
-    vtex_chakra(0, 0, FZ,  1,0,0,  0,1,0,  4.0, 10,  FR, 0.3 + hd)
-    vtex_rings(0, 0, FZ,  1,0,0,  0,1,0,  3, 40,  4.6, 0.03,  FR, 3.3 + hd)
+    ลายจักร(0, 0, FZ,  1,0,0,  0,1,0,  4.0, 10,  FR, 0.3 + hd)
+    ลายวงซ้อน(0, 0, FZ,  1,0,0,  0,1,0,  3, 40,  4.6, 0.03,  FR, 3.3 + hd)
 }
 
-函 draw_left_wall(FR, hd) {
-    令 cx   = 0 - W
-    令 fmid = (NZ + FZ) / 2
+ฟังก์ชัน draw_left_wall(FR, hd) {
+    ผูก cx   = 0 - W
+    ผูก fmid = (NZ + FZ) / 2
     vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  24, 16,  0.64, 0.58,  0.022,  FR, 4.0 + hd)
 }
 
-函 draw_right_wall(FR, hd) {
-    令 cx   = W
-    令 fmid = (NZ + FZ) / 2
+ฟังก์ชัน draw_right_wall(FR, hd) {
+    ผูก cx   = W
+    ผูก fmid = (NZ + FZ) / 2
     vtex_letter_rain(cx, 0, fmid,  0,0,1,  0,1,0,  24, 16,  0.64, 0.58,  0.018,  FR, 1.5 + hd)
 }
 
@@ -178,22 +178,22 @@
 # 回声帧  ECHO PASS (structural elements only — cheap, for temporal smear)
 # ════════════════════════════════════════════════════════════════════════════
 
-函 draw_echo(FR, hd) {
-    令 cy_f = 0 - H
-    令 cy_c = H
-    令 fm   = FZ / 2
+ฟังก์ชัน draw_echo(FR, hd) {
+    ผูก cy_f = 0 - H
+    ผูก cy_c = H
+    ผูก fm   = FZ / 2
 
     # Floor: mandala + grid (no expensive tessellation)
-    vtex_yantra(0, cy_f, fm,  1,0,0,  0,0,1,  4, 4.6,  FR, 0.0 + hd)
-    vtex_grid(0, cy_f, fm,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5 + hd)
+    ลายยันต์(0, cy_f, fm,  1,0,0,  0,0,1,  4, 4.6,  FR, 0.0 + hd)
+    ลายตาราง(0, cy_f, fm,  1,0,0,  0,0,1,  28, 24,  0.64, 0.64,  FR, 3.5 + hd)
 
     # Ceiling: outer ring + flower
-    vtex_rings(0, cy_c, fm,  1,0,0,  0,0,1,  2, 40,  6.4, 0.02,  FR, 4.2 + hd)
-    vtex_flower(0, cy_c, fm,  1,0,0,  0,0,1,  2.2, 8,  FR, 1.0 + hd)
+    ลายวงซ้อน(0, cy_c, fm,  1,0,0,  0,0,1,  2, 40,  6.4, 0.02,  FR, 4.2 + hd)
+    ลายดอกไม้(0, cy_c, fm,  1,0,0,  0,0,1,  2.2, 8,  FR, 1.0 + hd)
 
     # Back portal
-    vtex_chakra(0, 0, FZ,  1,0,0,  0,1,0,  4.0, 10,  FR, 0.3 + hd)
-    vtex_rings(0, 0, FZ,  1,0,0,  0,1,0,  3, 40,  4.6, 0.03,  FR, 3.3 + hd)
+    ลายจักร(0, 0, FZ,  1,0,0,  0,1,0,  4.0, 10,  FR, 0.3 + hd)
+    ลายวงซ้อน(0, 0, FZ,  1,0,0,  0,1,0,  3, 40,  4.6, 0.03,  FR, 3.3 + hd)
 
     # Pagoda: sparse tiers + core (no dragon arms)
     draw_taiji(FR, hd)
@@ -201,7 +201,7 @@
     tier(0-0.8, 1.58, 10, FR, hd)
     tier( 1.6,  1.06, 12, FR, hd)
     tier( H-0.6, 0.58, 8, FR, hd)
-    vtex_star(0, H-0.3, PZ,  1,0,0,  0,0,1,  8, 1.18, 0.48, 0.038,  FR, 0.6 + hd)
+    ลายดาว(0, H-0.3, PZ,  1,0,0,  0,0,1,  8, 1.18, 0.48, 0.038,  FR, 0.6 + hd)
 }
 
 
@@ -209,28 +209,28 @@
 # 灯光  LIGHTS
 # ════════════════════════════════════════════════════════════════════════════
 
-函 setup_lights(FR) {
-    clear_lights()
+ฟังก์ชัน setup_lights(FR) {
+    ล้างแสง()
     # Warm gold key — orbiting above pagoda (蜡烛 temple candle)
-    add_light(
-        sin(FR * 0.0082) * 4.0,
+    เพิ่มแสง(
+        ไซน์(FR * 0.0082) * 4.0,
         3.8,
-        cos(FR * 0.0082) * 2.0 + PZ,
+        โคไซน์(FR * 0.0082) * 2.0 + PZ,
         1.0, 0.82, 0.38,
         3.0, 14.0
     )
     # Jade fill — cool green from left (玉石 jade statue glow)
-    add_light(0-5.0, 1.5, PZ,  0.22, 0.72, 0.52,  1.4, 11.0)
+    เพิ่มแสง(0-5.0, 1.5, PZ,  0.22, 0.72, 0.52,  1.4, 11.0)
     # Vermilion rim — right rear (香 incense ember)
-    add_light(
-        sin(FR * 0.0057) * 3.0,
+    เพิ่มแสง(
+        ไซน์(FR * 0.0057) * 3.0,
         0.3,
-        0-cos(FR * 0.0057) * 2.0 + PZ,
+        0-โคไซน์(FR * 0.0057) * 2.0 + PZ,
         0.92, 0.16, 0.10,
         1.0, 9.0
     )
     # Deep indigo under-fill (影 floor shadow)
-    add_light(0, 0-3.5, PZ,  0.20, 0.08, 0.58,  0.5, 7.0)
+    เพิ่มแสง(0, 0-3.5, PZ,  0.20, 0.08, 0.58,  0.5, 7.0)
 }
 
 
@@ -240,109 +240,109 @@
 # LFO 0.12–0.50 Hz = natural breathing — like monks sustaining sine tones
 # ════════════════════════════════════════════════════════════════════════════
 
-函 init_audio() {
+ฟังก์ชัน init_audio() {
     # slot   x      y     z     w      freq      amp   lfo_hz  lfo_depth
-    audio_tone(0,  0,  0-H,  PZ,  1.5,  130.81,  0.12,  0.18,  0.012)  # 宫C3  floor
-    audio_tone(1,  0,  0-H,  FZ,  2.0,   65.41,  0.10,  0.12,  0.008)  # 宫C2  sub-bass
-    audio_tone(2, 0-W,  0,   PZ,  2.0,  196.00,  0.09,  0.25,  0.015)  # 徵G3  left
-    audio_tone(3,  W,   0,   PZ,  2.0,  220.00,  0.09,  0.30,  0.018)  # 羽A3  right
-    audio_tone(4,  0,   H,   PZ,  0.5,  146.83,  0.07,  0.22,  0.013)  # 商D3  ceiling
-    audio_tone(5,  0,   0,   FZ,  1.2,  164.81,  0.08,  0.36,  0.020)  # 角E3  portal
-    audio_tone(6,  0,   0,   PZ,  1.0,  261.63,  0.07,  0.15,  0.010)  # 宫C4  octave spine
-    audio_tone(7, 0-3.5, 0, PZ-2.5, 3.0, 392.00, 0.06,  0.44,  0.022)  # 徵G4  dragon L
-    audio_tone(8,  3.5,  0, PZ+2.5, 3.0, 440.00, 0.06,  0.50,  0.025)  # 羽A4  dragon R
-    audio_volume(0.60)
+    เสียง(0,  0,  0-H,  PZ,  1.5,  130.81,  0.12,  0.18,  0.012)  # 宫C3  floor
+    เสียง(1,  0,  0-H,  FZ,  2.0,   65.41,  0.10,  0.12,  0.008)  # 宫C2  sub-bass
+    เสียง(2, 0-W,  0,   PZ,  2.0,  196.00,  0.09,  0.25,  0.015)  # 徵G3  left
+    เสียง(3,  W,   0,   PZ,  2.0,  220.00,  0.09,  0.30,  0.018)  # 羽A3  right
+    เสียง(4,  0,   H,   PZ,  0.5,  146.83,  0.07,  0.22,  0.013)  # 商D3  ceiling
+    เสียง(5,  0,   0,   FZ,  1.2,  164.81,  0.08,  0.36,  0.020)  # 角E3  portal
+    เสียง(6,  0,   0,   PZ,  1.0,  261.63,  0.07,  0.15,  0.010)  # 宫C4  octave spine
+    เสียง(7, 0-3.5, 0, PZ-2.5, 3.0, 392.00, 0.06,  0.44,  0.022)  # 徵G4  dragon L
+    เสียง(8,  3.5,  0, PZ+2.5, 3.0, 440.00, 0.06,  0.50,  0.025)  # 羽A4  dragon R
+    ระดับเสียง(0.60)
 }
 
 
 # ════════════════════════════════════════════════════════════════════════════
 # 启动  MAIN
 # ════════════════════════════════════════════════════════════════════════════
-令 启 = 执 {
+ผูก สร้าง = ทำ {
     เปิดหน้าต่างเต็มจอ("East Asian Chan Temple — 東亞禪寺")
     capture_mouse()
-    set_ambient(0.05)
+    ตั้งแสงรอบข้าง(0.05)
 
     init_audio()
 
-    令 帧 = 0
+    ผูก 帧 = 0
 
-    令 cam_px = 0.0
-    令 cam_py = 0.0
-    令 cam_pz = 0.0
-    令 cam_zdist = 2.0
-    令 cam_ry_off = 0.0
-    令 cam_rx_off = 0.0
-    令 cam_idle = 0
-    令 cam_manual = 0
-    令 cam_ry_snap = 0.0
-    令 cam_rx_snap = 0.0
+    ผูก cam_px = 0.0
+    ผูก cam_py = 0.0
+    ผูก cam_pz = 0.0
+    ผูก cam_zdist = 2.0
+    ผูก cam_ry_off = 0.0
+    ผูก cam_rx_off = 0.0
+    ผูก cam_idle = 0
+    ผูก cam_manual = 0
+    ผูก cam_ry_snap = 0.0
+    ผูก cam_rx_snap = 0.0
 
-    循 หน้าต่างเปิดอยู่() {
+    ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(2, 0, 1)    # deep lacquer-black (tiny red hint)
 
         # ── Camera: very slow pendulum sway — stable, meditative ─────────────
         # Horizontal: sin sway  ±0.22 rad (≈13°), period ~2500 frames
         # Vertical:   very subtle nod ±0.08 rad (≈5°), period ~3700 frames
-        令 ry  = sin(帧 * 0.00042) * 0.22
-        令 rx  = sin(帧 * 0.00028) * 0.08
-        令 mdx = mouse_dx()
-        令 mdy = mouse_dy()
-        令 any_input = 0
-        若 key_down("w")      { 令 any_input = 1 }
-        若 key_down("s")      { 令 any_input = 1 }
-        若 key_down("a")      { 令 any_input = 1 }
-        若 key_down("d")      { 令 any_input = 1 }
-        若 key_down("space")  { 令 any_input = 1 }
-        若 key_down("lshift") { 令 any_input = 1 }
-        若 key_down("left")   { 令 any_input = 1 }
-        若 key_down("right")  { 令 any_input = 1 }
-        若 key_down("up")     { 令 any_input = 1 }
-        若 key_down("down")   { 令 any_input = 1 }
-        若 mdx * mdx + mdy * mdy > 0.25 { 令 any_input = 1 }
-        若 any_input == 1 { 令 cam_manual = 1; 令 cam_idle = 0 }
-        若 cam_manual == 1 {
-            令 cam_idle = cam_idle + 1
-            若 cam_idle > 300 { 令 cam_manual = 0; 令 cam_idle = 0 }
+        ผูก ry  = ไซน์(帧 * 0.00042) * 0.22
+        ผูก rx  = ไซน์(帧 * 0.00028) * 0.08
+        ผูก mdx = mouse_dx()
+        ผูก mdy = mouse_dy()
+        ผูก any_input = 0
+        ถ้า key_down("w")      { ผูก any_input = 1 }
+        ถ้า key_down("s")      { ผูก any_input = 1 }
+        ถ้า key_down("a")      { ผูก any_input = 1 }
+        ถ้า key_down("d")      { ผูก any_input = 1 }
+        ถ้า key_down("space")  { ผูก any_input = 1 }
+        ถ้า key_down("lshift") { ผูก any_input = 1 }
+        ถ้า key_down("left")   { ผูก any_input = 1 }
+        ถ้า key_down("right")  { ผูก any_input = 1 }
+        ถ้า key_down("up")     { ผูก any_input = 1 }
+        ถ้า key_down("down")   { ผูก any_input = 1 }
+        ถ้า mdx * mdx + mdy * mdy > 0.25 { ผูก any_input = 1 }
+        ถ้า any_input == 1 { ผูก cam_manual = 1; ผูก cam_idle = 0 }
+        ถ้า cam_manual == 1 {
+            ผูก cam_idle = cam_idle + 1
+            ถ้า cam_idle > 300 { ผูก cam_manual = 0; ผูก cam_idle = 0 }
         }
-        若 cam_manual == 1 {
-            令 cam_ry_off = cam_ry_off + mdx * 0.0022
-            令 cam_rx_off = cam_rx_off + mdy * 0.0022
-            若 cam_rx_off > 3.14159  { 令 cam_rx_off = 3.14159 }
-            若 cam_rx_off < -3.14159 { 令 cam_rx_off = -3.14159 }
-            若 key_down("left")  { 令 cam_ry_off = cam_ry_off - 0.018 }
-            若 key_down("right") { 令 cam_ry_off = cam_ry_off + 0.018 }
-            若 key_down("up")    { 令 cam_rx_off = cam_rx_off - 0.018 }
-            若 key_down("down")  { 令 cam_rx_off = cam_rx_off + 0.018 }
-            令 fwd_x = sin(cam_ry_snap + cam_ry_off)
-            令 fwd_z = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_x = cos(cam_ry_snap + cam_ry_off)
-            令 rgt_z = 0.0 - sin(cam_ry_snap + cam_ry_off)
-            令 spd = 0.12
-            若 key_down("w") { 令 cam_px = cam_px + fwd_x * spd; 令 cam_pz = cam_pz + fwd_z * spd }
-            若 key_down("s") { 令 cam_px = cam_px - fwd_x * spd; 令 cam_pz = cam_pz - fwd_z * spd }
-            若 key_down("a") { 令 cam_px = cam_px - rgt_x * spd; 令 cam_pz = cam_pz - rgt_z * spd }
-            若 key_down("d") { 令 cam_px = cam_px + rgt_x * spd; 令 cam_pz = cam_pz + rgt_z * spd }
-            若 key_down("space")  { 令 cam_py = cam_py + spd }
-            若 key_down("lshift") { 令 cam_py = cam_py - spd }
-            若 key_pressed("numpad+") { 令 cam_zdist = cam_zdist + 0.5 }
-            若 key_pressed("numpad-") { 令 cam_zdist = cam_zdist - 0.5; 若 cam_zdist < 0.5 { 令 cam_zdist = 0.5 } }
+        ถ้า cam_manual == 1 {
+            ผูก cam_ry_off = cam_ry_off + mdx * 0.0022
+            ผูก cam_rx_off = cam_rx_off + mdy * 0.0022
+            ถ้า cam_rx_off > 3.14159  { ผูก cam_rx_off = 3.14159 }
+            ถ้า cam_rx_off < -3.14159 { ผูก cam_rx_off = -3.14159 }
+            ถ้า key_down("left")  { ผูก cam_ry_off = cam_ry_off - 0.018 }
+            ถ้า key_down("right") { ผูก cam_ry_off = cam_ry_off + 0.018 }
+            ถ้า key_down("up")    { ผูก cam_rx_off = cam_rx_off - 0.018 }
+            ถ้า key_down("down")  { ผูก cam_rx_off = cam_rx_off + 0.018 }
+            ผูก fwd_x = ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก fwd_z = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_x = โคไซน์(cam_ry_snap + cam_ry_off)
+            ผูก rgt_z = 0.0 - ไซน์(cam_ry_snap + cam_ry_off)
+            ผูก spd = 0.12
+            ถ้า key_down("w") { ผูก cam_px = cam_px + fwd_x * spd; ผูก cam_pz = cam_pz + fwd_z * spd }
+            ถ้า key_down("s") { ผูก cam_px = cam_px - fwd_x * spd; ผูก cam_pz = cam_pz - fwd_z * spd }
+            ถ้า key_down("a") { ผูก cam_px = cam_px - rgt_x * spd; ผูก cam_pz = cam_pz - rgt_z * spd }
+            ถ้า key_down("d") { ผูก cam_px = cam_px + rgt_x * spd; ผูก cam_pz = cam_pz + rgt_z * spd }
+            ถ้า key_down("space")  { ผูก cam_py = cam_py + spd }
+            ถ้า key_down("lshift") { ผูก cam_py = cam_py - spd }
+            ถ้า key_pressed("numpad+") { ผูก cam_zdist = cam_zdist + 0.5 }
+            ถ้า key_pressed("numpad-") { ผูก cam_zdist = cam_zdist - 0.5; ถ้า cam_zdist < 0.5 { ผูก cam_zdist = 0.5 } }
         }
-        若 cam_manual == 0 {
-            令 cam_ry_snap = ry
-            令 cam_rx_snap = rx
-            令 cam_ry_off = cam_ry_off * 0.97
-            令 cam_rx_off = cam_rx_off * 0.97
-            令 cam_px = cam_px * 0.97
-            令 cam_py = cam_py * 0.97
-            令 cam_pz = cam_pz * 0.97
+        ถ้า cam_manual == 0 {
+            ผูก cam_ry_snap = ry
+            ผูก cam_rx_snap = rx
+            ผูก cam_ry_off = cam_ry_off * 0.97
+            ผูก cam_rx_off = cam_rx_off * 0.97
+            ผูก cam_px = cam_px * 0.97
+            ผูก cam_py = cam_py * 0.97
+            ผูก cam_pz = cam_pz * 0.97
         }
-        令 cry = cos(cam_ry_snap + cam_ry_off)   令 sry = sin(cam_ry_snap + cam_ry_off)
-        令 crx = cos(cam_rx_snap + cam_rx_off)   令 srx = sin(cam_rx_snap + cam_rx_off)
-        set_camera(cry, sry, crx, srx)
-        set_camera_pos(cam_px, cam_py, cam_pz)
-        set_zdist(cam_zdist)
-        audio_listener(cry, sry, crx, srx)
+        ผูก cry = โคไซน์(cam_ry_snap + cam_ry_off)   ผูก sry = ไซน์(cam_ry_snap + cam_ry_off)
+        ผูก crx = โคไซน์(cam_rx_snap + cam_rx_off)   ผูก srx = ไซน์(cam_rx_snap + cam_rx_off)
+        ตั้งกล้อง(cry, sry, crx, srx)
+        ตั้งตำแหน่งกล้อง(cam_px, cam_py, cam_pz)
+        ตั้งระยะห่าง(cam_zdist)
+        ผู้ฟัง(cry, sry, crx, srx)
 
         setup_lights(帧)
 
@@ -364,6 +364,6 @@
         draw_pagoda(帧, 0.0)
 
         แสดงผล()
-        令 帧 = 帧 + 1
+        ผูก 帧 = 帧 + 1
     }
 }

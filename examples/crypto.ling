@@ -18,7 +18,7 @@
 # HASHING — Deterministic, one-way functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn blake3_hash(data) {
+ฟังก์ชัน blake3_hash(ข้อมูล) {
     # 🔵 BLAKE3: Fast, cryptographic hash. Output: 32 bytes (256-bit).
     # English:  blake3_hash(data)
     # Chinese:  blake3_哈希 / blake3_散列
@@ -27,39 +27,39 @@ fn blake3_hash(data) {
     # Thai:     blake3_แฮช
     #
     # Maps to: crypto_blake3_hash(data: string) -> string
-    crypto_blake3_hash(data)
+    crypto_blake3_hash(ข้อมูล)
 }
 
-fn sha3_256_hash(data) {
+ฟังก์ชัน sha3_256_hash(ข้อมูล) {
     # 🔵 SHA3-256: NIST-standardized hash. Output: 32 bytes.
     # English:  sha3_256_hash(data)
     # Chinese:  sha3_256_哈希
     # Japanese: sha3_256_ハッシュ
     # Korean:   sha3_256_해시
     # Thai:     sha3_256_แฮช
-    crypto_sha3_256_hash(data)
+    crypto_sha3_256_hash(ข้อมูล)
 }
 
-fn sha3_512_hash(data) {
+ฟังก์ชัน sha3_512_hash(ข้อมูล) {
     # 🔵 SHA3-512: Extended output. Output: 64 bytes.
-    crypto_sha3_512_hash(data)
+    crypto_sha3_512_hash(ข้อมูล)
 }
 
-fn shake256_xof(data, len) {
+ฟังก์ชัน shake256_xof(ข้อมูล, ความยาว) {
     # 🔵 SHAKE-256: Extendable-output function. Can produce any length.
     # English:  shake256_xof(data, length_bytes)
     # Chinese:  shake256_可扩展输出 / shake256_XOF
     # Japanese: shake256_拡張出力
     # Korean:   shake256_확장출력
     # Thai:     shake256_ส่วนขยายผลลัพธ์
-    crypto_shake256_xof(data, len)
+    crypto_shake256_xof(ข้อมูล, ความยาว)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENCRYPTION — Symmetric AEAD (Authenticated Encryption with Associated Data)
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn aes_gcm_encrypt(plaintext, key) {
+ฟังก์ชัน aes_gcm_encrypt(plaintext, key) {
     # 🟢 AES-256-GCM: Fast, authenticated encryption. Industry standard.
     # English:  aes_gcm_encrypt(plaintext, key)
     # Chinese:  aes_gcm_加密 / aes_gcm_编码
@@ -71,7 +71,7 @@ fn aes_gcm_encrypt(plaintext, key) {
     crypto_aes_gcm_encrypt(plaintext, key)
 }
 
-fn aes_gcm_decrypt(ciphertext_with_nonce, key) {
+ฟังก์ชัน aes_gcm_decrypt(ciphertext_with_nonce, key) {
     # 🟢 AES-256-GCM Decryption with authentication verification.
     # English:  aes_gcm_decrypt(ciphertext_with_nonce, key)
     # Chinese:  aes_gcm_解密
@@ -81,7 +81,7 @@ fn aes_gcm_decrypt(ciphertext_with_nonce, key) {
     crypto_aes_gcm_decrypt(ciphertext_with_nonce, key)
 }
 
-fn chacha20_encrypt(plaintext, key) {
+ฟังก์ชัน chacha20_encrypt(plaintext, key) {
     # 🟢 XChaCha20-Poly1305: Modern, fast, best for long nonces.
     # English:  chacha20_encrypt(plaintext, key)
     # Chinese:  chacha20_加密
@@ -91,7 +91,7 @@ fn chacha20_encrypt(plaintext, key) {
     crypto_chacha20_encrypt(plaintext, key)
 }
 
-fn chacha20_decrypt(ciphertext_with_nonce, key) {
+ฟังก์ชัน chacha20_decrypt(ciphertext_with_nonce, key) {
     # 🟢 XChaCha20-Poly1305 Decryption.
     crypto_chacha20_decrypt(ciphertext_with_nonce, key)
 }
@@ -100,7 +100,7 @@ fn chacha20_decrypt(ciphertext_with_nonce, key) {
 # SIGNING — Asymmetric signatures (Ed25519)
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn ed25519_sign(message, secret_key) {
+ฟังก์ชัน ed25519_sign(message, secret_key) {
     # 🔴 Ed25519: Digital signature scheme. Sign with secret, verify with public.
     # English:  ed25519_sign(message, secret_key)
     # Chinese:  ed25519_签名 / ed25519_签署
@@ -112,7 +112,7 @@ fn ed25519_sign(message, secret_key) {
     crypto_ed25519_sign(message, secret_key)
 }
 
-fn ed25519_verify(message, public_key, signature) {
+ฟังก์ชัน ed25519_verify(message, public_key, signature) {
     # 🔴 Ed25519: Verify a signature. Returns true if valid.
     # English:  ed25519_verify(message, public_key, signature)
     # Chinese:  ed25519_验证
@@ -122,7 +122,7 @@ fn ed25519_verify(message, public_key, signature) {
     crypto_ed25519_verify(message, public_key, signature)
 }
 
-fn ed25519_public_key(secret_key) {
+ฟังก์ชัน ed25519_public_key(secret_key) {
     # 🔴 Derive public key from secret key.
     # English:  ed25519_public_key(secret_key)
     # Chinese:  ed25519_公钥
@@ -136,7 +136,7 @@ fn ed25519_public_key(secret_key) {
 # KEY DERIVATION — Argon2id for passwords, HKDF for keys
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn argon2id_hash(password) {
+ฟังก์ชัน argon2id_hash(password) {
     # 🟣 Argon2id: Password hashing (memory-hard, resistant to GPU cracking).
     # English:  argon2id_hash(password)
     # Chinese:  argon2id_密码哈希
@@ -148,12 +148,12 @@ fn argon2id_hash(password) {
     crypto_argon2id_hash(password)
 }
 
-fn argon2id_verify(password, hash_string) {
+ฟังก์ชัน argon2id_verify(password, hash_string) {
     # 🟣 Argon2id: Verify password against hash. Returns true if match.
     crypto_argon2id_verify(password, hash_string)
 }
 
-fn hkdf_sha3(input_key_material, salt, info, output_len) {
+ฟังก์ชัน hkdf_sha3(input_key_material, salt, info, output_len) {
     # 🟣 HKDF-SHA3: Extract-Expand key derivation (standards-based).
     # English:  hkdf_sha3(ikm, salt, info, output_len)
     # Chinese:  hkdf_sha3_密钥导出
@@ -169,7 +169,7 @@ fn hkdf_sha3(input_key_material, salt, info, output_len) {
 # POST-QUANTUM — ML-KEM-768 (lattice-based, FIPS 203)
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn mlkem_keygen() {
+ฟังก์ชัน mlkem_keygen() {
     # 🟠 ML-KEM-768: Post-quantum key encapsulation. NIST-standardized.
     # English:  mlkem_keygen()
     # Chinese:  mlkem_密钥生成
@@ -181,14 +181,14 @@ fn mlkem_keygen() {
     crypto_mlkem_keygen()
 }
 
-fn mlkem_encapsulate(public_key) {
+ฟังก์ชัน mlkem_encapsulate(public_key) {
     # 🟠 ML-KEM: Create shared secret and ciphertext.
     # English:  mlkem_encapsulate(public_key)
     # Output: (ciphertext: 1088 bytes, shared_secret: 32 bytes)
     crypto_mlkem_encapsulate(public_key)
 }
 
-fn mlkem_decapsulate(secret_key, ciphertext) {
+ฟังก์ชัน mlkem_decapsulate(secret_key, ciphertext) {
     # 🟠 ML-KEM: Recover shared secret from ciphertext.
     # English:  mlkem_decapsulate(secret_key, ciphertext)
     crypto_mlkem_decapsulate(secret_key, ciphertext)
@@ -198,7 +198,7 @@ fn mlkem_decapsulate(secret_key, ciphertext) {
 # ADVANCED — ZKP, VRF, Secret Sharing
 # ─────────────────────────────────────────────────────────────────────────────
 
-fn schnorr_proof_of_knowledge(secret, message) {
+ฟังก์ชัน schnorr_proof_of_knowledge(secret, message) {
     # 🟡 Schnorr ZKP: Prove knowledge of secret without revealing it.
     # English:  schnorr_proof_of_knowledge(secret, message)
     # Chinese:  schnorr_零知识证明
@@ -208,7 +208,7 @@ fn schnorr_proof_of_knowledge(secret, message) {
     crypto_schnorr_proof(secret, message)
 }
 
-fn vrf_evaluate(secret_key, input) {
+ฟังก์ชัน vrf_evaluate(secret_key, อินพุต) {
     # 🟡 VRF (Verifiable Random Function): Deterministic randomness.
     # English:  vrf_evaluate(secret_key, input)
     # Chinese:  vrf_可验证随机函数
@@ -217,10 +217,10 @@ fn vrf_evaluate(secret_key, input) {
     # Thai:     vrf_ฟังก์ชั่นสุ่มที่ตรวจสอบได้
     #
     # Output: (proof: 64 bytes, output: 32 bytes)
-    crypto_vrf_evaluate(secret_key, input)
+    crypto_vrf_evaluate(secret_key, อินพุต)
 }
 
-fn shamir_split(secret, threshold, shares) {
+ฟังก์ชัน shamir_split(secret, threshold, shares) {
     # 🟡 Shamir Secret Sharing: Split secret into shares.
     # English:  shamir_split(secret, threshold, num_shares)
     # Chinese:  shamir_秘密分享
@@ -232,12 +232,12 @@ fn shamir_split(secret, threshold, shares) {
     crypto_shamir_split(secret, threshold, shares)
 }
 
-fn shamir_reconstruct(shares) {
+ฟังก์ชัน shamir_reconstruct(shares) {
     # 🟡 Shamir: Reconstruct secret from shares.
     crypto_shamir_reconstruct(shares)
 }
 
-fn mandala_hash(n_rings, n_spokes, n_petals, twist, seed) {
+ฟังก์ชัน mandala_hash(n_rings, n_spokes, n_petals, twist, seed) {
     # 🟡 Mandala Hash: Visual → cryptographic keys. Ling-specific.
     # English:  mandala_hash(rings, spokes, petals, twist, seed)
     # Chinese:  mandala_哈希

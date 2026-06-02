@@ -1,0 +1,6 @@
+#!/usr/bin/env ling
+
+ผูก start = ทำ {
+    ผูก message = "Hello, World!"
+    พิมพ์(message)
+}
