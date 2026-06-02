@@ -2,181 +2,274 @@
 # Crypto Hologram — 4D Visualization of Cryptographic Operations
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-# This room demonstrates three cryptographic primitives with 4D color-coded
-# holographic visualization:
+# An immersive, color-coded 4D visualization of three cryptographic primitives:
 #
-# 🔵 HASHING (Blue) — deterministic, one-way
-#    Spherical accumulation rings that collapse into a fixed point
+# 🔵 HASHING (Blue, Left)    — Deterministic, one-way collapse to fixed point
+# 🟢 ENCRYPTION (Green, Center) — Reversible, key-dependent lattice transformation
+# 🔴 SIGNING (Red, Right)    — Asymmetric proof: secret spiral + public vortex
 #
-# 🟢 ENCRYPTION (Green) — reversible transformation
-#    Rotating lattice cages that expand/contract with key modulation
+# The visualization updates in real-time with:
+# - Rotating spirals (modulation by frame counter)
+# - Pulsing rings (computational rounds)
+# - Color gradients (security strength)
+# - Spatial separation (different algorithms)
+# - 4D encoding (X=algorithm, Y=stage, Z=depth, Color=parameter)
 #
-# 🔴 SIGNING (Red) — asymmetric authentication
-#    Spiral vortices with counterclockwise verification rings
+# Camera: Panoramic sweep left-to-right over 240 frames, upward gaze.
+# Audio: Harmonic progression in each zone (blue→green→red).
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-bind start = do {
-    bind FR = 0.0
+# ─────────────────────────────────────────────────────────────────────────────
+# PARAMETERS & STATE
+# ─────────────────────────────────────────────────────────────────────────────
 
-    set_ambient(0.15)
-    set_zdist(4.0)
-    set_camera(0.5, 0.7, 0.3, 0.4)
+令 W = 14.0       # world width
+令 H = 6.0        # world height
+令 D = 16.0       # world depth
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECTION 1: HASHING (Blue) — Deterministic Collapse
-    # ─────────────────────────────────────────────────────────────────────────
-    # Color: #0070ff (bright blue)
-    # Pattern: Concentric rings spiraling inward toward a fixed point
-    # Meaning: Hash output is always the same for same input
+令 CAM_SWEEP = 240.0  # full panorama in 240 frames (4 sec @ 60fps)
 
-    # Input data as expanding rings (multiple colors → single point)
+# Frequencies: cryptographic zones
+令 FREQ_HASH = 261.63   # C4 — hash zone (blue)
+令 FREQ_CRYPT = 349.23  # F4 — encryption zone (green)
+令 FREQ_SIGN = 440.00   # A4 — signing zone (red)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SETUP FUNCTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+函 setup_camera(FR) {
+    # Panoramic sweep left-to-right, eyes tilted upward
+    令 cycle = FR / CAM_SWEEP
+    令 theta = cycle * 3.14159    # 0 to π (180°)
+    令 cam_x = sin(theta) * 12.0  # sweep from -12 to +12
+    令 cam_y = 0.6 + sin(theta * 0.5) * 0.3  # slight bob
+    令 cam_z = 8.0 + cos(theta * 2.0) * 1.5  # oscillate forward/back
+
+    令 cry = 0.4 + cos(theta * 0.7) * 0.15   # rotation, y-axis
+    令 sry = 0.25 + sin(theta * 1.3) * 0.08  # tilt
+    令 crx = 0.5 - cos(theta * 0.5) * 0.1    # look-up/down
+    令 srx = 0.1 + sin(theta * 0.3) * 0.05   # lean
+
+    set_camera(cry, sry, crx, srx)
+    set_camera_pos(cam_x, cam_y, cam_z)
+    set_zdist(2.5)
+    set_ambient(0.18)
+}
+
+函 setup_lights(FR) {
+    clear_lights()
+
+    # Cryptographic light - white core with faint color bleed
+    令 t = FR * 0.008
+    add_light(
+        sin(t) * 6.0,
+        cos(t * 0.5) * 3.0,
+        D * 0.5,
+        8.0,
+        0.90, 0.92, 0.95  # near-white
+    )
+
+    # Accent light in blue zone
+    add_light(-8.0, 2.0, 6.0, 4.0,  0.2, 0.5, 1.0)  # blue
+    # Accent light in green zone
+    add_light(0.0, 2.0, 6.0, 4.0,  0.4, 1.0, 0.4)  # green
+    # Accent light in red zone
+    add_light(8.0, 2.0, 6.0, 4.0,  1.0, 0.2, 0.3)  # red
+}
+
+函 setup_audio() {
+    # Three harmonic voices in cryptographic zones
+    audio_tone(0, -8.0, 0.0, 8.0, 3.0, FREQ_HASH, 0.06, 0.3, 0.02)
+    audio_tone(1,  0.0, 0.0, 8.0, 3.0, FREQ_CRYPT, 0.07, 0.4, 0.025)
+    audio_tone(2,  8.0, 0.0, 8.0, 3.0, FREQ_SIGN, 0.05, 0.35, 0.018)
+    audio_volume(0.35)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VISUALIZATION ZONES
+# ─────────────────────────────────────────────────────────────────────────────
+
+函 zone_hashing(FR) {
+    # 🔵 BLUE ZONE — BLAKE3 Hashing
+    # Input entropy (outer) → deterministic collapse (middle) → fixed point (inner)
+
+    令 f = FR * 0.014  # slow modulation
+    令 twist = sin(f * 0.5) * 0.08
+
+    # Input spiral (expanding, many states → one)
     vtex_spiral(
-        -3.5, 0.0, 3.0,      # Center: left side, upper elevation
-        1.0, 0.0, 0.0,       # Right tangent (width)
-        0.0, 1.0, 0.0,       # Up tangent (height)
-        6, 24,                # 6 spiral arms, 24 sides
-        3.0, 0.08,            # max radius, twist
-        FR, 0.55              # FR frame rate, hue 0.55 (blue)
+        -8.0, 1.5, 10.0,
+        1.2, 0.0, 0.0,  0.0, 1.2, 0.0,
+        8, 32,          # 8 arms, 32 sides
+        3.5, twist,
+        FR, 0.56        # blue hue
     )
 
-    # Accumulation rings converging (represents hash computation steps)
+    # Convergence rings (avalanche effect)
     vtex_rings(
-        -3.5, 0.0, 2.0,      # Slightly forward
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        8, 32,                # 8 rings, 32 sides
-        2.5, 0.0,             # no twist (deterministic)
-        FR, 0.58              # blue-cyan
+        -8.0, 1.0, 8.5,
+        1.0, 0.0, 0.0,  0.0, 1.0, 0.0,
+        12, 40,         # 12 rings, high detail
+        3.0, 0.0,       # no twist (deterministic)
+        FR, 0.54        # blue-cyan
     )
 
-    # Final hash point (fixed, unchanging)
+    # Hash output point (tiny, fixed)
     vtex_grid(
-        -3.5, 0.0, 1.0,      # 1 unit forward (closest = result)
-        0.3, 0.0, 0.0,
-        0.0, 0.3, 0.0,
-        2, 2,                 # tiny grid (concentrated)
+        -8.0, 0.5, 7.0,
+        0.3, 0.0, 0.0,  0.0, 0.3, 0.0,
+        2, 2,
         2.0, 2.0,
-        FR, 0.56              # blue core
+        FR, 0.57        # deep blue
     )
+}
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECTION 2: ENCRYPTION (Green) — Symmetric Transformation
-    # ─────────────────────────────────────────────────────────────────────────
-    # Color: #00d060 (bright green)
-    # Pattern: Expanding lattice cage with key-driven modulation
-    # Meaning: Same key reverses the transformation; different key = garbage
+函 zone_encryption(FR) {
+    # 🟢 GREEN ZONE — AES-256-GCM Encryption
+    # Plaintext lattice + Key modulation → Ciphertext lattice (reversible)
 
-    # Plaintext lattice (input state)
+    令 f = FR * 0.016
+    令 key_twist = sin(f) * 0.12
+    令 key_strength = 0.6 + cos(f * 1.5) * 0.2  # modulate amplitude
+
+    # Plaintext grid (ordered structure)
     vtex_grid(
-        0.0, 0.0, 3.0,       # Center view
-        1.0, 0.0, 0.0,       # Width (plaintext)
-        0.0, 1.0, 0.0,       # Height (state evolution)
-        12, 8,                # 12×8 grid
-        2.0, 1.5,
-        FR, 0.33              # green
+        0.0, 1.5, 10.0,
+        1.1, 0.0, 0.0,  0.0, 1.1, 0.0,
+        14, 10,         # 14×10 grid (organized)
+        2.0, 1.6,
+        FR, 0.33        # green
     )
 
-    # Key material as rotating rings (modulation)
+    # Key material as rotating chakra (modulation source)
     vtex_chakra(
-        0.0, 0.0, 2.0,       # 1 unit back (key phase)
-        0.7, 0.0, 0.0,
-        0.0, 0.7, 0.0,
-        12, 3.0, 0.12,        # 12 spokes, twist 0.12 (key strength)
-        FR, 0.32              # lime-green
+        0.0, 0.0, 9.0,
+        0.8 * key_strength, 0.0, 0.0,
+        0.0, 0.8 * key_strength, 0.0,
+        12, 4.0, key_twist,
+        FR, 0.32        # lime-green (key color)
     )
 
-    # Ciphertext (transformed, still reversible)
+    # Ciphertext (transformed but reversible)
     vtex_rings(
-        0.0, 0.0, 1.0,       # Forward (output)
-        1.2, 0.0, 0.0,
-        0.0, 1.2, 0.0,
-        10, 40,               # 10 rings of confusion
-        2.8, 0.06,
-        FR, 0.34              # teal-green
+        0.0, 0.8, 7.5,
+        1.3, 0.0, 0.0,  0.0, 1.3, 0.0,
+        11, 48,         # 11 rings of confusion
+        2.8, sin(f) * 0.07,
+        FR, 0.34        # teal (green+blue blend)
     )
+}
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # SECTION 3: SIGNING (Red) — Asymmetric Proof
-    # ─────────────────────────────────────────────────────────────────────────
-    # Color: #ff1040 (bright red)
-    # Pattern: Outward spiral (private key) + inward verification vortex (public)
-    # Meaning: Sign with secret, verify with public — cannot forge
+函 zone_signing(FR) {
+    # 🔴 RED ZONE — Ed25519 Signing
+    # Private key spiral (secret, outward) + Public vortex (verification, inward)
 
-    # Private key spiral (secret, outward)
+    令 f = FR * 0.018
+    令 verify_twist = -sin(f * 2.0) * 0.2  # inward rotation
+    令 proof_scale = 0.7 + sin(f * 3.0) * 0.15
+
+    # Private key spiral (secret, outward, twisting)
     vtex_spiral(
-        3.5, 0.0, 3.0,       # Right side, upper
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        8, 32,                # 8 arms (security parameter)
-        3.5, 0.15,            # Larger, twisted (private key strength)
-        FR, 0.0               # Red
+        8.0, 1.5, 10.0,
+        1.1, 0.0, 0.0,  0.0, 1.1, 0.0,
+        8, 40,          # 8 arms (security parameter)
+        3.5 * proof_scale, sin(f) * 0.18,
+        FR, 0.01        # red (private)
     )
 
     # Message rings (what we're signing)
     vtex_rings(
-        3.5, 0.0, 2.0,       # Parallel to key
-        0.8, 0.0, 0.0,
-        0.0, 0.8, 0.0,
-        6, 24,                # 6 proof rings
-        2.0, 0.0,
-        FR, 0.02              # crimson (slightly orange-red)
+        8.0, 0.5, 8.5,
+        0.9, 0.0, 0.0,  0.0, 0.9, 0.0,
+        7, 28,          # 7 proof rings
+        2.0, cos(f * 0.7) * 0.05,
+        FR, 0.02        # crimson
     )
 
-    # Public key verification vortex (inward, asymmetric)
+    # Public key verification vortex (inward, counter-rotating)
     vtex_spiral(
-        3.5, 0.0, 1.0,       # At result level
-        0.6, 0.0, 0.0,
-        0.0, 0.6, 0.0,
-        8, 40,                # Same 8 arms (same key!)
-        2.2, -0.18,           # Inward twist (verification direction)
-        FR, 0.03              # darkred → orange-red (different direction)
+        8.0, 0.0, 7.0,
+        0.65, 0.0, 0.0,
+        0.0, 0.65, 0.0,
+        8, 48,          # Same 8 arms (same key structure)
+        2.2 * proof_scale, verify_twist,  # inward twist
+        FR, 0.03        # orange-red (verification)
     )
 
-    # Authentication halo (proof is valid)
+    # Authentication bloom (proof is valid)
     vtex_lotus(
-        3.5, 0.0, 0.5,       # Below, glowing
-        0.5, 0.0, 0.0,
-        0.0, 0.5, 0.0,
-        8,                    # 8 petals (matching arms)
-        FR, 0.01              # deep red
+        8.0, -0.5, 6.5,
+        0.6, 0.0, 0.0,  0.0, 0.6, 0.0,
+        8,              # 8 petals (matching)
+        FR, 0.00        # deep red glow
     )
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # ANNOTATION: Color-coded legend in 4D space
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # Blue zone (z=3.0) — hashing  deterministic, one-way
-    # Green zone (z=3.0) — encryption, reversible, key-dependent
-    # Red zone (z=3.0)   — signing, asymmetric, unforgeable
-
-    # Time axis (frame progression) shows:
-    # - Rings expanding/contracting with time
-    # - Spirals rotating (showing computation/verification)
-    # - Color gradients brightening (increasing key material)
-
-    present()
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Holographic Interpretation:
+# MAIN LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+
+bind start = do {
+    bind FR = 0.0
+
+    setup_audio()
+
+    # Render loop (runs until window closes)
+    循 true {
+        setup_camera(FR)
+        setup_lights(FR)
+
+        # Render all three cryptographic zones
+        zone_hashing(FR)
+        zone_encryption(FR)
+        zone_signing(FR)
+
+        present()
+
+        # Increment frame counter
+        令 FR = FR + 1.0
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCUMENTATION
+# ─────────────────────────────────────────────────────────────────────────────
 #
-# This visualization encodes cryptographic concepts as geometric patterns:
+# LAYOUT:
+#   -X ← Blue (Hash)   │   0 ← Green (Encrypt)   │   +X ← Red (Sign)
 #
-# HASH (Blue, Left)
-#   Input entropy (outer rings) → deterministic collapse → fixed point output
-#   Meaning: Small input change = completely different output (avalanche effect)
+# COLOR ENCODING:
+#   Hue:        0.00-0.60 (red to blue): Security parameter
+#   Saturation: Modulated by frame (breathing effect)
+#   Value:      Constant (fixed brightness for visibility)
 #
-# ENCRYPT (Green, Center)
-#   Plaintext lattice + key modulation → transformed lattice
-#   Meaning: Only with correct key can you reverse the transformation
+# GEOMETRY:
+#   Spiral:     Rotating twist shows key material / entropy
+#   Rings:      Concentric circles show computational rounds
+#   Grid:       Regular lattice for plaintext / output structure
+#   Chakra:     Rotating spokes for symmetric key modulation
+#   Lotus:      Bloom effect for valid authentication proofs
 #
-# SIGN (Red, Right)
-#   Private key spiral (secret, outward) + public verification (inward)
-#   Meaning: The signature proves knowledge of private key without revealing it
+# 4D ENCODING:
+#   X-axis:    Different algorithms (hash, crypt, sign)
+#   Y-axis:    Processing stages (input → compute → output)
+#   Z-axis:    Computation depth / time evolution
+#   Hue:       Security strength (darker = stronger keys)
+#   Rotation:  Key entropy modulation (faster = higher entropy)
+#   Density:   Computational complexity (more rings = more rounds)
 #
-# 4D Encoding:
-# - X-axis (left/right): Different algorithms
-# - Y-axis (up/down): Processing stages
-# - Z-axis (back/forward): Time / computation depth
-# - Color hue: Security parameter (darker = stronger)
-# - Rotation speed: Key material entropy
-# - Ring density: Computational rounds
+# AUDIO:
+#   Left zone:    C4 (261.63 Hz) — earth tone (hash)
+#   Center zone:  F4 (349.23 Hz) — bright tone (encrypt)
+#   Right zone:   A4 (440.00 Hz) — high tone (sign)
+#   All modulated with LFO for breathing effect
+#
+# CONTROLS:
+#   ESC or window close — exit
+#   Camera is automatic panoramic sweep (no keyboard input)
+#
+# FURTHER READING:
+#   - Examples: examples/crypto.ling (abstraction library)
+#   - Docs:     docs.ling-lang.org/graphics (window, camera, lights, vtex_*)
+#   - Library:  ling-crypto crate (BLAKE3, AES-GCM, Ed25519, etc.)

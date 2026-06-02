@@ -1,0 +1,251 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Ling Cryptography Library
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Multilingual crypto abstractions using ling-crypto crate.
+# Available in English, Chinese, Japanese, Korean, and Thai.
+#
+# Usage:
+#   令 hash_data = blake3_hash("data")           # Chinese
+#   令 hash_data = blake3ハッシュ("data")        # Japanese
+#   令 hash_data = blake3_해시("data")          # Korean
+#   令 hash_data = blake3_แฮช("data")           # Thai
+#   bind hash_data = blake3_hash("data")         # English
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HASHING — Deterministic, one-way functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn blake3_hash(data) {
+    # 🔵 BLAKE3: Fast, cryptographic hash. Output: 32 bytes (256-bit).
+    # English:  blake3_hash(data)
+    # Chinese:  blake3_哈希 / blake3_散列
+    # Japanese: blake3_ハッシュ
+    # Korean:   blake3_해시
+    # Thai:     blake3_แฮช
+    #
+    # Maps to: crypto_blake3_hash(data: string) -> string
+    crypto_blake3_hash(data)
+}
+
+fn sha3_256_hash(data) {
+    # 🔵 SHA3-256: NIST-standardized hash. Output: 32 bytes.
+    # English:  sha3_256_hash(data)
+    # Chinese:  sha3_256_哈希
+    # Japanese: sha3_256_ハッシュ
+    # Korean:   sha3_256_해시
+    # Thai:     sha3_256_แฮช
+    crypto_sha3_256_hash(data)
+}
+
+fn sha3_512_hash(data) {
+    # 🔵 SHA3-512: Extended output. Output: 64 bytes.
+    crypto_sha3_512_hash(data)
+}
+
+fn shake256_xof(data, len) {
+    # 🔵 SHAKE-256: Extendable-output function. Can produce any length.
+    # English:  shake256_xof(data, length_bytes)
+    # Chinese:  shake256_可扩展输出 / shake256_XOF
+    # Japanese: shake256_拡張出力
+    # Korean:   shake256_확장출력
+    # Thai:     shake256_ส่วนขยายผลลัพธ์
+    crypto_shake256_xof(data, len)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENCRYPTION — Symmetric AEAD (Authenticated Encryption with Associated Data)
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn aes_gcm_encrypt(plaintext, key) {
+    # 🟢 AES-256-GCM: Fast, authenticated encryption. Industry standard.
+    # English:  aes_gcm_encrypt(plaintext, key)
+    # Chinese:  aes_gcm_加密 / aes_gcm_编码
+    # Japanese: aes_gcm_暗号化
+    # Korean:   aes_gcm_암호화
+    # Thai:     aes_gcm_เข้ารหัส
+    #
+    # Key must be 32 bytes (256-bit). Returns: nonce(12) + ciphertext + tag(16)
+    crypto_aes_gcm_encrypt(plaintext, key)
+}
+
+fn aes_gcm_decrypt(ciphertext_with_nonce, key) {
+    # 🟢 AES-256-GCM Decryption with authentication verification.
+    # English:  aes_gcm_decrypt(ciphertext_with_nonce, key)
+    # Chinese:  aes_gcm_解密
+    # Japanese: aes_gcm_復号化
+    # Korean:   aes_gcm_복호화
+    # Thai:     aes_gcm_ถอดรหัส
+    crypto_aes_gcm_decrypt(ciphertext_with_nonce, key)
+}
+
+fn chacha20_encrypt(plaintext, key) {
+    # 🟢 XChaCha20-Poly1305: Modern, fast, best for long nonces.
+    # English:  chacha20_encrypt(plaintext, key)
+    # Chinese:  chacha20_加密
+    # Japanese: chacha20_暗号化
+    # Korean:   chacha20_암호화
+    # Thai:     chacha20_เข้ารหัส
+    crypto_chacha20_encrypt(plaintext, key)
+}
+
+fn chacha20_decrypt(ciphertext_with_nonce, key) {
+    # 🟢 XChaCha20-Poly1305 Decryption.
+    crypto_chacha20_decrypt(ciphertext_with_nonce, key)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNING — Asymmetric signatures (Ed25519)
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn ed25519_sign(message, secret_key) {
+    # 🔴 Ed25519: Digital signature scheme. Sign with secret, verify with public.
+    # English:  ed25519_sign(message, secret_key)
+    # Chinese:  ed25519_签名 / ed25519_签署
+    # Japanese: ed25519_署名
+    # Korean:   ed25519_서명
+    # Thai:     ed25519_ลายเซ็น
+    #
+    # Secret key: 32 bytes. Output: 64-byte signature.
+    crypto_ed25519_sign(message, secret_key)
+}
+
+fn ed25519_verify(message, public_key, signature) {
+    # 🔴 Ed25519: Verify a signature. Returns true if valid.
+    # English:  ed25519_verify(message, public_key, signature)
+    # Chinese:  ed25519_验证
+    # Japanese: ed25519_検証
+    # Korean:   ed25519_검증
+    # Thai:     ed25519_ยืนยัน
+    crypto_ed25519_verify(message, public_key, signature)
+}
+
+fn ed25519_public_key(secret_key) {
+    # 🔴 Derive public key from secret key.
+    # English:  ed25519_public_key(secret_key)
+    # Chinese:  ed25519_公钥
+    # Japanese: ed25519_公開鍵
+    # Korean:   ed25519_공개키
+    # Thai:     ed25519_คีย์สาธารณะ
+    crypto_ed25519_public_key(secret_key)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KEY DERIVATION — Argon2id for passwords, HKDF for keys
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn argon2id_hash(password) {
+    # 🟣 Argon2id: Password hashing (memory-hard, resistant to GPU cracking).
+    # English:  argon2id_hash(password)
+    # Chinese:  argon2id_密码哈希
+    # Japanese: argon2id_パスワードハッシュ
+    # Korean:   argon2id_암호해시
+    # Thai:     argon2id_แฮชรหัสผ่าน
+    #
+    # Returns: PHC string (includes salt, automatically random)
+    crypto_argon2id_hash(password)
+}
+
+fn argon2id_verify(password, hash_string) {
+    # 🟣 Argon2id: Verify password against hash. Returns true if match.
+    crypto_argon2id_verify(password, hash_string)
+}
+
+fn hkdf_sha3(input_key_material, salt, info, output_len) {
+    # 🟣 HKDF-SHA3: Extract-Expand key derivation (standards-based).
+    # English:  hkdf_sha3(ikm, salt, info, output_len)
+    # Chinese:  hkdf_sha3_密钥导出
+    # Japanese: hkdf_sha3_鍵導出
+    # Korean:   hkdf_sha3_키도출
+    # Thai:     hkdf_sha3_ที่มาของคีย์
+    #
+    # Derives output_len bytes from input key material.
+    crypto_hkdf_sha3(input_key_material, salt, info, output_len)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST-QUANTUM — ML-KEM-768 (lattice-based, FIPS 203)
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn mlkem_keygen() {
+    # 🟠 ML-KEM-768: Post-quantum key encapsulation. NIST-standardized.
+    # English:  mlkem_keygen()
+    # Chinese:  mlkem_密钥生成
+    # Japanese: mlkem_鍵生成
+    # Korean:   mlkem_키생성
+    # Thai:     mlkem_สร้างคีย์
+    #
+    # Output: (secret_key: 2400 bytes, public_key: 1184 bytes)
+    crypto_mlkem_keygen()
+}
+
+fn mlkem_encapsulate(public_key) {
+    # 🟠 ML-KEM: Create shared secret and ciphertext.
+    # English:  mlkem_encapsulate(public_key)
+    # Output: (ciphertext: 1088 bytes, shared_secret: 32 bytes)
+    crypto_mlkem_encapsulate(public_key)
+}
+
+fn mlkem_decapsulate(secret_key, ciphertext) {
+    # 🟠 ML-KEM: Recover shared secret from ciphertext.
+    # English:  mlkem_decapsulate(secret_key, ciphertext)
+    crypto_mlkem_decapsulate(secret_key, ciphertext)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADVANCED — ZKP, VRF, Secret Sharing
+# ─────────────────────────────────────────────────────────────────────────────
+
+fn schnorr_proof_of_knowledge(secret, message) {
+    # 🟡 Schnorr ZKP: Prove knowledge of secret without revealing it.
+    # English:  schnorr_proof_of_knowledge(secret, message)
+    # Chinese:  schnorr_零知识证明
+    # Japanese: schnorr_ゼロ知識証明
+    # Korean:   schnorr_영지식증명
+    # Thai:     schnorr_พิสูจน์ความรู้ศูนย์
+    crypto_schnorr_proof(secret, message)
+}
+
+fn vrf_evaluate(secret_key, input) {
+    # 🟡 VRF (Verifiable Random Function): Deterministic randomness.
+    # English:  vrf_evaluate(secret_key, input)
+    # Chinese:  vrf_可验证随机函数
+    # Japanese: vrf_検証可能ランダム関数
+    # Korean:   vrf_검증가능난수함수
+    # Thai:     vrf_ฟังก์ชั่นสุ่มที่ตรวจสอบได้
+    #
+    # Output: (proof: 64 bytes, output: 32 bytes)
+    crypto_vrf_evaluate(secret_key, input)
+}
+
+fn shamir_split(secret, threshold, shares) {
+    # 🟡 Shamir Secret Sharing: Split secret into shares.
+    # English:  shamir_split(secret, threshold, num_shares)
+    # Chinese:  shamir_秘密分享
+    # Japanese: shamir_秘密分散
+    # Korean:   shamir_비밀분산
+    # Thai:     shamir_แบ่งปันความลับ
+    #
+    # Any threshold shares can reconstruct the secret.
+    crypto_shamir_split(secret, threshold, shares)
+}
+
+fn shamir_reconstruct(shares) {
+    # 🟡 Shamir: Reconstruct secret from shares.
+    crypto_shamir_reconstruct(shares)
+}
+
+fn mandala_hash(n_rings, n_spokes, n_petals, twist, seed) {
+    # 🟡 Mandala Hash: Visual → cryptographic keys. Ling-specific.
+    # English:  mandala_hash(rings, spokes, petals, twist, seed)
+    # Chinese:  mandala_哈希
+    # Japanese: mandala_ハッシュ
+    # Korean:   mandala_해시
+    # Thai:     mandala_แฮช
+    #
+    # Same visual pattern = same key (deterministic).
+    # Different patterns = completely different keys (avalanche).
+    crypto_mandala_hash(n_rings, n_spokes, n_petals, twist, seed)
+}
