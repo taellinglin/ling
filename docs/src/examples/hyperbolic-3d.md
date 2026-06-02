@@ -47,13 +47,19 @@ Colors are **procedurally hashed** from each room's type index, cycling smoothly
 
 | Key | Action |
 |-----|--------|
-| `W` / `S` | move forward / back (hyperbolic) |
-| `A` / `D` | strafe left / right (hyperbolic) |
+| `W` / `S` | move forward / back (very slow hyperbolic) |
+| `A` / `D` | strafe left / right (very slow hyperbolic) |
 | `Q` / `E` | turn left / right (Euclidean yaw) |
-| `SPACE` | jump (Euclidean gravity pulls you back down) |
+| `SPACE` | charged jump (hold longer for higher jump; releases on key-up) |
 
-Movement in the XZ plane is **purely hyperbolic**. Vertical motion (Y) uses **Euclidean gravity**
-(same as the H²×ℝ demo), so jumping feels natural even in curved space.
+Movement in the XZ plane is **slowly hyperbolic** (rapidity 0.008 per frame, about 7× slower than earlier
+versions). This deliberate slowness reveals the subtle geometry of hyperbolic space as you navigate.
+Vertical motion (Y) uses **Euclidean gravity** — the ball bounces with elasticity (0.86) and damping (0.995).
+Jumping feels natural even in curved space.
+
+**The Player**: a large physics ball (radius 1.6) rendered as a spinning gyro. The ball's size
+makes the H³ temple geometry feel monumental around you. Color intensity modulates with kinetic energy
+(brighter when fast, dimmer at rest).
 
 ## What makes it hyperbolic
 
@@ -66,15 +72,26 @@ Movement in the XZ plane is **purely hyperbolic**. Vertical motion (Y) uses **Eu
 - **No preferred direction**: boosts can point any direction in the XZ plane; unlike the 2D
   demo, you have full 2D freedom on the horizontal plane (plus ordinary vertical gravity).
 
+## Physics-Encoded Audio
+
+The ball emits a continuous tone that **encodes its physics state**:
+- **Pitch** ← height (low when near floor, rises toward ceiling) + speed + impact spikes on bounce
+- **Amplitude** ← speed (faster ball = louder tone; resting ball = quiet)
+- **Pan** ← horizontal X position (ball on left → left speaker, right → right speaker)
+
+This creates an immersive **physical feedback loop**: you hear the geometry and motion encoded as sound.
+A bounce sounds like a sharp frequency spike; accelerating sounds like a rising tone; quiet zones in the
+temple feel acoustically dead.
+
 ## Lighting & appearance
 
-The scene uses **holographic cel shading** (smooth vertices → posterized bands):
-- **Warm overhead light** (yellow, slowly drifting)
-- **Cool fill** from the front-left (cyan)
-- **Purple under-fill** (DMT aesthetic)
-- **Fresnel rim glow** on all surfaces (cyan edge highlight)
+The scene uses **cel shading** (smooth vertices → posterized bands, no holographic sheen):
+- **Warm overhead light** (yellow, slowly drifting around the scene)
+- **Cool fill** from the front-left (cyan, wide area light)
+- **Purple ball-tracking light** (follows the physics ball, providing specular highlight as it moves)
+- **Crisp cel bands** (5 posterization levels for clean, flat toon appearance)
 - **Coloured shadows** (deep indigo in unlit regions)
-- **Normal-gradient sheen** (subtle iridescent tint that shifts with surface normal)
+- **Subtle purple rim** (small Fresnel edge highlight, toned down for clean look)
 
 Each room's color hue is **independently procedural** — no texture assets, just per-room
 hash-based RGB cycling.
