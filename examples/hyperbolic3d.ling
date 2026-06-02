@@ -25,7 +25,7 @@ bind JUMP   = 7.5
 bind HDIST  = 1.8
 bind NROOMS = 9
 
-bind BALL_R = 1.4
+bind BALL_R = 0.35
 bind DAMPING = 0.995
 bind ELASTICITY = 0.86
 bind MOVE_ACCEL = 20.0
@@ -165,7 +165,7 @@ bind start = do {
     # ── Camera orbital state ───────────────────────────────────────────────────
     bind cam_dist = CAM_DIST_INIT
     bind cam_orbit = 0.0          # horizontal orbit around ball (radians)
-    bind cam_pitch = 0.4          # vertical pitch (up/down, radians)
+    bind cam_pitch = 1.1          # vertical pitch (up/down, radians) — start HIGH looking down
     bind last_mouse_x = 0
     bind last_mouse_y = 0
 
