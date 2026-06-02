@@ -62,12 +62,9 @@ impl Camera3D {
         let ry  =  wy * self.crx - rz1 * self.srx;
         let rz  =  wy * self.srx + rz1 * self.crx;
         // — Perspective —
-        // Screen Y is negated so world +Y maps DOWN the screen: this flips
-        // every 3-D scene vertically (upside-down world). Affects all draws
-        // that route through project(): 3-D tris/lines and every vtex pattern.
         let d   = rz + self.zdist;
         let sx  = self.cx    + self.focal * rx / d;
-        let sy  = self.cy    - self.focal * ry / d;
+        let sy  = self.cy    + self.focal * ry / d;
         (sx, sy, rz)
     }
 }
