@@ -23,10 +23,10 @@ bind MOVE_ACCEL = 250.0
 # Massive voxel world (5-way symmetry)
 bind VOXEL_SIZE = 2.0
 
-# Orbital camera
-bind CAM_DIST_INIT = 35.0
-bind CAM_DIST_MIN = 10.0
-bind CAM_DIST_MAX = 500.0
+# Orbital camera (zoomed in close)
+bind CAM_DIST_INIT = 8.0
+bind CAM_DIST_MIN = 2.0
+bind CAM_DIST_MAX = 150.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
