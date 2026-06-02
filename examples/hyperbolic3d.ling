@@ -21,14 +21,14 @@ bind ZC     = 9.0
 bind STEP   = 0.025
 bind TURN   = 0.03
 bind G      = 22.0
-bind JUMP   = 7.5
+bind JUMP   = 60.0
 bind HDIST  = 1.8
 bind NROOMS = 9
 
 bind BALL_R = 0.35
 bind DAMPING = 0.995
 bind ELASTICITY = 0.86
-bind MOVE_ACCEL = 20.0
+bind MOVE_ACCEL = 200.0
 
 # MASSIVE hyperbolic temple (8x scale)
 bind HALLWAY_W = 64.0
@@ -37,9 +37,9 @@ bind ATRIUM_R = 80.0
 bind SPOKE_L = 160.0
 
 # Orbital camera
-bind CAM_DIST_INIT = 40.0   # start far away (8x scale)
-bind CAM_DIST_MIN = 64.0
-bind CAM_DIST_MAX = 640.0
+bind CAM_DIST_INIT = 25.0   # start far away (8x scale)
+bind CAM_DIST_MIN = 4.0
+bind CAM_DIST_MAX = 800.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
@@ -215,7 +215,7 @@ bind start = do {
         bind spaceNow = 0
         if key_down("space") { bind spaceNow = 1 }
         if spaceNow > 0 {
-            if grounded > 0 { bind charge = charge + 14.0 * dt   if charge > 11.0 { bind charge = 11.0 } }
+            if grounded > 0 { bind charge = charge + 112.0 * dt   if charge > 88.0 { bind charge = 88.0 } }
         } else {
             if spaceWasDown > 0 {
                 if charge > 0.01 { bind vy_phys = vy_phys - charge }
@@ -452,9 +452,9 @@ bind start = do {
         draw_line_3d(bx, by, bz,  bx + vx * 0.25, by + vy_phys * 0.25, bz + vz * 0.25)
 
         if charge > 0.01 {
-            bind cf = charge / 11.0
+            bind cf = charge / 88.0
             set_color(255, int(200 - cf * 150.0), 40)
-            draw_line_3d(bx, by, bz, bx, by - cf * 2.0, bz)
+            draw_line_3d(bx, by, bz, bx, by - cf * 16.0, bz)
         }
 
         present()
