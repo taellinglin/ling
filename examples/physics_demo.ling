@@ -55,7 +55,7 @@ bind start = do {
         เติม(2, 3, 10)            # deep navy backdrop
 
         # ── integrate physics ────────────────────────────────────────────────
-        令 vy = vy - GRAVITY * DT          # gravity
+        令 vy = vy + GRAVITY * DT          # gravity pulls toward +Y (screen-down)
 
         令 vx = vx * DAMPING               # drag
         令 vy = vy * DAMPING
@@ -83,7 +83,7 @@ bind start = do {
 
         # ── derived quantities ───────────────────────────────────────────────
         令 speed  = sqrt(vx*vx + vy*vy + vz*vz)
-        令 hNorm  = (by + HH) / (2.0 * HH)      # 0 floor → 1 ceiling
+        令 hNorm  = (HH - by) / (2.0 * HH)      # 0 at floor (+HH) → 1 at ceiling (−HH)
 
         # ── PHYSICS-ENCODED AUDIO ────────────────────────────────────────────
         令 sinceHit  = FR - lastBounce
@@ -124,14 +124,14 @@ bind start = do {
         draw_line_3d( HW, 0-HH, ZF,  HW, HH, ZF)
         draw_line_3d(0-HW, 0-HH, ZF, 0-HW, HH, ZF)
 
-        # ── shadow on the floor (helps read height) ──────────────────────────
+        # ── shadow on the floor (+HH = screen bottom; helps read height) ─────
         set_color(0, 30, 60)
-        draw_line_3d(bx - R, 0-HH, bz, bx + R, 0-HH, bz)
-        draw_line_3d(bx, 0-HH, bz - R, bx, 0-HH, bz + R)
+        draw_line_3d(bx - R, HH, bz, bx + R, HH, bz)
+        draw_line_3d(bx, HH, bz - R, bx, HH, bz + R)
 
-        # ── drop-line from ball to its floor shadow (shows altitude) ─────────
+        # ── drop-line from ball down to its floor shadow (shows altitude) ────
         set_color(40, 90, 140)
-        draw_line_3d(bx, by - R, bz, bx, 0-HH, bz)
+        draw_line_3d(bx, by + R, bz, bx, HH, bz)
 
         # ── velocity arrow (red, length ∝ speed) ─────────────────────────────
         set_color(230, 60, 40)
