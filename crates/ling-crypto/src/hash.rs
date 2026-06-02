@@ -1,28 +1,80 @@
-//! Blake3 cryptographic hashing stub.
+//! Cryptographic hashing: BLAKE3, SHA3-256, SHA3-512, SHAKE-256.
+
+use sha3::{Digest, Sha3_256 as Sha3_256Inner, Sha3_512 as Sha3_512Inner};
+use sha3::digest::{ExtendableOutput, Update as XofUpdate};
+
+// ── BLAKE3 ────────────────────────────────────────────────────────────────────
 
 pub struct Blake3;
 
 impl Blake3 {
-    /// Compute the 32-byte Blake3 hash of `data`.
     pub fn hash(data: &[u8]) -> [u8; 32] {
-        // TODO: wire to blake3 crate when feature is enabled
-        // Simple djb2-style placeholder that at least varies by input.
-        let mut h = 5381u64;
-        for &b in data {
-            h = h.wrapping_mul(33).wrapping_add(b as u64);
-        }
-        let mut out = [0u8; 32];
-        for i in 0..4 {
-            let word = h.wrapping_mul((i as u64 + 1).wrapping_mul(0x517cc1b727220a95));
-            out[i * 8..(i + 1) * 8].copy_from_slice(&word.to_le_bytes());
-        }
-        out
+        let hash = blake3::hash(data);
+        *hash.as_bytes()
     }
 
-    /// Compute a keyed Blake3 hash.
     pub fn keyed_hash(key: &[u8; 32], data: &[u8]) -> [u8; 32] {
-        let mut combined = key.to_vec();
-        combined.extend_from_slice(data);
-        Self::hash(&combined)
+        let hash = blake3::keyed_hash(key, data);
+        *hash.as_bytes()
+    }
+
+    /// Derive a subkey from a context string and key material.
+    pub fn derive_key(context: &str, key_material: &[u8]) -> [u8; 32] {
+        blake3::derive_key(context, key_material)
+    }
+
+    /// Extended output (XOF): produce `len` bytes from `data`.
+    pub fn xof(data: &[u8], len: usize) -> Vec<u8> {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(data);
+        let mut out = vec![0u8; len];
+        let mut reader = hasher.finalize_xof();
+        reader.fill(&mut out);
+        out
+    }
+}
+
+// ── SHA3-256 ──────────────────────────────────────────────────────────────────
+
+pub struct Sha3_256;
+
+impl Sha3_256 {
+    pub fn hash(data: &[u8]) -> [u8; 32] {
+        let mut h = Sha3_256Inner::new();
+        Digest::update(&mut h, data);
+        h.finalize().into()
+    }
+
+    pub fn hash_many(parts: &[&[u8]]) -> [u8; 32] {
+        let mut h = Sha3_256Inner::new();
+        for part in parts { Digest::update(&mut h, part); }
+        h.finalize().into()
+    }
+}
+
+// ── SHA3-512 ──────────────────────────────────────────────────────────────────
+
+pub struct Sha3_512;
+
+impl Sha3_512 {
+    pub fn hash(data: &[u8]) -> [u8; 64] {
+        let mut h = Sha3_512Inner::new();
+        Digest::update(&mut h, data);
+        h.finalize().into()
+    }
+}
+
+// ── SHAKE-256 (XOF) ───────────────────────────────────────────────────────────
+
+pub struct Shake256;
+
+impl Shake256 {
+    /// Produce `len` bytes of output from `data`.
+    pub fn hash(data: &[u8], len: usize) -> Vec<u8> {
+        let mut h = sha3::Shake256::default();
+        XofUpdate::update(&mut h, data);
+        let mut out = vec![0u8; len];
+        h.finalize_xof_into(&mut out);
+        out
     }
 }

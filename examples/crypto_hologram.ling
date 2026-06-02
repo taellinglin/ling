@@ -1,0 +1,180 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Crypto Hologram — 4D Visualization of Cryptographic Operations
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# This room demonstrates three cryptographic primitives with 4D color-coded
+# holographic visualization:
+#
+# 🔵 HASHING (Blue) — deterministic, one-way
+#    Spherical accumulation rings that collapse into a fixed point
+#
+# 🟢 ENCRYPTION (Green) — reversible transformation
+#    Rotating lattice cages that expand/contract with key modulation
+#
+# 🔴 SIGNING (Red) — asymmetric authentication
+#    Spiral vortices with counterclockwise verification rings
+
+fn main() {
+    set_ambient(0.15)
+    set_zdist(4.0)
+    set_camera(0.5, 0.7, 0.3, 0.4)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 1: HASHING (Blue) — Deterministic Collapse
+    # ─────────────────────────────────────────────────────────────────────────
+    # Color: #0070ff (bright blue)
+    # Pattern: Concentric rings spiraling inward toward a fixed point
+    # Meaning: Hash output is always the same for same input
+
+    # Input data as expanding rings (multiple colors → single point)
+    vtex_spiral(
+        -3.5, 0.0, 3.0,      # Center: left side, upper elevation
+        1.0, 0.0, 0.0,       # Right tangent (width)
+        0.0, 1.0, 0.0,       # Up tangent (height)
+        6, 24,                # 6 spiral arms, 24 sides
+        3.0, 0.08,            # max radius, twist
+        FR, 0.55              # FR frame rate, hue 0.55 (blue)
+    )
+
+    # Accumulation rings converging (represents hash computation steps)
+    vtex_rings(
+        -3.5, 0.0, 2.0,      # Slightly forward
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        8, 32,                # 8 rings, 32 sides
+        2.5, 0.0,             # no twist (deterministic)
+        FR, 0.58              # blue-cyan
+    )
+
+    # Final hash point (fixed, unchanging)
+    vtex_grid(
+        -3.5, 0.0, 1.0,      # 1 unit forward (closest = result)
+        0.3, 0.0, 0.0,
+        0.0, 0.3, 0.0,
+        2, 2,                 # tiny grid (concentrated)
+        2.0, 2.0,
+        FR, 0.56              # blue core
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 2: ENCRYPTION (Green) — Symmetric Transformation
+    # ─────────────────────────────────────────────────────────────────────────
+    # Color: #00d060 (bright green)
+    # Pattern: Expanding lattice cage with key-driven modulation
+    # Meaning: Same key reverses the transformation; different key = garbage
+
+    # Plaintext lattice (input state)
+    vtex_grid(
+        0.0, 0.0, 3.0,       # Center view
+        1.0, 0.0, 0.0,       # Width (plaintext)
+        0.0, 1.0, 0.0,       # Height (state evolution)
+        12, 8,                # 12×8 grid
+        2.0, 1.5,
+        FR, 0.33              # green
+    )
+
+    # Key material as rotating rings (modulation)
+    vtex_chakra(
+        0.0, 0.0, 2.0,       # 1 unit back (key phase)
+        0.7, 0.0, 0.0,
+        0.0, 0.7, 0.0,
+        12, 3.0, 0.12,        # 12 spokes, twist 0.12 (key strength)
+        FR, 0.32              # lime-green
+    )
+
+    # Ciphertext (transformed, still reversible)
+    vtex_rings(
+        0.0, 0.0, 1.0,       # Forward (output)
+        1.2, 0.0, 0.0,
+        0.0, 1.2, 0.0,
+        10, 40,               # 10 rings of confusion
+        2.8, 0.06,
+        FR, 0.34              # teal-green
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # SECTION 3: SIGNING (Red) — Asymmetric Proof
+    # ─────────────────────────────────────────────────────────────────────────
+    # Color: #ff1040 (bright red)
+    # Pattern: Outward spiral (private key) + inward verification vortex (public)
+    # Meaning: Sign with secret, verify with public — cannot forge
+
+    # Private key spiral (secret, outward)
+    vtex_spiral(
+        3.5, 0.0, 3.0,       # Right side, upper
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        8, 32,                # 8 arms (security parameter)
+        3.5, 0.15,            # Larger, twisted (private key strength)
+        FR, 0.0               # Red
+    )
+
+    # Message rings (what we're signing)
+    vtex_rings(
+        3.5, 0.0, 2.0,       # Parallel to key
+        0.8, 0.0, 0.0,
+        0.0, 0.8, 0.0,
+        6, 24,                # 6 proof rings
+        2.0, 0.0,
+        FR, 0.02              # crimson (slightly orange-red)
+    )
+
+    # Public key verification vortex (inward, asymmetric)
+    vtex_spiral(
+        3.5, 0.0, 1.0,       # At result level
+        0.6, 0.0, 0.0,
+        0.0, 0.6, 0.0,
+        8, 40,                # Same 8 arms (same key!)
+        2.2, -0.18,           # Inward twist (verification direction)
+        FR, 0.03              # darkred → orange-red (different direction)
+    )
+
+    # Authentication halo (proof is valid)
+    vtex_lotus(
+        3.5, 0.0, 0.5,       # Below, glowing
+        0.5, 0.0, 0.0,
+        0.0, 0.5, 0.0,
+        8,                    # 8 petals (matching arms)
+        FR, 0.01              # deep red
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ANNOTATION: Color-coded legend in 4D space
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Blue zone (z=3.0) — hashing  deterministic, one-way
+    # Green zone (z=3.0) — encryption, reversible, key-dependent
+    # Red zone (z=3.0)   — signing, asymmetric, unforgeable
+
+    # Time axis (frame progression) shows:
+    # - Rings expanding/contracting with time
+    # - Spirals rotating (showing computation/verification)
+    # - Color gradients brightening (increasing key material)
+
+    present()
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Holographic Interpretation:
+#
+# This visualization encodes cryptographic concepts as geometric patterns:
+#
+# HASH (Blue, Left)
+#   Input entropy (outer rings) → deterministic collapse → fixed point output
+#   Meaning: Small input change = completely different output (avalanche effect)
+#
+# ENCRYPT (Green, Center)
+#   Plaintext lattice + key modulation → transformed lattice
+#   Meaning: Only with correct key can you reverse the transformation
+#
+# SIGN (Red, Right)
+#   Private key spiral (secret, outward) + public verification (inward)
+#   Meaning: The signature proves knowledge of private key without revealing it
+#
+# 4D Encoding:
+# - X-axis (left/right): Different algorithms
+# - Y-axis (up/down): Processing stages
+# - Z-axis (back/forward): Time / computation depth
+# - Color hue: Security parameter (darker = stronger)
+# - Rotation speed: Key material entropy
+# - Ring density: Computational rounds
