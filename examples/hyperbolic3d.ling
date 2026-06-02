@@ -1,39 +1,41 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Hyperbolic 3D — an H³ DMT mandala temple floating in 3-hyperbolic space
-# With physics ball avatar + audio physics encoding + cel shading
+# Hyperbolic 3D DOOM — Symmetrical Wireframe Maze in H³ Space
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-# Full H³ hyperbolic geometry: the hyperboloid model (Minkowski space).
-# A 9-room temple floats in hyperbolic space — 1 centre + 8 axial/diagonal rooms.
-# Movement is by WASD (very slow), with a large physics ball as the player avatar.
-# The ball bounces with elasticity, emits physics-encoded audio, and is rendered
-# in cel-shaded style.
+# A symmetrical 8-way mandala maze floating in H³ hyperbolic space.
+# Central atrium with mandala floor → 8 radial hallways → small alcove rooms.
+# Wireframe walls + archways as doorways. Ground plane walkable.
+# Physics ball avatar with audio encoding.
 #
 # Controls:
-#   W / S   move forward / back (slow hyperbolic)
-#   A / D   strafe left / right (slow hyperbolic)
-#   Q / E   turn left / right (Euclidean yaw)
-#   SPACE   jump (Euclidean gravity pulls you back)
-#
-# The ball's tone encodes physics: pitch ← height, amplitude ← speed, pan ← X pos.
+#   W / S   move forward / back (FASTER than before)
+#   A / D   strafe left / right
+#   Q / E   turn left / right
+#   SPACE   jump
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-bind SCALE  = 7.0     # Poincaré ball → world-space scale
-bind ZC     = 9.0     # z-centre: screen depth of the ball origin
-bind STEP   = 0.008   # VERY SLOW hyperbolic rapidity (7x slower than before)
-bind TURN   = 0.025   # yaw rotation per frame (slightly reduced)
-bind G      = 22.0    # gravity (Euclidean vertical acceleration)
-bind JUMP   = 7.5     # jump impulse
-bind HDIST  = 1.2     # hyperbolic distance to each satellite room
-bind NROOMS = 9       # 1 centre + 8 cardinal/diagonal
+bind SCALE  = 6.5     # Poincaré ball → world-space scale
+bind ZC     = 9.0     # z-centre
+bind STEP   = 0.025   # FASTER movement
+bind TURN   = 0.03
+bind G      = 22.0    # gravity
+bind JUMP   = 7.5
+bind HDIST  = 1.5     # distance to spoke rooms in H³
+bind NROOMS = 9       # 1 centre + 8 spokes
 
 # Ball physics
-bind BALL_R = 1.6           # ball radius (large, makes temple seem big)
-bind DAMPING = 0.995        # air drag
-bind ELASTICITY = 0.86      # bounce elasticity
-bind MOVE_ACCEL = 16.0      # WASD thrust (units/sec²)
+bind BALL_R = 1.4
+bind DAMPING = 0.995
+bind ELASTICITY = 0.86
+bind MOVE_ACCEL = 20.0
 
-# ── cosh / sinh (scalar returns — no local variables) ───────────────────────────────
+# Maze parameters
+bind HALLWAY_W = 2.0      # hallway half-width
+bind HALLWAY_H = 2.2      # hallway half-height
+bind ATRIUM_R = 2.5       # central atrium radius
+bind SPOKE_L = 4.0        # spoke (hallway) length from centre to alcove
+
+# ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
     (exp(v) + exp(0.0 - v)) / 2.0
 }
@@ -42,116 +44,108 @@ fn sinh_h(v) {
     (exp(v) - exp(0.0 - v)) / 2.0
 }
 
-# ── fract(sin) hash → pseudo-random 0..1 ─────────────────────────────────────
+# ── hash for procedural colouring ──────────────────────────────────────────────
 fn hash01(a, b) {
     sin(a*12.9898 + b*78.233) * 43758.5453 - floor(sin(a*12.9898 + b*78.233) * 43758.5453)
 }
 
+# ── draw a wireframe box (hallway section) ────────────────────────────────────
+fn draw_wireframe_box(cx, cy, cz, sx, sy, sz, col_r, col_g, col_b) {
+    set_color(col_r, col_g, col_b)
+    # bottom rectangle
+    draw_line_3d(cx-sx, cy+sy, cz-sz,  cx+sx, cy+sy, cz-sz)
+    draw_line_3d(cx+sx, cy+sy, cz-sz,  cx+sx, cy+sy, cz+sz)
+    draw_line_3d(cx+sx, cy+sy, cz+sz,  cx-sx, cy+sy, cz+sz)
+    draw_line_3d(cx-sx, cy+sy, cz+sz,  cx-sx, cy+sy, cz-sz)
+    # top rectangle
+    draw_line_3d(cx-sx, cy-sy, cz-sz,  cx+sx, cy-sy, cz-sz)
+    draw_line_3d(cx+sx, cy-sy, cz-sz,  cx+sx, cy-sy, cz+sz)
+    draw_line_3d(cx+sx, cy-sy, cz+sz,  cx-sx, cy-sy, cz+sz)
+    draw_line_3d(cx-sx, cy-sy, cz+sz,  cx-sx, cy-sy, cz-sz)
+    # vertical pillars
+    draw_line_3d(cx-sx, cy-sy, cz-sz,  cx-sx, cy+sy, cz-sz)
+    draw_line_3d(cx+sx, cy-sy, cz-sz,  cx+sx, cy+sy, cz-sz)
+    draw_line_3d(cx+sx, cy-sy, cz+sz,  cx+sx, cy+sy, cz+sz)
+    draw_line_3d(cx-sx, cy-sy, cz+sz,  cx-sx, cy+sy, cz+sz)
+}
+
 # ── main ──────────────────────────────────────────────────────────────────────
 bind start = do {
-    open_fullscreen("Hyperbolic 3D — H³ DMT Temple with Physics Ball")
+    open_fullscreen("Hyperbolic 3D DOOM — Wireframe Maze")
     capture_mouse()
-    set_ambient(0.16)
+    set_ambient(0.14)
 
-    # Cel shading (NOT holographic)
+    # Cel shading: clean toon look
     set_shade_mode(1)
-    set_cel_bands(5)
-    set_shadow_color(20, 10, 55)        # deep violet shadow
-    set_rim(0.4, 100, 60, 180)          # subtle purple rim
+    set_cel_bands(4)
+    set_shadow_color(10, 5, 30)
+    set_rim(0.3, 80, 120, 200)
 
-    # Audio setup (tone encodes physics)
-    audio_tone(0, 0.0, 0.0, ZC, 4.0, 200.0, 0.05, 0.5, 0.02)
+    # Audio
+    audio_tone(0, 0.0, 0.0, ZC, 4.0, 180.0, 0.06, 0.5, 0.02)
 
-    # ── initialize 9-room positions in H³ space ────────────────────────────────
-    bind rx = list_new()       # H³ x component
-    bind ry = list_new()       # H³ y component
-    bind rz = list_new()       # H³ z component
-    bind rw = list_new()       # H³ w component (timelike)
-    bind rtype = list_new()    # room type (for procedural colouring)
+    # Initialize room positions (same H³ geometry as before)
+    bind rx = list_new()
+    bind ry = list_new()
+    bind rz = list_new()
+    bind rw = list_new()
+    bind rtype = list_new()
 
-    # centre room at H³ origin
+    # Centre room
     bind rx = list_push(rx, 0.0)
     bind ry = list_push(ry, 0.0)
     bind rz = list_push(rz, 0.0)
     bind rw = list_push(rw, 1.0)
     bind rtype = list_push(rtype, 0)
 
-    # satellite rooms: boost origin along each direction by HDIST
+    # 8 spoke rooms (radial directions)
     bind ch0 = cosh_h(HDIST)
     bind sh0 = sinh_h(HDIST)
+    bind spoke_dirs = list_new()
 
-    # room 1: +X
-    bind rx = list_push(rx, sh0)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, 0.0)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 1)
-    # room 2: -X
-    bind rx = list_push(rx, 0.0 - sh0)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, 0.0)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 2)
-    # room 3: +Z
-    bind rx = list_push(rx, 0.0)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, sh0)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 3)
-    # room 4: -Z
-    bind rx = list_push(rx, 0.0)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, 0.0 - sh0)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 4)
+    # Cardinal directions (N, S, E, W)
+    bind spoke_dirs = list_push(spoke_dirs, 0)    # +Z (N)
+    bind spoke_dirs = list_push(spoke_dirs, 1)    # -Z (S)
+    bind spoke_dirs = list_push(spoke_dirs, 2)    # +X (E)
+    bind spoke_dirs = list_push(spoke_dirs, 3)    # -X (W)
 
-    # diagonal rooms (normalized to 0.7071 each)
+    # Diagonal directions (NE, NW, SE, SW)
+    bind spoke_dirs = list_push(spoke_dirs, 4)    # +X+Z
+    bind spoke_dirs = list_push(spoke_dirs, 5)    # -X+Z
+    bind spoke_dirs = list_push(spoke_dirs, 6)    # +X-Z
+    bind spoke_dirs = list_push(spoke_dirs, 7)    # -X-Z
+
+    # Place spoke rooms
     bind D2 = sh0 * 0.7071
-    # room 5: +X +Z
-    bind rx = list_push(rx, D2)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, D2)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 5)
-    # room 6: -X +Z
-    bind rx = list_push(rx, 0.0 - D2)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, D2)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 6)
-    # room 7: +X -Z
-    bind rx = list_push(rx, D2)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, 0.0 - D2)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 7)
-    # room 8: -X -Z
-    bind rx = list_push(rx, 0.0 - D2)
-    bind ry = list_push(ry, 0.0)
-    bind rz = list_push(rz, 0.0 - D2)
-    bind rw = list_push(rw, ch0)
-    bind rtype = list_push(rtype, 8)
+    # Cardinal
+    bind rx = list_push(rx, 0.0)       bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, sh0)    bind rw = list_push(rw, ch0)   bind rtype = list_push(rtype, 1)
+    bind rx = list_push(rx, 0.0)       bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, 0.0-sh0) bind rw = list_push(rw, ch0)  bind rtype = list_push(rtype, 2)
+    bind rx = list_push(rx, sh0)       bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, 0.0)   bind rw = list_push(rw, ch0)   bind rtype = list_push(rtype, 3)
+    bind rx = list_push(rx, 0.0-sh0)   bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, 0.0)   bind rw = list_push(rw, ch0)   bind rtype = list_push(rtype, 4)
+    # Diagonal
+    bind rx = list_push(rx, D2)        bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, D2)    bind rw = list_push(rw, ch0)   bind rtype = list_push(rtype, 5)
+    bind rx = list_push(rx, 0.0-D2)    bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, D2)    bind rw = list_push(rw, ch0)   bind rtype = list_push(rtype, 6)
+    bind rx = list_push(rx, D2)        bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, 0.0-D2) bind rw = list_push(rw, ch0)  bind rtype = list_push(rtype, 7)
+    bind rx = list_push(rx, 0.0-D2)    bind ry = list_push(ry, 0.0)      bind rz = list_push(rz, 0.0-D2) bind rw = list_push(rw, ch0)  bind rtype = list_push(rtype, 8)
 
-    # player/ball state (Euclidean)
-    bind bx   = 0.0
-    bind by   = 1.0
-    bind bz   = ZC
-    bind vx   = 0.0
-    bind vy   = 0.0
-    bind vz   = 0.0
-    bind pyaw = 0.0
-    bind ph   = 0.0
+    # Player/ball state
+    bind bx = 0.0
+    bind by = 0.2
+    bind bz = ZC
+    bind vx = 0.0
     bind vy_phys = 0.0
-    bind FR   = 0
+    bind vz = 0.0
+    bind pyaw = 0.0
+    bind FR = 0
     bind lastBounce = -99
     bind spaceWasDown = 0
     bind charge = 0.0
 
     while window_is_open() {
-        fill(4, 2, 16)
+        fill(1, 1, 6)
         bind dt = 0.0166667
 
-        # ── PHYSICS SIMULATION ─────────────────────────────────────────────────
+        # ── PHYSICS ────────────────────────────────────────────────────────────
         bind vy_phys = vy_phys + G * dt
         bind vx = vx * DAMPING
         bind vy_phys = vy_phys * DAMPING
@@ -163,112 +157,84 @@ bind start = do {
 
         bind hit = 0
 
-        # Boundary bounces (room walls at ±3.5)
-        if bx < (0.0 - 3.5 + BALL_R) { bind bx = 0.0 - 3.5 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
-        if bx > (3.5 - BALL_R) { bind bx = 3.5 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
-
-        if by < (0.0 - 3.0 + BALL_R) { bind by = 0.0 - 3.0 + BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-        if by > (3.0 - BALL_R) { bind by = 3.0 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-
-        if bz < (ZC - 4.0 + BALL_R) { bind bz = ZC - 4.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
-        if bz > (ZC + 4.0 - BALL_R) { bind bz = ZC + 4.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        # Boundary bounces (large arena)
+        if bx < (0.0 - 5.0 + BALL_R) { bind bx = 0.0 - 5.0 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        if bx > (5.0 - BALL_R) { bind bx = 5.0 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        if by < (0.2 + BALL_R) { bind by = 0.2 + BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
+        if by > (4.5 - BALL_R) { bind by = 4.5 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
+        if bz < (ZC - 5.0 + BALL_R) { bind bz = ZC - 5.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        if bz > (ZC + 5.0 - BALL_R) { bind bz = ZC + 5.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
 
         if hit > 0 { bind lastBounce = FR }
-
-        # Grounded check (ball resting on floor)
         bind grounded = 0
-        if by > (3.0 - BALL_R - 0.12) { bind grounded = 1 }
+        if by > (0.2 + BALL_R - 0.15) { bind grounded = 1 }
 
-        # ── input: build boost direction + magnitude ──────────────────────────
+        # ── INPUT ──────────────────────────────────────────────────────────────
         bind bx_move = 0.0
         bind bz_move = 0.0
-        if key_down("w") {
-            bind bx_move = bx_move + sin(pyaw) * STEP
-            bind bz_move = bz_move + cos(pyaw) * STEP
-        }
-        if key_down("s") {
-            bind bx_move = bx_move - sin(pyaw) * STEP
-            bind bz_move = bz_move - cos(pyaw) * STEP
-        }
-        if key_down("a") {
-            bind bx_move = bx_move + cos(pyaw) * STEP
-            bind bz_move = bz_move - sin(pyaw) * STEP
-        }
-        if key_down("d") {
-            bind bx_move = bx_move - cos(pyaw) * STEP
-            bind bz_move = bz_move + sin(pyaw) * STEP
-        }
+        if key_down("w") { bind bx_move = bx_move + sin(pyaw) * STEP   bind bz_move = bz_move + cos(pyaw) * STEP }
+        if key_down("s") { bind bx_move = bx_move - sin(pyaw) * STEP   bind bz_move = bz_move - cos(pyaw) * STEP }
+        if key_down("a") { bind bx_move = bx_move + cos(pyaw) * STEP   bind bz_move = bz_move - sin(pyaw) * STEP }
+        if key_down("d") { bind bx_move = bx_move - cos(pyaw) * STEP   bind bz_move = bz_move + sin(pyaw) * STEP }
 
-        # ── WASD applies to BALL MOVEMENT (thrust) ──────────────────────────────
         bind vx = vx + bx_move * MOVE_ACCEL * dt
         bind vz = vz + bz_move * MOVE_ACCEL * dt
 
         if key_down("q") { bind pyaw = pyaw + TURN }
         if key_down("e") { bind pyaw = pyaw - TURN }
 
-        # ── SPACEBAR CHARGED JUMP ───────────────────────────────────────────────
+        # ── JUMP ───────────────────────────────────────────────────────────────
         bind spaceNow = 0
         if key_down("space") { bind spaceNow = 1 }
-
         if spaceNow > 0 {
-            if grounded > 0 {
-                bind charge = charge + 14.0 * dt
-                if charge > 11.0 { bind charge = 11.0 }
-            }
+            if grounded > 0 { bind charge = charge + 14.0 * dt   if charge > 11.0 { bind charge = 11.0 } }
         } else {
             if spaceWasDown > 0 {
-                if charge > 0.01 {
-                    bind vy_phys = vy_phys - charge
-                }
+                if charge > 0.01 { bind vy_phys = vy_phys - charge }
                 bind charge = 0.0
             }
         }
         bind spaceWasDown = spaceNow
 
-        # ── PHYSICS-ENCODED AUDIO ────────────────────────────────────────────
+        # ── AUDIO ──────────────────────────────────────────────────────────────
         bind speed = sqrt(vx*vx + vy_phys*vy_phys + vz*vz)
-        bind hNorm = (3.0 - by) / 6.0
+        bind hNorm = (by - 0.2) / 4.0
         bind sinceHit = FR - lastBounce
         bind impact = 0.0
-        if sinceHit < 6 { bind impact = (6 - sinceHit) * 26.0 }
-
-        bind freq = 150.0 + hNorm * 200.0 + impact + speed * 24.0
-        bind amp = 0.045 + speed * 0.05
-        bind pan = bx / 4.0
+        if sinceHit < 6 { bind impact = (6 - sinceHit) * 24.0 }
+        bind freq = 140.0 + hNorm * 200.0 + impact + speed * 20.0
+        bind amp = 0.04 + speed * 0.06
+        bind pan = bx / 5.0
         audio_tone(0, bx, by, bz, 4.0, freq, amp, pan, 0.02)
 
-        # ── lights: warm overhead, cool fill, purple under ───────────────────
+        # ── LIGHTS ────────────────────────────────────────────────────────────
         clear_lights()
-        add_light(sin(FR*0.008)*4.0, 0.0-5.0, ZC,  1.0, 0.85, 0.55,  2.0, 18.0)
-        add_light(0.0-3.0, 0.0-3.0, ZC-3.0,  0.3, 0.6, 1.0,  0.9, 12.0)
-        add_light(bx, by + 1.0, bz,  0.55, 0.1, 0.9,  0.6, 8.0)
+        add_light(sin(FR*0.006)*3.5, 0.0-4.0, ZC,  0.8, 0.7, 0.55,  1.8, 16.0)
+        add_light(0.0-2.5, 0.0-2.0, ZC-2.5,  0.4, 0.5, 0.9,  0.8, 10.0)
+        add_light(bx, by + 0.8, bz,  0.6, 0.3, 0.8,  0.5, 6.0)
 
-        # ── camera: 3rd person, offset behind and above the ball ──────────────
-        bind cam_dist = 3.2
+        # ── CAMERA: 3rd person ────────────────────────────────────────────────
+        bind cam_dist = 2.5
         bind cam_x = bx - sin(pyaw) * cam_dist
         bind cam_z = bz - cos(pyaw) * cam_dist
-        set_camera(cos(pyaw), sin(pyaw), 0.88, 0.48)
-        set_camera_pos(cam_x, by - 0.8, cam_z)
-        set_zdist(1.5)
+        set_camera(cos(pyaw), sin(pyaw), 0.85, 0.53)
+        set_camera_pos(cam_x, by - 0.6, cam_z)
+        set_zdist(1.4)
 
-        # ── normalize boost direction for room movement ───────────────────────
+        # ── H³ BOOST for room movement ────────────────────────────────────────
         bind blen = sqrt(bx_move*bx_move + bz_move*bz_move)
         bind dx = 0.0
         bind dz = 0.0
-        if blen > 0.00001 {
-            bind dx = bx_move / blen
-            bind dz = bz_move / blen
-        }
+        if blen > 0.00001 { bind dx = bx_move / blen   bind dz = bz_move / blen }
         bind v = blen
 
-        # ── precompute cosh/sinh for inverse boost ────────────────────────────
         bind ep = exp(v)
         bind em = exp((0.0 - v))
         bind ch = (ep + em) / 2.0
         bind sh = (ep - em) / 2.0
         bind nsh = 0.0 - sh
 
-        # ── update & draw each room ────────────────────────────────────────────
+        # ── UPDATE ROOMS ───────────────────────────────────────────────────────
         bind nrx = list_new()
         bind nry = list_new()
         bind nrz = list_new()
@@ -281,112 +247,107 @@ bind start = do {
             bind pz = list_get(rz, i)
             bind pw = list_get(rw, i)
 
-            # ── Lorentz boost (inverse) ────────────────────────────────────────
             bind dot = dx*px + dz*pz
             bind nx = px + (ch - 1.0)*dx*dot + nsh*dx*pw
             bind ny = py
             bind nz = pz + (ch - 1.0)*dz*dot + nsh*dz*pw
             bind nw = nsh*dot + ch*pw
 
-            # ── normalize to correct numerical drift ───────────────────────────
             bind nn = sqrt(nw*nw - nx*nx - ny*ny - nz*nz)
-            if nn > 0.0001 {
-                bind nx = nx / nn
-                bind ny = ny / nn
-                bind nz = nz / nn
-                bind nw = nw / nn
-            }
+            if nn > 0.0001 { bind nx = nx / nn   bind ny = ny / nn   bind nz = nz / nn   bind nw = nw / nn }
 
             bind nrx = list_push(nrx, nx)
             bind nry = list_push(nry, ny)
             bind nrz = list_push(nrz, nz)
             bind nrw = list_push(nrw, nw)
 
-            # ── Poincaré projection ────────────────────────────────────────────
+            # ── DRAW MAZE STRUCTURE ────────────────────────────────────────────
             bind bx2 = nx / (1.0 + nw)
             bind by2 = ny / (1.0 + nw)
             bind bz2 = nz / (1.0 + nw)
             bind rr = bx2*bx2 + by2*by2 + bz2*bz2
             bind conf = 1.0 - rr
 
-            if conf > 0.03 {
+            if conf > 0.02 {
                 bind wx = bx2 * SCALE
                 bind wy = by2 * SCALE
                 bind wz = ZC + bz2 * SCALE
 
-                # ── procedural room colour ─────────────────────────────────────
+                # Colour by room type
                 bind rt = list_get(rtype, i)
                 bind hue = hash01(rt, 1.0)
-                bind hr = sin(hue * 6.28 + FR * 0.003) * 80.0 + 160.0
-                bind hg = sin(hue * 6.28 + FR * 0.003 + 2.094) * 80.0 + 160.0
-                bind hb = sin(hue * 6.28 + FR * 0.003 + 4.189) * 80.0 + 160.0
-                set_color(hr, hg, hb)
+                bind col_r = int(sin(hue * 6.28 + FR * 0.002) * 40.0 + 100.0)
+                bind col_g = int(sin(hue * 6.28 + FR * 0.002 + 2.094) * 50.0 + 110.0)
+                bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
 
-                bind sz = conf * 3.5
-                bind mode = 1
-                if conf > 0.5 { bind mode = 2 }
-
-                # ── floor slab ─────────────────────────────────────────────────
-                cube(wx, wy + sz * 0.98, wz,  sz, sz * 0.04, sz,  0.0, 0.0, 0.0,  mode)
-
-                # ── ceiling slab ───────────────────────────────────────────────
-                cube(wx, wy - sz * 0.98, wz,  sz, sz * 0.04, sz,  0.0, 0.0, 0.0,  mode)
-
-                # ── walls (when conf > 0.15) ──────────────────────────────────
-                if conf > 0.15 {
-                    cube(wx, wy, wz + sz * 0.98,  sz, sz, sz * 0.04,  0.0, 0.0, 0.0,  mode)
-                    cube(wx, wy, wz - sz * 0.98,  sz, sz, sz * 0.04,  0.0, 0.0, 0.0,  mode)
-                    cube(wx + sz * 0.98, wy, wz,  sz * 0.04, sz, sz,  0.0, 0.0, 0.0,  mode)
-                    cube(wx - sz * 0.98, wy, wz,  sz * 0.04, sz, sz,  0.0, 0.0, 0.0,  mode)
-                }
-
-                # ── arches (when conf > 0.2) — FIXED ORIENTATION ───────────────
-                if conf > 0.2 {
-                    bind aw = sz * 0.3
-                    bind aa = sz * 0.3
-
-                    # Doorways open OUTWARD from the room
-                    # Side walls: east/west (arch extends in Y, opens in ±X)
-                    arch(wx + sz, wy, wz,  aa, aa, aw,  0.0, 0.0, 0.0,  mode,  12, 0.15)
-                    arch(wx - sz, wy, wz,  aa, aa, aw,  0.0, 0.0, 0.0,  mode,  12, 0.15)
-
-                    # Front/back walls: arch extends in Y, opens in ±Z
-                    arch(wx, wy, wz + sz,  aa, aa, aw,  0.0, 1.5708, 0.0,  mode,  12, 0.15)
-                    arch(wx, wy, wz - sz,  aa, aa, aw,  0.0, 1.5708, 0.0,  mode,  12, 0.15)
-                }
-
-                # ── pedestal + dice (when conf > 0.35) ─────────────────────────
-                if conf > 0.35 {
-                    set_color(200, 200, 220)
-                    cylinder(wx, wy + sz * 0.35, wz,  sz * 0.08, sz * 0.4, sz * 0.08,  0.0, 0.0, 0.0,  mode, 10)
-
-                    bind ds = conf * 0.3
-                    bind da = FR * 0.008
-                    bind drt = floor(rt)
-                    if drt < 1.5 {
-                        set_color(255, 100, 120)
-                        tetrahedron(wx, wy - sz * 0.08, wz,  ds,ds,ds,  da,da,0.0,  0)
+                if i == 0 {
+                    # ── CENTRE ATRIUM: ground plane + mandala ──────────────────
+                    set_color(col_r, col_g, col_b)
+                    # Ground plane (wireframe grid)
+                    bind gx = 0
+                    while gx < 5 {
+                        draw_line_3d(wx - 2.5, wy, wz - 2.5 + gx,  wx + 2.5, wy, wz - 2.5 + gx)
+                        bind gx = gx + 1
                     }
-                    if drt > 0.5 { if drt < 2.5 {
-                        set_color(140, 200, 255)
-                        octahedron(wx, wy - sz * 0.08, wz,  ds,ds,ds,  da,da,0.0,  0)
-                    } }
-                    if drt > 1.5 { if drt < 3.5 {
-                        set_color(220, 150, 255)
-                        icosahedron(wx, wy - sz * 0.08, wz,  ds,ds,ds,  da,da,0.0,  0)
-                    } }
-                    if drt > 2.5 { if drt < 4.5 {
-                        set_color(255, 210, 130)
-                        dodecahedron(wx, wy - sz * 0.08, wz,  ds,ds,ds,  da,da*0.7,0.0,  0)
-                    } }
-                    if drt > 3.5 {
-                        set_color(140, 255, 170)
-                        cube(wx, wy - sz * 0.08, wz,  ds,ds,ds,  da,da*0.6,0.0,  0)
+                    bind gx = 0
+                    while gx < 5 {
+                        draw_line_3d(wx - 2.5 + gx, wy, wz - 2.5,  wx - 2.5 + gx, wy, wz + 2.5)
+                        bind gx = gx + 1
                     }
 
-                    # ── alchemy symbol on back wall ────────────────────────────
-                    bind hue2 = hash01(rt, 2.0) * 6.28
-                    vtex_yantra(wx, wy, wz + sz * 0.9,  1,0,0,  0,1,0,  2, sz * 0.4,  FR, hue2)
+                    # Mandala floor pattern
+                    set_color(col_r - 20, col_g - 20, col_b + 30)
+                    bind mrad = 0.5
+                    while mrad < 2.2 {
+                        draw_line_3d(wx, wy, wz - mrad,  wx + mrad * 0.866, wy, wz - mrad * 0.5)
+                        draw_line_3d(wx + mrad * 0.866, wy, wz - mrad * 0.5,  wx + mrad * 0.866, wy, wz + mrad * 0.5)
+                        draw_line_3d(wx + mrad * 0.866, wy, wz + mrad * 0.5,  wx, wy, wz + mrad)
+                        draw_line_3d(wx, wy, wz + mrad,  wx - mrad * 0.866, wy, wz + mrad * 0.5)
+                        draw_line_3d(wx - mrad * 0.866, wy, wz + mrad * 0.5,  wx - mrad * 0.866, wy, wz - mrad * 0.5)
+                        draw_line_3d(wx - mrad * 0.866, wy, wz - mrad * 0.5,  wx, wy, wz - mrad)
+                        bind mrad = mrad + 0.35
+                    }
+                } else {
+                    # ── SPOKE ROOMS: hallway + alcove ─────────────────────────
+                    bind spoke_idx = i - 1
+
+                    # Direction vector for this spoke
+                    bind spoke_angle = spoke_idx * 0.7854   # π/4 radians per spoke
+                    bind spoke_dx = cos(spoke_angle)
+                    bind spoke_dz = sin(spoke_angle)
+
+                    # Hallway from centre toward alcove
+                    bind hw_len = SPOKE_L * conf
+                    bind hw_cx = wx + spoke_dx * hw_len * 0.5
+                    bind hw_cz = wz + spoke_dz * hw_len * 0.5
+
+                    draw_wireframe_box(hw_cx, wy, hw_cz,  HALLWAY_W * conf, HALLWAY_H * conf, hw_len * 0.5,  col_r, col_g, col_b)
+
+                    # Alcove at end of hallway (room)
+                    bind alcove_cx = wx + spoke_dx * hw_len
+                    bind alcove_cz = wz + spoke_dz * hw_len
+
+                    # Room box (wireframe)
+                    draw_wireframe_box(alcove_cx, wy, alcove_cz,  1.2 * conf, 1.5 * conf, 1.2 * conf,  col_r + 30, col_g + 20, col_b - 20)
+
+                    # Archway into alcove (FILLED, prominent)
+                    set_color(col_r - 40, col_g + 60, col_b + 80)
+                    bind arch_x = wx + spoke_dx * (hw_len - 1.0 * conf)
+                    bind arch_z = wz + spoke_dz * (hw_len - 1.0 * conf)
+                    arch(arch_x, wy, arch_z,  HALLWAY_W * conf * 0.8, HALLWAY_H * conf * 0.7, 0.3 * conf,  spoke_angle, 0.0, 0.0,  0,  10, 0.18)
+
+                    # Geometric decoration (mandala or geometric shape)
+                    set_color(col_r + 20, col_g - 30, col_b + 50)
+                    bind deco_x = alcove_cx
+                    bind deco_z = alcove_cz
+                    # Draw decorative circle
+                    bind deco_rad = 0.3 * conf
+                    bind deco_angle = 0
+                    while deco_angle < 6.28 {
+                        bind next_angle = deco_angle + 0.39
+                        draw_line_3d(deco_x + deco_rad * cos(deco_angle), wy - 0.5, deco_z + deco_rad * sin(deco_angle),  deco_x + deco_rad * cos(next_angle), wy - 0.5, deco_z + deco_rad * sin(next_angle))
+                        bind deco_angle = next_angle
+                    }
                 }
             }
 
@@ -398,27 +359,22 @@ bind start = do {
         bind rz = nrz
         bind rw = nrw
 
-        # ── DRAW THE BALL — large physics avatar ─────────────────────────────
-        bind ball_hue = 0.1 - hNorm * 0.3 + speed * 0.08
-        set_color(255, int(160 + speed * 20.0), 60)
-        # Draw ball as a large gyro (spinning rings)
-        gyro(bx, by, bz,  BALL_R, BALL_R, BALL_R,  FR*0.02, FR*0.015, FR*0.018,  1,  3)
+        # ── DRAW THE BALL ──────────────────────────────────────────────────────
+        set_color(int(180 + speed * 40.0), 100, int(200 - speed * 20.0))
+        gyro(bx, by, bz,  BALL_R, BALL_R, BALL_R,  FR*0.02, FR*0.015, FR*0.018,  1,  2)
 
-        # Draw shadow on ground plane
-        set_color(30, 40, 100)
-        draw_line_3d(bx - BALL_R, 3.0, bz, bx + BALL_R, 3.0, bz)
-        draw_line_3d(bx, 3.0, bz - BALL_R, bx, 3.0, bz + BALL_R)
+        # Shadow and indicators
+        set_color(50, 40, 100)
+        draw_line_3d(bx - BALL_R, 0.2, bz,  bx + BALL_R, 0.2, bz)
+        draw_line_3d(bx, 0.2, bz - BALL_R,  bx, 0.2, bz + BALL_R)
 
-        # Velocity indicator (cyan arrow)
-        set_color(80, 200, 255)
-        draw_line_3d(bx, by, bz, bx + vx * 0.3, by + vy_phys * 0.3, bz + vz * 0.3)
+        set_color(100, 200, 255)
+        draw_line_3d(bx, by, bz,  bx + vx * 0.25, by + vy_phys * 0.25, bz + vz * 0.25)
 
-        # Charge meter (grows upward while charging)
         if charge > 0.01 {
             bind cf = charge / 11.0
             set_color(255, int(200 - cf * 150.0), 40)
-            draw_line_3d(bx, by, bz, bx, by - cf * 2.5, bz)
-            draw_line_3d(bx - 0.3, by - cf * 2.5, bz, bx + 0.3, by - cf * 2.5, bz)
+            draw_line_3d(bx, by, bz, bx, by - cf * 2.0, bz)
         }
 
         present()
