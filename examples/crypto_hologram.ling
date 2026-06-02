@@ -54,7 +54,6 @@
     set_camera(cry, sry, crx, srx)
     set_camera_pos(cam_x, cam_y, cam_z)
     set_zdist(2.5)
-    set_ambient(0.18)
 }
 
 函 setup_lights(FR) {
@@ -80,10 +79,10 @@
 
 函 setup_audio() {
     # Three harmonic voices in cryptographic zones
-    audio_tone(0, -8.0, 0.0, 8.0, 3.0, FREQ_HASH, 0.06, 0.3, 0.02)
-    audio_tone(1,  0.0, 0.0, 8.0, 3.0, FREQ_CRYPT, 0.07, 0.4, 0.025)
-    audio_tone(2,  8.0, 0.0, 8.0, 3.0, FREQ_SIGN, 0.05, 0.35, 0.018)
-    audio_volume(0.35)
+    เสียงโทน(0, -8.0, 0.0, 8.0, 3.0, FREQ_HASH, 0.06, 0.3, 0.02)
+    เสียงโทน(1,  0.0, 0.0, 8.0, 3.0, FREQ_CRYPT, 0.07, 0.4, 0.025)
+    เสียงโทน(2,  8.0, 0.0, 8.0, 3.0, FREQ_SIGN, 0.05, 0.35, 0.018)
+    ระดับเสียง(0.35)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +97,7 @@
     令 twist = sin(f * 0.5) * 0.08
 
     # Input spiral (expanding, many states → one)
-    vtex_spiral(
+    ลายเกลียว(
         -8.0, 1.5, 10.0,
         1.2, 0.0, 0.0,  0.0, 1.2, 0.0,
         8, 32,          # 8 arms, 32 sides
@@ -107,7 +106,7 @@
     )
 
     # Convergence rings (avalanche effect)
-    vtex_rings(
+    ลายวงซ้อน(
         -8.0, 1.0, 8.5,
         1.0, 0.0, 0.0,  0.0, 1.0, 0.0,
         12, 40,         # 12 rings, high detail
@@ -116,7 +115,7 @@
     )
 
     # Hash output point (tiny, fixed)
-    vtex_grid(
+    ลายตาราง(
         -8.0, 0.5, 7.0,
         0.3, 0.0, 0.0,  0.0, 0.3, 0.0,
         2, 2,
@@ -134,7 +133,7 @@
     令 key_strength = 0.6 + cos(f * 1.5) * 0.2  # modulate amplitude
 
     # Plaintext grid (ordered structure)
-    vtex_grid(
+    ลายตาราง(
         0.0, 1.5, 10.0,
         1.1, 0.0, 0.0,  0.0, 1.1, 0.0,
         14, 10,         # 14×10 grid (organized)
@@ -143,7 +142,7 @@
     )
 
     # Key material as rotating chakra (modulation source)
-    vtex_chakra(
+    ลายจักร(
         0.0, 0.0, 9.0,
         0.8 * key_strength, 0.0, 0.0,
         0.0, 0.8 * key_strength, 0.0,
@@ -152,7 +151,7 @@
     )
 
     # Ciphertext (transformed but reversible)
-    vtex_rings(
+    ลายวงซ้อน(
         0.0, 0.8, 7.5,
         1.3, 0.0, 0.0,  0.0, 1.3, 0.0,
         11, 48,         # 11 rings of confusion
@@ -170,7 +169,7 @@
     令 proof_scale = 0.7 + sin(f * 3.0) * 0.15
 
     # Private key spiral (secret, outward, twisting)
-    vtex_spiral(
+    ลายเกลียว(
         8.0, 1.5, 10.0,
         1.1, 0.0, 0.0,  0.0, 1.1, 0.0,
         8, 40,          # 8 arms (security parameter)
@@ -179,7 +178,7 @@
     )
 
     # Message rings (what we're signing)
-    vtex_rings(
+    ลายวงซ้อน(
         8.0, 0.5, 8.5,
         0.9, 0.0, 0.0,  0.0, 0.9, 0.0,
         7, 28,          # 7 proof rings
@@ -188,7 +187,7 @@
     )
 
     # Public key verification vortex (inward, counter-rotating)
-    vtex_spiral(
+    ลายเกลียว(
         8.0, 0.0, 7.0,
         0.65, 0.0, 0.0,
         0.0, 0.65, 0.0,
@@ -198,7 +197,7 @@
     )
 
     # Authentication bloom (proof is valid)
-    vtex_lotus(
+    ลายดอกบัว(
         8.0, -0.5, 6.5,
         0.6, 0.0, 0.0,  0.0, 0.6, 0.0,
         8,              # 8 petals (matching)
@@ -210,13 +209,19 @@
 # MAIN LOOP
 # ─────────────────────────────────────────────────────────────────────────────
 
-bind start = do {
-    bind FR = 0.0
+令 start = 执 {
+    open_fullscreen("Crypto Hologram — 4D Cryptographic Visualization")
+    capture_mouse()
+    set_ambient(0.18)
 
     setup_audio()
 
+    令 FR = 0.0
+
     # Render loop (runs until window closes)
-    循 true {
+    循 window_is_open() {
+        clear(0.02, 0.01, 0.05)  # near-black background
+
         setup_camera(FR)
         setup_lights(FR)
 
