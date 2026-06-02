@@ -1,7 +1,6 @@
 <div align="center">
 
-<img src="ling-lang.org/images/logo.svg" width="160" height="160" alt="Ling logo">
-
+![Ling logo](https://ling-lang.org/images/logo.svg)
 # ling · 灵 · 霊 · 령 · ลิง
 
 **The Omniglot Systems Language**
