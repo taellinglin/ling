@@ -90,11 +90,19 @@ path = "src/bin/lx.rs"
 name = "ling-repl"
 path = "src/bin/ling-repl.rs"
 
+[[example]]
+name = "physics_demo_rust"
+path = "examples/physics_demo_rust.rs"
+
 [features]
 # Enable LLVM-backed native codegen (requires LLVM toolchain)
 llvm = []
 
 [dependencies]
+glam = "0.28"
+ling-physics = { path = "crates/ling-physics", version = "2030.1" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0" }
+ling-game = { path = "crates/ling-game", version = "2030.1" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
