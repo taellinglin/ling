@@ -51,6 +51,15 @@ bind start = do {
     令 FR = 0
     令 lastBounce = -99
 
+    # ── spacebar charge state ──────────────────────────────────────────────────
+    # Hold SPACE to wind up an impulse; release to launch the ball upward.
+    # Longer hold → bigger charge (capped), so the launch scales with hold time.
+    令 charge        = 0.0
+    令 spaceWasDown  = 0
+    令 CHARGE_RATE   = 14.0     # charge gained per second of holding
+    令 MAX_CHARGE    = 11.0     # cap so it can't grow forever
+    令 lastLaunch    = -99
+
     ขณะที่ หน้าต่างเปิดอยู่() {
         เติม(2, 3, 10)            # deep navy backdrop
 
@@ -81,6 +90,27 @@ bind start = do {
 
         若 hit > 0 { 令 lastBounce = FR }
 
+        # ── SPACEBAR CHARGE → IMPULSE ─────────────────────────────────────────
+        # While held, accumulate charge (capped). On release, convert the stored
+        # charge into an upward impulse (−Y is screen-up) plus a small sideways
+        # kick so repeated launches stay lively. Hold longer = launch harder.
+        令 spaceNow = 0
+        若 key_down("space") { 令 spaceNow = 1 }
+
+        若 spaceNow > 0 {
+            令 charge = charge + CHARGE_RATE * DT
+            若 charge > MAX_CHARGE { 令 charge = MAX_CHARGE }
+        } 否则 {
+            # released this frame? (was down, now up) → launch
+            若 spaceWasDown > 0 {
+                令 vy = vy - charge                 # upward kick (−Y = up)
+                令 vx = vx + (bx / HW) * charge * 0.35   # lean away from centre
+                令 charge = 0.0
+                令 lastLaunch = FR
+            }
+        }
+        令 spaceWasDown = spaceNow
+
         # ── derived quantities ───────────────────────────────────────────────
         令 speed  = sqrt(vx*vx + vy*vy + vz*vz)
         令 hNorm  = (HH - by) / (2.0 * HH)      # 0 at floor (+HH) → 1 at ceiling (−HH)
@@ -90,7 +120,7 @@ bind start = do {
         令 impact    = 0.0
         若 sinceHit < 6 { 令 impact = (6 - sinceHit) * 26.0 }
 
-        令 freq = 150.0 + hNorm * 180.0 + impact + speed * 22.0
+        令 freq = 150.0 + hNorm * 180.0 + impact + speed * 22.0 + charge * 16.0
         令 amp  = 0.04 + speed * 0.045
         令 pan  = bx / HW                        # −1 … +1 stereo
         เสียงโทน(0, bx, by, bz, 4.0, freq, amp, pan, 0.02)
@@ -136,6 +166,15 @@ bind start = do {
         # ── velocity arrow (red, length ∝ speed) ─────────────────────────────
         set_color(230, 60, 40)
         draw_line_3d(bx, by, bz, bx + vx * 0.18, by + vy * 0.18, bz + vz * 0.18)
+
+        # ── charge meter — a hot bar growing UP from the ball while winding ──
+        若 charge > 0.01 {
+            令 cf = charge / MAX_CHARGE              # 0..1 fill
+            set_color(255, int(200 - cf * 180.0), 40)
+            draw_line_3d(bx, by, bz, bx, by - cf * 2.2, bz)
+            # little crossbar tip so the top of the gauge is easy to read
+            draw_line_3d(bx - 0.18, by - cf * 2.2, bz, bx + 0.18, by - cf * 2.2, bz)
+        }
 
         # ── THE BALL — energy-coloured chakra ────────────────────────────────
         # hue param cycles with speed so a hot ball reads warm, a slow one cool
