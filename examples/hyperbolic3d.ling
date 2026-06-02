@@ -1,0 +1,323 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Hyperbolic 3D — an H³ DMT mandala temple floating in 3-hyperbolic space
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Full H³ hyperbolic geometry: the hyperboloid model (Minkowski space).
+# A 9-room temple floats in hyperbolic space — 1 centre + 8 axial/diagonal rooms.
+# Movement = Lorentz boosts (the same mathematical structure as Möbius transforms
+# in 2D, but extended to full 3D). Rendering = Poincaré ball projection, then
+# conformal scaling before drawing to world-space.
+#
+# Controls:
+#   W / S   move forward / back (hyperbolic)
+#   A / D   strafe left / right (hyperbolic)
+#   Q / E   turn left / right (Euclidean yaw)
+#   SPACE   jump (Euclidean gravity)
+#
+# The camera stays at the H³ origin; the entire 9-room structure translates
+# relative to the player each frame (the "world moves around you" pattern).
+# Each room is drawn with procedural colours (hashing its type) and a Platonic
+# dice-solid at the centre. Alchemy symbols (yantras) decorate the back walls.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind SCALE  = 7.0     # Poincaré ball → world-space scale
+bind ZC     = 9.0     # z-centre: screen depth of the ball origin
+bind STEP   = 0.055   # hyperbolic rapidity per frame while moving
+bind TURN   = 0.035   # yaw rotation per frame
+bind G      = 22.0    # gravity (Euclidean vertical acceleration)
+bind JUMP   = 7.5     # jump impulse
+bind HDIST  = 1.2     # hyperbolic distance to each satellite room
+bind NROOMS = 9       # 1 centre + 8 cardinal/diagonal
+
+# ── cosh / sinh (scalar returns — no local variables) ───────────────────────────────
+fn cosh_h(v) {
+    (exp(v) + exp(0.0 - v)) / 2.0
+}
+
+fn sinh_h(v) {
+    (exp(v) - exp(0.0 - v)) / 2.0
+}
+
+# ── fract(sin) hash → pseudo-random 0..1 ─────────────────────────────────────
+fn hash01(a, b) {
+    sin(a*12.9898 + b*78.233) * 43758.5453 - floor(sin(a*12.9898 + b*78.233) * 43758.5453)
+}
+
+# ── main ──────────────────────────────────────────────────────────────────────
+bind start = do {
+    open_fullscreen("Hyperbolic 3D — H³ DMT Temple")
+    capture_mouse()
+    set_ambient(0.18)
+    set_shade_mode(2)
+    set_cel_bands(4)
+    set_shadow_color(20, 10, 55)        # deep violet shadow
+    set_rim(0.65, 140, 80, 255)         # cyan/magenta rim
+
+    # ── initialize 9-room positions in H³ space ────────────────────────────────
+    bind rx = list_new()       # H³ x component
+    bind ry = list_new()       # H³ y component
+    bind rz = list_new()       # H³ z component
+    bind rw = list_new()       # H³ w component (timelike)
+    bind rtype = list_new()    # room type (for procedural colouring)
+
+    # centre room at H³ origin
+    bind rx = list_push(rx, 0.0)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0)
+    bind rw = list_push(rw, 1.0)
+    bind rtype = list_push(rtype, 0)
+
+    # satellite rooms: boost origin along each direction by HDIST
+    bind ch0 = cosh_h(HDIST)
+    bind sh0 = sinh_h(HDIST)
+
+    # room 1: +X
+    bind rx = list_push(rx, sh0)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 1)
+    # room 2: -X
+    bind rx = list_push(rx, 0.0 - sh0)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 2)
+    # room 3: +Z
+    bind rx = list_push(rx, 0.0)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, sh0)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 3)
+    # room 4: -Z
+    bind rx = list_push(rx, 0.0)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0 - sh0)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 4)
+
+    # diagonal rooms (normalized to 0.7071 each)
+    bind D2 = sh0 * 0.7071
+    # room 5: +X +Z
+    bind rx = list_push(rx, D2)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, D2)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 5)
+    # room 6: -X +Z
+    bind rx = list_push(rx, 0.0 - D2)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, D2)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 6)
+    # room 7: +X -Z
+    bind rx = list_push(rx, D2)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0 - D2)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 7)
+    # room 8: -X -Z
+    bind rx = list_push(rx, 0.0 - D2)
+    bind ry = list_push(ry, 0.0)
+    bind rz = list_push(rz, 0.0 - D2)
+    bind rw = list_push(rw, ch0)
+    bind rtype = list_push(rtype, 8)
+
+    # player state (Euclidean)
+    bind pyaw = 0.0    # horizontal yaw (Euclidean rotation)
+    bind ph   = 0.0    # height above floor
+    bind vy   = 0.0    # vertical velocity
+    bind FR   = 0
+
+    while window_is_open() {
+        fill(4, 2, 16)
+        bind dt = 0.0166667
+
+        # ── input: build boost direction + magnitude ──────────────────────────
+        bind bx = 0.0
+        bind bz = 0.0
+        if key_down("w") {
+            bind bx = bx + sin(pyaw) * STEP
+            bind bz = bz + cos(pyaw) * STEP
+        }
+        if key_down("s") {
+            bind bx = bx - sin(pyaw) * STEP
+            bind bz = bz - cos(pyaw) * STEP
+        }
+        if key_down("a") {
+            bind bx = bx + cos(pyaw) * STEP
+            bind bz = bz - sin(pyaw) * STEP
+        }
+        if key_down("d") {
+            bind bx = bx - cos(pyaw) * STEP
+            bind bz = bz + sin(pyaw) * STEP
+        }
+
+        if key_down("q") { bind pyaw = pyaw + TURN }
+        if key_down("e") { bind pyaw = pyaw - TURN }
+
+        # ── gravity + jump ─────────────────────────────────────────────────────
+        bind grounded = 0
+        if ph < 0.001 { bind grounded = 1 }
+        if key_down("space") { if grounded > 0 { bind vy = JUMP } }
+        bind vy = vy - G * dt
+        bind ph = ph + vy * dt
+        if ph < 0.0 { bind ph = 0.0   bind vy = 0.0 }
+
+        # ── lights: warm overhead, cool fill, purple under ───────────────────
+        clear_lights()
+        add_light(sin(FR*0.008)*4.0, 0.0-5.0, ZC,  1.0, 0.85, 0.55,  2.2, 18.0)
+        add_light(0.0-3.0, 0.0-3.0, ZC-3.0,  0.3, 0.6, 1.0,  1.0, 12.0)
+        add_light(0.0, 2.0, ZC,  0.55, 0.1, 0.9,  0.7, 8.0)
+
+        # ── camera: at origin, slight downward pitch ──────────────────────────
+        set_camera(cos(pyaw), sin(pyaw), 0.90, 0.44)
+        set_camera_pos(0.0, 0.0 - ph * 0.5, 0.0)
+        set_zdist(1.6)
+
+        # ── normalize boost direction ──────────────────────────────────────────
+        bind blen = sqrt(bx*bx + bz*bz)
+        bind dx = 0.0
+        bind dz = 0.0
+        if blen > 0.00001 {
+            bind dx = bx / blen
+            bind dz = bz / blen
+        }
+        bind v = blen
+
+        # ── precompute cosh/sinh for inverse boost ────────────────────────────
+        bind ep = exp(v)
+        bind em = exp((0.0 - v))
+        bind ch = (ep + em) / 2.0
+        bind sh = (ep - em) / 2.0
+        bind nsh = 0.0 - sh   # inverse boost: negate sinh
+
+        # ── update & draw each room ────────────────────────────────────────────
+        bind nrx = list_new()
+        bind nry = list_new()
+        bind nrz = list_new()
+        bind nrw = list_new()
+        bind i = 0
+
+        while i < NROOMS {
+            bind px = list_get(rx, i)
+            bind py = list_get(ry, i)
+            bind pz = list_get(rz, i)
+            bind pw = list_get(rw, i)
+
+            # ── Lorentz boost (inverse) ────────────────────────────────────────
+            bind dot = dx*px + dz*pz
+            bind nx = px + (ch - 1.0)*dx*dot + nsh*dx*pw
+            bind ny = py
+            bind nz = pz + (ch - 1.0)*dz*dot + nsh*dz*pw
+            bind nw = nsh*dot + ch*pw
+
+            # ── normalize to correct numerical drift ───────────────────────────
+            bind nn = sqrt(nw*nw - nx*nx - ny*ny - nz*nz)
+            if nn > 0.0001 {
+                bind nx = nx / nn
+                bind ny = ny / nn
+                bind nz = nz / nn
+                bind nw = nw / nn
+            }
+
+            bind nrx = list_push(nrx, nx)
+            bind nry = list_push(nry, ny)
+            bind nrz = list_push(nrz, nz)
+            bind nrw = list_push(nrw, nw)
+
+            # ── Poincaré projection ────────────────────────────────────────────
+            bind bx2 = nx / (1.0 + nw)
+            bind by2 = ny / (1.0 + nw)
+            bind bz2 = nz / (1.0 + nw)
+            bind rr = bx2*bx2 + by2*by2 + bz2*bz2
+            bind conf = 1.0 - rr
+
+            if conf > 0.03 {
+                bind wx = bx2 * SCALE
+                bind wy = by2 * SCALE + ph
+                bind wz = ZC + bz2 * SCALE
+
+                # ── procedural room colour ─────────────────────────────────────
+                bind rt = list_get(rtype, i)
+                bind hue = hash01(rt, 1.0)
+                bind hr = sin(hue * 6.28 + FR * 0.003) * 80.0 + 160.0
+                bind hg = sin(hue * 6.28 + FR * 0.003 + 2.094) * 80.0 + 160.0
+                bind hb = sin(hue * 6.28 + FR * 0.003 + 4.189) * 80.0 + 160.0
+                set_color(hr, hg, hb)
+
+                bind sz = conf * 3.5
+                bind mode = 1
+                if conf > 0.5 { bind mode = 2 }
+
+                # ── floor slab ─────────────────────────────────────────────────
+                cube(wx, wy + sz * 0.95, wz,  sz, sz * 0.05, sz,  0.0, 0.0, 0.0,  mode)
+
+                # ── ceiling slab ───────────────────────────────────────────────
+                cube(wx, wy - sz * 0.95, wz,  sz, sz * 0.05, sz,  0.0, 0.0, 0.0,  mode)
+
+                # ── walls (when conf > 0.15) ──────────────────────────────────
+                if conf > 0.15 {
+                    cube(wx, wy, wz + sz * 0.95,  sz, sz, sz * 0.05,  0.0, 0.0, 0.0,  mode)
+                    cube(wx, wy, wz - sz * 0.95,  sz, sz, sz * 0.05,  0.0, 0.0, 0.0,  mode)
+                    cube(wx + sz * 0.95, wy, wz,  sz * 0.05, sz, sz,  0.0, 0.0, 0.0,  mode)
+                    cube(wx - sz * 0.95, wy, wz,  sz * 0.05, sz, sz,  0.0, 0.0, 0.0,  mode)
+                }
+
+                # ── arches (when conf > 0.2) ──────────────────────────────────
+                if conf > 0.2 {
+                    bind aw = sz * 0.4
+                    bind aa = sz * 0.35
+                    arch(wx + sz, wy, wz,  aw, aa, sz * 0.05,  0.0, 1.5708, 0.0,  mode,  16, 0.12)
+                    arch(wx - sz, wy, wz,  aw, aa, sz * 0.05,  0.0, 1.5708, 0.0,  mode,  16, 0.12)
+                    arch(wx, wy, wz + sz,  aw, aa, sz * 0.05,  0.0, 0.0, 0.0,  mode,  16, 0.12)
+                    arch(wx, wy, wz - sz,  aw, aa, sz * 0.05,  0.0, 0.0, 0.0,  mode,  16, 0.12)
+                }
+
+                # ── pedestal + dice (when conf > 0.35) ─────────────────────────
+                if conf > 0.35 {
+                    set_color(200, 200, 220)
+                    cylinder(wx, wy + sz * 0.4, wz,  sz * 0.1, sz * 0.45, sz * 0.1,  0.0, 0.0, 0.0,  mode, 12)
+
+                    bind ds = conf * 0.35
+                    bind da = FR * 0.008
+                    bind drt = floor(rt)
+                    if drt < 1.5 {
+                        set_color(255, 100, 120)
+                        tetrahedron(wx, wy - sz * 0.05, wz,  ds,ds,ds,  da,da,0.0,  0)
+                    }
+                    if drt > 0.5 { if drt < 2.5 {
+                        set_color(140, 200, 255)
+                        octahedron(wx, wy - sz * 0.05, wz,  ds,ds,ds,  da,da,0.0,  0)
+                    } }
+                    if drt > 1.5 { if drt < 3.5 {
+                        set_color(220, 150, 255)
+                        icosahedron(wx, wy - sz * 0.05, wz,  ds,ds,ds,  da,da,0.0,  0)
+                    } }
+                    if drt > 2.5 { if drt < 4.5 {
+                        set_color(255, 210, 130)
+                        dodecahedron(wx, wy - sz * 0.05, wz,  ds,ds,ds,  da,da*0.7,0.0,  0)
+                    } }
+                    if drt > 3.5 {
+                        set_color(140, 255, 170)
+                        cube(wx, wy - sz * 0.05, wz,  ds,ds,ds,  da,da*0.6,0.0,  0)
+                    }
+
+                    # ── alchemy symbol on back wall ────────────────────────────
+                    bind hue2 = hash01(rt, 2.0) * 6.28
+                    vtex_yantra(wx, wy, wz + sz * 0.9,  1,0,0,  0,1,0,  2, sz * 0.5,  FR, hue2)
+                }
+            }
+
+            bind i = i + 1
+        }
+
+        bind rx = nrx
+        bind ry = nry
+        bind rz = nrz
+        bind rw = nrw
+
+        present()
+        bind FR = FR + 1
+    }
+}
