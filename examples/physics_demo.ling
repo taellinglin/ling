@@ -1,195 +1,148 @@
-# Physics Demo — Bouncing Ball with Physics-Encoded Audio
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Physics Demo — Bouncing Ball in a Cage, with Physics-Encoded Audio
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# A ball bounces inside a wireframe cage under real gravity.
+# The tone it emits ENCODES the physics:
+#   • pitch  ← height          (low floor → high ceiling)
+#   • pitch  ← impact spikes    (each bounce kicks the frequency up)
+#   • volume ← speed            (fast = loud, resting = quiet)
+#   • pan    ← horizontal pos   (positional audio follows the ball)
+#
+# Coordinate convention (matches the room demos):
+#   camera sits at the ORIGIN looking down +Z; the cage lives in front of it.
+#   X: −HW … +HW   (left/right)
+#   Y: −HH … +HH   (floor/ceiling)
+#   Z:  ZN … ZF    (near/far, all positive — in front of the camera)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# Cage half-extents and depth window
+令 HW = 3.2          # half width  (X spans −3.2 … +3.2)
+令 HH = 2.6          # half height (Y spans −2.6 … +2.6)
+令 ZN = 5.0          # near wall
+令 ZF = 11.0         # far wall
+令 ZC = 8.0          # cage centre depth
+
+令 R  = 0.5          # ball radius
+
+# Physics constants
+令 GRAVITY    = 9.8
+令 DAMPING    = 0.995    # mild air drag per frame
+令 ELASTICITY = 0.86     # energy kept on each bounce
+令 DT         = 0.0167   # ~60 FPS step
 
 bind start = do {
     open_fullscreen("Physics Demo — Bouncing Ball")
-    set_ambient(0.3)
-    add_light(5.0, 8.0, 6.0, 4.0, 1.0, 0.95, 0.85)
-    add_light(1.0, 4.0, 1.0, 3.0, 0.2, 0.6, 1.0)
     capture_mouse()
+    set_ambient(0.14)
 
-    ระดับเสียง(0.4)
+    ระดับเสียง(0.45)
+    # one continuous voice we keep re-tuning from the physics state
+    เสียงโทน(0, 0.0, 0.0, ZC, 4.0, 200.0, 0.06, 0.5, 0.02)
 
-    # Ball state
-    令 bx = 3.0
-    令 by = 5.0
-    令 bz = 6.0
-    令 vx = 2.0
-    令 vy = 0.0
-    令 vz = 1.5
+    # ── ball state ───────────────────────────────────────────────────────────
+    令 bx = -1.4
+    令 by =  2.0
+    令 bz =  ZC
+    令 vx =  3.4
+    令 vy =  0.0
+    令 vz =  2.1
 
     令 FR = 0
-    令 last_bounce = 0
-
-    # Room dimensions
-    令 W = 10.0
-    令 H = 8.0
-    令 D = 12.0
-    令 radius = 0.4
-
-    # Physics constants
-    令 gravity = 9.8
-    令 damping = 0.90
-    令 elasticity = 0.75
-    令 dt = 0.0167
+    令 lastBounce = -99
 
     ขณะที่ หน้าต่างเปิดอยู่() {
-        เติม(3, 5, 15)  # Dark blue background
+        เติม(2, 3, 10)            # deep navy backdrop
 
-        # Apply gravity to vertical velocity
-        令 new_vy = vy - gravity * dt
+        # ── integrate physics ────────────────────────────────────────────────
+        令 vy = vy - GRAVITY * DT          # gravity
 
-        # Update position
-        令 new_bx = bx + vx * dt
-        令 new_by = by + new_vy * dt
-        令 new_bz = bz + vz * dt
+        令 vx = vx * DAMPING               # drag
+        令 vy = vy * DAMPING
+        令 vz = vz * DAMPING
 
-        # Apply damping to velocity
-        令 vx = vx * damping
-        令 new_vy = new_vy * damping
-        令 vz = vz * damping
+        令 bx = bx + vx * DT               # advance position
+        令 by = by + vy * DT
+        令 bz = bz + vz * DT
 
-        # Bounce off walls
-        若 new_bx < radius {
-            令 new_bx = radius
-            令 vx = -vx * elasticity
-        }
-        若 new_bx > (W - radius) {
-            令 new_bx = W - radius
-            令 vx = -vx * elasticity
-        }
+        令 hit = 0
 
-        # Bounce off floor (bottom)
-        若 new_by < radius {
-            令 new_by = radius
-            令 new_vy = -new_vy * elasticity
-            令 last_bounce = FR
-        }
+        # left / right walls
+        若 bx < (0 - HW + R) { 令 bx = 0 - HW + R   令 vx = 0 - vx * ELASTICITY   令 hit = 1 }
+        若 bx > (HW - R)     { 令 bx = HW - R        令 vx = 0 - vx * ELASTICITY   令 hit = 1 }
 
-        # Bounce off ceiling (top)
-        若 new_by > (H - radius) {
-            令 new_by = H - radius
-            令 new_vy = -new_vy * elasticity
-        }
+        # floor / ceiling
+        若 by < (0 - HH + R) { 令 by = 0 - HH + R   令 vy = 0 - vy * ELASTICITY   令 hit = 1 }
+        若 by > (HH - R)     { 令 by = HH - R        令 vy = 0 - vy * ELASTICITY   令 hit = 1 }
 
-        # Bounce off front/back
-        若 new_bz < radius {
-            令 new_bz = radius
-            令 vz = -vz * elasticity
-        }
-        若 new_bz > (D - radius) {
-            令 new_bz = D - radius
-            令 vz = -vz * elasticity
-        }
+        # near / far walls
+        若 bz < (ZN + R)     { 令 bz = ZN + R        令 vz = 0 - vz * ELASTICITY   令 hit = 1 }
+        若 bz > (ZF - R)     { 令 bz = ZF - R        令 vz = 0 - vz * ELASTICITY   令 hit = 1 }
 
-        # Update state
-        令 bx = new_bx
-        令 by = new_by
-        令 bz = new_bz
-        令 vy = new_vy
+        若 hit > 0 { 令 lastBounce = FR }
 
-        # Calculate ball speed
-        令 speed = sqrt(vx*vx + vy*vy + vz*vz)
+        # ── derived quantities ───────────────────────────────────────────────
+        令 speed  = sqrt(vx*vx + vy*vy + vz*vz)
+        令 hNorm  = (by + HH) / (2.0 * HH)      # 0 floor → 1 ceiling
 
-        # Calculate energy for visualization
-        令 ke = speed * speed * 0.5
-        令 pe = by / H
-        令 energy = ke + pe
+        # ── PHYSICS-ENCODED AUDIO ────────────────────────────────────────────
+        令 sinceHit  = FR - lastBounce
+        令 impact    = 0.0
+        若 sinceHit < 6 { 令 impact = (6 - sinceHit) * 26.0 }
 
-        # Map energy to color (red=high, blue=low)
-        令 hue = (1.0 - energy / 5.0) * 0.66
-        若 hue < 0.0 { 令 hue = 0.0 }
+        令 freq = 150.0 + hNorm * 180.0 + impact + speed * 22.0
+        令 amp  = 0.04 + speed * 0.045
+        令 pan  = bx / HW                        # −1 … +1 stereo
+        เสียงโทน(0, bx, by, bz, 4.0, freq, amp, pan, 0.02)
 
-        # Physics-encoded audio
-        # Frequency: Higher when ball bounces (impacts), modulated by height
-        # Base frequency depends on height: bottom=150Hz, top=300Hz
-        令 height_freq = 150.0 + (by / H) * 150.0
+        # ── lights track the ball so it always catches highlight ─────────────
+        clear_lights()
+        add_light(bx, by + 1.0, bz - 1.0, 4.0, 1.0, 0.95, 0.85)
+        add_light(0.0, 0.0, ZN, 1.6, 0.25, 0.55, 1.0)
 
-        # Impact frequency boost on collision
-        令 time_since_bounce = FR - last_bounce
-        若 time_since_bounce < 5 {
-            令 impact_boost = (5 - time_since_bounce) * 30.0
-        } 否则 {
-            令 impact_boost = 0.0
-        }
+        # ── camera: stay at origin, gentle sway (NO set_camera_pos) ──────────
+        令 t  = FR * 0.0065
+        令 ry = sin(t) * 0.18
+        令 rx = sin(t * 0.5) * 0.06
+        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
 
-        令 freq = height_freq + impact_boost + speed * 50.0
+        # ── draw the cage (set_color first, 0-255; line takes 6 args) ────────
+        set_color(60, 120, 200)
+        # bottom rectangle
+        draw_line_3d(0-HW, 0-HH, ZN,  HW, 0-HH, ZN)
+        draw_line_3d( HW, 0-HH, ZN,   HW, 0-HH, ZF)
+        draw_line_3d( HW, 0-HH, ZF,  0-HW, 0-HH, ZF)
+        draw_line_3d(0-HW, 0-HH, ZF, 0-HW, 0-HH, ZN)
+        # top rectangle
+        draw_line_3d(0-HW, HH, ZN,  HW, HH, ZN)
+        draw_line_3d( HW, HH, ZN,   HW, HH, ZF)
+        draw_line_3d( HW, HH, ZF,  0-HW, HH, ZF)
+        draw_line_3d(0-HW, HH, ZF, 0-HW, HH, ZN)
+        # vertical pillars
+        draw_line_3d(0-HW, 0-HH, ZN, 0-HW, HH, ZN)
+        draw_line_3d( HW, 0-HH, ZN,  HW, HH, ZN)
+        draw_line_3d( HW, 0-HH, ZF,  HW, HH, ZF)
+        draw_line_3d(0-HW, 0-HH, ZF, 0-HW, HH, ZF)
 
-        # Amplitude: Louder when moving fast
-        令 amplitude = 0.05 + speed * 0.05
+        # ── shadow on the floor (helps read height) ──────────────────────────
+        set_color(0, 30, 60)
+        draw_line_3d(bx - R, 0-HH, bz, bx + R, 0-HH, bz)
+        draw_line_3d(bx, 0-HH, bz - R, bx, 0-HH, bz + R)
 
-        # Play tone with physics-encoded parameters
-        เสียงโทน(0, bx, by, bz, 4.0, freq, amplitude, 0.5, 0.02)
+        # ── drop-line from ball to its floor shadow (shows altitude) ─────────
+        set_color(40, 90, 140)
+        draw_line_3d(bx, by - R, bz, bx, 0-HH, bz)
 
-        # Setup camera
-        令 cam_angle = FR * 0.004
-        令 cam_x = 5.0 + cos(cam_angle) * 7.0
-        令 cam_y = 4.0 + 3.0
-        令 cam_z = 6.0 + sin(cam_angle) * 7.0
+        # ── velocity arrow (red, length ∝ speed) ─────────────────────────────
+        set_color(230, 60, 40)
+        draw_line_3d(bx, by, bz, bx + vx * 0.18, by + vy * 0.18, bz + vz * 0.18)
 
-        set_camera_pos(cam_x, cam_y, cam_z)
-        set_camera(0.7, 0.7, 0.2, 0.1)
-        set_zdist(1.2)
+        # ── THE BALL — energy-coloured chakra ────────────────────────────────
+        # hue param cycles with speed so a hot ball reads warm, a slow one cool
+        令 hue = 0.62 - hNorm * 0.55
+        ลายจักร(bx, by, bz,  1,0,0,  0,1,0,  R, 7,  FR * 0.04, hue)
 
-        # Draw cage/room wireframe
-        # Bottom square
-        draw_line_3d(0.0, radius, 0.0, W, radius, 0.0, 0.15, 0.5)
-        draw_line_3d(W, radius, 0.0, W, radius, D, 0.15, 0.5)
-        draw_line_3d(W, radius, D, 0.0, radius, D, 0.15, 0.5)
-        draw_line_3d(0.0, radius, D, 0.0, radius, 0.0, 0.15, 0.5)
-
-        # Top square
-        draw_line_3d(0.0, H - radius, 0.0, W, H - radius, 0.0, 0.15, 0.5)
-        draw_line_3d(W, H - radius, 0.0, W, H - radius, D, 0.15, 0.5)
-        draw_line_3d(W, H - radius, D, 0.0, H - radius, D, 0.15, 0.5)
-        draw_line_3d(0.0, H - radius, D, 0.0, H - radius, 0.0, 0.15, 0.5)
-
-        # Vertical edges
-        draw_line_3d(0.0, radius, 0.0, 0.0, H - radius, 0.0, 0.15, 0.5)
-        draw_line_3d(W, radius, 0.0, W, H - radius, 0.0, 0.15, 0.5)
-        draw_line_3d(W, radius, D, W, H - radius, D, 0.15, 0.5)
-        draw_line_3d(0.0, radius, D, 0.0, H - radius, D, 0.15, 0.5)
-
-        # Draw gravity indicator (vertical line on left wall)
-        draw_line_3d(
-            0.3, radius, 0.3,
-            0.3, radius + (by - radius) * 1.5, 0.3,
-            0.0, 0.8
-        )
-
-        # Draw floor grid lines for reference
-        令 i = 0
-        ขณะที่ i < 5 {
-            draw_line_3d(i * 2.0, radius, 0.0, i * 2.0, radius, D, 0.1, 0.2)
-            令 i = i + 1
-        }
-
-        令 i = 0
-        ขณะที่ i < 6 {
-            draw_line_3d(0.0, radius, i * 2.0, W, radius, i * 2.0, 0.1, 0.2)
-            令 i = i + 1
-        }
-
-        # Draw the ball - large visible chakra
-        ลายจักร(
-            bx, by, bz,
-            1, 0, 0,  0, 1, 0,
-            radius * 1.5, 12,
-            by * 0.1, hue
-        )
-
-        # Draw velocity vector (red line showing direction)
-        若 speed > 0.1 {
-            令 arrow_length = speed * 1.5
-            draw_line_3d(
-                bx, by, bz,
-                bx + vx * arrow_length, by + vy * arrow_length, bz + vz * arrow_length,
-                0.0, 0.9
-            )
-        }
-
-        # Render frame
         แสดงผล()
-
         令 FR = FR + 1
     }
 }
