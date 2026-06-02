@@ -22,6 +22,9 @@ pub struct Mesh {
     pub verts: Vec<[f32; 3]>,
     pub tris:  Vec<[u32; 3]>,
     pub edges: Vec<[u32; 2]>,
+    /// Smooth (area-weighted averaged) per-vertex normals, world space.
+    /// Populated by `build()` after transform; empty until then.
+    pub normals: Vec<[f32; 3]>,
 }
 
 impl Mesh {
@@ -52,6 +55,27 @@ impl Mesh {
                 if seen.insert(k) { self.edges.push([k.0, k.1]); }
             }
         }
+    }
+
+    /// Compute area-weighted smooth per-vertex normals from the current
+    /// (already transformed) verts + tris — gives continuous shading with no
+    /// faceted edges.
+    fn compute_smooth_normals(&mut self) {
+        let mut n = vec![[0.0f32; 3]; self.verts.len()];
+        for t in &self.tris {
+            let a = self.verts[t[0] as usize];
+            let b = self.verts[t[1] as usize];
+            let c = self.verts[t[2] as usize];
+            let u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+            let v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
+            let f = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
+            for &i in t { let i = i as usize; n[i][0]+=f[0]; n[i][1]+=f[1]; n[i][2]+=f[2]; }
+        }
+        for p in &mut n {
+            let l = (p[0]*p[0]+p[1]*p[1]+p[2]*p[2]).sqrt();
+            if l > 1e-8 { p[0]/=l; p[1]/=l; p[2]/=l; }
+        }
+        self.normals = n;
     }
 
     /// scale → rotate(Euler XYZ) → translate, in place.
@@ -503,6 +527,171 @@ fn gyro(rings: i32) -> Mesh {
     m
 }
 
+// ── exotic / compound shapes ──────────────────────────────────────────────────
+
+fn append_mesh(dst: &mut Mesh, src: &Mesh) {
+    let base = dst.verts.len() as u32;
+    for v in &src.verts { dst.verts.push(*v); }
+    for t in &src.tris  { dst.tri(t[0]+base, t[1]+base, t[2]+base); }
+    for e in &src.edges { dst.edge(e[0]+base, e[1]+base); }
+}
+
+fn box_between(x0:f32,x1:f32,y0:f32,y1:f32,z0:f32,z1:f32) -> Mesh {
+    let mut m = Mesh::default();
+    let p=[
+        m.v(x0,y0,z0),m.v(x1,y0,z0),m.v(x1,y1,z0),m.v(x0,y1,z0),
+        m.v(x0,y0,z1),m.v(x1,y0,z1),m.v(x1,y1,z1),m.v(x0,y1,z1),
+    ];
+    m.face(&[p[0],p[1],p[2],p[3]]);
+    m.face(&[p[5],p[4],p[7],p[6]]);
+    m.face(&[p[4],p[0],p[3],p[7]]);
+    m.face(&[p[1],p[5],p[6],p[2]]);
+    m.face(&[p[4],p[5],p[1],p[0]]);
+    m.face(&[p[3],p[2],p[6],p[7]]);
+    m
+}
+
+/// Tube swept along a helix around the Y axis (height −1..1).
+fn helix(turns: i32, tube: f32, sides: i32) -> Mesh {
+    let mut m = Mesh::default();
+    let turns = turns.clamp(1, 24);
+    let sides = sides.clamp(3, 32);
+    let tube  = tube.clamp(0.02, 0.5);
+    let seg_per = 24;
+    let total = turns * seg_per;
+    for i in 0..=total {
+        let ang = (i as f32 / seg_per as f32) * 2.0 * PI;
+        let y = -1.0 + 2.0 * (i as f32 / total as f32);
+        let cen = [ang.cos(), y, ang.sin()];
+        let radial = [ang.cos(), 0.0, ang.sin()];
+        let up = [0.0, 1.0, 0.0];
+        for j in 0..sides {
+            let v = j as f32 / sides as f32 * 2.0 * PI;
+            let (sv, cv) = v.sin_cos();
+            m.v(cen[0] + tube*(cv*radial[0] + sv*up[0]),
+                cen[1] + tube*(cv*radial[1] + sv*up[1]),
+                cen[2] + tube*(cv*radial[2] + sv*up[2]));
+        }
+    }
+    let s = sides;
+    for i in 0..total {
+        for j in 0..sides {
+            let a=(i*s+j) as u32; let b=(i*s+(j+1)%s) as u32;
+            let c=((i+1)*s+j) as u32; let d=((i+1)*s+(j+1)%s) as u32;
+            m.tri(a,c,b); m.tri(b,c,d);
+        }
+    }
+    m.edges_from_tris();
+    m
+}
+
+/// Semicircular archway — circular tube swept over a 180° arc in the XY plane.
+fn arch(segs: i32, tube: f32) -> Mesh {
+    let mut m = Mesh::default();
+    let segs = segs.clamp(6, 128);
+    let sides = 10i32;
+    let tube = tube.clamp(0.05, 0.4);
+    for i in 0..=segs {
+        let a = PI * (i as f32 / segs as f32);     // 0..π
+        let cen = [a.cos(), a.sin(), 0.0];
+        let radial = [a.cos(), a.sin(), 0.0];
+        let binorm = [0.0, 0.0, 1.0];
+        for j in 0..sides {
+            let v = j as f32 / sides as f32 * 2.0 * PI;
+            let (sv, cv) = v.sin_cos();
+            m.v(cen[0] + tube*(cv*radial[0] + sv*binorm[0]),
+                cen[1] + tube*(cv*radial[1] + sv*binorm[1]),
+                cen[2] + tube*(cv*radial[2] + sv*binorm[2]));
+        }
+    }
+    for i in 0..segs {
+        for j in 0..sides {
+            let a=(i*sides+j) as u32; let b=(i*sides+(j+1)%sides) as u32;
+            let c=((i+1)*sides+j) as u32; let d=((i+1)*sides+(j+1)%sides) as u32;
+            m.tri(a,c,b); m.tri(b,c,d);
+        }
+    }
+    m.edges_from_tris();
+    m
+}
+
+/// Staircase of `steps` cuboid steps rising along +Y and +Z.
+fn stairs(steps: i32) -> Mesh {
+    let mut m = Mesh::default();
+    let steps = steps.clamp(2, 40);
+    let sh = 2.0 / steps as f32;
+    let sd = 2.0 / steps as f32;
+    for i in 0..steps {
+        let y0 = -1.0 + i as f32 * sh; let y1 = y0 + sh;
+        let z0 = -1.0 + i as f32 * sd; let zf = z0 + sd;
+        let blk = box_between(-1.0, 1.0, y0, y1, z0, zf);
+        append_mesh(&mut m, &blk);
+    }
+    m
+}
+
+/// Star-shaped prism: an N-point star cross-section extruded along Y.
+fn star_prism(points: i32, inner: f32) -> Mesh {
+    let mut m = Mesh::default();
+    let points = points.clamp(3, 32);
+    let inner = inner.clamp(0.1, 0.95);
+    let n = (points * 2) as usize;
+    let mut bot = Vec::new(); let mut top = Vec::new();
+    for k in 0..n {
+        let ang = k as f32 / n as f32 * 2.0 * PI;
+        let r = if k % 2 == 0 { 1.0 } else { inner };
+        let (s, c) = ang.sin_cos();
+        bot.push(m.v(c*r, -1.0, s*r));
+        top.push(m.v(c*r,  1.0, s*r));
+    }
+    for k in 0..n {
+        let b0=bot[k]; let b1=bot[(k+1)%n]; let t0=top[k]; let t1=top[(k+1)%n];
+        m.tri(b0,t0,b1); m.tri(b1,t0,t1);
+        m.edge(b0,b1); m.edge(t0,t1); m.edge(b0,t0);
+    }
+    for k in 1..n-1 { m.tri(top[0], top[k], top[k+1]); }
+    let mut rb = bot.clone(); rb.reverse();
+    for k in 1..rb.len()-1 { m.tri(rb[0], rb[k], rb[k+1]); }
+    m
+}
+
+/// A row of `count` capsule "beads" along X — a chain / caterpillar.
+fn capsule_chain(count: i32) -> Mesh {
+    let mut m = Mesh::default();
+    let count = count.clamp(1, 12);
+    let step = 2.0 / count as f32;
+    for i in 0..count {
+        let mut c = capsule(12, 4);
+        let cx = -1.0 + (i as f32 + 0.5) * step;
+        c.transform([cx, 0.0, 0.0,  step*0.5, step*0.5, step*0.5,  0.0, 0.0, PI/2.0]);
+        append_mesh(&mut m, &c);
+    }
+    m
+}
+
+/// Möbius strip — a half-twisted band looped once.
+fn mobius(segs: i32, width: f32) -> Mesh {
+    let mut m = Mesh::default();
+    let segs = segs.clamp(8, 240);
+    let w = width.clamp(0.05, 0.6);
+    for i in 0..=segs {
+        let u = i as f32 / segs as f32 * 2.0 * PI;
+        for &vv in &[-1.0f32, 1.0] {
+            let v = vv * w;
+            let x = (1.0 + v/2.0 * (u/2.0).cos()) * u.cos();
+            let y = v/2.0 * (u/2.0).sin();
+            let z = (1.0 + v/2.0 * (u/2.0).cos()) * u.sin();
+            m.v(x, y, z);
+        }
+    }
+    for i in 0..segs {
+        let a=(2*i) as u32; let b=(2*i+1) as u32; let c=(2*(i+1)) as u32; let d=(2*(i+1)+1) as u32;
+        m.tri(a,c,b); m.tri(b,c,d);
+    }
+    m.edges_from_tris();
+    m
+}
+
 /// Resolve a builtin call name (in any supported language) to a canonical
 /// shape kind. Returns `None` if the name is not a 3-D primitive.
 pub fn canon(name: &str) -> Option<&'static str> {
@@ -542,6 +731,20 @@ pub fn canon(name: &str) -> Option<&'static str> {
         "gear" | "cog" | "齿轮" | "歯車" | "톱니바퀴" | "เฟือง" => "gear",
         // gyro
         "gyro" | "陀螺" | "ジャイロ" | "자이로" | "ไจโร" => "gyro",
+        // helix
+        "helix" | "螺旋线" | "らせん" | "나선" | "เกลียว" => "helix",
+        // spring
+        "spring" | "弹簧" | "ばね" | "스프링" | "สปริง" => "spring",
+        // arch
+        "arch" | "拱门" | "アーチ" | "아치" | "ซุ้มโค้ง" => "arch",
+        // stairs
+        "stairs" | "楼梯" | "階段" | "계단" | "บันได" => "stairs",
+        // star prism
+        "star_prism" | "star" | "星柱" | "星型柱" | "별기둥" | "แท่งดาว" => "star_prism",
+        // capsule chain
+        "capsule_chain" | "chain" | "胶囊链" | "カプセル鎖" | "캡슐체인" | "โซ่แคปซูล" => "capsule_chain",
+        // mobius
+        "mobius" | "莫比乌斯" | "メビウス" | "뫼비우스" | "เมอบีอุส" => "mobius",
         _ => return None,
     })
 }
@@ -567,9 +770,17 @@ pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh>
         "icosahedron" | "d20" => icosahedron(),
         "gear" | "cog"        => gear(iarg(e0,12), farg(e1,0.25)),
         "gyro"                => gyro(iarg(e0,3)),
+        "helix"               => helix(iarg(e0,3), farg(e1,0.15), iarg(e2,8)),
+        "spring"              => helix(iarg(e0,6), farg(e1,0.12), iarg(e2,8)),
+        "arch"                => arch(iarg(e0,24), farg(e1,0.18)),
+        "stairs"              => stairs(iarg(e0,5)),
+        "star_prism"          => star_prism(iarg(e0,5), farg(e1,0.5)),
+        "capsule_chain"       => capsule_chain(iarg(e0,3)),
+        "mobius"              => mobius(iarg(e0,60), farg(e1,0.3)),
         _ => return None,
     };
     m.transform(c);
+    m.compute_smooth_normals();
     Some(m)
 }
 
@@ -579,26 +790,59 @@ impl GfxState {
     pub fn emit_mesh(&mut self, m: &Mesh, mode: i32) {
         let near = -self.camera.zdist + 0.05;
 
-        if mode == 0 || mode == 2 {
-            for t in &m.tris {
-                let a = m.verts[t[0] as usize];
-                let b = m.verts[t[1] as usize];
-                let c = m.verts[t[2] as usize];
-                // world-space normal & centroid
-                let ux=b[0]-a[0]; let uy=b[1]-a[1]; let uz=b[2]-a[2];
-                let vx=c[0]-a[0]; let vy=c[1]-a[1]; let vz=c[2]-a[2];
-                let normal = [uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
-                let centroid = [(a[0]+b[0]+c[0])/3.0,(a[1]+b[1]+c[1])/3.0,(a[2]+b[2]+c[2])/3.0];
-                let lit = crate::gfx::light::compute_lit_color(self.color, normal, centroid, &self.lights, self.ambient);
-                let da=self.camera.depth(a[0],a[1],a[2]);
-                let db=self.camera.depth(b[0],b[1],b[2]);
-                let dc=self.camera.depth(c[0],c[1],c[2]);
-                if da<=near || db<=near || dc<=near { continue; }
-                let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
-                let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
-                let (scx,scy,pc)=self.camera.project(c[0],c[1],c[2]);
-                let depth=(pa+pb+pc)/3.0;
-                self.depth_queue.push_triangle(depth, lit, sax,say, sbx,sby, scx,scy);
+        let want_fill = mode == 0 || mode == 2;
+        if want_fill {
+            let have_normals = m.normals.len() == m.verts.len() && self.shade_mode != 0;
+            if have_normals {
+                // ── smooth cel / holographic path ─────────────────────────────
+                // Per-vertex coloured lighting (smooth normals) → Gouraud
+                // interpolation → per-pixel posterise. No faceted edges.
+                let base = ling_graphics::shading::unpack(self.color);
+                let eye = [self.camera.tx, self.camera.ty, self.camera.tz];
+                let lights: Vec<ling_graphics::shading::LightS> = self.lights.iter().map(|l| {
+                    ling_graphics::shading::LightS { pos:[l.x,l.y,l.z], color:[l.r,l.g,l.b], intensity:l.intensity, radius:l.radius }
+                }).collect();
+                let mut sp = self.shade;
+                sp.ambient = self.ambient;              // scene ambient drives fill
+                if self.shade_mode == 1 { sp.holo = false; sp.rim *= 0.4; }
+                let bands = sp.bands;
+                for t in &m.tris {
+                    let ia=t[0] as usize; let ib=t[1] as usize; let ic=t[2] as usize;
+                    let a=m.verts[ia]; let b=m.verts[ib]; let c=m.verts[ic];
+                    let da=self.camera.depth(a[0],a[1],a[2]);
+                    let db=self.camera.depth(b[0],b[1],b[2]);
+                    let dc=self.camera.depth(c[0],c[1],c[2]);
+                    if da<=near || db<=near || dc<=near { continue; }
+                    let ca = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ia], a, eye, &lights, &sp));
+                    let cb = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ib], b, eye, &lights, &sp));
+                    let cc = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ic], c, eye, &lights, &sp));
+                    let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
+                    let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
+                    let (scx,scy,pc)=self.camera.project(c[0],c[1],c[2]);
+                    let depth=(pa+pb+pc)/3.0;
+                    self.depth_queue.push_triangle_g(depth, sax,say,ca, sbx,sby,cb, scx,scy,cc, bands);
+                }
+            } else {
+                // ── flat per-face path (shade_mode 0) ─────────────────────────
+                for t in &m.tris {
+                    let a = m.verts[t[0] as usize];
+                    let b = m.verts[t[1] as usize];
+                    let c = m.verts[t[2] as usize];
+                    let ux=b[0]-a[0]; let uy=b[1]-a[1]; let uz=b[2]-a[2];
+                    let vx=c[0]-a[0]; let vy=c[1]-a[1]; let vz=c[2]-a[2];
+                    let normal = [uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
+                    let centroid = [(a[0]+b[0]+c[0])/3.0,(a[1]+b[1]+c[1])/3.0,(a[2]+b[2]+c[2])/3.0];
+                    let lit = crate::gfx::light::compute_lit_color(self.color, normal, centroid, &self.lights, self.ambient);
+                    let da=self.camera.depth(a[0],a[1],a[2]);
+                    let db=self.camera.depth(b[0],b[1],b[2]);
+                    let dc=self.camera.depth(c[0],c[1],c[2]);
+                    if da<=near || db<=near || dc<=near { continue; }
+                    let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
+                    let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
+                    let (scx,scy,pc)=self.camera.project(c[0],c[1],c[2]);
+                    let depth=(pa+pb+pc)/3.0;
+                    self.depth_queue.push_triangle(depth, lit, sax,say, sbx,sby, scx,scy);
+                }
             }
         }
 

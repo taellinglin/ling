@@ -68,6 +68,39 @@ bind start = do {
 
 ---
 
+## Rendering & lighting modes (holographic cel)
+
+Shape fills use an **anime / holographic cel** model by default: surfaces are
+lit with **smooth (averaged) vertex normals**, the lit colour is interpolated
+across each triangle, then **posterised per pixel** into crisp luminance bands.
+The result is smooth shading with no faceted triangle edges, but clean toon
+bands that curve over the surface — plus coloured lights, coloured shadows, and
+a Fresnel rim glow.
+
+| Builtin | Args | Effect |
+|---------|------|--------|
+| `set_shade_mode(m)` | `0` flat · `1` cel · `2` holo (default) | overall style |
+| `set_cel_bands(n)` | `n ≥ 2` (default 4) | number of posterisation bands — lower = chunkier |
+| `set_shadow_color(r,g,b)` | 0–255 | tint of unlit regions (coloured shadows) |
+| `set_rim(strength, r,g,b)` | strength + 0–255 | Fresnel edge-glow colour/intensity |
+
+```ling
+set_shade_mode(2)            # holographic cel (default)
+set_cel_bands(4)             # 4 bands
+set_shadow_color(28,36,90)   # cool indigo shadows
+set_rim(0.7, 120,220,255)    # cyan holographic edge
+```
+
+- **Mode 0 (flat):** legacy per-face cel — every triangle one flat band (faceted).
+- **Mode 1 (cel):** smooth bands, no rim/sheen — clean toon.
+- **Mode 2 (holo):** smooth bands + Fresnel rim + a subtle normal-gradient sheen.
+
+Lighting comes from `add_light(x,y,z, intensity, r,g,b)` (each light contributes
+its own colour) and `set_ambient(level)`. The lighting math lives in the
+`ling-graphics` crate (`ling_graphics::shading`).
+
+---
+
 ## Round & swept solids
 
 ### `cube` · `box` — `立方体` · `方块` · `정육면체` · `ลูกบาศก์`  (box: `方块`/`箱`/`상자`/`กล่อง`)
@@ -175,6 +208,52 @@ gear(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  teeth=12, tooth=0.25)
 Nested gimbal: `rings` concentric tori on alternating axes — a gyroscope / armillary.
 ```
 gyro(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  rings=3)
+```
+
+### `arch` — `拱门` · `アーチ` · `아치` · `ซุ้มโค้ง`
+Semicircular archway (tube swept over 180°).
+```
+arch(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  segments=24, tube=0.18)
+```
+
+### `stairs` — `楼梯` · `階段` · `계단` · `บันได`
+Staircase of `steps` cuboid steps rising along +Y/+Z.
+```
+stairs(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  steps=5)
+```
+
+---
+
+## Curves & surfaces
+
+### `helix` — `螺旋线` · `らせん` · `나선` · `เกลียว`
+Tube swept along a helix around Y.
+```
+helix(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  turns=3, tube=0.15, sides=8)
+```
+
+### `spring` — `弹簧` · `ばね` · `스프링` · `สปริง`
+A tighter, thinner helix (coil). Same params as `helix`.
+```
+spring(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  turns=6, tube=0.12, sides=8)
+```
+
+### `star_prism` · `star` — `星柱` · `별기둥` · `แท่งดาว`
+An N-point star cross-section extruded along Y.
+```
+star_prism(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  points=5, inner_ratio=0.5)
+```
+
+### `capsule_chain` · `chain` — `胶囊链` · `カプセル鎖` · `캡슐체인` · `โซ่แคปซูล`
+A row of `count` capsule beads along X — a chain / caterpillar.
+```
+capsule_chain(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  count=3)
+```
+
+### `mobius` — `莫比乌斯` · `メビウス` · `뫼비우스` · `เมอบีอุส`
+A half-twisted Möbius band.
+```
+mobius(cx,cy,cz, sx,sy,sz, rx,ry,rz, mode,  segments=60, width=0.3)
 ```
 
 ---

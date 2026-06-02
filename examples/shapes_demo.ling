@@ -1,73 +1,87 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 3-D Shape Gallery — the Ling primitive library ("Inkscape for 3-D")
+# 3-D Shape Gallery — Ling's primitive library + holographic cel shading
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
-# Every primitive shares the same call shape:
+# Uniform call shape for every primitive:
 #   name(cx,cy,cz,  sx,sy,sz,  rx,ry,rz,  mode,  e0,e1,e2)
-#     • cx,cy,cz  centre position
-#     • sx,sy,sz  per-axis scale (non-uniform cubes, ellipsoids, …)
-#     • rx,ry,rz  Euler rotation in radians
-#     • mode      0 = filled · 1 = wireframe · 2 = both
-#     • e0,e1,e2  shape-specific (segments / sides / ratio …)
+#     mode: 0 filled · 1 wireframe · 2 both
 #
-# Camera stays at the origin (no set_camera_pos); shapes live in front at +Z.
+# Shading is holographic cel by default (smooth normals → posterised bands,
+# coloured lights, coloured shadows, fresnel rim). Tweak it with:
+#   set_shade_mode(0|1|2)  set_cel_bands(n)  set_shadow_color(r,g,b)  set_rim(s,r,g,b)
+#
+# Remember: +Y is screen-DOWN here, so the "top" row uses negative Y.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bind start = do {
-    open_fullscreen("3-D Shape Gallery")
+    open_fullscreen("3-D Shape Gallery — holographic cel")
     capture_mouse()
-    set_ambient(0.22)
+    set_ambient(0.20)
+
+    # holographic cel look
+    set_shade_mode(2)
+    set_cel_bands(4)
+    set_shadow_color(28, 36, 90)      # cool indigo shadows
+    set_rim(0.7, 120, 220, 255)       # cyan fresnel edge
 
     令 FR = 0
 
     ขณะที่ หน้าต่างเปิดอยู่() {
-        เติม(4, 5, 12)
-
-        # spin everything slowly
+        เติม(4, 5, 14)
         令 a = FR * 0.012
 
-        # moving key light + cool fill
+        # two coloured lights swinging through the scene
         clear_lights()
-        add_light(cos(a) * 6.0, 3.0, 8.0 + sin(a) * 3.0, 4.0, 1.0, 0.96, 0.9)
-        add_light(-5.0, -2.0, 5.0, 2.0, 0.4, 0.6, 1.0)
+        add_light(cos(a) * 6.0, -3.0, 8.0 + sin(a) * 3.0, 4.0, 255, 180, 120)   # warm
+        add_light(-5.0, 3.0, 6.0, 3.0, 120, 160, 255)                            # cool
 
-        # gentle camera sway, anchored at origin
         令 ry = sin(FR * 0.006) * 0.12
         set_camera(cos(ry), sin(ry), 1.0, 0.0)
         set_zdist(2.0)
 
-        # ── Row 1 (upper) — FILLED solids ─────────────────────────────────────
-        set_color(230, 110, 90)
-        cube(-4.5, -1.6, 9.0,  0.7,0.7,0.7,  a,a*0.7,0,  0)
-        set_color(110, 210, 130)
-        sphere(-2.7, -1.6, 9.0,  0.8,0.8,0.8,  0,a,0,  0,  18,14)
-        set_color(120, 170, 240)
-        cylinder(-0.9, -1.6, 9.0,  0.6,0.8,0.6,  a,0,a*0.5,  0,  24)
-        set_color(240, 200, 90)
-        cone(0.9, -1.6, 9.0,  0.7,0.8,0.7,  a*0.6,a,0,  0,  24)
-        set_color(200, 120, 230)
-        torus(2.9, -1.6, 9.0,  0.8,0.8,0.8,  a,a*0.8,0,  0,  32,14, 0.35)
-        set_color(240, 240, 150)
-        capsule(4.8, -1.6, 9.0,  0.5,0.8,0.5,  a*0.5,0,a,  0,  16,6)
-
-        # ── Row 2 (lower) — DICE (Platonic solids), WIREFRAME + FILL ──────────
-        set_color(255, 90, 120)
-        tetrahedron(-4.5, 1.4, 9.0,  0.8,0.8,0.8,  a,a,0,  2)        # d4
-        set_color(120, 255, 180)
-        cube(-2.7, 1.4, 9.0,  0.7,0.7,0.7,  a,a*0.6,a*0.3,  2)       # d6
-        set_color(120, 200, 255)
-        octahedron(-0.9, 1.4, 9.0,  0.85,0.85,0.85,  a,a,0,  2)      # d8
+        # ── TOP ROW (negative Y) — exotic / mechanical ───────────────────────
+        set_color(120, 220, 255)
+        helix(-4.8, -2.4, 9.0,  0.6,0.7,0.6,  0,a,0,  0,  3, 0.14, 8)
+        set_color(200, 160, 255)
+        spring(-2.9, -2.4, 9.0,  0.55,0.7,0.55,  0,a,0,  0,  6, 0.1, 8)
         set_color(255, 200, 120)
-        dodecahedron(0.9, 1.4, 9.0,  0.8,0.8,0.8,  a*0.7,a,0,  2)    # d12
-        set_color(220, 140, 255)
-        icosahedron(2.9, 1.4, 9.0,  0.85,0.85,0.85,  a,a*0.8,0,  2)  # d20
+        arch(-1.0, -2.4, 9.0,  0.8,0.8,0.8,  0,a*0.5,0,  0,  24, 0.16)
+        set_color(160, 255, 180)
+        stairs(0.9, -2.4, 9.0,  0.6,0.6,0.6,  0,a,0,  0,  6)
+        set_color(255, 150, 180)
+        star_prism(2.8, -2.4, 9.0,  0.7,0.7,0.7,  a*0.5,a,0,  0,  6, 0.45)
+        set_color(180, 230, 255)
+        mobius(4.7, -2.4, 9.0,  0.7,0.7,0.7,  a,a*0.7,0,  0,  64, 0.32)
 
-        # ── a spinning gear + a gyro to show mechanical/architectural shapes ──
-        set_color(190, 190, 200)
-        gear(4.8, 1.4, 9.0,  0.7,0.25,0.7,  1.57,a*2.0,0,  0,  14, 0.3)
+        # ── MIDDLE ROW — dice (Platonic solids) ──────────────────────────────
+        set_color(255, 100, 120)
+        tetrahedron(-4.0, 0.0, 9.0,  0.8,0.8,0.8,  a,a,0,  0)
+        set_color(140, 255, 170)
+        cube(-2.0, 0.0, 9.0,  0.7,0.7,0.7,  a,a*0.6,a*0.3,  0)
+        set_color(140, 200, 255)
+        octahedron(0.0, 0.0, 9.0,  0.85,0.85,0.85,  a,a,0,  0)
+        set_color(255, 210, 130)
+        dodecahedron(2.0, 0.0, 9.0,  0.8,0.8,0.8,  a*0.7,a,0,  0)
+        set_color(220, 150, 255)
+        icosahedron(4.0, 0.0, 9.0,  0.85,0.85,0.85,  a,a*0.8,0,  0)
 
-        set_color(150, 230, 230)
-        gyro(0.0, 0.0, 6.2,  0.7,0.7,0.7,  a,a*1.3,a*0.6,  1,  3)
+        # ── BOTTOM ROW (positive Y) — round / swept solids ───────────────────
+        set_color(120, 230, 140)
+        sphere(-4.5, 2.4, 9.0,  0.8,0.8,0.8,  0,a,0,  0,  20,16)
+        set_color(120, 180, 255)
+        cylinder(-2.7, 2.4, 9.0,  0.6,0.8,0.6,  a,0,a*0.4,  0,  28)
+        set_color(255, 200, 110)
+        cone(-0.9, 2.4, 9.0,  0.7,0.8,0.7,  a*0.6,a,0,  0,  28)
+        set_color(210, 130, 240)
+        torus(0.9, 2.4, 9.0,  0.8,0.8,0.8,  a,a*0.8,0,  0,  36,16, 0.34)
+        set_color(240, 240, 150)
+        capsule(2.8, 2.4, 9.0,  0.5,0.8,0.5,  a*0.5,0,a,  0,  18,8)
+        set_color(190, 195, 210)
+        gear(4.7, 2.4, 9.0,  0.7,0.28,0.7,  1.57,a*2.0,0,  0,  14, 0.3)
+
+        # centrepiece gyro, wireframe, floating nearer
+        set_color(150, 240, 240)
+        gyro(0.0, 0.0, 6.0,  0.8,0.8,0.8,  a,a*1.3,a*0.6,  1,  3)
 
         แสดงผล()
         令 FR = FR + 1

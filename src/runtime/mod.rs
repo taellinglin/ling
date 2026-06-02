@@ -2184,6 +2184,40 @@ impl Interpreter {
             }
 
             // ══════════════════════════════════════════════════════════════════
+            // RENDER / LIGHTING MODES  (holographic cel shading)
+            // ══════════════════════════════════════════════════════════════════
+            // set_shade_mode(m) — 0 flat · 1 cel · 2 holo (default)
+            "set_shade_mode" | "设置着色" | "シェード設定" | "셰이드모드" | "ตั้งการแรเงา" => {
+                let m = self.arg_num(&args, 0, 2.0)? as u8;
+                self.gfx.borrow_mut().shade_mode = m;
+                return Ok(Value::Unit);
+            }
+            // set_cel_bands(n) — number of posterisation bands (>=2)
+            "set_cel_bands" | "设置色阶" | "セル段数" | "셀밴드" | "ตั้งระดับสี" => {
+                let n = (self.arg_num(&args, 0, 4.0)? as u32).max(2);
+                self.gfx.borrow_mut().shade.bands = n;
+                return Ok(Value::Unit);
+            }
+            // set_shadow_color(r,g,b) — coloured-shadow tint, 0-255
+            "set_shadow_color" | "设置阴影色" | "影の色" | "그림자색" | "ตั้งสีเงา" => {
+                let r=self.arg_num(&args,0,26.)? as f32/255.0;
+                let g=self.arg_num(&args,1,33.)? as f32/255.0;
+                let b=self.arg_num(&args,2,77.)? as f32/255.0;
+                self.gfx.borrow_mut().shade.shadow = [r,g,b];
+                return Ok(Value::Unit);
+            }
+            // set_rim(strength, r,g,b) — holographic fresnel edge glow
+            "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" => {
+                let s=self.arg_num(&args,0,0.6)? as f32;
+                let r=self.arg_num(&args,1,115.)? as f32/255.0;
+                let g=self.arg_num(&args,2,217.)? as f32/255.0;
+                let b=self.arg_num(&args,3,255.)? as f32/255.0;
+                let mut gfx=self.gfx.borrow_mut();
+                gfx.shade.rim = s; gfx.shade.rim_color = [r,g,b];
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
             // 3-D PRIMITIVES  (src/gfx/shapes.rs)  — "Inkscape for 3-D"
             //   shape(cx,cy,cz,  sx,sy,sz,  rx,ry,rz,  mode,  e0,e1,e2)
             //     centre (cx,cy,cz), per-axis scale, Euler rotation (radians),

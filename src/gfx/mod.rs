@@ -48,6 +48,10 @@ pub struct GfxState {
     pub last_mx: f32, pub last_my: f32,
     /// When true: cursor is hidden and reset to center every frame for infinite rotation.
     pub mouse_captured: bool,
+    /// Shading mode for 3-D shape meshes: 0 flat · 1 cel · 2 holo (default).
+    pub shade_mode: u8,
+    /// Tunable cel/holo parameters (bands, shadow tint, rim, …).
+    pub shade: ling_graphics::shading::ShadeParams,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,6 +72,8 @@ impl GfxState {
             last_mx:        f32::NAN,
             last_my:        f32::NAN,
             mouse_captured: false,
+            shade_mode:     2, // holographic cel by default
+            shade:          ling_graphics::shading::ShadeParams::default(),
         }
     }
 
@@ -96,6 +102,8 @@ pub struct GfxState {
     pub ambient:     f32,
     /// Accumulates projected screen-space draw calls; flushed to WebGL by present().
     pub depth_queue: DepthQueue,
+    pub shade_mode:  u8,
+    pub shade:       ling_graphics::shading::ShadeParams,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -112,6 +120,8 @@ impl GfxState {
             lights:      Vec::new(),
             ambient:     0.15,
             depth_queue: DepthQueue::default(),
+            shade_mode:  2,
+            shade:       ling_graphics::shading::ShadeParams::default(),
         }
     }
 

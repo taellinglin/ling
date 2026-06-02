@@ -11,6 +11,7 @@ pub mod font;
 pub mod renderer;
 pub mod viewport;
 pub mod window;
+pub mod shading;
 
 
 pub use math::{Vec2, Vec3, Vec4, Mat3, Mat4, Quat, Vec4H, Mat5, Aabb, Ray3, Plane, Frustum};
@@ -21,6 +22,7 @@ pub use camera::{Camera3D, Camera4D, Projection, HyperModel};
 pub use scene::{Transform, SceneNode, Scene, NodeId};
 pub use animation::{Timeline, Track, Keyframe, EaseFunction, Lerp};
 pub use font::{FontAtlas, GlyphInfo};
+pub use shading::{LightS, ShadeParams, lit_vertex, posterize};
 pub use renderer::{Renderer, FrameBuffer, SoftwareRenderer};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
