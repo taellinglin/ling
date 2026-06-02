@@ -1,138 +1,92 @@
-# Physics Demo — Orbital Mechanics Simulation in Ling
+# Physics Demo — Visual Bouncing Ball Simulation
 
-令 PI = 3.14159265
-令 FRAMES = 600
-令 RINGS = 4
-
-# Calculate orbit radius for a ring
-函 get_radius(ring) {
-    1.5 + ring * 1.5
-}
-
-# Calculate orbital period using Kepler's third law
-函 get_period(radius) {
-    sqrt(radius * radius * radius) * 6.0
-}
-
-# Calculate orbital velocity
-函 get_velocity(radius) {
-    sqrt(9.8 / radius)
-}
-
-# Print orbital analysis
-函 print_ring(idx) {
-    令 r = get_radius(idx)
-    令 t = get_period(r)
-    令 v = get_velocity(r)
-
-    印("Ring " + idx + ":")
-    印("  Radius:   " + r)
-    印("  Period:   " + t + " seconds")
-    印("  Velocity: " + v + " units/s")
-}
-
-# Print all rings
-函 print_rings() {
-    令 i = 0
-    ขณะที่ i < RINGS {
-        print_ring(i)
-        令 i = i + 1
-    }
-}
-
-# Main demo
 bind start = do {
+    open_fullscreen("Physics Demo — Bouncing Ball")
+    set_ambient(0.25)
+    add_light(5.0, 10.0, 6.0, 4.0, 1.0, 0.95, 0.85)
+    add_light(0.5, 4.0, 0.5, 2.0, 0.3, 0.6, 1.0)
+    capture_mouse()
+
+    เสียงโทน(0, 5.0, 4.0, 6.0, 5.0, 200.0, 0.05, 0.5, 0.03)
     ระดับเสียง(0.3)
-    เสียงโทน(0, 0.0, 0.0, 0.0, 5.0, 150.0, 0.08, 0.5, 0.03)
 
-    印("")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("🌍 Physics Demo — Orbital Mechanics")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("")
+    令 FR = 0
 
-    印("Configuration:")
-    印("  Orbital rings: " + RINGS)
-    印("  Particles per ring: 8")
-    印("  Total particles: " + (RINGS * 8))
-    印("  Center mass: 10.0")
-    印("  Simulation frames: " + FRAMES)
-    印("  Duration: ~10 seconds (60 FPS)")
-    印("")
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(2, 3, 8)
 
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("ORBITAL PARAMETERS (Kepler's Laws)")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("")
+        # Time parameter
+        令 t = FR * 0.016667
 
-    print_rings()
+        # Ball position (animated trajectory)
+        令 bx = 3.0 + sin(t) * 2.0
+        令 by = 4.0 + cos(t * 0.5) * 1.5
+        令 bz = 6.0 + sin(t * 0.7) * 1.5
 
-    印("")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("PHYSICS PRINCIPLES")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("")
+        # Keep ball in room bounds
+        若 by < 0.3 { 令 by = 0.3 }
+        若 by > 7.7 { 令 by = 7.7 }
+        若 bx < 0.3 { 令 bx = 0.3 }
+        若 bx > 9.7 { 令 bx = 9.7 }
+        若 bz < 0.3 { 令 bz = 0.3 }
+        若 bz > 11.7 { 令 bz = 11.7 }
 
-    印("1. Gravitational Attraction")
-    印("   F = GMm/r²")
-    印("   Force decreases with square of distance")
-    印("")
+        # Velocity for energy calculation
+        令 vx = cos(t) * 3.0
+        令 vy = sin(t * 0.5) * 2.0 - 9.8 * t
+        令 vz = cos(t * 0.7) * 2.0
 
-    印("2. Orbital Velocity")
-    印("   v = √(GM/r)")
-    印("   Velocity decreases with distance from center")
-    印("")
+        # Energy (kinetic + potential)
+        令 speed_sq = vx*vx + vy*vy + vz*vz
+        令 energy = sqrt(speed_sq) * 0.5 + by / 8.0
 
-    印("3. Kepler's Third Law")
-    印("   T² ∝ r³")
-    印("   Outer orbits have much longer periods")
-    印("   Period scales as r^(3/2)")
-    印("")
+        # Energy to hue (red=high energy, blue=low)
+        令 norm_energy = energy / 5.0
+        若 norm_energy > 1.0 { 令 norm_energy = 1.0 }
+        若 norm_energy < 0.0 { 令 norm_energy = 0.0 }
+        令 hue = (1.0 - norm_energy) * 0.66
 
-    印("   Ring 0: Period ≈ 14.3 seconds")
-    印("   Ring 1: Period ≈ 28.3 seconds")
-    印("   Ring 2: Period ≈ 57.3 seconds")
-    印("   Ring 3: Period ≈ 88.2 seconds")
-    印("")
+        # Camera orbit
+        令 cam_angle = FR * 0.005
+        令 cam_x = 5.0 + cos(cam_angle) * 8.0
+        令 cam_y = 4.5 + 3.0
+        令 cam_z = 6.0 + sin(cam_angle) * 8.0
 
-    印("4. Energy Conservation")
-    印("   E_total = KE + PE = constant")
-    印("   Circular orbits maintain constant energy")
-    印("")
+        set_camera_pos(cam_x, cam_y, cam_z)
+        set_camera(0.7, 0.7, 0.0, 0.0)
+        set_zdist(1.5)
 
-    印("5. Centripetal Acceleration")
-    印("   a = v²/r = GM/r²")
-    印("   Gravity provides exactly the acceleration needed")
-    印("")
+        # Draw room box
+        draw_line_3d(0.0, 0.3, 0.0, 10.0, 0.3, 0.0, 0.15, 0.4)
+        draw_line_3d(10.0, 0.3, 0.0, 10.0, 0.3, 12.0, 0.15, 0.4)
+        draw_line_3d(10.0, 0.3, 12.0, 0.0, 0.3, 12.0, 0.15, 0.4)
+        draw_line_3d(0.0, 0.3, 12.0, 0.0, 0.3, 0.0, 0.15, 0.4)
 
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("SIMULATION RUNNING")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("")
+        draw_line_3d(0.0, 7.7, 0.0, 10.0, 7.7, 0.0, 0.15, 0.4)
+        draw_line_3d(10.0, 7.7, 0.0, 10.0, 7.7, 12.0, 0.15, 0.4)
+        draw_line_3d(10.0, 7.7, 12.0, 0.0, 7.7, 12.0, 0.15, 0.4)
+        draw_line_3d(0.0, 7.7, 12.0, 0.0, 7.7, 0.0, 0.15, 0.4)
 
-    # Simulate frame counter
-    令 frame = 0
-    ขณะที่ frame < FRAMES {
-        令 frame = frame + 1
+        draw_line_3d(0.0, 0.3, 0.0, 0.0, 7.7, 0.0, 0.15, 0.4)
+        draw_line_3d(10.0, 0.3, 0.0, 10.0, 7.7, 0.0, 0.15, 0.4)
+        draw_line_3d(10.0, 0.3, 12.0, 10.0, 7.7, 12.0, 0.15, 0.4)
+        draw_line_3d(0.0, 0.3, 12.0, 0.0, 7.7, 12.0, 0.15, 0.4)
+
+        # Draw gravity indicator bar
+        令 gravity_height = (8.0 - by) / 8.0 * 7.0
+        draw_line_3d(0.6, 0.3, 0.6, 0.6, 0.3 + gravity_height, 0.6, 0.0, 0.7)
+
+        # Draw ball with energy color
+        ลายจักร(bx, by, bz, 1, 0, 0, 0, 1, 0, 0.3, 8, by * 0.1, hue)
+
+        # Audio feedback on high speed
+        若 sqrt(speed_sq) > 2.0 {
+            令 freq = 200.0 + sqrt(speed_sq) * 100.0
+            เสียงโทน(0, bx, by, bz, 3.0, freq, 0.1, 0.5, 0.02)
+        }
+
+        แสดงผล()
+
+        令 FR = FR + 1
     }
-
-    印("Frames processed: " + FRAMES)
-    印("Simulation time: 10.00 seconds")
-    印("Particles tracked: " + (RINGS * 8))
-    印("")
-
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("RESULTS")
-    印("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    印("")
-
-    印("✓ ling-physics: 4D vector operations ready")
-    印("✓ Orbital mechanics: All laws validated")
-    印("✓ Energy conservation: Systems in equilibrium")
-    印("✓ Audio synthesis: Real-time tone generation")
-    印("✓ Physics simulation: Complete and accurate")
-    印("")
-
-    印("All systems operational!")
-    印("")
 }
