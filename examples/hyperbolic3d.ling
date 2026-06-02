@@ -294,6 +294,9 @@ bind start = do {
         set_camera_pos(cam_x, cam_y, cam_z)
         set_zdist(150.0)
 
+        # ── OCCLUSION DETECTION (for fade) ─────────────────────────────────────
+        bind cam_to_ball_dist = sqrt((bx-cam_x)*(bx-cam_x) + (by-cam_y)*(by-cam_y) + (bz-cam_z)*(bz-cam_z))
+
         # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
         # Solid ground plane (MASSIVE - 8x)
         set_color(45, 38, 65)
@@ -391,11 +394,23 @@ bind start = do {
                 bind wy = by2 * SCALE
                 bind wz = ZC + bz2 * SCALE
 
+                # Occlusion fade: check if room is between camera and ball
+                bind cam_to_room_dist = sqrt((wx-cam_x)*(wx-cam_x) + (wy-cam_y)*(wy-cam_y) + (wz-cam_z)*(wz-cam_z))
+                bind is_occluding = 0
+                if cam_to_room_dist < cam_to_ball_dist - 0.5 { bind is_occluding = 1 }
+
                 bind rt = list_get(rtype, i)
                 bind hue = hash01(rt, 1.0)
                 bind col_r = int(sin(hue * 6.28 + FR * 0.002) * 40.0 + 100.0)
                 bind col_g = int(sin(hue * 6.28 + FR * 0.002 + 2.094) * 50.0 + 110.0)
                 bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
+
+                # Fade geometry that's occluding (blend towards background)
+                if is_occluding > 0 {
+                    bind col_r = int(col_r * 0.3 + 1.0 * 0.7)
+                    bind col_g = int(col_g * 0.3 + 1.0 * 0.7)
+                    bind col_b = int(col_b * 0.3 + 6.0 * 0.7)
+                }
 
                 if i == 0 {
                     # ── CENTRE ATRIUM (MASSIVE - 8x) with grid pattern ──────────
@@ -433,20 +448,43 @@ bind start = do {
                     bind hw_cx = wx + spoke_dx * hw_len * 0.5
                     bind hw_cz = wz + spoke_dz * hw_len * 0.5
 
-                    # Hallway with solid filled geometry + wireframe
-                    set_color(col_r - 15, col_g - 15, col_b + 10)
+                    # Hallway with prominent solid fill (walls darker, interior lighter)
+                    bind hall_col_r = col_r - 15
+                    bind hall_col_g = col_g - 15
+                    bind hall_col_b = col_b + 10
+                    if is_occluding > 0 {
+                        bind hall_col_r = int(hall_col_r * 0.3 + 1.0 * 0.7)
+                        bind hall_col_g = int(hall_col_g * 0.3 + 1.0 * 0.7)
+                        bind hall_col_b = int(hall_col_b * 0.3 + 6.0 * 0.7)
+                    }
+                    set_color(hall_col_r, hall_col_g, hall_col_b)
                     cube(hw_cx, wy, hw_cz,  HALLWAY_W * conf, HALLWAY_H * conf, hw_len * 0.5,  0.0, 0.0, 0.0,  0)
-                    draw_wireframe_box(hw_cx, wy, hw_cz,  HALLWAY_W * conf, HALLWAY_H * conf, hw_len * 0.5,  col_r, col_g, col_b)
 
                     bind alcove_cx = wx + spoke_dx * hw_len
                     bind alcove_cz = wz + spoke_dz * hw_len
 
-                    # Alcove with solid fill + wireframe
-                    set_color(col_r + 20, col_g + 10, col_b - 10)
+                    # Alcove with bright solid fill
+                    bind alcove_col_r = col_r + 20
+                    bind alcove_col_g = col_g + 10
+                    bind alcove_col_b = col_b - 10
+                    if is_occluding > 0 {
+                        bind alcove_col_r = int(alcove_col_r * 0.3 + 1.0 * 0.7)
+                        bind alcove_col_g = int(alcove_col_g * 0.3 + 1.0 * 0.7)
+                        bind alcove_col_b = int(alcove_col_b * 0.3 + 6.0 * 0.7)
+                    }
+                    set_color(alcove_col_r, alcove_col_g, alcove_col_b)
                     cube(alcove_cx, wy, alcove_cz,  1.6 * conf, 2.0 * conf, 1.6 * conf,  0.0, 0.0, 0.0,  0)
-                    draw_wireframe_box(alcove_cx, wy, alcove_cz,  1.6 * conf, 2.0 * conf, 1.6 * conf,  col_r + 30, col_g + 20, col_b - 20)
 
-                    set_color(col_r - 40, col_g + 60, col_b + 80)
+                    # Archway entrance (bright cyan/blue fill)
+                    bind arch_col_r = col_r - 40
+                    bind arch_col_g = col_g + 60
+                    bind arch_col_b = col_b + 80
+                    if is_occluding > 0 {
+                        bind arch_col_r = int(arch_col_r * 0.3 + 1.0 * 0.7)
+                        bind arch_col_g = int(arch_col_g * 0.3 + 1.0 * 0.7)
+                        bind arch_col_b = int(arch_col_b * 0.3 + 6.0 * 0.7)
+                    }
+                    set_color(arch_col_r, arch_col_g, arch_col_b)
                     bind arch_x = wx + spoke_dx * (hw_len - 1.3 * conf)
                     bind arch_z = wz + spoke_dz * (hw_len - 1.3 * conf)
                     arch(arch_x, wy, arch_z,  HALLWAY_W * conf * 0.8, HALLWAY_H * conf * 0.7, 0.4 * conf,  spoke_angle, 0.0, 0.0,  0,  10, 0.18)
