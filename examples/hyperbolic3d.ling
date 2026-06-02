@@ -295,21 +295,21 @@ bind start = do {
         set_zdist(150.0)
 
         # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
-        # Solid ground plane with checkerboard pattern (MASSIVE - 8x)
-        bind gx = 0.0 - 148.0
-        while gx < 148.0 {
-            bind gz = 0.0 - 148.0
-            while gz < 148.0 {
-                bind checker = int((gx / 10.0 + gz / 10.0)) % 2
-                if checker > 0 {
-                    set_color(35, 30, 50)
-                } else {
-                    set_color(50, 42, 75)
-                }
-                cube(gx + 5.0, 4.8, ZC + gz + 5.0,  5.0, 4.8, 5.0,  0.0, 0.0, 0.0,  0)
-                bind gz = gz + 10.0
-            }
-            bind gx = gx + 10.0
+        # Solid ground plane (MASSIVE - 8x)
+        set_color(45, 38, 65)
+        cube(0.0, 4.8, ZC,  148.0, 4.8, 148.0,  0.0, 0.0, 0.0,  0)
+
+        # Ground grid pattern
+        set_color(60, 50, 85)
+        bind gx = 0.0 - 140.0
+        while gx < 140.0 {
+            draw_line_3d(gx, 5.0, ZC - 140.0,  gx, 5.0, ZC + 140.0)
+            bind gx = gx + 20.0
+        }
+        bind gz = 0.0 - 140.0
+        while gz < 140.0 {
+            draw_line_3d(0.0 - 140.0, 5.0, ZC + gz,  140.0, 5.0, ZC + gz)
+            bind gz = gz + 20.0
         }
 
         # Tray walls (solid + wireframe) - MASSIVE
@@ -399,22 +399,6 @@ bind start = do {
 
                 if i == 0 {
                     # ── CENTRE ATRIUM (MASSIVE - 8x) with grid pattern ──────────
-                    bind gx = 0
-                    while gx < 16 {
-                        bind gz = 0
-                        while gz < 16 {
-                            bind checker = (gx + gz) % 2
-                            if checker > 0 {
-                                set_color(col_r - 10, col_g - 10, col_b + 5)
-                            } else {
-                                set_color(col_r + 10, col_g + 10, col_b - 5)
-                            }
-                            cube(wx - 80.0 + gx * 10.0 + 5.0, wy, wz - 80.0 + gz * 10.0 + 5.0,  5.0, 0.5, 5.0,  0.0, 0.0, 0.0,  0)
-                            bind gz = gz + 1
-                        }
-                        bind gx = gx + 1
-                    }
-
                     set_color(col_r, col_g, col_b)
                     bind gx = 0
                     while gx < 16 {
