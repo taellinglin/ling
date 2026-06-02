@@ -125,6 +125,89 @@ pub fn transform_dir(v: Vec3, mat: Mat4) -> Vec3 {
     Vec3::new(v4.x, v4.y, v4.z)
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// 4D VECTOR OPERATIONS
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Normalize a 4D vector (magnitude = 1.0)
+pub fn normalize_4d(v: Vec4) -> Vec4 {
+    v.normalize()
+}
+
+/// 4D dot product
+pub fn dot_4d(a: Vec4, b: Vec4) -> f32 {
+    a.dot(b)
+}
+
+/// 4D vector magnitude (length)
+pub fn magnitude_4d(v: Vec4) -> f32 {
+    v.length()
+}
+
+/// 4D distance between two points
+pub fn distance_4d(a: Vec4, b: Vec4) -> f32 {
+    (a - b).length()
+}
+
+/// 4D squared distance (faster, avoids sqrt)
+pub fn distance_4d_squared(a: Vec4, b: Vec4) -> f32 {
+    (a - b).length_squared()
+}
+
+/// 4D linear interpolation
+pub fn lerp_4d(a: Vec4, b: Vec4, t: f32) -> Vec4 {
+    a.lerp(b, t)
+}
+
+/// 4D angle between two vectors
+pub fn angle_between_4d(a: Vec4, b: Vec4) -> f32 {
+    let cos_angle = (a.normalize().dot(b.normalize())).clamp(-1.0, 1.0);
+    cos_angle.acos()
+}
+
+/// Project 4D vector a onto vector b
+pub fn project_4d(a: Vec4, b: Vec4) -> Vec4 {
+    let b_normalized = b.normalize();
+    (a.dot(b_normalized)) * b_normalized
+}
+
+/// Reflect 4D vector off a hyperplane
+pub fn reflect_4d(incoming: Vec4, normal: Vec4) -> Vec4 {
+    incoming - 2.0 * incoming.dot(normal) * normal
+}
+
+/// Clamp 4D vector magnitude to max length
+pub fn clamp_magnitude_4d(v: Vec4, max_length: f32) -> Vec4 {
+    let len = v.length();
+    if len > max_length {
+        (v / len) * max_length
+    } else {
+        v
+    }
+}
+
+/// 4D vector rejection: remove component of a along b
+pub fn reject_4d(a: Vec4, b: Vec4) -> Vec4 {
+    a - project_4d(a, b)
+}
+
+/// Convert 4D point to 3D homogeneous coordinates (perspective division)
+pub fn vec4_to_vec3(v: Vec4) -> Vec3 {
+    Vec3::new(v.x / v.w, v.y / v.w, v.z / v.w)
+}
+
+/// Create a 4D rotation matrix (4x4) from axis-angle in 3D subspace
+pub fn rotation_4d_from_axis_angle(axis: Vec3, angle: f32) -> Mat4 {
+    let quat = Quat::from_axis_angle(axis.normalize(), angle);
+    Mat4::from_quat(quat)
+}
+
+/// 4D smooth interpolation with smoothstep
+pub fn smooth_lerp_4d(a: Vec4, b: Vec4, t: f32) -> Vec4 {
+    let smooth_t = t * t * (3.0 - 2.0 * t);
+    a.lerp(b, smooth_t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +231,28 @@ mod tests {
         let a = Vec3::ZERO;
         let b = Vec3::new(10.0, 0.0, 0.0);
         let mid = lerp(a, b, 0.5);
+        assert!((mid.x - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_distance_4d() {
+        let a = Vec4::ZERO;
+        let b = Vec4::new(3.0, 4.0, 0.0, 0.0);
+        assert!((distance_4d(a, b) - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_dot_4d() {
+        let a = Vec4::new(1.0, 0.0, 0.0, 0.0);
+        let b = Vec4::new(0.0, 1.0, 0.0, 0.0);
+        assert!((dot_4d(a, b)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_lerp_4d() {
+        let a = Vec4::ZERO;
+        let b = Vec4::new(10.0, 0.0, 0.0, 0.0);
+        let mid = lerp_4d(a, b, 0.5);
         assert!((mid.x - 5.0).abs() < 0.01);
     }
 }

@@ -8,7 +8,7 @@
 //! - Buoyancy
 //! - Wind force (directional + turbulence)
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 
 /// Gravitational acceleration (9.8 m/s² downward)
 pub const GRAVITY: f32 = 9.8;
@@ -149,6 +149,68 @@ pub fn pressure_force(pressure: f32, area: f32, normal: Vec3) -> Vec3 {
 pub fn acceleration_from_force(force: Vec3, mass: f32) -> Vec3 {
     if mass < 0.001 {
         return Vec3::ZERO;
+    }
+    force / mass
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// 4D FORCE OPERATIONS
+// ──────────────────────────────────────────────────────────────────────────
+
+/// 4D gravity force (projects into 4D space)
+pub fn gravity_force_4d(mass: f32) -> Vec4 {
+    Vec4::new(0.0, -GRAVITY * mass, 0.0, 0.0)
+}
+
+/// 4D drag force: F = -drag_coeff * velocity
+pub fn drag_force_4d(velocity: Vec4, drag_coeff: f32) -> Vec4 {
+    -drag_coeff * velocity
+}
+
+/// 4D spring force (Hooke's law in 4D)
+pub fn spring_force_4d(position: Vec4, anchor: Vec4, spring_constant: f32, rest_length: f32) -> Vec4 {
+    let displacement = position - anchor;
+    let distance = displacement.length();
+    if distance < 0.001 {
+        return Vec4::ZERO;
+    }
+    let direction = displacement.normalize();
+    let extension = distance - rest_length;
+    -spring_constant * extension * direction
+}
+
+/// 4D damping force: F = -damping * velocity
+pub fn damping_force_4d(velocity: Vec4, damping_coeff: f32) -> Vec4 {
+    -damping_coeff * velocity
+}
+
+/// 4D gravitational attraction (inverse square law in 4D space)
+pub fn gravitational_attraction_4d(source: Vec4, target: Vec4, mass1: f32, mass2: f32, g: f32) -> Vec4 {
+    let displacement = target - source;
+    let distance = displacement.length();
+    if distance < 0.01 {
+        return Vec4::ZERO;
+    }
+    let direction = displacement.normalize();
+    let force_magnitude = g * mass1 * mass2 / (distance * distance);
+    force_magnitude * direction
+}
+
+/// 4D repulsive force (inverse square law)
+pub fn repulsive_force_4d(source: Vec4, target: Vec4, mass1: f32, mass2: f32, g: f32) -> Vec4 {
+    -gravitational_attraction_4d(source, target, mass1, mass2, g)
+}
+
+/// 4D bounce/reflection: elastic collision response
+pub fn bounce_velocity_4d(velocity: Vec4, normal: Vec4, elasticity: f32) -> Vec4 {
+    let reflected = velocity - 2.0 * velocity.dot(normal) * normal;
+    reflected * elasticity
+}
+
+/// 4D acceleration from force: a = F / m
+pub fn acceleration_from_force_4d(force: Vec4, mass: f32) -> Vec4 {
+    if mass < 0.001 {
+        return Vec4::ZERO;
     }
     force / mass
 }
