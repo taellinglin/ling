@@ -1,6 +1,8 @@
 //! ling-physics — simulation, world generation, and hyperbolic geometry.
 //!
 //! Modules:
+//! - [`vector`]    — vector operations, linear algebra (dot, cross, distance)
+//! - [`forces`]    — force calculations (gravity, drag, spring, buoyancy, wind)
 //! - [`rigid`]     — rigid-body dynamics (position-based + impulse)
 //! - [`soft`]      — spring-mass soft bodies (deformable ball bounce, cloth)
 //! - [`terrain`]   — chunk-based terrain with fractal noise and LOD
@@ -10,6 +12,8 @@
 //! - [`world`]     — scene descriptor, chunk manager, entity placement
 //! - [`gltf`]      — glTF 2.0 model loading with skeletal animation
 
+pub mod vector;
+pub mod forces;
 pub mod rigid;
 pub mod soft;
 pub mod terrain;

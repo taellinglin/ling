@@ -1,0 +1,237 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Physics Abstractions — Vector & Force Library
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Multilingual physics abstractions for vector operations and force calculations.
+# Available in English, Chinese, Japanese, Korean, and Thai.
+#
+# Vector operations: normalize, dot product, cross product, distance, magnitude
+# Forces: gravity, drag, spring, buoyancy, wind, attraction/repulsion, elasticity
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VECTOR OPERATIONS — Linear algebra primitives
+# ─────────────────────────────────────────────────────────────────────────────
+
+函 normalize(vector) {
+    # Normalize to unit length (magnitude = 1)
+    # English:  normalize(vector)
+    # Chinese:  归一化 / 向量_单位化
+    # Japanese: 正規化 / ベクトル_単位化
+    # Korean:   정규화 / 벡터_단위화
+    # Thai:     ทำให้เป็นหน่วย / เวกเตอร์_ปกติ
+    physics_normalize(vector)
+}
+
+函 dot_product(a, b) {
+    # Dot product: alignment measure (-1 to 1)
+    # English:  dot_product(a, b)
+    # Chinese:  点积 / 向量_点乘
+    # Japanese: 内積 / ベクトル_内積
+    # Korean:   내적 / 벡터_내적
+    # Thai:     ผลคูณเชิงสเกลาร์ / เวกเตอร์_ผลคูณจุด
+    physics_dot(a, b)
+}
+
+函 cross_product(a, b) {
+    # Cross product: perpendicular vector
+    # English:  cross_product(a, b)
+    # Chinese:  叉积 / 向量_叉乘
+    # Japanese: 外積 / ベクトル_外積
+    # Korean:   외적 / 벡터_외적
+    # Thai:     ผลคูณเชิงเวกเตอร์ / เวกเตอร์_ผลคูณไขว้
+    physics_cross(a, b)
+}
+
+函 distance(a, b) {
+    # Distance between two points
+    # English:  distance(a, b)
+    # Chinese:  距离 / 两点距离
+    # Japanese: 距離 / 2点間距離
+    # Korean:   거리 / 두점거리
+    # Thai:     ระยะห่าง / ระยะห่างสองจุด
+    physics_distance(a, b)
+}
+
+函 magnitude(vector) {
+    # Vector length / magnitude
+    # English:  magnitude(vector)
+    # Chinese:  大小 / 向量_长度
+    # Japanese: 大きさ / ベクトル_長さ
+    # Korean:   크기 / 벡터_크기
+    # Thai:     ขนาด / เวกเตอร์_ความยาว
+    physics_magnitude(vector)
+}
+
+函 lerp_vector(a, b, t) {
+    # Linear interpolation between vectors (t: 0-1)
+    # English:  lerp_vector(a, b, t)
+    # Chinese:  线性插值 / 向量_插值
+    # Japanese: 線形補間 / ベクトル_線形補間
+    # Korean:   선형보간 / 벡터_선형보간
+    # Thai:     การสอดแทรกเชิงเส้น / เวกเตอร์_สอดแทรก
+    physics_lerp(a, b, t)
+}
+
+函 angle_between(a, b) {
+    # Angle between vectors in radians
+    # English:  angle_between(a, b)
+    # Chinese:  向量_夹角
+    # Japanese: ベクトル_なす角
+    # Korean:   벡터_사잇각
+    # Thai:     เวกเตอร์_มุมระหว่าง
+    physics_angle(a, b)
+}
+
+函 project_vector(a, b) {
+    # Project a onto b: component of a in direction of b
+    # English:  project_vector(a, b)
+    # Chinese:  投影 / 向量_投影
+    # Japanese: 投影 / ベクトル_投影
+    # Korean:   정사영 / 벡터_정사영
+    # Thai:     การฉาย / เวกเตอร์_ฉาย
+    physics_project(a, b)
+}
+
+函 reflect_vector(incoming, normal) {
+    # Reflect vector off surface with normal
+    # English:  reflect_vector(incoming, normal)
+    # Chinese:  反射 / 向量_反射
+    # Japanese: 反射 / ベクトル_反射
+    # Korean:   반사 / 벡터_반사
+    # Thai:     การสะท้อน / เวกเตอร์_สะท้อน
+    physics_reflect(incoming, normal)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FORCES — Physics simulations
+# ─────────────────────────────────────────────────────────────────────────────
+
+函 gravity_force(mass) {
+    # Gravitational force (9.8 m/s² downward)
+    # English:  gravity_force(mass)
+    # Chinese:  重力 / 重力_力
+    # Japanese: 重力 / 重力_力
+    # Korean:   중력 / 중력_힘
+    # Thai:     แรงโน้มถ่วง / แรงโน้มถ่วง_แรง
+    physics_gravity(mass)
+}
+
+函 drag_force(velocity, drag_coeff) {
+    # Air resistance: F = -drag_coeff * velocity
+    # English:  drag_force(velocity, drag_coeff)
+    # Chinese:  阻力 / 阻力_风阻
+    # Japanese: 抵抗 / 抵抗_抗力
+    # Korean:   항력 / 항력_공기항력
+    # Thai:     แรงลาก / แรงลาก_ความต้านทาน
+    physics_drag(velocity, drag_coeff)
+}
+
+函 spring_force(position, anchor, k, rest_length) {
+    # Hooke's law: F = -k * (x - rest_length)
+    # k: spring constant (stiffness)
+    # English:  spring_force(pos, anchor, k, rest_len)
+    # Chinese:  弹簧 / 弹簧_力
+    # Japanese: バネ / バネ_力
+    # Korean:   스프링 / 스프링_힘
+    # Thai:     แรงสปริง / สปริง_แรง
+    physics_spring(position, anchor, k, rest_length)
+}
+
+函 damping_force(velocity, damping_coeff) {
+    # Reduce oscillation: F = -damping * velocity
+    # English:  damping_force(velocity, damping)
+    # Chinese:  阻尼 / 阻尼_力
+    # Japanese: 減衰 / 減衰_力
+    # Korean:   감쇠 / 감쇠_힘
+    # Thai:     แรงลดการสั่น / การลดการสั่น_แรง
+    physics_damping(velocity, damping_coeff)
+}
+
+函 gravity_attraction(source, target, mass1, mass2, g) {
+    # Inverse square attraction: F = G * m1 * m2 / r²
+    # English:  gravity_attraction(src, tgt, m1, m2, g)
+    # Chinese:  吸引 / 万有引力
+    # Japanese: 引力 / 万有引力
+    # Korean:   인력 / 만유인력
+    # Thai:     แรงดึงดูด / แรงดึงดูดสากล
+    physics_attraction(source, target, mass1, mass2, g)
+}
+
+函 repulsive_force(source, target, mass1, mass2, g) {
+    # Inverse square repulsion: F = G * m1 * m2 / r²
+    # English:  repulsive_force(src, tgt, m1, m2, g)
+    # Chinese:  排斥 / 排斥_力
+    # Japanese: 斥力 / 斥力_力
+    # Korean:   척력 / 척력_힘
+    # Thai:     แรงผลัก / แรงผลัก_แรง
+    physics_repulsion(source, target, mass1, mass2, g)
+}
+
+函 buoyancy_force(volume, density) {
+    # Upward force in fluid: F = ρ * g * V
+    # English:  buoyancy_force(volume, density)
+    # Chinese:  浮力 / 浮力_力
+    # Japanese: 浮力 / 浮力_力
+    # Korean:   부력 / 부력_힘
+    # Thai:     แรงลอยตัว / แรงลอยตัว_แรง
+    physics_buoyancy(volume, density)
+}
+
+函 wind_force(direction, strength, turbulence, time) {
+    # Directional + turbulent wind
+    # English:  wind_force(dir, strength, turb, time)
+    # Chinese:  风 / 风_力
+    # Japanese: 風 / 風_力
+    # Korean:   바람 / 바람_힘
+    # Thai:     แรงลม / ลม_แรง
+    physics_wind(direction, strength, turbulence, time)
+}
+
+函 bounce_velocity(velocity, normal, elasticity) {
+    # Collision response: bounce with elasticity
+    # elasticity: 0 (absorb) to 1 (perfect bounce)
+    # English:  bounce_velocity(vel, normal, elasticity)
+    # Chinese:  反弹 / 碰撞_反弹
+    # Japanese: バウンス / 衝突_バウンス
+    # Korean:   반발 / 충돌_반발
+    # Thai:     การกระเด้ง / การชน_กระเด้ง
+    physics_bounce(velocity, normal, elasticity)
+}
+
+函 acceleration_from_force(force, mass) {
+    # F = m*a, so a = F / m
+    # English:  acceleration_from_force(force, mass)
+    # Chinese:  加速度 / 力_加速度
+    # Japanese: 加速度 / 力_加速度
+    # Korean:   가속도 / 힘_가속도
+    # Thai:     ความเร่ง / แรง_ความเร่ง
+    physics_accel(force, mass)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AUDIO-REACTIVE PHYSICS — Sound as force
+# ─────────────────────────────────────────────────────────────────────────────
+
+函 audio_force(audio_level, direction) {
+    # Convert audio amplitude to force magnitude
+    # English:  audio_force(level, direction)
+    # Chinese:  音频 / 音频_力
+    # Japanese: 音声 / 音声_力
+    # Korean:   오디오 / 오디오_힘
+    # Thai:     เสียง / เสียง_แรง
+    令 magnitude = clamp(audio_level * 100.0, 0.0, 50.0)
+    magnitude * normalize(direction)
+}
+
+函 ripple_from_impact(center, position, strength, time) {
+    # Radial wave from impact point (like sound ripple)
+    # English:  ripple_from_impact(center, pos, strength, time)
+    # Chinese:  涟漪 / 冲击_涟漪
+    # Japanese: 波紋 / 衝撃_波紋
+    # Korean:   물결 / 충격_물결
+    # Thai:     คลื่นตามวงกลม / การกระแทก_คลื่น
+    令 distance = magnitude(position - center)
+    令 wave = sin(distance - time * 5.0) / (distance + 0.1)
+    wave * strength * normalize(position - center)
+}
