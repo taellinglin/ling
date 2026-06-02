@@ -30,16 +30,16 @@ bind DAMPING = 0.995
 bind ELASTICITY = 0.86
 bind MOVE_ACCEL = 200.0
 
-# MASSIVE hyperbolic temple (8x scale)
-bind HALLWAY_W = 64.0
-bind HALLWAY_H = 72.0
-bind ATRIUM_R = 80.0
-bind SPOKE_L = 160.0
+# Hyperbolic temple (4x scale - half size)
+bind HALLWAY_W = 32.0
+bind HALLWAY_H = 36.0
+bind ATRIUM_R = 40.0
+bind SPOKE_L = 80.0
 
-# Orbital camera
-bind CAM_DIST_INIT = 25.0   # start far away (8x scale)
-bind CAM_DIST_MIN = 4.0
-bind CAM_DIST_MAX = 800.0
+# Orbital camera (scaled down)
+bind CAM_DIST_INIT = 12.5   # start closer (half scale)
+bind CAM_DIST_MIN = 2.0
+bind CAM_DIST_MAX = 400.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
@@ -185,13 +185,13 @@ bind start = do {
 
         bind hit = 0
 
-        # MASSIVE arena boundary (8x scale)
-        if bx < (0.0 - 144.0 + BALL_R) { bind bx = 0.0 - 144.0 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
-        if bx > (144.0 - BALL_R) { bind bx = 144.0 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
-        if by < (0.2 + BALL_R) { bind by = 0.2 + BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-        if by > (96.0 - BALL_R) { bind by = 96.0 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-        if bz < (ZC - 144.0 + BALL_R) { bind bz = ZC - 144.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
-        if bz > (ZC + 144.0 - BALL_R) { bind bz = ZC + 144.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        # Arena boundary (4x scale - half size)
+        if bx < (0.0 - 72.0 + BALL_R) { bind bx = 0.0 - 72.0 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        if bx > (72.0 - BALL_R) { bind bx = 72.0 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        if by < (0.1 + BALL_R) { bind by = 0.1 + BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
+        if by > (48.0 - BALL_R) { bind by = 48.0 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
+        if bz < (ZC - 72.0 + BALL_R) { bind bz = ZC - 72.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        if bz > (ZC + 72.0 - BALL_R) { bind bz = ZC + 72.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
 
         if hit > 0 { bind lastBounce = FR }
         bind grounded = 0
@@ -292,55 +292,56 @@ bind start = do {
 
         set_camera(cry, sry, crx, srx)
         set_camera_pos(cam_x, cam_y, cam_z)
-        set_zdist(150.0)
+        set_zdist(300.0)
 
         # ── OCCLUSION DETECTION (for fade) ─────────────────────────────────────
         bind cam_to_ball_dist = sqrt((bx-cam_x)*(bx-cam_x) + (by-cam_y)*(by-cam_y) + (bz-cam_z)*(bz-cam_z))
+        bind occlusion_fade_used = 0.0
 
         # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
-        # Solid ground plane (MASSIVE - 8x)
+        # Solid ground plane (4x scale - half size)
         set_color(45, 38, 65)
-        cube(0.0, 4.8, ZC,  148.0, 4.8, 148.0,  0.0, 0.0, 0.0,  0)
+        cube(0.0, 2.4, ZC,  74.0, 2.4, 74.0,  0.0, 0.0, 0.0,  0)
 
         # Ground grid pattern
         set_color(60, 50, 85)
-        bind gx = 0.0 - 140.0
-        while gx < 140.0 {
-            draw_line_3d(gx, 5.0, ZC - 140.0,  gx, 5.0, ZC + 140.0)
-            bind gx = gx + 20.0
+        bind gx = 0.0 - 70.0
+        while gx < 70.0 {
+            draw_line_3d(gx, 2.5, ZC - 70.0,  gx, 2.5, ZC + 70.0)
+            bind gx = gx + 10.0
         }
-        bind gz = 0.0 - 140.0
-        while gz < 140.0 {
-            draw_line_3d(0.0 - 140.0, 5.0, ZC + gz,  140.0, 5.0, ZC + gz)
-            bind gz = gz + 20.0
+        bind gz = 0.0 - 70.0
+        while gz < 70.0 {
+            draw_line_3d(0.0 - 70.0, 2.5, ZC + gz,  70.0, 2.5, ZC + gz)
+            bind gz = gz + 10.0
         }
 
-        # Tray walls (solid + wireframe) - MASSIVE
+        # Tray walls (solid + wireframe)
         # North wall
         set_color(100, 85, 140)
-        cube(0.0, 48.0, ZC + 148.0,  148.0, 48.0, 4.0,  0.0, 0.0, 0.0,  0)
+        cube(0.0, 24.0, ZC + 74.0,  74.0, 24.0, 2.0,  0.0, 0.0, 0.0,  0)
         set_color(80, 70, 120)
-        draw_wireframe_box(0.0, 48.0, ZC + 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
+        draw_wireframe_box(0.0, 24.0, ZC + 74.0,  74.0, 24.0, 2.0,  80, 70, 120)
         # South wall
         set_color(100, 85, 140)
-        cube(0.0, 48.0, ZC - 148.0,  148.0, 48.0, 4.0,  0.0, 0.0, 0.0,  0)
+        cube(0.0, 24.0, ZC - 74.0,  74.0, 24.0, 2.0,  0.0, 0.0, 0.0,  0)
         set_color(80, 70, 120)
-        draw_wireframe_box(0.0, 48.0, ZC - 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
+        draw_wireframe_box(0.0, 24.0, ZC - 74.0,  74.0, 24.0, 2.0,  80, 70, 120)
         # East wall
         set_color(110, 95, 150)
-        cube(148.0, 48.0, ZC,  4.0, 48.0, 148.0,  0.0, 0.0, 0.0,  0)
+        cube(74.0, 24.0, ZC,  2.0, 24.0, 74.0,  0.0, 0.0, 0.0,  0)
         set_color(80, 70, 120)
-        draw_wireframe_box(148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
+        draw_wireframe_box(74.0, 24.0, ZC,  2.0, 24.0, 74.0,  80, 70, 120)
         # West wall
         set_color(110, 95, 150)
-        cube(0.0 - 148.0, 48.0, ZC,  4.0, 48.0, 148.0,  0.0, 0.0, 0.0,  0)
+        cube(0.0 - 74.0, 24.0, ZC,  2.0, 24.0, 74.0,  0.0, 0.0, 0.0,  0)
         set_color(80, 70, 120)
-        draw_wireframe_box(0.0 - 148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
+        draw_wireframe_box(0.0 - 74.0, 24.0, ZC,  2.0, 24.0, 74.0,  80, 70, 120)
         # Ceiling
         set_color(70, 60, 100)
-        cube(0.0, 0.0 - 48.0, ZC,  148.0, 4.0, 148.0,  0.0, 0.0, 0.0,  0)
+        cube(0.0, 0.0 - 24.0, ZC,  74.0, 2.0, 74.0,  0.0, 0.0, 0.0,  0)
         set_color(80, 70, 120)
-        draw_wireframe_box(0.0, 0.0 - 48.0, ZC,  148.0, 4.0, 148.0,  80, 70, 120)
+        draw_wireframe_box(0.0, 0.0 - 24.0, ZC,  74.0, 2.0, 74.0,  80, 70, 120)
 
         # ── H³ BOOST ───────────────────────────────────────────────────────────
         bind blen = sqrt(bx_move*bx_move + bz_move*bz_move)
@@ -394,48 +395,58 @@ bind start = do {
                 bind wy = by2 * SCALE
                 bind wz = ZC + bz2 * SCALE
 
-                # Occlusion fade: check if room is between camera and ball
-                bind cam_to_room_dist = sqrt((wx-cam_x)*(wx-cam_x) + (wy-cam_y)*(wy-cam_y) + (wz-cam_z)*(wz-cam_z))
-                bind is_occluding = 0
-                if cam_to_room_dist < cam_to_ball_dist - 0.5 { bind is_occluding = 1 }
+                # Back-culling: skip if behind camera
+                bind dot_with_cam_dir = (wx-cam_x)*look_dx + (wy-cam_y)*look_dy + (wz-cam_z)*look_dz
 
-                bind rt = list_get(rtype, i)
-                bind hue = hash01(rt, 1.0)
-                bind col_r = int(sin(hue * 6.28 + FR * 0.002) * 40.0 + 100.0)
-                bind col_g = int(sin(hue * 6.28 + FR * 0.002 + 2.094) * 50.0 + 110.0)
-                bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
+                if dot_with_cam_dir > 0 {
+                    # Occlusion fade: check if room is between camera and ball
+                    bind cam_to_room_dist = sqrt((wx-cam_x)*(wx-cam_x) + (wy-cam_y)*(wy-cam_y) + (wz-cam_z)*(wz-cam_z))
+                    bind is_occluding = 0
+                    if cam_to_room_dist < cam_to_ball_dist - 0.5 { bind is_occluding = 1 }
 
-                # Fade geometry that's occluding (blend towards background)
-                if is_occluding > 0 {
-                    bind col_r = int(col_r * 0.3 + 1.0 * 0.7)
-                    bind col_g = int(col_g * 0.3 + 1.0 * 0.7)
-                    bind col_b = int(col_b * 0.3 + 6.0 * 0.7)
-                }
+                    bind rt = list_get(rtype, i)
+                    bind hue = hash01(rt, 1.0)
+                    bind col_r = int(sin(hue * 6.28 + FR * 0.002) * 40.0 + 100.0)
+                    bind col_g = int(sin(hue * 6.28 + FR * 0.002 + 2.094) * 50.0 + 110.0)
+                    bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
+
+                    # Cap occlusion opacity at 0.2 total across all occluders
+                    if is_occluding > 0 {
+                        if occlusion_fade_used < 0.2 {
+                            bind remaining_fade = 0.2 - occlusion_fade_used
+                            bind fade_amount = min(0.1, remaining_fade)
+                            bind color_blend = 1.0 - fade_amount
+                            bind col_r = int(col_r * color_blend + 1.0 * fade_amount)
+                            bind col_g = int(col_g * color_blend + 1.0 * fade_amount)
+                            bind col_b = int(col_b * color_blend + 6.0 * fade_amount)
+                            bind occlusion_fade_used = occlusion_fade_used + fade_amount
+                        }
+                    }
 
                 if i == 0 {
-                    # ── CENTRE ATRIUM (MASSIVE - 8x) with grid pattern ──────────
+                    # ── CENTRE ATRIUM (4x scale - half size) with grid pattern ──
                     set_color(col_r, col_g, col_b)
                     bind gx = 0
                     while gx < 16 {
-                        draw_line_3d(wx - 80.0, wy, wz - 80.0 + gx * 10.0,  wx + 80.0, wy, wz - 80.0 + gx * 10.0)
+                        draw_line_3d(wx - 40.0, wy, wz - 40.0 + gx * 5.0,  wx + 40.0, wy, wz - 40.0 + gx * 5.0)
                         bind gx = gx + 1
                     }
                     bind gx = 0
                     while gx < 16 {
-                        draw_line_3d(wx - 80.0 + gx * 10.0, wy, wz - 80.0,  wx - 80.0 + gx * 10.0, wy, wz + 80.0)
+                        draw_line_3d(wx - 40.0 + gx * 5.0, wy, wz - 40.0,  wx - 40.0 + gx * 5.0, wy, wz + 40.0)
                         bind gx = gx + 1
                     }
 
                     set_color(col_r - 20, col_g - 20, col_b + 30)
-                    bind mrad = 8.0
-                    while mrad < 72.0 {
+                    bind mrad = 4.0
+                    while mrad < 36.0 {
                         draw_line_3d(wx, wy, wz - mrad,  wx + mrad * 0.866, wy, wz - mrad * 0.5)
                         draw_line_3d(wx + mrad * 0.866, wy, wz - mrad * 0.5,  wx + mrad * 0.866, wy, wz + mrad * 0.5)
                         draw_line_3d(wx + mrad * 0.866, wy, wz + mrad * 0.5,  wx, wy, wz + mrad)
                         draw_line_3d(wx, wy, wz + mrad,  wx - mrad * 0.866, wy, wz + mrad * 0.5)
                         draw_line_3d(wx - mrad * 0.866, wy, wz + mrad * 0.5,  wx - mrad * 0.866, wy, wz - mrad * 0.5)
                         draw_line_3d(wx - mrad * 0.866, wy, wz - mrad * 0.5,  wx, wy, wz - mrad)
-                        bind mrad = mrad + 8.0
+                        bind mrad = mrad + 4.0
                     }
                 } else {
                     # ── SPOKES & ALCOVES ───────────────────────────────────────
@@ -492,13 +503,14 @@ bind start = do {
                     set_color(col_r + 20, col_g - 30, col_b + 50)
                     bind deco_x = alcove_cx
                     bind deco_z = alcove_cz
-                    bind deco_rad = 9.6 * conf
+                    bind deco_rad = 4.8 * conf
                     bind deco_angle = 0
                     while deco_angle < 6.28 {
                         bind next_angle = deco_angle + 0.39
-                        draw_line_3d(deco_x + deco_rad * cos(deco_angle), wy - 8.0, deco_z + deco_rad * sin(deco_angle),  deco_x + deco_rad * cos(next_angle), wy - 8.0, deco_z + deco_rad * sin(next_angle))
+                        draw_line_3d(deco_x + deco_rad * cos(deco_angle), wy - 4.0, deco_z + deco_rad * sin(deco_angle),  deco_x + deco_rad * cos(next_angle), wy - 4.0, deco_z + deco_rad * sin(next_angle))
                         bind deco_angle = next_angle
                     }
+                }
                 }
             }
 
