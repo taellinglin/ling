@@ -30,16 +30,16 @@ bind DAMPING = 0.995
 bind ELASTICITY = 0.86
 bind MOVE_ACCEL = 20.0
 
-# COLOSSAL hyperbolic temple (25x scale)
-bind HALLWAY_W = 200.0
-bind HALLWAY_H = 225.0
-bind ATRIUM_R = 250.0
-bind SPOKE_L = 500.0
+# MASSIVE hyperbolic temple (8x scale)
+bind HALLWAY_W = 64.0
+bind HALLWAY_H = 72.0
+bind ATRIUM_R = 80.0
+bind SPOKE_L = 160.0
 
 # Orbital camera
-bind CAM_DIST_INIT = 750.0   # start ASTRONOMICALLY FAR away (25x scale)
-bind CAM_DIST_MIN = 200.0
-bind CAM_DIST_MAX = 2000.0
+bind CAM_DIST_INIT = 40.0   # start far away (8x scale)
+bind CAM_DIST_MIN = 64.0
+bind CAM_DIST_MAX = 640.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
@@ -185,13 +185,13 @@ bind start = do {
 
         bind hit = 0
 
-        # COLOSSAL arena boundary (25x scale)
-        if bx < (0.0 - 450.0 + BALL_R) { bind bx = 0.0 - 450.0 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
-        if bx > (450.0 - BALL_R) { bind bx = 450.0 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        # MASSIVE arena boundary (8x scale)
+        if bx < (0.0 - 144.0 + BALL_R) { bind bx = 0.0 - 144.0 + BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
+        if bx > (144.0 - BALL_R) { bind bx = 144.0 - BALL_R   bind vx = 0.0 - vx * ELASTICITY   bind hit = 1 }
         if by < (0.2 + BALL_R) { bind by = 0.2 + BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-        if by > (300.0 - BALL_R) { bind by = 300.0 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
-        if bz < (ZC - 450.0 + BALL_R) { bind bz = ZC - 450.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
-        if bz > (ZC + 450.0 - BALL_R) { bind bz = ZC + 450.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        if by > (96.0 - BALL_R) { bind by = 96.0 - BALL_R   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
+        if bz < (ZC - 144.0 + BALL_R) { bind bz = ZC - 144.0 + BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
+        if bz > (ZC + 144.0 - BALL_R) { bind bz = ZC + 144.0 - BALL_R   bind vz = 0.0 - vz * ELASTICITY   bind hit = 1 }
 
         if hit > 0 { bind lastBounce = FR }
         bind grounded = 0
@@ -295,22 +295,22 @@ bind start = do {
         set_zdist(150.0)
 
         # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
-        # Solid ground plane (COLOSSAL - 25x)
+        # Solid ground plane (MASSIVE - 8x)
         set_color(40, 35, 60)
-        cube(0.0, 15.0, ZC,  462.5, 15.0, 462.5,  0.0, 0.0, 0.0,  0)
+        cube(0.0, 4.8, ZC,  148.0, 4.8, 148.0,  0.0, 0.0, 0.0,  0)
 
-        # Tray walls (wireframe boundary) - COLOSSAL
+        # Tray walls (wireframe boundary) - MASSIVE
         set_color(80, 70, 120)
         # North wall
-        draw_wireframe_box(0.0, 150.0, ZC + 462.5,  462.5, 150.0, 12.5,  80, 70, 120)
+        draw_wireframe_box(0.0, 48.0, ZC + 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
         # South wall
-        draw_wireframe_box(0.0, 150.0, ZC - 462.5,  462.5, 150.0, 12.5,  80, 70, 120)
+        draw_wireframe_box(0.0, 48.0, ZC - 148.0,  148.0, 48.0, 4.0,  80, 70, 120)
         # East wall
-        draw_wireframe_box(462.5, 150.0, ZC,  12.5, 150.0, 462.5,  80, 70, 120)
+        draw_wireframe_box(148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
         # West wall
-        draw_wireframe_box(0.0 - 462.5, 150.0, ZC,  12.5, 150.0, 462.5,  80, 70, 120)
+        draw_wireframe_box(0.0 - 148.0, 48.0, ZC,  4.0, 48.0, 148.0,  80, 70, 120)
         # Ceiling
-        draw_wireframe_box(0.0, 0.0 - 150.0, ZC,  462.5, 12.5, 462.5,  80, 70, 120)
+        draw_wireframe_box(0.0, 0.0 - 48.0, ZC,  148.0, 4.0, 148.0,  80, 70, 120)
 
         # ── H³ BOOST ───────────────────────────────────────────────────────────
         bind blen = sqrt(bx_move*bx_move + bz_move*bz_move)
@@ -371,29 +371,29 @@ bind start = do {
                 bind col_b = int(sin(hue * 6.28 + FR * 0.002 + 4.189) * 60.0 + 140.0)
 
                 if i == 0 {
-                    # ── CENTRE ATRIUM (COLOSSAL - 25x) ────────────────────────
+                    # ── CENTRE ATRIUM (MASSIVE - 8x) ──────────────────────────
                     set_color(col_r, col_g, col_b)
                     bind gx = 0
-                    while gx < 25 {
-                        draw_line_3d(wx - 250.0, wy, wz - 250.0 + gx * 20.0,  wx + 250.0, wy, wz - 250.0 + gx * 20.0)
+                    while gx < 16 {
+                        draw_line_3d(wx - 80.0, wy, wz - 80.0 + gx * 10.0,  wx + 80.0, wy, wz - 80.0 + gx * 10.0)
                         bind gx = gx + 1
                     }
                     bind gx = 0
-                    while gx < 25 {
-                        draw_line_3d(wx - 250.0 + gx * 20.0, wy, wz - 250.0,  wx - 250.0 + gx * 20.0, wy, wz + 250.0)
+                    while gx < 16 {
+                        draw_line_3d(wx - 80.0 + gx * 10.0, wy, wz - 80.0,  wx - 80.0 + gx * 10.0, wy, wz + 80.0)
                         bind gx = gx + 1
                     }
 
                     set_color(col_r - 20, col_g - 20, col_b + 30)
-                    bind mrad = 25.0
-                    while mrad < 225.0 {
+                    bind mrad = 8.0
+                    while mrad < 72.0 {
                         draw_line_3d(wx, wy, wz - mrad,  wx + mrad * 0.866, wy, wz - mrad * 0.5)
                         draw_line_3d(wx + mrad * 0.866, wy, wz - mrad * 0.5,  wx + mrad * 0.866, wy, wz + mrad * 0.5)
                         draw_line_3d(wx + mrad * 0.866, wy, wz + mrad * 0.5,  wx, wy, wz + mrad)
                         draw_line_3d(wx, wy, wz + mrad,  wx - mrad * 0.866, wy, wz + mrad * 0.5)
                         draw_line_3d(wx - mrad * 0.866, wy, wz + mrad * 0.5,  wx - mrad * 0.866, wy, wz - mrad * 0.5)
                         draw_line_3d(wx - mrad * 0.866, wy, wz - mrad * 0.5,  wx, wy, wz - mrad)
-                        bind mrad = mrad + 25.0
+                        bind mrad = mrad + 8.0
                     }
                 } else {
                     # ── SPOKES & ALCOVES ───────────────────────────────────────
@@ -421,11 +421,11 @@ bind start = do {
                     set_color(col_r + 20, col_g - 30, col_b + 50)
                     bind deco_x = alcove_cx
                     bind deco_z = alcove_cz
-                    bind deco_rad = 30.0 * conf
+                    bind deco_rad = 9.6 * conf
                     bind deco_angle = 0
                     while deco_angle < 6.28 {
                         bind next_angle = deco_angle + 0.39
-                        draw_line_3d(deco_x + deco_rad * cos(deco_angle), wy - 25.0, deco_z + deco_rad * sin(deco_angle),  deco_x + deco_rad * cos(next_angle), wy - 25.0, deco_z + deco_rad * sin(next_angle))
+                        draw_line_3d(deco_x + deco_rad * cos(deco_angle), wy - 8.0, deco_z + deco_rad * sin(deco_angle),  deco_x + deco_rad * cos(next_angle), wy - 8.0, deco_z + deco_rad * sin(next_angle))
                         bind deco_angle = next_angle
                     }
                 }
