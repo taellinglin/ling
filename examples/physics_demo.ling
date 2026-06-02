@@ -1,90 +1,193 @@
-# Physics Demo — Visual Bouncing Ball Simulation
+# Physics Demo — Bouncing Ball with Physics-Encoded Audio
 
 bind start = do {
     open_fullscreen("Physics Demo — Bouncing Ball")
-    set_ambient(0.25)
-    add_light(5.0, 10.0, 6.0, 4.0, 1.0, 0.95, 0.85)
-    add_light(0.5, 4.0, 0.5, 2.0, 0.3, 0.6, 1.0)
+    set_ambient(0.3)
+    add_light(5.0, 8.0, 6.0, 4.0, 1.0, 0.95, 0.85)
+    add_light(1.0, 4.0, 1.0, 3.0, 0.2, 0.6, 1.0)
     capture_mouse()
 
-    เสียงโทน(0, 5.0, 4.0, 6.0, 5.0, 200.0, 0.05, 0.5, 0.03)
-    ระดับเสียง(0.3)
+    ระดับเสียง(0.4)
+
+    # Ball state
+    令 bx = 3.0
+    令 by = 5.0
+    令 bz = 6.0
+    令 vx = 2.0
+    令 vy = 0.0
+    令 vz = 1.5
 
     令 FR = 0
+    令 last_bounce = 0
+
+    # Room dimensions
+    令 W = 10.0
+    令 H = 8.0
+    令 D = 12.0
+    令 radius = 0.4
+
+    # Physics constants
+    令 gravity = 9.8
+    令 damping = 0.90
+    令 elasticity = 0.75
+    令 dt = 0.0167
 
     ขณะที่ หน้าต่างเปิดอยู่() {
-        เติม(2, 3, 8)
+        เติม(3, 5, 15)  # Dark blue background
 
-        # Time parameter
-        令 t = FR * 0.016667
+        # Apply gravity to vertical velocity
+        令 new_vy = vy - gravity * dt
 
-        # Ball position (animated trajectory)
-        令 bx = 3.0 + sin(t) * 2.0
-        令 by = 4.0 + cos(t * 0.5) * 1.5
-        令 bz = 6.0 + sin(t * 0.7) * 1.5
+        # Update position
+        令 new_bx = bx + vx * dt
+        令 new_by = by + new_vy * dt
+        令 new_bz = bz + vz * dt
 
-        # Keep ball in room bounds
-        若 by < 0.3 { 令 by = 0.3 }
-        若 by > 7.7 { 令 by = 7.7 }
-        若 bx < 0.3 { 令 bx = 0.3 }
-        若 bx > 9.7 { 令 bx = 9.7 }
-        若 bz < 0.3 { 令 bz = 0.3 }
-        若 bz > 11.7 { 令 bz = 11.7 }
+        # Apply damping to velocity
+        令 vx = vx * damping
+        令 new_vy = new_vy * damping
+        令 vz = vz * damping
 
-        # Velocity for energy calculation
-        令 vx = cos(t) * 3.0
-        令 vy = sin(t * 0.5) * 2.0 - 9.8 * t
-        令 vz = cos(t * 0.7) * 2.0
-
-        # Energy (kinetic + potential)
-        令 speed_sq = vx*vx + vy*vy + vz*vz
-        令 energy = sqrt(speed_sq) * 0.5 + by / 8.0
-
-        # Energy to hue (red=high energy, blue=low)
-        令 norm_energy = energy / 5.0
-        若 norm_energy > 1.0 { 令 norm_energy = 1.0 }
-        若 norm_energy < 0.0 { 令 norm_energy = 0.0 }
-        令 hue = (1.0 - norm_energy) * 0.66
-
-        # Camera orbit
-        令 cam_angle = FR * 0.005
-        令 cam_x = 5.0 + cos(cam_angle) * 8.0
-        令 cam_y = 4.5 + 3.0
-        令 cam_z = 6.0 + sin(cam_angle) * 8.0
-
-        set_camera_pos(cam_x, cam_y, cam_z)
-        set_camera(0.7, 0.7, 0.0, 0.0)
-        set_zdist(1.5)
-
-        # Draw room box
-        draw_line_3d(0.0, 0.3, 0.0, 10.0, 0.3, 0.0, 0.15, 0.4)
-        draw_line_3d(10.0, 0.3, 0.0, 10.0, 0.3, 12.0, 0.15, 0.4)
-        draw_line_3d(10.0, 0.3, 12.0, 0.0, 0.3, 12.0, 0.15, 0.4)
-        draw_line_3d(0.0, 0.3, 12.0, 0.0, 0.3, 0.0, 0.15, 0.4)
-
-        draw_line_3d(0.0, 7.7, 0.0, 10.0, 7.7, 0.0, 0.15, 0.4)
-        draw_line_3d(10.0, 7.7, 0.0, 10.0, 7.7, 12.0, 0.15, 0.4)
-        draw_line_3d(10.0, 7.7, 12.0, 0.0, 7.7, 12.0, 0.15, 0.4)
-        draw_line_3d(0.0, 7.7, 12.0, 0.0, 7.7, 0.0, 0.15, 0.4)
-
-        draw_line_3d(0.0, 0.3, 0.0, 0.0, 7.7, 0.0, 0.15, 0.4)
-        draw_line_3d(10.0, 0.3, 0.0, 10.0, 7.7, 0.0, 0.15, 0.4)
-        draw_line_3d(10.0, 0.3, 12.0, 10.0, 7.7, 12.0, 0.15, 0.4)
-        draw_line_3d(0.0, 0.3, 12.0, 0.0, 7.7, 12.0, 0.15, 0.4)
-
-        # Draw gravity indicator bar
-        令 gravity_height = (8.0 - by) / 8.0 * 7.0
-        draw_line_3d(0.6, 0.3, 0.6, 0.6, 0.3 + gravity_height, 0.6, 0.0, 0.7)
-
-        # Draw ball with energy color
-        ลายจักร(bx, by, bz, 1, 0, 0, 0, 1, 0, 0.3, 8, by * 0.1, hue)
-
-        # Audio feedback on high speed
-        若 sqrt(speed_sq) > 2.0 {
-            令 freq = 200.0 + sqrt(speed_sq) * 100.0
-            เสียงโทน(0, bx, by, bz, 3.0, freq, 0.1, 0.5, 0.02)
+        # Bounce off walls
+        若 new_bx < radius {
+            令 new_bx = radius
+            令 vx = -vx * elasticity
+        }
+        若 new_bx > (W - radius) {
+            令 new_bx = W - radius
+            令 vx = -vx * elasticity
         }
 
+        # Bounce off floor (bottom)
+        若 new_by < radius {
+            令 new_by = radius
+            令 new_vy = -new_vy * elasticity
+            令 last_bounce = FR
+        }
+
+        # Bounce off ceiling (top)
+        若 new_by > (H - radius) {
+            令 new_by = H - radius
+            令 new_vy = -new_vy * elasticity
+        }
+
+        # Bounce off front/back
+        若 new_bz < radius {
+            令 new_bz = radius
+            令 vz = -vz * elasticity
+        }
+        若 new_bz > (D - radius) {
+            令 new_bz = D - radius
+            令 vz = -vz * elasticity
+        }
+
+        # Update state
+        令 bx = new_bx
+        令 by = new_by
+        令 bz = new_bz
+        令 vy = new_vy
+
+        # Calculate ball speed
+        令 speed = sqrt(vx*vx + vy*vy + vz*vz)
+
+        # Calculate energy for visualization
+        令 ke = speed * speed * 0.5
+        令 pe = by / H
+        令 energy = ke + pe
+
+        # Map energy to color (red=high, blue=low)
+        令 hue = (1.0 - energy / 5.0) * 0.66
+        若 hue < 0.0 { 令 hue = 0.0 }
+
+        # Physics-encoded audio
+        # Frequency: Higher when ball bounces (impacts), modulated by height
+        # Base frequency depends on height: bottom=150Hz, top=300Hz
+        令 height_freq = 150.0 + (by / H) * 150.0
+
+        # Impact frequency boost on collision
+        令 time_since_bounce = FR - last_bounce
+        若 time_since_bounce < 5 {
+            令 impact_boost = (5 - time_since_bounce) * 30.0
+        } 否则 {
+            令 impact_boost = 0.0
+        }
+
+        令 freq = height_freq + impact_boost + speed * 50.0
+
+        # Amplitude: Louder when moving fast
+        令 amplitude = 0.05 + speed * 0.05
+
+        # Play tone with physics-encoded parameters
+        เสียงโทน(0, bx, by, bz, 4.0, freq, amplitude, 0.5, 0.02)
+
+        # Setup camera
+        令 cam_angle = FR * 0.004
+        令 cam_x = 5.0 + cos(cam_angle) * 7.0
+        令 cam_y = 4.0 + 3.0
+        令 cam_z = 6.0 + sin(cam_angle) * 7.0
+
+        set_camera_pos(cam_x, cam_y, cam_z)
+        set_camera(0.7, 0.7, 0.2, 0.1)
+        set_zdist(1.2)
+
+        # Draw cage/room wireframe
+        # Bottom square
+        draw_line_3d(0.0, radius, 0.0, W, radius, 0.0, 0.15, 0.5)
+        draw_line_3d(W, radius, 0.0, W, radius, D, 0.15, 0.5)
+        draw_line_3d(W, radius, D, 0.0, radius, D, 0.15, 0.5)
+        draw_line_3d(0.0, radius, D, 0.0, radius, 0.0, 0.15, 0.5)
+
+        # Top square
+        draw_line_3d(0.0, H - radius, 0.0, W, H - radius, 0.0, 0.15, 0.5)
+        draw_line_3d(W, H - radius, 0.0, W, H - radius, D, 0.15, 0.5)
+        draw_line_3d(W, H - radius, D, 0.0, H - radius, D, 0.15, 0.5)
+        draw_line_3d(0.0, H - radius, D, 0.0, H - radius, 0.0, 0.15, 0.5)
+
+        # Vertical edges
+        draw_line_3d(0.0, radius, 0.0, 0.0, H - radius, 0.0, 0.15, 0.5)
+        draw_line_3d(W, radius, 0.0, W, H - radius, 0.0, 0.15, 0.5)
+        draw_line_3d(W, radius, D, W, H - radius, D, 0.15, 0.5)
+        draw_line_3d(0.0, radius, D, 0.0, H - radius, D, 0.15, 0.5)
+
+        # Draw gravity indicator (vertical line on left wall)
+        draw_line_3d(
+            0.3, radius, 0.3,
+            0.3, radius + (by - radius) * 1.5, 0.3,
+            0.0, 0.8
+        )
+
+        # Draw floor grid lines for reference
+        令 i = 0
+        ขณะที่ i < 5 {
+            draw_line_3d(i * 2.0, radius, 0.0, i * 2.0, radius, D, 0.1, 0.2)
+            令 i = i + 1
+        }
+
+        令 i = 0
+        ขณะที่ i < 6 {
+            draw_line_3d(0.0, radius, i * 2.0, W, radius, i * 2.0, 0.1, 0.2)
+            令 i = i + 1
+        }
+
+        # Draw the ball - large visible chakra
+        ลายจักร(
+            bx, by, bz,
+            1, 0, 0,  0, 1, 0,
+            radius * 1.5, 12,
+            by * 0.1, hue
+        )
+
+        # Draw velocity vector (red line showing direction)
+        若 speed > 0.1 {
+            令 arrow_length = speed * 1.5
+            draw_line_3d(
+                bx, by, bz,
+                bx + vx * arrow_length, by + vy * arrow_length, bz + vz * arrow_length,
+                0.0, 0.9
+            )
+        }
+
+        # Render frame
         แสดงผล()
 
         令 FR = FR + 1
