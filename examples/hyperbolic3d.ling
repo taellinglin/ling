@@ -213,8 +213,8 @@ bind start = do {
         add_light(0.0-2.5, 0.0-2.0, ZC-2.5,  0.4, 0.5, 0.9,  0.8, 10.0)
         add_light(bx, by + 0.8, bz,  0.6, 0.3, 0.8,  0.5, 6.0)
 
-        # ── CAMERA: 3rd person ────────────────────────────────────────────────
-        bind cam_dist = 2.5
+        # ── CAMERA: 3rd person (further back) ──────────────────────────────────
+        bind cam_dist = 4.5
         bind cam_x = bx - sin(pyaw) * cam_dist
         bind cam_z = bz - cos(pyaw) * cam_dist
         set_camera(cos(pyaw), sin(pyaw), 0.85, 0.53)
@@ -359,9 +359,9 @@ bind start = do {
         bind rz = nrz
         bind rw = nrw
 
-        # ── DRAW THE BALL ──────────────────────────────────────────────────────
-        set_color(int(180 + speed * 40.0), 100, int(200 - speed * 20.0))
-        gyro(bx, by, bz,  BALL_R, BALL_R, BALL_R,  FR*0.02, FR*0.015, FR*0.018,  1,  2)
+        # ── DRAW THE BALL: mandala chakra ─────────────────────────────────────
+        bind ball_hue = hash01(speed, FR * 0.01) * 6.28
+        vtex_chakra(bx, by, bz,  1,0,0,  0,1,0,  6, BALL_R,  FR * 0.04, ball_hue)
 
         # Shadow and indicators
         set_color(50, 40, 100)
