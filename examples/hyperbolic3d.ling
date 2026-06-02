@@ -292,7 +292,25 @@ bind start = do {
 
         set_camera(cry, sry, crx, srx)
         set_camera_pos(cam_x, cam_y, cam_z)
-        set_zdist(1.0)
+        set_zdist(150.0)
+
+        # ── DRAW TRAY BOUNDARY & SOLID GROUND ─────────────────────────────────
+        # Solid ground plane
+        set_color(40, 35, 60)
+        cube(0.0, 0.35, ZC,  8.5, 0.35, 8.5,  0.0, 0.0, 0.0,  0)
+
+        # Tray walls (wireframe boundary)
+        set_color(80, 70, 120)
+        # North wall
+        draw_wireframe_box(0.0, 3.0, ZC + 8.5,  8.5, 3.0, 0.3,  80, 70, 120)
+        # South wall
+        draw_wireframe_box(0.0, 3.0, ZC - 8.5,  8.5, 3.0, 0.3,  80, 70, 120)
+        # East wall
+        draw_wireframe_box(8.5, 3.0, ZC,  0.3, 3.0, 8.5,  80, 70, 120)
+        # West wall
+        draw_wireframe_box(0.0 - 8.5, 3.0, ZC,  0.3, 3.0, 8.5,  80, 70, 120)
+        # Ceiling
+        draw_wireframe_box(0.0, 0.0 - 3.0, ZC,  8.5, 0.3, 8.5,  80, 70, 120)
 
         # ── H³ BOOST ───────────────────────────────────────────────────────────
         bind blen = sqrt(bx_move*bx_move + bz_move*bz_move)
