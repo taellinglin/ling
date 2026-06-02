@@ -7,26 +7,26 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bind SCALE  = 6.5
-bind ZC     = 9.0
+bind ZC     = 18.0
 bind STEP   = 0.04
 bind TURN   = 0.03
 bind G      = 22.0
 bind JUMP   = 60.0
-bind HDIST  = 2.2
+bind HDIST  = 4.4
 bind NROOMS = 6
 
-bind BALL_R = 2.0
+bind BALL_R = 4.0
 bind DAMPING = 0.99
 bind ELASTICITY = 0.80
 bind MOVE_ACCEL = 250.0
 
-# Massive voxel world (5-way symmetry)
-bind VOXEL_SIZE = 2.0
+# Massive voxel world (5-way symmetry, 2x scale, Z-up coordinates)
+bind VOXEL_SIZE = 4.0
 
-# Orbital camera (zoomed in close)
-bind CAM_DIST_INIT = 8.0
-bind CAM_DIST_MIN = 2.0
-bind CAM_DIST_MAX = 150.0
+# Orbital camera (zoomed in close, Z vertical)
+bind CAM_DIST_INIT = 16.0
+bind CAM_DIST_MIN = 4.0
+bind CAM_DIST_MAX = 300.0
 
 # ── cosh / sinh ───────────────────────────────────────────────────────────────
 fn cosh_h(v) {
@@ -91,8 +91,8 @@ bind start = do {
     bind spoke = 0
     while spoke < 5 {
         bind angle = spoke * 1.2566
-        bind portal_x = list_push(portal_x, cos(angle) * 25.0)
-        bind portal_z = list_push(portal_z, sin(angle) * 25.0)
+        bind portal_x = list_push(portal_x, cos(angle) * 50.0)
+        bind portal_z = list_push(portal_z, sin(angle) * 50.0)
         bind spoke = spoke + 1
     }
 
@@ -131,10 +131,10 @@ bind start = do {
         bind hit = 0
 
         # Infinite ground wrap
-        if bx < -50.0 { bind bx = bx + 100.0 }
-        if bx > 50.0 { bind bx = bx - 100.0 }
-        if bz < ZC - 50.0 { bind bz = bz + 100.0 }
-        if bz > ZC + 50.0 { bind bz = bz - 100.0 }
+        if bx < -100.0 { bind bx = bx + 200.0 }
+        if bx > 100.0 { bind bx = bx - 200.0 }
+        if bz < ZC - 100.0 { bind bz = bz + 200.0 }
+        if bz > ZC + 100.0 { bind bz = bz - 200.0 }
 
         # Ground collision
         if by < (BALL_R + 0.1) { bind by = BALL_R + 0.1   bind vy_phys = 0.0 - vy_phys * ELASTICITY   bind hit = 1 }
@@ -177,7 +177,7 @@ bind start = do {
             bind px = list_get(portal_x, p)
             bind pz = list_get(portal_z, p)
             bind dist_to_portal = sqrt((bx - px)*(bx - px) + (bz - ZC - pz)*(bz - ZC - pz))
-            if dist_to_portal < 5.0 {
+            if dist_to_portal < 10.0 {
                 bind target = int(hash01(FR, p) * 4.999)
                 bind new_px = list_get(portal_x, target)
                 bind new_pz = list_get(portal_z, target)
@@ -273,10 +273,10 @@ bind start = do {
         }
 
         # Procedural voxel towers on ground
-        bind vx_world = int(bx / 6.0) * 6.0 - 80.0
-        while vx_world < bx + 80.0 {
-            bind vz_world = int((bz - ZC) / 6.0) * 6.0 - 80.0
-            while vz_world < (bz - ZC) + 80.0 {
+        bind vx_world = int(bx / 12.0) * 12.0 - 160.0
+        while vx_world < bx + 160.0 {
+            bind vz_world = int((bz - ZC) / 12.0) * 12.0 - 160.0
+            while vz_world < (bz - ZC) + 160.0 {
                 bind voxel_hash = hash01(vx_world * 0.05, vz_world * 0.05)
                 if voxel_hash > 0.4 {
                     bind voxel_height = int(voxel_hash * 5.0) + 1
@@ -295,9 +295,9 @@ bind start = do {
                         bind v_y = v_y + 1
                     }
                 }
-                bind vz_world = vz_world + 6.0
+                bind vz_world = vz_world + 12.0
             }
-            bind vx_world = vx_world + 6.0
+            bind vx_world = vx_world + 12.0
         }
 
         # ── H³ BOOST ───────────────────────────────────────────────────────────
