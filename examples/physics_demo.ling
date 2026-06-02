@@ -41,12 +41,14 @@ bind start = do {
     เสียงโทน(0, 0.0, 0.0, ZC, 4.0, 200.0, 0.06, 0.5, 0.02)
 
     # ── ball state ───────────────────────────────────────────────────────────
-    令 bx = -1.4
-    令 by =  2.0
+    令 bx =  0.0
+    令 by =  0.0
     令 bz =  ZC
-    令 vx =  3.4
+    令 vx =  0.0
     令 vy =  0.0
-    令 vz =  2.1
+    令 vz =  0.0
+
+    令 MOVE_ACCEL = 26.0   # WASD thrust (units/sec²)
 
     令 FR = 0
     令 lastBounce = -99
@@ -90,23 +92,36 @@ bind start = do {
 
         若 hit > 0 { 令 lastBounce = FR }
 
-        # ── SPACEBAR CHARGE → IMPULSE ─────────────────────────────────────────
-        # While held, accumulate charge (capped). On release, convert the stored
-        # charge into an upward impulse (−Y is screen-up) plus a small sideways
-        # kick so repeated launches stay lively. Hold longer = launch harder.
+        # grounded when resting on the floor (+HH side = screen bottom)
+        令 grounded = 0
+        若 by > (HH - R - 0.06) { 令 grounded = 1 }
+
+        # ── WASD MOVEMENT — thrust the ball around the floor plane ────────────
+        # A/D = left/right (X),  W/S = away/toward camera (Z)
+        若 key_down("a") { 令 vx = vx - MOVE_ACCEL * DT }
+        若 key_down("d") { 令 vx = vx + MOVE_ACCEL * DT }
+        若 key_down("w") { 令 vz = vz + MOVE_ACCEL * DT }
+        若 key_down("s") { 令 vz = vz - MOVE_ACCEL * DT }
+
+        # ── SPACEBAR CHARGED JUMP ─────────────────────────────────────────────
+        # Hold SPACE while grounded to wind up; release to jump. Longer hold →
+        # higher jump (−Y is screen-up). Charge only builds while on the floor.
         令 spaceNow = 0
         若 key_down("space") { 令 spaceNow = 1 }
 
         若 spaceNow > 0 {
-            令 charge = charge + CHARGE_RATE * DT
-            若 charge > MAX_CHARGE { 令 charge = MAX_CHARGE }
+            若 grounded > 0 {
+                令 charge = charge + CHARGE_RATE * DT
+                若 charge > MAX_CHARGE { 令 charge = MAX_CHARGE }
+            }
         } 否则 {
-            # released this frame? (was down, now up) → launch
+            # released this frame? (was down, now up) → jump
             若 spaceWasDown > 0 {
-                令 vy = vy - charge                 # upward kick (−Y = up)
-                令 vx = vx + (bx / HW) * charge * 0.35   # lean away from centre
+                若 charge > 0.01 {
+                    令 vy = vy - charge          # upward jump impulse
+                    令 lastLaunch = FR
+                }
                 令 charge = 0.0
-                令 lastLaunch = FR
             }
         }
         令 spaceWasDown = spaceNow

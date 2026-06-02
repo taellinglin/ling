@@ -16,6 +16,7 @@
 
 - [Syntax](reference/syntax.md)
 - [Builtins — Core](reference/builtins.md)
+- [Builtins — 3-D Primitive Shapes](reference/shapes.md)
 - [Builtins — Vector Geometry (vtex)](reference/vtex.md)
 - [Builtins — Pixel Textures (tex)](reference/tex.md)
 - [Builtins — Audio](reference/audio.md)

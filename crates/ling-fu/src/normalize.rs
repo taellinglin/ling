@@ -102,6 +102,27 @@ static BUILTINS_VTEX: &[Entry] = &[
     (&["vtex_pagoda","ลายเจดีย์","纹塔","塔","탑","เจดีย์"],       ["vtex_pagoda","纹塔","塔","탑","เจดีย์"]),
 ];
 
+// Builtins — 3-D primitive shapes (ling-graphics / gfx::shapes)
+static BUILTINS_SHAPES: &[Entry] = &[
+    (&["cube","box","立方体","方块","箱","정육면체","상자","ลูกบาศก์","กล่อง"], ["cube","立方体","立方体","정육면체","ลูกบาศก์"]),
+    (&["sphere","球体","球","구","ทรงกลม"],                       ["sphere","球体","球","구","ทรงกลม"]),
+    (&["icosphere","二十面球","アイコ球","아이코구체","ทรงกลมเหลี่ยม"], ["icosphere","二十面球","アイコ球","아이코구체","ทรงกลมเหลี่ยม"]),
+    (&["dome","穹顶","ドーム","돔","โดม"],                         ["dome","穹顶","ドーム","돔","โดม"]),
+    (&["cylinder","圆柱","円柱","원기둥","ทรงกระบอก"],             ["cylinder","圆柱","円柱","원기둥","ทรงกระบอก"]),
+    (&["cone","圆锥","円錐","원뿔","กรวย"],                        ["cone","圆锥","円錐","원뿔","กรวย"]),
+    (&["capsule","胶囊","カプセル","캡슐","แคปซูล"],               ["capsule","胶囊","カプセル","캡슐","แคปซูล"]),
+    (&["torus","ring","圆环","トーラス","토러스","ทอรัส"],         ["torus","圆环","トーラス","토러스","ทอรัส"]),
+    (&["pyramid","金字塔","ピラミッド","피라미드","พีระมิด"],       ["pyramid","金字塔","ピラミッド","피라미드","พีระมิด"]),
+    (&["prism","棱柱","角柱","각기둥","ปริซึม"],                   ["prism","棱柱","角柱","각기둥","ปริซึม"]),
+    (&["frustum","棱台","錐台","원뿔대","กรวยตัด"],                ["frustum","棱台","錐台","원뿔대","กรวยตัด"]),
+    (&["tetrahedron","d4","四面体","정사면체","ทรงสี่หน้า"],        ["tetrahedron","四面体","四面体","정사면체","ทรงสี่หน้า"]),
+    (&["octahedron","d8","八面体","정팔면체","ทรงแปดหน้า"],         ["octahedron","八面体","八面体","정팔면체","ทรงแปดหน้า"]),
+    (&["dodecahedron","d12","十二面体","정십이면체","ทรงสิบสองหน้า"],["dodecahedron","十二面体","十二面体","정십이면체","ทรงสิบสองหน้า"]),
+    (&["icosahedron","d20","二十面体","정이십면체","ทรงยี่สิบหน้า"], ["icosahedron","二十面体","二十面体","정이십면체","ทรงยี่สิบหน้า"]),
+    (&["gear","cog","齿轮","歯車","톱니바퀴","เฟือง"],             ["gear","齿轮","歯車","톱니바퀴","เฟือง"]),
+    (&["gyro","陀螺","ジャイロ","자이로","ไจโร"],                  ["gyro","陀螺","ジャイロ","자이로","ไจโร"]),
+];
+
 // Builtins — draw / camera / audio / misc
 static BUILTINS_OTHER: &[Entry] = &[
     (&["present","呈现","表示","표시","แสดง"],           ["present","呈现","表示","표시","แสดง"]),
@@ -321,7 +342,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_OTHER, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

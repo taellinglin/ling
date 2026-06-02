@@ -14,6 +14,7 @@ pub mod camera;
 pub mod light;
 pub mod depth;
 pub mod vtex;
+pub mod shapes;
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
 #[cfg(target_arch = "wasm32")]

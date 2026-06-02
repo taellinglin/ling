@@ -2183,6 +2183,28 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // ══════════════════════════════════════════════════════════════════
+            // 3-D PRIMITIVES  (src/gfx/shapes.rs)  — "Inkscape for 3-D"
+            //   shape(cx,cy,cz,  sx,sy,sz,  rx,ry,rz,  mode,  e0,e1,e2)
+            //     centre (cx,cy,cz), per-axis scale, Euler rotation (radians),
+            //     mode: 0 filled · 1 wireframe · 2 both,
+            //     e0..e2: shape-specific (segments / sides / ratio …).
+            //   Pen colour (set_color) drives fill lighting and wireframe colour.
+            // ══════════════════════════════════════════════════════════════════
+            n if crate::gfx::shapes::canon(n).is_some() => {
+                let kind = crate::gfx::shapes::canon(n).unwrap();
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
+                let sx=self.arg_num(&args,3,1.)? as f32; let sy=self.arg_num(&args,4,1.)? as f32; let sz=self.arg_num(&args,5,1.)? as f32;
+                let rx=self.arg_num(&args,6,0.)? as f32; let ry=self.arg_num(&args,7,0.)? as f32; let rz=self.arg_num(&args,8,0.)? as f32;
+                let mode=self.arg_num(&args,9,0.)? as i32;
+                let e0=self.arg_num(&args,10,0.)? as f32; let e1=self.arg_num(&args,11,0.)? as f32; let e2=self.arg_num(&args,12,0.)? as f32;
+                if let Some(mesh)=crate::gfx::shapes::build(kind,[cx,cy,cz,sx,sy,sz,rx,ry,rz],e0,e1,e2){
+                    let mut gfx=self.gfx.borrow_mut();
+                    gfx.emit_mesh(&mesh,mode);
+                }
+                return Ok(Value::Unit);
+            }
+
             _ => {}
         }
 
