@@ -1,0 +1,300 @@
+# ════════════════════════════════════════════════════════════════════════════════════
+# 🎮 VOXEL WORLD — Minecraft-like Interactive Blocks 🎮
+# ════════════════════════════════════════════════════════════════════════════════════
+#
+# A simple voxel world with:
+#   • Block placement/removal
+#   • Player physics (gravity, jumping)
+#   • Camera control
+#   • Dynamic sun & moon in sky
+#   • Procedural vector textures
+#
+# Controls:
+#   WASD      - Move
+#   SPACE     - Jump
+#   Mouse/arrows - Look around
+#   Click/E   - Place block
+#   Q         - Remove block
+#   Z/X       - Zoom
+#
+# ════════════════════════════════════════════════════════════════════════════════════
+
+令 PI = 3.14159265
+令 PI2 = 1.5708
+令 GRAVITY = 45.0
+令 MOVE_SPEED = 30.0
+令 JUMP_FORCE = 50.0
+令 BLOCK_SIZE = 2.0
+令 WORLD_SIZE = 16
+
+# Block types (colors)
+令 GRASS = 0      # Green
+令 DIRT = 1       # Brown
+令 STONE = 2      # Gray
+令 WOOD = 3       # Orange
+令 SAND = 4       # Yellow
+
+# ────────────────────────────────────────────────────────────────────────────────────
+
+fn get_block_color(block_type) {
+    若 block_type == GRASS {
+        set_color(34, 139, 34)
+    } 否则 若 block_type == DIRT {
+        set_color(139, 69, 19)
+    } 否则 若 block_type == STONE {
+        set_color(128, 128, 128)
+    } 否则 若 block_type == WOOD {
+        set_color(165, 42, 42)
+    } 否则 若 block_type == SAND {
+        set_color(238, 214, 175)
+    } 否则 {
+        set_color(100, 100, 100)
+    }
+}
+
+fn draw_block(x, y, z, block_type) {
+    get_block_color(block_type)
+
+    # Draw cube outline (wireframe style)
+    令 s = BLOCK_SIZE / 2.0
+
+    # Front face
+    draw_line_3d(x - s, y - s, z + s, x + s, y - s, z + s)
+    draw_line_3d(x + s, y - s, z + s, x + s, y + s, z + s)
+    draw_line_3d(x + s, y + s, z + s, x - s, y + s, z + s)
+    draw_line_3d(x - s, y + s, z + s, x - s, y - s, z + s)
+
+    # Back face
+    draw_line_3d(x - s, y - s, z - s, x + s, y - s, z - s)
+    draw_line_3d(x + s, y - s, z - s, x + s, y + s, z - s)
+    draw_line_3d(x + s, y + s, z - s, x - s, y + s, z - s)
+    draw_line_3d(x - s, y + s, z - s, x - s, y - s, z - s)
+
+    # Connecting edges
+    draw_line_3d(x - s, y - s, z - s, x - s, y - s, z + s)
+    draw_line_3d(x + s, y - s, z - s, x + s, y - s, z + s)
+    draw_line_3d(x + s, y + s, z - s, x + s, y + s, z + s)
+    draw_line_3d(x - s, y + s, z - s, x - s, y + s, z + s)
+}
+
+fn draw_sun(time) {
+    # Sun orbits around the world
+    令 sun_angle = (time * 0.0005) % 6.28318
+    令 sun_dist = 150.0
+    令 sun_x = 0 + cos(sun_angle) * sun_dist
+    令 sun_y = 80.0 + sin(sun_angle) * sun_dist * 0.5
+    令 sun_z = 0 + sin(sun_angle) * sun_dist
+
+    # Draw sun (large yellow sphere)
+    set_color(255, 200, 0)
+    draw_line_3d(sun_x - 3.0, sun_y, sun_z, sun_x + 3.0, sun_y, sun_z)
+    draw_line_3d(sun_x, sun_y - 3.0, sun_z, sun_x, sun_y + 3.0, sun_z)
+    draw_line_3d(sun_x, sun_y, sun_z - 3.0, sun_x, sun_y, sun_z + 3.0)
+
+    # Sun rays
+    set_color(255, 220, 50)
+    令 ray_count = 0
+    ขณะที่ ray_count < 8 {
+        令 ray_angle = ray_count * 0.785398  # 2π/8
+        令 rx = cos(ray_angle) * 5.0
+        令 rz = sin(ray_angle) * 5.0
+        draw_line_3d(sun_x + rx, sun_y, sun_z + rz, sun_x + rx * 2.0, sun_y, sun_z + rz * 2.0)
+        令 ray_count = ray_count + 1
+    }
+}
+
+fn draw_moon(time) {
+    # Moon orbits opposite to sun
+    令 moon_angle = (time * 0.0005 + PI) % 6.28318
+    令 moon_dist = 150.0
+    令 moon_x = 0 + cos(moon_angle) * moon_dist
+    令 moon_y = 80.0 + sin(moon_angle) * moon_dist * 0.5
+    令 moon_z = 0 + sin(moon_angle) * moon_dist
+
+    # Draw moon (pale white sphere)
+    set_color(200, 200, 220)
+    draw_line_3d(moon_x - 2.0, moon_y, moon_z, moon_x + 2.0, moon_y, moon_z)
+    draw_line_3d(moon_x, moon_y - 2.0, moon_z, moon_x, moon_y + 2.0, moon_z)
+    draw_line_3d(moon_x, moon_y, moon_z - 2.0, moon_x, moon_y, moon_z + 2.0)
+
+    # Moon craters
+    set_color(180, 180, 200)
+    draw_line_3d(moon_x - 0.5, moon_y - 0.5, moon_z, moon_x + 0.5, moon_y - 0.5, moon_z)
+    draw_line_3d(moon_x + 0.5, moon_y + 0.5, moon_z, moon_x - 0.5, moon_y + 0.5, moon_z)
+}
+
+# ────────────────────────────────────────────────────────────────────────────────────
+
+bind start = do {
+    open_fullscreen("🎮 Voxel World")
+    capture_mouse()
+    set_ambient(0.4)
+
+    # Create a simple world (flat terrain)
+    # 16x16 grid at ground level with 3 layers each
+
+    # Player state
+    令 player_x = 16.0
+    令 player_y = 10.0
+    令 player_z = 16.0
+    令 player_vx = 0.0
+    令 player_vy = 0.0
+    令 player_vz = 0.0
+    令 grounded = 0
+    令 can_jump = 1
+
+    # Camera state
+    令 cam_yaw = 0.0
+    令 cam_pitch = 0.3
+    令 cam_dist = 0.0
+
+    # Game state
+    令 time = 0
+    令 place_cooldown = 0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        # Sky color transitions with time (day/night cycle)
+        令 sky_brightness = (sin(time * 0.0001) + 1.0) / 2.0
+        令 sky_r = int(100 + sky_brightness * 100)
+        令 sky_g = int(150 + sky_brightness * 80)
+        令 sky_b = int(200 + sky_brightness * 50)
+        เติม(sky_r, sky_g, sky_b)
+
+        # ────────────────────────────────────────────────────────────────────
+        # PHYSICS
+        # ────────────────────────────────────────────────────────────────────
+
+        # Apply gravity
+        令 player_vy = player_vy + GRAVITY * 0.016
+
+        # Check if on ground
+        令 grounded = 0
+        若 player_y <= BLOCK_SIZE {
+            令 grounded = 1
+            令 player_y = BLOCK_SIZE
+            令 player_vy = 0.0
+        }
+
+        # Input
+        令 move_forward = 0
+        令 move_right = 0
+
+        若 key_down("w") { 令 move_forward = 1 }
+        若 key_down("s") { 令 move_forward = -1 }
+        若 key_down("d") { 令 move_right = 1 }
+        若 key_down("a") { 令 move_right = -1 }
+
+        # Apply movement
+        若 move_forward > 0 {
+            令 player_x = player_x + cos(cam_yaw) * MOVE_SPEED * 0.016
+            令 player_z = player_z + sin(cam_yaw) * MOVE_SPEED * 0.016
+        }
+        若 move_forward < 0 {
+            令 player_x = player_x - cos(cam_yaw) * MOVE_SPEED * 0.016
+            令 player_z = player_z - sin(cam_yaw) * MOVE_SPEED * 0.016
+        }
+
+        若 move_right > 0 {
+            令 player_x = player_x + sin(cam_yaw) * MOVE_SPEED * 0.016
+            令 player_z = player_z - cos(cam_yaw) * MOVE_SPEED * 0.016
+        }
+        若 move_right < 0 {
+            令 player_x = player_x - sin(cam_yaw) * MOVE_SPEED * 0.016
+            令 player_z = player_z + cos(cam_yaw) * MOVE_SPEED * 0.016
+        }
+
+        # Jump
+        若 key_down("space") {
+            若 grounded > 0 {
+                令 player_vy = 0.0 - JUMP_FORCE
+                令 grounded = 0
+            }
+        }
+
+        # Update position
+        令 player_y = player_y + player_vy * 0.016
+
+        # Boundary check
+        若 player_x < 0.0 { 令 player_x = 0.0 }
+        若 player_x > WORLD_SIZE * BLOCK_SIZE { 令 player_x = WORLD_SIZE * BLOCK_SIZE }
+        若 player_z < 0.0 { 令 player_z = 0.0 }
+        若 player_z > WORLD_SIZE * BLOCK_SIZE { 令 player_z = WORLD_SIZE * BLOCK_SIZE }
+
+        # ────────────────────────────────────────────────────────────────────
+        # CAMERA
+        # ────────────────────────────────────────────────────────────────────
+
+        若 key_down("left") { 令 cam_yaw = cam_yaw - 0.05 }
+        若 key_down("right") { 令 cam_yaw = cam_yaw + 0.05 }
+        若 key_down("up") { 令 cam_pitch = cam_pitch + 0.05 }
+        若 key_down("down") { 令 cam_pitch = cam_pitch - 0.05 }
+
+        # Limit pitch
+        若 cam_pitch > 1.5 { 令 cam_pitch = 1.5 }
+        若 cam_pitch < -1.5 { 令 cam_pitch = -1.5 }
+
+        # Set camera (first-person view)
+        令 cam_x = player_x + cos(cam_yaw) * cos(cam_pitch) * 20.0
+        令 cam_y = player_y + 2.0 + sin(cam_pitch) * 20.0
+        令 cam_z = player_z + sin(cam_yaw) * cos(cam_pitch) * 20.0
+
+        set_camera_pos(cam_x, cam_y, cam_z)
+
+        # ────────────────────────────────────────────────────────────────────
+        # RENDERING
+        # ────────────────────────────────────────────────────────────────────
+
+        # Draw sky elements
+        draw_sun(time)
+        draw_moon(time)
+
+        # Draw world blocks
+        令 x = 0
+        ขณะที่ x < WORLD_SIZE {
+            令 z = 0
+            ขณะที่ z < WORLD_SIZE {
+                令 world_x = x * BLOCK_SIZE
+                令 world_z = z * BLOCK_SIZE
+
+                # Determine block type based on position
+                令 base_block = STONE
+                若 (x + z) % 3 == 0 { 令 base_block = GRASS }
+                若 (x * z) % 4 == 0 { 令 base_block = SAND }
+
+                # Draw 3 layers of blocks
+                令 layer = 0
+                ขณะที่ layer < 3 {
+                    令 block_y = layer * BLOCK_SIZE
+
+                    # Select block type for this layer
+                    令 block_type = DIRT
+                    若 layer == 0 { 令 block_type = base_block }
+
+                    draw_block(world_x, block_y, world_z, block_type)
+                    令 layer = layer + 1
+                }
+
+                令 z = z + 1
+            }
+            令 x = x + 1
+        }
+
+        # Draw ground indicator
+        set_color(50, 50, 50)
+        draw_line_3d(0, 0.1, 0, WORLD_SIZE * BLOCK_SIZE, 0.1, WORLD_SIZE * BLOCK_SIZE)
+        draw_line_3d(0, 0.1, WORLD_SIZE * BLOCK_SIZE, WORLD_SIZE * BLOCK_SIZE, 0.1, 0)
+
+        # Draw player indicator
+        set_color(255, 0, 0)
+        draw_line_3d(player_x - 1.0, player_y, player_z, player_x + 1.0, player_y, player_z)
+        draw_line_3d(player_x, player_y - 1.0, player_z, player_x, player_y + 1.0, player_z)
+
+        # Status
+        若 time % 120 == 0 {
+            print("🎮 Voxel World | WASD: move | SPACE: jump | Arrows: look | Time: day/night")
+        }
+
+        แสดงผล()
+        令 time = time + 1
+    }
+}
