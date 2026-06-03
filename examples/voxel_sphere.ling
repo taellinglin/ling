@@ -1,50 +1,155 @@
 bind start = do {
     open_fullscreen("🎮 Voxel Sphere")
-    set_ambient(0.7)
+    capture_mouse()
+    set_ambient(0.6)
 
+    # Simple block sphere
+    bind blocks = [
+        [0.0, 0.0, 0.0, 2],
+        [1.0, 0.0, 0.0, 1],
+        [-1.0, 0.0, 0.0, 1],
+        [0.0, 1.0, 0.0, 1],
+        [0.0, -1.0, 0.0, 1],
+        [0.0, 0.0, 1.0, 1],
+        [0.0, 0.0, -1.0, 1],
+        [2.0, 0.0, 0.0, 1],
+        [-2.0, 0.0, 0.0, 1],
+        [0.0, 2.0, 0.0, 1],
+        [0.0, -2.0, 0.0, 1],
+        [0.0, 0.0, 2.0, 1],
+        [0.0, 0.0, -2.0, 1],
+        [1.0, 1.0, 0.0, 1],
+        [1.0, -1.0, 0.0, 1],
+        [-1.0, 1.0, 0.0, 1],
+        [-1.0, -1.0, 0.0, 1],
+        [1.0, 0.0, 1.0, 1],
+        [1.0, 0.0, -1.0, 1],
+        [-1.0, 0.0, 1.0, 1],
+        [-1.0, 0.0, -1.0, 1],
+        [0.0, 1.0, 1.0, 1],
+        [0.0, 1.0, -1.0, 1],
+        [0.0, -1.0, 1.0, 1],
+        [0.0, -1.0, -1.0, 1],
+        [2.0, 1.0, 0.0, 1],
+        [2.0, -1.0, 0.0, 1],
+        [-2.0, 1.0, 0.0, 1],
+        [-2.0, -1.0, 0.0, 1],
+        [1.0, 2.0, 0.0, 1],
+        [1.0, -2.0, 0.0, 1],
+        [-1.0, 2.0, 0.0, 1],
+        [-1.0, -2.0, 0.0, 1],
+        [2.0, 0.0, 1.0, 1],
+        [2.0, 0.0, -1.0, 1],
+        [-2.0, 0.0, 1.0, 1],
+        [-2.0, 0.0, -1.0, 1],
+        [1.0, 0.0, 2.0, 1],
+        [1.0, 0.0, -2.0, 1],
+        [-1.0, 0.0, 2.0, 1],
+        [-1.0, 0.0, -2.0, 1],
+        [0.0, 2.0, 1.0, 1],
+        [0.0, 2.0, -1.0, 1],
+        [0.0, -2.0, 1.0, 1],
+        [0.0, -2.0, -1.0, 1],
+        [0.0, 1.0, 2.0, 1],
+        [0.0, 1.0, -2.0, 1],
+        [0.0, -1.0, 2.0, 1],
+        [0.0, -1.0, -2.0, 1],
+        [3.0, 0.0, 0.0, 1],
+        [-3.0, 0.0, 0.0, 1]
+    ]
+
+    bind player_x = 0.0
+    bind player_y = 4.0
+    bind player_z = 6.0
+    bind player_vy = 0.0
+    bind cam_yaw = 0.0
+    bind cam_pitch = 0.0
     bind time = 0
 
     while window_is_open() {
-        # Sky with gradient
-        fill(80, 140, 200)
+        fill(100, 150, 200)
 
-        # Set camera - looking at origin from (5,5,5)
-        bind cam_yaw = 0.785398  # 45 degrees
-        bind cam_pitch = 0.785398
+        # Physics
+        bind player_vy = player_vy + 25.0 * 0.016
 
-        bind cry = cos(cam_yaw)
-        bind sry = sin(cam_yaw)
-        bind crx = cos(cam_pitch)
-        bind srx = sin(cam_pitch)
+        # Input
+        if key_down("w") {
+            bind player_x = player_x + cos(cam_yaw) * 0.4
+            bind player_z = player_z + sin(cam_yaw) * 0.4
+        }
+        if key_down("s") {
+            bind player_x = player_x - cos(cam_yaw) * 0.4
+            bind player_z = player_z - sin(cam_yaw) * 0.4
+        }
+        if key_down("d") {
+            bind player_x = player_x + sin(cam_yaw) * 0.4
+            bind player_z = player_z - cos(cam_yaw) * 0.4
+        }
+        if key_down("a") {
+            bind player_x = player_x - sin(cam_yaw) * 0.4
+            bind player_z = player_z + cos(cam_yaw) * 0.4
+        }
 
-        set_camera(cry, sry, crx, srx)
-        set_camera_pos(5.0, 5.0, 5.0)
+        if key_down("space") {
+            if player_y <= 0.5 {
+                bind player_vy = -12.0
+            }
+        }
 
-        # Draw huge red cross centered at origin - should be VERY visible
-        set_color(255, 0, 0)
-        draw_line_3d(-10.0, 0.0, 0.0, 10.0, 0.0, 0.0)
-        draw_line_3d(0.0, -10.0, 0.0, 0.0, 10.0, 0.0)
-        draw_line_3d(0.0, 0.0, -10.0, 0.0, 0.0, 10.0)
+        bind player_y = player_y + player_vy * 0.016
 
-        # Draw small colored cubes at origin
-        set_color(0, 255, 0)
-        draw_line_3d(-1.0, -1.0, -1.0, 1.0, -1.0, -1.0)
-        draw_line_3d(1.0, -1.0, -1.0, 1.0, 1.0, -1.0)
-        draw_line_3d(1.0, 1.0, -1.0, -1.0, 1.0, -1.0)
-        draw_line_3d(-1.0, 1.0, -1.0, -1.0, -1.0, -1.0)
+        if player_y <= 0.0 {
+            bind player_y = 0.0
+            bind player_vy = 0.0
+        }
 
-        draw_line_3d(-1.0, -1.0, 1.0, 1.0, -1.0, 1.0)
-        draw_line_3d(1.0, -1.0, 1.0, 1.0, 1.0, 1.0)
-        draw_line_3d(1.0, 1.0, 1.0, -1.0, 1.0, 1.0)
-        draw_line_3d(-1.0, 1.0, 1.0, -1.0, -1.0, 1.0)
+        if key_down("left") { bind cam_yaw = cam_yaw - 0.04 }
+        if key_down("right") { bind cam_yaw = cam_yaw + 0.04 }
+        if key_down("up") { bind cam_pitch = cam_pitch + 0.03 }
+        if key_down("down") { bind cam_pitch = cam_pitch - 0.03 }
 
-        draw_line_3d(-1.0, -1.0, -1.0, -1.0, -1.0, 1.0)
-        draw_line_3d(1.0, -1.0, -1.0, 1.0, -1.0, 1.0)
-        draw_line_3d(1.0, 1.0, -1.0, 1.0, 1.0, 1.0)
-        draw_line_3d(-1.0, 1.0, -1.0, -1.0, 1.0, 1.0)
+        if cam_pitch > 1.4 { bind cam_pitch = 1.4 }
+        if cam_pitch < -1.4 { bind cam_pitch = -1.4 }
+
+        # Camera from player position
+        set_camera_pos(player_x, player_y + 1.5, player_z)
+
+        # Draw blocks
+        bind i = 0
+        while i < 50 {
+            bind block = blocks[i]
+            bind x = block[0]
+            bind y = block[1]
+            bind z = block[2]
+            bind t = block[3]
+
+            if t == 2 {
+                set_color(50, 180, 50)
+            } else {
+                set_color(150, 100, 50)
+            }
+
+            bind s = 0.4
+            draw_line_3d(x - s, y - s, z + s, x + s, y - s, z + s)
+            draw_line_3d(x + s, y - s, z + s, x + s, y + s, z + s)
+            draw_line_3d(x + s, y + s, z + s, x - s, y + s, z + s)
+            draw_line_3d(x - s, y + s, z + s, x - s, y - s, z + s)
+
+            draw_line_3d(x - s, y - s, z - s, x + s, y - s, z - s)
+            draw_line_3d(x + s, y - s, z - s, x + s, y + s, z - s)
+            draw_line_3d(x + s, y + s, z - s, x - s, y + s, z - s)
+            draw_line_3d(x - s, y + s, z - s, x - s, y - s, z - s)
+
+            draw_line_3d(x - s, y - s, z - s, x - s, y - s, z + s)
+            draw_line_3d(x + s, y - s, z - s, x + s, y - s, z + s)
+            draw_line_3d(x + s, y + s, z - s, x + s, y + s, z + s)
+            draw_line_3d(x - s, y + s, z - s, x - s, y + s, z + s)
+
+            bind i = i + 1
+        }
 
         if time % 60 == 0 {
-            print("🎮 Voxel Test | Should see red cross and green cube")
+            print("🎮 Voxel Sphere | WASD move | Space jump | Arrows look")
         }
 
         แสดงผล()
