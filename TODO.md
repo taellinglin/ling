@@ -30,10 +30,16 @@ normalizer table can emit.
       output forms; verified by normalizing a graphics program to zh/ja/ko/th and
       confirming every builtin resolves. Docs: `docs/src/reference/window.md`.
       (Shapes/`vtex_*` already had 5-language coverage.)
-- [ ] **Batch 3 — audio** (`audio_*`, `tone`, `mic_*`, `fft_*`): same treatment,
-      update `docs/src/reference/audio.md`.
-- [ ] **Batch 4 — crypto / physics** (`ling-crypto`, `ling-physics` builtins):
-      same treatment, update `docs/src/crypto.md` + a new physics reference page.
+- [x] **Batch 3 — audio** (`audio_tone/volume/listener/bgm/bgm_volume`,
+      `fft_push/bands/beat/beat_ratio/rms/dominant_freq`): ZH/JA/KO aliases added
+      to runtime (both native + wasm cfg blocks), new `BUILTINS_AUDIO` normalize
+      table; `docs/src/reference/audio.md` 5-language table. Verified by
+      normalize round-trip + `tests/language_system.rs`.
+- [x] **Batch 4 — collections** (`list_new/push/get/join`, `len`/`str_len`):
+      ZH/JA/KO aliases + normalize entries + docs. **Crypto/physics are not Ling
+      builtins** — they are Rust crate APIs (`ling-crypto`, `ling-physics`),
+      covered by their own test suites; wiring them in as multilingual builtins
+      remains future work (documented in `docs/src/reference/builtins.md`).
 - [ ] Fill the `—` cells in the math table (Thai for `exp`/`hypot`/`log2`/`fract`,
       etc.) once preferred terms are chosen.
 

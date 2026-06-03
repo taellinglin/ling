@@ -57,14 +57,13 @@ All math args and results are `f64`. Angles are in radians.
 
 ## Lists
 
-| Function | Description |
-|----------|-------------|
-| `list_new()` | Create empty list |
-| `list_push(lst, v)` | Append value, return new list |
-| `list_get(lst, i)` | Get element at index |
-| `list_len(lst)` | Number of elements |
-| `list_pop(lst)` | Remove last element |
-| `list_set(lst, i, v)` | Set element at index |
+| EN | 🇨🇳 ZH | 🇯🇵 JA | 🇰🇷 KO | 🇹🇭 TH | Description |
+|----|--------|--------|--------|--------|-------------|
+| `list_new` | `新建列表` | `新規リスト` | `새목록` | `รายการใหม่` | Create empty list |
+| `list_push` | `列表添加` | `リスト追加` | `목록추가` | `เพิ่มรายการ` | Append value, return new list |
+| `list_get` | `取元素` | `要素取得` | `요소가져오기` | `รับรายการ` | Get element at index |
+| `list_join` / `join` | `连接` | `連結` | `연결` | `รวมรายการ` | Join list into a string |
+| `len` / `str_len` | `长度` | `長さ` | `길이` | `ความยาว` | Length of list or string |
 
 ## Strings
 
@@ -101,6 +100,16 @@ See [tex reference](tex.md).
 ## Audio
 
 See [Audio reference](audio.md).
+
+## Cryptography & Physics
+
+`ling-crypto` (Blake3, SHA-3, AES-GCM-256, XChaCha20, Ed25519, X25519, Shamir,
+Schnorr, VRF …) and `ling-physics` (vectors, rigid bodies, forces, hyperbolic
+geometry) are exposed as **Rust crate APIs**, not yet as `.ling` builtins — call
+them from Rust, or via a host that embeds the interpreter. Coverage is verified
+by the crate test suites (`crates/ling-crypto/tests`, `crates/ling-physics/tests`).
+Wiring them in as multilingual builtins is tracked in
+[`TODO.md`](https://github.com/taellinglin/ling/blob/master/TODO.md).
 
 ## FFT (native only, no-op on WASM)
 

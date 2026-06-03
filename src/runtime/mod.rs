@@ -1898,7 +1898,7 @@ impl Interpreter {
 
             // audio_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth)
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_tone" | "เสียงโทน" => {
+            "audio_tone" | "เสียงโทน" | "音调" | "音調" | "음조" | "空间音" | "空間音" | "공간음" => {
                 let idx  = self.arg_num(&args, 0, 0.0)? as usize;
                 let x    = self.arg_num(&args, 1, 0.0)? as f32;
                 let y    = self.arg_num(&args, 2, 0.0)? as f32;
@@ -1915,7 +1915,7 @@ impl Interpreter {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_listener" | "ผู้ฟัง" => {
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" => {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
@@ -1927,7 +1927,7 @@ impl Interpreter {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_bgm" | "เพลงพื้นหลัง" => {
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" => {
                 let path = match args.first() {
                     Some(Value::Str(s)) => s.clone(),
                     _ => return Ok(Value::Unit),
@@ -1940,7 +1940,7 @@ impl Interpreter {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" => {
+            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" | "ระดับเพลงประกอบ" | "背景乐音量" | "BGM音量" | "배경음악음량" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 if let Some(audio) = &self.audio {
                     audio.set_bgm_volume(vol);
@@ -1949,7 +1949,7 @@ impl Interpreter {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_volume" | "ระดับเสียง" => {
+            "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 if let Some(audio) = &self.audio {
                     audio.set_master_volume(vol);
@@ -1959,7 +1959,7 @@ impl Interpreter {
 
             // WASM audio builtins — delegate to Web Audio API
             #[cfg(target_arch = "wasm32")]
-            "audio_tone" | "เสียงโทน" => {
+            "audio_tone" | "เสียงโทน" | "音调" | "音調" | "음조" | "空间音" | "空間音" | "공간음" => {
                 let idx  = self.arg_num(&args, 0, 0.0)? as usize;
                 let x    = self.arg_num(&args, 1, 0.0)? as f32;
                 let y    = self.arg_num(&args, 2, 0.0)? as f32;
@@ -1974,7 +1974,7 @@ impl Interpreter {
             }
 
             #[cfg(target_arch = "wasm32")]
-            "audio_listener" | "ผู้ฟัง" => {
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" => {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
@@ -1984,7 +1984,7 @@ impl Interpreter {
             }
 
             #[cfg(target_arch = "wasm32")]
-            "audio_bgm" | "เพลงพื้นหลัง" => {
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" => {
                 let path = self.arg_str(&args, 0, "");
                 let vol  = self.arg_num(&args, 1, 0.5)? as f32;
                 crate::gfx::audio_web::load_bgm(&path, vol);
@@ -1992,14 +1992,14 @@ impl Interpreter {
             }
 
             #[cfg(target_arch = "wasm32")]
-            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" => {
+            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" | "ระดับเพลงประกอบ" | "背景乐音量" | "BGM音量" | "배경음악음량" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 crate::gfx::audio_web::set_bgm_volume(vol);
                 return Ok(Value::Unit);
             }
 
             #[cfg(target_arch = "wasm32")]
-            "audio_volume" | "ระดับเสียง" => {
+            "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 crate::gfx::audio_web::set_master_volume(vol);
                 return Ok(Value::Unit);
@@ -2120,7 +2120,7 @@ impl Interpreter {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.to_lowercase()));
             }
-            "str_len" | "len" | "ความยาว" => {
+            "str_len" | "len" | "ความยาว" | "长度" | "長さ" | "길이" => {
                 match args.first() {
                     Some(Value::Str(s))  => return Ok(Value::Number(s.chars().count() as f64)),
                     Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
@@ -2144,16 +2144,16 @@ impl Interpreter {
             }
 
             // ── List utilities ────────────────────────────────────────────────
-            "list_new" | "รายการใหม่" => {
+            "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" => {
                 return Ok(Value::List(Vec::new()));
             }
-            "list_push" | "เพิ่มรายการ" => {
+            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" => {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
                 let val = args.get(1).cloned().unwrap_or(Value::Unit);
                 if let Value::List(mut v) = lst { v.push(val); return Ok(Value::List(v)); }
                 return Ok(Value::List(vec![val]));
             }
-            "list_get" | "รับรายการ" => {
+            "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" => {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
                 let i   = self.arg_num(&args, 1, 0.0)? as usize;
                 if let Value::List(v) = lst {
@@ -2161,7 +2161,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Str(String::new()));
             }
-            "list_join" | "join" | "รวมรายการ" => {
+            "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" => {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
                 let sep = args.get(1).map(|v| v.to_string()).unwrap_or_default();
                 if let Value::List(v) = lst {
@@ -2278,7 +2278,7 @@ impl Interpreter {
 
             // fft_push(samples_list) — feed raw audio samples and run FFT
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_push" | "วิเคราะห์เสียง" => {
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" => {
                 if let Some(Value::List(v)) = args.first() {
                     let samples: Vec<f32> = v.iter()
                         .filter_map(|x| if let Value::Number(n) = x { Some(*n as f32) } else { None })
@@ -2290,7 +2290,7 @@ impl Interpreter {
 
             // fft_bands(n) → list of n log-spaced magnitude bands (0..1)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_bands" | "แถบความถี่" => {
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" => {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 let bands = self.fft.borrow().freq_bands(n);
                 *self.fft_bands_cache.borrow_mut() = bands.clone();
@@ -2299,44 +2299,44 @@ impl Interpreter {
 
             // fft_beat() → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat" | "จังหวะเสียง" => {
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" => {
                 return Ok(Value::Bool(self.fft.borrow().is_beat()));
             }
 
             // fft_beat_ratio() → f64  (1.0 = at threshold, >1 = strong beat)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat_ratio" | "อัตราจังหวะ" => {
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" => {
                 return Ok(Value::Number(self.fft.borrow().beat_ratio() as f64));
             }
 
             // fft_rms() → f64
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_rms" | "ระดับRMS" => {
+            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => {
                 return Ok(Value::Number(self.fft.borrow().rms() as f64));
             }
 
             // fft_dominant_freq() → f64  in Hz
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_dominant_freq" | "ความถี่หลัก" => {
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" => {
                 return Ok(Value::Number(self.fft.borrow().dominant_freq() as f64));
             }
 
             // ── wasm32 stubs: fft builtins are no-ops on web ───────────────
             #[cfg(target_arch = "wasm32")]
-            "fft_push" | "วิเคราะห์เสียง" => { return Ok(Value::Unit); }
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" => { return Ok(Value::Unit); }
             #[cfg(target_arch = "wasm32")]
-            "fft_bands" | "แถบความถี่" => {
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" => {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 return Ok(Value::List(vec![Value::Number(0.0); n]));
             }
             #[cfg(target_arch = "wasm32")]
-            "fft_beat" | "จังหวะเสียง" => { return Ok(Value::Bool(false)); }
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" => { return Ok(Value::Bool(false)); }
             #[cfg(target_arch = "wasm32")]
-            "fft_beat_ratio" | "อัตราจังหวะ" => { return Ok(Value::Number(1.0)); }
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" => { return Ok(Value::Number(1.0)); }
             #[cfg(target_arch = "wasm32")]
-            "fft_rms" | "ระดับRMS" => { return Ok(Value::Number(0.0)); }
+            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => { return Ok(Value::Number(0.0)); }
             #[cfg(target_arch = "wasm32")]
-            "fft_dominant_freq" | "ความถี่หลัก" => { return Ok(Value::Number(0.0)); }
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" => { return Ok(Value::Number(0.0)); }
 
             // ══════════════════════════════════════════════════════════════════
             // PROCEDURAL TEXTURE BLIT BUILTINS  (screen-space)

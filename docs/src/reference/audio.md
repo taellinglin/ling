@@ -2,6 +2,24 @@
 
 Audio builtins are available on native targets. On WASM they are no-ops.
 
+Every builtin below is callable in all five languages — the aliases are accepted
+by the interpreter and produced by `lingfu normalize`.
+
+## Multilingual names
+
+| EN | 🇨🇳 ZH | 🇯🇵 JA | 🇰🇷 KO | 🇹🇭 TH |
+|----|--------|--------|--------|--------|
+| `audio_tone` | `音调` | `音調` | `음조` | `เสียงโทน` |
+| `audio_volume` | `音量` | `音量` | `음량` | `ระดับเสียง` |
+| `audio_listener` | `音频监听` | `音声リスナー` | `오디오리스너` | `ผู้ฟัง` |
+| `audio_bgm` | `背景乐` | `BGM` | `배경음악` | `เพลงพื้นหลัง` |
+| `audio_bgm_volume` | `背景乐音量` | `BGM音量` | `배경음악음량` | `ระดับเสียงพื้นหลัง` |
+| `fft_push` | `频谱输入` | `FFT入力` | `FFT입력` | `วิเคราะห์เสียง` |
+| `fft_bands` | `频段` | `周波数帯` | `주파수대` | `แถบความถี่` |
+| `fft_beat` | `节拍检测` | `ビート検出` | `비트` | `จังหวะเสียง` |
+| `fft_rms` | `均方根` | `二乗平均` | `RMS레벨` | `ระดับRMS` |
+| `fft_dominant_freq` | `主频` | `主要周波数` | `주파수` | `ความถี่หลัก` |
+
 ## Tone synthesis
 
 ```ling

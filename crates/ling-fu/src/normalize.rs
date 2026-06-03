@@ -170,6 +170,19 @@ static BUILTINS_OTHER: &[Entry] = &[
     (&["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"],      ["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"]),
 ];
 
+// Builtins — audio + FFT + collections (5-language parity)
+// Output forms match the lexicon/runtime canonical aliases.
+static BUILTINS_AUDIO: &[Entry] = &[
+    (&["fft_push","频谱输入","FFT入力","FFT입력","วิเคราะห์เสียง"],     ["fft_push","频谱输入","FFT入力","FFT입력","วิเคราะห์เสียง"]),
+    (&["fft_bands","频段","周波数帯","주파수대","แถบความถี่"],          ["fft_bands","频段","周波数帯","주파수대","แถบความถี่"]),
+    (&["fft_beat","节拍检测","ビート検出","비트","จังหวะเสียง"],        ["fft_beat","节拍检测","ビート検出","비트","จังหวะเสียง"]),
+    (&["fft_rms","均方根","二乗平均","RMS레벨","ระดับRMS"],            ["fft_rms","均方根","二乗平均","RMS레벨","ระดับRMS"]),
+    (&["fft_dominant_freq","主频","主要周波数","주파수","ความถี่หลัก"],["fft_dominant_freq","主频","主要周波数","주파수","ความถี่หลัก"]),
+    (&["list_new","新建列表","新規リスト","새목록","รายการใหม่"],      ["list_new","新建列表","新規リスト","새목록","รายการใหม่"]),
+    (&["list_push","列表添加","リスト追加","목록추가","เพิ่มรายการ"],  ["list_push","列表添加","リスト追加","목록추가","เพิ่มรายการ"]),
+    (&["list_get","取元素","要素取得","요소가져오기","รับรายการ"],     ["list_get","取元素","要素取得","요소가져오기","รับรายการ"]),
+];
+
 // Builtins — core 2-D/3-D graphics, window, input (5-language parity)
 // Output forms match the lexicon/runtime canonical aliases.
 static BUILTINS_GFX: &[Entry] = &[
@@ -483,7 +496,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_GAME, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_GAME, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

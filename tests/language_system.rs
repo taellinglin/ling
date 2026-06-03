@@ -141,6 +141,43 @@ fn mixed_language_single_file() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase 3/4: audio (fft) + collection builtins resolve in every language.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn collections_and_fft_english() {
+    assert_runs("coll-en", r#"bind start = do {
+        bind xs = list_new()
+        bind xs2 = list_push(xs, 1.0)
+        print(len(xs2))
+        fft_push(0.1)
+        print(fft_rms())
+    }"#);
+}
+
+#[test]
+fn collections_and_fft_chinese() {
+    assert_runs("coll-zh", r#"令 启动 = 执 {
+        令 xs = 新建列表()
+        令 xs2 = 列表添加(xs, 1.0)
+        印(长度(xs2))
+        频谱输入(0.1)
+        印(均方根())
+    }"#);
+}
+
+#[test]
+fn collections_and_fft_korean() {
+    assert_runs("coll-ko", r#"바인드 시작 = 실행 {
+        바인드 xs = 새목록()
+        바인드 xs2 = 목록추가(xs, 1.0)
+        출력(길이(xs2))
+        FFT입력(0.1)
+        출력(RMS레벨())
+    }"#);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Polyglot language detection
 // ─────────────────────────────────────────────────────────────────────────────
 
