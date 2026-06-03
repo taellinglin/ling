@@ -14,8 +14,10 @@ pub fn detect_language(source: &str) -> &'static str {
             0x0400..=0x04FF                     => counts[5] += 1, // Cyrillic
             0x0600..=0x06FF                     => counts[6] += 1, // Arabic
             0x0900..=0x097F                     => counts[7] += 1, // Devanagari
-            0x0020..=0x007E                     => counts[0] += 1, // ASCII / English
-            _ => counts[8] += 1,
+            0x0041..=0x005A | 0x0061..=0x007A   => counts[0] += 1, // A-Z a-z (English)
+            // Whitespace, digits and punctuation are script-neutral: skip them so
+            // they don't outweigh a handful of CJK/Thai keyword characters.
+            _ => {}
         }
     }
     let langs = ["en", "zh", "ja", "ko", "th", "ru", "ar", "hi", "en"];

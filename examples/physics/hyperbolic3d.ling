@@ -1,0 +1,223 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Physics Demo — 3D Maze
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+令 R = 8.0
+令 GRAVITY = 22.0
+令 DAMPING = 0.99
+令 ELASTICITY = 0.80
+令 DT = 0.0167
+令 MOVE_ACCEL = 250.0
+令 MAX_CHARGE = 11.0
+令 CHARGE_RATE = 14.0
+令 WALL_HEIGHT = 60.0
+令 WALL_WIDTH = 20.0
+
+bind start = do {
+    open_fullscreen("3D Maze")
+    capture_mouse()
+    set_ambient(0.2)
+
+    ระดับเสียง(0.45)
+    เสียงโทน(0, 0.0, 0.0, 0.0, 4.0, 200.0, 0.06, 0.5, 0.02)
+
+    # Ball state
+    令 bx = 0.0
+    令 by = 0.0
+    令 bz = 0.0
+    令 vx = 0.0
+    令 vy = 0.0
+    令 vz = 0.0
+
+    令 FR = 0
+    令 lastBounce = -99
+    令 charge = 0.0
+    令 spaceWasDown = 0
+
+    # Camera state
+    令 cam_orbit = 0.0
+    令 cam_pitch = 0.5
+    令 cam_dist = 100.0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(10, 5, 15)
+
+        # ── Physics ────────────────────────────────────────────────────────────
+        令 vy = vy + GRAVITY * DT
+
+        令 vx = vx * DAMPING
+        令 vy = vy * DAMPING
+        令 vz = vz * DAMPING
+
+        令 bx = bx + vx * DT
+        令 by = by + vy * DT
+        令 bz = bz + vz * DT
+
+        令 hit = 0
+
+        # ── Maze collision (walls defined as rectangles) ──────────────────────
+        # Outer boundary walls
+        if bx < -150.0 + R { 令 bx = -150.0 + R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 }
+        if bx > 150.0 - R { 令 bx = 150.0 - R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 }
+        if bz < -150.0 + R { 令 bz = -150.0 + R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 }
+        if bz > 150.0 - R { 令 bz = 150.0 - R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 }
+
+        # Floor and ceiling
+        if by < 0.0 - 100.0 + R { 令 by = 0.0 - 100.0 + R  令 vy = 0.0 - vy * ELASTICITY  令 hit = 1 }
+        if by > 100.0 - R { 令 by = 100.0 - R  令 vy = 0.0 - vy * ELASTICITY  令 hit = 1 }
+
+        # Maze walls (interior barriers)
+        # Wall 1: vertical corridor at x=50
+        if bx > 45.0 - R { if bx < 55.0 + R { if bz > -60.0 { if bz < 60.0 { 令 bx = 45.0 - R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 } } } }
+
+        # Wall 2: horizontal at z=-40
+        if bz > -45.0 - R { if bz < -35.0 + R { if bx > -80.0 { if bx < 80.0 { 令 bz = -45.0 - R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 } } } }
+
+        # Wall 3: vertical at x=-70
+        if bx > -75.0 - R { if bx < -65.0 + R { if bz > -100.0 { if bz < 0.0 { 令 bx = -75.0 - R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 } } } }
+
+        # Wall 4: horizontal at z=80
+        if bz > 75.0 - R { if bz < 85.0 + R { if bx > -120.0 { if bx < 100.0 { 令 bz = 75.0 - R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 } } } }
+
+        # Wall 5: vertical at x=100
+        if bx > 95.0 - R { if bx < 105.0 + R { if bz > 0.0 { if bz < 120.0 { 令 bx = 95.0 - R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 } } } }
+
+        若 hit > 0 { 令 lastBounce = FR }
+        令 grounded = 0
+        若 by > 100.0 - R - 1.0 { 令 grounded = 1 }
+
+        # ── Input ──────────────────────────────────────────────────────────────
+        若 key_down("w") { 令 vz = vz + MOVE_ACCEL * DT }
+        若 key_down("s") { 令 vz = vz - MOVE_ACCEL * DT }
+        若 key_down("a") { 令 vx = vx - MOVE_ACCEL * DT }
+        若 key_down("d") { 令 vx = vx + MOVE_ACCEL * DT }
+
+        # ── Jump ───────────────────────────────────────────────────────────────
+        令 spaceNow = 0
+        若 key_down("space") { 令 spaceNow = 1 }
+
+        若 spaceNow > 0 {
+            若 grounded > 0 {
+                令 charge = charge + CHARGE_RATE * DT
+                若 charge > MAX_CHARGE { 令 charge = MAX_CHARGE }
+            }
+        } 否则 {
+            若 spaceWasDown > 0 {
+                若 charge > 0.01 {
+                    令 vy = vy - charge
+                    令 lastLaunch = FR
+                }
+                令 charge = 0.0
+            }
+        }
+        令 spaceWasDown = spaceNow
+
+        # ── Derived quantities ─────────────────────────────────────────────────
+        令 speed = sqrt(vx*vx + vy*vy + vz*vz)
+        令 hNorm = (100.0 - by) / 200.0
+
+        # ── Physics-encoded audio ──────────────────────────────────────────────
+        令 sinceHit = FR - lastBounce
+        令 impact = 0.0
+        若 sinceHit < 6 { 令 impact = (6 - sinceHit) * 24.0 }
+
+        令 freq = 140.0 + hNorm * 200.0 + impact + speed * 20.0
+        令 amp = 0.04 + speed * 0.06
+        令 pan = bx / 150.0
+        เสียงโทน(0, bx, by, bz, 4.0, freq, amp, pan, 0.02)
+
+        # ── Lights ─────────────────────────────────────────────────────────────
+        clear_lights()
+        add_light(sin(FR*0.005)*40.0, 30.0, cos(FR*0.003)*40.0, 1.0, 0.9, 0.8, 2.5, 100.0)
+        add_light(-50.0, 20.0, -50.0, 0.6, 0.7, 1.0, 1.0, 50.0)
+        add_light(bx, by + 20.0, bz, 0.8, 0.5, 0.9, 0.9, 30.0)
+
+        # ── Camera positioning ─────────────────────────────────────────────────
+        令 cam_x = bx + cam_dist * cos(cam_pitch) * sin(cam_orbit)
+        令 cam_y = by + cam_dist * sin(cam_pitch) * 0.7 + 30.0
+        令 cam_z = bz + cam_dist * cos(cam_pitch) * cos(cam_orbit)
+
+        令 look_dx = bx - cam_x
+        令 look_dy = by - cam_y
+        令 look_dz = bz - cam_z
+        令 look_len = sqrt(look_dx*look_dx + look_dy*look_dy + look_dz*look_dz) + 0.001
+
+        令 look_dx = look_dx / look_len
+        令 look_dy = look_dy / look_len
+        令 look_dz = look_dz / look_len
+
+        令 cam_yaw = atan2(look_dz, look_dx)
+        令 cam_pitch_angle = atan2(look_dy, sqrt(look_dx*look_dx + look_dz*look_dz))
+
+        令 cry = cos(cam_yaw)
+        令 sry = sin(cam_yaw)
+        令 crx = cos(cam_pitch_angle)
+        令 srx = sin(cam_pitch_angle)
+
+        set_camera(cry, sry, crx, srx)
+        set_camera_pos(cam_x, cam_y, cam_z)
+
+        # ── Camera controls ────────────────────────────────────────────────────
+        若 key_down("left") { 令 cam_orbit = cam_orbit - 0.05 }
+        若 key_down("right") { 令 cam_orbit = cam_orbit + 0.05 }
+        若 key_down("up") { 令 cam_pitch = cam_pitch + 0.03 }
+        若 key_down("down") { 令 cam_pitch = cam_pitch - 0.03 }
+        若 key_down("z") { 令 cam_dist = cam_dist - 3.0   若 cam_dist < 30.0 { 令 cam_dist = 30.0 } }
+        若 key_down("x") { 令 cam_dist = cam_dist + 3.0   若 cam_dist > 300.0 { 令 cam_dist = 300.0 } }
+
+        # ── Draw maze walls ────────────────────────────────────────────────────
+        set_color(80, 120, 160)
+
+        # Outer boundary
+        draw_line_3d(-150.0, -100.0, -150.0, -150.0, 100.0, -150.0)
+        draw_line_3d(-150.0, -100.0, 150.0, -150.0, 100.0, 150.0)
+        draw_line_3d(150.0, -100.0, -150.0, 150.0, 100.0, -150.0)
+        draw_line_3d(150.0, -100.0, 150.0, 150.0, 100.0, 150.0)
+
+        draw_line_3d(-150.0, -100.0, -150.0, 150.0, -100.0, -150.0)
+        draw_line_3d(-150.0, 100.0, -150.0, 150.0, 100.0, -150.0)
+        draw_line_3d(-150.0, -100.0, 150.0, 150.0, -100.0, 150.0)
+        draw_line_3d(-150.0, 100.0, 150.0, 150.0, 100.0, 150.0)
+
+        # Interior walls
+        set_color(100, 140, 180)
+        draw_line_3d(50.0, -100.0, -60.0, 50.0, 100.0, -60.0)
+        draw_line_3d(50.0, -100.0, 60.0, 50.0, 100.0, 60.0)
+
+        draw_line_3d(-80.0, -100.0, -100.0, -80.0, 100.0, -100.0)
+        draw_line_3d(-80.0, -100.0, 0.0, -80.0, 100.0, 0.0)
+
+        draw_line_3d(-100.0, -100.0, -40.0, 80.0, -100.0, -40.0)
+        draw_line_3d(-100.0, 100.0, -40.0, 80.0, 100.0, -40.0)
+
+        draw_line_3d(100.0, -100.0, 0.0, 100.0, 100.0, 0.0)
+        draw_line_3d(100.0, -100.0, 120.0, 100.0, 100.0, 120.0)
+
+        # ── Draw ball ──────────────────────────────────────────────────────────
+        令 hue = 0.62 - hNorm * 0.55
+        ลายจักร(bx, by, bz, 1,0,0, 0,1,0, R, 7, FR * 0.04, hue)
+
+        # ── Shadow ─────────────────────────────────────────────────────────────
+        set_color(0, 30, 60)
+        draw_line_3d(bx - R, -100.0, bz, bx + R, -100.0, bz)
+        draw_line_3d(bx, -100.0, bz - R, bx, -100.0, bz + R)
+
+        set_color(40, 90, 140)
+        draw_line_3d(bx, by, bz, bx, -100.0, bz)
+
+        # ── Velocity arrow ─────────────────────────────────────────────────────
+        set_color(230, 60, 40)
+        draw_line_3d(bx, by, bz, bx + vx * 0.08, by + vy * 0.08, bz + vz * 0.08)
+
+        # ── Charge meter ───────────────────────────────────────────────────────
+        若 charge > 0.01 {
+            令 cf = charge / MAX_CHARGE
+            set_color(255, int(200 - cf * 180.0), 40)
+            draw_line_3d(bx, by, bz, bx, by - cf * 5.0, bz)
+            draw_line_3d(bx - 1.5, by - cf * 5.0, bz, bx + 1.5, by - cf * 5.0, bz)
+        }
+
+        แสดงผล()
+        令 FR = FR + 1
+    }
+}

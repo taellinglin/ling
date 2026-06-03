@@ -28,8 +28,8 @@ fn test_hello_world() {
 
 #[test]
 fn test_run_hello_ling() {
-    let source = std::fs::read_to_string("examples/hello.ling")
-        .expect("examples/hello.ling must exist");
+    let source = std::fs::read_to_string("examples/basics/thai_hello_world.ling")
+        .expect("examples/basics/thai_hello_world.ling must exist");
     let result = ling::run(&source);
     assert!(result.is_ok(), "ling::run failed: {:?}", result.err());
 }

@@ -1,0 +1,75 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 1 DMT Trip Coder Demo
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+令 WIDTH = 1024
+令 HEIGHT = 768
+令 CX = 512.0
+令 CY = 384.0
+
+bind start = do {
+    open_window(WIDTH, HEIGHT)
+    set_ambient(0.2)
+
+    while window_is_open() {
+        let t = time_now()
+
+        set_color(10, 5, 15)
+        fill()
+
+        令 p1 = perlin(sin(t * 0.5) * 2.0, cos(t * 0.5) * 2.0, t * 0.3)
+        令 p2 = fbm(sin(t * 0.3) * 3.0, cos(t * 0.3) * 3.0, 3, 0)
+
+        令 r1 = 50.0 + p1 * 30.0
+        令 r2 = 100.0 + p2 * 40.0
+
+        set_blend(1)
+        set_color(255, 0, 255)
+        draw_disc(CX, CY, r1)
+
+        set_color(0, 255, 255)
+        draw_disc(CX, CY, r2)
+
+        令 a1 = t * 2.0
+        令 ox1 = CX + cos(a1) * 150.0
+        令 oy1 = CY + sin(a1) * 150.0
+        set_color(0, 255, 100)
+        draw_disc(ox1, oy1, 12.0)
+
+        令 a2 = t * 2.0 + 3.14159
+        令 ox2 = CX + cos(a2) * 150.0
+        令 oy2 = CY + sin(a2) * 150.0
+        set_color(255, 100, 0)
+        draw_disc(ox2, oy2, 12.0)
+
+        set_blend(0)
+        set_color(255, 100, 255)
+        draw_circle(CX, CY, 80.0)
+        draw_circle(CX, CY, 120.0)
+
+        令 lt = sin(t * 0.5) * 0.5 + 0.5
+        令 cr = lerp(100.0, 255.0, lt)
+        令 cg = lerp(50.0, 150.0, lt)
+        令 cb = 200.0
+
+        set_color((cr) as i32, (cg) as i32, (cb) as i32)
+        draw_circle(CX, CY + 180.0, 60.0)
+
+        set_blend(1)
+        set_color(200, 100, 200)
+        令 vn = vnoise(sin(t * 0.4), cos(t * 0.4), 0)
+        令 vs = 5.0 + vn * 15.0
+        draw_disc(200.0, 450.0, vs)
+
+        set_blend(0)
+        set_color(100, 200, 100)
+        令 wn = fbm(t * 0.2, 0.0, 2, 0)
+        令 wy = 550.0 + wn * 30.0
+        draw_pixel(400.0, wy)
+        draw_pixel(420.0, wy)
+        draw_pixel(380.0, wy)
+
+        set_blend(0)
+        present()
+    }
+}

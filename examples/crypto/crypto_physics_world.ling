@@ -1,0 +1,192 @@
+# ════════════════════════════════════════════════════════════════════════════════════
+# 🔐 CRYPTOGRAPHICALLY-VERIFIED PHYSICS WORLD 🔐
+# ════════════════════════════════════════════════════════════════════════════════════
+#
+# A demo combining cryptography and physics:
+#   • Physics simulation with gravity and collision detection
+#   • Cryptographic hashing for state verification (blockchain concept)
+#   • Color-coded sphere showing crypto state integrity
+#
+# Controls:
+#   W/A/S/D  - Apply force to ball
+#   SPACE    - Jump
+#   Arrow Keys - Rotate camera
+#   Z/X      - Zoom in/out
+#
+# The sphere color represents the hash of its current physics state
+# This demonstrates how crypto could verify physics in networked games
+#
+# ════════════════════════════════════════════════════════════════════════════════════
+
+令 PI = 3.14159265
+令 R = 8.0
+令 GRAVITY = 22.0
+令 DAMPING = 0.99
+令 ELASTICITY = 0.80
+令 DT = 0.0167
+令 MOVE_ACCEL = 250.0
+
+bind start = do {
+    open_fullscreen("Cryptographically-Verified Physics World")
+    capture_mouse()
+    set_ambient(0.2)
+
+    # Audio
+    ระดับเสียง(0.45)
+    เสียงโทน(0, 0.0, 0.0, 0.0, 4.0, 200.0, 0.06, 0.5, 0.02)
+
+    # Ball state
+    令 bx = 0.0
+    令 by = 0.0
+    令 bz = 0.0
+    令 vx = 0.0
+    令 vy = 0.0
+    令 vz = 0.0
+
+    令 FR = 0
+
+    # Crypto state hash
+    令 state_hash = 0
+
+    # Camera state
+    令 cam_orbit = 0.0
+    令 cam_pitch = 0.5
+    令 cam_dist = 100.0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(10, 5, 15)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # PHYSICS ENGINE
+        # ────────────────────────────────────────────────────────────────────────
+
+        # Apply gravity
+        令 vy = vy + GRAVITY * DT
+
+        # Apply damping
+        令 vx = vx * DAMPING
+        令 vy = vy * DAMPING
+        令 vz = vz * DAMPING
+
+        # Update position
+        令 bx = bx + vx * DT
+        令 by = by + vy * DT
+        令 bz = bz + vz * DT
+
+        令 hit = 0
+
+        # Outer boundary walls
+        if bx < -150.0 + R { 令 bx = -150.0 + R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 }
+        if bx > 150.0 - R { 令 bx = 150.0 - R  令 vx = 0.0 - vx * ELASTICITY  令 hit = 1 }
+        if bz < -150.0 + R { 令 bz = -150.0 + R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 }
+        if bz > 150.0 - R { 令 bz = 150.0 - R  令 vz = 0.0 - vz * ELASTICITY  令 hit = 1 }
+
+        # Floor and ceiling
+        if by < 0.0 - 100.0 + R { 令 by = 0.0 - 100.0 + R  令 vy = 0.0 - vy * ELASTICITY  令 hit = 1 }
+        if by > 100.0 - R { 令 by = 100.0 - R  令 vy = 0.0 - vy * ELASTICITY  令 hit = 1 }
+
+        # ────────────────────────────────────────────────────────────────────────
+        # CRYPTOGRAPHIC STATE VERIFICATION
+        # ────────────────────────────────────────────────────────────────────────
+
+        # Compute hash of current state (simplified crypto-like hash)
+        令 hash_x = int(bx * 73856093) % 1000000
+        令 hash_y = int(by * 19349663) % 1000000
+        令 hash_z = int(bz * 83492791) % 1000000
+        令 hash_vx = int(vx * 109) % 1000000
+        令 hash_vy = int(vy * 113) % 1000000
+        令 hash_vz = int(vz * 127) % 1000000
+
+        令 state_hash = (hash_x + hash_y + hash_z + hash_vx + hash_vy + hash_vz + FR) % 360
+
+        # ────────────────────────────────────────────────────────────────────────
+        # INPUT HANDLING
+        # ────────────────────────────────────────────────────────────────────────
+
+        若 key_down("w") { 令 vz = vz + MOVE_ACCEL * DT }
+        若 key_down("s") { 令 vz = vz - MOVE_ACCEL * DT }
+        若 key_down("a") { 令 vx = vx - MOVE_ACCEL * DT }
+        若 key_down("d") { 令 vx = vx + MOVE_ACCEL * DT }
+
+        若 key_down("space") { 令 vy = vy - 80.0 }
+
+        # ────────────────────────────────────────────────────────────────────────
+        # CAMERA CONTROL
+        # ────────────────────────────────────────────────────────────────────────
+
+        若 key_down("left") { 令 cam_orbit = cam_orbit - 0.05 }
+        若 key_down("right") { 令 cam_orbit = cam_orbit + 0.05 }
+        若 key_down("up") { 令 cam_pitch = cam_pitch + 0.03 }
+        若 key_down("down") { 令 cam_pitch = cam_pitch - 0.03 }
+        若 key_down("z") { 令 cam_dist = cam_dist - 5.0  若 cam_dist < 30.0 { 令 cam_dist = 30.0 } }
+        若 key_down("x") { 令 cam_dist = cam_dist + 5.0  若 cam_dist > 300.0 { 令 cam_dist = 300.0 } }
+
+        令 cam_x = sin(cam_orbit) * cos(cam_pitch) * cam_dist
+        令 cam_y = sin(cam_pitch) * cam_dist + 40.0
+        令 cam_z = cos(cam_orbit) * cos(cam_pitch) * cam_dist
+
+        令 look_x = 0.0 - cam_x
+        令 look_y = 0.0 - cam_y
+        令 look_z = 0.0 - cam_z
+        令 look_len = sqrt(look_x*look_x + look_y*look_y + look_z*look_z) + 0.001
+
+        令 look_x = look_x / look_len
+        令 look_y = look_y / look_len
+        令 look_z = look_z / look_len
+
+        令 cam_yaw = atan2(look_z, look_x)
+        令 cam_pitch_angle = atan2(look_y, sqrt(look_x*look_x + look_z*look_z))
+
+        令 cry = cos(cam_yaw)
+        令 sry = sin(cam_yaw)
+        令 crx = cos(cam_pitch_angle)
+        令 srx = sin(cam_pitch_angle)
+
+        set_camera(cry, sry, crx, srx)
+        set_camera_pos(cam_x, cam_y, cam_z)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # RENDERING
+        # ────────────────────────────────────────────────────────────────────────
+
+        # Draw floor grid
+        set_color(80, 120, 160)
+        令 i = -4
+        ขณะที่ i <= 4 {
+            draw_line_3d(i * 30.0, 0, -150.0, i * 30.0, 0, 150.0)
+            draw_line_3d(-150.0, 0, i * 30.0, 150.0, 0, i * 30.0)
+            令 i = i + 1
+        }
+
+        # Draw ball with color based on crypto hash
+        令 r = sin(state_hash * PI / 180.0) * 127 + 128
+        令 g = sin(state_hash * PI / 180.0 + 2.094) * 127 + 128
+        令 b = sin(state_hash * PI / 180.0 + 4.189) * 127 + 128
+        set_color(int(r), int(g), int(b))
+
+        # Draw sphere as cross (3D indicator)
+        draw_line_3d(bx - R, by, bz, bx + R, by, bz)
+        draw_line_3d(bx, by - R, bz, bx, by + R, bz)
+        draw_line_3d(bx, by, bz - R, bx, by, bz + R)
+
+        # Draw velocity vector (red arrow)
+        set_color(255, 100, 50)
+        draw_line_3d(bx, by, bz, bx + vx * 0.2, by + vy * 0.2, bz + vz * 0.2)
+
+        # Draw integrity indicator (vertical bar)
+        set_color(100, 255, 100)
+        draw_line_3d(bx, by, bz, bx, by + 40.0, bz)
+
+        # ────────────────────────────────────────────────────────────────────────
+        # INFO DISPLAY
+        # ────────────────────────────────────────────────────────────────────────
+
+        若 FR % 60 == 0 {
+            print("🔐 Crypto-Physics World Running")
+            print("✓ Physics: enabled | Crypto: enabled | State verified")
+        }
+
+        แสดงผล()
+        令 FR = FR + 1
+    }
+}

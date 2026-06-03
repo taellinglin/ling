@@ -1,6 +1,6 @@
 # 道场 — Shrine Room
 
-Source: [`examples/ling-dao-chamber.ling`](https://github.com/taellinglin/ling/blob/master/examples/ling-dao-chamber.ling)
+Source: [`examples/3d-rooms/ling-dao-chamber.ling`](https://github.com/taellinglin/ling/blob/master/examples/3d-rooms/ling-dao-chamber.ling)
 
 A quiet Chinese-Japanese temple rendered entirely with vector geometry (`vtex_*`).
 No pixel fills. Slow, dignified motion in a gold · jade · crimson palette.
@@ -16,5 +16,5 @@ No pixel fills. Slow, dignified motion in a gold · jade · crimson palette.
 Run with:
 
 ```sh
-ling examples/ling-dao-chamber.ling
+ling examples/3d-rooms/ling-dao-chamber.ling
 ```

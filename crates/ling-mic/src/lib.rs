@@ -76,4 +76,9 @@ impl MicInput {
     pub fn rms(&self) -> f32 {
         self.inner.rms()
     }
+
+    /// Get the most recent PCM samples for FFT analysis.
+    pub fn latest_samples(&self) -> Vec<f32> {
+        self.inner.latest_samples()
+    }
 }

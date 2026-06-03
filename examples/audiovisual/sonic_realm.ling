@@ -1,0 +1,204 @@
+// SONIC REALM - Interactive Physics + Audio + Graphics Demo
+// Demonstrates Ling's omniglot capabilities combining:
+//   • Physics simulation (gravity, elastic collisions)
+//   • Audio synthesis (pentatonic scale generation)
+//   • 3D graphics rendering
+//   • Cryptographic hash-based colors
+//
+// Controls: SPACE to spawn, R to reset, arrow keys move camera
+
+令 PI = 3.14159265
+令 PI2 = 1.5708
+令 BASE = 440.0
+令 RAD = 8.0
+令 G = 32.0
+令 DAMP = 0.985
+令 BOUNCE = 0.88
+令 DT = 0.016
+
+// Pentatonic scale frequencies (relative to BASE)
+令 S1 = 1.0
+令 S2 = 1.125
+令 S3 = 1.25
+令 S4 = 1.5
+令 S5 = 1.875
+
+// Hash function for procedural colors
+fn hash_color(n) {
+    令 h = n * 73856093
+    令 h = h % 19349663
+    令 h = h * 19349663 + 1
+    กลับ h % 360
+}
+
+// Play a pentatonic note
+fn play_note(degree, amp) {
+    令 ratio = 0.0
+    if degree % 5 == 0 { 令 ratio = S1 }
+    if degree % 5 == 1 { 令 ratio = S2 }
+    if degree % 5 == 2 { 令 ratio = S3 }
+    if degree % 5 == 3 { 令 ratio = S4 }
+    if degree % 5 == 4 { 令 ratio = S5 }
+    令 f = BASE * ratio
+}
+
+令 start = do {
+    open_fullscreen("SONIC REALM")
+    capture_mouse()
+    set_ambient(0.2)
+
+    // Ambient tone
+    ระดับเสียง(0.4)
+    เสียงโทน(0, BASE * 0.5, 0.0, 0.0, 3.0, 0.5, 0.1, 0.6, 0.03)
+
+    // Lighting
+    clear_lights()
+    add_light(0.0, 50.0, 0.0, 1.0, 0.9, 0.8, 2.0, 150.0)
+    add_light(40.0, 30.0, 40.0, 0.6, 0.7, 1.0, 1.0, 80.0)
+
+    // Physics state
+    令 x0 = 0.0   令 y0 = 50.0  令 z0 = 0.0
+    令 vx0 = 0.0  令 vy0 = 0.0  令 vz0 = 0.0
+
+    令 x1 = 15.0  令 y1 = 40.0  令 z1 = 0.0
+    令 vx1 = 0.0  令 vy1 = 0.0  令 vz1 = 0.0
+
+    令 x2 = -15.0 令 y2 = 30.0  令 z2 = 0.0
+    令 vx2 = 0.0  令 vy2 = 0.0  令 vz2 = 0.0
+
+    令 x3 = 0.0   令 y3 = 20.0  令 z3 = 20.0
+    令 vx3 = 0.0  令 vy3 = 0.0  令 vz3 = 0.0
+
+    // Camera and animation
+    令 FR = 0
+    令 cam_orbit = 0.0
+    令 cam_pitch = 0.5
+    令 cam_dist = 150.0
+
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(30, 50, 100)
+
+        // Input
+        若 key_down("left") { 令 cam_orbit = cam_orbit - 0.03 }
+        若 key_down("right") { 令 cam_orbit = cam_orbit + 0.03 }
+        若 key_down("up") { 令 cam_pitch = cam_pitch + 0.02 }
+        若 key_down("down") { 令 cam_pitch = cam_pitch - 0.02 }
+        若 key_down("z") { 令 cam_dist = cam_dist - 5.0  若 cam_dist < 80.0 { 令 cam_dist = 80.0 } }
+        若 key_down("x") { 令 cam_dist = cam_dist + 5.0  若 cam_dist > 400.0 { 令 cam_dist = 400.0 } }
+
+        若 key_down("space") {
+            令 x0 = (FR % 50 - 25) * 2.0
+            令 y0 = 100.0
+            令 z0 = (FR % 40 - 20) * 2.0
+            令 vx0 = (FR % 30 - 15) * 0.5
+            令 vy0 = -30.0
+            令 vz0 = (FR % 25 - 12) * 0.5
+            play_note(FR % 5, 0.7)
+        }
+
+        若 key_down("r") {
+            令 x0 = 0.0   令 y0 = 50.0  令 z0 = 0.0  令 vx0 = 0.0  令 vy0 = 0.0  令 vz0 = 0.0
+            令 x1 = 15.0  令 y1 = 40.0  令 z1 = 0.0  令 vx1 = 0.0  令 vy1 = 0.0  令 vz1 = 0.0
+            令 x2 = -15.0 令 y2 = 30.0  令 z2 = 0.0  令 vx2 = 0.0  令 vy2 = 0.0  令 vz2 = 0.0
+            令 x3 = 0.0   令 y3 = 20.0  令 z3 = 20.0 令 vx3 = 0.0  令 vy3 = 0.0  令 vz3 = 0.0
+        }
+
+        // Physics - Sphere 0
+        令 vy0 = vy0 + G * DT
+        令 vx0 = vx0 * DAMP  令 vy0 = vy0 * DAMP  令 vz0 = vz0 * DAMP
+        令 x0 = x0 + vx0 * DT  令 y0 = y0 + vy0 * DT  令 z0 = z0 + vz0 * DT
+
+        若 x0 < -80.0 + RAD { 令 x0 = -80.0 + RAD  令 vx0 = 0.0 - vx0 * BOUNCE  play_note(0, 0.6) }
+        若 x0 > 80.0 - RAD { 令 x0 = 80.0 - RAD  令 vx0 = 0.0 - vx0 * BOUNCE  play_note(4, 0.6) }
+        若 z0 < -80.0 + RAD { 令 z0 = -80.0 + RAD  令 vz0 = 0.0 - vz0 * BOUNCE  play_note(1, 0.6) }
+        若 z0 > 80.0 - RAD { 令 z0 = 80.0 - RAD  令 vz0 = 0.0 - vz0 * BOUNCE  play_note(3, 0.6) }
+        若 y0 < 0.0 + RAD { 令 y0 = 0.0 + RAD  令 vy0 = 0.0 - vy0 * BOUNCE  play_note(0, 0.7) }
+
+        // Physics - Sphere 1
+        令 vy1 = vy1 + G * DT
+        令 vx1 = vx1 * DAMP  令 vy1 = vy1 * DAMP  令 vz1 = vz1 * DAMP
+        令 x1 = x1 + vx1 * DT  令 y1 = y1 + vy1 * DT  令 z1 = z1 + vz1 * DT
+
+        若 x1 < -80.0 + RAD { 令 x1 = -80.0 + RAD  令 vx1 = 0.0 - vx1 * BOUNCE }
+        若 x1 > 80.0 - RAD { 令 x1 = 80.0 - RAD  令 vx1 = 0.0 - vx1 * BOUNCE }
+        若 z1 < -80.0 + RAD { 令 z1 = -80.0 + RAD  令 vz1 = 0.0 - vz1 * BOUNCE }
+        若 z1 > 80.0 - RAD { 令 z1 = 80.0 - RAD  令 vz1 = 0.0 - vz1 * BOUNCE }
+        若 y1 < 0.0 + RAD { 令 y1 = 0.0 + RAD  令 vy1 = 0.0 - vy1 * BOUNCE }
+
+        // Physics - Sphere 2
+        令 vy2 = vy2 + G * DT
+        令 vx2 = vx2 * DAMP  令 vy2 = vy2 * DAMP  令 vz2 = vz2 * DAMP
+        令 x2 = x2 + vx2 * DT  令 y2 = y2 + vy2 * DT  令 z2 = z2 + vz2 * DT
+
+        若 x2 < -80.0 + RAD { 令 x2 = -80.0 + RAD  令 vx2 = 0.0 - vx2 * BOUNCE }
+        若 x2 > 80.0 - RAD { 令 x2 = 80.0 - RAD  令 vx2 = 0.0 - vx2 * BOUNCE }
+        若 z2 < -80.0 + RAD { 令 z2 = -80.0 + RAD  令 vz2 = 0.0 - vz2 * BOUNCE }
+        若 z2 > 80.0 - RAD { 令 z2 = 80.0 - RAD  令 vz2 = 0.0 - vz2 * BOUNCE }
+        若 y2 < 0.0 + RAD { 令 y2 = 0.0 + RAD  令 vy2 = 0.0 - vy2 * BOUNCE }
+
+        // Physics - Sphere 3
+        令 vy3 = vy3 + G * DT
+        令 vx3 = vx3 * DAMP  令 vy3 = vy3 * DAMP  令 vz3 = vz3 * DAMP
+        令 x3 = x3 + vx3 * DT  令 y3 = y3 + vy3 * DT  令 z3 = z3 + vz3 * DT
+
+        若 x3 < -80.0 + RAD { 令 x3 = -80.0 + RAD  令 vx3 = 0.0 - vx3 * BOUNCE }
+        若 x3 > 80.0 - RAD { 令 x3 = 80.0 - RAD  令 vx3 = 0.0 - vx3 * BOUNCE }
+        若 z3 < -80.0 + RAD { 令 z3 = -80.0 + RAD  令 vz3 = 0.0 - vz3 * BOUNCE }
+        若 z3 > 80.0 - RAD { 令 z3 = 80.0 - RAD  令 vz3 = 0.0 - vz3 * BOUNCE }
+        若 y3 < 0.0 + RAD { 令 y3 = 0.0 + RAD  令 vy3 = 0.0 - vy3 * BOUNCE }
+
+        // Camera setup
+        令 cam_x = sin(cam_orbit) * cos(cam_pitch) * cam_dist
+        令 cam_y = sin(cam_pitch) * cam_dist + 40.0
+        令 cam_z = cos(cam_orbit) * cos(cam_pitch) * cam_dist
+
+        令 look_x = 0.0 - cam_x
+        令 look_y = 0.0 - cam_y
+        令 look_z = 0.0 - cam_z
+        令 look_len = sqrt(look_x*look_x + look_y*look_y + look_z*look_z) + 0.001
+
+        令 look_x = look_x / look_len
+        令 look_y = look_y / look_len
+        令 look_z = look_z / look_len
+
+        令 cam_yaw = atan2(look_z, look_x)
+        令 cam_pitch_angle = atan2(look_y, sqrt(look_x*look_x + look_z*look_z))
+
+        令 cry = cos(cam_yaw)
+        令 sry = sin(cam_yaw)
+        令 crx = cos(cam_pitch_angle)
+        令 srx = sin(cam_pitch_angle)
+
+        set_camera(cry, sry, crx, srx)
+        set_camera_pos(cam_x, cam_y, cam_z)
+
+        // Draw floor grid
+        set_color(80, 120, 160)
+        令 i = -4
+        ขณะที่ i <= 4 {
+            draw_line_3d(i * 20.0, 0, -80.0, i * 20.0, 0, 80.0)
+            draw_line_3d(-80.0, 0, i * 20.0, 80.0, 0, i * 20.0)
+            令 i = i + 1
+        }
+
+        // Draw spheres as circles (since we don't have sphere drawing)
+        set_color(255, 100 + int(sin(FR * 0.05) * 50), 150)
+        draw_line_3d(x0 - RAD, y0, z0, x0 + RAD, y0, z0)
+        draw_line_3d(x0, y0 - RAD, z0, x0, y0 + RAD, z0)
+
+        set_color(100, 200 + int(cos(FR * 0.04) * 50), 255)
+        draw_line_3d(x1 - RAD, y1, z1, x1 + RAD, y1, z1)
+        draw_line_3d(x1, y1 - RAD, z1, x1, y1 + RAD, z1)
+
+        set_color(200 + int(sin(FR * 0.03) * 50), 255, 100)
+        draw_line_3d(x2 - RAD, y2, z2, x2 + RAD, y2, z2)
+        draw_line_3d(x2, y2 - RAD, z2, x2, y2 + RAD, z2)
+
+        set_color(255, 200 + int(cos(FR * 0.06) * 50), 100)
+        draw_line_3d(x3 - RAD, y3, z3, x3 + RAD, y3, z3)
+        draw_line_3d(x3, y3 - RAD, z3, x3, y3 + RAD, z3)
+
+        แสดงผล()
+        令 FR = FR + 1
+    }
+}

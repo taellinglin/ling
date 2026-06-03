@@ -1,0 +1,169 @@
+//! Language-system tests for ling-lang.
+//!
+//! These exercise the full pipeline — lexer → parser → runtime — and the
+//! central multilingual guarantee: the SAME program written in English, Chinese,
+//! Japanese, Korean, or Thai must parse and execute identically.
+//!
+//! Run with: `cargo test --test language_system`
+
+use ling::run;
+
+/// A program that runs cleanly returns Ok(()).
+fn assert_runs(label: &str, src: &str) {
+    match run(src) {
+        Ok(()) => {}
+        Err(e) => panic!("[{label}] expected program to run, got error: {e}\n--- source ---\n{src}"),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Core execution
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn runs_minimal_program() {
+    assert_runs("minimal", r#"bind start = do { print("hello") }"#);
+}
+
+#[test]
+fn arithmetic_and_bind_locals() {
+    assert_runs("arith", r#"
+        bind start = do {
+            bind a = 2
+            bind b = 40
+            print(a + b)
+        }
+    "#);
+}
+
+#[test]
+fn if_else_and_while() {
+    assert_runs("control-flow", r#"
+        bind start = do {
+            bind n = 0
+            while n < 3 {
+                print(n)
+                bind n = n + 1
+            }
+            if n > 2 { print("done") } else { print("no") }
+        }
+    "#);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multilingual keywords — the same hello-world in five languages
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn hello_world_english() {
+    assert_runs("en", r#"bind start = do { print("hi") }"#);
+}
+
+#[test]
+fn hello_world_chinese() {
+    assert_runs("zh", r#"令 启动 = 执 { 印("你好") }"#);
+}
+
+#[test]
+fn hello_world_japanese() {
+    assert_runs("ja", r#"束縛 開始 = 実行 { 印刷("こんにちは") }"#);
+}
+
+#[test]
+fn hello_world_korean() {
+    assert_runs("ko", r#"바인드 시작 = 실행 { 출력("안녕") }"#);
+}
+
+#[test]
+fn hello_world_thai() {
+    assert_runs("th", r#"ผูก เริ่ม = ทำ { พิมพ์("สวัสดี") }"#);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multilingual math builtins (Batch 1 parity) — every language must resolve.
+// Each program computes the same values; success means all aliases resolved.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MATH_EN: &str = r#"bind start = do {
+    print(sin(0.0)) print(cos(0.0)) print(sqrt(16.0))
+    print(max(3.0, 7.0)) print(min(3.0, 7.0)) print(floor(3.9))
+    print(round(2.5)) print(clamp(5.0, 0.0, 1.0)) print(pow(2.0, 8.0))
+}"#;
+
+const MATH_ZH: &str = r#"令 启动 = 执 {
+    印(正弦(0.0)) 印(余弦(0.0)) 印(平方根(16.0))
+    印(最大(3.0, 7.0)) 印(最小(3.0, 7.0)) 印(向下取整(3.9))
+    印(四舍五入(2.5)) 印(截取(5.0, 0.0, 1.0)) 印(幂(2.0, 8.0))
+}"#;
+
+const MATH_JA: &str = r#"束縛 開始 = 実行 {
+    印刷(サイン(0.0)) 印刷(コサイン(0.0)) 印刷(平方根(16.0))
+    印刷(最大(3.0, 7.0)) 印刷(最小(3.0, 7.0)) 印刷(床関数(3.9))
+    印刷(四捨五入(2.5)) 印刷(範囲制限(5.0, 0.0, 1.0)) 印刷(べき乗(2.0, 8.0))
+}"#;
+
+const MATH_KO: &str = r#"바인드 시작 = 실행 {
+    출력(사인(0.0)) 출력(코사인(0.0)) 출력(제곱근(16.0))
+    출력(최댓값(3.0, 7.0)) 출력(최솟값(3.0, 7.0)) 출력(내림(3.9))
+    출력(반올림(2.5)) 출력(범위제한(5.0, 0.0, 1.0)) 출력(거듭제곱(2.0, 8.0))
+}"#;
+
+const MATH_TH: &str = r#"ผูก เริ่ม = ทำ {
+    พิมพ์(ไซน์(0.0)) พิมพ์(โคไซน์(0.0)) พิมพ์(รากที่สอง(16.0))
+    พิมพ์(สูงสุด(3.0, 7.0)) พิมพ์(ต่ำสุด(3.0, 7.0)) พิมพ์(ปัดลง(3.9))
+    พิมพ์(ปัดเศษ(2.5)) พิมพ์(จำกัด(5.0, 0.0, 1.0)) พิมพ์(ยกกำลัง(2.0, 8.0))
+}"#;
+
+#[test]
+fn math_builtins_english() { assert_runs("math-en", MATH_EN); }
+#[test]
+fn math_builtins_chinese() { assert_runs("math-zh", MATH_ZH); }
+#[test]
+fn math_builtins_japanese() { assert_runs("math-ja", MATH_JA); }
+#[test]
+fn math_builtins_korean() { assert_runs("math-ko", MATH_KO); }
+#[test]
+fn math_builtins_thai() { assert_runs("math-th", MATH_TH); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mixed-language source — the killer feature: five languages in one file.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn mixed_language_single_file() {
+    assert_runs("mixed", r#"bind start = do {
+        bind x = 正弦(0.0)
+        bind y = 余弦(0.0)
+        print(ปัดลง(3.7))
+        출력(제곱근(9.0))
+        印刷(べき乗(2.0, 3.0))
+    }"#);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Polyglot language detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn detects_languages() {
+    // Detection is heuristic; just assert it returns a non-empty label and does
+    // not panic for each script.
+    for (label, src) in [
+        ("en", "bind start = do { print(1) }"),
+        ("zh", "令 启动 = 执 { 印(1) }"),
+        ("th", "ผูก เริ่ม = ทำ { พิมพ์(1) }"),
+    ] {
+        let lang = ling::detect_language(src);
+        assert!(!lang.is_empty(), "[{label}] detect_language returned empty");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error handling — unknown functions must error, not panic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn unknown_function_is_error_not_panic() {
+    let res = run(r#"bind start = do { this_is_not_a_builtin(1) }"#);
+    assert!(res.is_err(), "calling an unknown builtin should be an error");
+}

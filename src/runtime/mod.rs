@@ -11,6 +11,9 @@ use ling_audio::{AudioEngine, ToneParams};
 #[cfg(not(target_arch = "wasm32"))]
 use ling_audio::FftAnalyzer;
 
+#[cfg(not(target_arch = "wasm32"))]
+use ling_mic;
+
 // ─── Values ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -171,6 +174,183 @@ fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
     ((r * 255.0) as u32) << 16 | ((g * 255.0) as u32) << 8 | (b * 255.0) as u32
 }
 
+// ─── 3D Perlin Noise (Improved Perlin 2002) ───────────────────────────────────
+
+const PERM: [u8; 512] = [
+    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
+    140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
+    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
+    57,177,33,88,237,149,56,87,174,35,63,189,114,56,42,123,
+    165,38,72,93,69,139,138,78,149,159,56,89,152,78,61,140,
+    63,26,142,76,124,132,72,11,90,44,82,59,96,41,148,126,
+    157,13,49,27,176,33,47,14,97,78,71,40,87,183,4,122,
+    92,7,72,3,246,17,225,87,91,106,203,190,57,74,76,88,
+    207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,
+    168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,
+    210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,
+    115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,
+    219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,
+    121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,
+    8,186,120,37,46,28,166,180,198,232,221,116,31,75,189,139,
+    138,112,62,181,102,72,3,246,14,97,53,87,185,134,193,29,
+    158,225,248,152,17,105,217,142,148,155,30,135,233,206,85,40,
+    223,140,161,137,13,191,230,66,104,153,199,167,147,99,179,92,
+    // Duplicate for wrap-around indexing
+    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
+    140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
+    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
+    57,177,33,88,237,149,56,87,174,35,63,189,114,56,42,123,
+    165,38,72,93,69,139,138,78,149,159,56,89,152,78,61,140,
+    63,26,142,76,124,132,72,11,90,44,82,59,96,41,148,126,
+    157,13,49,27,176,33,47,14,97,78,71,40,87,183,4,122,
+    92,7,72,3,246,17,225,87,91,106,203,190,57,74,76,88,
+    207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,
+    168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,
+    210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,
+    115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,
+    219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,
+    121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,
+];
+
+fn fade(t: f32) -> f32 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+fn grad(hash: u8, x: f32, y: f32, z: f32) -> f32 {
+    let h = hash & 15;
+    let u = if h < 8 { x } else { y };
+    let v = if h < 8 { y } else { z };
+    (if (h & 1) == 0 { u } else { -u }) + (if (h & 2) == 0 { v } else { -v })
+}
+
+fn perlin3(x: f32, y: f32, z: f32) -> f32 {
+    let xi = (x.floor() as i32) & 255;
+    let yi = (y.floor() as i32) & 255;
+    let zi = (z.floor() as i32) & 255;
+
+    let xf = x - x.floor();
+    let yf = y - y.floor();
+    let zf = z - z.floor();
+
+    let u = fade(xf);
+    let v = fade(yf);
+    let w = fade(zf);
+
+    let p0 = PERM[xi as usize] as usize;
+    let p1 = PERM[((xi + 1) & 255) as usize] as usize;
+    let pa = PERM[(p0 + yi as usize) & 255] as usize;
+    let pb = PERM[(p0 + ((yi + 1) & 255) as usize) & 255] as usize;
+    let pc = PERM[(p1 + yi as usize) & 255] as usize;
+    let pd = PERM[(p1 + ((yi + 1) & 255) as usize) & 255] as usize;
+
+    let g000 = grad(PERM[(pa + zi as usize) & 255], xf, yf, zf);
+    let g001 = grad(PERM[(pa + ((zi + 1) & 255) as usize) & 255], xf, yf, zf - 1.0);
+    let g010 = grad(PERM[(pb + zi as usize) & 255], xf, yf - 1.0, zf);
+    let g011 = grad(PERM[(pb + ((zi + 1) & 255) as usize) & 255], xf, yf - 1.0, zf - 1.0);
+    let g100 = grad(PERM[(pc + zi as usize) & 255], xf - 1.0, yf, zf);
+    let g101 = grad(PERM[(pc + ((zi + 1) & 255) as usize) & 255], xf - 1.0, yf, zf - 1.0);
+    let g110 = grad(PERM[(pd + zi as usize) & 255], xf - 1.0, yf - 1.0, zf);
+    let g111 = grad(PERM[(pd + ((zi + 1) & 255) as usize) & 255], xf - 1.0, yf - 1.0, zf - 1.0);
+
+    let l00 = g000 + u * (g100 - g000);
+    let l01 = g001 + u * (g101 - g001);
+    let l10 = g010 + u * (g110 - g010);
+    let l11 = g011 + u * (g111 - g011);
+
+    let l0 = l00 + v * (l10 - l00);
+    let l1 = l01 + v * (l11 - l01);
+
+    l0 + w * (l1 - l0)
+}
+
+fn fast_rand_f64(state: &mut u64) -> f64 {
+    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    ((*state >> 32) as u32) as f64 / 4294967296.0
+}
+
+// ─── Circle Drawing Primitives ────────────────────────────────────────────────
+
+fn draw_circle_outline(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
+    let mut x = 0;
+    let mut y = r;
+    let mut d = 3 - 2 * r;
+
+    while x <= y {
+        plot_circle_points(buf, w, h, cx, cy, x, y, color, blend);
+        if d < 0 {
+            d = d + 4 * x + 6;
+        } else {
+            d = d + 4 * (x - y) + 10;
+            y -= 1;
+        }
+        x += 1;
+    }
+}
+
+fn plot_circle_points(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, x: i32, y: i32, color: u32, blend: u8) {
+    let points = [(cx+x, cy+y), (cx-x, cy+y), (cx+x, cy-y), (cx-x, cy-y),
+                  (cx+y, cy+x), (cx-y, cy+x), (cx+y, cy-x), (cx-y, cy-x)];
+    for &(px, py) in &points {
+        if px >= 0 && px < w && py >= 0 && py < h {
+            let idx = (py * w + px) as usize;
+            if blend == 0 {
+                if idx < buf.len() { unsafe { *(buf.as_ptr() as *mut u32).add(idx) = color; } }
+            } else {
+                // Additive blend
+                if idx < buf.len() {
+                    unsafe {
+                        let ptr = (buf.as_ptr() as *mut u32).add(idx);
+                        let old = *ptr;
+                        let r1 = (old >> 16) & 255;
+                        let g1 = (old >> 8) & 255;
+                        let b1 = old & 255;
+                        let r2 = (color >> 16) & 255;
+                        let g2 = (color >> 8) & 255;
+                        let b2 = color & 255;
+                        let r = (r1 + r2).min(255);
+                        let g = (g1 + g2).min(255);
+                        let b = (b1 + b2).min(255);
+                        *ptr = (r << 16) | (g << 8) | b;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn draw_circle_filled(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
+    for dy in -r..=r {
+        let dx_max = ((r*r - dy*dy) as f64).sqrt() as i32;
+        for dx in -dx_max..=dx_max {
+            let px = cx + dx;
+            let py = cy + dy;
+            if px >= 0 && px < w && py >= 0 && py < h {
+                let idx = (py * w + px) as usize;
+                if blend == 0 {
+                    if idx < buf.len() { unsafe { *(buf.as_ptr() as *mut u32).add(idx) = color; } }
+                } else {
+                    if idx < buf.len() {
+                        unsafe {
+                            let ptr = (buf.as_ptr() as *mut u32).add(idx);
+                            let old = *ptr;
+                            let r1 = (old >> 16) & 255;
+                            let g1 = (old >> 8) & 255;
+                            let b1 = old & 255;
+                            let r2 = (color >> 16) & 255;
+                            let g2 = (color >> 8) & 255;
+                            let b2 = color & 255;
+                            let r = (r1 + r2).min(255);
+                            let g = (g1 + g2).min(255);
+                            let b = (b1 + b2).min(255);
+                            *ptr = (r << 16) | (g << 8) | b;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ─── Interpreter ─────────────────────────────────────────────────────────────
 
 pub struct Interpreter {
@@ -189,6 +369,15 @@ pub struct Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     fft:       RefCell<FftAnalyzer>,
     fft_bands_cache: RefCell<Vec<f32>>,
+    /// Real-time clock — initialized at startup
+    start_time: std::time::Instant,
+    /// Frame counter — incremented at each present()
+    frame_num: u64,
+    /// Random state for rand() builtin (xorshift)
+    rand_state: u64,
+    /// Microphone input (Phase 1 audio reactivity)
+    #[cfg(not(target_arch = "wasm32"))]
+    mic: Option<ling_mic::MicInput>,
 }
 
 impl Interpreter {
@@ -210,6 +399,11 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             fft: RefCell::new(FftAnalyzer::new(2048, 44100)),
             fft_bands_cache: RefCell::new(vec![]),
+            start_time: std::time::Instant::now(),
+            frame_num: 0,
+            rand_state: 0x123456789ABCDEF,
+            #[cfg(not(target_arch = "wasm32"))]
+            mic: None,
         }
     }
 
@@ -354,7 +548,7 @@ impl Interpreter {
 
     // ─── Expression evaluation ────────────────────────────────────────────────
 
-    fn eval_expr(&self, expr: &Expr, env: &mut Env) -> EvalResult {
+    fn eval_expr(&mut self, expr: &Expr, env: &mut Env) -> EvalResult {
         match expr {
             Expr::Str(s)    => Ok(Value::Str(s.clone())),
             Expr::Number(n) => Ok(Value::Number(*n)),
@@ -389,11 +583,13 @@ impl Interpreter {
             }
 
             Expr::If { cond, then, elseifs, else_body } => {
-                if self.is_truthy(&self.eval_expr(cond, env)?) {
+                let cond_val = self.eval_expr(cond, env)?;
+                if self.is_truthy(&cond_val) {
                     return Ok(self.exec_block(then, env)?.unwrap_or(Value::Unit));
                 }
                 for (ei_cond, ei_body) in elseifs {
-                    if self.is_truthy(&self.eval_expr(ei_cond, env)?) {
+                    let ei_cond_val = self.eval_expr(ei_cond, env)?;
+                    if self.is_truthy(&ei_cond_val) {
                         return Ok(self.exec_block(ei_body, env)?.unwrap_or(Value::Unit));
                     }
                 }
@@ -498,7 +694,7 @@ impl Interpreter {
 
     // ─── Block execution ─────────────────────────────────────────────────────
 
-    fn exec_block(&self, stmts: &[Stmt], env: &mut Env) -> Result<Option<Value>, EvalErr> {
+    fn exec_block(&mut self, stmts: &[Stmt], env: &mut Env) -> Result<Option<Value>, EvalErr> {
         let mut last: Option<Value> = None;
         for stmt in stmts {
             match stmt {
@@ -529,23 +725,23 @@ impl Interpreter {
         }
         // Math constants usable as plain identifiers (e.g. `sin(pi)`)
         match name {
-            "pi" | "π" | "พาย" => return Ok(Value::Number(std::f64::consts::PI)),
-            "tau" | "τ"        => return Ok(Value::Number(std::f64::consts::TAU)),
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => return Ok(Value::Number(std::f64::consts::PI)),
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว"        => return Ok(Value::Number(std::f64::consts::TAU)),
             _ => {}
         }
         Err(EvalErr::from(format!("undefined: '{name}'")))
     }
 
-    fn call_named(&self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
+    fn call_named(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
         match name {
             // ── Print ──
-            "print" | "println" | "印" | "พิมพ์" | "출력" | "вывести" | "imprimir" | "afficher" => {
+            "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести" | "imprimir" | "afficher" => {
                 let s = args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("");
                 println!("{s}");
                 return Ok(Value::Unit);
             }
             // ── Format ──
-            "format" | "格式" | "รูปแบบ" | "форматировать" | "formatear" | "formater" => {
+            "format" | "格式" | "フォーマット" | "서식" | "รูปแบบ" | "форматировать" | "formatear" | "formater" => {
                 return Ok(Value::Str(self.builtin_format(&args)?));
             }
             // ── String join / concatenation ──
@@ -558,11 +754,11 @@ impl Interpreter {
                 }
             }
             // ── Result constructors ──
-            "ok" | "好" => {
+            "ok" | "好" | "良し" | "좋아" | "โอเค" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Ok(Box::new(val)));
             }
-            "bad" | "坏" | "err" => {
+            "bad" | "坏" | "err" | "悪い" | "나쁨" | "ผิด" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Err(Box::new(val)));
             }
@@ -578,7 +774,7 @@ impl Interpreter {
             "计时::获取当前小时" | "Timer::hour" => return Ok(Value::Number(14.0)),
             "计时::现在" | "Timer::now"          => return Ok(Value::Number(1000.0)),
             // ── Sleep ──
-            "sleep" | "หยุด" | "sleep_ms" | "流水::睡眠" | "Flow::sleep" => {
+            "sleep" | "หยุด" | "นอน" | "sleep_ms" | "睡眠" | "眠る" | "スリープ" | "잠자기" | "잠" | "流水::睡眠" | "Flow::sleep" => {
                 if let Some(ms_val) = args.first() {
                     if let Ok(ms) = self.to_number(ms_val) {
                         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
@@ -608,102 +804,103 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── Trigonometry (input in radians) ──
-            "sin" | "ไซน์" => {
+            "sin" | "ไซน์" | "正弦" | "サイン" | "사인" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sin()));
             }
-            "cos" | "โคไซน์" => {
+            "cos" | "โคไซน์" | "余弦" | "コサイン" | "코사인" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cos()));
             }
 
             // ── Hyperbolic functions ──
             // Hyperbolic tangent
-            "tanh" | "tanhf" => {
+            "tanh" | "tanhf" | "双曲正切" | "双曲線正接" | "쌍곡탄젠트" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tanh()));
             }
 
 
-            "tan" | "แทนเจนต์" => {
+            "tan" | "แทนเจนต์" | "正切" | "タンジェント" | "탄젠트" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tan()));
             }
-            "asin" | "arcsin" => {
+            "asin" | "arcsin" | "反正弦" | "アークサイン" | "아크사인" | "อาร์กไซน์" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.asin()));
             }
-            "acos" | "arccos" => {
+            "acos" | "arccos" | "反余弦" | "アークコサイン" | "아크코사인" | "อาร์กโคไซน์" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.acos()));
             }
-            "atan" | "arctan" => {
+            "atan" | "arctan" | "反正切" | "アークタンジェント" | "아크탄젠트" | "อาร์กแทนเจนต์" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.atan()));
             }
-            "atan2" | "arctan2" => {
+            "atan2" | "arctan2" | "反正切2" | "アークタンジェント2" | "아크탄젠트2" => {
                 let y = self.arg_num(&args, 0, 0.0)?;
                 let x = self.arg_num(&args, 1, 1.0)?;
                 return Ok(Value::Number(y.atan2(x)));
             }
 
             // ── Roots / powers ──
-            "sqrt" | "รากที่สอง" => {
+            "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sqrt()));
             }
-            "cbrt" => {
+            "cbrt" | "立方根" | "세제곱근" | "รากที่สาม" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cbrt()));
             }
-            "pow" | "ยกกำลัง" => {
+            "pow" | "ยกกำลัง" | "幂" | "べき乗" | "거듭제곱" => {
                 let base = self.arg_num(&args, 0, 0.0)?;
                 let exp  = self.arg_num(&args, 1, 1.0)?;
                 return Ok(Value::Number(base.powf(exp)));
             }
-            "exp" => {
+            "exp" | "指数" | "指数関数" | "지수" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.exp()));
             }
-            "hypot" => {
+            "hypot" | "斜边" | "斜辺" | "빗변" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let y = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(x.hypot(y)));
             }
 
             // ── Logarithms ──
-            "ln" | "log" | "ลอการิทึม" => {
+            "ln" | "log" | "ลอการิทึม" | "对数" | "対数" | "로그" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.ln()));
             }
-            "log2" => {
+            "log2" | "对数2" | "対数2" | "로그2" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.log2()));
             }
-            "log10" => {
+            "log10" | "对数10" | "対数10" | "로그10" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.log10()));
             }
 
             // ── Rounding / truncation ──
-            "abs" | "ค่าสัมบูรณ์" => {
+            "abs" | "ค่าสัมบูรณ์" | "绝对值" | "绝对" | "絶対値" | "절댓값" | "절대값" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.abs()));
             }
-            "floor" | "ปัดลง" => {
+            "floor" | "ปัดลง" | "向下取整" | "下整" | "床関数" | "내림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.floor()));
             }
-            "ceil" | "ปัดขึ้น" => {
+            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.ceil()));
             }
-            "round" | "ปัดเศษ" => {
+            "round" | "ปัดเศษ" | "四舍五入" | "四舍" | "四捨五入" | "반올림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.round()));
             }
-            "trunc" | "int" | "ตัดทศนิยม" => {
+            "trunc" | "int" | "ตัดทศนิยม" | "取整" | "整数化" | "整数" | "截整"
+                    | "정수화" | "정수" | "切り捨て" | "버림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.trunc()));
             }
-            "fract" => {
+            "fract" | "小数部分" | "小数部" | "소수부" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.fract()));
             }
 
             // ── min / max / clamp ──
-            "min" | "ต่ำสุด" => {
+            "min" | "ต่ำสุด" | "最小" | "최솟값" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.min(b)));
             }
-            "max" | "สูงสุด" => {
+            "max" | "สูงสุด" | "最大" | "최댓값" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.max(b)));
             }
-            "clamp" | "จำกัด" => {
+            "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" => {
                 let x  = self.arg_num(&args, 0, 0.0)?;
                 let lo = self.arg_num(&args, 1, 0.0)?;
                 let hi = self.arg_num(&args, 2, 1.0)?;
@@ -711,8 +908,186 @@ impl Interpreter {
             }
 
             // ── Constants (also accessible as plain identifiers via lookup) ──
-            "pi" | "π" | "พาย" => return Ok(Value::Number(std::f64::consts::PI)),
-            "tau" | "τ"        => return Ok(Value::Number(std::f64::consts::TAU)),
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => return Ok(Value::Number(std::f64::consts::PI)),
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว"        => return Ok(Value::Number(std::f64::consts::TAU)),
+
+            // ══════════════════════════════════════════════════════════════════
+            // PHASE 1: DMT TRIP CODER FEATURES
+            // ══════════════════════════════════════════════════════════════════
+
+            // ── Step 1: Noise Functions ──
+            "vnoise" | "noise2" | "นอยส์2ดี" | "柏林噪声2D" | "バリューノイズ2D" | "값노이즈2D" => {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let seed = self.arg_num(&args, 2, 0.0)? as u32;
+                return Ok(Value::Number(tex_vnoise(x, y, seed) as f64));
+            }
+
+            "fbm" | "นอยส์ออร์แกนิก" | "分形噪声" | "フラクタルノイズ" | "프랙탈노이즈" => {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let octaves = self.arg_num(&args, 2, 4.0)? as u32;
+                let seed = self.arg_num(&args, 3, 0.0)? as u32;
+                return Ok(Value::Number(tex_fbm(x, y, octaves, seed) as f64));
+            }
+
+            "perlin" | "perlin3" | "เพอร์ลิน3ดี" | "柏林噪声3D" | "パーリンノイズ3D" | "펄린노이즈3D" => {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                return Ok(Value::Number(perlin3(x, y, z) as f64));
+            }
+
+            // ── Step 2: Math Ergonomics ──
+            "lerp" | "ค่าระหว่าง" | "线性插值" | "線形補間" | "선형보간" => {
+                let a = self.arg_num(&args, 0, 0.0)?;
+                let b = self.arg_num(&args, 1, 1.0)?;
+                let t = self.arg_num(&args, 2, 0.0)?;
+                return Ok(Value::Number(a + (b - a) * t));
+            }
+
+            "smoothstep" | "เปลี่ยนแบบนุ่ม" | "平滑步进" | "スムーズステップ" | "스무스스텝" => {
+                let lo = self.arg_num(&args, 0, 0.0)?;
+                let hi = self.arg_num(&args, 1, 1.0)?;
+                let x = self.arg_num(&args, 2, 0.5)?;
+                let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
+                return Ok(Value::Number(t * t * (3.0 - 2.0 * t)));
+            }
+
+            "rand" | "สุ่ม" | "随机" | "乱数" | "난수" => {
+                let val = fast_rand_f64(&mut self.rand_state);
+                return Ok(Value::Number(val));
+            }
+
+            "sign" | "เครื่องหมาย" | "符号" | "符号関数" | "부호" => {
+                let x = self.arg_num(&args, 0, 0.0)?;
+                return Ok(Value::Number(x.signum()));
+            }
+
+            "hsv_to_rgb" | "เอชเอสวีเป็นRGB" | "HSV转RGB" | "HSV変換RGB" | "HSV변환RGB" => {
+                let h = self.arg_num(&args, 0, 0.0)?; // 0-360
+                let s = self.arg_num(&args, 1, 1.0)?; // 0-1
+                let v = self.arg_num(&args, 2, 1.0)?; // 0-1
+                let c = v * s;
+                let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
+                let m = v - c;
+                let (r1, g1, b1) = if h < 60.0       { (c, x, 0.0) }
+                                    else if h < 120.0  { (x, c, 0.0) }
+                                    else if h < 180.0  { (0.0, c, x) }
+                                    else if h < 240.0  { (0.0, x, c) }
+                                    else if h < 300.0  { (x, 0.0, c) }
+                                    else               { (c, 0.0, x) };
+                let r = ((r1 + m) * 255.0).round();
+                let g = ((g1 + m) * 255.0).round();
+                let b = ((b1 + m) * 255.0).round();
+                return Ok(Value::List(vec![Value::Number(r), Value::Number(g), Value::Number(b)]));
+            }
+
+            "lerp_color" | "ไล่สี" | "颜色插值" | "色補間" | "색보간" => {
+                let r1 = self.arg_num(&args, 0, 0.0)?;
+                let g1 = self.arg_num(&args, 1, 0.0)?;
+                let b1 = self.arg_num(&args, 2, 0.0)?;
+                let r2 = self.arg_num(&args, 3, 255.0)?;
+                let g2 = self.arg_num(&args, 4, 255.0)?;
+                let b2 = self.arg_num(&args, 5, 255.0)?;
+                let t = self.arg_num(&args, 6, 0.0)?;
+                let r = r1 + (r2 - r1) * t;
+                let g = g1 + (g2 - g1) * t;
+                let b = b1 + (b2 - b1) * t;
+                let c = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                self.gfx.borrow_mut().color = c;
+                return Ok(Value::Unit);
+            }
+
+            // ── Step 3: Real-Time Clock ──
+            "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" => {
+                return Ok(Value::Number(self.start_time.elapsed().as_secs_f64()));
+            }
+
+            "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" => {
+                return Ok(Value::Number(self.frame_num as f64));
+            }
+
+            // ── Step 4: Microphone Input ──
+            "mic_open" | "เปิดไมค์" | "开麦克风" | "マイク開く" | "마이크열기" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    match ling_mic::MicInput::open(Default::default()) {
+                        Ok(mic) => {
+                            let _ = mic.start(|_samples: &[f32]| {});  // No-op callback
+                            self.mic = Some(mic);
+                            return Ok(Value::Unit);
+                        }
+                        Err(e) => return Err(EvalErr::from(format!("mic_open failed: {e}"))),
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Unit);
+            }
+
+            "mic_rms" | "เสียงRMS" | "麦克风音量" | "マイクRMS" | "마이크RMS" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let rms = self.mic.as_ref().map(|m: &ling_mic::MicInput| m.rms()).unwrap_or(0.0);
+                    return Ok(Value::Number(rms as f64));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+
+            "mic_peak" | "เสียงพีค" | "麦克风峰值" | "マイクピーク" | "마이크피크" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let peak = self.mic.as_ref().map(|m: &ling_mic::MicInput| m.peak()).unwrap_or(0.0);
+                    return Ok(Value::Number(peak as f64));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+
+            "mic_fft" | "วิเคราะห์เสียงสด" | "实时频谱" | "リアルタイムFFT" | "실시간FFT" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let n = self.arg_num(&args, 0, 8.0)? as usize;
+                    if let Some(mic) = self.mic.as_ref() {
+                        let samples = mic.latest_samples();
+                        self.fft.borrow_mut().push_samples(&samples);
+                    }
+                    let bands = self.fft.borrow().freq_bands(n);
+                    let result = bands.iter().map(|&v| Value::Number(v as f64)).collect();
+                    return Ok(Value::List(result));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::List(vec![]));
+            }
+
+            // ── Step 5: Additive Blend Mode ──
+            "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" => {
+                let mode = self.arg_num(&args, 0, 0.0)? as u8;
+                self.gfx.borrow_mut().blend = mode;
+                return Ok(Value::Unit);
+            }
+
+            // ── Step 6: Circle Primitives ──
+            "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" => {
+                let cx = self.arg_num(&args, 0, 0.0)? as i32;
+                let cy = self.arg_num(&args, 1, 0.0)? as i32;
+                let r = self.arg_num(&args, 2, 10.0)? as i32;
+                let gfx = self.gfx.borrow();
+                draw_circle_outline(&gfx.buffer, gfx.width as i32, gfx.height as i32, cx, cy, r, gfx.color, gfx.blend);
+                drop(gfx);
+                return Ok(Value::Unit);
+            }
+
+            "draw_filled_circle" | "draw_disc" | "วาดวงกลมทึบ" | "画实心圆" | "塗りつぶし円" | "원채우기" => {
+                let cx = self.arg_num(&args, 0, 0.0)? as i32;
+                let cy = self.arg_num(&args, 1, 0.0)? as i32;
+                let r = self.arg_num(&args, 2, 10.0)? as i32;
+                let gfx = self.gfx.borrow();
+                draw_circle_filled(&gfx.buffer, gfx.width as i32, gfx.height as i32, cx, cy, r, gfx.color, gfx.blend);
+                drop(gfx);
+                return Ok(Value::Unit);
+            }
 
             // ══════════════════════════════════════════════════════════════════
             // GRAPHICS BUILTINS
@@ -720,7 +1095,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── เปิดหน้าต่าง(width, height, title) — open_window ──
-            "เปิดหน้าต่าง" | "open_window" | "gfx_window" => {
+            "เปิดหน้าต่าง" | "open_window" | "gfx_window" | "开窗" | "ウィンドウ開く" | "창열기" => {
                 let w = self.arg_num(&args, 0, 800.0)? as usize;
                 let h = self.arg_num(&args, 1, 600.0)? as usize;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -756,7 +1131,7 @@ impl Interpreter {
             }
 
             // ── เติม(r, g, b) — fill / clear screen with colour ──
-            "เติม" | "fill" | "gfx_fill" | "clear" => {
+            "เติม" | "fill" | "gfx_fill" | "clear" | "填" | "塗り潰し" | "채우기" | "清" | "消去" | "지우기" => {
                 let r = self.arg_num(&args, 0, 0.0)? as u32;
                 let g = self.arg_num(&args, 1, 0.0)? as u32;
                 let b = self.arg_num(&args, 2, 0.0)? as u32;
@@ -777,7 +1152,7 @@ impl Interpreter {
 
             // ── set_color_hsl(h, s, l) — set drawing colour from HSL ──
             // h: 0–360 degrees, s: 0–100 saturation, l: 0–100 lightness
-            "set_color_hsl" | "颜色HSL" | "สีHSLวาด" => {
+            "set_color_hsl" | "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" => {
                 let h = self.arg_num(&args, 0, 0.0)?;
                 let s = self.arg_num(&args, 1, 70.0)?;
                 let l = self.arg_num(&args, 2, 50.0)?;
@@ -790,7 +1165,7 @@ impl Interpreter {
             }
 
             // ── สีดินสอ(r, g, b) — set drawing colour ──
-            "สีดินสอ" | "set_color" | "gfx_color" | "color" => {
+            "สีดินสอ" | "set_color" | "gfx_color" | "color" | "设色" | "色設定" | "색설정" => {
                 let r = self.arg_num(&args, 0, 255.0)? as u32;
                 let g = self.arg_num(&args, 1, 255.0)? as u32;
                 let b = self.arg_num(&args, 2, 255.0)? as u32;
@@ -799,7 +1174,7 @@ impl Interpreter {
             }
 
             // ── วาดสามเหลี่ยม(x1,y1, x2,y2, x3,y3) — draw filled triangle ──
-            "วาดสามเหลี่ยม" | "draw_triangle" | "gfx_triangle" | "triangle" => {
+            "วาดสามเหลี่ยม" | "draw_triangle" | "gfx_triangle" | "triangle" | "画三角" | "三角形描画" | "삼각형그리기" => {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
                 let x1 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -820,7 +1195,7 @@ impl Interpreter {
             }
 
             // ── วาดเส้น(x1,y1, x2,y2) — draw line ──
-            "วาดเส้น" | "draw_line" | "gfx_line" | "line" => {
+            "วาดเส้น" | "draw_line" | "gfx_line" | "line" | "画线" | "線描く" | "선그리기" => {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
                 let x1 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -839,7 +1214,7 @@ impl Interpreter {
             }
 
             // ── วาดจุด(x, y) — plot a single pixel ──
-            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" => {
+            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" | "画点" | "点描く" | "점그리기" => {
                 let px = self.arg_num(&args, 0, 0.0)? as i32;
                 let py = self.arg_num(&args, 1, 0.0)? as i32;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -865,7 +1240,7 @@ impl Interpreter {
             }
 
             // ── แสดงผล() — flush depth queue, then present frame to screen ──
-            "แสดงผล" | "present" | "gfx_present" | "show" => {
+            "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     // Flush depth queue and present — release borrow before reading mouse.
@@ -943,11 +1318,13 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     queue.flush_to_webgl(fr, fg, fb, w, h);
                 }
+                // Increment frame counter
+                self.frame_num += 1;
                 return Ok(Value::Unit);
             }
 
             // ── เปิดหน้าต่างเต็มจอ(title) — true native-res fullscreen window ──
-            "เปิดหน้าต่างเต็มจอ" | "open_fullscreen" | "fullscreen" => {
+            "เปิดหน้าต่างเต็มจอ" | "open_fullscreen" | "fullscreen" | "全屏" | "全画面" | "전체화면" => {
                 // In WASM the canvas defines the viewport; use its current size
                 // as the default so the projection matches what's actually visible.
                 #[cfg(target_arch = "wasm32")]
@@ -1004,15 +1381,15 @@ impl Interpreter {
             }
 
             // ── ความกว้าง() / ความสูง() — current framebuffer size ──
-            "get_width" | "ความกว้าง" => {
+            "get_width" | "ความกว้าง" | "宽" | "幅取得" | "너비" => {
                 return Ok(Value::Number(self.gfx.borrow().width as f64));
             }
-            "get_height" | "ความสูง" => {
+            "get_height" | "ความสูง" | "高" | "高取得" | "높이" => {
                 return Ok(Value::Number(self.gfx.borrow().height as f64));
             }
 
             // ── หน้าต่างเปิดอยู่() → bool — is the window still open? ──
-            "หน้าต่างเปิดอยู่" | "window_is_open" | "gfx_is_open" | "is_open" => {
+            "หน้าต่างเปิดอยู่" | "window_is_open" | "gfx_is_open" | "is_open" | "窗开" | "開いている" | "창열림" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let gfx = self.gfx.borrow();
@@ -1026,7 +1403,7 @@ impl Interpreter {
             }
 
             // ── key_down(name) → bool — is a key held? ──
-            "key_down" | "กดค้าง" => {
+            "key_down" | "กดค้าง" | "按键" | "キー押す" | "키누름" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
@@ -1041,7 +1418,7 @@ impl Interpreter {
             }
 
             // ── key_pressed(name) → bool — was a key pressed this frame? ──
-            "key_pressed" | "กดปุ่ม" => {
+            "key_pressed" | "กดปุ่ม" | "键按" | "キー押した" | "키눌림" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
@@ -1057,13 +1434,13 @@ impl Interpreter {
             }
 
             // ── mouse_dx() / mouse_dy() → f64 — delta since last frame ──
-            "mouse_dx" | "เมาส์X" => {
+            "mouse_dx" | "เมาส์X" | "鼠ΔX" | "マウスΔX" | "마우스ΔX" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
             }
-            "mouse_dy" | "เมาส์Y" => {
+            "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
                 #[cfg(target_arch = "wasm32")]
@@ -1071,7 +1448,7 @@ impl Interpreter {
             }
 
             // ── set_camera_pos(x, y, z) — move camera to world position ──
-            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" => {
+            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
@@ -1091,14 +1468,14 @@ impl Interpreter {
             }
 
             // ── set_zdist(d) — set perspective z-offset (field-of-view taper) ──
-            "set_zdist" | "ตั้งระยะห่าง" => {
+            "set_zdist" | "ตั้งระยะห่าง" | "镜距" | "Z距離設定" | "Z거리설정" => {
                 let d = self.arg_num(&args, 0, 5.0)? as f32;
                 self.gfx.borrow_mut().camera.zdist = d;
                 return Ok(Value::Unit);
             }
 
             // ── capture_mouse() — hide cursor and warp to centre each frame ──
-            "capture_mouse" | "จับเมาส์" => {
+            "capture_mouse" | "จับเมาส์" | "捕鼠" | "マウス捕捉" | "마우스잡기" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let mut gfx = self.gfx.borrow_mut();
@@ -1137,7 +1514,7 @@ impl Interpreter {
 
             // ── set_camera(cry, sry, crx, srx) — store precomputed camera trig ──
             // Call once per frame after computing cos/sin of your rotation angles.
-            "set_camera" | "ตั้งกล้อง" => {
+            "set_camera" | "ตั้งกล้อง" | "设镜" | "设置摄像机" | "カメラ設定" | "카메라설정" => {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
@@ -1150,7 +1527,7 @@ impl Interpreter {
 
             // ── set_projection(cx, cy, focal, zdist) — override projection params ──
             // Automatically set when the window opens; override only if needed.
-            "set_projection" | "ตั้งโปรเจกชัน" => {
+            "set_projection" | "ตั้งโปรเจกชัน" | "投影" | "投影設定" | "투영설정" => {
                 let cx    = self.arg_num(&args, 0, 960.0)? as f32;
                 let cy    = self.arg_num(&args, 1, 540.0)? as f32;
                 let focal = self.arg_num(&args, 2, 1080.0)? as f32;
@@ -1166,7 +1543,7 @@ impl Interpreter {
             // ── add_light(x, y, z, r, g, b, intensity, radius) ──
             // Adds a point light in world space.  r/g/b in [0..1].
             // radius == 0 → no distance falloff.
-            "add_light" | "เพิ่มแสง" => {
+            "add_light" | "เพิ่มแสง" | "加灯" | "ライト追加" | "조명추가" => {
                 let x   = self.arg_num(&args, 0, 0.0)? as f32;
                 let y   = self.arg_num(&args, 1, -3.0)? as f32;
                 let z   = self.arg_num(&args, 2, 3.0)? as f32;
@@ -1183,13 +1560,13 @@ impl Interpreter {
             }
 
             // ── clear_lights() — remove all lights ──
-            "clear_lights" | "ล้างแสง" => {
+            "clear_lights" | "ล้างแสง" | "清灯" | "ライト消去" | "조명초기화" => {
                 self.gfx.borrow_mut().lights.clear();
                 return Ok(Value::Unit);
             }
 
             // ── set_ambient(v) — ambient light level [0..1] ──
-            "set_ambient" | "ตั้งแสงรอบข้าง" => {
+            "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" => {
                 let v = self.arg_num(&args, 0, 0.15)? as f32;
                 self.gfx.borrow_mut().ambient = v;
                 return Ok(Value::Unit);
@@ -2286,7 +2663,7 @@ impl Interpreter {
         Err(EvalErr::from(format!("unknown function '{name}'")))
     }
 
-    fn call_value(&self, v: Value, args: Vec<Value>) -> EvalResult {
+    fn call_value(&mut self, v: Value, args: Vec<Value>) -> EvalResult {
         match v {
             Value::Fn(params, body, mut captured) => {
                 for (p, a) in params.iter().zip(args) {

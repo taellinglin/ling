@@ -8,7 +8,50 @@
 - [x] Add integration test that runs `examples/hello.ling` and asserts stdout contains `Hello, World!`
 
 ## Examples: gfx compatibility (ling-graphics)
-- [x] Make `examples/gfx.ling` parse and run by removing unsupported `&&` conditions
+- [x] Make `examples/basics/gfx.ling` parse and run by removing unsupported `&&` conditions
+
+## 5-Language Builtin Parity (EN · ZH · JA · KO · TH)
+Goal: every runtime builtin accepts aliases in all 5 languages, mirrored in the
+lexicons and `lingfu normalize` so a program normalized to any language runs
+unchanged. Runtime is the **superset** — it accepts every alias any lexicon or
+normalizer table can emit.
+
+- [x] **Batch 1 — math + core** (`sin`…`tau`, `print`/`format`/`ok`/`bad`/`sleep`)
+      added to runtime, lexicons (th fixes), and a new `BUILTINS_MATH` normalize
+      table; verified by normalizing a math program to zh/ja/ko/th and running
+      each (identical output). Docs: `docs/src/reference/builtins.md`.
+- [x] **Batch 2 — graphics / window / camera / input / lighting** (24 arms:
+      `open_window`, `fill`, `set_color`, `draw_line`, `draw_pixel`, `triangle`,
+      `present`, `get_width/height`, `key_down/pressed`, `mouse_dx/dy`,
+      `capture_mouse`, `set_camera`/`_pos`, `set_zdist`, `set_projection`,
+      `set_ambient`, `add_light`, `clear_lights`, `open_fullscreen`,
+      `window_is_open`, `set_color_hsl`): ZH/JA/KO aliases added to runtime
+      (superset), new `BUILTINS_GFX` normalize table + reconciled `BUILTINS_OTHER`
+      output forms; verified by normalizing a graphics program to zh/ja/ko/th and
+      confirming every builtin resolves. Docs: `docs/src/reference/window.md`.
+      (Shapes/`vtex_*` already had 5-language coverage.)
+- [ ] **Batch 3 — audio** (`audio_*`, `tone`, `mic_*`, `fft_*`): same treatment,
+      update `docs/src/reference/audio.md`.
+- [ ] **Batch 4 — crypto / physics** (`ling-crypto`, `ling-physics` builtins):
+      same treatment, update `docs/src/crypto.md` + a new physics reference page.
+- [ ] Fill the `—` cells in the math table (Thai for `exp`/`hypot`/`log2`/`fract`,
+      etc.) once preferred terms are chosen.
+
+## Test suite & CI (tests badge)
+- [x] `tests/language_system.rs` — 16 tests: multilingual hello-world (5 langs),
+      math builtins in 5 langs, mixed-language file, polyglot detect, error paths.
+- [x] `crates/ling-fu/tests/normalize_cli.rs` — drives the `lingfu` binary,
+      normalizes a program to zh/ja/ko/th + back to `bind`-canonical English.
+- [x] `crates/ling-crypto/tests/crypto_roundtrip.rs` — Blake3 + AES-GCM-256.
+- [x] `crates/ling-physics/tests/vector_ops.rs` — vector algebra.
+- [x] `crates/ling-audio/tests/fft_smoke.rs` — FFT analyzer.
+- [x] `crates/ling-game/tests/ecs_smoke.rs` — entity/component store.
+- [x] Fixed pre-existing failures: `ling-polyglot` detect heuristic (neutral
+      chars no longer outweigh CJK/Thai), `ling-audio` fft doctest, stale
+      `physics_demo_rust` example target in Cargo.toml.
+- [x] `.github/workflows/ci.yml` rewritten (master/main triggers, system deps for
+      minifb/cpal, lint non-blocking) + `tests` badge in README.
+      Full workspace: **66 passed, 0 failed**.
 
 ## Requested: rotating cube “window/viewport” instance API
 - [ ] Add Rust-to-language integration so `.ling` can trigger a render loop

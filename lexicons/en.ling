@@ -122,6 +122,7 @@ set_volume = "set_volume"
 mic_open = "mic_open"
 mic_peak = "mic_peak"
 mic_rms = "mic_rms"
+mic_fft = "mic_fft"
 audio_tone = "audio_tone"
 audio_volume = "audio_volume"
 audio_listener = "audio_listener"
@@ -155,6 +156,24 @@ max = "max"
 clamp = "clamp"
 pi = "pi"
 tau = "tau"
+lerp = "lerp"
+smoothstep = "smoothstep"
+rand = "rand"
+sign = "sign"
+# Noise
+vnoise = "vnoise"
+fbm = "fbm"
+perlin = "perlin"
+# Color
+hsv_to_rgb = "hsv_to_rgb"
+lerp_color = "lerp_color"
+# Blending
+set_blend = "set_blend"
+# Time
+time_now = "time_now"
+frame_count = "frame_count"
+# Drawing - filled
+draw_disc = "draw_disc"
 # Collections
 len = "len"
 push = "push"

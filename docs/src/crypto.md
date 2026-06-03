@@ -343,7 +343,7 @@ bind key = mandala_hash(
 
 ## Multilingual Crypto Library
 
-All examples in this section support all 5 languages. See `examples/crypto.ling` for a complete multilingual wrapper library.
+All examples in this section support all 5 languages. See `examples/crypto/crypto.ling` for a complete multilingual wrapper library.
 
 ```ling
 # Same code, different languages:
@@ -354,7 +354,7 @@ bind h3 = blake3_ハッシュ("test")       # Japanese
 
 ## Further Reading
 
-- **Visualization**: `examples/crypto_hologram.ling` — 4D holographic cryptography
+- **Visualization**: `examples/crypto/crypto_hologram.ling` — 4D holographic cryptography
 - **Crypto Crate**: [ling-crypto on crates.io](https://crates.io/crates/ling-crypto)
 - **Standards**:
   - BLAKE3: https://blake3.io/

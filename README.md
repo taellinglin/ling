@@ -5,6 +5,7 @@
 
 **The Omniglot Systems Language**
 
+[![CI](https://img.shields.io/github/actions/workflow/status/taellinglin/ling/ci.yml?branch=master&style=flat-square&label=tests)](https://github.com/taellinglin/ling/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/ling-lang?style=flat-square&color=c8273e&label=crates.io)](https://crates.io/crates/ling-lang)
 [![docs.rs](https://img.shields.io/docsrs/ling-lang?style=flat-square&color=00c4cc&label=docs.rs)](https://docs.rs/ling-lang)
 [![Website](https://img.shields.io/badge/website-ling--lang.org-00c4cc?style=flat-square)](https://ling-lang.org)
@@ -29,14 +30,14 @@ English, Arabic, Hebrew, Russian, and more — in the same source file, with no
 
 ```bash
 cargo install ling-lang
-ling run examples/hello.ling
+ling run examples/basics/thai_hello_world.ling
 ```
 
 ```bash
 # Or from source
 git clone https://github.com/taellinglin/ling
 cd ling
-cargo run --bin ling -- run examples/hello.ling
+cargo run --bin ling -- run examples/basics/thai_hello_world.ling
 ```
 
 ---
@@ -56,7 +57,7 @@ cargo run --bin ling -- run examples/hello.ling
 
 ```ling
 fn main() {
-  let x = 42
+  bind x = 42
   print("Hello!")
 }
 ```
@@ -113,7 +114,7 @@ All five are valid in a **single `.ling` file** — mix and match freely.
 
 | Concept | 🇺🇸 EN | 🇨🇳 ZH | 🇯🇵 JA | 🇰🇷 KO | 🇹🇭 TH |
 |---------|--------|--------|--------|--------|--------|
-| Bind/Let | `let` | `令` | `束縛` | `바인드` | `ผูก` |
+| Bind | `bind` | `令` | `束縛` | `바인드` | `ผูก` |
 | Function | `fn` | `函` | `関数` | `함수` | `ฟังก์ชัน` |
 | If | `if` | `若` | `もし` | `만약` | `ถ้า` |
 | Else | `else` | `否则` | `他` | `아니면` | `มิฉะนั้น` |
@@ -264,8 +265,8 @@ ling/
 ```bash
 cargo build                                        # debug
 cargo build --release                              # release
-cargo run --bin ling -- run examples/Garden.ling   # run a room
-cargo run --bin ling -- visualize examples/Garden.ling > Garden.svg
+cargo run --bin ling -- run examples/audiovisual/Garden.ling   # run a room
+cargo run --bin ling -- visualize examples/audiovisual/Garden.ling > Garden.svg
 mdbook build docs && mdbook serve docs             # local docs
 ```
 

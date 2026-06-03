@@ -24,5 +24,5 @@ cargo build --release
 ## Run a script
 
 ```sh
-ling examples/hello.ling
+ling examples/basics/thai_hello_world.ling
 ```

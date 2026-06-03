@@ -1,0 +1,270 @@
+// ════════════════════════════════════════════════════════════════════════════════════
+// 🎵 MYSTICAL SYMPHONY — Interactive Physics + Audio + Graphics Demo 🎵
+// ════════════════════════════════════════════════════════════════════════════════════
+//
+// An omniglot Ling demonstration combining:
+//   • Real-time physics simulation (gravity, collisions, elasticity)
+//   • Procedural audio synthesis (pentatonic scale, harmonic generation)
+//   • 3D graphics rendering (spheres, patterns, camera motion)
+//   • Cryptographic hash functions for color generation
+//   • Interactive mouse + keyboard controls
+//
+// ════════════════════════════════════════════════════════════════════════════════════
+
+令 PI = 3.14159265
+令 PI2 = 1.5708
+令 BASE_FREQ = 440.0             // A4 frequency for pentatonic scale
+令 SPHERE_RADIUS = 2.0           // Visual sphere size
+令 GRAVITY = 32.0                // World gravity
+令 DAMPING = 0.985               // Velocity damping
+令 ELASTICITY = 0.88             // Bounce elasticity
+令 DT = 0.016                    // Delta time (60 FPS)
+
+// Pentatonic scale ratios (DO RE MI SOL LA)
+令 R1 = 1.0    // Fundamental
+令 R2 = 1.125  // Major second
+令 R3 = 1.25   // Major third
+令 R4 = 1.5    // Perfect fifth
+令 R5 = 1.875  // Major sixth
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ════════════════════════════════════════════════════════════════════════════════════
+
+fn hash_value(n) {
+    // Cryptography-inspired pseudo-random hash
+    令 h = n
+    令 h = (h * 73856093) % 19349663
+    令 h = (h * 19349663 + 1) % 19349663
+    กลับ h
+}
+
+fn hue_color(v) {
+    // Generate hue (0-360) from value
+    令 h = hash_value(v)
+    กลับ (h % 360)
+}
+
+fn set_color_hue(hue) {
+    // HSV to RGB conversion using sine waves
+    令 r = ไซน์(hue * PI / 180.0 + 0.0) * 127 + 128
+    令 g = ไซน์(hue * PI / 180.0 + 2.094) * 127 + 128
+    令 b = ไซน์(hue * PI / 180.0 + 4.189) * 127 + 128
+    สีดินสอ(r, g, b)
+}
+
+fn play_tone(degree, amp) {
+    // Play pentatonic note
+    令 ratio = 0.0
+    if degree % 5 == 0 { 令 ratio = R1 }
+    if degree % 5 == 1 { 令 ratio = R2 }
+    if degree % 5 == 2 { 令 ratio = R3 }
+    if degree % 5 == 3 { 令 ratio = R4 }
+    if degree % 5 == 4 { 令 ratio = R5 }
+
+    令 freq = BASE_FREQ * ratio
+    ระดับเสียง(amp * 0.3)
+    เสียงโทน(0, freq, 0.0, 0.0, 2.0, 0.15, 0.05, 0.4, 0.02)
+}
+
+fn draw_ball(x, y, z, hue) {
+    set_color_hue(hue)
+    วาดทรงกลม(x, y, z, SPHERE_RADIUS)
+}
+
+fn draw_pattern(cx, cy, cz, frame) {
+    // Draw concentric ring pattern (mandala-inspired)
+    令 i = 0
+    ขณะที่ i < 5 {
+        令 r = 1.0 + i * 0.5
+        令 a = i * PI2 + frame * 0.01
+        令 px = cx + r * โคไซน์(a)
+        令 pz = cz + r * ไซน์(a)
+        set_color_hue(hue_color(i + frame))
+        วาดสี่เหลี่ยมจัตุรัส(px, cy, pz, 0.3)
+        令 i = i + 1
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// MAIN APPLICATION
+// ════════════════════════════════════════════════════════════════════════════════════
+
+令 start = do {
+    // Initialize window and audio
+    open_fullscreen("MYSTICAL SYMPHONY: Ling Omniglot Demo")
+    capture_mouse()
+    set_ambient(0.15)
+
+    // Background ambient tone
+    ระดับเสียง(0.4)
+    เสียงโทน(0, BASE_FREQ * 0.5, 0.0, 0.0, 3.0, 0.5, 0.1, 0.6, 0.03)
+
+    // Lighting setup
+    set_light(0.3)
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // PHYSICS STATE — 4 Bouncing Spheres
+    // ──────────────────────────────────────────────────────────────────────────
+
+    令 x0 = 0.0   令 y0 = 20.0  令 z0 = 0.0
+    令 vx0 = 0.0  令 vy0 = 0.0  令 vz0 = 0.0
+
+    令 x1 = 5.0   令 y1 = 15.0  令 z1 = 0.0
+    令 vx1 = 0.0  令 vy1 = 0.0  令 vz1 = 0.0
+
+    令 x2 = -5.0  令 y2 = 10.0  令 z2 = 0.0
+    令 vx2 = 0.0  令 vy2 = 0.0  令 vz2 = 0.0
+
+    令 x3 = 0.0   令 y3 = 5.0   令 z3 = 5.0
+    令 vx3 = 0.0  令 vy3 = 0.0  令 vz3 = 0.0
+
+    令 frame = 0
+    令 cam_rot = 0.0
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // MAIN SIMULATION LOOP
+    // ──────────────────────────────────────────────────────────────────────────
+
+    ขณะที่ window_is_open() {
+        fill(30, 50, 120)
+
+        // Input handling
+        令 mx = get_mouse_x()
+        令 my = get_mouse_y()
+        令 cam_rot = mx * 0.002
+
+        // Spacebar spawns sphere
+        if key_down("space") {
+            令 x0 = (mx - 512) * 0.1
+            令 y0 = 30.0
+            令 z0 = (my - 384) * 0.1
+            令 vx0 = (mx - 512) * 0.01
+            令 vy0 = -5.0
+            令 vz0 = (my - 384) * 0.01
+            play_tone(frame % 5, 0.8)
+        }
+
+        // R key resets
+        if key_down("r") {
+            令 x0 = 0.0   令 y0 = 20.0  令 z0 = 0.0  令 vx0 = 0.0  令 vy0 = 0.0  令 vz0 = 0.0
+            令 x1 = 5.0   令 y1 = 15.0  令 z1 = 0.0  令 vx1 = 0.0  令 vy1 = 0.0  令 vz1 = 0.0
+            令 x2 = -5.0  令 y2 = 10.0  令 z2 = 0.0  令 vx2 = 0.0  令 vy2 = 0.0  令 vz2 = 0.0
+            令 x3 = 0.0   令 y3 = 5.0   令 z3 = 5.0  令 vx3 = 0.0  令 vy3 = 0.0  令 vz3 = 0.0
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // PHYSICS — Sphere 0
+        // ──────────────────────────────────────────────────────────────────
+
+        令 vy0 = vy0 + GRAVITY * DT
+        令 vx0 = vx0 * DAMPING  令 vy0 = vy0 * DAMPING  令 vz0 = vz0 * DAMPING
+        令 x0 = x0 + vx0 * DT   令 y0 = y0 + vy0 * DT   令 z0 = z0 + vz0 * DT
+
+        if x0 < -20.0 + SPHERE_RADIUS { 令 x0 = -20.0 + SPHERE_RADIUS  令 vx0 = 0.0 - vx0 * ELASTICITY  play_tone(0, 0.5) }
+        if x0 > 20.0 - SPHERE_RADIUS { 令 x0 = 20.0 - SPHERE_RADIUS  令 vx0 = 0.0 - vx0 * ELASTICITY  play_tone(4, 0.5) }
+        if z0 < -25.0 + SPHERE_RADIUS { 令 z0 = -25.0 + SPHERE_RADIUS  令 vz0 = 0.0 - vz0 * ELASTICITY  play_tone(1, 0.5) }
+        if z0 > 25.0 - SPHERE_RADIUS { 令 z0 = 25.0 - SPHERE_RADIUS  令 vz0 = 0.0 - vz0 * ELASTICITY  play_tone(3, 0.5) }
+        if y0 < 0.0 + SPHERE_RADIUS { 令 y0 = 0.0 + SPHERE_RADIUS  令 vy0 = 0.0 - vy0 * ELASTICITY  play_tone(0, 0.6) }
+
+        // ──────────────────────────────────────────────────────────────────
+        // PHYSICS — Sphere 1
+        // ──────────────────────────────────────────────────────────────────
+
+        令 vy1 = vy1 + GRAVITY * DT
+        令 vx1 = vx1 * DAMPING  令 vy1 = vy1 * DAMPING  令 vz1 = vz1 * DAMPING
+        令 x1 = x1 + vx1 * DT   令 y1 = y1 + vy1 * DT   令 z1 = z1 + vz1 * DT
+
+        if x1 < -20.0 + SPHERE_RADIUS { 令 x1 = -20.0 + SPHERE_RADIUS  令 vx1 = 0.0 - vx1 * ELASTICITY }
+        if x1 > 20.0 - SPHERE_RADIUS { 令 x1 = 20.0 - SPHERE_RADIUS  令 vx1 = 0.0 - vx1 * ELASTICITY }
+        if z1 < -25.0 + SPHERE_RADIUS { 令 z1 = -25.0 + SPHERE_RADIUS  令 vz1 = 0.0 - vz1 * ELASTICITY }
+        if z1 > 25.0 - SPHERE_RADIUS { 令 z1 = 25.0 - SPHERE_RADIUS  令 vz1 = 0.0 - vz1 * ELASTICITY }
+        if y1 < 0.0 + SPHERE_RADIUS { 令 y1 = 0.0 + SPHERE_RADIUS  令 vy1 = 0.0 - vy1 * ELASTICITY }
+
+        // ──────────────────────────────────────────────────────────────────
+        // PHYSICS — Sphere 2
+        // ──────────────────────────────────────────────────────────────────
+
+        令 vy2 = vy2 + GRAVITY * DT
+        令 vx2 = vx2 * DAMPING  令 vy2 = vy2 * DAMPING  令 vz2 = vz2 * DAMPING
+        令 x2 = x2 + vx2 * DT   令 y2 = y2 + vy2 * DT   令 z2 = z2 + vz2 * DT
+
+        if x2 < -20.0 + SPHERE_RADIUS { 令 x2 = -20.0 + SPHERE_RADIUS  令 vx2 = 0.0 - vx2 * ELASTICITY }
+        if x2 > 20.0 - SPHERE_RADIUS { 令 x2 = 20.0 - SPHERE_RADIUS  令 vx2 = 0.0 - vx2 * ELASTICITY }
+        if z2 < -25.0 + SPHERE_RADIUS { 令 z2 = -25.0 + SPHERE_RADIUS  令 vz2 = 0.0 - vz2 * ELASTICITY }
+        if z2 > 25.0 - SPHERE_RADIUS { 令 z2 = 25.0 - SPHERE_RADIUS  令 vz2 = 0.0 - vz2 * ELASTICITY }
+        if y2 < 0.0 + SPHERE_RADIUS { 令 y2 = 0.0 + SPHERE_RADIUS  令 vy2 = 0.0 - vy2 * ELASTICITY }
+
+        // ──────────────────────────────────────────────────────────────────
+        // PHYSICS — Sphere 3
+        // ──────────────────────────────────────────────────────────────────
+
+        令 vy3 = vy3 + GRAVITY * DT
+        令 vx3 = vx3 * DAMPING  令 vy3 = vy3 * DAMPING  令 vz3 = vz3 * DAMPING
+        令 x3 = x3 + vx3 * DT   令 y3 = y3 + vy3 * DT   令 z3 = z3 + vz3 * DT
+
+        if x3 < -20.0 + SPHERE_RADIUS { 令 x3 = -20.0 + SPHERE_RADIUS  令 vx3 = 0.0 - vx3 * ELASTICITY }
+        if x3 > 20.0 - SPHERE_RADIUS { 令 x3 = 20.0 - SPHERE_RADIUS  令 vx3 = 0.0 - vx3 * ELASTICITY }
+        if z3 < -25.0 + SPHERE_RADIUS { 令 z3 = -25.0 + SPHERE_RADIUS  令 vz3 = 0.0 - vz3 * ELASTICITY }
+        if z3 > 25.0 - SPHERE_RADIUS { 令 z3 = 25.0 - SPHERE_RADIUS  令 vz3 = 0.0 - vz3 * ELASTICITY }
+        if y3 < 0.0 + SPHERE_RADIUS { 令 y3 = 0.0 + SPHERE_RADIUS  令 vy3 = 0.0 - vy3 * ELASTICITY }
+
+        // ──────────────────────────────────────────────────────────────────
+        // CAMERA — Orbiting view with animation
+        // ──────────────────────────────────────────────────────────────────
+
+        令 cam_dist = 50.0 + ไซน์(frame * 0.003) * 10.0
+        令 cam_h = 15.0 + โคไซน์(frame * 0.002) * 5.0
+        令 cam_x = โคไซน์(cam_rot) * cam_dist
+        令 cam_z = ไซน์(cam_rot) * cam_dist
+
+        set_camera(cam_x, cam_h, cam_z, 0.0, 5.0, 0.0, 0.0, 1.0, 0.0)
+
+        // ──────────────────────────────────────────────────────────────────
+        // RENDERING — Floor with checkerboard
+        // ──────────────────────────────────────────────────────────────────
+
+        set_color_hue(hue_color(frame * 0.5))
+        令 px = 0
+        ขณะที่ px < 8 {
+            令 pz = 0
+            ขณะที่ pz < 10 {
+                令 fx = px * 5.0 - 17.5
+                令 fz = pz * 5.0 - 22.5
+                draw_quad(fx, 0, fz, 2.0)
+                令 pz = pz + 1
+            }
+            令 px = px + 1
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // RENDERING — Bouncing Spheres
+        // ──────────────────────────────────────────────────────────────────
+
+        draw_ball(x0, y0, z0, hue_color(0 + frame))
+        draw_ball(x1, y1, z1, hue_color(1 + frame))
+        draw_ball(x2, y2, z2, hue_color(2 + frame))
+        draw_ball(x3, y3, z3, hue_color(3 + frame))
+
+        // ──────────────────────────────────────────────────────────────────
+        // RENDERING — Center Mandala Pattern
+        // ──────────────────────────────────────────────────────────────────
+
+        draw_pattern(0.0, 8.0, 0.0, frame)
+
+        // ──────────────────────────────────────────────────────────────────
+        // RENDERING — Corner Pillars
+        // ──────────────────────────────────────────────────────────────────
+
+        draw_ball(-18.0, 12.0, -22.0, hue_color(0 + frame))
+        draw_ball(18.0, 12.0, -22.0, hue_color(1 + frame))
+        draw_ball(-18.0, 12.0, 22.0, hue_color(2 + frame))
+        draw_ball(18.0, 12.0, 22.0, hue_color(3 + frame))
+
+        令 frame = frame + 1
+
+        if frame % 60 == 0 {
+            print(&"Frame {} - S0: ({}, {}, {})"(frame, x0, y0, z0))
+        }
+    }
+}

@@ -13,4 +13,5 @@ impl WebMic {
     pub fn stop(&self) {}
     pub fn peak(&self) -> f32 { 0.0 }
     pub fn rms(&self)  -> f32 { 0.0 }
+    pub fn latest_samples(&self) -> Vec<f32> { Vec::new() }
 }

@@ -2,10 +2,13 @@
 //!
 //! Usage:
 //! ```
+//! use ling_audio::FftAnalyzer;
 //! let mut fft = FftAnalyzer::new(2048, 44100);
+//! let audio_frame = vec![0.0f32; 2048];
 //! fft.push_samples(&audio_frame);
 //! let bands = fft.freq_bands(32); // 32 log-spaced frequency bands
 //! let beat  = fft.is_beat();
+//! let _ = (bands, beat);
 //! ```
 
 use rustfft::{FftPlanner, num_complex::Complex};

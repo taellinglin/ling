@@ -52,6 +52,8 @@ pub struct GfxState {
     pub shade_mode: u8,
     /// Tunable cel/holo parameters (bands, shadow tint, rim, …).
     pub shade: ling_graphics::shading::ShadeParams,
+    /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
+    pub blend: u8,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -74,6 +76,7 @@ impl GfxState {
             mouse_captured: false,
             shade_mode:     2, // holographic cel by default
             shade:          ling_graphics::shading::ShadeParams::default(),
+            blend:          0, // normal (overwrite) by default
         }
     }
 

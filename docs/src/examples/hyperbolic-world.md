@@ -1,13 +1,13 @@
 # Hyperbolic World — an H²×ℝ block walker
 
-`examples/hyperbolic_world.ling` is a tiny game world inspired by
+`examples/physics/hyperbolic_world.ling` is a tiny game world inspired by
 [Hypermine](https://github.com/Ralith/hypermine). Hypermine is set in **H³**
 (fully 3-D hyperbolic space); this demo uses the simplest playable cousin,
 **H²×ℝ**: you walk on the **hyperbolic plane** (the Poincaré disk) with ordinary
 vertical **gravity**.
 
 ```
-ling run examples/hyperbolic_world.ling
+ling run examples/physics/hyperbolic_world.ling
 ```
 
 ## Controls

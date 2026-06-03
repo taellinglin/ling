@@ -1,13 +1,13 @@
 # Hyperbolic 3D DOOM — Wireframe Maze in H³
 
-`examples/hyperbolic3d.ling` is a playable symmetrical maze in **hyperbolic 3D space** using
+`examples/physics/hyperbolic3d.ling` is a playable symmetrical maze in **hyperbolic 3D space** using
 the **hyperboloid model** (Minkowski geometry). Navigate wireframe hallways and alcove rooms
 connected by prominent archways. Roll a physics ball through a "hyperbolic doom" temple.
 
 It's the game-like cousin to the earlier [H²×ℝ Hyperbolic World](./hyperbolic-world.md).
 
 ```
-ling run examples/hyperbolic3d.ling
+ling run examples/physics/hyperbolic3d.ling
 ```
 
 ## The geometry

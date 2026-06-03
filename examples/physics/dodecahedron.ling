@@ -1,0 +1,327 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Physics Demo — Bouncing Ball in a DODECAHEDRON Cage
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+令 R_DODEC = 6.5
+令 R  = 0.5
+令 GRAVITY    = 9.8
+令 DAMPING    = 0.995
+令 ELASTICITY = 0.86
+令 DT         = 0.0167
+
+令 ROLL_FRICTION = 0.992
+令 AIR_SPIN_DAMP = 0.998
+
+# Dodecahedron vertices using golden ratio
+令 φ = 1.618034
+令 scale = R_DODEC / 1.618
+
+# 20 vertices (x,y,z for each)
+令 v0x = 1 * scale
+令 v0y = 1 * scale
+令 v0z = 1 * scale
+
+令 v1x = 1 * scale
+令 v1y = 1 * scale
+令 v1z = -1 * scale
+
+令 v2x = 1 * scale
+令 v2y = -1 * scale
+令 v2z = 1 * scale
+
+令 v3x = 1 * scale
+令 v3y = -1 * scale
+令 v3z = -1 * scale
+
+令 v4x = -1 * scale
+令 v4y = 1 * scale
+令 v4z = 1 * scale
+
+令 v5x = -1 * scale
+令 v5y = 1 * scale
+令 v5z = -1 * scale
+
+令 v6x = -1 * scale
+令 v6y = -1 * scale
+令 v6z = 1 * scale
+
+令 v7x = -1 * scale
+令 v7y = -1 * scale
+令 v7z = -1 * scale
+
+令 v8x = 0
+令 v8y = φ * scale
+令 v8z = (1/φ) * scale
+
+令 v9x = 0
+令 v9y = φ * scale
+令 v9z = -(1/φ) * scale
+
+令 v10x = 0
+令 v10y = -φ * scale
+令 v10z = (1/φ) * scale
+
+令 v11x = 0
+令 v11y = -φ * scale
+令 v11z = -(1/φ) * scale
+
+令 v12x = (1/φ) * scale
+令 v12y = 0
+令 v12z = φ * scale
+
+令 v13x = (1/φ) * scale
+令 v13y = 0
+令 v13z = -φ * scale
+
+令 v14x = -(1/φ) * scale
+令 v14y = 0
+令 v14z = φ * scale
+
+令 v15x = -(1/φ) * scale
+令 v15y = 0
+令 v15z = -φ * scale
+
+令 v16x = φ * scale
+令 v16y = (1/φ) * scale
+令 v16z = 0
+
+令 v17x = φ * scale
+令 v17y = -(1/φ) * scale
+令 v17z = 0
+
+令 v18x = -φ * scale
+令 v18y = (1/φ) * scale
+令 v18z = 0
+
+令 v19x = -φ * scale
+令 v19y = -(1/φ) * scale
+令 v19z = 0
+
+bind start = do {
+    open_fullscreen("Dodecahedron Cage + Spin Gauge")
+    capture_mouse()
+    set_ambient(0.14)
+
+    ระดับเสียง(0.45)
+    เสียงโทน(0, 0.0, 0.0, 0.0, 8.0, 200.0, 0.06, 0.5, 0.02)
+
+    # Ball state
+    令 bx = 0.0
+    令 by = 0.0
+    令 bz = 0.0
+    令 vx = 0.0
+    令 vy = 0.0
+    令 vz = 0.0
+    令 wx = 0.0
+    令 wy = 0.0
+    令 wz = 0.0
+    令 spinAngle = 0.0
+
+    令 MOVE_ACCEL = 22.0
+    令 FR = 0
+    令 lastBounce = -99
+
+    令 charge = 0.0
+    令 spaceWasDown = 0
+    令 CHARGE_RATE = 14.0
+    令 MAX_CHARGE = 11.0
+
+    # Simplified collision: spherical boundary at dodecahedron radius
+    
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(2, 3, 10)
+
+        # Physics integration
+        令 vy = vy + GRAVITY * DT
+        令 vx = vx * DAMPING
+        令 vy = vy * DAMPING
+        令 vz = vz * DAMPING
+        令 wx = wx * AIR_SPIN_DAMP
+        令 wy = wy * AIR_SPIN_DAMP
+        令 wz = wz * AIR_SPIN_DAMP
+
+        令 bx = bx + vx * DT
+        令 by = by + vy * DT
+        令 bz = bz + vz * DT
+
+        # Simple spherical boundary collision
+        令 distFromCenter = sqrt(bx*bx + by*by + bz*bz)
+        令 maxDist = R_DODEC - R
+        若 distFromCenter > maxDist {
+            令 nx = bx / distFromCenter
+            令 ny = by / distFromCenter
+            令 nz = bz / distFromCenter
+            令 bx = nx * maxDist
+            令 by = ny * maxDist
+            令 bz = nz * maxDist
+            令 dot = vx*nx + vy*ny + vz*nz
+            令 vx = vx - dot * nx * (1 + ELASTICITY)
+            令 vy = vy - dot * ny * (1 + ELASTICITY)
+            令 vz = vz - dot * nz * (1 + ELASTICITY)
+            令 lastBounce = FR
+            # Add spin on bounce
+            令 speed_mag = sqrt(vx*vx + vy*vy + vz*vz)
+            若 speed_mag > 0.5 {
+                令 wx = wx + (vz*0.5 - vy*0.3) * 1.5
+                令 wy = wy + (vx*0.5 - vz*0.3) * 1.5
+                令 wz = wz + (vy*0.5 - vx*0.3) * 1.5
+            }
+        }
+
+        # Check if grounded (near bottom)
+        令 grounded = 0
+        若 by < -R_DODEC + R + 0.2 {
+            令 wx = wx * ROLL_FRICTION
+            令 wy = wy * ROLL_FRICTION
+            令 wz = wz * ROLL_FRICTION
+            若 vy < 0.5 { 令 grounded = 1 }
+        }
+
+        # WASD movement
+        若 key_down("a") { 令 vx = vx - MOVE_ACCEL * DT }
+        若 key_down("d") { 令 vx = vx + MOVE_ACCEL * DT }
+        若 key_down("w") { 令 vz = vz + MOVE_ACCEL * DT }
+        若 key_down("s") { 令 vz = vz - MOVE_ACCEL * DT }
+
+        # Spacebar charged jump
+        令 spaceNow = 0
+        若 key_down("space") { 令 spaceNow = 1 }
+        若 spaceNow == 1 {
+            若 grounded == 1 {
+                令 charge = charge + CHARGE_RATE * DT
+                若 charge > MAX_CHARGE { 令 charge = MAX_CHARGE }
+            }
+        } 否则 {
+            若 spaceWasDown == 1 {
+                若 charge > 0.01 {
+                    令 vy = vy - charge
+                }
+                令 charge = 0.0
+            }
+        }
+        令 spaceWasDown = spaceNow
+
+        # Angular speed
+        令 spinSpeed = sqrt(wx*wx + wy*wy + wz*wz)
+        令 spinAngle = spinAngle + spinSpeed * DT * 10.0
+        
+        令 speed = sqrt(vx*vx + vy*vy + vz*vz)
+        令 hNorm = (by + R_DODEC) / (2.0 * R_DODEC)
+        若 hNorm < 0 { 令 hNorm = 0 }
+        若 hNorm > 1 { 令 hNorm = 1 }
+
+        令 sinceHit = FR - lastBounce
+        令 impact = 0.0
+        若 sinceHit < 6 { 令 impact = (6 - sinceHit) * 26.0 }
+
+        令 freq = 150.0 + hNorm * 180.0 + impact + speed * 22.0 + charge * 16.0 + spinSpeed * 15.0
+        令 amp = 0.04 + speed * 0.045
+        令 pan = bx / R_DODEC
+        若 pan < -1 { 令 pan = -1 }
+        若 pan > 1 { 令 pan = 1 }
+        
+        เสียงโทน(0, bx, by, bz, 8.0, freq, amp, pan, 0.02)
+
+        # Lights
+        clear_lights()
+        add_light(bx, by + 1.0, bz - 1.0, 4.0, 1.0, 0.95, 0.85)
+        add_light(0.0, 0.0, -R_DODEC, 1.6, 0.25, 0.55, 1.0)
+
+        # Camera
+        令 t = FR * 0.0065
+        令 ry = sin(t) * 0.18
+        令 rx = sin(t * 0.5) * 0.06
+        set_camera(cos(ry), sin(ry), cos(rx), sin(rx))
+
+        # Draw dodecahedron edges
+        set_color(80, 140, 220)
+        draw_line_3d(v0x, v0y, v0z, v1x, v1y, v1z)
+        draw_line_3d(v0x, v0y, v0z, v2x, v2y, v2z)
+        draw_line_3d(v0x, v0y, v0z, v4x, v4y, v4z)
+        draw_line_3d(v1x, v1y, v1z, v3x, v3y, v3z)
+        draw_line_3d(v1x, v1y, v1z, v8x, v8y, v8z)
+        draw_line_3d(v1x, v1y, v1z, v16x, v16y, v16z)
+        draw_line_3d(v2x, v2y, v2z, v3x, v3y, v3z)
+        draw_line_3d(v2x, v2y, v2z, v10x, v10y, v10z)
+        draw_line_3d(v2x, v2y, v2z, v12x, v12y, v12z)
+        draw_line_3d(v3x, v3y, v3z, v11x, v11y, v11z)
+        draw_line_3d(v3x, v3y, v3z, v17x, v17y, v17z)
+        draw_line_3d(v4x, v4y, v4z, v5x, v5y, v5z)
+        draw_line_3d(v4x, v4y, v4z, v6x, v6y, v6z)
+        draw_line_3d(v4x, v4y, v4z, v9x, v9y, v9z)
+        draw_line_3d(v5x, v5y, v5z, v7x, v7y, v7z)
+        draw_line_3d(v5x, v5y, v5z, v14x, v14y, v14z)
+        draw_line_3d(v5x, v5y, v5z, v18x, v18y, v18z)
+        draw_line_3d(v6x, v6y, v6z, v7x, v7y, v7z)
+        draw_line_3d(v6x, v6y, v6z, v15x, v15y, v15z)
+        draw_line_3d(v6x, v6y, v6z, v19x, v19y, v19z)
+        draw_line_3d(v7x, v7y, v7z, v13x, v13y, v13z)
+        draw_line_3d(v7x, v7y, v7z, v19x, v19y, v19z)
+        draw_line_3d(v8x, v8y, v8z, v9x, v9y, v9z)
+        draw_line_3d(v8x, v8y, v8z, v16x, v16y, v16z)
+        draw_line_3d(v9x, v9y, v9z, v18x, v18y, v18z)
+        draw_line_3d(v10x, v10y, v10z, v11x, v11y, v11z)
+        draw_line_3d(v10x, v10y, v10z, v12x, v12y, v12z)
+        draw_line_3d(v11x, v11y, v11z, v17x, v17y, v17z)
+        draw_line_3d(v12x, v12y, v12z, v13x, v13y, v13z)
+        draw_line_3d(v13x, v13y, v13z, v15x, v15y, v15z)
+        draw_line_3d(v14x, v14y, v14z, v15x, v15y, v15z)
+        draw_line_3d(v14x, v14y, v14z, v18x, v18y, v18z)
+        draw_line_3d(v16x, v16y, v16z, v17x, v17y, v17z)
+        draw_line_3d(v18x, v18y, v18z, v19x, v19y, v19z)
+
+        # SPIN GAUGE - second dial showing angular velocity
+        令 gaugeX = -6.5
+        令 gaugeY = 5.5
+        令 gaugeR = 1.2
+        
+        set_color(100, 100, 100)
+        令 ang = 0
+        while ang < 360 {
+            令 rad = ang * 3.14159 / 180
+            令 x1 = gaugeX + cos(rad) * gaugeR
+            令 y1 = gaugeY + sin(rad) * gaugeR
+            令 rad2 = (ang + 10) * 3.14159 / 180
+            令 x2 = gaugeX + cos(rad2) * gaugeR
+            令 y2 = gaugeY + sin(rad2) * gaugeR
+            draw_line_2d(x1, y1, x2, y2)
+            令 ang = ang + 10
+        }
+        
+        令 maxSpinShow = 18.0
+        令 spinNorm = spinSpeed / maxSpinShow
+        若 spinNorm > 1 { 令 spinNorm = 1 }
+        
+        令 needleAngle = spinNorm * 360.0
+        令 needleRad = needleAngle * 3.14159 / 180
+        令 nx = gaugeX + sin(needleRad) * gaugeR * 0.85
+        令 ny = gaugeY + cos(needleRad) * gaugeR * 0.85
+        set_color(255, 80, 40)
+        draw_line_2d(gaugeX, gaugeY, nx, ny)
+        
+        set_color(180, 180, 220)
+        draw_text("SPIN", gaugeX - 0.6, gaugeY + 1.4, 0.25)
+        draw_text(f"{spinSpeed:.1f}", gaugeX - 0.4, gaugeY - 1.3, 0.22)
+
+        # Shadow and velocity arrow
+        set_color(0, 30, 60)
+        draw_line_3d(bx - 0.4, by - 0.4, bz - 0.4, bx + 0.4, by + 0.4, bz + 0.4)
+        set_color(230, 60, 40)
+        draw_line_3d(bx, by, bz, bx + vx * 0.18, by + vy * 0.18, bz + vz * 0.18)
+
+        # Charge meter
+        若 charge > 0.01 {
+            令 cf = charge / MAX_CHARGE
+            set_color(255, 200 - cf * 180, 40)
+            draw_line_3d(bx, by, bz, bx, by - cf * 2.2, bz)
+            draw_line_3d(bx - 0.18, by - cf * 2.2, bz, bx + 0.18, by - cf * 2.2, bz)
+        }
+
+        # Ball with visual spin
+        令 hue = 0.62 - spinSpeed * 0.05
+        ลายจักร(bx, by, bz, wx*0.2, wy*0.2, wz*0.2, R, 9, FR * 0.04 + spinAngle, hue)
+
+        แสดงผล()
+        令 FR = FR + 1
+    }
+}

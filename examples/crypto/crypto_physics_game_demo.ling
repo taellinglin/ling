@@ -1,0 +1,40 @@
+// Demo showcasing multilingual support for existing Ling functions
+// These functions are already implemented in the runtime
+// The lexicon additions enable them to be called in any language:
+//   English:  open_fullscreen, window_is_open, capture_mouse, fill, set_color
+//   Chinese:  打开全屏, 窗口打开, 捕获鼠标, 清空, 设置颜色
+//   Thai:     เปิดหน้าต่างเต็มจอ, หน้าต่างเปิดอยู่, จับเมาส์, เติม, สีดินสอ
+//   Japanese: 全画面を開く, ウィンドウが開いている, マウスをキャプチャ, クリア, 色設定
+//   Korean:   전체화면열기, 창이열려있음, 마우스캡처, 지우기, 색설정
+
+令 start = do {
+    // Graphics functions (fully implemented)
+    open_fullscreen("Ling Demo")
+    capture_mouse()
+    set_ambient(0.2)
+
+    // Utility functions (fully implemented)
+    print("✅ Graphics functions available in 5 languages")
+    print("✅ Math functions available in 5 languages")
+    print("✅ Audio functions available in 5 languages")
+
+    // Audio setup (fully implemented)
+    ระดับเสียง(0.4)
+    เสียงโทน(0, 440.0, 0.0, 0.0, 3.0, 0.5, 0.1, 0.6, 0.03)
+
+    // Main loop
+    ขณะที่ หน้าต่างเปิดอยู่() {
+        เติม(30, 50, 120)
+
+        // Camera setup
+        set_camera_pos(0, 10, 20)
+
+        // Draw a simple shape
+        สีดินสอ(255, 100, 150)
+        draw_line_3d(-10, 0, 0, 10, 0, 0)
+        draw_line_3d(0, -10, 0, 0, 10, 0)
+        draw_line_3d(0, 0, -10, 0, 0, 10)
+
+        แสดงผล()
+    }
+}

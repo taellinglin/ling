@@ -1,0 +1,141 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Additive Glow Demo — Circles with Additive Blending
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Demonstrates: draw_circle(), draw_disc(), set_blend(), perlin(), lerp()
+
+bind setup = do {
+  open_window(800, 600)
+}
+
+bind update = do {
+  let t = time_now()
+  let frame = frame_count()
+
+  # Dark background for glow effect
+  set_color(5, 5, 10)
+  fill()
+
+  # Center point
+  let cx = 400.0
+  let cy = 300.0
+
+  # ─── Pulsing filled circles (additive) ──────────────────────────────────
+  set_blend(1)
+
+  # Ring 1: magenta
+  let pulse1 = perlin(t * 0.5, 0.0, 0.0)
+  let radius1 = 50.0 + pulse1 * 30.0
+  set_color(255, 0, 255)
+  draw_disc(cx, cy, radius1)
+
+  # Ring 2: cyan
+  let pulse2 = perlin(t * 0.3, 1.0, 0.0)
+  let radius2 = 100.0 + pulse2 * 40.0
+  set_color(0, 255, 255)
+  draw_disc(cx, cy, radius2)
+
+  # Ring 3: yellow (green + red)
+  let pulse3 = perlin(t * 0.4, 2.0, 0.0)
+  let radius3 = 150.0 + pulse3 * 35.0
+  set_color(255, 255, 0)
+  draw_disc(cx, cy, radius3)
+
+  # ─── Orbiting circles ──────────────────────────────────────────────────
+  # Orbiter 0
+  let angle0 = 0.0 * 6.28318 / 6.0 + t * 2.0
+  let ox0 = cx + cos(angle0) * 200.0
+  let oy0 = cy + sin(angle0) * 200.0
+  set_color(255, 55, 100)
+  draw_disc(ox0, oy0, 15.0)
+
+  # Orbiter 1
+  let angle1 = 1.0 * 6.28318 / 6.0 + t * 2.0
+  let ox1 = cx + cos(angle1) * 200.0
+  let oy1 = cy + sin(angle1) * 200.0
+  set_color(100, 200, 55)
+  draw_disc(ox1, oy1, 15.0)
+
+  # Orbiter 2
+  let angle2 = 2.0 * 6.28318 / 6.0 + t * 2.0
+  let ox2 = cx + cos(angle2) * 200.0
+  let oy2 = cy + sin(angle2) * 200.0
+  set_color(55, 100, 255)
+  draw_disc(ox2, oy2, 15.0)
+
+  # Orbiter 3
+  let angle3 = 3.0 * 6.28318 / 6.0 + t * 2.0
+  let ox3 = cx + cos(angle3) * 200.0
+  let oy3 = cy + sin(angle3) * 200.0
+  set_color(255, 200, 55)
+  draw_disc(ox3, oy3, 15.0)
+
+  # Orbiter 4
+  let angle4 = 4.0 * 6.28318 / 6.0 + t * 2.0
+  let ox4 = cx + cos(angle4) * 200.0
+  let oy4 = cy + sin(angle4) * 200.0
+  set_color(200, 55, 255)
+  draw_disc(ox4, oy4, 15.0)
+
+  # Orbiter 5
+  let angle5 = 5.0 * 6.28318 / 6.0 + t * 2.0
+  let ox5 = cx + cos(angle5) * 200.0
+  let oy5 = cy + sin(angle5) * 200.0
+  set_color(55, 255, 200)
+  draw_disc(ox5, oy5, 15.0)
+
+  # ─── Circle outlines (no fill) ─────────────────────────────────────────
+  set_color(0, 200, 100)
+  draw_circle(cx, cy, 50.0)
+  draw_circle(cx, cy, 100.0)
+  draw_circle(cx, cy, 150.0)
+  draw_circle(cx, cy, 200.0)
+
+  # ─── Pulsing outline circle ────────────────────────────────────────────
+  let outline_pulse = perlin(t * 0.6, 3.0, 0.0)
+  let outline_radius = 250.0 + outline_pulse * 50.0
+  set_color(255, 100, 200)
+  draw_circle(cx, cy, outline_radius)
+
+  # Switch to normal blending for the edge effect
+  set_blend(0)
+  set_color(255, 150, 255)
+  draw_circle(cx, cy, outline_radius + 2.0)
+
+  # ─── Corner accents with lerp colors ───────────────────────────────────
+  set_blend(1)
+
+  # Top-left corner
+  let tl_val = sin(t * 0.7) * 0.5 + 0.5
+  let tl_color_a = 255.0
+  let tl_color_b = 100.0
+  let tl_color = lerp(tl_color_b, tl_color_a, tl_val)
+  set_color((tl_color) as i32, 50, 150)
+  draw_disc(50.0, 50.0, 25.0)
+
+  # Top-right corner
+  let tr_val = cos(t * 0.7) * 0.5 + 0.5
+  let tr_color = lerp(100.0, 200.0, tr_val)
+  set_color(100, (tr_color) as i32, 255)
+  draw_disc(750.0, 50.0, 25.0)
+
+  # Bottom-left corner
+  let bl_val = sin(t * 0.5 + 1.0) * 0.5 + 0.5
+  let bl_color = lerp(50.0, 255.0, bl_val)
+  set_color((bl_color) as i32, 200, 100)
+  draw_disc(50.0, 550.0, 25.0)
+
+  # Bottom-right corner
+  let br_val = cos(t * 0.5 + 1.5) * 0.5 + 0.5
+  let br_color = lerp(150.0, 255.0, br_val)
+  set_color(100, (br_color) as i32, 200)
+  draw_disc(750.0, 550.0, 25.0)
+
+  # Reset blend for next frame
+  set_blend(0)
+  present()
+}
+
+setup()
+while window_is_open() {
+  update()
+}
