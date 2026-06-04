@@ -62,3 +62,6 @@ docs/book/
 
 # ── Temp screenshots ───────────────────────────────────────────────────────────
 ling-lang.org-tmp-*.png
+
+# UI frame captures
+recordings/

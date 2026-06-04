@@ -94,7 +94,7 @@ Cryptography library and visualizations.
 
 | File | Description |
 |------|-------------|
-| [crypto_donut_physics.ling](crypto/crypto_donut_physics.ling) | 🍩 Hash a string into a **knotwork** donut, drop it in a box with an invisible **orientation-aware torus collider** (wide when flat, thin on edge) — shape, bounce, spin & colour from the hash (SPACE re-drops, R re-rolls) |
+| [crypto_donut_physics.ling](crypto/crypto_donut_physics.ling) | 🍩 Type a string **or record your voice** → a **knotwork** donut with an orientation-aware torus collider, dropped in a box. Holographic UI: text input, DROP, hold-**MIC** (sound→donut), **REC** (PPM frame capture) |
 | [geo_knot_demo.ling](crypto/geo_knot_demo.ling) | 🟢 A public key as a rotating 3-D torus-knot fingerprint (geo suite) |
 | [hybrid_kem_demo.ling](crypto/hybrid_kem_demo.ling) | 🟡🟣 X25519+ML-KEM-768 hybrid PQ KEM — gold identity knot + magenta ciphertext knot |
 | [holographic_demo.ling](crypto/holographic_demo.ling) | 🟣 4-D all-or-nothing transform — secret scattered into shards on a 4-sphere |
@@ -103,6 +103,14 @@ Cryptography library and visualizations.
 | [crypto_hologram.ling](crypto/crypto_hologram.ling) | 4-D visualization of cryptographic operations |
 | [crypto_physics_world.ling](crypto/crypto_physics_world.ling) | Cryptographically-verified physics world |
 | [crypto_physics_game_demo.ling](crypto/crypto_physics_game_demo.ling) | Crypto + physics game demo |
+
+## ui/
+The `ling-ui` 2030 holographic toolkit — vector stroke font, sci-fi frame
+geometry, animation easings, and immediate-mode widgets.
+
+| File | Description |
+|------|-------------|
+| [holo_ui_demo.ling](ui/holo_ui_demo.ling) | 🛸 Holographic control panel: animated hover-glow buttons (easings), a draggable slider, a toggle, and vector text |
 
 ## procedural/
 Phase 1 "DMT Trip Coder" features: Perlin/FBM noise, lerp/smoothstep, real-time

@@ -1,108 +1,103 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CRYPTO DONUT  —  a knotwork donut with a real torus collider
+# CRYPTO DONUT  —  type a string (or record your voice) → a knotwork donut
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Your INPUT string is SHA3-256 hashed into a (p,q) torus knot (the geo crypto
-# module). The knot curve IS the donut you see. Its collision shape is the
-# (invisible) torus the knot wraps — and it is ORIENTATION-AWARE: as the donut
-# tumbles, its footprint changes (wide when flat, thin when on-edge), so it
-# bounces like a real ring, not a ball. Shape, bounciness, spin and colour all
-# come from the hash.
+# The seed is SHA3-256 hashed into a (p,q) torus knot (geo crypto module). The
+# knot curve IS the donut; its collider is the (invisible) orientation-aware
+# torus the knot wraps. Shape, bounce, spin & colour all come from the hash.
 #
-#   ✏  change `seed` to make a new donut      ␣ SPACE re-drop      R re-roll
+#   ⌨  type to edit the seed        [ DROP ] rebuild donut from the seed
+#   🎙 hold [ MIC ] to record sound → the audio's hash becomes the donut
+#   ⏺  [ REC ] toggles PPM frame capture → ./recordings/
+#   ␣  SPACE re-drop      R re-roll velocity
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bind seed = "灵 · ling · my cryptographic donut"
 
-bind BOX     = 6.0
-bind DONUT_R = 1.9          # outer radius in world units
+bind BOX     = 5.5
+bind DONUT_R = 1.8
 bind GRAVITY = 15.0
 bind DT      = 0.016
 bind DAMP    = 0.997
 
 bind start = do {
-    open_window(1000, 760)
+    open_window(1100, 760)
     set_ambient(0.2)
+    text_set(seed)
+    mic_open()
 
-    # ── SHAPE from the knot fingerprint of the input ──
-    bind pts = knot_points(seed)
-    bind n = len(pts) / 3.0
-
-    bind maxRad = 0.0
-    bind minRad = 9999.0
-    bind i = 0.0
-    while i < n {
-        bind k = i * 3.0
-        bind x = pts[k]
-        bind z = pts[k + 2.0]
-        bind rad = sqrt(x * x + z * z)
-        if rad > maxRad { bind maxRad = rad }
-        if rad < minRad { bind minRad = rad }
-        bind i = i + 1.0
-    }
-    bind s = DONUT_R / maxRad                 # scale so outer radius = DONUT_R
-    bind majR = (maxRad + minRad) * 0.5 * s   # torus major radius (collider)
-    bind tubeR = (maxRad - minRad) * 0.5 * s  # torus tube radius   (collider)
-    if tubeR < 0.15 { bind tubeR = 0.15 }
-
-    # ── PHYSICS from the hash (deterministic pseudo-randoms) ──
-    bind h1 = sin(pts[0] * 12.9898 + pts[1] * 4.1414) * 43758.5453
-    bind f1 = h1 - floor(h1)
-    bind h2 = sin(pts[3] * 19.19 + pts[5] * 7.77) * 31718.13
-    bind f2 = h2 - floor(h2)
-    bind h3 = sin(maxRad * 8.8 + minRad * 3.3) * 12345.678
-    bind f3 = h3 - floor(h3)
-
-    bind restitution = 0.6 + f1 * 0.35
-    bind cr = (sin(f1 * 6.2831 + 0.0) * 0.5 + 0.5) * 215.0 + 40.0
-    bind cg = (sin(f1 * 6.2831 + 2.0) * 0.5 + 0.5) * 215.0 + 40.0
-    bind cb = (sin(f1 * 6.2831 + 4.0) * 0.5 + 0.5) * 215.0 + 40.0
-
-    # ── donut state ──
-    bind px = 0.0
-    bind py = 0.0 - BOX + DONUT_R + 0.3
-    bind pz = 0.0
-    bind vx = (f2 - 0.5) * 11.0
-    bind vy = 0.0
-    bind vz = (f3 - 0.5) * 11.0
-    bind ax = 0.0                  # tumble angles
-    bind ay = 0.0
-    bind az = 0.0
-    bind wx = (f1 - 0.5) * 4.5     # angular velocity
-    bind wy = (f2 - 0.5) * 4.5
-    bind wz = (f3 - 0.5) * 4.5
-    bind flash = 0.0
+    bind needBuild = 1.0
+    bind recording = 0.0
+    bind micRec = 0.0
+    bind wasDown = 0.0
 
     while window_is_open() {
-        set_color(7, 8, 14)
-        fill()
         bind t = time_now()
-        set_camera(cos(t * 0.22), sin(t * 0.22), cos(0.5), sin(0.5))
-        set_ambient(0.2)
+        # ── input ──
+        bind typed = text_poll()
+        bind mx = mouse_x()
+        bind my = mouse_y()
+        bind nd = 0.0
+        if mouse_down() { bind nd = 1.0 }
+        bind clicked = 0.0
+        if nd > 0.5 { if wasDown < 0.5 { bind clicked = 1.0 } }
 
-        # ── integrate ──
+        # ── (re)build the donut from the current seed ──
+        if needBuild > 0.5 {
+            bind src = text_get()
+            bind pts = knot_points(src)
+            bind n = len(pts) / 3.0
+            bind maxRad = 0.0
+            bind minRad = 9999.0
+            bind bi = 0.0
+            while bi < n {
+                bind bk = bi * 3.0
+                bind bx = pts[bk]
+                bind bz = pts[bk + 2.0]
+                bind brad = sqrt(bx * bx + bz * bz)
+                if brad > maxRad { bind maxRad = brad }
+                if brad < minRad { bind minRad = brad }
+                bind bi = bi + 1.0
+            }
+            bind s = DONUT_R / maxRad
+            bind majR = (maxRad + minRad) * 0.5 * s
+            bind tubeR = (maxRad - minRad) * 0.5 * s
+            if tubeR < 0.15 { bind tubeR = 0.15 }
+            bind hh1 = sin(pts[0] * 12.9898 + pts[1] * 4.1414) * 43758.5453
+            bind f1 = hh1 - floor(hh1)
+            bind hh2 = sin(pts[3] * 19.19 + pts[5] * 7.77) * 31718.13
+            bind f2 = hh2 - floor(hh2)
+            bind hh3 = sin(maxRad * 8.8 + minRad * 3.3) * 12345.678
+            bind f3 = hh3 - floor(hh3)
+            bind restitution = 0.6 + f1 * 0.35
+            bind cr = (sin(f1 * 6.2831 + 0.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind cg = (sin(f1 * 6.2831 + 2.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind cb = (sin(f1 * 6.2831 + 4.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind px = 0.0
+            bind py = 0.0 - BOX + DONUT_R + 0.3
+            bind pz = 0.0
+            bind vx = (f2 - 0.5) * 11.0
+            bind vy = 0.0
+            bind vz = (f3 - 0.5) * 11.0
+            bind ax = 0.0  bind ay = 0.0  bind az = 0.0
+            bind wx = (f1 - 0.5) * 4.5  bind wy = (f2 - 0.5) * 4.5  bind wz = (f3 - 0.5) * 4.5
+            bind flash = 0.0
+            bind needBuild = 0.0
+        }
+
+        # ── physics ──
         bind vy = vy + GRAVITY * DT
-        bind vx = vx * DAMP
-        bind vy = vy * DAMP
-        bind vz = vz * DAMP
-        bind px = px + vx * DT
-        bind py = py + vy * DT
-        bind pz = pz + vz * DT
-        bind ax = ax + wx * DT
-        bind ay = ay + wy * DT
-        bind az = az + wz * DT
+        bind vx = vx * DAMP  bind vy = vy * DAMP  bind vz = vz * DAMP
+        bind px = px + vx * DT  bind py = py + vy * DT  bind pz = pz + vz * DT
+        bind ax = ax + wx * DT  bind ay = ay + wy * DT  bind az = az + wz * DT
 
-        # ── rotation basis (precomputed once per frame) ──
         bind cax = cos(ax)  bind sax = sin(ax)
         bind cay = cos(ay)  bind say = sin(ay)
         bind caz = cos(az)  bind saz = sin(az)
 
-        # hole axis n = R(ax,ay,az) · (0,1,0)  → torus normal in world
         bind nx = sax * say * caz - cax * saz
         bind ny = sax * say * saz + cax * caz
         bind nz = sax * cay
 
-        # ── TORUS COLLISION: half-width along each world axis depends on tilt ──
-        # extent along axis a = majR*sqrt(1-(n·a)^2) + tubeR
         bind gx = 1.0 - nx * nx
         if gx < 0.0 { bind gx = 0.0 }
         bind gy = 1.0 - ny * ny
@@ -112,38 +107,28 @@ bind start = do {
         bind hwx = majR * sqrt(gx) + tubeR
         bind hwy = majR * sqrt(gy) + tubeR
         bind hwz = majR * sqrt(gz) + tubeR
-
-        bind lx = BOX - hwx
-        bind ly = BOX - hwy
-        bind lz = BOX - hwz
-        if px > lx       { bind px = lx          bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy + vz * 0.5 }
-        if px < 0.0 - lx { bind px = 0.0 - lx    bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy - vz * 0.5 }
-        if py > ly       { bind py = ly          bind vy = 0.0 - vy * restitution  bind flash = 1.0  bind wx = wx + vx * 0.6  bind wz = wz + vz * 0.6 }
-        if py < 0.0 - ly { bind py = 0.0 - ly    bind vy = 0.0 - vy * restitution  bind flash = 1.0 }
-        if pz > lz       { bind pz = lz          bind vz = 0.0 - vz * restitution  bind flash = 1.0  bind wx = wx + vx * 0.5 }
-        if pz < 0.0 - lz { bind pz = 0.0 - lz    bind vz = 0.0 - vz * restitution  bind flash = 1.0 }
-
+        bind clx = BOX - hwx
+        bind cly = BOX - hwy
+        bind clz = BOX - hwz
+        if px > clx       { bind px = clx          bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy + vz * 0.5 }
+        if px < 0.0 - clx { bind px = 0.0 - clx    bind vx = 0.0 - vx * restitution  bind flash = 1.0 }
+        if py > cly       { bind py = cly          bind vy = 0.0 - vy * restitution  bind flash = 1.0  bind wx = wx + vx * 0.6 }
+        if py < 0.0 - cly { bind py = 0.0 - cly    bind vy = 0.0 - vy * restitution  bind flash = 1.0 }
+        if pz > clz       { bind pz = clz          bind vz = 0.0 - vz * restitution  bind flash = 1.0  bind wx = wx + vx * 0.5 }
+        if pz < 0.0 - clz { bind pz = 0.0 - clz    bind vz = 0.0 - vz * restitution  bind flash = 1.0 }
         bind flash = flash * 0.86
 
-        # ── keep it lively when it settles ──
-        bind speed = vx * vx + vy * vy + vz * vz
-        if speed < 1.0 {
-            if py > ly - 0.5 {
-                bind vy = 0.0 - 11.0 - f2 * 6.0
-                bind vx = (f3 - 0.5) * 9.0
-                bind vz = (f1 - 0.5) * 9.0
-            }
-        }
+        bind sp = vx * vx + vy * vy + vz * vz
+        if sp < 1.0 { if py > cly - 0.5 { bind vy = 0.0 - 11.0 - f2 * 6.0  bind vx = (f3 - 0.5) * 9.0  bind vz = (f1 - 0.5) * 9.0 } }
+        if key_pressed("space") { bind px = 0.0  bind pz = 0.0  bind py = 0.0 - cly  bind vx = (f2-0.5)*11.0  bind vy = 0.0  bind vz = (f3-0.5)*11.0 }
+        if key_pressed("r") { bind vx = sin(t * 7.0) * 10.0  bind vz = cos(t * 5.0) * 10.0  bind vy = 0.0 - 8.0 }
 
-        if key_pressed("space") {
-            bind px = 0.0  bind pz = 0.0  bind py = 0.0 - ly
-            bind vx = (f2 - 0.5) * 11.0  bind vy = 0.0  bind vz = (f3 - 0.5) * 11.0
-        }
-        if key_pressed("r") {
-            bind vx = sin(t * 7.0) * 10.0  bind vz = cos(t * 5.0) * 10.0  bind vy = 0.0 - 8.0
-        }
+        # ── draw 3-D scene ──
+        set_color(7, 8, 14)
+        fill()
+        set_camera(cos(t * 0.22), sin(t * 0.22), cos(0.5), sin(0.5))
+        set_ambient(0.2)
 
-        # ── draw the box (12 wireframe edges) ──
         set_color(44, 62, 100)
         draw_line_3d(0.0-BOX,0.0-BOX,0.0-BOX,  BOX,0.0-BOX,0.0-BOX)
         draw_line_3d(BOX,0.0-BOX,0.0-BOX,  BOX,BOX,0.0-BOX)
@@ -158,47 +143,93 @@ bind start = do {
         draw_line_3d(BOX,BOX,0.0-BOX,  BOX,BOX,BOX)
         draw_line_3d(0.0-BOX,BOX,0.0-BOX,  0.0-BOX,BOX,BOX)
 
-        # ── draw the KNOTWORK donut (rotate each knot point, then draw segments) ──
-        # world point 0
+        # knotwork donut
         bind plx = pts[0]  bind ply = pts[1]  bind plz = pts[2]
-        bind py1 = ply * cax - plz * sax
-        bind pz1 = ply * sax + plz * cax
-        bind px2 = plx * cay + pz1 * say
-        bind pz2 = (0.0 - plx) * say + pz1 * cay
-        bind px3 = px2 * caz - py1 * saz
-        bind py3 = px2 * saz + py1 * caz
-        bind pwx = px + px3 * s
-        bind pwy = py + py3 * s
-        bind pwz = pz + pz2 * s
-
+        bind a1 = ply * cax - plz * sax
+        bind b1 = ply * sax + plz * cax
+        bind a2 = plx * cay + b1 * say
+        bind b2 = (0.0 - plx) * say + b1 * cay
+        bind a3 = a2 * caz - a1 * saz
+        bind c3 = a2 * saz + a1 * caz
+        bind pwx = px + a3 * s
+        bind pwy = py + c3 * s
+        bind pwz = pz + b2 * s
         bind i = 1.0
         while i < n {
             bind k = i * 3.0
-            bind clx = pts[k]
-            bind cly = pts[k + 1.0]
-            bind clz = pts[k + 2.0]
-            bind cy1 = cly * cax - clz * sax
-            bind cz1 = cly * sax + clz * cax
-            bind cx2 = clx * cay + cz1 * say
-            bind cz2 = (0.0 - clx) * say + cz1 * cay
-            bind cx3 = cx2 * caz - cy1 * saz
-            bind cy3 = cx2 * saz + cy1 * caz
-            bind cwx = px + cx3 * s
-            bind cwy = py + cy3 * s
-            bind cwz = pz + cz2 * s
-
-            # colour: hash hue, brightness waves along the curve, white flash on hit
-            bind hh = i / n
-            bind br = sin(hh * 14.0 + t * 2.5) * 0.35 + 0.65
-            set_color(cr * br + (255.0 - cr * br) * flash,
-                      cg * br + (255.0 - cg * br) * flash,
-                      cb * br + (255.0 - cb * br) * flash)
+            bind qlx = pts[k]  bind qly = pts[k + 1.0]  bind qlz = pts[k + 2.0]
+            bind d1 = qly * cax - qlz * sax
+            bind e1 = qly * sax + qlz * cax
+            bind d2 = qlx * cay + e1 * say
+            bind e2 = (0.0 - qlx) * say + e1 * cay
+            bind d3 = d2 * caz - d1 * saz
+            bind f3b = d2 * saz + d1 * caz
+            bind cwx = px + d3 * s
+            bind cwy = py + f3b * s
+            bind cwz = pz + e2 * s
+            bind br = sin(i / n * 14.0 + t * 2.5) * 0.35 + 0.65
+            set_color(cr*br + (255.0-cr*br)*flash, cg*br + (255.0-cg*br)*flash, cb*br + (255.0-cb*br)*flash)
             draw_line_3d(pwx, pwy, pwz, cwx, cwy, cwz)
-
             bind pwx = cwx  bind pwy = cwy  bind pwz = cwz
             bind i = i + 1.0
         }
 
+        flush_3d()
+
+        # ── 2-D holographic UI on top ──
+        set_blend(1)
+        set_color(0, 210, 255)
+        ui_text(40.0, 22.0, 22.0, "CRYPTO DONUT")
+
+        # seed input box
+        set_color(40, 110, 150)
+        ui_bevel(40.0, 60.0, 720.0, 40.0, 10.0)
+        set_color(120, 200, 230)
+        ui_text(54.0, 70.0, 16.0, typed)
+
+        # DROP button
+        bind overDrop = 0.0
+        if ui_hot(780.0, 60.0, 130.0, 40.0) { bind overDrop = 1.0 }
+        set_color(40 + overDrop*60.0, 200, 150 + overDrop*80.0)
+        ui_bevel(780.0, 60.0, 130.0, 40.0, 10.0)
+        ui_text(800.0, 70.0, 18.0, "DROP")
+        if clicked > 0.5 { if overDrop > 0.5 { bind needBuild = 1.0 } }
+
+        # MIC button (hold to record sound → donut)
+        bind overMic = 0.0
+        if ui_hot(930.0, 60.0, 130.0, 40.0) { bind overMic = 1.0 }
+        if micRec > 0.5 { set_color(255, 80, 90) } else { set_color(40 + overMic*60.0, 160, 230) }
+        ui_bevel(930.0, 60.0, 130.0, 40.0, 10.0)
+        ui_text(950.0, 70.0, 18.0, "MIC")
+        # while held over MIC: capture; on release: build donut from the sound
+        if nd > 0.5 { if overMic > 0.5 { mic_capture()  bind micRec = 1.0 } }
+        if nd < 0.5 { if micRec > 0.5 { text_set(mic_seed())  mic_clear()  bind micRec = 1.0  bind needBuild = 1.0  bind micRec = 0.0 } }
+        # live level meter while recording
+        if micRec > 0.5 {
+            bind lvl = mic_rms() * 600.0
+            set_color(255, 90, 90)
+            draw_line(930.0, 112.0, 930.0 + lvl, 112.0)
+        }
+
+        # REC toggle (PPM frame capture)
+        bind overRec = 0.0
+        if ui_hot(40.0, 700.0, 130.0, 44.0) { bind overRec = 1.0 }
+        if clicked > 0.5 { if overRec > 0.5 { bind recording = 1.0 - recording } }
+        set_color(60, 90, 120)
+        ui_frame(40.0, 700.0, 130.0, 44.0, 12.0)
+        if recording > 0.5 {
+            bind blink = sin(t * 6.0) * 0.5 + 0.5
+            set_color(255, 40 + blink*60.0, 40 + blink*60.0)
+            draw_disc(64.0, 722.0, 8.0)
+            ui_text(82.0, 712.0, 16.0, "REC")
+            record_frame()
+        } else {
+            set_color(120, 120, 140)
+            ui_text(60.0, 712.0, 16.0, "REC OFF")
+        }
+
+        set_blend(0)
+        bind wasDown = nd
         present()
     }
 }

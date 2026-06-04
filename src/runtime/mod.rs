@@ -170,6 +170,19 @@ fn tex_palette(name: &str, t: f32) -> [f32; 3] {
     [0,1,2].map(|i| (a[i] + b[i] * (std::f32::consts::TAU * (c[i] * t + d[i])).cos()).clamp(0.0, 1.0))
 }
 
+/// Map a physical key to a typed character for ling-ui text input (lowercase).
+#[cfg(not(target_arch = "wasm32"))]
+fn key_char(k: minifb::Key) -> Option<char> {
+    use minifb::Key::*;
+    Some(match k {
+        A=>'a',B=>'b',C=>'c',D=>'d',E=>'e',F=>'f',G=>'g',H=>'h',I=>'i',J=>'j',K=>'k',L=>'l',M=>'m',
+        N=>'n',O=>'o',P=>'p',Q=>'q',R=>'r',S=>'s',T=>'t',U=>'u',V=>'v',W=>'w',X=>'x',Y=>'y',Z=>'z',
+        Key0=>'0',Key1=>'1',Key2=>'2',Key3=>'3',Key4=>'4',Key5=>'5',Key6=>'6',Key7=>'7',Key8=>'8',Key9=>'9',
+        Space=>' ', Minus=>'-', Period=>'.',
+        _ => return None,
+    })
+}
+
 /// Lowercase-hex encode bytes (the wire format for crypto values in Ling).
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
@@ -410,6 +423,13 @@ pub struct Interpreter {
     /// Persistent KEM keypairs (knot / hybrid identities), referenced by handle.
     #[cfg(not(target_arch = "wasm32"))]
     crypto_ids: Vec<ling_crypto::KnotIdentity>,
+    /// Editable text-input buffer (ling-ui text fields).
+    text_buffer: String,
+    /// Frame counter for record_frame().
+    record_n: u32,
+    /// Accumulated microphone samples (for turning sound into crypto donuts).
+    #[cfg(not(target_arch = "wasm32"))]
+    mic_buffer: Vec<f32>,
 }
 
 impl Interpreter {
@@ -438,6 +458,10 @@ impl Interpreter {
             mic: None,
             #[cfg(not(target_arch = "wasm32"))]
             crypto_ids: Vec::new(),
+            text_buffer: String::new(),
+            record_n: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            mic_buffer: Vec::new(),
         }
     }
 
@@ -2711,6 +2735,141 @@ impl Interpreter {
             "holo_fragment_count" | "จำนวนชิ้นโฮโลแกรม" | "全息碎片数" | "ホログラム断片数" | "홀로그램조각수" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(ling_crypto::geo::scatter(s.as_bytes()).len() as f64));
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // ling-ui — animation easings + holographic vector widgets + text I/O
+            // ══════════════════════════════════════════════════════════════════
+            "ease" => {
+                let name = self.arg_str(&args, 0, "ease");
+                let t = self.arg_num(&args, 1, 0.0)? as f32;
+                return Ok(Value::Number(ling_ui::Easing::from_name(&name).apply(t) as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_x" => {
+                let gfx = self.gfx.borrow();
+                let v = gfx.window.as_ref().and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).map(|p| p.0 as f64).unwrap_or(0.0);
+                return Ok(Value::Number(v));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_y" => {
+                let gfx = self.gfx.borrow();
+                let v = gfx.window.as_ref().and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).map(|p| p.1 as f64).unwrap_or(0.0);
+                return Ok(Value::Number(v));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_down" => {
+                let gfx = self.gfx.borrow();
+                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
+                return Ok(Value::Bool(d));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_hot" => {
+                let x = self.arg_num(&args,0,0.0)? as f32;
+                let y = self.arg_num(&args,1,0.0)? as f32;
+                let w = self.arg_num(&args,2,0.0)? as f32;
+                let h = self.arg_num(&args,3,0.0)? as f32;
+                let gfx = self.gfx.borrow();
+                let (mx,my) = gfx.window.as_ref().and_then(|win| win.get_mouse_pos(minifb::MouseMode::Clamp)).unwrap_or((0.0,0.0));
+                return Ok(Value::Bool(ling_ui::holo::hit_rect(mx,my,x,y,w,h)));
+            }
+            // ui_text(x, y, scale, "string") — holographic vector text
+            "ui_text" => {
+                let x = self.arg_num(&args,0,0.0)? as f32;
+                let y = self.arg_num(&args,1,0.0)? as f32;
+                let scale = self.arg_num(&args,2,16.0)? as f32;
+                let s = self.arg_str(&args,3,"");
+                let segs = ling_ui::holo::text_lines(&s, x, y, scale*0.62, scale, scale*0.24);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,color) = (gfx.width, gfx.height, gfx.color);
+                for sg in segs { draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]); }
+                return Ok(Value::Unit);
+            }
+            // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
+            "ui_frame" => {
+                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
+                let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
+                let l=self.arg_num(&args,4,14.0)? as f32;
+                let segs = ling_ui::holo::corner_brackets(x,y,w0,h0,l);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,color)=(gfx.width,gfx.height,gfx.color);
+                for sg in segs { draw_line(&mut gfx.buffer, w,h,color, sg[0],sg[1],sg[2],sg[3]); }
+                return Ok(Value::Unit);
+            }
+            // ui_bevel(x,y,w,h, bevel) — beveled holographic panel outline
+            "ui_bevel" => {
+                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
+                let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
+                let bv=self.arg_num(&args,4,10.0)? as f32;
+                let segs = ling_ui::holo::beveled_rect(x,y,w0,h0,bv);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,color)=(gfx.width,gfx.height,gfx.color);
+                for sg in segs { draw_line(&mut gfx.buffer, w,h,color, sg[0],sg[1],sg[2],sg[3]); }
+                return Ok(Value::Unit);
+            }
+            // text_poll() — fold newly-typed keys into the input buffer, return it
+            #[cfg(not(target_arch = "wasm32"))]
+            "text_poll" => {
+                let keys = { let gfx = self.gfx.borrow(); gfx.window.as_ref().map(|w| w.get_keys_pressed(minifb::KeyRepeat::No)).unwrap_or_default() };
+                for k in keys {
+                    if k == minifb::Key::Backspace { self.text_buffer.pop(); }
+                    else if let Some(c) = key_char(k) { self.text_buffer.push(c); }
+                }
+                return Ok(Value::Str(self.text_buffer.clone()));
+            }
+            "text_get"   => return Ok(Value::Str(self.text_buffer.clone())),
+            "text_set"   => { self.text_buffer = self.arg_str(&args,0,""); return Ok(Value::Unit); }
+            "text_clear" => { self.text_buffer.clear(); return Ok(Value::Unit); }
+            // record_frame() — append the current framebuffer as a PPM, return frame #
+            #[cfg(not(target_arch = "wasm32"))]
+            "record_frame" => {
+                let n = self.record_n;
+                let (buf, w, h) = { let gfx = self.gfx.borrow(); (gfx.buffer.clone(), gfx.width, gfx.height) };
+                let _ = std::fs::create_dir_all("recordings");
+                let mut out = Vec::with_capacity(w*h*3 + 32);
+                out.extend_from_slice(format!("P6\n{w} {h}\n255\n").as_bytes());
+                for px in &buf { let p = *px; out.push((p>>16) as u8); out.push((p>>8) as u8); out.push(p as u8); }
+                let _ = std::fs::write(format!("recordings/frame_{n:05}.ppm"), out);
+                self.record_n += 1;
+                return Ok(Value::Number(n as f64));
+            }
+            "record_count" => return Ok(Value::Number(self.record_n as f64)),
+            // ── microphone → crypto donut ──
+            // mic_capture() — append the latest mic samples to the record buffer
+            // (call each frame while recording). Returns the buffer length.
+            #[cfg(not(target_arch = "wasm32"))]
+            "mic_capture" => {
+                if let Some(mic) = self.mic.as_ref() {
+                    let s = mic.latest_samples();
+                    self.mic_buffer.extend_from_slice(&s);
+                    let cap = 96_000usize; // ~2 s @ 48 kHz
+                    if self.mic_buffer.len() > cap {
+                        let drop = self.mic_buffer.len() - cap;
+                        self.mic_buffer.drain(0..drop);
+                    }
+                }
+                return Ok(Value::Number(self.mic_buffer.len() as f64));
+            }
+            // mic_seed() — SHA3-256 hex of the recorded audio, usable as a donut seed
+            #[cfg(not(target_arch = "wasm32"))]
+            "mic_seed" => {
+                let mut bytes = Vec::with_capacity(self.mic_buffer.len() * 4);
+                for f in &self.mic_buffer { bytes.extend_from_slice(&f.to_le_bytes()); }
+                return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(&bytes))));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "mic_clear" => { self.mic_buffer.clear(); return Ok(Value::Number(0.0)); }
+            // flush the 3-D depth queue onto the framebuffer WITHOUT presenting,
+            // so 2-D UI drawn afterwards overlays the 3-D scene.
+            #[cfg(not(target_arch = "wasm32"))]
+            "flush_3d" | "render_3d" => {
+                let mut gfx = self.gfx.borrow_mut();
+                if !gfx.depth_queue.is_empty() {
+                    let w = gfx.width; let h = gfx.height;
+                    let queue = std::mem::take(&mut gfx.depth_queue);
+                    queue.flush(&mut gfx.buffer, w, h);
+                }
+                return Ok(Value::Unit);
             }
 
             "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" => {

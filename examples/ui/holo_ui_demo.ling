@@ -1,0 +1,119 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LING-UI 2030  —  holographic vector interface + animation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Vector stroke font, sci-fi corner brackets & beveled panels, animated hover
+# glow (easings), a draggable slider and a toggle. Move the mouse, click & drag.
+
+bind start = do {
+    open_window(960, 640)
+
+    bind tgl = 0.0          # toggle state
+    bind wasDown = 0.0      # previous mouse-down (for click edges)
+    bind g1 = 0.0           # per-button animated hover glow
+    bind g2 = 0.0
+    bind g3 = 0.0
+    bind slider = 0.4       # slider value 0..1
+
+    while window_is_open() {
+        set_color(6, 9, 16)
+        fill()
+        bind t = time_now()
+        bind mx = mouse_x()
+        bind my = mouse_y()
+        bind nd = 0.0
+        if mouse_down() { bind nd = 1.0 }
+        bind clicked = 0.0
+        if nd > 0.5 { if wasDown < 0.5 { bind clicked = 1.0 } }
+
+        set_blend(1)
+
+        # ── title + outer frame ──
+        bind pulse = ease("sine", sin(t * 1.2) * 0.5 + 0.5)
+        set_color(40 + pulse * 60.0, 200, 255)
+        ui_frame(40.0, 30.0, 880.0, 580.0, 26.0)
+        set_color(0, 210, 255)
+        ui_text(70.0, 50.0, 30.0, "LING UI 2030")
+        set_color(60, 130, 170)
+        ui_text(72.0, 92.0, 14.0, "HOLOGRAPHIC VECTOR INTERFACE")
+
+        # ── three animated buttons ──
+        bind bx = 80.0
+        bind bw = 250.0
+        bind bh = 64.0
+
+        # button 1
+        bind by1 = 150.0
+        bind hot1 = 0.0
+        if ui_hot(bx, by1, bw, bh) { bind hot1 = 1.0 }
+        bind g1 = g1 + (hot1 - g1) * 0.18
+        bind e1 = ease("back", g1)
+        set_color(20 + e1 * 60.0, 160 + e1 * 95.0, 200 + e1 * 55.0)
+        ui_bevel(bx - e1 * 4.0, by1 - e1 * 4.0, bw + e1 * 8.0, bh + e1 * 8.0, 12.0)
+        ui_text(bx + 26.0, by1 + 22.0, 20.0, "ENCRYPT")
+
+        # button 2
+        bind by2 = 240.0
+        bind hot2 = 0.0
+        if ui_hot(bx, by2, bw, bh) { bind hot2 = 1.0 }
+        bind g2 = g2 + (hot2 - g2) * 0.18
+        bind e2 = ease("back", g2)
+        set_color(200 + e2 * 55.0, 60 + e2 * 90.0, 180 + e2 * 70.0)
+        ui_bevel(bx - e2 * 4.0, by2 - e2 * 4.0, bw + e2 * 8.0, bh + e2 * 8.0, 12.0)
+        ui_text(bx + 26.0, by2 + 22.0, 20.0, "SCATTER")
+
+        # button 3
+        bind by3 = 330.0
+        bind hot3 = 0.0
+        if ui_hot(bx, by3, bw, bh) { bind hot3 = 1.0 }
+        bind g3 = g3 + (hot3 - g3) * 0.18
+        bind e3 = ease("back", g3)
+        set_color(60 + e3 * 60.0, 220, 150 + e3 * 90.0)
+        ui_bevel(bx - e3 * 4.0, by3 - e3 * 4.0, bw + e3 * 8.0, bh + e3 * 8.0, 12.0)
+        ui_text(bx + 26.0, by3 + 22.0, 20.0, "VERIFY")
+
+        # ── slider (drag the knob) ──
+        bind sx = 470.0
+        bind sy = 180.0
+        bind sw = 380.0
+        if mouse_down() {
+            if ui_hot(sx - 12.0, sy - 24.0, sw + 24.0, 48.0) {
+                bind slider = (mx - sx) / sw
+                if slider < 0.0 { bind slider = 0.0 }
+                if slider > 1.0 { bind slider = 1.0 }
+            }
+        }
+        set_color(40, 90, 130)
+        draw_line(sx, sy, sx + sw, sy)
+        bind kx = sx + slider * sw
+        bind kp = ease("elastic", sin(t * 3.0) * 0.04 + 0.96)
+        set_color(0, 230, 255)
+        draw_disc(kx, sy, 9.0 + kp * 3.0)
+        set_color(80, 160, 200)
+        ui_text(sx, sy - 44.0, 14.0, "GLOW LEVEL")
+
+        # ── toggle ──
+        bind tx = 470.0
+        bind ty = 300.0
+        if clicked > 0.5 {
+            if ui_hot(tx, ty, 90.0, 44.0) {
+                bind tgl = 1.0 - tgl
+            }
+        }
+        set_color(50, 90, 120)
+        ui_frame(tx, ty, 90.0, 44.0, 12.0)
+        bind knob = tx + 10.0 + ease("cubic_out", tgl) * 50.0
+        if tgl > 0.5 { set_color(0, 255, 160) } else { set_color(120, 120, 140) }
+        draw_disc(knob, ty + 22.0, 14.0)
+        set_color(80, 160, 200)
+        ui_text(tx + 110.0, ty + 12.0, 16.0, "HOLOGRAM")
+
+        # ── animated scan accent ──
+        bind scan = ease("quad_inout", sin(t * 0.8) * 0.5 + 0.5)
+        set_color(0, 120, 180)
+        draw_line(470.0, 400.0 + scan * 150.0, 850.0, 400.0 + scan * 150.0)
+
+        bind wasDown = nd
+        set_blend(0)
+        present()
+    }
+}
