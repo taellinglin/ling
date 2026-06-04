@@ -1,8 +1,11 @@
-//! ling-crypto smoke tests: hashing is deterministic and symmetric
-//! encryption round-trips.
+//! ling-crypto smoke tests: hashing is deterministic, symmetric encryption
+//! round-trips, and the post-quantum (ML-KEM-768) + hybrid (X25519+ML-KEM) KEMs
+//! establish matching shared secrets.
 
 use ling_crypto::hash::Blake3;
 use ling_crypto::symmetric::AesGcm256;
+use ling_crypto::pq::MlKem768Keypair;
+use ling_crypto::hybrid::HybridKeypair;
 
 #[test]
 fn blake3_is_deterministic_and_sensitive() {
@@ -25,6 +28,27 @@ fn aes_gcm_256_round_trips() {
 
     let pt = cipher.decrypt(&ct).expect("decrypt must succeed");
     assert_eq!(pt, plaintext, "decrypt(encrypt(x)) == x");
+}
+
+#[test]
+fn ml_kem_768_establishes_shared_secret() {
+    let recipient = MlKem768Keypair::generate();
+    let ek = recipient.encapsulation_key();
+    let (ct, ss_sender) = ling_crypto::pq::encapsulate(&ek).expect("encapsulate");
+    let ss_recipient = recipient.decapsulate(&ct).expect("decapsulate");
+    assert_eq!(ss_sender, ss_recipient, "ML-KEM-768 shared secrets must match");
+}
+
+#[test]
+fn hybrid_x25519_mlkem_establishes_shared_secret() {
+    let recipient = HybridKeypair::generate();
+    let pk = recipient.public_key();
+    let (ct, ss_sender) = ling_crypto::hybrid::encapsulate(&pk).expect("encapsulate");
+    let ss_recipient = recipient.decapsulate(&ct).expect("decapsulate");
+    assert_eq!(ss_sender, ss_recipient, "hybrid shared secrets must match");
+    // The hybrid secret must not equal either component trivially; just assert
+    // it's 32 bytes of established key material.
+    assert_eq!(ss_sender.len(), 32);
 }
 
 #[test]

@@ -59,6 +59,21 @@ normalizer table can emit.
       minifb/cpal, lint non-blocking) + `tests` badge in README.
       Full workspace: **66 passed, 0 failed**.
 
+## ling-crypto — 2030 hardening
+- [x] Replace the ML-KEM-768 placeholder (random bytes) with a **real** FIPS 203
+      implementation backed by the `ml-kem` crate (`pq.rs`): `MlKem768Keypair`
+      generate / from_seed / encapsulation_key / decapsulate + free `encapsulate`.
+- [x] Add **hybrid X25519 + ML-KEM-768** KEM (`hybrid.rs`) — the real PQ-migration
+      primitive (X-Wing-style SHA3-256 combiner, secure if either leg holds).
+- [x] Fix the broken Shamir `gf_inv` (was integer division) → correct Fermat
+      inverse `x^254` in GF(2⁸); add split/reconstruct + inverse tests.
+- [x] Tests: ML-KEM round-trip, hybrid round-trip/tamper/length, Shamir — all green.
+- [ ] **ML-DSA (FIPS 204)** post-quantum signatures: the `ml-dsa` crate is only
+      at 0.1.0 (immature); add once it stabilises, to pair PQ signatures with the
+      PQ KEM. Until then Ed25519 (classical) is the signature primitive.
+- [ ] Upgrade the VRF to full RFC 9381 ECVRF (current one is a simplified
+      sign-then-hash construction).
+
 ## Requested: rotating cube “window/viewport” instance API
 - [ ] Add Rust-to-language integration so `.ling` can trigger a render loop
 - [ ] Add a small “software viewport” presenter (RGBA framebuffer -> terminal output)

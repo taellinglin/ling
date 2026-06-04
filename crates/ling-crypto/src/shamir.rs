@@ -20,23 +20,23 @@ fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     result
 }
 
+/// Multiplicative inverse in GF(2⁸).
+///
+/// The nonzero elements form a cyclic group of order 255, so by Fermat's little
+/// theorem `x^255 = 1` and therefore `x⁻¹ = x^254`. Computed with
+/// square-and-multiply (a fixed 8 squarings + multiplies → no secret-dependent
+/// branching on the loop count, unlike an extended-Euclid implementation).
 fn gf_inv(x: u8) -> u8 {
     if x == 0 { return 0; }
-    // Extended Euclidean in GF(2^8)
-    let mut t = 0u16; let mut newt = 1u16;
-    let mut r = POLY;  let mut newr = x as u16;
-    while newr != 0 {
-        let q = r / newr; // polynomial long division in GF(2^8) — simplified
-        let tmp = r ^ gf_mul_u16(q, newr);
-        r = newr; newr = tmp;
-        let tmp2 = t ^ gf_mul_u16(q, newt);
-        t = newt; newt = tmp2;
+    let mut result = 1u8;
+    let mut base = x;
+    let mut exp = 254u16;
+    while exp > 0 {
+        if exp & 1 == 1 { result = gf_mul(result, base); }
+        base = gf_mul(base, base);
+        exp >>= 1;
     }
-    (t & 0xff) as u8
-}
-
-fn gf_mul_u16(a: u16, b: u16) -> u16 {
-    gf_mul(a as u8, b as u8) as u16
+    result
 }
 
 fn eval_poly(coeffs: &[u8], x: u8) -> u8 {
@@ -76,6 +76,39 @@ pub fn split_secret(secret: &[u8], threshold: u8, n: u8) -> Vec<Share> {
         }
     }
     shares
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gf_inverse_is_correct() {
+        // x * x⁻¹ == 1 for every nonzero field element.
+        for x in 1u16..=255 {
+            let x = x as u8;
+            assert_eq!(gf_mul(x, gf_inv(x)), 1, "inverse of {x} is wrong");
+        }
+    }
+
+    #[test]
+    fn split_then_reconstruct() {
+        let secret = b"ling secret \x00\xff bytes";
+        let shares = split_secret(secret, 3, 5);
+        assert_eq!(shares.len(), 5);
+        // Any 3 of the 5 shares reconstruct the secret.
+        let subset = vec![shares[0].clone(), shares[2].clone(), shares[4].clone()];
+        assert_eq!(reconstruct_secret(&subset), secret);
+    }
+
+    #[test]
+    fn fewer_than_threshold_does_not_recover() {
+        let secret = b"top secret";
+        let shares = split_secret(secret, 3, 5);
+        let two = vec![shares[0].clone(), shares[1].clone()];
+        // With only 2 of 3 required shares, reconstruction must NOT yield the secret.
+        assert_ne!(reconstruct_secret(&two), secret);
+    }
 }
 
 /// Reconstruct the secret from at least `threshold` shares via Lagrange interpolation.

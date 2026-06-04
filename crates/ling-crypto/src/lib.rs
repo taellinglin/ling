@@ -5,7 +5,8 @@
 //! - [`symmetric`] — AES-256-GCM, XChaCha20-Poly1305
 //! - [`asymmetric`]— Ed25519 signatures, X25519 ECDH
 //! - [`kdf`]       — Argon2id, HKDF-SHA3
-//! - [`pq`]        — ML-KEM-768 (post-quantum KEM, FIPS 203)
+//! - [`pq`]        — ML-KEM-768 (post-quantum KEM, FIPS 203) — real implementation
+//! - [`hybrid`]    — X25519 + ML-KEM-768 hybrid KEM (the PQ-migration primitive)
 //! - [`shamir`]    — Shamir's Secret Sharing over GF(2⁸)
 //! - [`zkp`]       — Schnorr zero-knowledge proof of knowledge
 //! - [`vrf`]       — Verifiable Random Function (Ed25519-based)
@@ -16,6 +17,7 @@ pub mod symmetric;
 pub mod asymmetric;
 pub mod kdf;
 pub mod pq;
+pub mod hybrid;
 pub mod shamir;
 pub mod zkp;
 pub mod vrf;
@@ -25,7 +27,8 @@ pub use hash::{Blake3, Sha3_256, Sha3_512, Shake256};
 pub use symmetric::{AesGcm256, XChaCha20};
 pub use asymmetric::{Ed25519Keypair, X25519Secret};
 pub use kdf::{Argon2idParams, hkdf_sha3};
-pub use pq::{mlkem768_keygen, mlkem768_encapsulate, mlkem768_decapsulate};
+pub use pq::{MlKem768Keypair, encapsulate as mlkem768_encapsulate};
+pub use hybrid::{HybridKeypair, encapsulate as hybrid_encapsulate};
 pub use shamir::{split_secret, reconstruct_secret, Share};
 pub use zkp::{SchnorrProof, SchnorrKeypair};
 pub use vrf::{VrfKeypair, VrfProof};
