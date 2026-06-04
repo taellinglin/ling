@@ -94,7 +94,7 @@ Cryptography library and visualizations.
 
 | File | Description |
 |------|-------------|
-| [crypto_donut_physics.ling](crypto/crypto_donut_physics.ling) | 🍩 Hash a string into a torus donut, then drop it in a box — shape, bounciness, spin & colour all come from the hash (SPACE re-drops, R re-rolls) |
+| [crypto_donut_physics.ling](crypto/crypto_donut_physics.ling) | 🍩 Hash a string into a **knotwork** donut, drop it in a box with an invisible **orientation-aware torus collider** (wide when flat, thin on edge) — shape, bounce, spin & colour from the hash (SPACE re-drops, R re-rolls) |
 | [geo_knot_demo.ling](crypto/geo_knot_demo.ling) | 🟢 A public key as a rotating 3-D torus-knot fingerprint (geo suite) |
 | [hybrid_kem_demo.ling](crypto/hybrid_kem_demo.ling) | 🟡🟣 X25519+ML-KEM-768 hybrid PQ KEM — gold identity knot + magenta ciphertext knot |
 | [holographic_demo.ling](crypto/holographic_demo.ling) | 🟣 4-D all-or-nothing transform — secret scattered into shards on a 4-sphere |

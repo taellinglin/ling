@@ -1,29 +1,29 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# CRYPTO DONUT  —  hash a string into a torus, then drop it in a box
+# CRYPTO DONUT  —  a knotwork donut with a real torus collider
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Your INPUT string is SHA3-256 hashed into a (p,q) torus knot (the geo crypto
-# module). The knot's inner/outer radius set the donut's hole and fatness; the
-# hash bytes also pick its bounciness, spin and colour. Then gravity drops it
-# into a big box and it tumbles & bounces — every string makes a different donut
-# that bounces differently.
+# module). The knot curve IS the donut you see. Its collision shape is the
+# (invisible) torus the knot wraps — and it is ORIENTATION-AWARE: as the donut
+# tumbles, its footprint changes (wide when flat, thin when on-edge), so it
+# bounces like a real ring, not a ball. Shape, bounciness, spin and colour all
+# come from the hash.
 #
-#   ✏  change `seed` below to make a new donut
-#   ␣  SPACE = re-drop      R = re-roll velocity
+#   ✏  change `seed` to make a new donut      ␣ SPACE re-drop      R re-roll
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bind seed = "灵 · ling · my cryptographic donut"
 
-bind BOX     = 6.0          # half-size of the container
-bind DONUT_R = 1.7          # outer radius of the donut
+bind BOX     = 6.0
+bind DONUT_R = 1.9          # outer radius in world units
 bind GRAVITY = 15.0
 bind DT      = 0.016
-bind DAMP    = 0.996
+bind DAMP    = 0.997
 
 bind start = do {
     open_window(1000, 760)
-    set_ambient(0.18)
+    set_ambient(0.2)
 
-    # ── Derive the donut's SHAPE from the knot fingerprint of the input ──
+    # ── SHAPE from the knot fingerprint of the input ──
     bind pts = knot_points(seed)
     bind n = len(pts) / 3.0
 
@@ -39,13 +39,12 @@ bind start = do {
         if rad < minRad { bind minRad = rad }
         bind i = i + 1.0
     }
-    # torus tube fraction so inner/outer matches the knot's inner/outer
-    bind ratio = minRad / maxRad
-    bind tube = (1.0 - ratio) / 2.0
-    if tube < 0.08 { bind tube = 0.08 }
-    if tube > 0.45 { bind tube = 0.45 }
+    bind s = DONUT_R / maxRad                 # scale so outer radius = DONUT_R
+    bind majR = (maxRad + minRad) * 0.5 * s   # torus major radius (collider)
+    bind tubeR = (maxRad - minRad) * 0.5 * s  # torus tube radius   (collider)
+    if tubeR < 0.15 { bind tubeR = 0.15 }
 
-    # ── Derive PHYSICS from the hash (deterministic pseudo-randoms 0..1) ──
+    # ── PHYSICS from the hash (deterministic pseudo-randoms) ──
     bind h1 = sin(pts[0] * 12.9898 + pts[1] * 4.1414) * 43758.5453
     bind f1 = h1 - floor(h1)
     bind h2 = sin(pts[3] * 19.19 + pts[5] * 7.77) * 31718.13
@@ -53,37 +52,34 @@ bind start = do {
     bind h3 = sin(maxRad * 8.8 + minRad * 3.3) * 12345.678
     bind f3 = h3 - floor(h3)
 
-    bind restitution = 0.55 + f1 * 0.4        # bounciness 0.55–0.95
-    bind cr = (sin(f1 * 6.2831 + 0.0) * 0.5 + 0.5) * 235.0 + 20.0
-    bind cg = (sin(f1 * 6.2831 + 2.0) * 0.5 + 0.5) * 235.0 + 20.0
-    bind cb = (sin(f1 * 6.2831 + 4.0) * 0.5 + 0.5) * 235.0 + 20.0
+    bind restitution = 0.6 + f1 * 0.35
+    bind cr = (sin(f1 * 6.2831 + 0.0) * 0.5 + 0.5) * 215.0 + 40.0
+    bind cg = (sin(f1 * 6.2831 + 2.0) * 0.5 + 0.5) * 215.0 + 40.0
+    bind cb = (sin(f1 * 6.2831 + 4.0) * 0.5 + 0.5) * 215.0 + 40.0
 
-    # ── Donut state ──
+    # ── donut state ──
     bind px = 0.0
-    bind py = 0.0 - BOX + DONUT_R + 0.3       # start near the ceiling
+    bind py = 0.0 - BOX + DONUT_R + 0.3
     bind pz = 0.0
     bind vx = (f2 - 0.5) * 11.0
     bind vy = 0.0
     bind vz = (f3 - 0.5) * 11.0
-    bind rx = 0.0
-    bind ry = 0.0
-    bind rz = 0.0
-    bind wx = (f1 - 0.5) * 5.0                # angular velocity (tumble)
-    bind wy = (f2 - 0.5) * 5.0
-    bind wz = (f3 - 0.5) * 5.0
+    bind ax = 0.0                  # tumble angles
+    bind ay = 0.0
+    bind az = 0.0
+    bind wx = (f1 - 0.5) * 4.5     # angular velocity
+    bind wy = (f2 - 0.5) * 4.5
+    bind wz = (f3 - 0.5) * 4.5
     bind flash = 0.0
-
-    bind lim = BOX - DONUT_R
 
     while window_is_open() {
         set_color(7, 8, 14)
         fill()
-
         bind t = time_now()
         set_camera(cos(t * 0.22), sin(t * 0.22), cos(0.5), sin(0.5))
-        set_ambient(0.18)
+        set_ambient(0.2)
 
-        # ── integrate gravity + velocity ──
+        # ── integrate ──
         bind vy = vy + GRAVITY * DT
         bind vx = vx * DAMP
         bind vy = vy * DAMP
@@ -91,65 +87,117 @@ bind start = do {
         bind px = px + vx * DT
         bind py = py + vy * DT
         bind pz = pz + vz * DT
+        bind ax = ax + wx * DT
+        bind ay = ay + wy * DT
+        bind az = az + wz * DT
 
-        # ── bounce off the 6 walls (bounding radius = DONUT_R) ──
-        if px > lim       { bind px = lim            bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy + vz * 0.4 }
-        if px < 0.0 - lim { bind px = 0.0 - lim      bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy - vz * 0.4 }
-        if py > lim       { bind py = lim            bind vy = 0.0 - vy * restitution  bind flash = 1.0  bind wx = wx + vx * 0.5 }
-        if py < 0.0 - lim { bind py = 0.0 - lim      bind vy = 0.0 - vy * restitution  bind flash = 1.0 }
-        if pz > lim       { bind pz = lim            bind vz = 0.0 - vz * restitution  bind flash = 1.0  bind wx = wx + vx * 0.4 }
-        if pz < 0.0 - lim { bind pz = 0.0 - lim      bind vz = 0.0 - vz * restitution  bind flash = 1.0 }
+        # ── rotation basis (precomputed once per frame) ──
+        bind cax = cos(ax)  bind sax = sin(ax)
+        bind cay = cos(ay)  bind say = sin(ay)
+        bind caz = cos(az)  bind saz = sin(az)
 
-        # ── spin + flash decay ──
-        bind rx = rx + wx * DT
-        bind ry = ry + wy * DT
-        bind rz = rz + wz * DT
+        # hole axis n = R(ax,ay,az) · (0,1,0)  → torus normal in world
+        bind nx = sax * say * caz - cax * saz
+        bind ny = sax * say * saz + cax * caz
+        bind nz = sax * cay
+
+        # ── TORUS COLLISION: half-width along each world axis depends on tilt ──
+        # extent along axis a = majR*sqrt(1-(n·a)^2) + tubeR
+        bind gx = 1.0 - nx * nx
+        if gx < 0.0 { bind gx = 0.0 }
+        bind gy = 1.0 - ny * ny
+        if gy < 0.0 { bind gy = 0.0 }
+        bind gz = 1.0 - nz * nz
+        if gz < 0.0 { bind gz = 0.0 }
+        bind hwx = majR * sqrt(gx) + tubeR
+        bind hwy = majR * sqrt(gy) + tubeR
+        bind hwz = majR * sqrt(gz) + tubeR
+
+        bind lx = BOX - hwx
+        bind ly = BOX - hwy
+        bind lz = BOX - hwz
+        if px > lx       { bind px = lx          bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy + vz * 0.5 }
+        if px < 0.0 - lx { bind px = 0.0 - lx    bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy - vz * 0.5 }
+        if py > ly       { bind py = ly          bind vy = 0.0 - vy * restitution  bind flash = 1.0  bind wx = wx + vx * 0.6  bind wz = wz + vz * 0.6 }
+        if py < 0.0 - ly { bind py = 0.0 - ly    bind vy = 0.0 - vy * restitution  bind flash = 1.0 }
+        if pz > lz       { bind pz = lz          bind vz = 0.0 - vz * restitution  bind flash = 1.0  bind wx = wx + vx * 0.5 }
+        if pz < 0.0 - lz { bind pz = 0.0 - lz    bind vz = 0.0 - vz * restitution  bind flash = 1.0 }
+
         bind flash = flash * 0.86
 
-        # ── auto re-energize if it's nearly settled on the floor (keep it fun) ──
+        # ── keep it lively when it settles ──
         bind speed = vx * vx + vy * vy + vz * vz
-        if speed < 1.2 {
-            if py > lim - 0.4 {
+        if speed < 1.0 {
+            if py > ly - 0.5 {
                 bind vy = 0.0 - 11.0 - f2 * 6.0
                 bind vx = (f3 - 0.5) * 9.0
                 bind vz = (f1 - 0.5) * 9.0
             }
         }
 
-        # ── controls ──
         if key_pressed("space") {
-            bind px = 0.0  bind pz = 0.0
-            bind py = 0.0 - lim
+            bind px = 0.0  bind pz = 0.0  bind py = 0.0 - ly
             bind vx = (f2 - 0.5) * 11.0  bind vy = 0.0  bind vz = (f3 - 0.5) * 11.0
         }
         if key_pressed("r") {
-            bind vx = sin(t * 7.0) * 10.0
-            bind vz = cos(t * 5.0) * 10.0
-            bind vy = 0.0 - 8.0
+            bind vx = sin(t * 7.0) * 10.0  bind vz = cos(t * 5.0) * 10.0  bind vy = 0.0 - 8.0
         }
 
         # ── draw the box (12 wireframe edges) ──
-        set_color(46, 64, 104)
-        draw_line_3d(0.0 - BOX, 0.0 - BOX, 0.0 - BOX,  BOX, 0.0 - BOX, 0.0 - BOX)
-        draw_line_3d(BOX, 0.0 - BOX, 0.0 - BOX,  BOX, BOX, 0.0 - BOX)
-        draw_line_3d(BOX, BOX, 0.0 - BOX,  0.0 - BOX, BOX, 0.0 - BOX)
-        draw_line_3d(0.0 - BOX, BOX, 0.0 - BOX,  0.0 - BOX, 0.0 - BOX, 0.0 - BOX)
-        draw_line_3d(0.0 - BOX, 0.0 - BOX, BOX,  BOX, 0.0 - BOX, BOX)
-        draw_line_3d(BOX, 0.0 - BOX, BOX,  BOX, BOX, BOX)
-        draw_line_3d(BOX, BOX, BOX,  0.0 - BOX, BOX, BOX)
-        draw_line_3d(0.0 - BOX, BOX, BOX,  0.0 - BOX, 0.0 - BOX, BOX)
-        draw_line_3d(0.0 - BOX, 0.0 - BOX, 0.0 - BOX,  0.0 - BOX, 0.0 - BOX, BOX)
-        draw_line_3d(BOX, 0.0 - BOX, 0.0 - BOX,  BOX, 0.0 - BOX, BOX)
-        draw_line_3d(BOX, BOX, 0.0 - BOX,  BOX, BOX, BOX)
-        draw_line_3d(0.0 - BOX, BOX, 0.0 - BOX,  0.0 - BOX, BOX, BOX)
+        set_color(44, 62, 100)
+        draw_line_3d(0.0-BOX,0.0-BOX,0.0-BOX,  BOX,0.0-BOX,0.0-BOX)
+        draw_line_3d(BOX,0.0-BOX,0.0-BOX,  BOX,BOX,0.0-BOX)
+        draw_line_3d(BOX,BOX,0.0-BOX,  0.0-BOX,BOX,0.0-BOX)
+        draw_line_3d(0.0-BOX,BOX,0.0-BOX,  0.0-BOX,0.0-BOX,0.0-BOX)
+        draw_line_3d(0.0-BOX,0.0-BOX,BOX,  BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,0.0-BOX,BOX,  BOX,BOX,BOX)
+        draw_line_3d(BOX,BOX,BOX,  0.0-BOX,BOX,BOX)
+        draw_line_3d(0.0-BOX,BOX,BOX,  0.0-BOX,0.0-BOX,BOX)
+        draw_line_3d(0.0-BOX,0.0-BOX,0.0-BOX,  0.0-BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,0.0-BOX,0.0-BOX,  BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,BOX,0.0-BOX,  BOX,BOX,BOX)
+        draw_line_3d(0.0-BOX,BOX,0.0-BOX,  0.0-BOX,BOX,BOX)
 
-        # ── light follows the donut; donut flashes white on impact ──
-        add_light(px, py - 3.0, pz - 3.0, 4.5, 1.0, 0.96, 0.88)
-        bind fr = cr + (255.0 - cr) * flash
-        bind fg = cg + (255.0 - cg) * flash
-        bind fb = cb + (255.0 - cb) * flash
-        set_color(fr, fg, fb)
-        torus(px, py, pz,  DONUT_R, DONUT_R, DONUT_R,  rx, ry, rz,  2,  44.0, 16.0, tube)
+        # ── draw the KNOTWORK donut (rotate each knot point, then draw segments) ──
+        # world point 0
+        bind plx = pts[0]  bind ply = pts[1]  bind plz = pts[2]
+        bind py1 = ply * cax - plz * sax
+        bind pz1 = ply * sax + plz * cax
+        bind px2 = plx * cay + pz1 * say
+        bind pz2 = (0.0 - plx) * say + pz1 * cay
+        bind px3 = px2 * caz - py1 * saz
+        bind py3 = px2 * saz + py1 * caz
+        bind pwx = px + px3 * s
+        bind pwy = py + py3 * s
+        bind pwz = pz + pz2 * s
+
+        bind i = 1.0
+        while i < n {
+            bind k = i * 3.0
+            bind clx = pts[k]
+            bind cly = pts[k + 1.0]
+            bind clz = pts[k + 2.0]
+            bind cy1 = cly * cax - clz * sax
+            bind cz1 = cly * sax + clz * cax
+            bind cx2 = clx * cay + cz1 * say
+            bind cz2 = (0.0 - clx) * say + cz1 * cay
+            bind cx3 = cx2 * caz - cy1 * saz
+            bind cy3 = cx2 * saz + cy1 * caz
+            bind cwx = px + cx3 * s
+            bind cwy = py + cy3 * s
+            bind cwz = pz + cz2 * s
+
+            # colour: hash hue, brightness waves along the curve, white flash on hit
+            bind hh = i / n
+            bind br = sin(hh * 14.0 + t * 2.5) * 0.35 + 0.65
+            set_color(cr * br + (255.0 - cr * br) * flash,
+                      cg * br + (255.0 - cg * br) * flash,
+                      cb * br + (255.0 - cb * br) * flash)
+            draw_line_3d(pwx, pwy, pwz, cwx, cwy, cwz)
+
+            bind pwx = cwx  bind pwy = cwy  bind pwz = cwz
+            bind i = i + 1.0
+        }
 
         present()
     }
