@@ -170,6 +170,21 @@ static BUILTINS_OTHER: &[Entry] = &[
     (&["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"],      ["now","当前时间","現在時刻","현재시간","เวลาปัจจุบัน"]),
 ];
 
+// Builtins — geometric / post-quantum crypto (5-language parity)
+static BUILTINS_GEO_CRYPTO: &[Entry] = &[
+    (&["crypto_hash","几何哈希","幾何ハッシュ","기하해시","แฮชเข้ารหัส"],          ["crypto_hash","几何哈希","幾何ハッシュ","기하해시","แฮชเข้ารหัส"]),
+    (&["knot_points","结点坐标","結び目点","매듭점","จุดปม"],                    ["knot_points","结点坐标","結び目点","매듭점","จุดปม"]),
+    (&["knot_label","结点标签","結び目ラベル","매듭라벨","ป้ายปม"],              ["knot_label","结点标签","結び目ラベル","매듭라벨","ป้ายปม"]),
+    (&["knot_keygen","hybrid_keygen","生成密钥","鍵生成","키생성","สร้างกุญแจปม"],["knot_keygen","生成密钥","鍵生成","키생성","สร้างกุญแจปม"]),
+    (&["knot_public","hybrid_public","公钥","公開鍵","공개키","กุญแจสาธารณะปม"], ["knot_public","公钥","公開鍵","공개키","กุญแจสาธารณะปม"]),
+    (&["knot_encapsulate","hybrid_encapsulate","封装密钥","カプセル化","캡슐화","ห่อกุญแจปม"],["knot_encapsulate","封装密钥","カプセル化","캡슐화","ห่อกุญแจปม"]),
+    (&["knot_decapsulate","hybrid_decapsulate","解封装密钥","カプセル解除","캡슐해제","แกะกุญแจปม"],["knot_decapsulate","解封装密钥","カプセル解除","캡슐해제","แกะกุญแจปม"]),
+    (&["crypto_seal","封印","封印する","봉인","ผนึก"],                          ["crypto_seal","封印","封印する","봉인","ผนึก"]),
+    (&["crypto_open","解封","封印解除","봉인해제","เปิดผนึก"],                   ["crypto_open","解封","封印解除","봉인해제","เปิดผนึก"]),
+    (&["holo_points","全息点","ホログラム点","홀로그램점","จุดโฮโลแกรม"],         ["holo_points","全息点","ホログラム点","홀로그램점","จุดโฮโลแกรม"]),
+    (&["holo_fragment_count","全息碎片数","ホログラム断片数","홀로그램조각수","จำนวนชิ้นโฮโลแกรม"],["holo_fragment_count","全息碎片数","ホログラム断片数","홀로그램조각수","จำนวนชิ้นโฮโลแกรม"]),
+];
+
 // Builtins — audio + FFT + collections (5-language parity)
 // Output forms match the lexicon/runtime canonical aliases.
 static BUILTINS_AUDIO: &[Entry] = &[
@@ -496,7 +511,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_GAME, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_GAME, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

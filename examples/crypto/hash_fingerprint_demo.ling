@@ -1,0 +1,56 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HASH FINGERPRINT  —  SHA3-256 rendered as a 3-D knot "constellation"
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# A human-verifiable visual hash (like SSH randomart, but a 3-D knot). The same
+# input always yields the same constellation; one changed byte scatters it
+# completely. Colour theme: ELECTRIC BLUE.
+
+bind start = do {
+    open_window(900, 720)
+
+    bind message = "verify me: 灵 ling SHA3-256 fingerprint"
+    bind pts = knot_points(message)
+    bind n = len(pts) / 3.0
+
+    while window_is_open() {
+        set_color(4, 8, 16)
+        fill()
+        set_blend(1)
+
+        bind t = time_now()
+        bind a = t * 0.4
+        bind ca = cos(a)
+        bind sa = sin(a)
+        bind cx = 450.0
+        bind cy = 360.0
+        bind scale = 100.0
+        bind pulse = sin(t * 1.5) * 0.5 + 0.5
+
+        bind i = 0.0
+        while i < n {
+            bind k = i * 3.0
+            bind x = pts[k]
+            bind y = pts[k + 1.0]
+            bind z = pts[k + 2.0]
+
+            bind xr = x * ca - z * sa
+            bind zr = x * sa + z * ca
+            bind f = 5.0 / (5.0 + zr)
+            bind sx = cx + xr * scale * f
+            bind sy = cy - y * scale * f
+
+            # electric blue, brightness twinkles along the curve
+            bind tw = sin(i * 0.3 + t * 3.0) * 0.5 + 0.5
+            bind b = 180.0 + tw * 75.0
+            bind g = 120.0 + tw * 90.0
+            set_color(30.0 + tw * 40.0, g, b)
+            bind rad = 1.5 + f * 3.0 + pulse * 1.5
+            draw_disc(sx, sy, rad)
+
+            bind i = i + 1.0
+        }
+
+        set_blend(0)
+        present()
+    }
+}

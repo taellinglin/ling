@@ -1,0 +1,65 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GEO / KNOT  —  a public key rendered as a rotating 3-D torus knot
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# The string below is hashed (SHA3-256) into a (p,q) torus knot. The knot IS the
+# key's visual fingerprint — show it to a human to confirm a key out-of-band.
+# Colour theme: EMERALD → CYAN.
+
+bind start = do {
+    open_window(900, 720)
+
+    bind secret = "灵 · ling · geometric post-quantum identity"
+    bind pts = knot_points(secret)
+    bind n = len(pts) / 3.0
+
+    while window_is_open() {
+        set_color(6, 10, 14)
+        fill()
+
+        bind t = time_now()
+        bind a = t * 0.6
+        bind ca = cos(a)
+        bind sa = sin(a)
+        bind cx = 450.0
+        bind cy = 360.0
+        bind scale = 95.0
+
+        set_blend(1)
+
+        bind i = 0.0
+        while i < n - 1.0 {
+            bind k = i * 3.0
+            bind x0 = pts[k]
+            bind y0 = pts[k + 1.0]
+            bind z0 = pts[k + 2.0]
+            bind x1 = pts[k + 3.0]
+            bind y1 = pts[k + 4.0]
+            bind z1 = pts[k + 5.0]
+
+            # rotate around Y, then perspective-project (focal 5)
+            bind xr0 = x0 * ca - z0 * sa
+            bind zr0 = x0 * sa + z0 * ca
+            bind f0 = 5.0 / (5.0 + zr0)
+            bind sx0 = cx + xr0 * scale * f0
+            bind sy0 = cy - y0 * scale * f0
+
+            bind xr1 = x1 * ca - z1 * sa
+            bind zr1 = x1 * sa + z1 * ca
+            bind f1 = 5.0 / (5.0 + zr1)
+            bind sx1 = cx + xr1 * scale * f1
+            bind sy1 = cy - y1 * scale * f1
+
+            # emerald→cyan gradient along the curve
+            bind h = i / n
+            bind g = (sin(h * 6.2831 + 0.0) * 0.5 + 0.5) * 180.0 + 60.0
+            bind b = (sin(h * 6.2831 + 2.0) * 0.5 + 0.5) * 160.0 + 80.0
+            set_color(20.0, g, b)
+            draw_line(sx0, sy0, sx1, sy1)
+
+            bind i = i + 1.0
+        }
+
+        set_blend(0)
+        present()
+    }
+}

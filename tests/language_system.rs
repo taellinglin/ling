@@ -178,6 +178,37 @@ fn collections_and_fft_korean() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Crypto builtins: hybrid PQ KEM round-trip + seal/open, callable from Ling.
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn crypto_kem_and_seal_round_trip() {
+    assert_runs("crypto-en", r#"bind start = do {
+        bind id = knot_keygen()
+        bind pk = knot_public(id)
+        bind enc = knot_encapsulate(pk)
+        bind ss = knot_decapsulate(id, enc[0])
+        bind sealed = crypto_seal(enc[1], "temple at dusk")
+        print(crypto_open(ss, sealed))
+        print(len(knot_points(pk)))
+        print(crypto_hash("ling"))
+    }"#);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn crypto_builtins_chinese() {
+    assert_runs("crypto-zh", r#"令 启动 = 执 {
+        令 id = 生成密钥()
+        令 pk = 公钥(id)
+        令 enc = 封装密钥(pk)
+        令 ss = 解封装密钥(id, enc[0])
+        印(解封(ss, 封印(enc[1], "你好")))
+    }"#);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Polyglot language detection
 // ─────────────────────────────────────────────────────────────────────────────
 

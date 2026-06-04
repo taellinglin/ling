@@ -170,6 +170,30 @@ fn tex_palette(name: &str, t: f32) -> [f32; 3] {
     [0,1,2].map(|i| (a[i] + b[i] * (std::f32::consts::TAU * (c[i] * t + d[i])).cos()).clamp(0.0, 1.0))
 }
 
+/// Lowercase-hex encode bytes (the wire format for crypto values in Ling).
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes { s.push_str(&format!("{b:02x}")); }
+    s
+}
+
+/// Decode a lowercase/uppercase hex string to bytes (ignores malformed tail).
+fn hex_decode(s: &str) -> Vec<u8> {
+    let s = s.trim();
+    (0..s.len() / 2)
+        .filter_map(|i| u8::from_str_radix(s.get(i * 2..i * 2 + 2)?, 16).ok())
+        .collect()
+}
+
+/// Decode a hex string into a fixed 32-byte key (zero-padded / truncated).
+fn hex_to_32(s: &str) -> [u8; 32] {
+    let v = hex_decode(s);
+    let mut out = [0u8; 32];
+    let n = v.len().min(32);
+    out[..n].copy_from_slice(&v[..n]);
+    out
+}
+
 fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
     ((r * 255.0) as u32) << 16 | ((g * 255.0) as u32) << 8 | (b * 255.0) as u32
 }
@@ -378,6 +402,9 @@ pub struct Interpreter {
     /// Microphone input (Phase 1 audio reactivity)
     #[cfg(not(target_arch = "wasm32"))]
     mic: Option<ling_mic::MicInput>,
+    /// Persistent KEM keypairs (knot / hybrid identities), referenced by handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    crypto_ids: Vec<ling_crypto::KnotIdentity>,
 }
 
 impl Interpreter {
@@ -404,6 +431,8 @@ impl Interpreter {
             rand_state: 0x123456789ABCDEF,
             #[cfg(not(target_arch = "wasm32"))]
             mic: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            crypto_ids: Vec::new(),
         }
     }
 
@@ -2587,6 +2616,98 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
             // set_rim(strength, r,g,b) — holographic fresnel edge glow
+            // ══════════════════════════════════════════════════════════════════
+            // CRYPTOGRAPHY (ling-crypto) — geo suite, hybrid PQ KEM, holographic
+            // Bytes cross the language boundary as lowercase hex strings.
+            // ══════════════════════════════════════════════════════════════════
+            #[cfg(not(target_arch = "wasm32"))]
+            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(s.as_bytes()))));
+            }
+            // 3-D torus-knot fingerprint of any text/key → flat [x,y,z, x,y,z, …]
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
+                let s = self.arg_str(&args, 0, "");
+                let shape = ling_crypto::geo::KnotShape::from_bytes(s.as_bytes());
+                let mut out = Vec::with_capacity(shape.points.len() * 3);
+                for p in &shape.points {
+                    out.push(Value::Number(p[0] as f64));
+                    out.push(Value::Number(p[1] as f64));
+                    out.push(Value::Number(p[2] as f64));
+                }
+                return Ok(Value::List(out));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(ling_crypto::geo::KnotShape::from_bytes(s.as_bytes()).label()));
+            }
+            // KEM keypair (hybrid X25519+ML-KEM-768) → integer handle
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_keygen" | "hybrid_keygen" | "สร้างกุญแจปม" | "生成密钥" | "鍵生成" | "키생성" => {
+                self.crypto_ids.push(ling_crypto::KnotIdentity::generate());
+                return Ok(Value::Number((self.crypto_ids.len() - 1) as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_public" | "hybrid_public" | "กุญแจสาธารณะปม" | "公钥" | "公開鍵" | "공개키" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let pk = self.crypto_ids.get(h).map(|id| hex_encode(id.public_key())).unwrap_or_default();
+                return Ok(Value::Str(pk));
+            }
+            // encapsulate(pubkey_hex) → [ciphertext_hex, shared_secret_hex]
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_encapsulate" | "hybrid_encapsulate" | "ห่อกุญแจปม" | "封装密钥" | "カプセル化" | "캡슐화" => {
+                let pk = hex_decode(&self.arg_str(&args, 0, ""));
+                match ling_crypto::geo::knot_encapsulate(&pk) {
+                    Ok((ct, ss)) => return Ok(Value::List(vec![Value::Str(hex_encode(&ct)), Value::Str(hex_encode(&ss))])),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            // decapsulate(handle, ciphertext_hex) → shared_secret_hex
+            #[cfg(not(target_arch = "wasm32"))]
+            "knot_decapsulate" | "hybrid_decapsulate" | "แกะกุญแจปม" | "解封装密钥" | "カプセル解除" | "캡슐해제" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let ct = hex_decode(&self.arg_str(&args, 1, ""));
+                let ss = self.crypto_ids.get(h)
+                    .and_then(|id| id.decapsulate(&ct).ok())
+                    .map(|s| hex_encode(&s)).unwrap_or_default();
+                return Ok(Value::Str(ss));
+            }
+            // Authenticated encryption (XChaCha20-Poly1305) — seal(key_hex, text) → ct_hex
+            #[cfg(not(target_arch = "wasm32"))]
+            "crypto_seal" | "ผนึก" | "封印" | "封印する" | "봉인" => {
+                let key = hex_to_32(&self.arg_str(&args, 0, ""));
+                let pt = self.arg_str(&args, 1, "");
+                match ling_crypto::geo::holo_seal(key, pt.as_bytes()) {
+                    Ok(ct) => return Ok(Value::Str(hex_encode(&ct))),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "crypto_open" | "เปิดผนึก" | "解封" | "封印解除" | "봉인해제" => {
+                let key = hex_to_32(&self.arg_str(&args, 0, ""));
+                let ct = hex_decode(&self.arg_str(&args, 1, ""));
+                match ling_crypto::geo::holo_open(key, &ct) {
+                    Ok(pt) => return Ok(Value::Str(String::from_utf8_lossy(&pt).into_owned())),
+                    Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            // Holographic all-or-nothing transform — 4-D fragment coords [a,b,c,d, …]
+            #[cfg(not(target_arch = "wasm32"))]
+            "holo_points" | "จุดโฮโลแกรม" | "全息点" | "ホログラム点" | "홀로그램점" => {
+                let s = self.arg_str(&args, 0, "");
+                let frags = ling_crypto::geo::scatter(s.as_bytes());
+                let mut out = Vec::with_capacity(frags.len() * 4);
+                for f in &frags { for c in f.coord { out.push(Value::Number(c as f64)); } }
+                return Ok(Value::List(out));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "holo_fragment_count" | "จำนวนชิ้นโฮโลแกรม" | "全息碎片数" | "ホログラム断片数" | "홀로그램조각수" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(ling_crypto::geo::scatter(s.as_bytes()).len() as f64));
+            }
+
             "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" => {
                 let s=self.arg_num(&args,0,0.6)? as f32;
                 let r=self.arg_num(&args,1,115.)? as f32/255.0;

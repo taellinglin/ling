@@ -94,6 +94,10 @@ Cryptography library and visualizations.
 
 | File | Description |
 |------|-------------|
+| [geo_knot_demo.ling](crypto/geo_knot_demo.ling) | 🟢 A public key as a rotating 3-D torus-knot fingerprint (geo suite) |
+| [hybrid_kem_demo.ling](crypto/hybrid_kem_demo.ling) | 🟡🟣 X25519+ML-KEM-768 hybrid PQ KEM — gold identity knot + magenta ciphertext knot |
+| [holographic_demo.ling](crypto/holographic_demo.ling) | 🟣 4-D all-or-nothing transform — secret scattered into shards on a 4-sphere |
+| [hash_fingerprint_demo.ling](crypto/hash_fingerprint_demo.ling) | 🔵 SHA3-256 as a 3-D knot "constellation" (visual hash) |
 | [crypto.ling](crypto/crypto.ling) | Ling cryptography library (multilingual wrappers) |
 | [crypto_hologram.ling](crypto/crypto_hologram.ling) | 4-D visualization of cryptographic operations |
 | [crypto_physics_world.ling](crypto/crypto_physics_world.ling) | Cryptographically-verified physics world |

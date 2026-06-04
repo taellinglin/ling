@@ -1,0 +1,75 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HYBRID KEM  —  X25519 + ML-KEM-768 post-quantum key encapsulation
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# GOLD knot   = your public identity (the hybrid public key)
+# MAGENTA knot= the ciphertext that encapsulates a shared secret to that key.
+# Both spin together: the secret is sealed *to* the identity.
+
+bind start = do {
+    open_window(960, 720)
+
+    # Generate a hybrid (classical + post-quantum) identity, then encapsulate.
+    bind id = knot_keygen()
+    bind pk = knot_public(id)
+    bind enc = knot_encapsulate(pk)
+    bind ct = enc[0]
+
+    bind pkp = knot_points(pk)          # gold identity knot
+    bind ctp = knot_points(ct)          # magenta ciphertext knot
+    bind n = len(pkp) / 3.0
+
+    while window_is_open() {
+        set_color(10, 8, 14)
+        fill()
+        set_blend(1)
+
+        bind t = time_now()
+        bind a = t * 0.7
+        bind ca = cos(a)
+        bind sa = sin(a)
+        bind cy = 360.0
+        bind scale = 78.0
+
+        bind i = 0.0
+        while i < n - 1.0 {
+            bind k = i * 3.0
+
+            # ── GOLD identity knot (left) ──
+            bind gx0 = pkp[k]
+            bind gy0 = pkp[k + 1.0]
+            bind gz0 = pkp[k + 2.0]
+            bind gx1 = pkp[k + 3.0]
+            bind gy1 = pkp[k + 4.0]
+            bind gz1 = pkp[k + 5.0]
+            bind gxr0 = gx0 * ca - gz0 * sa
+            bind gzr0 = gx0 * sa + gz0 * ca
+            bind gf0 = 5.0 / (5.0 + gzr0)
+            bind gxr1 = gx1 * ca - gz1 * sa
+            bind gzr1 = gx1 * sa + gz1 * ca
+            bind gf1 = 5.0 / (5.0 + gzr1)
+            set_color(255.0, 190.0, 40.0)
+            draw_line(280.0 + gxr0 * scale * gf0, cy - gy0 * scale * gf0, 280.0 + gxr1 * scale * gf1, cy - gy1 * scale * gf1)
+
+            # ── MAGENTA ciphertext knot (right) ──
+            bind mx0 = ctp[k]
+            bind my0 = ctp[k + 1.0]
+            bind mz0 = ctp[k + 2.0]
+            bind mx1 = ctp[k + 3.0]
+            bind my1 = ctp[k + 4.0]
+            bind mz1 = ctp[k + 5.0]
+            bind mxr0 = mx0 * ca - mz0 * sa
+            bind mzr0 = mx0 * sa + mz0 * ca
+            bind mf0 = 5.0 / (5.0 + mzr0)
+            bind mxr1 = mx1 * ca - mz1 * sa
+            bind mzr1 = mx1 * sa + mz1 * ca
+            bind mf1 = 5.0 / (5.0 + mzr1)
+            set_color(255.0, 40.0, 200.0)
+            draw_line(680.0 + mxr0 * scale * mf0, cy - my0 * scale * mf0, 680.0 + mxr1 * scale * mf1, cy - my1 * scale * mf1)
+
+            bind i = i + 1.0
+        }
+
+        set_blend(0)
+        present()
+    }
+}
