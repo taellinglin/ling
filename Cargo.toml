@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.9"
+version = "2030.1.10"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -97,13 +97,13 @@ llvm = []
 [dependencies]
 glam = "0.28"
 ling-physics = { path = "crates/ling-physics", version = "2030.1" }
-ling-graphics = { path = "crates/ling-graphics", version = "2030.0" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.1" }
 ling-game = { path = "crates/ling-game", version = "2030.1" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
 ling-audio = { path = "crates/ling-audio", version = "2030.0.1" }
-ling-mic = { path = "crates/ling-mic", version = "2030.0.0" }
+ling-mic = { path = "crates/ling-mic", version = "2030.0.1" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
