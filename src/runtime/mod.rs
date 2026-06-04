@@ -294,84 +294,89 @@ fn fast_rand_f64(state: &mut u64) -> f64 {
 
 // ─── Circle Drawing Primitives ────────────────────────────────────────────────
 
-fn draw_circle_outline(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
+/// Write one pixel into the framebuffer (normal or additive blend).
+#[inline]
+fn put_px(buf: &mut [u32], idx: usize, color: u32, blend: u8) {
+    if idx >= buf.len() { return; }
+    if blend == 0 {
+        buf[idx] = color;
+    } else {
+        let old = buf[idx];
+        let r = (((old >> 16) & 255) + ((color >> 16) & 255)).min(255);
+        let g = (((old >> 8) & 255) + ((color >> 8) & 255)).min(255);
+        let b = ((old & 255) + (color & 255)).min(255);
+        buf[idx] = (r << 16) | (g << 8) | b;
+    }
+}
+
+fn draw_circle_outline(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
     let mut x = 0;
     let mut y = r;
     let mut d = 3 - 2 * r;
-
     while x <= y {
         plot_circle_points(buf, w, h, cx, cy, x, y, color, blend);
         if d < 0 {
-            d = d + 4 * x + 6;
+            d += 4 * x + 6;
         } else {
-            d = d + 4 * (x - y) + 10;
+            d += 4 * (x - y) + 10;
             y -= 1;
         }
         x += 1;
     }
 }
 
-fn plot_circle_points(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, x: i32, y: i32, color: u32, blend: u8) {
+fn plot_circle_points(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, x: i32, y: i32, color: u32, blend: u8) {
     let points = [(cx+x, cy+y), (cx-x, cy+y), (cx+x, cy-y), (cx-x, cy-y),
                   (cx+y, cy+x), (cx-y, cy+x), (cx+y, cy-x), (cx-y, cy-x)];
     for &(px, py) in &points {
         if px >= 0 && px < w && py >= 0 && py < h {
-            let idx = (py * w + px) as usize;
-            if blend == 0 {
-                if idx < buf.len() { unsafe { *(buf.as_ptr() as *mut u32).add(idx) = color; } }
-            } else {
-                // Additive blend
-                if idx < buf.len() {
-                    unsafe {
-                        let ptr = (buf.as_ptr() as *mut u32).add(idx);
-                        let old = *ptr;
-                        let r1 = (old >> 16) & 255;
-                        let g1 = (old >> 8) & 255;
-                        let b1 = old & 255;
-                        let r2 = (color >> 16) & 255;
-                        let g2 = (color >> 8) & 255;
-                        let b2 = color & 255;
-                        let r = (r1 + r2).min(255);
-                        let g = (g1 + g2).min(255);
-                        let b = (b1 + b2).min(255);
-                        *ptr = (r << 16) | (g << 8) | b;
-                    }
-                }
+            put_px(buf, (py * w + px) as usize, color, blend);
+        }
+    }
+}
+
+fn draw_circle_filled(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
+    if r <= 0 { return; }
+    for dy in -r..=r {
+        let dx_max = ((r*r - dy*dy) as f64).sqrt() as i32;
+        let py = cy + dy;
+        if py < 0 || py >= h { continue; }
+        for dx in -dx_max..=dx_max {
+            let px = cx + dx;
+            if px >= 0 && px < w {
+                put_px(buf, (py * w + px) as usize, color, blend);
             }
         }
     }
 }
 
-fn draw_circle_filled(buf: &[u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
-    for dy in -r..=r {
-        let dx_max = ((r*r - dy*dy) as f64).sqrt() as i32;
-        for dx in -dx_max..=dx_max {
-            let px = cx + dx;
-            let py = cy + dy;
-            if px >= 0 && px < w && py >= 0 && py < h {
-                let idx = (py * w + px) as usize;
-                if blend == 0 {
-                    if idx < buf.len() { unsafe { *(buf.as_ptr() as *mut u32).add(idx) = color; } }
-                } else {
-                    if idx < buf.len() {
-                        unsafe {
-                            let ptr = (buf.as_ptr() as *mut u32).add(idx);
-                            let old = *ptr;
-                            let r1 = (old >> 16) & 255;
-                            let g1 = (old >> 8) & 255;
-                            let b1 = old & 255;
-                            let r2 = (color >> 16) & 255;
-                            let g2 = (color >> 8) & 255;
-                            let b2 = color & 255;
-                            let r = (r1 + r2).min(255);
-                            let g = (g1 + g2).min(255);
-                            let b = (b1 + b2).min(255);
-                            *ptr = (r << 16) | (g << 8) | b;
-                        }
-                    }
-                }
-            }
-        }
+#[cfg(test)]
+mod draw_tests {
+    use super::*;
+
+    #[test]
+    fn filled_circle_actually_writes_pixels() {
+        let mut buf = vec![0u32; 100 * 100];
+        draw_circle_filled(&mut buf, 100, 100, 50, 50, 10, 0xFF00FF, 0);
+        assert_eq!(buf[50 * 100 + 50], 0xFF00FF, "centre pixel must be filled");
+        assert_eq!(buf[0], 0, "far corner must stay clear");
+        let n = buf.iter().filter(|&&p| p != 0).count();
+        assert!(n > 200 && n < 500, "r=10 disc area ≈ 314, got {n}");
+    }
+
+    #[test]
+    fn circle_outline_writes_a_ring() {
+        let mut buf = vec![0u32; 100 * 100];
+        draw_circle_outline(&mut buf, 100, 100, 50, 50, 20, 0x00FF00, 0);
+        assert_eq!(buf[50 * 100 + 50], 0, "outline must NOT fill the centre");
+        assert!(buf.iter().any(|&p| p == 0x00FF00), "outline must draw a ring");
+    }
+
+    #[test]
+    fn additive_blend_accumulates_channels() {
+        let mut buf = vec![0x202020u32; 1];
+        put_px(&mut buf, 0, 0x404040, 1);
+        assert_eq!(buf[0], 0x606060);
     }
 }
 
@@ -1102,9 +1107,9 @@ impl Interpreter {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
                 let r = self.arg_num(&args, 2, 10.0)? as i32;
-                let gfx = self.gfx.borrow();
-                draw_circle_outline(&gfx.buffer, gfx.width as i32, gfx.height as i32, cx, cy, r, gfx.color, gfx.blend);
-                drop(gfx);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w, h, color, blend) = (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
+                draw_circle_outline(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
                 return Ok(Value::Unit);
             }
 
@@ -1112,9 +1117,9 @@ impl Interpreter {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
                 let r = self.arg_num(&args, 2, 10.0)? as i32;
-                let gfx = self.gfx.borrow();
-                draw_circle_filled(&gfx.buffer, gfx.width as i32, gfx.height as i32, cx, cy, r, gfx.color, gfx.blend);
-                drop(gfx);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w, h, color, blend) = (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
+                draw_circle_filled(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
                 return Ok(Value::Unit);
             }
 
