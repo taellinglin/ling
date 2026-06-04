@@ -8,7 +8,7 @@
 bind start = do {
     open_window(900, 720)
 
-    bind secret = "灵 · ling · geometric post-quantum identity"
+    bind secret = "灵爱伊森，我爱你我的月，我很久了想见你"
     bind pts = knot_points(secret)
     bind n = len(pts) / 3.0
 

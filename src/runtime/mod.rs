@@ -1665,7 +1665,7 @@ impl Interpreter {
             // ── วาดเส้น3มิติ(ax,ay,az, bx,by,bz) ──
             // Projects two world-space points via the stored camera and pushes
             // a line to the depth queue.
-            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" => {
+            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" | "画3D线" | "3D線描く" | "3D선그리기" => {
                 let ax = self.arg_num(&args, 0, 0.0)? as f32;
                 let ay = self.arg_num(&args, 1, 0.0)? as f32;
                 let az = self.arg_num(&args, 2, 0.0)? as f32;

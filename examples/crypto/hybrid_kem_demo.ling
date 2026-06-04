@@ -1,14 +1,14 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# HYBRID KEM  —  X25519 + ML-KEM-768 post-quantum key encapsulation
+# HYBRID KEM  —  X25519 + ML-KEM-768 post-quantum key encapsulation (native 3-D)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # GOLD knot   = your public identity (the hybrid public key)
 # MAGENTA knot= the ciphertext that encapsulates a shared secret to that key.
-# Both spin together: the secret is sealed *to* the identity.
+# Rendered with the engine's depth-sorted draw_line_3d + a single rotating camera.
 
 bind start = do {
     open_window(960, 720)
+    set_zdist(9.0)
 
-    # Generate a hybrid (classical + post-quantum) identity, then encapsulate.
     bind id = knot_keygen()
     bind pk = knot_public(id)
     bind enc = knot_encapsulate(pk)
@@ -17,59 +17,33 @@ bind start = do {
     bind pkp = knot_points(pk)          # gold identity knot
     bind ctp = knot_points(ct)          # magenta ciphertext knot
     bind n = len(pkp) / 3.0
+    bind s = 0.40                        # knot scale
+    bind sep = 2.6                       # world-space separation of the two knots
 
     while window_is_open() {
         set_color(10, 8, 14)
         fill()
-        set_blend(1)
 
         bind t = time_now()
-        bind a = t * 0.7
-        bind ca = cos(a)
-        bind sa = sin(a)
-        bind cy = 360.0
-        bind scale = 78.0
+        set_camera(cos(t * 0.5), sin(t * 0.5), cos(0.45), sin(0.45))
 
         bind i = 0.0
         while i < n - 1.0 {
             bind k = i * 3.0
 
-            # ── GOLD identity knot (left) ──
-            bind gx0 = pkp[k]
-            bind gy0 = pkp[k + 1.0]
-            bind gz0 = pkp[k + 2.0]
-            bind gx1 = pkp[k + 3.0]
-            bind gy1 = pkp[k + 4.0]
-            bind gz1 = pkp[k + 5.0]
-            bind gxr0 = gx0 * ca - gz0 * sa
-            bind gzr0 = gx0 * sa + gz0 * ca
-            bind gf0 = 5.0 / (5.0 + gzr0)
-            bind gxr1 = gx1 * ca - gz1 * sa
-            bind gzr1 = gx1 * sa + gz1 * ca
-            bind gf1 = 5.0 / (5.0 + gzr1)
+            # ── GOLD identity knot (shifted -X) ──
             set_color(255.0, 190.0, 40.0)
-            draw_line(280.0 + gxr0 * scale * gf0, cy - gy0 * scale * gf0, 280.0 + gxr1 * scale * gf1, cy - gy1 * scale * gf1)
+            draw_line_3d(pkp[k] * s - sep,        pkp[k + 1.0] * s,  pkp[k + 2.0] * s,
+                         pkp[k + 3.0] * s - sep,  pkp[k + 4.0] * s,  pkp[k + 5.0] * s)
 
-            # ── MAGENTA ciphertext knot (right) ──
-            bind mx0 = ctp[k]
-            bind my0 = ctp[k + 1.0]
-            bind mz0 = ctp[k + 2.0]
-            bind mx1 = ctp[k + 3.0]
-            bind my1 = ctp[k + 4.0]
-            bind mz1 = ctp[k + 5.0]
-            bind mxr0 = mx0 * ca - mz0 * sa
-            bind mzr0 = mx0 * sa + mz0 * ca
-            bind mf0 = 5.0 / (5.0 + mzr0)
-            bind mxr1 = mx1 * ca - mz1 * sa
-            bind mzr1 = mx1 * sa + mz1 * ca
-            bind mf1 = 5.0 / (5.0 + mzr1)
+            # ── MAGENTA ciphertext knot (shifted +X) ──
             set_color(255.0, 40.0, 200.0)
-            draw_line(680.0 + mxr0 * scale * mf0, cy - my0 * scale * mf0, 680.0 + mxr1 * scale * mf1, cy - my1 * scale * mf1)
+            draw_line_3d(ctp[k] * s + sep,        ctp[k + 1.0] * s,  ctp[k + 2.0] * s,
+                         ctp[k + 3.0] * s + sep,  ctp[k + 4.0] * s,  ctp[k + 5.0] * s)
 
             bind i = i + 1.0
         }
 
-        set_blend(0)
         present()
     }
 }
