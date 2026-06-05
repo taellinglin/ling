@@ -45,6 +45,8 @@ exclude = [
     # Build artifacts
     "examples/.ling-build",
     "examples/.ling-build/**",
+    "examples/music/.ling-build/hallway_runner",
+    "examples/music/.ling-build/karaoke_hero",
     ".ling-shared-target",
     ".ling-shared-target/**",
     # Pre-built binaries

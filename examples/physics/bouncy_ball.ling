@@ -1,0 +1,68 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# BOUNCY BALL — a spring-mass soft body squashes & stretches as it bounces around
+# a box (ling-physics soft.rs). The mesh deforms on every impact, like jelly.
+# Autoplaying — no input.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(960, 720)
+    set_ambient(0.3)
+    set_zdist(16.0)
+    bind ui = font_load("assets/fonts/Exo2.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Exo2.ttf", 600.0) }
+
+    bind B = 4.0
+    bind ball = soft_ball(0.0, 0.0 - 2.5, 0.0, 1.2)
+    soft_kick(ball, 1.0, 0.0, 0.6, 0.05)   # gentle initial toss
+
+    while window_is_open() {
+        bind t = time_now()
+        # physics: gravity pulls +y (down in screen space); bounce off the box walls
+        soft_step(ball, 0.016, 9.0)
+        soft_contain(ball, 0.0-B, 0.0-B, 0.0-B, B, B, B, 0.55)
+        # occasional gentle re-kick so it keeps tumbling
+        if sin(t*0.6) > 0.99 { soft_kick(ball, sin(t*3.0), 0.0-0.6, cos(t*2.0), 0.05) }
+
+        bind def = soft_deform(ball)
+        bind dc = def
+        if dc > 0.5 { bind dc = 0.5 }
+
+        set_color(7, 8, 16)
+        fill()
+        set_camera(cos(t*0.25), sin(t*0.25), cos(0.45), sin(0.45))
+        set_ambient(0.3)
+        set_blend(1)
+
+        # box
+        set_color(40, 60, 100)
+        draw_line_3d(0.0-B,0.0-B,0.0-B, B,0.0-B,0.0-B) draw_line_3d(B,0.0-B,0.0-B, B,B,0.0-B)
+        draw_line_3d(B,B,0.0-B, 0.0-B,B,0.0-B) draw_line_3d(0.0-B,B,0.0-B, 0.0-B,0.0-B,0.0-B)
+        draw_line_3d(0.0-B,0.0-B,B, B,0.0-B,B) draw_line_3d(B,0.0-B,B, B,B,B)
+        draw_line_3d(B,B,B, 0.0-B,B,B) draw_line_3d(0.0-B,B,B, 0.0-B,0.0-B,B)
+        draw_line_3d(0.0-B,0.0-B,0.0-B, 0.0-B,0.0-B,B) draw_line_3d(B,0.0-B,0.0-B, B,0.0-B,B)
+        draw_line_3d(B,B,0.0-B, B,B,B) draw_line_3d(0.0-B,B,0.0-B, 0.0-B,B,B)
+
+        # the deformable ball: draw every node as a little glowing cross.
+        # colour shifts red as it squishes (deformation rises on impact).
+        bind ns = soft_nodes(ball)
+        bind nn = len(ns) / 3.0
+        set_color(100.0 + dc*300.0, 235.0 - dc*300.0, 255.0 - dc*200.0)
+        bind i = 0.0
+        while i < nn {
+            bind k = i * 3.0
+            bind x = ns[k]  bind y = ns[k+1.0]  bind z = ns[k+2.0]
+            draw_line_3d(x-0.06, y, z, x+0.06, y, z)
+            draw_line_3d(x, y-0.06, z, x, y+0.06, z)
+            draw_line_3d(x, y, z-0.06, x, y, z+0.06)
+            bind i = i + 1.0
+        }
+        flush_3d()
+
+        set_color(0, 230, 255)
+        if ui < 0.0 { ui_text(36.0, 22.0, 22.0, "BOUNCY BALL") } else { font_text_fill(ui, 36.0, 22.0, 26.0, "BOUNCY BALL") }
+        set_color(120, 255, 180)
+        ui_bar(36.0, 64.0, 240.0, 14.0, def, 0.6, 60.0, 255.0, 160.0)
+        set_blend(0)
+        present()
+    }
+}

@@ -477,6 +477,12 @@ pub struct Interpreter {
     /// Parsed MIDI songs, by `music_midi_load` handle.
     #[cfg(not(target_arch = "wasm32"))]
     midis: Vec<ling_music::MidiSong>,
+    /// Soft bodies (deformable balls), by `soft_ball` handle.
+    soft_bodies: Vec<ling_physics::soft::SoftBody>,
+    /// Rigid-body world (angular dynamics), shared by `rb_*`.
+    rigid_world: ling_physics::rigid::PhysicsWorld,
+    /// Liquid grids (water/oil), by `liquid_new` handle.
+    liquids: Vec<ling_physics::liquid::LiquidGrid>,
 }
 
 impl Interpreter {
@@ -523,6 +529,9 @@ impl Interpreter {
             lyrics: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             midis: Vec::new(),
+            soft_bodies: Vec::new(),
+            rigid_world: ling_physics::rigid::PhysicsWorld::new(),
+            liquids: Vec::new(),
         }
     }
 
@@ -3768,6 +3777,245 @@ impl Interpreter {
             "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" => {
                 let cutoff=self.arg_num(&args,0,1.0)? as f32;
                 if let Some(a)=&self.audio { a.fx_lowpass(cutoff); }
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // PHYSICS BUILTINS  (crates/ling-physics) — soft bodies, rigid+angular,
+            // and a fast 2-D water/oil liquid sim mappable onto 3-D surfaces.
+            // ══════════════════════════════════════════════════════════════════
+
+            // ── soft bodies (deformable bouncy balls) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_ball" | "软球" | "ソフトボール" | "소프트볼" | "ลูกบอลนุ่ม" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32; let z=self.arg_num(&args,2,0.)? as f32;
+                let r=self.arg_num(&args,3,1.0)? as f32;
+                let b = ling_physics::soft::SoftBody::sphere(ling_physics::Vec3::new(x,y,z), r, 8, 12, 1.0);
+                let id = self.soft_bodies.len(); self.soft_bodies.push(b);
+                return Ok(Value::Number(id as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_step" | "软体步进" | "ソフト更新" | "소프트스텝" | "ก้าวนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize; let dt=self.arg_num(&args,1,0.016)? as f32;
+                let gy=self.arg_num(&args,2,15.0)? as f32;
+                if let Some(b)=self.soft_bodies.get_mut(id) { b.integrate(dt, ling_physics::Vec3::new(0.0,gy,0.0), 4); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_bounce" | "软体落地" | "ソフト着地" | "소프트바운스" | "เด้งนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize; let fy=self.arg_num(&args,1,0.)? as f32; let rest=self.arg_num(&args,2,0.5)? as f32;
+                if let Some(b)=self.soft_bodies.get_mut(id) { b.floor_collision(fy, rest); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_contain" | "软体边界" | "ソフト箱" | "소프트경계" | "กล่องนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let nx=self.arg_num(&args,1,-5.)? as f32; let ny=self.arg_num(&args,2,-5.)? as f32; let nz=self.arg_num(&args,3,-5.)? as f32;
+                let mx=self.arg_num(&args,4,5.)? as f32; let my=self.arg_num(&args,5,5.)? as f32; let mz=self.arg_num(&args,6,5.)? as f32;
+                let rest=self.arg_num(&args,7,0.6)? as f32;
+                if let Some(b)=self.soft_bodies.get_mut(id) { b.contain(ling_physics::Vec3::new(nx,ny,nz), ling_physics::Vec3::new(mx,my,mz), rest); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_kick" | "软体踢" | "ソフト衝撃" | "소프트킥" | "เตะนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let dx=self.arg_num(&args,1,0.)? as f32; let dy=self.arg_num(&args,2,0.)? as f32; let dz=self.arg_num(&args,3,0.)? as f32;
+                let s=self.arg_num(&args,4,0.1)? as f32;
+                if let Some(b)=self.soft_bodies.get_mut(id) { b.kick(ling_physics::Vec3::new(dx,dy,dz), s); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_deform" | "形变量" | "変形量" | "변형량" | "ความบิดเบี้ยว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let d=self.soft_bodies.get(id).map(|b| b.deformation()).unwrap_or(0.0);
+                return Ok(Value::Number(d as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let c=self.soft_bodies.get(id).map(|b| b.centroid()).unwrap_or(ling_physics::Vec3::ZERO);
+                return Ok(Value::List(vec![Value::Number(c.x as f64),Value::Number(c.y as f64),Value::Number(c.z as f64)]));
+            }
+            // soft_nodes(id) -> flat [x,y,z, x,y,z, …] for rendering the deformed mesh
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_nodes" | "软体节点" | "ソフト節点" | "소프트노드" | "จุดนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let mut out=Vec::new();
+                if let Some(b)=self.soft_bodies.get(id) {
+                    for n in &b.nodes { out.push(Value::Number(n.pos.x as f64)); out.push(Value::Number(n.pos.y as f64)); out.push(Value::Number(n.pos.z as f64)); }
+                }
+                return Ok(Value::List(out));
+            }
+
+            // ── rigid bodies with angular dynamics ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_add" | "刚体添加" | "剛体追加" | "강체추가" | "เพิ่มวัตถุแข็ง" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32; let z=self.arg_num(&args,2,0.)? as f32;
+                let mass=self.arg_num(&args,3,1.0)? as f32;
+                let mut b = ling_physics::rigid::RigidBody::new(ling_physics::Vec3::new(x,y,z), mass);
+                b.restitution = 0.6;
+                return Ok(Value::Number(self.rigid_world.add(b) as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_torque" | "扭矩" | "トルク" | "토크" | "แรงบิด" => {
+                let i=self.arg_num(&args,0,0.)? as usize;
+                let tx=self.arg_num(&args,1,0.)? as f32; let ty=self.arg_num(&args,2,0.)? as f32; let tz=self.arg_num(&args,3,0.)? as f32;
+                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_torque(ling_physics::Vec3::new(tx,ty,tz)); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_spin" | "自旋" | "スピン" | "스핀" | "หมุน" => {
+                let i=self.arg_num(&args,0,0.)? as usize;
+                let wx=self.arg_num(&args,1,0.)? as f32; let wy=self.arg_num(&args,2,0.)? as f32; let wz=self.arg_num(&args,3,0.)? as f32;
+                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_spin(ling_physics::Vec3::new(wx,wy,wz)); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_impulse" | "刚体冲量" | "剛体インパルス" | "강체충격" | "แรงดลแข็ง" => {
+                let i=self.arg_num(&args,0,0.)? as usize;
+                let ix=self.arg_num(&args,1,0.)? as f32; let iy=self.arg_num(&args,2,0.)? as f32; let iz=self.arg_num(&args,3,0.)? as f32;
+                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_impulse(ling_physics::Vec3::new(ix,iy,iz)); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_floor" | "刚体落地" | "剛体着地" | "강체바닥" | "พื้นแข็ง" => {
+                let i=self.arg_num(&args,0,0.)? as usize; let fy=self.arg_num(&args,1,0.)? as f32;
+                let rest=self.arg_num(&args,2,0.6)? as f32; let fric=self.arg_num(&args,3,0.6)? as f32;
+                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.bounce_floor(fy, rest, fric); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_gravity" | "刚体重力" | "剛体重力" | "강체중력" | "แรงโน้มถ่วงแข็ง" => {
+                let gx=self.arg_num(&args,0,0.)? as f32; let gy=self.arg_num(&args,1,9.81)? as f32; let gz=self.arg_num(&args,2,0.)? as f32;
+                self.rigid_world.gravity = ling_physics::Vec3::new(gx,gy,gz);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_step" | "刚体步进" | "剛体更新" | "강체스텝" | "ก้าวแข็ง" => {
+                let dt=self.arg_num(&args,0,0.016)? as f32;
+                self.rigid_world.step(dt);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_pos" | "刚体位置" | "剛体位置" | "강체위치" | "ตำแหน่งแข็ง" => {
+                let i=self.arg_num(&args,0,0.)? as usize;
+                let p=self.rigid_world.bodies.get(i).map(|b| b.pos).unwrap_or(ling_physics::Vec3::ZERO);
+                return Ok(Value::List(vec![Value::Number(p.x as f64),Value::Number(p.y as f64),Value::Number(p.z as f64)]));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" => {
+                let i=self.arg_num(&args,0,0.)? as usize;
+                let q=self.rigid_world.bodies.get(i).map(|b| b.orientation).unwrap_or(ling_physics::Quat::IDENTITY);
+                return Ok(Value::List(vec![Value::Number(q.x as f64),Value::Number(q.y as f64),Value::Number(q.z as f64),Value::Number(q.w as f64)]));
+            }
+
+            // ── liquid sim (water + oil, immiscible) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
+                let w=self.arg_num(&args,0,64.)? as usize; let h=self.arg_num(&args,1,64.)? as usize;
+                let id=self.liquids.len(); self.liquids.push(ling_physics::liquid::LiquidGrid::new(w,h));
+                return Ok(Value::Number(id as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let x=self.arg_num(&args,1,0.)? as f32; let y=self.arg_num(&args,2,0.)? as f32;
+                let kind=self.arg_num(&args,3,0.)? as i32; let amt=self.arg_num(&args,4,1.0)? as f32; let rad=self.arg_num(&args,5,4.0)? as f32;
+                if let Some(g)=self.liquids.get_mut(id) { g.splat(x,y,kind,amt,rad); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let gx=self.arg_num(&args,1,0.)? as f32; let gy=self.arg_num(&args,2,60.)? as f32;
+                if let Some(g)=self.liquids.get_mut(id) { g.set_gravity(gx,gy); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize; let dt=self.arg_num(&args,1,0.016)? as f32;
+                if let Some(g)=self.liquids.get_mut(id) { g.step(dt); }
+                return Ok(Value::Unit);
+            }
+            // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let sx=self.arg_num(&args,1,0.)? as i32; let sy=self.arg_num(&args,2,0.)? as i32;
+                let scale=(self.arg_num(&args,3,4.)? as i32).max(1);
+                if id < self.liquids.len() {
+                    let (gw,gh)={ let g=&self.liquids[id]; (g.w,g.h) };
+                    let mut gfx=self.gfx.borrow_mut(); let (w,h)=(gfx.width as i32, gfx.height as i32);
+                    let g=&self.liquids[id];
+                    for cy in 0..gh { for cx in 0..gw {
+                        let col=g.sample_rgb(cx,cy);
+                        let bx=sx + cx as i32*scale; let by=sy + cy as i32*scale;
+                        for dy in 0..scale { for dx in 0..scale {
+                            let px=bx+dx; let py=by+dy;
+                            if px>=0 && py>=0 && px<w && py<h { gfx.buffer[(py*w+px) as usize]=col; }
+                        }}
+                    }}
+                }
+                return Ok(Value::Unit);
+            }
+            // liquid_draw_surface(id, kind, cx,cy,cz, radius, height)
+            //   kind: 0 plane · 1 sphere · 2 cylinder · 3 cone · 4 dome
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let kind=self.arg_num(&args,1,1.)? as i32;
+                let cx=self.arg_num(&args,2,0.)? as f32; let cy=self.arg_num(&args,3,0.)? as f32; let cz=self.arg_num(&args,4,0.)? as f32;
+                let radius=self.arg_num(&args,5,2.0)? as f32; let height=self.arg_num(&args,6,3.0)? as f32;
+                if id < self.liquids.len() {
+                    let (gw,gh)={ let g=&self.liquids[id]; (g.w,g.h) };
+                    let mut gfx=self.gfx.borrow_mut();
+                    let (w,h)=(gfx.width as i32, gfx.height as i32);
+                    let cam=gfx.camera.clone();
+                    let near = -cam.zdist + 0.05;
+                    let g=&self.liquids[id];
+                    let tau=std::f32::consts::TAU; let pi=std::f32::consts::PI;
+                    let mut cyc=0usize;
+                    while cyc<gh {
+                        let v=cyc as f32/(gh as f32-1.0);
+                        let mut cxc=0usize;
+                        while cxc<gw {
+                            let u=cxc as f32/(gw as f32-1.0);
+                            // surface point P and outward normal N
+                            let (px_,py_,pz_,nx_,ny_,nz_);
+                            if kind==0 { // plane
+                                px_=cx+(u-0.5)*2.0*radius; py_=cy; pz_=cz+(v-0.5)*2.0*radius; nx_=0.0; ny_=-1.0; nz_=0.0;
+                            } else if kind==2 { // cylinder
+                                let th=u*tau; px_=cx+th.cos()*radius; py_=cy+(v-0.5)*height; pz_=cz+th.sin()*radius; nx_=th.cos(); ny_=0.0; nz_=th.sin();
+                            } else if kind==3 { // cone
+                                let th=u*tau; let rr=radius*(1.0-v); px_=cx+th.cos()*rr; py_=cy+(v-0.5)*height; pz_=cz+th.sin()*rr;
+                                let s=(radius/height.max(0.01)).atan(); nx_=th.cos()*s.cos(); ny_=s.sin(); nz_=th.sin()*s.cos();
+                            } else if kind==4 { // dome (upper hemisphere)
+                                let th=u*tau; let ph=v*pi*0.5; px_=cx+ph.sin()*th.cos()*radius; py_=cy-ph.cos()*radius; pz_=cz+ph.sin()*th.sin()*radius; nx_=ph.sin()*th.cos(); ny_=-ph.cos(); nz_=ph.sin()*th.sin();
+                            } else { // sphere
+                                let th=u*tau; let ph=v*pi; px_=cx+ph.sin()*th.cos()*radius; py_=cy+ph.cos()*radius; pz_=cz+ph.sin()*th.sin()*radius; nx_=ph.sin()*th.cos(); ny_=ph.cos(); nz_=ph.sin()*th.sin();
+                            }
+                            let dP=cam.depth(px_,py_,pz_);
+                            if dP>near {
+                                // back-face cull (skip for the plane): outward normal pointing away → deeper
+                                let cull = kind!=0 && cam.depth(px_+nx_*0.06, py_+ny_*0.06, pz_+nz_*0.06) > dP;
+                                if !cull {
+                                    let (spx,spy,depth)=cam.project(px_,py_,pz_);
+                                    if depth>0.0 {
+                                        let col=g.sample_rgb(cxc,cyc);
+                                        let bs=((radius*cam.focal/(depth*gw as f32))*1.6).max(1.0).min(7.0) as i32;
+                                        let ix=spx as i32; let iy=spy as i32;
+                                        let mut dy=-bs; while dy<=bs { let mut dx=-bs; while dx<=bs {
+                                            let qx=ix+dx; let qy=iy+dy;
+                                            if qx>=0 && qy>=0 && qx<w && qy<h { gfx.buffer[(qy*w+qx) as usize]=col; }
+                                            dx+=1; } dy+=1; }
+                                    }
+                                }
+                            }
+                            cxc+=1;
+                        }
+                        cyc+=1;
+                    }
+                }
                 return Ok(Value::Unit);
             }
 

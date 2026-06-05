@@ -65,3 +65,13 @@ ling-lang.org-tmp-*.png
 
 # UI frame captures
 recordings/
+
+# Generated vector-font glyph cache (<font>/<codepoint>.ling)
+cache/
+
+# Large user-provided audio media (exceed GitHub 100MB/file limit) — keep .mid (small)
+assets/music/*.wav
+assets/music/*.flac
+# mdbook build output + ling example build dirs
+docs/book/
+**/.ling-build/

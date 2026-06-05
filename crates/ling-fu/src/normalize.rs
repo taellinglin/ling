@@ -432,6 +432,34 @@ static BUILTINS_MUSIC: &[Entry] = &[
     (&["music_fft","音乐频谱","音楽スペクトル","음악스펙트럼","สเปกตรัมเพลง"],   ["music_fft","音乐频谱","音楽スペクトル","음악스펙트럼","สเปกตรัมเพลง"]),
 ];
 
+// Builtins — physics simulation functions (ling-physics → .ling)
+// Output forms MUST match the 5-language aliases in src/runtime/mod.rs.
+static BUILTINS_PHYSICS_FN: &[Entry] = &[
+    (&["soft_ball","软球","ソフトボール","소프트볼","ลูกบอลนุ่ม"],            ["soft_ball","软球","ソフトボール","소프트볼","ลูกบอลนุ่ม"]),
+    (&["soft_step","软体步进","ソフト更新","소프트스텝","ก้าวนุ่ม"],          ["soft_step","软体步进","ソフト更新","소프트스텝","ก้าวนุ่ม"]),
+    (&["soft_bounce","软体落地","ソフト着地","소프트바운스","เด้งนุ่ม"],       ["soft_bounce","软体落地","ソフト着地","소프트바운스","เด้งนุ่ม"]),
+    (&["soft_contain","软体边界","ソフト箱","소프트경계","กล่องนุ่ม"],         ["soft_contain","软体边界","ソフト箱","소프트경계","กล่องนุ่ม"]),
+    (&["soft_kick","软体踢","ソフト衝撃","소프트킥","เตะนุ่ม"],               ["soft_kick","软体踢","ソフト衝撃","소프트킥","เตะนุ่ม"]),
+    (&["soft_deform","形变量","変形量","변형량","ความบิดเบี้ยว"],            ["soft_deform","形变量","変形量","변형량","ความบิดเบี้ยว"]),
+    (&["soft_centroid","软体质心","ソフト重心","소프트중심","จุดศูนย์กลางนุ่ม"],["soft_centroid","软体质心","ソフト重心","소프트중심","จุดศูนย์กลางนุ่ม"]),
+    (&["soft_nodes","软体节点","ソフト節点","소프트노드","จุดนุ่ม"],          ["soft_nodes","软体节点","ソフト節点","소프트노드","จุดนุ่ม"]),
+    (&["rb_add","刚体添加","剛体追加","강체추가","เพิ่มวัตถุแข็ง"],            ["rb_add","刚体添加","剛体追加","강체추가","เพิ่มวัตถุแข็ง"]),
+    (&["rb_torque","扭矩","トルク","토크","แรงบิด"],                        ["rb_torque","扭矩","トルク","토크","แรงบิด"]),
+    (&["rb_spin","自旋","スピン","스핀","หมุน"],                            ["rb_spin","自旋","スピン","스핀","หมุน"]),
+    (&["rb_impulse","刚体冲量","剛体インパルス","강체충격","แรงดลแข็ง"],       ["rb_impulse","刚体冲量","剛体インパルス","강체충격","แรงดลแข็ง"]),
+    (&["rb_floor","刚体落地","剛体着地","강체바닥","พื้นแข็ง"],               ["rb_floor","刚体落地","剛体着地","강체바닥","พื้นแข็ง"]),
+    (&["rb_gravity","刚体重力","剛体重力","강체중력","แรงโน้มถ่วงแข็ง"],       ["rb_gravity","刚体重力","剛体重力","강체중력","แรงโน้มถ่วงแข็ง"]),
+    (&["rb_step","刚体步进","剛体更新","강체스텝","ก้าวแข็ง"],               ["rb_step","刚体步进","剛体更新","강체스텝","ก้าวแข็ง"]),
+    (&["rb_pos","刚体位置","剛体位置","강체위치","ตำแหน่งแข็ง"],              ["rb_pos","刚体位置","剛体位置","강체위치","ตำแหน่งแข็ง"]),
+    (&["rb_rot","刚体旋转","剛体回転","강체회전","การหมุนแข็ง"],             ["rb_rot","刚体旋转","剛体回転","강체회전","การหมุนแข็ง"]),
+    (&["liquid_new","新建液体","液体新規","액체생성","สร้างของเหลว"],         ["liquid_new","新建液体","液体新規","액체생성","สร้างของเหลว"]),
+    (&["liquid_splat","液体注入","液体追加","액체분사","หยดของเหลว"],         ["liquid_splat","液体注入","液体追加","액체분사","หยดของเหลว"]),
+    (&["liquid_gravity","液体重力","液体重力ベクトル","액체중력","แรงโน้มถ่วงเหลว"],["liquid_gravity","液体重力","液体重力ベクトル","액체중력","แรงโน้มถ่วงเหลว"]),
+    (&["liquid_step","液体步进","液体更新","액체스텝","ก้าวของเหลว"],         ["liquid_step","液体步进","液体更新","액체스텝","ก้าวของเหลว"]),
+    (&["liquid_draw","绘制液体","液体描画","액체그리기","วาดของเหลว"],        ["liquid_draw","绘制液体","液体描画","액체그리기","วาดของเหลว"]),
+    (&["liquid_draw_surface","液体贴面","液体曲面","액체곡면","ของเหลวบนพื้นผิว"],["liquid_draw_surface","液体贴面","液体曲面","액체곡면","ของเหลวบนพื้นผิว"]),
+];
+
 // Vocabulary — project/domain words used in filenames and folder names ─────
 //
 // These supplement KEYWORDS and BUILTINS_* — they are also included in the
@@ -611,7 +639,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

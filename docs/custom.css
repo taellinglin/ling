@@ -25,3 +25,11 @@ th {
     content: "\f09b"; /* 'github' fallback from Font Awesome v6 */
 }
 
+
+/* Language selector (lang.js) */
+#ling-lang-select {
+  background: #11151c; color: #9fe7ff; border: 1px solid #2c3e64;
+  border-radius: 6px; padding: 2px 8px; margin-left: 8px; font-size: 0.85em;
+  cursor: pointer;
+}
+#ling-lang-select:hover { border-color: #00d2ff; }

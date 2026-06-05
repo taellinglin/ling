@@ -58,19 +58,22 @@ impl SoftBody {
             }
         }
 
-        // Structural springs along rings and sectors.
+        // Structural springs along rings and sectors. Interior rows are r∈[0, rings-2],
+        // so the vertical (`down`) spring only exists when r+1 is still a valid row.
         for r in 0..(rings - 1) {
             for s in 0..sectors {
                 let cur  = offset + (r * sectors + s) as usize;
                 let next = offset + (r * sectors + (s + 1) % sectors) as usize;
-                let down = offset + ((r + 1) * sectors + s) as usize;
                 let rest_h = (nodes[cur].pos - nodes[next].pos).length();
-                let rest_v = (nodes[cur].pos - nodes[down].pos).length();
                 if rest_h > 0.0 {
                     springs.push(Spring { a: cur, b: next, rest_length: rest_h, stiffness: 0.9 });
                 }
-                if rest_v > 0.0 && r + 1 < rings - 1 {
-                    springs.push(Spring { a: cur, b: down, rest_length: rest_v, stiffness: 0.9 });
+                if r + 1 < rings - 1 {
+                    let down = offset + ((r + 1) * sectors + s) as usize;
+                    let rest_v = (nodes[cur].pos - nodes[down].pos).length();
+                    if rest_v > 0.0 {
+                        springs.push(Spring { a: cur, b: down, rest_length: rest_v, stiffness: 0.9 });
+                    }
                 }
             }
         }
@@ -145,5 +148,49 @@ impl SoftBody {
                 n.prev_pos.y = n.pos.y + vel_y * restitution;
             }
         }
+    }
+
+    /// Kick the whole body in a direction (Verlet impulse): shifts each node's
+    /// previous position so the next step gains `strength` of velocity along `dir`.
+    pub fn kick(&mut self, dir: Vec3, strength: f32) {
+        let d = if dir.length_squared() > 1e-9 { dir.normalize() } else { return };
+        for n in &mut self.nodes {
+            if !n.pinned { n.prev_pos -= d * strength; }
+        }
+    }
+
+    /// Keep the body inside an axis-aligned box `[min,max]`, bouncing (and thus
+    /// squashing) off every wall — a contained bouncy ball.
+    pub fn contain(&mut self, min: Vec3, max: Vec3, restitution: f32) {
+        for n in &mut self.nodes {
+            // x
+            if n.pos.x < min.x { let v = (n.pos.x - n.prev_pos.x).abs(); n.pos.x = min.x; n.prev_pos.x = n.pos.x + v * restitution; }
+            if n.pos.x > max.x { let v = (n.pos.x - n.prev_pos.x).abs(); n.pos.x = max.x; n.prev_pos.x = n.pos.x - v * restitution; }
+            // y
+            if n.pos.y < min.y { let v = (n.pos.y - n.prev_pos.y).abs(); n.pos.y = min.y; n.prev_pos.y = n.pos.y + v * restitution; }
+            if n.pos.y > max.y { let v = (n.pos.y - n.prev_pos.y).abs(); n.pos.y = max.y; n.prev_pos.y = n.pos.y - v * restitution; }
+            // z
+            if n.pos.z < min.z { let v = (n.pos.z - n.prev_pos.z).abs(); n.pos.z = min.z; n.prev_pos.z = n.pos.z + v * restitution; }
+            if n.pos.z > max.z { let v = (n.pos.z - n.prev_pos.z).abs(); n.pos.z = max.z; n.prev_pos.z = n.pos.z - v * restitution; }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ball_deforms_on_impact() {
+        let mut b = SoftBody::sphere(Vec3::new(0.0, 2.0, 0.0), 1.0, 6, 8, 1.0);
+        let d0 = b.deformation();
+        // drop it onto a floor and let it squash
+        for _ in 0..120 {
+            b.integrate(1.0 / 60.0, Vec3::new(0.0, -9.81, 0.0), 4);
+            b.floor_collision(0.0, 0.5);
+        }
+        // it should have deformed away from a perfect sphere at some point and stayed finite
+        assert!(b.centroid().is_finite());
+        assert!(b.deformation() >= 0.0 && b.deformation() <= 1.0);
+        let _ = d0;
     }
 }

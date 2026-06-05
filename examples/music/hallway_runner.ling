@@ -235,57 +235,8 @@ bind start = do {
 
         flush_3d()
 
-        # ── candle flames: filled translucent teardrops layered in 2-D, placed by
-        #    projecting each candle into screen space (additive glow, FFT-reactive) ──
-        set_blend(1)
-        bind fk = 0.0
-        while fk < NRIBS {
-            bind even = fk - floor(fk / 2.0) * 2.0
-            if even < 0.5 {
-                bind fz = fk * SPACING - off
-                bind fband = bands[fk - floor(fk / NB) * NB] * 6.0
-                bind flh = 0.35 + fband * 1.9 + beat * 0.5
-                bind fci = 0.0
-                while fci < 2.0 {
-                    bind cxw = lx + 0.18
-                    if fci > 0.5 { bind cxw = rx - 0.18 }
-                    bind cby = fy - 0.2
-                    bind pb = project_3d(cxw, cby, fz)
-                    bind pt = project_3d(cxw, cby - flh, fz)
-                    if pb[0.0] > 0.0 - 90000.0 { if pt[0.0] > 0.0 - 90000.0 {
-                        bind bx = pb[0.0]  bind by2 = pb[1.0]
-                        bind tx = pt[0.0]  bind ty = pt[1.0]
-                        bind dx = tx - bx  bind dy = ty - by2
-                        bind flen = sqrt(dx*dx + dy*dy) + 0.001
-                        bind ux = dx / flen  bind uy = dy / flen
-                        bind perpx = 0.0 - uy  bind perpy = ux
-                        # 4 stacked layers: big cool-orange outer → small white-hot inner
-                        bind layer = 0.0
-                        while layer < 4.0 {
-                            bind shrink = 1.0 - layer * 0.22
-                            bind w2 = flen * 0.34 * shrink
-                            bind hl = flen * shrink
-                            bind sway = sin(t*10.0 + fk + layer*1.7 + fci*2.0) * flen * 0.10
-                            bind tipx = bx + ux*hl + perpx*sway
-                            bind tipy = by2 + uy*hl + perpy*sway
-                            bind brx = bx + perpx*w2  bind bry = by2 + perpy*w2
-                            bind blx = bx - perpx*w2  bind bly = by2 - perpy*w2
-                            bind bgx = bx - ux*w2*1.15  bind bgy = by2 - uy*w2*1.15
-                            bind cf = layer / 3.0
-                            bind br = 0.4 + fband*0.7 + beat*0.25
-                            if br > 1.0 { bind br = 1.0 }
-                            set_color(255.0*br, (110.0 + cf*140.0)*br, (20.0 + cf*190.0)*br)
-                            draw_poly([tipx, tipy, brx, bry, bgx, bgy, blx, bly])
-                            bind layer = layer + 1.0
-                        }
-                    } }
-                    bind fci = fci + 1.0
-                }
-            }
-            bind fk = fk + 1.0
-        }
-
         # ── HUD ──
+        set_blend(1)
         set_color(0, 230, 255)
         if ui < 0.0 { ui_text(40.0, 22.0, 22.0, "NEON HALL") } else { font_text_fill(ui, 40.0, 22.0, 26.0, "NEON HALL") }
         ui_counter(900.0, 18.0, 16.0, 26.0, score, 5.0)

@@ -1,0 +1,106 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TUMBLING — rigid bodies with full angular dynamics (ling-physics rigid.rs):
+# torque, spin, inertia and a spin-inducing floor bounce make them tumble & roll.
+# Autoplaying — no input.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(1040, 720)
+    set_ambient(0.3)
+    set_zdist(22.0)
+    bind ui = font_load("assets/fonts/Exo2.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Exo2.ttf", 600.0) }
+
+    rb_gravity(0.0, 9.0, 0.0)     # +y is down in screen space
+    bind FLOOR = 5.0
+    bind N = 6.0
+    bind HS = 0.7                 # cube half-size
+
+    # spawn N tumbling bodies with spins + sideways impulses
+    bind i = 0.0
+    while i < N {
+        bind id = rb_add((i - 2.5) * 2.2, 0.0 - 8.0 - i * 0.6, 0.0, 1.0)
+        rb_spin(id, sin(i)*3.0 + 2.0, cos(i)*3.0, i*0.7 + 1.0)
+        rb_impulse(id, sin(i*1.7)*2.0, 0.0, cos(i)*2.0)
+        bind i = i + 1.0
+    }
+
+    while window_is_open() {
+        bind t = time_now()
+        rb_step(0.016)
+
+        set_color(6, 8, 16)
+        fill()
+        set_camera(cos(t*0.2), sin(t*0.2), cos(0.5), sin(0.5))
+        set_ambient(0.3)
+        set_blend(1)
+
+        # floor grid at y = FLOOR
+        set_color(40, 60, 100)
+        bind gi = 0.0 - 6.0
+        while gi <= 6.0 {
+            draw_line_3d(gi, FLOOR, 0.0-6.0, gi, FLOOR, 6.0)
+            draw_line_3d(0.0-6.0, FLOOR, gi, 6.0, FLOOR, gi)
+            bind gi = gi + 2.0
+        }
+
+        # draw each body as a rotated cube (built from its quaternion-rotated axes)
+        bind i = 0.0
+        while i < N {
+            rb_floor(i, FLOOR, 0.62, 0.7)
+            bind p = rb_pos(i)
+            bind q = rb_rot(i)
+            bind px = p[0.0]  bind py = p[1.0]  bind pz = p[2.0]
+            bind qx = q[0.0]  bind qy = q[1.0]  bind qz = q[2.0]  bind qw = q[3.0]
+
+            # rotate the three half-axes (HS,0,0)/(0,HS,0)/(0,0,HS) by q (quaternion rotate)
+            # --- axis X ---
+            bind vx=HS bind vy=0.0 bind vz=0.0
+            bind tx=2.0*(qy*vz-qz*vy) bind ty=2.0*(qz*vx-qx*vz) bind tz=2.0*(qx*vy-qy*vx)
+            bind axx = vx + qw*tx + (qy*tz-qz*ty)
+            bind axy = vy + qw*ty + (qz*tx-qx*tz)
+            bind axz = vz + qw*tz + (qx*ty-qy*tx)
+            # --- axis Y ---
+            bind vx=0.0 bind vy=HS bind vz=0.0
+            bind tx=2.0*(qy*vz-qz*vy) bind ty=2.0*(qz*vx-qx*vz) bind tz=2.0*(qx*vy-qy*vx)
+            bind ayx = vx + qw*tx + (qy*tz-qz*ty)
+            bind ayy = vy + qw*ty + (qz*tx-qx*tz)
+            bind ayz = vz + qw*tz + (qx*ty-qy*tx)
+            # --- axis Z ---
+            bind vx=0.0 bind vy=0.0 bind vz=HS
+            bind tx=2.0*(qy*vz-qz*vy) bind ty=2.0*(qz*vx-qx*vz) bind tz=2.0*(qx*vy-qy*vx)
+            bind azx = vx + qw*tx + (qy*tz-qz*ty)
+            bind azy = vy + qw*ty + (qz*tx-qx*tz)
+            bind azz = vz + qw*tz + (qx*ty-qy*tx)
+
+            # 8 corners = p ± ax ± ay ± az
+            bind c0x=px-axx-ayx-azx bind c0y=py-axy-ayy-azy bind c0z=pz-axz-ayz-azz
+            bind c1x=px+axx-ayx-azx bind c1y=py+axy-ayy-azy bind c1z=pz+axz-ayz-azz
+            bind c2x=px+axx+ayx-azx bind c2y=py+axy+ayy-azy bind c2z=pz+axz+ayz-azz
+            bind c3x=px-axx+ayx-azx bind c3y=py-axy+ayy-azy bind c3z=pz-axz+ayz-azz
+            bind c4x=px-axx-ayx+azx bind c4y=py-axy-ayy+azy bind c4z=pz-axz-ayz+azz
+            bind c5x=px+axx-ayx+azx bind c5y=py+axy-ayy+azy bind c5z=pz+axz-ayz+azz
+            bind c6x=px+axx+ayx+azx bind c6y=py+axy+ayy+azy bind c6z=pz+axz+ayz+azz
+            bind c7x=px-axx+ayx+azx bind c7y=py-axy+ayy+azy bind c7z=pz-axz+ayz+azz
+
+            bind hue = i / N
+            set_color((sin(hue*6.283)*0.5+0.5)*200.0+55.0, (sin(hue*6.283+2.0)*0.5+0.5)*200.0+55.0, (sin(hue*6.283+4.0)*0.5+0.5)*200.0+55.0)
+            # bottom face
+            draw_line_3d(c0x,c0y,c0z, c1x,c1y,c1z) draw_line_3d(c1x,c1y,c1z, c2x,c2y,c2z)
+            draw_line_3d(c2x,c2y,c2z, c3x,c3y,c3z) draw_line_3d(c3x,c3y,c3z, c0x,c0y,c0z)
+            # top face
+            draw_line_3d(c4x,c4y,c4z, c5x,c5y,c5z) draw_line_3d(c5x,c5y,c5z, c6x,c6y,c6z)
+            draw_line_3d(c6x,c6y,c6z, c7x,c7y,c7z) draw_line_3d(c7x,c7y,c7z, c4x,c4y,c4z)
+            # verticals
+            draw_line_3d(c0x,c0y,c0z, c4x,c4y,c4z) draw_line_3d(c1x,c1y,c1z, c5x,c5y,c5z)
+            draw_line_3d(c2x,c2y,c2z, c6x,c6y,c6z) draw_line_3d(c3x,c3y,c3z, c7x,c7y,c7z)
+            bind i = i + 1.0
+        }
+        flush_3d()
+
+        set_color(0, 230, 255)
+        if ui < 0.0 { ui_text(36.0, 22.0, 22.0, "TUMBLING") } else { font_text_fill(ui, 36.0, 22.0, 26.0, "TUMBLING") }
+        set_blend(0)
+        present()
+    }
+}

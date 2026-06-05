@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](index.md)
+[Showcase & Comparison](showcase.md)
 
 ---
 
@@ -20,6 +21,10 @@
 - [Builtins — Vector Geometry (vtex)](reference/vtex.md)
 - [Builtins — Pixel Textures (tex)](reference/tex.md)
 - [Builtins — Audio](reference/audio.md)
+- [Builtins — Music & Spatial Audio](reference/music.md)
+- [Builtins — Vector Fonts](reference/fonts.md)
+- [Builtins — UI Toolkit](reference/ui.md)
+- [Builtins — Physics](reference/physics.md)
 - [Builtins — Window & Camera](reference/window.md)
 
 ---
