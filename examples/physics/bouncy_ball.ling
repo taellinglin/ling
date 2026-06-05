@@ -12,16 +12,19 @@ bind start = do {
     if ui < 0.0 { bind ui = font_load("../../assets/fonts/Exo2.ttf", 600.0) }
 
     bind B = 4.0
-    bind ball = soft_ball(0.0, 0.0 - 2.5, 0.0, 1.2)
-    soft_kick(ball, 1.0, 0.0, 0.6, 0.05)   # gentle initial toss
+    bind ball = soft_ball(0.0, 0.0 - 2.5, 0.0, 1.8)   # a big, jelly ball
+    soft_kick(ball, 1.0, 0.0, 0.6, 0.12)              # lively initial toss
+    bind fc = 0.0
 
     while window_is_open() {
         bind t = time_now()
+        bind fc = fc + 1.0
         # physics: gravity pulls +y (down in screen space); bounce off the box walls
-        soft_step(ball, 0.016, 9.0)
-        soft_contain(ball, 0.0-B, 0.0-B, 0.0-B, B, B, B, 0.55)
-        # occasional gentle re-kick so it keeps tumbling
-        if sin(t*0.6) > 0.99 { soft_kick(ball, sin(t*3.0), 0.0-0.6, cos(t*2.0), 0.05) }
+        soft_step(ball, 0.016, 11.0)
+        soft_contain(ball, 0.0-B, 0.0-B, 0.0-B, B, B, B, 0.78)
+        # re-kick on a steady cadence so it keeps bouncing instead of fidgeting in a corner
+        bind beat = fc - floor(fc / 90.0) * 90.0
+        if beat < 0.5 { soft_kick(ball, sin(fc*0.7), 0.0 - 1.2, cos(fc*0.9), 0.16) }
 
         bind def = soft_deform(ball)
         bind dc = def
@@ -42,18 +45,22 @@ bind start = do {
         draw_line_3d(0.0-B,0.0-B,0.0-B, 0.0-B,0.0-B,B) draw_line_3d(B,0.0-B,0.0-B, B,0.0-B,B)
         draw_line_3d(B,B,0.0-B, B,B,B) draw_line_3d(0.0-B,B,0.0-B, 0.0-B,B,B)
 
-        # the deformable ball: draw every node as a little glowing cross.
-        # colour shifts red as it squishes (deformation rises on impact).
+        # the deformable ball: draw its mesh nodes as glowing strands (a winding
+        # path through the nodes + spokes to the centre) so it reads as a full
+        # jelly ball. Colour shifts red→hot as it squishes on impact.
         bind ns = soft_nodes(ball)
         bind nn = len(ns) / 3.0
-        set_color(100.0 + dc*300.0, 235.0 - dc*300.0, 255.0 - dc*200.0)
-        bind i = 0.0
+        bind ctr = soft_centroid(ball)
+        bind cxw = ctr[0.0]  bind cyw = ctr[1.0]  bind czw = ctr[2.0]
+        set_color(110.0 + dc*300.0, 235.0 - dc*300.0, 255.0 - dc*200.0)
+        bind i = 1.0
+        bind ax = ns[0.0]  bind ay = ns[1.0]  bind az = ns[2.0]
         while i < nn {
             bind k = i * 3.0
             bind x = ns[k]  bind y = ns[k+1.0]  bind z = ns[k+2.0]
-            draw_line_3d(x-0.06, y, z, x+0.06, y, z)
-            draw_line_3d(x, y-0.06, z, x, y+0.06, z)
-            draw_line_3d(x, y, z-0.06, x, y, z+0.06)
+            draw_line_3d(ax, ay, az, x, y, z)          # winding strand
+            if i - floor(i/3.0)*3.0 < 0.5 { draw_line_3d(cxw, cyw, czw, x, y, z) }  # spoke
+            bind ax = x  bind ay = y  bind az = z
             bind i = i + 1.0
         }
         flush_3d()

@@ -32,6 +32,12 @@ pub struct SoftBody {
     pub nodes:   Vec<SoftNode>,
     pub springs: Vec<Spring>,
     pub damping: f32,
+    /// Target radius from the centroid — a gentle shape-restoration constraint
+    /// keeps the ball round (it squashes on impact, then springs back) instead
+    /// of deflating/collapsing under gravity. `0` disables it.
+    pub rest_radius: f32,
+    /// How strongly each step pulls nodes back toward `rest_radius` (0..1).
+    pub shape_stiffness: f32,
 }
 
 impl SoftBody {
@@ -88,7 +94,7 @@ impl SoftBody {
             if r_bot > 0.0 { springs.push(Spring { a: 1, b: bot_near, rest_length: r_bot, stiffness: 0.9 }); }
         }
 
-        Self { nodes, springs, damping: 0.98 }
+        Self { nodes, springs, damping: 0.98, rest_radius: radius, shape_stiffness: 0.12 }
     }
 
     /// Verlet integration with gravity, then spring constraint projection.
@@ -113,6 +119,22 @@ impl SoftBody {
                 let correction = dir / dist * (dist - s.rest_length) * s.stiffness * 0.5;
                 if !self.nodes[s.a].pinned { self.nodes[s.a].pos += correction; }
                 if !self.nodes[s.b].pinned { self.nodes[s.b].pos -= correction; }
+            }
+            // Shape-restoration: nudge each node toward `rest_radius` from the
+            // centroid so the ball stays round (squashes then recovers).
+            if self.rest_radius > 0.0 && self.shape_stiffness > 0.0 {
+                let c = self.centroid();
+                let k = self.shape_stiffness;
+                let r = self.rest_radius;
+                for n in &mut self.nodes {
+                    if n.pinned { continue; }
+                    let d = n.pos - c;
+                    let len = d.length();
+                    if len > 1e-5 {
+                        let target = c + d / len * r;
+                        n.pos += (target - n.pos) * k;
+                    }
+                }
             }
         }
         // Update velocities for damping.

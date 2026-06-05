@@ -1,93 +1,33 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Noise Waves Demo — Perlin & FBM with Time and Lerp
+# Noise Waves — flowing multicolor wave lines driven by fbm noise over time.
+# Demonstrates: fbm · smoothstep · lerp · time_now · draw_line
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Demonstrates: perlin(), fbm(), lerp(), smoothstep(), time_now(), frame_count()
 
-bind setup = do {
-  open_window(1024, 600)
-}
+bind start = do {
+    open_window(1024, 600)
+    set_blend(1)
+    while window_is_open() {
+        bind t = time_now()
+        set_color(10, 8, 18)
+        fill()
 
-bind update = do {
-  let t = time_now()
-
-  # Dark background
-  set_color(15, 10, 20)
-  fill()
-
-  # Draw multiple layers of noise-based waves (simplified)
-  # Layer 0
-  let y0 = 100.0
-  let noise0 = fbm(t * 0.3, 0.0, 3, 0)
-  let yvar0 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise0 * 0.5 + 0.5))
-  set_color(80, 120, 200)
-  draw_pixel(100.0, y0 + yvar0)
-  draw_pixel(200.0, y0 + yvar0)
-  draw_pixel(300.0, y0 + yvar0)
-  draw_pixel(400.0, y0 + yvar0)
-  draw_pixel(500.0, y0 + yvar0)
-
-  # Layer 1
-  let y1 = 180.0
-  let noise1 = fbm(t * 0.35, 0.1, 3, 1)
-  let yvar1 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise1 * 0.5 + 0.5))
-  set_color(105, 135, 200)
-  draw_pixel(100.0, y1 + yvar1)
-  draw_pixel(200.0, y1 + yvar1)
-  draw_pixel(300.0, y1 + yvar1)
-  draw_pixel(400.0, y1 + yvar1)
-  draw_pixel(500.0, y1 + yvar1)
-
-  # Layer 2
-  let y2 = 260.0
-  let noise2 = fbm(t * 0.4, 0.2, 3, 2)
-  let yvar2 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise2 * 0.5 + 0.5))
-  set_color(130, 150, 200)
-  draw_pixel(100.0, y2 + yvar2)
-  draw_pixel(200.0, y2 + yvar2)
-  draw_pixel(300.0, y2 + yvar2)
-  draw_pixel(400.0, y2 + yvar2)
-  draw_pixel(500.0, y2 + yvar2)
-
-  # Layer 3
-  let y3 = 340.0
-  let noise3 = fbm(t * 0.45, 0.3, 3, 3)
-  let yvar3 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise3 * 0.5 + 0.5))
-  set_color(155, 165, 200)
-  draw_pixel(100.0, y3 + yvar3)
-  draw_pixel(200.0, y3 + yvar3)
-  draw_pixel(300.0, y3 + yvar3)
-  draw_pixel(400.0, y3 + yvar3)
-  draw_pixel(500.0, y3 + yvar3)
-
-  # Layer 4
-  let y4 = 420.0
-  let noise4 = fbm(t * 0.5, 0.4, 3, 4)
-  let yvar4 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise4 * 0.5 + 0.5))
-  set_color(180, 180, 200)
-  draw_pixel(100.0, y4 + yvar4)
-  draw_pixel(200.0, y4 + yvar4)
-  draw_pixel(300.0, y4 + yvar4)
-  draw_pixel(400.0, y4 + yvar4)
-  draw_pixel(500.0, y4 + yvar4)
-
-  # Layer 5
-  let y5 = 500.0
-  let noise5 = fbm(t * 0.55, 0.5, 3, 5)
-  let yvar5 = lerp(-15.0, 15.0, smoothstep(0.0, 1.0, noise5 * 0.5 + 0.5))
-  set_color(200, 200, 200)
-  draw_pixel(100.0, y5 + yvar5)
-  draw_pixel(200.0, y5 + yvar5)
-  draw_pixel(300.0, y5 + yvar5)
-  draw_pixel(400.0, y5 + yvar5)
-  draw_pixel(500.0, y5 + yvar5)
-
-  # Draw frame counter and time info
-  set_color(200, 200, 200)
-
-  present()
-}
-
-setup()
-while window_is_open() {
-  update()
+        bind layer = 0.0
+        while layer < 7.0 {
+            bind baseY = 80.0 + layer * 70.0
+            bind hue = layer / 7.0 + t * 0.05
+            set_color((sin(hue*6.283)*0.5+0.5)*180.0+50.0, (sin(hue*6.283+2.094)*0.5+0.5)*180.0+50.0, (sin(hue*6.283+4.188)*0.5+0.5)*180.0+50.0)
+            # sweep a polyline of fbm samples across the width
+            bind x = 0.0
+            bind py = baseY
+            while x < 1024.0 {
+                bind n = fbm(x * 0.004 + t * 0.3, layer * 1.7, 4.0, layer)
+                bind y = baseY + lerp(0.0-40.0, 40.0, smoothstep(0.0, 1.0, n*0.5+0.5))
+                if x > 0.5 { draw_line(x - 16.0, py, x, y) }
+                bind py = y
+                bind x = x + 16.0
+            }
+            bind layer = layer + 1.0
+        }
+        present()
+    }
 }

@@ -483,6 +483,10 @@ pub struct Interpreter {
     rigid_world: ling_physics::rigid::PhysicsWorld,
     /// Liquid grids (water/oil), by `liquid_new` handle.
     liquids: Vec<ling_physics::liquid::LiquidGrid>,
+    /// Active cinematic dialog box (Ocarina/Majora-style), if any.
+    dialog: Option<ling_game::dialog::Dialog>,
+    /// Dialog highlight colours by role: text, name, place, item (0x00RRGGBB).
+    dialog_colors: [u32; 4],
 }
 
 impl Interpreter {
@@ -532,6 +536,76 @@ impl Interpreter {
             soft_bodies: Vec::new(),
             rigid_world: ling_physics::rigid::PhysicsWorld::new(),
             liquids: Vec::new(),
+            dialog: None,
+            dialog_colors: [0xE6F2FF, 0xFFD24A, 0x4AD2FF, 0x6CFF8C], // text · name · place · item
+        }
+    }
+
+    /// Render the active dialog box: beveled frame + dark fill, then the visible
+    /// (typewriter-revealed) text word-wrapped with colour-coded runs, plus a
+    /// blinking advance arrow once the page is fully typed.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn render_dialog(&mut self, x: f32, y: f32, w: f32, h: f32, font: i64, t: f32) {
+        let (runs, typing) = match &self.dialog {
+            Some(d) if !d.is_closed() => {
+                let runs: Vec<(String, usize, bool)> = d.visible_runs().into_iter()
+                    .map(|r| (r.text, r.role.index(), r.newline_before)).collect();
+                (runs, d.is_typing())
+            }
+            _ => return,
+        };
+        let colors = self.dialog_colors;
+        // ── frame + fill ──
+        let b = 12.0;
+        let corners: Vec<[f32; 2]> = vec![
+            [x+b,y],[x+w-b,y],[x+w,y+b],[x+w,y+h-b],[x+w-b,y+h],[x+b,y+h],[x,y+h-b],[x,y+b],[x+b,y],
+        ];
+        {
+            let mut gfx = self.gfx.borrow_mut();
+            let (bw, bh) = (gfx.width, gfx.height);
+            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, 0x0A1018, false, std::slice::from_ref(&corners));
+            for seg in corners.windows(2) {
+                crate::gfx::raster::draw_line_aa(&mut gfx.buffer, bw, bh, 0x00D2FF, false, seg[0][0], seg[0][1], seg[1][0], seg[1][1]);
+            }
+        }
+        // ── word-wrapped, colour-coded text ──
+        let px = 22.0f32;
+        let pad = 20.0f32;
+        let line_h = px * 1.45;
+        let mut cx = x + pad;
+        let mut cy = y + pad;
+        let use_font = font >= 0 && (font as usize) < self.fonts.len();
+        for (text, role, nl) in &runs {
+            if *nl { cx = x + pad; cy += line_h; }
+            for word in text.split_inclusive(' ') {
+                let wpx = if use_font { self.fonts[font as usize].measure(word, px) }
+                          else { ling_ui::holo::text_width(word, px * 0.6, px * 0.24) };
+                if cx + wpx > x + w - pad && cx > x + pad + 1.0 { cx = x + pad; cy += line_h; }
+                if cy + line_h > y + h { break; }
+                let col = colors[(*role).min(3)];
+                if use_font {
+                    let glyphs = self.font_layout_2d_glyphs(font as usize, cx, cy, px, word);
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (bw, bh, add) = (gfx.width, gfx.height, gfx.blend == 1);
+                    for contours in &glyphs {
+                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, col, add, contours);
+                    }
+                } else {
+                    let segs = ling_ui::holo::text_lines(word, cx, cy, px * 0.6, px, px * 0.24);
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (bw, bh) = (gfx.width, gfx.height);
+                    for s in segs { draw_line(&mut gfx.buffer, bw, bh, col, s[0], s[1], s[2], s[3]); }
+                }
+                cx += wpx;
+            }
+        }
+        // ── blinking advance arrow when fully typed ──
+        if !typing && (t * 3.0).sin() > 0.0 {
+            let ax = x + w - 26.0; let ay = y + h - 22.0;
+            let mut gfx = self.gfx.borrow_mut();
+            let (bw, bh) = (gfx.width, gfx.height);
+            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, 0x00D2FF, false,
+                std::slice::from_ref(&vec![[ax-7.0,ay],[ax+7.0,ay],[ax,ay+9.0],[ax-7.0,ay]]));
         }
     }
 
@@ -3969,45 +4043,48 @@ impl Interpreter {
                 if id < self.liquids.len() {
                     let (gw,gh)={ let g=&self.liquids[id]; (g.w,g.h) };
                     let mut gfx=self.gfx.borrow_mut();
-                    let (w,h)=(gfx.width as i32, gfx.height as i32);
+                    let (w,h,add)=(gfx.width, gfx.height, gfx.blend==1);
                     let cam=gfx.camera.clone();
                     let near = -cam.zdist + 0.05;
                     let g=&self.liquids[id];
                     let tau=std::f32::consts::TAU; let pi=std::f32::consts::PI;
+                    // surface point for a (u,v) in [0,1] on the chosen primitive
+                    let sp = |u:f32, v:f32| -> [f32;3] {
+                        if kind==0 { [cx+(u-0.5)*2.0*radius, cy, cz+(v-0.5)*2.0*radius] }
+                        else if kind==2 { let th=u*tau; [cx+th.cos()*radius, cy+(v-0.5)*height, cz+th.sin()*radius] }
+                        else if kind==3 { let th=u*tau; let rr=radius*(1.0-v); [cx+th.cos()*rr, cy+(v-0.5)*height, cz+th.sin()*rr] }
+                        else if kind==4 { let th=u*tau; let ph=v*pi*0.5; [cx+ph.sin()*th.cos()*radius, cy-ph.cos()*radius, cz+ph.sin()*th.sin()*radius] }
+                        else { let th=u*tau; let ph=v*pi; [cx+ph.sin()*th.cos()*radius, cy+ph.cos()*radius, cz+ph.sin()*th.sin()*radius] }
+                    };
+                    let nrm = |u:f32, v:f32| -> [f32;3] {
+                        if kind==0 { [0.0,-1.0,0.0] }
+                        else if kind==2 { let th=u*tau; [th.cos(),0.0,th.sin()] }
+                        else if kind==3 { let th=u*tau; let s=(radius/height.max(0.01)).atan(); [th.cos()*s.cos(), s.sin(), th.sin()*s.cos()] }
+                        else if kind==4 { let th=u*tau; let ph=v*pi*0.5; [ph.sin()*th.cos(),-ph.cos(),ph.sin()*th.sin()] }
+                        else { let th=u*tau; let ph=v*pi; [ph.sin()*th.cos(),ph.cos(),ph.sin()*th.sin()] }
+                    };
+                    let gwf=gw as f32; let ghf=gh as f32;
                     let mut cyc=0usize;
                     while cyc<gh {
-                        let v=cyc as f32/(gh as f32-1.0);
                         let mut cxc=0usize;
                         while cxc<gw {
-                            let u=cxc as f32/(gw as f32-1.0);
-                            // surface point P and outward normal N
-                            let (px_,py_,pz_,nx_,ny_,nz_);
-                            if kind==0 { // plane
-                                px_=cx+(u-0.5)*2.0*radius; py_=cy; pz_=cz+(v-0.5)*2.0*radius; nx_=0.0; ny_=-1.0; nz_=0.0;
-                            } else if kind==2 { // cylinder
-                                let th=u*tau; px_=cx+th.cos()*radius; py_=cy+(v-0.5)*height; pz_=cz+th.sin()*radius; nx_=th.cos(); ny_=0.0; nz_=th.sin();
-                            } else if kind==3 { // cone
-                                let th=u*tau; let rr=radius*(1.0-v); px_=cx+th.cos()*rr; py_=cy+(v-0.5)*height; pz_=cz+th.sin()*rr;
-                                let s=(radius/height.max(0.01)).atan(); nx_=th.cos()*s.cos(); ny_=s.sin(); nz_=th.sin()*s.cos();
-                            } else if kind==4 { // dome (upper hemisphere)
-                                let th=u*tau; let ph=v*pi*0.5; px_=cx+ph.sin()*th.cos()*radius; py_=cy-ph.cos()*radius; pz_=cz+ph.sin()*th.sin()*radius; nx_=ph.sin()*th.cos(); ny_=-ph.cos(); nz_=ph.sin()*th.sin();
-                            } else { // sphere
-                                let th=u*tau; let ph=v*pi; px_=cx+ph.sin()*th.cos()*radius; py_=cy+ph.cos()*radius; pz_=cz+ph.sin()*th.sin()*radius; nx_=ph.sin()*th.cos(); ny_=ph.cos(); nz_=ph.sin()*th.sin();
-                            }
-                            let dP=cam.depth(px_,py_,pz_);
-                            if dP>near {
-                                // back-face cull (skip for the plane): outward normal pointing away → deeper
-                                let cull = kind!=0 && cam.depth(px_+nx_*0.06, py_+ny_*0.06, pz_+nz_*0.06) > dP;
+                            // cull by the cell centre's outward normal
+                            let uc=(cxc as f32+0.5)/gwf; let vc=(cyc as f32+0.5)/ghf;
+                            let c=sp(uc,vc); let n=nrm(uc,vc);
+                            let dc=cam.depth(c[0],c[1],c[2]);
+                            if dc>near {
+                                let cull = kind!=0 && cam.depth(c[0]+n[0]*0.06,c[1]+n[1]*0.06,c[2]+n[2]*0.06) > dc;
                                 if !cull {
-                                    let (spx,spy,depth)=cam.project(px_,py_,pz_);
-                                    if depth>0.0 {
+                                    // project the 4 cell corners → a filled AA vector quad
+                                    let u0=cxc as f32/gwf; let u1=(cxc+1) as f32/gwf;
+                                    let v0=cyc as f32/ghf; let v1=(cyc+1) as f32/ghf;
+                                    let q=[sp(u0,v0),sp(u1,v0),sp(u1,v1),sp(u0,v1)];
+                                    let mut poly: Vec<[f32;2]> = Vec::with_capacity(5);
+                                    let mut ok=true;
+                                    for p in &q { if cam.depth(p[0],p[1],p[2])<=near { ok=false; break; } let (sx,sy,_)=cam.project(p[0],p[1],p[2]); poly.push([sx,sy]); }
+                                    if ok { let p0=poly[0]; poly.push(p0);
                                         let col=g.sample_rgb(cxc,cyc);
-                                        let bs=((radius*cam.focal/(depth*gw as f32))*1.6).max(1.0).min(7.0) as i32;
-                                        let ix=spx as i32; let iy=spy as i32;
-                                        let mut dy=-bs; while dy<=bs { let mut dx=-bs; while dx<=bs {
-                                            let qx=ix+dx; let qy=iy+dy;
-                                            if qx>=0 && qy>=0 && qx<w && qy<h { gfx.buffer[(qy*w+qx) as usize]=col; }
-                                            dx+=1; } dy+=1; }
+                                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, col, add, std::slice::from_ref(&poly));
                                     }
                                 }
                             }
@@ -4016,6 +4093,96 @@ impl Interpreter {
                         cyc+=1;
                     }
                 }
+                return Ok(Value::Unit);
+            }
+            // sparkle(x, y, w, h, count [, t]) — scatter twinkling vector star-sparkles
+            // in a rect (snowglobe effect) in the current colour + blend mode.
+            #[cfg(not(target_arch = "wasm32"))]
+            "sparkle" | "闪光" | "きらめき" | "반짝임" | "ประกาย" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let ww=self.arg_num(&args,2,200.)? as f32; let hh=self.arg_num(&args,3,200.)? as f32;
+                let count=self.arg_num(&args,4,40.)? as i32;
+                let t=self.arg_num(&args,5,0.)? as f32;
+                let mut gfx=self.gfx.borrow_mut();
+                let (w,h,add,color)=(gfx.width, gfx.height, gfx.blend==1, gfx.color);
+                let (cr,cg,cb)=((color>>16&0xFF) as f32,(color>>8&0xFF) as f32,(color&0xFF) as f32);
+                let mut n=0i32;
+                while n<count {
+                    let hsh=(n as u32).wrapping_mul(2654435761).wrapping_add(0x9E3779B9);
+                    let u=((hsh>>8)&1023) as f32/1023.0;
+                    let v=((hsh>>18)&1023) as f32/1023.0;
+                    let phase=(hsh&255) as f32/255.0;
+                    let tw=(t*3.0 + phase*6.2831 + n as f32).sin()*0.5+0.5;
+                    let sz=1.5+tw*5.0;
+                    let px=x+u*ww; let py=y+v*hh;
+                    let b=tw*tw; // sharp twinkle
+                    let col=(((cr*b)as u32)<<16)|(((cg*b)as u32)<<8)|((cb*b)as u32);
+                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-sz,py, px+sz,py);
+                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px,py-sz, px,py+sz);
+                    let d=sz*0.55;
+                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-d,py-d, px+d,py+d);
+                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-d,py+d, px+d,py-d);
+                    n+=1;
+                }
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // DIALOG BUILTINS  (crates/ling-game/src/dialog.rs) — cinematic,
+            // typed-out, colour-coded text boxes. Markup: {n}name{/} {p}place{/}
+            // {i}item{/}, \n newline, || page break.
+            // ══════════════════════════════════════════════════════════════════
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_show" | "对话显示" | "会話表示" | "대화표시" | "แสดงบทสนทนา" => {
+                let text = self.arg_str(&args, 0, "");
+                let cps = self.arg_num(&args, 1, 32.0)? as f32;
+                self.dialog = Some(ling_game::dialog::Dialog::new(&text, cps));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_step" | "对话步进" | "会話更新" | "대화스텝" | "ก้าวบทสนทนา" => {
+                let dt = self.arg_num(&args, 0, 0.016)? as f32;
+                if let Some(d) = self.dialog.as_mut() { d.update(dt); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_advance" | "对话推进" | "会話送り" | "대화진행" | "เลื่อนบทสนทนา" => {
+                if let Some(d) = self.dialog.as_mut() { d.advance(); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_active" | "对话激活" | "会話中" | "대화중" | "บทสนทนาทำงาน" => {
+                let a = self.dialog.as_ref().map(|d| !d.is_closed()).unwrap_or(false);
+                return Ok(Value::Bool(a));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" => {
+                let a = self.dialog.as_ref().map(|d| !d.is_closed() && d.is_typing()).unwrap_or(false);
+                return Ok(Value::Bool(a));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" => {
+                self.dialog = None;
+                return Ok(Value::Unit);
+            }
+            // dialog_color(role, r, g, b) — role: 0 text · 1 name · 2 place · 3 item
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_color" | "对话颜色" | "会話色" | "대화색" | "สีบทสนทนา" => {
+                let role = (self.arg_num(&args,0,0.0)? as usize).min(3);
+                let r = self.arg_num(&args,1,255.0)? as u32 & 0xFF;
+                let g = self.arg_num(&args,2,255.0)? as u32 & 0xFF;
+                let b = self.arg_num(&args,3,255.0)? as u32 & 0xFF;
+                self.dialog_colors[role] = (r<<16)|(g<<8)|b;
+                return Ok(Value::Unit);
+            }
+            // dialog_draw(x, y, w, h [, font_handle]) — draw the box + typed text
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_draw" | "对话绘制" | "会話描画" | "대화그리기" | "วาดบทสนทนา" => {
+                let x=self.arg_num(&args,0,40.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
+                let ww=self.arg_num(&args,2,720.0)? as f32; let hh=self.arg_num(&args,3,150.0)? as f32;
+                let font = self.arg_num(&args,4,-1.0)? as i64;
+                let t = self.start_time.elapsed().as_secs_f32();
+                self.render_dialog(x, y, ww, hh, font, t);
                 return Ok(Value::Unit);
             }
 

@@ -1,0 +1,63 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# DIALOG — Ocarina/Majora-style cinematic text box: typed out letter-by-letter,
+# colour-coded {n}names{/}, {p}places{/} and {i}items{/}, paged with ||, and
+# auto-advancing. Walk up to the sage and press SPACE to talk; while the box is
+# open the "world" is suspended. (Autoplays here: it talks to itself.)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(900, 600)
+    bind ui = font_load("assets/fonts/Exo2.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Exo2.ttf", 600.0) }
+
+    bind line = "Hey {n}Link{/}! Welcome to {p}Hyrule{/}. Take this {i}Master Sword{/} — you will need it for the road ahead.||Seek the {n}Great Deku Tree{/} deep in the {p}Lost Woods{/}, and bring the {i}Kokiri Emerald{/}."
+    bind talking = 0.0
+    bind nextAdv = 0.0
+    bind wasSpace = 0.0
+
+    while window_is_open() {
+        bind t = time_now()
+
+        # ── input: SPACE talks / advances (edge-detected so it acts on release) ──
+        bind sp = 0.0
+        if key_pressed("space") { bind sp = 1.0 }
+        bind tap = 0.0
+        if sp > 0.5 { if wasSpace < 0.5 { bind tap = 1.0 } }
+        bind wasSpace = sp
+        # autoplay: tap "space" every ~2.2s so the demo advances on its own
+        if t > nextAdv { bind tap = 1.0  bind nextAdv = t + 2.2 }
+
+        if dialog_active() {
+            dialog_step(0.016)            # world is suspended; only the box updates
+            if tap > 0.5 { dialog_advance() }
+        } else {
+            if tap > 0.5 { dialog_show(line, 34.0)  bind talking = 1.0 }
+        }
+
+        # ── draw scene ──
+        set_color(10, 14, 24)
+        fill()
+        set_blend(1)
+
+        # a little sage character (only animates when NOT talking — world suspended)
+        bind bob = 0.0
+        if dialog_active() { bind bob = 0.0 } else { bind bob = sin(t*3.0)*6.0 }
+        set_color(80, 200, 255)
+        draw_disc(450.0, 250.0 + bob, 26.0)            # head
+        set_color(60, 150, 230)
+        draw_disc(450.0, 320.0 + bob, 40.0)            # body
+
+        set_color(0, 230, 255)
+        if ui < 0.0 { ui_text(36.0, 24.0, 22.0, "DIALOG") } else { font_text_fill(ui, 36.0, 24.0, 26.0, "DIALOG") }
+
+        if dialog_active() {
+            # the cinematic box (colour-coded, typed-out), drawn with the vector font
+            dialog_draw(50.0, 420.0, 800.0, 150.0, ui)
+        } else {
+            set_color(160, 220, 255)
+            if ui < 0.0 { } else { font_text_fill(ui, 360.0, 400.0, 18.0, "press SPACE") }
+        }
+        set_blend(0)
+        present()
+    }
+}

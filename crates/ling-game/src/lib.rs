@@ -6,7 +6,9 @@ pub mod physics;
 pub mod audio;
 pub mod texture;
 pub mod mesh;
+pub mod dialog;
 
+pub use dialog::{Dialog, Role as DialogRole};
 pub use engine::{GameApp, GameSystem};
 pub use entity::{Entity, EntityId, ComponentStore};
 pub use physics::{RigidBody, Vec2, Aabb};
