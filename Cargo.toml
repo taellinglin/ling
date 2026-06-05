@@ -15,6 +15,13 @@ readme = "README.md"
 keywords = ["systems", "polyglot", "ai", "crypto", "game"]
 categories = ["compilers", "graphics", "game-development", "artificial-intelligence", "cryptography"]
 rust-version = "1.85"
+# Keep the published crate small (crates.io 10 MB limit): ship only source.
+# These dirs aren't needed to compile the library/binaries (verified: nothing
+# embeds them via include_str!/include_bytes!).
+exclude = [
+    "assets/", "examples/", "docs/", "instruments/", "lexicons/",
+    "chinese-room-web/", "dist/", "recordings/", "cache/", "*.svg",
+]
 
 [workspace]
 members = [
