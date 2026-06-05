@@ -6,7 +6,7 @@ use crate::gfx::{GfxState, Light};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::gfx::raster::{fill_triangle, draw_line};
 #[cfg(not(target_arch = "wasm32"))]
-use ling_audio::{AudioEngine, ToneParams};
+use ling_audio::{AudioEngine, ToneParams, Wave};
 
 #[cfg(not(target_arch = "wasm32"))]
 use ling_audio::FftAnalyzer;
@@ -395,6 +395,32 @@ mod draw_tests {
 
 // ─── Interpreter ─────────────────────────────────────────────────────────────
 
+/// Customizable colour palette for the vector UI toolkit (packed 0x00RRGGBB).
+/// `ui_theme(...)` sets it; every widget falls back to these and accepts a
+/// trailing `r,g,b` override.
+#[derive(Clone, Copy)]
+pub struct UiTheme {
+    pub primary: u32,
+    pub accent:  u32,
+    pub track:   u32,
+    pub warn:    u32,
+    pub text:    u32,
+    pub bg:      u32,
+}
+
+impl Default for UiTheme {
+    fn default() -> Self {
+        Self {
+            primary: 0x00D2FF, // holographic cyan
+            accent:  0x28FFB4, // mint
+            track:   0x2C3E64, // dim slate
+            warn:    0xFF5A5A, // alert red
+            text:    0xBEEBFF, // pale cyan
+            bg:      0x0A1018, // near-black panel
+        }
+    }
+}
+
 pub struct Interpreter {
     globals:   HashMap<String, Expr>,
     functions: HashMap<String, FnDef>,
@@ -430,6 +456,27 @@ pub struct Interpreter {
     /// Accumulated microphone samples (for turning sound into crypto donuts).
     #[cfg(not(target_arch = "wasm32"))]
     mic_buffer: Vec<f32>,
+    /// Loaded vector UI fonts, referenced by handle (index) from `font_load`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fonts: Vec<ling_graphics::VectorFont>,
+    /// Customizable UI colour palette (set via `ui_theme`).
+    ui_theme: UiTheme,
+    /// Left-mouse state on the previous frame — for widget click-edge detection.
+    mouse_was_down: bool,
+    /// Live music engine (decode playback + GM synth) — lazily initialised.
+    #[cfg(not(target_arch = "wasm32"))]
+    music: Option<ling_music::MusicEngine>,
+    #[cfg(not(target_arch = "wasm32"))]
+    music_init: bool,
+    /// Decoded tracks (for analysis + playback), by `music_load` handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    tracks: Vec<ling_music::DecodedAudio>,
+    /// Parsed `.lrc` lyrics, by `music_lrc` handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    lyrics: Vec<ling_music::Lyrics>,
+    /// Parsed MIDI songs, by `music_midi_load` handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    midis: Vec<ling_music::MidiSong>,
 }
 
 impl Interpreter {
@@ -462,7 +509,68 @@ impl Interpreter {
             record_n: 0,
             #[cfg(not(target_arch = "wasm32"))]
             mic_buffer: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            fonts: Vec::new(),
+            ui_theme: UiTheme::default(),
+            mouse_was_down: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            music: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            music_init: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            tracks: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            lyrics: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            midis: Vec::new(),
         }
+    }
+
+    /// Lazily start the music engine on first use (playback/synth need a device;
+    /// analysis/decoding do not). Returns `false` if no audio device is available.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn ensure_music(&mut self) -> bool {
+        if self.music.is_some() { return true; }
+        if self.music_init { return false; }
+        self.music_init = true;
+        match ling_music::MusicEngine::new() {
+            Ok(m) => { self.music = Some(m); true }
+            Err(e) => { eprintln!("music engine init failed (no music playback): {e}"); false }
+        }
+    }
+
+    /// Lay out `text` for font `id` at size `px`, returning every glyph contour as
+    /// a screen-space polyline (x→right, y→down). `(x, y)` is the text box top-left;
+    /// the baseline is placed `ascent*px` below it. Curves are flattened to 0.3 px.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn font_layout_2d(&mut self, id: usize, x: f32, y: f32, px: f32, text: &str) -> Vec<Vec<[f32; 2]>> {
+        let mut out = Vec::new();
+        for g in self.font_layout_2d_glyphs(id, x, y, px, text) { out.extend(g); }
+        out
+    }
+
+    /// Same as [`font_layout_2d`] but grouped per glyph (so a fill can apply the
+    /// non-zero winding rule within each glyph, preserving interior holes).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn font_layout_2d_glyphs(&mut self, id: usize, x: f32, y: f32, px: f32, text: &str) -> Vec<Vec<Vec<[f32; 2]>>> {
+        let font = &mut self.fonts[id];
+        let asc = font.ascent();
+        let tol = 0.3 / px;
+        let mut pen = 0.0f32;
+        let mut glyphs = Vec::new();
+        for ch in text.chars() {
+            let go = font.glyph_outline(ch, tol);
+            let mut contours = Vec::with_capacity(go.polylines.len());
+            for pl in &go.polylines {
+                let mapped: Vec<[f32; 2]> = pl.iter()
+                    .map(|p| [x + (pen + p[0]) * px, y + (asc - p[1]) * px])
+                    .collect();
+                contours.push(mapped);
+            }
+            glyphs.push(contours);
+            pen += go.advance;
+        }
+        glyphs
     }
 
     pub fn run_program(&mut self, program: &Program) -> Result<(), String> {
@@ -1376,6 +1484,12 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     queue.flush_to_webgl(fr, fg, fb, w, h);
                 }
+                // Update the click-edge latch for interactive UI widgets.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let (_, _, down) = self.mouse_now();
+                    self.mouse_was_down = down;
+                }
                 // Increment frame counter
                 self.frame_num += 1;
                 return Ok(Value::Unit);
@@ -1728,6 +1842,45 @@ impl Interpreter {
                 let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
                 let depth = (da + db) / 2.0;
                 gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
+                return Ok(Value::Unit);
+            }
+
+            // project_3d(x,y,z) -> [screen_x, screen_y, depth]; behind the camera
+            // returns a sentinel ([-99999,-99999, depth]) so scripts can skip it.
+            // Lets scripts place 2-D overlays (e.g. filled teardrop flames) onto 3-D points.
+            "project_3d" | "投影3D" | "3D投影" | "3D투영" | "ฉาย3มิติ" => {
+                let x = self.arg_num(&args,0,0.0)? as f32;
+                let y = self.arg_num(&args,1,0.0)? as f32;
+                let z = self.arg_num(&args,2,0.0)? as f32;
+                let gfx = self.gfx.borrow();
+                let near = -gfx.camera.zdist + 0.05;
+                let d = gfx.camera.depth(x, y, z);
+                if d <= near {
+                    return Ok(Value::List(vec![Value::Number(-99999.0), Value::Number(-99999.0), Value::Number(d as f64)]));
+                }
+                let (sx, sy, depth) = gfx.camera.project(x, y, z);
+                return Ok(Value::List(vec![Value::Number(sx as f64), Value::Number(sy as f64), Value::Number(depth as f64)]));
+            }
+            // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
+            // honouring the blend mode (additive → translucent glow). Auto-closes.
+            #[cfg(not(target_arch = "wasm32"))]
+            "draw_poly" | "填充多边形" | "ポリゴン塗り" | "다각형채우기" | "เติมรูปหลายเหลี่ยม" => {
+                let mut pts: Vec<[f32; 2]> = Vec::new();
+                if let Some(Value::List(v)) = args.first() {
+                    let mut i = 0;
+                    while i + 1 < v.len() {
+                        let x = self.to_number(&v[i]).unwrap_or(0.0) as f32;
+                        let y = self.to_number(&v[i + 1]).unwrap_or(0.0) as f32;
+                        pts.push([x, y]);
+                        i += 2;
+                    }
+                }
+                if pts.len() >= 3 {
+                    if pts[0] != pts[pts.len() - 1] { let p0 = pts[0]; pts.push(p0); } // close
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
+                    crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, add, std::slice::from_ref(&pts));
+                }
                 return Ok(Value::Unit);
             }
 
@@ -2764,7 +2917,7 @@ impl Interpreter {
                 return Ok(Value::Bool(d));
             }
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_hot" => {
+            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" => {
                 let x = self.arg_num(&args,0,0.0)? as f32;
                 let y = self.arg_num(&args,1,0.0)? as f32;
                 let w = self.arg_num(&args,2,0.0)? as f32;
@@ -2774,7 +2927,7 @@ impl Interpreter {
                 return Ok(Value::Bool(ling_ui::holo::hit_rect(mx,my,x,y,w,h)));
             }
             // ui_text(x, y, scale, "string") — holographic vector text
-            "ui_text" => {
+            "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" => {
                 let x = self.arg_num(&args,0,0.0)? as f32;
                 let y = self.arg_num(&args,1,0.0)? as f32;
                 let scale = self.arg_num(&args,2,16.0)? as f32;
@@ -2785,8 +2938,148 @@ impl Interpreter {
                 for sg in segs { draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]); }
                 return Ok(Value::Unit);
             }
+            // font_load("path.ttf") — load a vector font (outlines cached lazily as
+            // cache/fonts/<stem>/<codepoint>.ling). Returns a handle, or -1 on failure.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" => {
+                let path = self.arg_str(&args, 0, "");
+                // Optional 2nd arg: variable-font weight (e.g. 600 for a solid, bold UI).
+                let weight = match self.arg_num(&args, 1, 0.0)? {
+                    w if w > 0.0 => Some(w as f32),
+                    _ => None,
+                };
+                // Try the path as given, then relative to the script's directory.
+                let mut loaded = ling_graphics::VectorFont::from_path_weight(&path, weight);
+                if loaded.is_err() {
+                    if let Some(dir) = &self.source_dir {
+                        let joined = dir.join(&path);
+                        loaded = ling_graphics::VectorFont::from_path_weight(&joined.to_string_lossy(), weight);
+                    }
+                }
+                match loaded {
+                    Ok(f) => {
+                        let id = self.fonts.len();
+                        self.fonts.push(f);
+                        return Ok(Value::Number(id as f64));
+                    }
+                    Err(e) => {
+                        eprintln!("font_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    }
+                }
+            }
+            // font_text(handle, x, y, px, "string") — anti-aliased *stroked* vector outline
+            // in the current set_color / set_blend. (x,y) is the text box top-left.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let x  = self.arg_num(&args, 1, 0.0)? as f32;
+                let y  = self.arg_num(&args, 2, 0.0)? as f32;
+                let px = self.arg_num(&args, 3, 16.0)? as f32;
+                let s  = self.arg_str(&args, 4, "");
+                if id >= 0 && (id as usize) < self.fonts.len() && px > 0.0 {
+                    let strokes = self.font_layout_2d(id as usize, x, y, px, &s);
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
+                    for pl in &strokes {
+                        for seg in pl.windows(2) {
+                            crate::gfx::raster::draw_line_aa(&mut gfx.buffer, w, h, color, add,
+                                seg[0][0], seg[0][1], seg[1][0], seg[1][1]);
+                        }
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+            // font_text_fill(handle, x, y, px, "string") — anti-aliased *filled* vector glyphs.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let x  = self.arg_num(&args, 1, 0.0)? as f32;
+                let y  = self.arg_num(&args, 2, 0.0)? as f32;
+                let px = self.arg_num(&args, 3, 16.0)? as f32;
+                let s  = self.arg_str(&args, 4, "");
+                if id >= 0 && (id as usize) < self.fonts.len() && px > 0.0 {
+                    // fill each glyph independently so interior holes (winding) stay correct
+                    let glyphs = self.font_layout_2d_glyphs(id as usize, x, y, px, &s);
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
+                    for contours in &glyphs {
+                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, add, contours);
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+            // font_text_3d(handle, cx,cy,cz, ux,uy,uz, vx,vy,vz, size, "string")
+            // — stroked vector text on a 3D plane: u = advance dir, v = up dir, size = world/em.
+            //   Flows through the depth-sorted line pipeline, so it rotates with the camera (and 4D).
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let cx=self.arg_num(&args,1,0.0)? as f32; let cy=self.arg_num(&args,2,0.0)? as f32; let cz=self.arg_num(&args,3,0.0)? as f32;
+                let ux=self.arg_num(&args,4,1.0)? as f32; let uy=self.arg_num(&args,5,0.0)? as f32; let uz=self.arg_num(&args,6,0.0)? as f32;
+                let vx=self.arg_num(&args,7,0.0)? as f32; let vy=self.arg_num(&args,8,1.0)? as f32; let vz=self.arg_num(&args,9,0.0)? as f32;
+                let size=self.arg_num(&args,10,1.0)? as f32;
+                let s = self.arg_str(&args,11,"");
+                if id >= 0 && (id as usize) < self.fonts.len() && size > 0.0 {
+                    // Build world-space polylines: world = C + (pen+ex)*size*U + ey*size*V
+                    let font = &mut self.fonts[id as usize];
+                    let asc = font.ascent();
+                    let mut pen = 0.0f32;
+                    let mut lines: Vec<[f32; 6]> = Vec::new();
+                    for ch in s.chars() {
+                        let go = font.glyph_outline(ch, 0.01);
+                        for pl in &go.polylines {
+                            for seg in pl.windows(2) {
+                                let map = |p: [f32; 2]| {
+                                    let a = pen + p[0];
+                                    let b = p[1] - asc; // shift so the top of the cap sits near C
+                                    [cx + a*size*ux + b*size*vx,
+                                     cy + a*size*uy + b*size*vy,
+                                     cz + a*size*uz + b*size*vz]
+                                };
+                                let p0 = map(seg[0]); let p1 = map(seg[1]);
+                                lines.push([p0[0],p0[1],p0[2], p1[0],p1[1],p1[2]]);
+                            }
+                        }
+                        pen += go.advance;
+                    }
+                    let mut gfx = self.gfx.borrow_mut();
+                    let color = gfx.color;
+                    let near = -gfx.camera.zdist + 0.05;
+                    for l in &lines {
+                        let (mut ax, mut ay, mut az) = (l[0], l[1], l[2]);
+                        let (mut bx, mut by, mut bz) = (l[3], l[4], l[5]);
+                        let da = gfx.camera.depth(ax, ay, az);
+                        let db = gfx.camera.depth(bx, by, bz);
+                        if da <= near && db <= near { continue; }
+                        if da <= near {
+                            let t = (near - da) / (db - da);
+                            ax += t*(bx-ax); ay += t*(by-ay); az += t*(bz-az);
+                        } else if db <= near {
+                            let t = (near - da) / (db - da);
+                            bx = ax + t*(bx-ax); by = ay + t*(by-ay); bz = az + t*(bz-az);
+                        }
+                        let (sax, say, da2) = gfx.camera.project(ax, ay, az);
+                        let (sbx, sby, db2) = gfx.camera.project(bx, by, bz);
+                        let depth = (da2 + db2) / 2.0;
+                        gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+            // font_width(handle, px, "string") — pixel width of a string in a loaded font.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let px = self.arg_num(&args, 1, 16.0)? as f32;
+                let s  = self.arg_str(&args, 2, "");
+                if id >= 0 && (id as usize) < self.fonts.len() {
+                    return Ok(Value::Number(self.fonts[id as usize].measure(&s, px) as f64));
+                }
+                return Ok(Value::Number(0.0));
+            }
             // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
-            "ui_frame" => {
+            "ui_frame" | "边框" | "フレーム枠" | "프레임틀" | "กรอบ" => {
                 let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
                 let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
                 let l=self.arg_num(&args,4,14.0)? as f32;
@@ -2797,7 +3090,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
             // ui_bevel(x,y,w,h, bevel) — beveled holographic panel outline
-            "ui_bevel" => {
+            "ui_bevel" | "斜角框" | "ベベル枠" | "베벨틀" | "กรอบเฉียง" => {
                 let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
                 let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
                 let bv=self.arg_num(&args,4,10.0)? as f32;
@@ -2807,6 +3100,677 @@ impl Interpreter {
                 for sg in segs { draw_line(&mut gfx.buffer, w,h,color, sg[0],sg[1],sg[2],sg[3]); }
                 return Ok(Value::Unit);
             }
+
+            // ══════════════════════════════════════════════════════════════════
+            // VECTOR UI TOOLKIT  (crates/ling-ui/src/widgets.rs)
+            // All widgets are vector + theme-coloured with an optional trailing
+            // r,g,b override; interactive ones read the mouse and return state.
+            // ══════════════════════════════════════════════════════════════════
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_theme" | "界面主题" | "UIテーマ" | "인터페이스테마" | "ธีมส่วนติดต่อ" => {
+                let cur = self.ui_theme;
+                let primary = self.color_at(&args, 0,  cur.primary);
+                let accent  = self.color_at(&args, 3,  cur.accent);
+                let track   = self.color_at(&args, 6,  cur.track);
+                let warn    = self.color_at(&args, 9,  cur.warn);
+                let text    = self.color_at(&args, 12, cur.text);
+                let bg      = self.color_at(&args, 15, cur.bg);
+                self.ui_theme = UiTheme { primary, accent, track, warn, text, bg };
+                return Ok(Value::Unit);
+            }
+
+            // ── HUD ──────────────────────────────────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_radar" | "雷达" | "レーダー" | "레이더" | "เรดาร์" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,60.)? as f32; let sweep=self.arg_num(&args,3,0.)? as f32;
+                let th=self.ui_theme;
+                let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::radar(cx,cy,r,sweep, prim, th.accent, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_compass" | "罗盘" | "コンパス" | "나침반" | "เข็มทิศ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,300.)? as f32; let h0=self.arg_num(&args,3,24.)? as f32;
+                let head=self.arg_num(&args,4,0.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::compass(x,y,w0,h0,head, prim, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_reticle" | "准星" | "照準" | "조준선" | "เป้าเล็ง" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,30.)? as f32; let spread=self.arg_num(&args,3,0.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::reticle(cx,cy,r,spread, prim));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_target" | "锁定框" | "ターゲット" | "표적" | "กรอบเป้า" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,80.)? as f32; let h0=self.arg_num(&args,3,80.)? as f32;
+                let lock=self.arg_num(&args,4,0.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::target(x,y,w0,h0,lock, prim, th.accent));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_panel" | "面板" | "パネル" | "패널" | "แผง" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
+                let bv=self.arg_num(&args,4,12.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::panel(x,y,w0,h0,bv, prim, th.bg));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_scanlines" | "扫描线" | "走査線" | "스캔라인" | "เส้นสแกน" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
+                let dens=self.arg_num(&args,4,24.)? as usize;
+                let th=self.ui_theme; let line=self.color_at(&args,5,th.track);
+                self.draw_ui(&ling_ui::widgets::scanlines(x,y,w0,h0,dens, line));
+                return Ok(Value::Unit);
+            }
+
+            // ── Meters ───────────────────────────────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_bar" | "进度条" | "バー" | "막대" | "แถบ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
+                let val=self.arg_num(&args,4,0.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::bar(x,y,w0,h0, val/max.max(1e-6), fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_segbar" | "分段条" | "分割バー" | "분할막대" | "แถบแบ่ง" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
+                let val=self.arg_num(&args,4,0.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
+                let segs=self.arg_num(&args,6,10.)? as usize;
+                let th=self.ui_theme; let fill=self.color_at(&args,7,th.primary);
+                self.draw_ui(&ling_ui::widgets::segbar(x,y,w0,h0, val/max.max(1e-6), segs, fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_gauge" | "仪表" | "ゲージ" | "게이지" | "มาตรวัด" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,50.)? as f32;
+                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
+                let th=self.ui_theme; let needle=self.color_at(&args,5,th.warn);
+                self.draw_ui(&ling_ui::widgets::gauge(cx,cy,r, val/max.max(1e-6), needle, th.accent, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_ring" | "环表" | "リングメーター" | "링미터" | "วงแหวนวัด" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,40.)? as f32;
+                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::ring(cx,cy,r, val/max.max(1e-6), fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_vu" | "音量条" | "VUメーター" | "음량막대" | "มาตรเสียง" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,60.)? as f32;
+                let levels=self.arg_list_f32(&args,4);
+                let th=self.ui_theme; let fill=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::vu(x,y,w0,h0, &levels, fill, th.warn));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_spark" | "迷你图" | "スパークライン" | "스파크라인" | "กราฟจิ๋ว" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,40.)? as f32;
+                let vals=self.arg_list_f32(&args,4);
+                let th=self.ui_theme; let line=self.color_at(&args,5,th.accent);
+                self.draw_ui(&ling_ui::widgets::spark(x,y,w0,h0, &vals, line));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_battery" | "电池" | "バッテリー" | "배터리" | "แบตเตอรี่" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,50.)? as f32; let h0=self.arg_num(&args,3,22.)? as f32;
+                let val=self.arg_num(&args,4,1.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,6,th.accent);
+                self.draw_ui(&ling_ui::widgets::battery(x,y,w0,h0, val/max.max(1e-6), fill, th.track, th.warn));
+                return Ok(Value::Unit);
+            }
+
+            // ── Interface controls (interactive → return state) ──────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_button" | "按钮" | "ボタン" | "버튼" | "ปุ่ม" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,40.)? as f32;
+                let (mx,my,down)=self.mouse_now();
+                let hover=ling_ui::holo::hit_rect(mx,my,x,y,w0,h0);
+                let clicked = hover && down && !self.mouse_was_down;
+                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::button(x,y,w0,h0, hover, down&&hover, prim, th.bg));
+                return Ok(Value::Number(if clicked {1.0} else {0.0}));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_toggle" | "开关" | "トグル" | "토글" | "สวิตช์" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,52.)? as f32; let h0=self.arg_num(&args,3,24.)? as f32;
+                let mut state=self.arg_num(&args,4,0.)? > 0.5;
+                let (mx,my,down)=self.mouse_now();
+                let hover=ling_ui::holo::hit_rect(mx,my,x,y,w0,h0);
+                if hover && down && !self.mouse_was_down { state = !state; }
+                let th=self.ui_theme; let on=self.color_at(&args,5,th.accent);
+                self.draw_ui(&ling_ui::widgets::toggle(x,y,w0,h0, state, on, th.track));
+                return Ok(Value::Number(if state {1.0} else {0.0}));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_slider" | "滑块" | "スライダー" | "슬라이더" | "แถบเลื่อน" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,160.)? as f32;
+                let mut val=self.arg_num(&args,3,0.)? as f32;
+                let mn=self.arg_num(&args,4,0.)? as f32; let mx_=self.arg_num(&args,5,1.)? as f32;
+                let (mx,my,down)=self.mouse_now();
+                let hover=ling_ui::holo::hit_rect(mx,my,x-8.0,y-10.0,w0+16.0,20.0);
+                if hover && down {
+                    let frac=((mx-x)/w0).max(0.0).min(1.0);
+                    val = mn + (mx_-mn)*frac;
+                }
+                let frac=((val-mn)/(mx_-mn).abs().max(1e-6)).max(0.0).min(1.0);
+                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::slider(x,y,w0, frac, hover, fill, th.track));
+                return Ok(Value::Number(val as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_checkbox" | "复选框" | "チェックボックス" | "체크박스" | "ช่องเลือก" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let s=self.arg_num(&args,2,20.)? as f32;
+                let mut checked=self.arg_num(&args,3,0.)? > 0.5;
+                let (mx,my,down)=self.mouse_now();
+                let hover=ling_ui::holo::hit_rect(mx,my,x,y,s,s);
+                if hover && down && !self.mouse_was_down { checked = !checked; }
+                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::checkbox(x,y,s, checked, hover, prim, th.track));
+                return Ok(Value::Number(if checked {1.0} else {0.0}));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_tabs" | "标签页" | "タブ" | "탭" | "แท็บ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,240.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
+                let count=self.arg_num(&args,4,3.)? as usize;
+                let mut active=self.arg_num(&args,5,0.)? as i32;
+                let (mx,my,down)=self.mouse_now();
+                let mut hover=-1;
+                if my>=y && my<=y+h0 && mx>=x && mx<=x+w0 && count>0 {
+                    hover = (((mx-x)/(w0/count as f32)) as i32).max(0).min(count as i32-1);
+                    if down && !self.mouse_was_down { active = hover; }
+                }
+                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::tabs(x,y,w0,h0, count, active as usize, hover, prim, th.track));
+                return Ok(Value::Number(active as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_progress" | "进度" | "プログレス" | "진행바" | "ความคืบหน้า" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,12.)? as f32;
+                let frac=self.arg_num(&args,4,0.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,5,th.accent);
+                self.draw_ui(&ling_ui::widgets::progress(x,y,w0,h0, frac, fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_tooltip" | "提示框" | "ツールチップ" | "툴팁" | "คำแนะนำ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::tooltip(x,y,w0,h0, prim, th.bg));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_stepper" | "步进器" | "ステッパー" | "스테퍼" | "ตัวปรับค่า" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
+                let mut val=self.arg_num(&args,4,0.)? as f32; let step=self.arg_num(&args,5,1.)? as f32;
+                let (mx,my,down)=self.mouse_now();
+                let hm=ling_ui::holo::hit_rect(mx,my,x,y,h0,h0);
+                let hp=ling_ui::holo::hit_rect(mx,my,x+w0-h0,y,h0,h0);
+                if down && !self.mouse_was_down { if hm { val -= step; } if hp { val += step; } }
+                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::stepper(x,y,w0,h0, hm, hp, prim, th.track));
+                return Ok(Value::Number(val as f64));
+            }
+
+            // ── Game UI ──────────────────────────────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_healthbar" | "血条" | "体力バー" | "체력바" | "แถบพลังชีวิต" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,180.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
+                let val=self.arg_num(&args,4,1.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
+                let pulse=self.arg_num(&args,6,0.)? as f32;
+                let th=self.ui_theme; let full=self.color_at(&args,7,th.accent);
+                self.draw_ui(&ling_ui::widgets::healthbar(x,y,w0,h0, val/max.max(1e-6), pulse, full, th.warn, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_cooldown" | "冷却" | "クールダウン" | "쿨다운" | "คูลดาวน์" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,28.)? as f32; let frac=self.arg_num(&args,3,0.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::cooldown(cx,cy,r, frac, fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_counter" | "计数器" | "カウンター" | "카운터" | "ตัวนับ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let dw=self.arg_num(&args,2,14.)? as f32; let dh=self.arg_num(&args,3,24.)? as f32;
+                let val=self.arg_num(&args,4,0.)? as i64; let digits=self.arg_num(&args,5,4.)? as usize;
+                let th=self.ui_theme; let on=self.color_at(&args,6,th.primary);
+                let off=ling_ui::widgets::shade(th.track,0.5);
+                self.draw_ui(&ling_ui::widgets::counter(x,y,dw,dh, val, digits, on, off));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_minimap" | "小地图" | "ミニマップ" | "미니맵" | "แผนที่ย่อ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,140.)? as f32; let h0=self.arg_num(&args,3,140.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
+                self.draw_ui(&ling_ui::widgets::minimap(x,y,w0,h0, prim, th.bg));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_dpad" | "方向键" | "方向パッド" | "방향패드" | "ปุ่มทิศทาง" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,50.)? as f32;
+                let (mx,my,down)=self.mouse_now();
+                let mut dir=0;
+                if down {
+                    let (dx,dy)=(mx-cx, my-cy);
+                    if dx*dx+dy*dy <= r*r {
+                        if dx.abs() > dy.abs() { dir = if dx>0.0 {2} else {4}; }
+                        else { dir = if dy>0.0 {3} else {1}; }
+                    }
+                }
+                let th=self.ui_theme; let prim=self.color_at(&args,3,th.primary);
+                self.draw_ui(&ling_ui::widgets::dpad(cx,cy,r, dir, prim, th.track));
+                return Ok(Value::Number(dir as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_slotgrid" | "物品格" | "スロットグリッド" | "슬롯격자" | "ช่องไอเทม" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let cols=self.arg_num(&args,2,4.)? as usize; let rows=self.arg_num(&args,3,1.)? as usize;
+                let cell=self.arg_num(&args,4,36.)? as f32; let sel=self.arg_num(&args,5,-1.)? as i32;
+                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::slotgrid(x,y,cols,rows,cell, sel, prim, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_vignette" | "暗角" | "ビネット" | "비네트" | "ขอบมืด" => {
+                let intensity=self.arg_num(&args,0,0.5)? as f32;
+                let (w,h)={ let g=self.gfx.borrow(); (g.width as f32, g.height as f32) };
+                let th=self.ui_theme; let col=self.color_at(&args,1,th.warn);
+                self.draw_ui(&ling_ui::widgets::vignette(w,h, intensity, col));
+                return Ok(Value::Unit);
+            }
+
+            // ── Faux-3D in 2D space ──────────────────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_gauge3d" | "立体仪表" | "立体ゲージ" | "입체게이지" | "มาตรวัด3มิติ" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,50.)? as f32;
+                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
+                let spin=self.arg_num(&args,5,0.)? as f32;
+                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
+                self.draw_ui(&ling_ui::widgets::gauge3d(cx,cy,r, val/max.max(1e-6), spin, fill, th.track));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_panel3d" | "立体面板" | "立体パネル" | "입체패널" | "แผง3มิติ" => {
+                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
+                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
+                let depth=self.arg_num(&args,4,14.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::panel3d(x,y,w0,h0,depth, prim, th.bg));
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_radar3d" | "立体雷达" | "立体レーダー" | "입체레이더" | "เรดาร์3มิติ" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
+                let r=self.arg_num(&args,2,60.)? as f32; let tilt=self.arg_num(&args,3,0.9)? as f32;
+                let sweep=self.arg_num(&args,4,0.)? as f32;
+                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
+                self.draw_ui(&ling_ui::widgets::radar3d(cx,cy,r,tilt,sweep, prim, th.track));
+                return Ok(Value::Unit);
+            }
+
+            // ── Interface sounds ─────────────────────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ" => {
+                let freq=self.arg_num(&args,0,660.)? as f32;
+                let dur=self.arg_num(&args,1,0.08)? as f32;
+                let wave=Wave::from_name(&self.arg_str(&args,2,"sine"));
+                let amp=self.arg_num(&args,3,0.25)? as f32;
+                if let Some(audio)=&self.audio { audio.blip(freq, amp, dur, wave); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม" => {
+                let name=self.arg_str(&args,0,"click");
+                if let Some(audio)=&self.audio {
+                    match name.as_str() {
+                        "hover"   => audio.blip(880.0, 0.10, 0.04, Wave::Sine),
+                        "confirm" => { audio.blip(660.0, 0.22, 0.07, Wave::Square); audio.blip(990.0, 0.18, 0.10, Wave::Square); }
+                        "error"   => { audio.blip(180.0, 0.30, 0.16, Wave::Saw); audio.blip(140.0, 0.30, 0.18, Wave::Saw); }
+                        "toggle"  => audio.blip(520.0, 0.22, 0.05, Wave::Triangle),
+                        "tick"    => audio.blip(1500.0, 0.12, 0.02, Wave::Square),
+                        _         => audio.blip(720.0, 0.26, 0.05, Wave::Square), // "click"
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+
+            // ══════════════════════════════════════════════════════════════════
+            // MUSIC TOOLKIT  (crates/ling-music) — decode · analysis · GM synth ·
+            // rhythm · karaoke. Analysis/decoding need no audio device; playback
+            // and synthesis lazily start a dedicated music engine.
+            // ══════════════════════════════════════════════════════════════════
+
+            // music_load(path) -> track handle (decodes WAV/FLAC/OGG/MP3/AAC)
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                match ling_music::load(&resolved) {
+                    Ok(t) => { let id = self.tracks.len(); self.tracks.push(t); return Ok(Value::Number(id as f64)); }
+                    Err(e) => { eprintln!("music_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let d = self.tracks.get(id as usize).map(|t| t.duration).unwrap_or(0.0);
+                return Ok(Value::Number(d as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let b = self.tracks.get(id as usize).map(|t| ling_music::analysis::bpm(&t.mono, t.rate)).unwrap_or(0.0);
+                return Ok(Value::Number(b as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let k = self.tracks.get(id as usize).map(|t| ling_music::analysis::key_name(&t.mono, t.rate)).unwrap_or_default();
+                return Ok(Value::Str(k));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let v = self.tracks.get(id as usize).map(|t| ling_music::analysis::onsets(&t.mono, t.rate)).unwrap_or_default();
+                return Ok(Value::List(v.into_iter().map(|x| Value::Number(x as f64)).collect()));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let beats = self.tracks.get(id as usize).map(|t| {
+                    let b = ling_music::analysis::bpm(&t.mono, t.rate);
+                    ling_music::analysis::beat_grid(&t.mono, t.rate, b)
+                }).unwrap_or_default();
+                return Ok(Value::List(beats.into_iter().map(|x| Value::Number(x as f64)).collect()));
+            }
+
+            // ── playback ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                if self.ensure_music() {
+                    let track = self.tracks.get(id as usize).map(|t| (t.stereo.clone(), t.rate));
+                    if let (Some((st, rate)), Some(m)) = (track, &self.music) { m.set_track(st, rate); m.play(); }
+                    else if let Some(m) = &self.music { m.play(); }
+                }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว" => {
+                if let Some(m) = &self.music { m.pause(); } return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" => {
+                if let Some(m) = &self.music { m.stop(); } return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" => {
+                let sec = self.arg_num(&args,0,0.0)? as f32;
+                if let Some(m) = &self.music { m.seek(sec); } return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" => {
+                let p = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
+                return Ok(Value::Number(p as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" => {
+                let v = self.arg_num(&args,0,0.8)? as f32;
+                if self.ensure_music() { if let Some(m) = &self.music { m.set_volume(v); } }
+                return Ok(Value::Unit);
+            }
+
+            // ── synthesis (GM-capable, patches from .ling files) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                if !self.ensure_music() { return Ok(Value::Number(-1.0)); }
+                match ling_music::patch::from_path(&resolved) {
+                    Ok(p) => { let id = self.music.as_ref().unwrap().add_patch(p); return Ok(Value::Number(id as f64)); }
+                    Err(e) => { eprintln!("music_patch failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต" => {
+                let inst = self.arg_num(&args,0,0.0)? as usize;
+                let midi = self.pitch_arg(&args, 1, 60);
+                let dur  = self.arg_num(&args,2,0.5)? as f32;
+                let vel  = self.arg_num(&args,3,0.9)? as f32;
+                if self.ensure_music() { if let Some(m) = &self.music { m.note(inst, midi, vel, dur); } }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม" => {
+                let inst = self.arg_num(&args,0,0.0)? as usize;
+                let midi = self.pitch_arg(&args, 1, 60);
+                let vel  = self.arg_num(&args,2,0.9)? as f32;
+                if self.ensure_music() { if let Some(m) = &self.music { m.note_on(inst, midi, vel); } }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" => {
+                let inst = self.arg_num(&args,0,0.0)? as usize;
+                let midi = self.pitch_arg(&args, 1, 60);
+                if let Some(m) = &self.music { m.note_off(inst, midi); }
+                return Ok(Value::Unit);
+            }
+
+            // ── rhythm-game judging ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" => {
+                let delta_ms = self.arg_num(&args,0,9999.0)? as f32;
+                return Ok(Value::Number(ling_music::Grade::judge(delta_ms).index() as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
+                let idx = self.arg_num(&args,0,4.0)? as i32;
+                return Ok(Value::Str(ling_music::Grade::from_index(idx).name().to_string()));
+            }
+
+            // ── karaoke ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                match std::fs::read_to_string(&resolved) {
+                    Ok(text) => { let id = self.lyrics.len(); self.lyrics.push(ling_music::Lyrics::parse(&text)); return Ok(Value::Number(id as f64)); }
+                    Err(e) => { eprintln!("music_lrc failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let t  = self.arg_num(&args,1,0.0)? as f32;
+                let line = self.lyrics.get(id as usize).map(|l| l.line_at(t).to_string()).unwrap_or_default();
+                return Ok(Value::Str(line));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์" => {
+                let hz = if let Some(mic) = self.mic.as_ref() {
+                    let s = mic.latest_samples();
+                    let rate = mic.sample_rate();
+                    ling_music::pitch::detect(&s, rate).unwrap_or(0.0)
+                } else { 0.0 };
+                return Ok(Value::Number(hz as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" => {
+                let hz = self.arg_num(&args,0,0.0)? as f32;
+                return Ok(Value::Str(ling_music::note::hz_to_name(hz)));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" => {
+                let midi = self.pitch_arg(&args, 0, 69);
+                return Ok(Value::Number(ling_music::note::midi_to_hz(midi as f32) as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" => {
+                let hz = self.arg_num(&args,0,0.0)? as f32;
+                let target = self.arg_num(&args,1,0.0)? as f32;
+                return Ok(Value::Number(ling_music::karaoke::pitch_score(hz, target) as f64));
+            }
+
+            // ── MIDI (inaudible note source: drive coins, cues, etc.) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                match ling_music::midi::load(&resolved) {
+                    Ok(m) => { let id = self.midis.len(); self.midis.push(m); return Ok(Value::Number(id as f64)); }
+                    Err(e) => { eprintln!("music_midi_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let n = self.midis.get(id as usize).map(|m| m.notes.len()).unwrap_or(0);
+                return Ok(Value::Number(n as f64));
+            }
+            // music_midi_notes(id) -> flat [time, midi, time, midi, …]
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let mut out = Vec::new();
+                if let Some(m) = self.midis.get(id as usize) {
+                    for n in &m.notes { out.push(Value::Number(n.time as f64)); out.push(Value::Number(n.midi as f64)); }
+                }
+                return Ok(Value::List(out));
+            }
+            // music_midi_bars(id) -> flat [time, midi, dur, …] (for karaoke note bars)
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let mut out = Vec::new();
+                if let Some(m) = self.midis.get(id as usize) {
+                    for n in &m.notes {
+                        out.push(Value::Number(n.time as f64));
+                        out.push(Value::Number(n.midi as f64));
+                        out.push(Value::Number(n.dur as f64));
+                    }
+                }
+                return Ok(Value::List(out));
+            }
+
+            // music_fft(track_id, nbands) -> spectrum at the current playback position
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
+                let id = self.arg_num(&args,0,0.0)? as i64;
+                let nbands = self.arg_num(&args,1,16.0)? as usize;
+                let pos = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
+                if let Some(t) = self.tracks.get(id as usize) {
+                    let idx = (pos * t.rate as f32) as usize;
+                    let end = (idx + 2048).min(t.mono.len());
+                    if end > idx + 64 {
+                        self.fft.borrow_mut().push_samples(&t.mono[idx..end]);
+                    }
+                }
+                let bands = self.fft.borrow().freq_bands(nbands);
+                return Ok(Value::List(bands.into_iter().map(|x| Value::Number(x as f64)).collect()));
+            }
+
+            // ── spatial (2D/3D/4D) one-shot SFX ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" => {
+                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32; let z=self.arg_num(&args,2,0.0)? as f32;
+                let w=self.arg_num(&args,3,1.0)? as f32; let freq=self.arg_num(&args,4,440.0)? as f32;
+                let amp=self.arg_num(&args,5,0.3)? as f32; let dur=self.arg_num(&args,6,0.15)? as f32;
+                let wave=Wave::from_name(&self.arg_str(&args,7,"sine"));
+                if let Some(a)=&self.audio { a.sfx(x,y,z,w,freq,amp,dur,wave); }
+                return Ok(Value::Unit);
+            }
+            // ── sample load / positional play / loop / stop ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                match ling_music::load(&resolved) {
+                    Ok(t) => {
+                        if let Some(a)=&self.audio { return Ok(Value::Number(a.add_sample(t.mono, t.rate) as f64)); }
+                        return Ok(Value::Number(-1.0));
+                    }
+                    Err(e) => { eprintln!("audio_sample_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" => {
+                let id=self.arg_num(&args,0,0.0)? as usize;
+                let x=self.arg_num(&args,1,0.0)? as f32; let y=self.arg_num(&args,2,0.0)? as f32; let z=self.arg_num(&args,3,0.0)? as f32;
+                let w=self.arg_num(&args,4,1.0)? as f32; let vol=self.arg_num(&args,5,1.0)? as f32;
+                let looping=self.arg_num(&args,6,0.0)? > 0.5;
+                let v = self.audio.as_ref().map(|a| a.play_sample(id,x,y,z,w,vol,looping)).unwrap_or(0);
+                return Ok(Value::Number(v as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" => {
+                let v=self.arg_num(&args,0,0.0)? as u32;
+                if let Some(a)=&self.audio { a.stop_sample(v); }
+                return Ok(Value::Unit);
+            }
+            // ── master FX: delay / reverb / low-pass (underwater) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน" => {
+                let time=self.arg_num(&args,0,0.3)? as f32; let fb=self.arg_num(&args,1,0.3)? as f32; let mix=self.arg_num(&args,2,0.3)? as f32;
+                if let Some(a)=&self.audio { a.fx_delay(time,fb,mix); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง" => {
+                let mix=self.arg_num(&args,0,0.3)? as f32;
+                if let Some(a)=&self.audio { a.fx_reverb(mix); }
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" => {
+                let cutoff=self.arg_num(&args,0,1.0)? as f32;
+                if let Some(a)=&self.audio { a.fx_lowpass(cutoff); }
+                return Ok(Value::Unit);
+            }
+
             // text_poll() — fold newly-typed keys into the input buffer, return it
             #[cfg(not(target_arch = "wasm32"))]
             "text_poll" => {
@@ -3063,6 +4027,70 @@ impl Interpreter {
 
     fn arg_str(&self, args: &[Value], n: usize, default: &str) -> String {
         args.get(n).map(|v| v.to_string()).unwrap_or_else(|| default.to_string())
+    }
+
+    /// Read a list-of-numbers argument as `Vec<f32>` (empty if absent/not a list).
+    #[allow(dead_code)]
+    fn arg_list_f32(&self, args: &[Value], n: usize) -> Vec<f32> {
+        match args.get(n) {
+            Some(Value::List(v)) => v.iter().filter_map(|x| match x {
+                Value::Number(n) => Some(*n as f32),
+                _ => None,
+            }).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Optional `r,g,b` colour override starting at arg `i` → packed 0x00RRGGBB,
+    /// or `default` if those three numeric args aren't present.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn color_at(&self, args: &[Value], i: usize, default: u32) -> u32 {
+        match (args.get(i), args.get(i + 1), args.get(i + 2)) {
+            (Some(a), Some(b), Some(c)) => match (self.to_number(a), self.to_number(b), self.to_number(c)) {
+                (Ok(r), Ok(g), Ok(bl)) =>
+                    ((r as u32 & 0xFF) << 16) | ((g as u32 & 0xFF) << 8) | (bl as u32 & 0xFF),
+                _ => default,
+            },
+            _ => default,
+        }
+    }
+
+    /// A pitch argument: a note-name string (`"C4"`, `"A#3"`) or a numeric MIDI value.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pitch_arg(&self, args: &[Value], i: usize, default: i32) -> i32 {
+        match args.get(i) {
+            Some(Value::Str(s)) => ling_music::note::parse_pitch(s).unwrap_or(default),
+            Some(Value::Number(n)) => *n as i32,
+            _ => default,
+        }
+    }
+
+    /// Current mouse position + left-button-down (native window only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mouse_now(&self) -> (f32, f32, bool) {
+        let gfx = self.gfx.borrow();
+        let (mx, my) = gfx.window.as_ref()
+            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).unwrap_or((0.0, 0.0));
+        let down = gfx.window.as_ref()
+            .map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
+        (mx, my, down)
+    }
+
+    /// Rasterize a UI [`ling_ui::widgets::Draw`] into the framebuffer: filled
+    /// polygons via the AA scanline fill, polylines via AA lines, honouring the
+    /// current blend mode.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn draw_ui(&self, d: &ling_ui::widgets::Draw) {
+        let mut gfx = self.gfx.borrow_mut();
+        let (w, h, add) = (gfx.width, gfx.height, gfx.blend == 1);
+        for (c, poly) in &d.fills {
+            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, *c, add, std::slice::from_ref(poly));
+        }
+        for (c, pl) in &d.strokes {
+            for s in pl.windows(2) {
+                crate::gfx::raster::draw_line_aa(&mut gfx.buffer, w, h, *c, add, s[0][0], s[0][1], s[1][0], s[1][1]);
+            }
+        }
     }
 
     /// Parse (dst_x, dst_y, width, height) from the first four args of a tex_* builtin.

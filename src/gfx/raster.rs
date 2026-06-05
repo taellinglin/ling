@@ -208,3 +208,187 @@ fn cs_clip(
         if co == ca { *ax = nx; *ay = ny; } else { *bx = nx; *by = ny; }
     }
 }
+
+// ── Anti-aliased primitives (used by the vector-font renderer) ───────────────
+
+/// Alpha-blend `color` over the pixel at (x,y) with `cov` ∈ [0,1].
+/// `additive` matches `set_blend(1)`: source is added instead of mixed.
+#[inline]
+pub fn blend_pixel(buf: &mut [u32], w: usize, h: usize, x: i32, y: i32, color: u32, cov: f32, additive: bool) {
+    if x < 0 || y < 0 || x as usize >= w || y as usize >= h { return; }
+    let cov = cov.clamp(0.0, 1.0);
+    if cov <= 0.0 { return; }
+    let idx = y as usize * w + x as usize;
+    let dst = buf[idx];
+    let sr = ((color >> 16) & 0xFF) as f32; let sg = ((color >> 8) & 0xFF) as f32; let sb = (color & 0xFF) as f32;
+    let dr = ((dst   >> 16) & 0xFF) as f32; let dg = ((dst   >> 8) & 0xFF) as f32; let db = (dst   & 0xFF) as f32;
+    let (nr, ng, nb) = if additive {
+        ((dr + sr * cov).min(255.0), (dg + sg * cov).min(255.0), (db + sb * cov).min(255.0))
+    } else {
+        (sr * cov + dr * (1.0 - cov), sg * cov + dg * (1.0 - cov), sb * cov + db * (1.0 - cov))
+    };
+    buf[idx] = ((nr as u32) << 16) | ((ng as u32) << 8) | (nb as u32);
+}
+
+/// Xiaolin-Wu anti-aliased line. `additive` selects the blend mode.
+pub fn draw_line_aa(buf: &mut [u32], w: usize, h: usize, color: u32, additive: bool, x0: f32, y0: f32, x1: f32, y1: f32) {
+    if w == 0 || h == 0 { return; }
+    if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() { return; }
+
+    let (mut x0, mut y0, mut x1, mut y1) = (x0, y0, x1, y1);
+    let steep = (y1 - y0).abs() > (x1 - x0).abs();
+    if steep {
+        std::mem::swap(&mut x0, &mut y0);
+        std::mem::swap(&mut x1, &mut y1);
+    }
+    if x0 > x1 {
+        std::mem::swap(&mut x0, &mut x1);
+        std::mem::swap(&mut y0, &mut y1);
+    }
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let grad = if dx.abs() < 1e-6 { 1.0 } else { dy / dx };
+
+    let plot = |buf: &mut [u32], a: i32, b: i32, c: f32| {
+        if steep { blend_pixel(buf, w, h, b, a, color, c, additive); }
+        else     { blend_pixel(buf, w, h, a, b, color, c, additive); }
+    };
+
+    // endpoints
+    let mut inter_y = y0 + grad * (x0.round() - x0) + grad;
+    let xend0 = x0.round();
+    let xend1 = x1.round();
+
+    plot(buf, xend0 as i32, y0.floor() as i32, 1.0);
+    plot(buf, xend1 as i32, y1.floor() as i32, 1.0);
+
+    let xpxl1 = xend0 as i32;
+    let xpxl2 = xend1 as i32;
+    let mut x = xpxl1 + 1;
+    while x < xpxl2 {
+        let fy = inter_y.floor();
+        let frac = inter_y - fy;
+        plot(buf, x, fy as i32,     1.0 - frac);
+        plot(buf, x, fy as i32 + 1, frac);
+        inter_y += grad;
+        x += 1;
+    }
+}
+
+/// Coverage-based scanline fill of closed `polylines` (screen space, y-down)
+/// using the non-zero winding rule, with 4× vertical supersampling and analytic
+/// horizontal span coverage — smooth filled glyph interiors without aliasing.
+pub fn fill_contours_aa(buf: &mut [u32], w: usize, h: usize, color: u32, additive: bool, polylines: &[Vec<[f32; 2]>]) {
+    if w == 0 || h == 0 { return; }
+    // Collect directed edges, skipping horizontal ones.
+    struct Edge { y_lo: f32, y_hi: f32, x_at_lo: f32, dxdy: f32, dir: i32 }
+    let mut edges: Vec<Edge> = Vec::new();
+    let (mut ymin, mut ymax) = (f32::MAX, f32::MIN);
+    let (mut xmin, mut xmax) = (f32::MAX, f32::MIN);
+    for pl in polylines {
+        for seg in pl.windows(2) {
+            let (a, b) = (seg[0], seg[1]);
+            if !a[0].is_finite() || !a[1].is_finite() || !b[0].is_finite() || !b[1].is_finite() { continue; }
+            xmin = xmin.min(a[0]).min(b[0]); xmax = xmax.max(a[0]).max(b[0]);
+            ymin = ymin.min(a[1]).min(b[1]); ymax = ymax.max(a[1]).max(b[1]);
+            if (a[1] - b[1]).abs() < 1e-9 { continue; }
+            let dir = if b[1] > a[1] { 1 } else { -1 };
+            let (lo, hi) = if a[1] < b[1] { (a, b) } else { (b, a) };
+            let dxdy = (hi[0] - lo[0]) / (hi[1] - lo[1]);
+            edges.push(Edge { y_lo: lo[1], y_hi: hi[1], x_at_lo: lo[0], dxdy, dir });
+        }
+    }
+    if edges.is_empty() { return; }
+
+    let y_start = (ymin.floor().max(0.0)) as i32;
+    let y_end   = (ymax.ceil().min(h as f32)) as i32;
+    let x_start = (xmin.floor().max(0.0)) as i32;
+    let x_end   = (xmax.ceil().min(w as f32)) as i32;
+    if x_end <= x_start || y_end <= y_start { return; }
+    let row_w = (x_end - x_start) as usize;
+
+    const SS: usize = 4;
+    let sub_w = 1.0 / SS as f32;
+    let mut cov = vec![0.0f32; row_w];
+    let mut xs: Vec<(f32, i32)> = Vec::with_capacity(16);
+
+    for py in y_start..y_end {
+        for c in cov.iter_mut() { *c = 0.0; }
+        for s in 0..SS {
+            let sy = py as f32 + (s as f32 + 0.5) * sub_w;
+            xs.clear();
+            for e in &edges {
+                if sy >= e.y_lo && sy < e.y_hi {
+                    xs.push((e.x_at_lo + (sy - e.y_lo) * e.dxdy, e.dir));
+                }
+            }
+            if xs.len() < 2 { continue; }
+            xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let mut wind = 0;
+            for i in 0..xs.len() - 1 {
+                wind += xs[i].1;
+                if wind != 0 {
+                    add_span(&mut cov, x_start, xs[i].0, xs[i + 1].0, sub_w);
+                }
+            }
+        }
+        for (i, c) in cov.iter().enumerate() {
+            if *c > 0.0 {
+                blend_pixel(buf, w, h, x_start + i as i32, py, color, *c, additive);
+            }
+        }
+    }
+}
+
+/// Accumulate horizontal coverage for the span [xa, xb] into `cov` (indexed from
+/// `x0`), weighting partially-covered end pixels by their covered fraction.
+#[inline]
+fn add_span(cov: &mut [f32], x0: i32, xa: f32, xb: f32, weight: f32) {
+    if xb <= xa { return; }
+    let n = cov.len() as f32;
+    let xa = (xa - x0 as f32).max(0.0);
+    let xb = (xb - x0 as f32).min(n);
+    if xb <= xa { return; }
+    let ia = xa.floor() as usize;
+    let ib = (xb.ceil() as usize).min(cov.len());
+    if ia >= cov.len() { return; }
+    if ib - ia == 1 {
+        cov[ia] += (xb - xa) * weight;
+        return;
+    }
+    // first partial pixel
+    cov[ia] += ((ia + 1) as f32 - xa) * weight;
+    // full interior pixels
+    for c in cov.iter_mut().take(ib.saturating_sub(1)).skip(ia + 1) { *c += weight; }
+    // last partial pixel
+    let last = ib - 1;
+    if last > ia { cov[last] += (xb - last as f32) * weight; }
+}
+
+#[cfg(test)]
+mod fill_tests {
+    use super::*;
+    #[test]
+    fn solid_square_is_filled() {
+        let (w,h)=(20usize,20usize); let mut buf=vec![0u32; w*h];
+        // CCW square 5..15
+        let sq = vec![vec![[5.0,5.0],[15.0,5.0],[15.0,15.0],[5.0,15.0],[5.0,5.0]]];
+        fill_contours_aa(&mut buf,w,h,0xFFFFFF,false,&sq);
+        let center = buf[10*w+10];
+        eprintln!("center=0x{center:06X} corner=0x{:06X}", buf[0]);
+        assert!(center != 0, "center should be filled");
+    }
+    #[test]
+    fn ring_has_hole() {
+        let (w,h)=(40usize,40usize); let mut buf=vec![0u32; w*h];
+        // outer CCW, inner CW (reversed) -> hole
+        let outer = vec![[5.0,5.0],[35.0,5.0],[35.0,35.0],[5.0,35.0],[5.0,5.0]];
+        let inner = vec![[15.0,15.0],[15.0,25.0],[25.0,25.0],[25.0,15.0],[15.0,15.0]];
+        fill_contours_aa(&mut buf,w,h,0xFFFFFF,false,&vec![outer,inner]);
+        let body = buf[10*w+20];   // in the ring body (top stroke)
+        let hole = buf[20*w+20];   // center hole
+        eprintln!("body=0x{body:06X} hole=0x{hole:06X}");
+        assert!(body != 0, "ring body should be filled");
+        assert!(hole == 0, "hole should be empty");
+    }
+}

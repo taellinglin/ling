@@ -1,0 +1,78 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# KARAOKE — scrolling .lrc lyrics + a target-note guide; sing into the mic and
+# ling-music scores your pitch (music_mic_pitch + music_pitch_score). A synth
+# plays the target note so you have something to match.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(960, 560)
+    bind ui = font_load("assets/fonts/Orbitron.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Orbitron.ttf", 600.0) }
+    # CJK-capable font for the lyric line (handles 灵 · 光 · 音)
+    bind body = font_load("assets/fonts/NotoSansSC.ttf", 500.0)
+    if body < 0.0 { bind body = font_load("../../assets/fonts/NotoSansSC.ttf", 500.0) }
+
+    mic_open()
+    music_volume(0.6)
+    bind lead = music_patch("instruments/square_lead.ling")
+    bind lrc = music_lrc("demo.lrc")
+    if lrc < 0.0 { bind lrc = music_lrc("examples/music/demo.lrc") }
+
+    bind melody = [60.0, 64.0, 67.0, 72.0]    # C4 E4 G4 C5 — one per 2 s phrase
+    bind lastPhrase = 0.0 - 1.0
+    bind avgScore = 0.0
+    bind t0 = time_now()
+
+    while window_is_open() {
+        bind songT = time_now() - t0
+        bind phrase = floor(songT / 2.0)
+        bind mi = phrase - floor(phrase / 4.0) * 4.0
+        bind targetMidi = melody[mi]
+        bind targetHz = music_hz(targetMidi)
+
+        # play the target note at the start of each phrase
+        if phrase > lastPhrase { bind lastPhrase = phrase  music_note(lead, targetMidi, 1.4, 0.6) }
+
+        # live mic pitch + score
+        bind micHz = music_mic_pitch()
+        bind score = music_pitch_score(micHz, targetHz)
+        bind avgScore = avgScore * 0.95 + score * 0.05
+
+        # ── draw ──
+        set_color(8, 10, 18)
+        fill()
+        set_blend(1)
+        set_color(0, 220, 255)
+        if ui < 0.0 { ui_text(40.0, 22.0, 22.0, "KARAOKE") } else { font_text_fill(ui, 40.0, 22.0, 26.0, "KARAOKE") }
+
+        # current lyric line (big, CJK-capable)
+        set_color(255, 240, 180)
+        bind line = music_lyric(lrc, songT)
+        if body < 0.0 { ui_text(60.0, 200.0, 28.0, line) } else { font_text_fill(body, 60.0, 200.0, 44.0, line) }
+
+        # target note vs your note
+        set_color(120, 255, 160)
+        if ui < 0.0 { } else { font_text_fill(ui, 60.0, 300.0, 22.0, music_note_name(targetHz)) }
+        set_color(255, 150, 200)
+        if ui < 0.0 { } else { font_text_fill(ui, 260.0, 300.0, 22.0, music_note_name(micHz)) }
+
+        # pitch-match meter (your accuracy this instant) + running average
+        ui_bar(60.0, 360.0, 500.0, 22.0, score, 1.0, 80.0, 255.0, 160.0)
+        ui_progress(60.0, 400.0, 500.0, 12.0, avgScore)
+        ui_gauge(720.0, 320.0, 70.0, avgScore, 1.0)
+
+        # a little pitch ribbon: where your note sits vs the target
+        set_color(60, 90, 130)
+        draw_line(60.0, 470.0, 900.0, 470.0)
+        if micHz > 20.0 {
+            bind cents = (micHz - targetHz)
+            set_color(255, 150, 200)
+            draw_disc(480.0 + cents * 0.6, 470.0, 7.0)
+        }
+        set_color(120, 255, 160)
+        draw_disc(480.0, 470.0, 4.0)
+
+        set_blend(0)
+        present()
+    }
+}

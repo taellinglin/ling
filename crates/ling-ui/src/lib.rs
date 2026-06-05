@@ -8,11 +8,13 @@ pub mod event;
 pub mod renderer;
 pub mod anim;
 pub mod holo;
+pub mod widgets;
 
 pub use widget::{View, Widget, Label, Button};
 pub use layout::{FlexDirection, LayoutNode, Style, simple_layout};
 pub use event::Event;
 pub use renderer::SoftwareRenderer;
 pub use anim::{Easing, Spring, Tween, ease};
+pub use widgets::{Draw, Rgba};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

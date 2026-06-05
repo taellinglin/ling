@@ -1,0 +1,116 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# RHYTHM — a 4-lane falling-note game. Notes ride a BPM grid; hit A S D F as they
+# cross the line. Uses ling-music judging (music_judge) + ling-ui widgets.
+# Drop a real song into music_load() and it will use the track's detected BPM.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(720, 760)
+    bind ui = font_load("assets/fonts/Orbitron.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Orbitron.ttf", 600.0) }
+    music_volume(0.7)
+
+    bind perc = music_patch("instruments/noise_perc.ling")
+    bind lead = music_patch("instruments/square_lead.ling")
+
+    bind bpm = 128.0
+    bind step = 60.0 / bpm          # one note per beat
+    bind hitY = 640.0
+    bind speed = 320.0              # px/sec fall speed
+    bind laneW = 150.0
+    bind laneX0 = 30.0
+
+    bind nextNote = 0.0
+    bind score = 0.0
+    bind combo = 0.0
+    bind maxCombo = 0.0
+    bind lastGrade = "READY"
+    bind gradeFlash = 0.0
+    bind lastBeat = 0.0 - 1.0
+    bind t0 = time_now()
+
+    while window_is_open() {
+        bind songT = time_now() - t0
+
+        # metronome tick on every beat
+        bind beat = floor(songT / step)
+        if beat > lastBeat { bind lastBeat = beat  music_note(perc, 72.0, 0.06, 0.5) }
+
+        # ── judge the active note ──
+        bind targetT = nextNote * step
+        bind lane = nextNote * 5.0 + 2.0
+        bind lane = lane - floor(lane / 4.0) * 4.0      # (i*5+2) % 4
+        # miss if it scrolled past the window
+        if songT > targetT + 0.16 {
+            bind combo = 0.0
+            bind lastGrade = "MISS"  bind gradeFlash = 1.0
+            bind nextNote = nextNote + 1.0
+        }
+        # key for this lane?
+        bind hitKey = 0.0
+        if lane < 0.5 { if key_pressed("a") { bind hitKey = 1.0 } }
+        if lane > 0.5 { if lane < 1.5 { if key_pressed("s") { bind hitKey = 1.0 } } }
+        if lane > 1.5 { if lane < 2.5 { if key_pressed("d") { bind hitKey = 1.0 } } }
+        if lane > 2.5 { if key_pressed("f") { bind hitKey = 1.0 } }
+        if hitKey > 0.5 {
+            bind delta = (targetT - songT) * 1000.0
+            bind g = music_judge(delta)
+            bind lastGrade = music_grade_name(g)
+            bind gradeFlash = 1.0
+            if g < 3.5 {
+                bind combo = combo + 1.0
+                if combo > maxCombo { bind maxCombo = combo }
+                bind score = score + (300.0 - g * 70.0) * (1.0 + combo / 25.0)
+                music_note(lead, 72.0 + lane * 3.0, 0.18, 0.7)
+            } else {
+                bind combo = 0.0
+            }
+            bind nextNote = nextNote + 1.0
+        }
+        bind gradeFlash = gradeFlash * 0.92
+
+        # ── draw ──
+        set_color(8, 10, 18)
+        fill()
+        set_blend(1)
+
+        # lanes + hit line
+        set_color(40, 60, 95)
+        bind L = 0.0
+        while L < 5.0 { bind lx = laneX0 + L * laneW  draw_line(lx, 60.0, lx, 720.0)  bind L = L + 1.0 }
+        set_color(0, 220, 255)
+        draw_line(laneX0, hitY, laneX0 + laneW * 4.0, hitY)
+        bind names = ["A","S","D","F"]
+        bind c = 0.0
+        while c < 4.0 {
+            if ui < 0.0 { } else { font_text_fill(ui, laneX0 + c * laneW + 64.0, hitY + 18.0, 20.0, names[c]) }
+            bind c = c + 1.0
+        }
+
+        # falling notes (draw the next ~12)
+        bind i = nextNote
+        while i < nextNote + 12.0 {
+            bind nt = i * step
+            bind nl = i * 5.0 + 2.0
+            bind nl = nl - floor(nl / 4.0) * 4.0
+            bind ny = hitY - (nt - songT) * speed
+            if ny > 40.0 { if ny < hitY + 20.0 {
+                bind nx = laneX0 + nl * laneW + 10.0
+                if i < nextNote + 0.5 { ui_bar(nx, ny, laneW - 20.0, 18.0, 1.0, 1.0, 255.0, 210.0, 70.0) } else { ui_bar(nx, ny, laneW - 20.0, 18.0, 1.0, 1.0, 0.0, 200.0, 255.0) }
+            } }
+            bind i = i + 1.0
+        }
+
+        # HUD
+        set_color(0, 220, 255)
+        if ui < 0.0 { ui_text(30.0, 16.0, 20.0, "RHYTHM") } else { font_text_fill(ui, 30.0, 14.0, 24.0, "RHYTHM") }
+        ui_counter(420.0, 14.0, 16.0, 26.0, score, 6.0)
+        # combo + last grade
+        set_color(255, 210, 70)
+        if combo > 0.5 { if ui < 0.0 { } else { font_text_fill(ui, 300.0, 690.0, 22.0, lastGrade) } }
+        ui_progress(30.0, 50.0, 660.0, 8.0, gradeFlash)
+
+        set_blend(0)
+        present()
+    }
+}

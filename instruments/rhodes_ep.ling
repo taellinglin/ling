@@ -1,0 +1,9 @@
+# Electric Piano / Rhodes (GM 5) — classic 2-op FM bell+tine, soft sustain.
+name = "Rhodes EP"
+gm = 5
+poly = 16
+op1.wave=sine  op1.ratio=1.0  op1.level=1.0  op1.adsr=0.004,0.5,0.15,0.18
+op2.wave=sine  op2.ratio=14.0 op2.level=0.55 op2.fm=op1  op2.adsr=0.001,0.18,0.0,0.12
+filter.cutoff=0.7 filter.reso=0.15 filter.env=0.2 filter.adsr=0.0,0.4,0.3,0.18
+lfo.rate=5.5 lfo.pitch=0.03
+amp = 0.75

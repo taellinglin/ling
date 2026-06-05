@@ -4,11 +4,16 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crate::{MicConfig, MicError};
 
+/// How many recent mono samples to keep for analysis (~0.17 s @ 48 kHz) — long
+/// enough for low-note pitch detection and a 2048-pt FFT.
+const RING: usize = 8192;
+
 pub struct NativeMic {
     stream:  Mutex<Option<cpal::Stream>>,
     peak:    Arc<Mutex<f32>>,
     rms:     Arc<Mutex<f32>>,
     samples: Arc<Mutex<Vec<f32>>>,
+    rate:    Arc<Mutex<u32>>,
 }
 
 impl NativeMic {
@@ -17,7 +22,8 @@ impl NativeMic {
             stream:  Mutex::new(None),
             peak:    Arc::new(Mutex::new(0.0)),
             rms:     Arc::new(Mutex::new(0.0)),
-            samples: Arc::new(Mutex::new(Vec::new())),
+            samples: Arc::new(Mutex::new(Vec::with_capacity(RING))),
+            rate:    Arc::new(Mutex::new(44_100)),
         })
     }
 
@@ -30,6 +36,9 @@ impl NativeMic {
         let config = device.default_input_config()
             .map_err(|e| MicError::StreamError(e.to_string()))?;
 
+        let channels = config.channels() as usize;
+        *self.rate.lock().unwrap() = config.sample_rate().0;
+
         let peak_w    = Arc::clone(&self.peak);
         let rms_w     = Arc::clone(&self.rms);
         let samples_w = Arc::clone(&self.samples);
@@ -38,11 +47,22 @@ impl NativeMic {
             &config.into(),
             move |data: &[f32], _| {
                 let peak = data.iter().cloned().fold(0.0f32, f32::max);
-                let rms  = (data.iter().map(|s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                let rms  = (data.iter().map(|s| s * s).sum::<f32>() / data.len().max(1) as f32).sqrt();
                 *peak_w.lock().unwrap() = peak;
                 *rms_w.lock().unwrap()  = rms;
-                // Store latest samples for FFT
-                *samples_w.lock().unwrap() = data.to_vec();
+                // Downmix interleaved → mono and append to a rolling ring so
+                // analysis (pitch/FFT) sees a stable, long-enough window.
+                let ch = channels.max(1);
+                if let Ok(mut ring) = samples_w.lock() {
+                    for frame in data.chunks(ch) {
+                        let m = frame.iter().sum::<f32>() / ch as f32;
+                        ring.push(m);
+                    }
+                    if ring.len() > RING {
+                        let drop = ring.len() - RING;
+                        ring.drain(0..drop);
+                    }
+                }
                 callback(data);
             },
             |e| eprintln!("[ling-mic] stream error: {e}"),
@@ -62,4 +82,5 @@ impl NativeMic {
     pub fn peak(&self) -> f32 { *self.peak.lock().unwrap() }
     pub fn rms(&self)  -> f32 { *self.rms.lock().unwrap()  }
     pub fn latest_samples(&self) -> Vec<f32> { self.samples.lock().unwrap().clone() }
+    pub fn sample_rate(&self) -> u32 { *self.rate.lock().unwrap() }
 }

@@ -1,0 +1,9 @@
+# Square Lead (GM 81) — chiptune-style square with vibrato; great for melodies.
+name = "Square Lead"
+gm = 81
+poly = 6
+op1.wave=square op1.ratio=1.0 op1.level=1.0 op1.adsr=0.005,0.1,0.85,0.15
+op2.wave=square op2.ratio=2.0 op2.level=0.25 op2.adsr=0.005,0.1,0.7,0.15
+filter.cutoff=0.7 filter.reso=0.2 filter.env=0.1 filter.adsr=0.0,0.2,0.8,0.2
+lfo.rate=6.0 lfo.pitch=0.05
+amp = 0.6

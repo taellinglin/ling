@@ -1,0 +1,301 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# NEON HALL — an AUTO-PLAYING, FFT-reactive infinite runner.
+#   • assets/music/STL.wav plays out loud; the hallway/candles/flames/smoke
+#     react to its live FFT (music_fft).
+#   • assets/music/STL.mid plays inaudibly: its notes become coins that ring out
+#     the melody (spatial audio_sfx) as the runner sweeps them up.
+#   • a looping ambience pad + master reverb/delay; the runner AI strafes to grab
+#     coins and hops over the trains/cars. No input required — sit back and watch.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(1120, 720)
+    set_ambient(0.35)
+    set_zdist(5.0)
+
+    bind ui = font_load("assets/fonts/Orbitron.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Orbitron.ttf", 600.0) }
+
+    # music (audible) + its FFT source
+    bind wav = music_load("assets/music/STL.wav")
+    if wav < 0.0 { bind wav = music_load("../../assets/music/STL.wav") }
+    music_volume(0.85)
+    music_play(wav)
+
+    # MIDI (inaudible) → coin schedule
+    bind mid = music_midi_load("assets/music/STL.mid")
+    if mid < 0.0 { bind mid = music_midi_load("../../assets/music/STL.mid") }
+    bind notes = music_midi_notes(mid)
+    bind nnotes = len(notes) / 2.0
+
+    # coin pickups ring the melody through the MUSIC engine's synth (same audible
+    # stream as the song), so each coin sounds its MIDI note.
+    bind coinInst = music_patch("instruments/coin_bell.ling")
+    if coinInst < 0.0 { bind coinInst = music_patch("../../instruments/coin_bell.ling") }
+
+    # spatial ambience loop + trippy master FX (ling-audio bus, separate from music)
+    bind amb = audio_sample_load("assets/sfx/ambience.wav")
+    if amb < 0.0 { bind amb = audio_sample_load("../../assets/sfx/ambience.wav") }
+    if amb > 0.0-0.5 { audio_sample_play(amb, 0.0, 0.0, 10.0, 1.0, 0.5, 1.0) }
+    audio_fx_reverb(0.4)
+    audio_fx_delay(0.28, 0.32, 0.22)
+    audio_volume(0.8)
+
+    bind SPEED   = 7.0       # world units / second the hall scrolls
+    bind LANEW   = 2.0
+    bind SPACING = 3.0
+    bind NRIBS   = 18.0
+    bind W       = 3.0
+    bind CEIL    = 0.0 - 2.4
+    bind FLOOR   = 2.0
+
+    bind playerX = 0.0
+    bind playerY = 0.0
+    bind vy = 0.0
+    bind onGround = 1.0
+    bind nextCoin = 0.0
+    bind autoN = 0.0
+    bind score = 0.0
+
+    while window_is_open() {
+        bind t = time_now()
+        bind pos = music_pos()
+        bind scroll = pos * SPEED
+
+        # ── FFT of the music drives everything (12 bands) ──
+        bind NB = 12.0
+        bind bands = music_fft(wav, NB)
+        bind bass = (bands[0.0] + bands[1.0] + bands[2.0]) * 4.0
+        bind energy = 0.0
+        bind bi = 0.0
+        while bi < NB { bind energy = energy + bands[bi]  bind bi = bi + 1.0 }
+        bind energy = energy / NB * 6.0
+        bind beat = 0.0
+        if fft_beat() { bind beat = 1.0 }
+
+        # ── autoplay AI: aim for the next coin's lane, hop on big beats ──
+        if nextCoin < nnotes {
+            bind ncm = notes[nextCoin * 2.0 + 1.0]
+            bind lane = ncm - floor(ncm / 3.0) * 3.0
+            bind tgx = (lane - 1.0) * LANEW
+            bind playerX = playerX + (tgx - playerX) * 0.10
+        }
+        # keep the runner/camera inside the hallway's bounding box
+        if playerX > W - 0.7 { bind playerX = W - 0.7 }
+        if playerX < (0.0 - W) + 0.7 { bind playerX = (0.0 - W) + 0.7 }
+        # jump: up is -y here. gravity pulls back toward the floor (+y → 0).
+        if onGround > 0.5 { if beat > 0.5 { if bass > 0.7 { bind vy = 0.0 - 5.2  bind onGround = 0.0 } } }
+        bind vy = vy + 16.0 * 0.016
+        bind playerY = playerY + vy * 0.016
+        if playerY > 0.0 { bind playerY = 0.0  bind vy = 0.0  bind onGround = 1.0 }
+        if playerY < CEIL + 0.6 { bind playerY = CEIL + 0.6  bind vy = 0.0 }
+        audio_listener(1.0, 0.0, 1.0, 0.0)
+
+        # ── collect coins whose time has arrived (ring the melody, spatial) ──
+        bind guard = 0.0
+        while guard < 8.0 {
+            bind guard = guard + 1.0
+            if nextCoin < nnotes {
+                bind ct = notes[nextCoin * 2.0]
+                if ct < pos {
+                    bind cm = notes[nextCoin * 2.0 + 1.0]
+                    # ring the coin's MIDI note as a bright bell through the music synth
+                    music_note(coinInst, cm + 12.0, 0.35, 0.9)
+                    bind score = score + 1.0
+                    bind nextCoin = nextCoin + 1.0
+                } else { bind guard = 99.0 }
+            } else { bind guard = 99.0 }
+        }
+
+        # ── render the hall ──
+        set_color(5, 3, 14)
+        fill()
+        set_camera(1.0, 0.0, cos(0.14), sin(0.14))
+        set_ambient(0.35)
+        set_blend(1)
+
+        bind off = scroll - floor(scroll / SPACING) * SPACING
+        bind lx = (0.0 - W) - playerX
+        bind rx = W - playerX
+        bind cy = CEIL - playerY
+        bind fy = FLOOR - playerY
+
+        bind k = 0.0
+        while k < NRIBS {
+            bind z0 = k * SPACING - off
+            bind z1 = z0 + SPACING
+            # each rib pulses with its own FFT band → colour + opacity
+            bind bandK = bands[k - floor(k / NB) * NB]
+            bind bv = bandK * 5.0
+            bind hue = t * 0.1 + k * 0.05 + bv * 0.25
+            # depth fade so the near rings glow and far ones recede
+            bind fade = 1.0 - (k / NRIBS) * 0.6
+            bind op = (0.18 + bv) * fade
+            if op > 1.0 { bind op = 1.0 }
+            set_color((sin(hue*6.283+0.0)*0.5+0.5)*235.0*op+8.0, (sin(hue*6.283+2.094)*0.5+0.5)*235.0*op+8.0, (sin(hue*6.283+4.188)*0.5+0.5)*235.0*op+8.0)
+            draw_line_3d(lx, fy, z0,  rx, fy, z0)
+            draw_line_3d(lx, cy, z0,  rx, cy, z0)
+            draw_line_3d(lx, cy, z0,  lx, fy, z0)
+            draw_line_3d(rx, cy, z0,  rx, fy, z0)
+            draw_line_3d(lx, fy, z0,  lx, fy, z1)
+            draw_line_3d(rx, fy, z0,  rx, fy, z1)
+            draw_line_3d(lx, cy, z0,  lx, cy, z1)
+            draw_line_3d(rx, cy, z0,  rx, cy, z1)
+
+            # waxy candle sticks on both walls at even ribs (flames drawn in 2-D below)
+            bind even = k - floor(k / 2.0) * 2.0
+            if even < 0.5 {
+                set_color(120, 95, 55)
+                draw_line_3d(lx + 0.18, fy, z0, lx + 0.18, fy - 0.2, z0)
+                draw_line_3d(rx - 0.18, fy, z0, rx - 0.18, fy - 0.2, z0)
+            }
+            bind k = k + 1.0
+        }
+
+        # ── coins (next ~36 upcoming MIDI notes ride the hall) ──
+        bind ci = nextCoin
+        bind drawn = 0.0
+        while drawn < 36.0 {
+            if ci < nnotes {
+                bind ctime = notes[ci * 2.0]
+                bind cmidi = notes[ci * 2.0 + 1.0]
+                bind cz = (ctime - pos) * SPEED
+                if cz > 0.3 { if cz < 48.0 {
+                    bind clane = cmidi - floor(cmidi / 3.0) * 3.0
+                    bind cxw = (clane - 1.0) * LANEW - playerX
+                    bind cyw = 0.3 - playerY + sin(t*2.0 + ci)*0.12   # gentle bob
+                    # spinning gold coin: rotated square ⊕ diamond + 4-point sparkle
+                    bind a = t * 5.0 + ci
+                    bind ca = cos(a)  bind sa = sin(a)
+                    bind cr2 = 0.30 + sin(t*6.0 + ci)*0.04
+                    bind gp = sin(a*1.7) * 0.5 + 0.5
+                    set_color(255.0, 205.0 + gp*50.0, 70.0 + beat*150.0)
+                    # rotated square (the coin face, edge-on as it spins)
+                    bind p0x = cxw + ca*cr2  bind p0y = cyw + sa*cr2
+                    bind p1x = cxw - sa*cr2  bind p1y = cyw + ca*cr2
+                    draw_line_3d(p0x, p0y, cz,  p1x, p1y, cz)
+                    draw_line_3d(p1x, p1y, cz,  cxw - ca*cr2, cyw - sa*cr2, cz)
+                    draw_line_3d(cxw - ca*cr2, cyw - sa*cr2, cz,  cxw + sa*cr2, cyw - ca*cr2, cz)
+                    draw_line_3d(cxw + sa*cr2, cyw - ca*cr2, cz,  p0x, p0y, cz)
+                    # bright 4-point sparkle through the centre
+                    set_color(255.0, 245.0, 180.0)
+                    draw_line_3d(cxw - cr2*1.3, cyw, cz, cxw + cr2*1.3, cyw, cz)
+                    draw_line_3d(cxw, cyw - cr2*1.3, cz, cxw, cyw + cr2*1.3, cz)
+                } }
+                bind drawn = drawn + 1.0
+                bind ci = ci + 1.0
+            } else { bind drawn = 99.0 }
+        }
+
+        # ── obstacles (trains/cars): deterministic boxes to dodge ──
+        bind ob = floor(pos / 2.2)
+        bind oi = 0.0
+        while oi < 5.0 {
+            bind on = ob + oi
+            bind otime = on * 2.2
+            bind oz = (otime - pos) * SPEED
+            if oz > 0.3 { if oz < 48.0 {
+                bind olane = on * 7.0 - floor(on * 7.0 / 3.0) * 3.0
+                bind oxw = (olane - 1.0) * LANEW - playerX
+                bind oy0 = FLOOR - playerY
+                bind oy1 = oy0 - 1.5
+                # alternate trains (long, amber) and cars (short, red)
+                bind isTrain = on - floor(on / 2.0) * 2.0
+                bind ow = 0.7  bind odp = 1.7
+                bind og = 50.0 + beat*120.0  bind obl = 80.0
+                if isTrain > 0.5 { bind ow = 0.95  bind odp = 3.4  bind og = 140.0 + beat*90.0  bind obl = 25.0 }
+                bind oz2 = oz + odp
+                set_color(255.0, og, obl)
+                # front face
+                draw_line_3d(oxw-ow, oy0, oz,  oxw+ow, oy0, oz)
+                draw_line_3d(oxw-ow, oy1, oz,  oxw+ow, oy1, oz)
+                draw_line_3d(oxw-ow, oy0, oz,  oxw-ow, oy1, oz)
+                draw_line_3d(oxw+ow, oy0, oz,  oxw+ow, oy1, oz)
+                # back face
+                draw_line_3d(oxw-ow, oy0, oz2,  oxw+ow, oy0, oz2)
+                draw_line_3d(oxw-ow, oy1, oz2,  oxw+ow, oy1, oz2)
+                draw_line_3d(oxw-ow, oy0, oz2,  oxw-ow, oy1, oz2)
+                draw_line_3d(oxw+ow, oy0, oz2,  oxw+ow, oy1, oz2)
+                # connectors
+                draw_line_3d(oxw-ow, oy0, oz,  oxw-ow, oy0, oz2)
+                draw_line_3d(oxw+ow, oy0, oz,  oxw+ow, oy0, oz2)
+                draw_line_3d(oxw-ow, oy1, oz,  oxw-ow, oy1, oz2)
+                draw_line_3d(oxw+ow, oy1, oz,  oxw+ow, oy1, oz2)
+                # hazard stripes across the front (caution yellow)
+                set_color(255.0, 220.0, 60.0)
+                draw_line_3d(oxw-ow, oy0-0.45, oz,  oxw+ow, oy0-0.45, oz)
+                draw_line_3d(oxw-ow, oy0-0.95, oz,  oxw+ow, oy0-0.95, oz)
+                # AI hops if this obstacle is close and in our lane
+                if oz < 4.5 { if oz > 1.0 {
+                    bind plane = floor((playerX / LANEW) + 1.5)
+                    if olane > plane - 0.5 { if olane < plane + 0.5 { if onGround > 0.5 { bind vy = 0.0 - 5.4  bind onGround = 0.0 } } }
+                } }
+            } }
+            bind oi = oi + 1.0
+        }
+
+        flush_3d()
+
+        # ── candle flames: filled translucent teardrops layered in 2-D, placed by
+        #    projecting each candle into screen space (additive glow, FFT-reactive) ──
+        set_blend(1)
+        bind fk = 0.0
+        while fk < NRIBS {
+            bind even = fk - floor(fk / 2.0) * 2.0
+            if even < 0.5 {
+                bind fz = fk * SPACING - off
+                bind fband = bands[fk - floor(fk / NB) * NB] * 6.0
+                bind flh = 0.35 + fband * 1.9 + beat * 0.5
+                bind fci = 0.0
+                while fci < 2.0 {
+                    bind cxw = lx + 0.18
+                    if fci > 0.5 { bind cxw = rx - 0.18 }
+                    bind cby = fy - 0.2
+                    bind pb = project_3d(cxw, cby, fz)
+                    bind pt = project_3d(cxw, cby - flh, fz)
+                    if pb[0.0] > 0.0 - 90000.0 { if pt[0.0] > 0.0 - 90000.0 {
+                        bind bx = pb[0.0]  bind by2 = pb[1.0]
+                        bind tx = pt[0.0]  bind ty = pt[1.0]
+                        bind dx = tx - bx  bind dy = ty - by2
+                        bind flen = sqrt(dx*dx + dy*dy) + 0.001
+                        bind ux = dx / flen  bind uy = dy / flen
+                        bind perpx = 0.0 - uy  bind perpy = ux
+                        # 4 stacked layers: big cool-orange outer → small white-hot inner
+                        bind layer = 0.0
+                        while layer < 4.0 {
+                            bind shrink = 1.0 - layer * 0.22
+                            bind w2 = flen * 0.34 * shrink
+                            bind hl = flen * shrink
+                            bind sway = sin(t*10.0 + fk + layer*1.7 + fci*2.0) * flen * 0.10
+                            bind tipx = bx + ux*hl + perpx*sway
+                            bind tipy = by2 + uy*hl + perpy*sway
+                            bind brx = bx + perpx*w2  bind bry = by2 + perpy*w2
+                            bind blx = bx - perpx*w2  bind bly = by2 - perpy*w2
+                            bind bgx = bx - ux*w2*1.15  bind bgy = by2 - uy*w2*1.15
+                            bind cf = layer / 3.0
+                            bind br = 0.4 + fband*0.7 + beat*0.25
+                            if br > 1.0 { bind br = 1.0 }
+                            set_color(255.0*br, (110.0 + cf*140.0)*br, (20.0 + cf*190.0)*br)
+                            draw_poly([tipx, tipy, brx, bry, bgx, bgy, blx, bly])
+                            bind layer = layer + 1.0
+                        }
+                    } }
+                    bind fci = fci + 1.0
+                }
+            }
+            bind fk = fk + 1.0
+        }
+
+        # ── HUD ──
+        set_color(0, 230, 255)
+        if ui < 0.0 { ui_text(40.0, 22.0, 22.0, "NEON HALL") } else { font_text_fill(ui, 40.0, 22.0, 26.0, "NEON HALL") }
+        ui_counter(900.0, 18.0, 16.0, 26.0, score, 5.0)
+        ui_vu(40.0, 660.0, 320.0, 48.0, bands)
+        if beat > 0.5 { ui_vignette(0.25, 0.0, 230.0, 255.0) }
+        set_blend(0)
+        bind autoN=autoN+1.0
+        if autoN>70.0 { if autoN<72.0 { record_frame() } }
+        if autoN>140.0 { if autoN<142.0 { record_frame() } }
+        present()
+    }
+}

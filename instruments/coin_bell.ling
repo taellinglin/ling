@@ -1,0 +1,8 @@
+# Coin Bell (glockenspiel-ish FM bell) — bright, short, cuts through a mix.
+name = "Coin Bell"
+gm = 10
+poly = 24
+op1.wave=sine op1.ratio=1.0  op1.level=1.0 op1.adsr=0.001,0.35,0.0,0.12
+op2.wave=sine op2.ratio=6.0  op2.level=0.7 op2.fm=op1 op2.adsr=0.001,0.18,0.0,0.10
+op3.wave=sine op3.ratio=9.0  op3.level=0.3 op3.fm=op1 op3.adsr=0.001,0.10,0.0,0.08
+amp=0.9

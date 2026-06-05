@@ -1,0 +1,9 @@
+# Percussion / Hat (GM drum-ish) — filtered noise burst; pitch sets the tone.
+# Play short notes; higher pitches = brighter hats, lower = toms/snare body.
+name = "Noise Perc"
+gm = 119
+poly = 8
+op1.wave=noise op1.ratio=1.0 op1.level=1.0 op1.adsr=0.001,0.08,0.0,0.05
+op2.wave=sine  op2.ratio=1.0 op2.level=0.5 op2.adsr=0.001,0.12,0.0,0.05
+filter.cutoff=0.6 filter.reso=0.5 filter.env=0.3 filter.adsr=0.0,0.06,0.0,0.05
+amp = 0.7

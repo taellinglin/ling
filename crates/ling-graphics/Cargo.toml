@@ -12,6 +12,7 @@ glam = { version = "0.28", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 fontdue = "0.9"
+ttf-parser = "0.21"
 
 [lib]
 name = "ling_graphics"

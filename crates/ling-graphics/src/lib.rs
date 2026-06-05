@@ -8,6 +8,7 @@ pub mod camera;
 pub mod scene;
 pub mod animation;
 pub mod font;
+pub mod vfont;
 pub mod renderer;
 pub mod viewport;
 pub mod window;
@@ -21,7 +22,8 @@ pub use material::{Material, TextureData, AlphaMode};
 pub use camera::{Camera3D, Camera4D, Projection, HyperModel};
 pub use scene::{Transform, SceneNode, Scene, NodeId};
 pub use animation::{Timeline, Track, Keyframe, EaseFunction, Lerp};
-pub use font::{FontAtlas, GlyphInfo};
+pub use font::{FontAtlas, GlyphInfo, GlyphFont};
+pub use vfont::{VectorFont, GlyphOutline};
 pub use shading::{LightS, ShadeParams, lit_vertex, posterize};
 pub use renderer::{Renderer, FrameBuffer, SoftwareRenderer};
 

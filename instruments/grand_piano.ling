@@ -1,0 +1,12 @@
+# Acoustic Grand Piano (GM 1) — bright FM body with a fast percussive attack.
+name = "Acoustic Grand"
+gm = 1
+poly = 16
+# carrier — short, percussive decay (no lingering sustain)
+op1.wave=sine  op1.ratio=1.0  op1.level=1.0  op1.adsr=0.002,0.45,0.0,0.12
+# bright modulator (adds upper harmonics that decay with the note)
+op2.wave=sine  op2.ratio=4.0  op2.level=0.6  op2.fm=op1  op2.adsr=0.001,0.22,0.0,0.1
+# subtle inharmonic shimmer
+op3.wave=sine  op3.ratio=11.0 op3.level=0.18 op3.fm=op1  op3.adsr=0.001,0.1,0.0,0.08
+filter.cutoff=0.85 filter.reso=0.1 filter.env=0.25 filter.adsr=0.0,0.4,0.2,0.15
+amp = 0.8

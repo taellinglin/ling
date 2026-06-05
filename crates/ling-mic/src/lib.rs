@@ -77,8 +77,13 @@ impl MicInput {
         self.inner.rms()
     }
 
-    /// Get the most recent PCM samples for FFT analysis.
+    /// Get the most recent mono PCM samples (rolling window) for FFT/pitch analysis.
     pub fn latest_samples(&self) -> Vec<f32> {
         self.inner.latest_samples()
+    }
+
+    /// Actual capture sample rate of the open device (Hz).
+    pub fn sample_rate(&self) -> u32 {
+        self.inner.sample_rate()
     }
 }

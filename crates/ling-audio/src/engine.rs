@@ -60,6 +60,59 @@ impl Tone {
     }
 }
 
+/// Oscillator waveform for one-shot UI blips.
+#[derive(Clone, Copy, Debug)]
+pub enum Wave { Sine, Square, Saw, Triangle }
+
+impl Wave {
+    pub fn from_name(s: &str) -> Wave {
+        match s.to_ascii_lowercase().as_str() {
+            "square" | "sq"   => Wave::Square,
+            "saw" | "sawtooth" => Wave::Saw,
+            "tri" | "triangle" => Wave::Triangle,
+            _ => Wave::Sine,
+        }
+    }
+    #[inline]
+    fn sample(self, phase: f32) -> f32 {
+        match self {
+            Wave::Sine     => (phase * TAU).sin(),
+            Wave::Square   => if phase < 0.5 { 1.0 } else { -1.0 },
+            Wave::Saw      => phase * 2.0 - 1.0,
+            Wave::Triangle => 1.0 - 4.0 * (phase - 0.5).abs(),
+        }
+    }
+}
+
+/// A fire-and-forget interface sound with a fast attack + exponential decay.
+struct Blip {
+    freq:  f32,
+    amp:   f32,
+    wave:  Wave,
+    dur:   f32,   // seconds until it's removed
+    age:   f32,   // seconds elapsed
+    phase: f32,
+}
+
+impl Blip {
+    /// Advance one sample, returning the (mono) value; envelope folds in here.
+    #[inline]
+    fn next(&mut self, dt: f32) -> f32 {
+        // 5 ms attack ramp, then exponential decay across the remaining duration.
+        let atk = 0.005;
+        let env = if self.age < atk {
+            self.age / atk
+        } else {
+            (-(self.age - atk) / (self.dur * 0.4 + 1e-4)).exp()
+        };
+        let s = self.wave.sample(self.phase) * self.amp * env;
+        self.phase = (self.phase + self.freq * dt).fract();
+        self.age += dt;
+        s
+    }
+    fn done(&self) -> bool { self.age >= self.dur }
+}
+
 struct BgmTrack {
     /// Interleaved stereo samples at `src_rate`.
     samples:  Vec<f32>,
@@ -69,8 +122,153 @@ struct BgmTrack {
     volume:   f32,
 }
 
+/// Equal-power pan + distance attenuation gains for a world-space point, using
+/// the current listener (camera) orientation. Shared by tones, sfx and samples.
+#[inline]
+fn spatial_gains(cry: f32, sry: f32, crx: f32, srx: f32, room_w: f32, x: f32, y: f32, z: f32) -> (f32, f32) {
+    let rz1   = x * sry + z * cry;
+    let cam_x = x * cry - z * sry;
+    let cam_y = y * crx - rz1 * srx;
+    let cam_z = y * srx + rz1 * crx;
+    let dist  = (cam_x * cam_x + cam_y * cam_y + cam_z * cam_z).sqrt().max(0.5);
+    let atten = (1.0 / (1.0 + dist * 0.18)).clamp(0.0, 1.0);
+    let pan   = (cam_x / room_w.max(1.0)).clamp(-1.0, 1.0);
+    let angle = (pan + 1.0) * 0.5 * FRAC_PI_2;
+    (angle.cos() * atten, angle.sin() * atten)
+}
+
+/// A positional (2D/3D/4D) one-shot sound effect with a fast-attack/decay
+/// envelope — like a [`Blip`] but spatialized at a world position.
+struct SfxVoice {
+    x: f32, y: f32, z: f32, w: f32,
+    freq: f32, amp: f32, wave: Wave, dur: f32, age: f32, phase: f32, w_phase: f32,
+}
+impl SfxVoice {
+    #[inline]
+    fn next(&mut self, dt: f32) -> f32 {
+        let atk = 0.005;
+        let env = if self.age < atk { self.age / atk }
+                  else { (-(self.age - atk) / (self.dur * 0.4 + 1e-4)).exp() };
+        let w_mod = (self.w_phase * TAU).sin() * 0.25;
+        self.w_phase = (self.w_phase + self.freq * self.w.abs() * 0.007 * dt).fract();
+        let f = self.freq * (1.0 + w_mod * 0.06);
+        let s = self.wave.sample(self.phase) * self.amp * env;
+        self.phase = (self.phase + f * dt).fract();
+        self.age += dt;
+        s
+    }
+    fn done(&self) -> bool { self.age >= self.dur }
+}
+
+/// A playing instance of a loaded sample buffer at a world position (looping or one-shot).
+struct SampleVoice {
+    id: u32,
+    sample: usize,
+    pos: f64,
+    x: f32, y: f32, z: f32, w: f32,
+    vol: f32, looping: bool, active: bool,
+}
+
+/// Stereo feedback delay on the master bus.
+struct Delay {
+    bl: Vec<f32>, br: Vec<f32>, idx: usize, len: usize, fb: f32, mix: f32,
+}
+impl Delay {
+    fn new(rate: u32) -> Self {
+        let cap = (rate as usize * 2).max(1); // up to 2 s
+        Self { bl: vec![0.0; cap], br: vec![0.0; cap], idx: 0, len: 0, fb: 0.0, mix: 0.0 }
+    }
+    #[inline]
+    fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        if self.mix <= 0.0 || self.len == 0 { return (l, r); }
+        let read = (self.idx + self.bl.len() - self.len) % self.bl.len();
+        let dl = self.bl[read]; let dr = self.br[read];
+        self.bl[self.idx] = l + dl * self.fb;
+        self.br[self.idx] = r + dr * self.fb;
+        self.idx = (self.idx + 1) % self.bl.len();
+        (l + dl * self.mix, r + dr * self.mix)
+    }
+}
+
+/// A single Freeverb-style comb filter.
+struct Comb { buf: Vec<f32>, idx: usize, fb: f32, store: f32, damp: f32 }
+impl Comb {
+    fn new(n: usize, fb: f32) -> Self { Self { buf: vec![0.0; n.max(1)], idx: 0, fb, store: 0.0, damp: 0.2 } }
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let y = self.buf[self.idx];
+        self.store = y * (1.0 - self.damp) + self.store * self.damp;
+        self.buf[self.idx] = x + self.store * self.fb;
+        self.idx = (self.idx + 1) % self.buf.len();
+        y
+    }
+}
+/// A single allpass filter.
+struct Allpass { buf: Vec<f32>, idx: usize }
+impl Allpass {
+    fn new(n: usize) -> Self { Self { buf: vec![0.0; n.max(1)], idx: 0 } }
+    #[inline]
+    fn process(&mut self, x: f32) -> f32 {
+        let buf = self.buf[self.idx];
+        let y = -x + buf;
+        self.buf[self.idx] = x + buf * 0.5;
+        self.idx = (self.idx + 1) % self.buf.len();
+        y
+    }
+}
+/// Cheap mono Schroeder reverb mixed back into stereo.
+struct Reverb { combs: Vec<Comb>, allpass: Vec<Allpass>, mix: f32 }
+impl Reverb {
+    fn new(rate: u32) -> Self {
+        let s = rate as f32 / 44100.0;
+        let comb = |n: usize, fb: f32| Comb::new((n as f32 * s) as usize, fb);
+        let ap = |n: usize| Allpass::new((n as f32 * s) as usize);
+        Self {
+            combs:   vec![comb(1116, 0.84), comb(1188, 0.83), comb(1277, 0.82), comb(1356, 0.81)],
+            allpass: vec![ap(225), ap(556)],
+            mix: 0.0,
+        }
+    }
+    #[inline]
+    fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        if self.mix <= 0.0 { return (l, r); }
+        let x = (l + r) * 0.5;
+        let mut y = 0.0;
+        for c in &mut self.combs { y += c.process(x); }
+        y *= 0.25;
+        for a in &mut self.allpass { y = a.process(y); }
+        (l + y * self.mix, r + y * self.mix)
+    }
+}
+
+/// Master 2-pole low-pass (smoothed cutoff) for muffled / underwater scenes.
+/// `cutoff` ∈ (0,1]; 1.0 ≈ bypass.
+struct LowPass { yl: [f32; 2], yr: [f32; 2], cutoff: f32, target: f32 }
+impl LowPass {
+    fn new() -> Self { Self { yl: [0.0; 2], yr: [0.0; 2], cutoff: 1.0, target: 1.0 } }
+    #[inline]
+    fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        // glide toward target to avoid zipper noise
+        self.cutoff += (self.target - self.cutoff) * 0.001;
+        if self.cutoff >= 0.999 { return (l, r); }
+        // map cutoff01 → one-pole coefficient (exp so low values are very dark)
+        let a = (self.cutoff * self.cutoff).clamp(0.0008, 1.0);
+        self.yl[0] += a * (l - self.yl[0]); self.yl[1] += a * (self.yl[0] - self.yl[1]);
+        self.yr[0] += a * (r - self.yr[0]); self.yr[1] += a * (self.yr[0] - self.yr[1]);
+        (self.yl[1], self.yr[1])
+    }
+}
+
 struct AudioState {
     tones:         Vec<Option<Tone>>,
+    blips:         Vec<Blip>,
+    sfx:           Vec<SfxVoice>,
+    samples:       Vec<(std::sync::Arc<Vec<f32>>, u32)>, // (mono buffer, src rate)
+    sample_voices: Vec<SampleVoice>,
+    next_voice_id: u32,
+    delay:         Delay,
+    reverb:        Reverb,
+    lowpass:       LowPass,
     bgm:           Option<BgmTrack>,
     master_volume: f32,
     // Camera orientation — mirrors Camera3D cry/sry/crx/srx.
@@ -85,6 +283,14 @@ impl AudioState {
     fn new(sample_rate: u32) -> Self {
         Self {
             tones:         (0..16).map(|_| None).collect(),
+            blips:         Vec::new(),
+            sfx:           Vec::new(),
+            samples:       Vec::new(),
+            sample_voices: Vec::new(),
+            next_voice_id: 1,
+            delay:         Delay::new(sample_rate),
+            reverb:        Reverb::new(sample_rate),
+            lowpass:       LowPass::new(),
             bgm:           None,
             master_volume: 0.5,
             cry: 1.0, sry: 0.0,
@@ -149,6 +355,48 @@ impl AudioState {
             r += sample * r_gain;
         }
 
+        // ── One-shot UI blips (centred, no spatialisation) ───────────────────
+        if !self.blips.is_empty() {
+            let mut mono = 0.0f32;
+            for b in &mut self.blips { mono += b.next(dt); }
+            self.blips.retain(|b| !b.done());
+            l += mono;
+            r += mono;
+        }
+
+        // ── Positional one-shot SFX (2D/3D/4D) ───────────────────────────────
+        if !self.sfx.is_empty() {
+            for v in &mut self.sfx {
+                let (lg, rg) = spatial_gains(cry, sry, crx, srx, room_w, v.x, v.y, v.z);
+                let s = v.next(dt);
+                l += s * lg;
+                r += s * rg;
+            }
+            self.sfx.retain(|v| !v.done());
+        }
+
+        // ── Positional sample voices (one-shot or looping) ───────────────────
+        if !self.sample_voices.is_empty() {
+            let out_rate = self.sample_rate as f64;
+            for v in &mut self.sample_voices {
+                if !v.active { continue; }
+                let (buf, src_rate) = match self.samples.get(v.sample) { Some(s) => s, None => { v.active = false; continue; } };
+                let n = buf.len();
+                if n < 2 { v.active = false; continue; }
+                let idx = v.pos as usize;
+                let frac = (v.pos - idx as f64) as f32;
+                let s = if idx + 1 < n { buf[idx] + (buf[idx + 1] - buf[idx]) * frac } else { buf[idx.min(n - 1)] };
+                let (lg, rg) = spatial_gains(cry, sry, crx, srx, room_w, v.x, v.y, v.z);
+                l += s * v.vol * lg;
+                r += s * v.vol * rg;
+                v.pos += *src_rate as f64 / out_rate;
+                if v.pos as usize >= n - 1 {
+                    if v.looping { v.pos = 0.0; } else { v.active = false; }
+                }
+            }
+            self.sample_voices.retain(|v| v.active);
+        }
+
         // ── BGM ─────────────────────────────────────────────────────────────
         if let Some(bgm) = &mut self.bgm {
             let n_pairs = bgm.samples.len() / 2;
@@ -171,6 +419,10 @@ impl AudioState {
             }
         }
 
+        // ── Master FX chain: delay → reverb → low-pass → volume ──────────────
+        let (l, r) = self.delay.process(l, r);
+        let (l, r) = self.reverb.process(l, r);
+        let (l, r) = self.lowpass.process(l, r);
         let mv = self.master_volume;
         ((l * mv).tanh(), (r * mv).tanh())
     }
@@ -220,6 +472,66 @@ impl AudioEngine {
                 slot    => *slot = Some(Tone::new(params)),
             }
         }
+    }
+
+    /// Fire a one-shot interface sound (fast attack, exponential decay).
+    /// `dur` is in seconds; up to 32 blips overlap before the oldest is dropped.
+    pub fn blip(&self, freq: f32, amp: f32, dur: f32, wave: Wave) {
+        if let Ok(mut s) = self.state.lock() {
+            if s.blips.len() >= 32 { s.blips.remove(0); }
+            s.blips.push(Blip { freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0 });
+        }
+    }
+
+    /// Fire a positional (2D/3D/4D) one-shot sound effect at a world point.
+    pub fn sfx(&self, x: f32, y: f32, z: f32, w: f32, freq: f32, amp: f32, dur: f32, wave: Wave) {
+        if let Ok(mut s) = self.state.lock() {
+            if s.sfx.len() >= 64 { s.sfx.remove(0); }
+            s.sfx.push(SfxVoice { x, y, z, w, freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0, w_phase: 0.0 });
+        }
+    }
+
+    /// Register a mono sample buffer (decoded elsewhere), returning its id.
+    pub fn add_sample(&self, mono: Vec<f32>, src_rate: u32) -> usize {
+        if let Ok(mut s) = self.state.lock() {
+            s.samples.push((std::sync::Arc::new(mono), src_rate.max(1)));
+            s.samples.len() - 1
+        } else { 0 }
+    }
+
+    /// Play a loaded sample at a world position (looping or one-shot). Returns a voice id.
+    pub fn play_sample(&self, id: usize, x: f32, y: f32, z: f32, w: f32, vol: f32, looping: bool) -> u32 {
+        if let Ok(mut s) = self.state.lock() {
+            if id >= s.samples.len() { return 0; }
+            let vid = s.next_voice_id; s.next_voice_id += 1;
+            if s.sample_voices.len() >= 64 { s.sample_voices.remove(0); }
+            s.sample_voices.push(SampleVoice { id: vid, sample: id, pos: 0.0, x, y, z, w, vol, looping, active: true });
+            vid
+        } else { 0 }
+    }
+
+    /// Stop a sample voice by id.
+    pub fn stop_sample(&self, voice: u32) {
+        if let Ok(mut s) = self.state.lock() {
+            if let Some(v) = s.sample_voices.iter_mut().find(|v| v.id == voice) { v.active = false; }
+        }
+    }
+
+    // ── master FX ─────────────────────────────────────────────────────────────
+    pub fn fx_delay(&self, time_s: f32, feedback: f32, mix: f32) {
+        if let Ok(mut s) = self.state.lock() {
+            let cap = s.delay.bl.len();
+            s.delay.len = ((time_s.max(0.0) * s.sample_rate as f32) as usize).min(cap.saturating_sub(1));
+            s.delay.fb = feedback.clamp(0.0, 0.95);
+            s.delay.mix = mix.clamp(0.0, 1.0);
+        }
+    }
+    pub fn fx_reverb(&self, mix: f32) {
+        if let Ok(mut s) = self.state.lock() { s.reverb.mix = mix.clamp(0.0, 1.0); }
+    }
+    /// Master low-pass cutoff ∈ (0,1]; 1.0 ≈ open, lower = muffled/underwater.
+    pub fn fx_lowpass(&self, cutoff01: f32) {
+        if let Ok(mut s) = self.state.lock() { s.lowpass.target = cutoff01.clamp(0.0, 1.0); }
     }
 
     /// Silence and remove the tone at `idx`.
@@ -371,5 +683,50 @@ fn fill_i16(data: &mut [i16], channels: usize, state: &Arc<Mutex<AudioState>>) {
         }
     } else {
         for s in data.iter_mut() { *s = 0; }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sfx_voice_envelopes_and_ends() {
+        let mut v = SfxVoice { x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 440.0, amp: 0.5,
+                               wave: Wave::Sine, dur: 0.02, age: 0.0, phase: 0.0, w_phase: 0.0 };
+        let dt = 1.0 / 44100.0;
+        let mut peak = 0.0f32;
+        let mut steps = 0;
+        while !v.done() && steps < 44100 { peak = peak.max(v.next(dt).abs()); steps += 1; }
+        assert!(peak > 0.01, "sfx should produce sound");
+        assert!(v.done(), "sfx should finish after its duration");
+    }
+
+    #[test]
+    fn sample_voice_loops_and_oneshot_stops() {
+        let mut st = AudioState::new(44100);
+        st.samples.push((std::sync::Arc::new(vec![0.5f32; 100]), 44100));
+        // looping voice survives past the buffer end
+        st.sample_voices.push(SampleVoice { id: 1, sample: 0, pos: 0.0, x: 0.0, y: 0.0, z: 0.0, w: 1.0, vol: 1.0, looping: true, active: true });
+        for _ in 0..500 { let _ = st.next_sample(); }
+        assert_eq!(st.sample_voices.len(), 1, "looping voice should still be alive");
+        // one-shot voice deactivates after the buffer
+        st.sample_voices.push(SampleVoice { id: 2, sample: 0, pos: 0.0, x: 0.0, y: 0.0, z: 0.0, w: 1.0, vol: 1.0, looping: false, active: true });
+        for _ in 0..500 { let _ = st.next_sample(); }
+        assert!(st.sample_voices.iter().all(|v| v.id != 2), "one-shot should have stopped");
+    }
+
+    #[test]
+    fn master_fx_stay_finite() {
+        let mut st = AudioState::new(44100);
+        st.delay.len = 2000; st.delay.fb = 0.6; st.delay.mix = 0.4;
+        st.reverb.mix = 0.5;
+        st.lowpass.target = 0.2; st.lowpass.cutoff = 0.2;
+        // feed a tone and ensure the FX chain never blows up
+        st.tones[0] = Some(Tone::new(ToneParams { freq: 220.0, amp: 0.8, ..Default::default() }));
+        for _ in 0..44100 {
+            let (l, r) = st.next_sample();
+            assert!(l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0);
+        }
     }
 }

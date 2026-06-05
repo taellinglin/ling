@@ -1,0 +1,8 @@
+# Synth Bass (GM 39) — fat saw through a resonant low-pass with an envelope sweep.
+name = "Synth Bass"
+gm = 39
+poly = 8
+op1.wave=saw op1.ratio=1.0  op1.level=1.0  op1.adsr=0.005,0.18,0.4,0.12
+op2.wave=saw op2.ratio=1.005 op2.level=0.6 op2.detune=8 op2.adsr=0.005,0.18,0.4,0.12
+filter.cutoff=0.35 filter.reso=0.6 filter.env=0.4 filter.adsr=0.005,0.25,0.3,0.2
+amp = 0.8

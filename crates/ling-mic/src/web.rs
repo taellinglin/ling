@@ -14,4 +14,5 @@ impl WebMic {
     pub fn peak(&self) -> f32 { 0.0 }
     pub fn rms(&self)  -> f32 { 0.0 }
     pub fn latest_samples(&self) -> Vec<f32> { Vec::new() }
+    pub fn sample_rate(&self) -> u32 { 44_100 }
 }

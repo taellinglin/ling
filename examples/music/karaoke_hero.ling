@@ -1,0 +1,164 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# KARAOKE HERO — "Underneath the Silver Sky"
+#   • the full mix plays; the Vocal MIDI becomes scrolling target-note bars
+#     (Karaoke-Hero style) that flow right→left across a NOW line.
+#   • sing into the mic: your live pitch draws a trailing line over the bars and
+#     a tuner in the corner shows your note + cents + mic volume.
+#   • the background reacts to the music's FFT. (Needs a mic for scoring; the
+#     bars/visuals run regardless.)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(1200, 700)
+    # Exo 2 — clean, professional, legible (downloaded from Google Fonts)
+    bind ui = font_load("assets/fonts/Exo2.ttf", 600.0)
+    if ui < 0.0 { bind ui = font_load("../../assets/fonts/Exo2.ttf", 600.0) }
+    mic_open()
+
+    bind wav = music_load("assets/music/Underneath the Silver Sky.wav")
+    if wav < 0.0 { bind wav = music_load("../../assets/music/Underneath the Silver Sky.wav") }
+    bind voc = music_midi_load("assets/music/Underneath_the_Silver_Sky_Vocal.mid")
+    if voc < 0.0 { bind voc = music_midi_load("../../assets/music/Underneath_the_Silver_Sky_Vocal.mid") }
+    bind bars = music_midi_bars(voc)
+    bind nbar = len(bars) / 3.0
+
+    music_volume(0.85)
+    music_play(wav)
+    music_seek(29.0)            # jump to where the vocal comes in
+
+    bind LO = 46.0  bind RANGE = 20.0
+    bind TOP = 150.0  bind BOT = 540.0  bind PH = BOT - TOP
+    bind NOWX = 380.0  bind PPS = 210.0
+    bind LN2 = log(2.0)
+    # the vocal MIDI runs ~1s ahead of the recorded vocal — push the bars later to sync
+    bind SYNC = 1.0
+
+    # pitch-trail shift register (most-recent first)
+    bind py0=345.0 bind py1=345.0 bind py2=345.0 bind py3=345.0 bind py4=345.0 bind py5=345.0
+    bind score = 0.0
+    bind acc = 0.0
+
+    while window_is_open() {
+        bind t = time_now()
+        bind pos = music_pos()
+        bind bands = music_fft(wav, 24.0)
+
+        # ── background: FFT spectrum ribbon + hue wash + drifting stars ──
+        set_color(6, 6, 14)
+        fill()
+        set_blend(1)
+        bind bi = 0.0
+        while bi < 24.0 {
+            bind h = bands[bi] * 4.0
+            bind bx = bi / 24.0 * 1200.0
+            bind hue = t * 0.15 + bi * 0.04
+            set_color((sin(hue*6.283)*0.5+0.5)*90.0+10.0, (sin(hue*6.283+2.0)*0.5+0.5)*90.0+10.0, (sin(hue*6.283+4.0)*0.5+0.5)*90.0+10.0)
+            draw_line(bx, 700.0, bx, 700.0 - h * 240.0)
+            bind bi = bi + 1.0
+        }
+        bind sN = 0.0
+        while sN < 40.0 {
+            bind sx = sN * 137.0 - floor((sN * 137.0 + pos * 60.0) / 1200.0) * 1200.0 + 1200.0
+            bind sx = sx - floor(sx / 1200.0) * 1200.0
+            bind sy = sin(sN * 2.3) * 320.0 + 350.0
+            set_color(60, 70, 110)
+            draw_disc(sx, sy, 1.5)
+            bind sN = sN + 1.0
+        }
+
+        # ── staff guide lines (every 4 semitones) ──
+        set_color(30, 40, 70)
+        bind g = 0.0
+        while g < 6.0 {
+            bind gm = LO + g * 4.0
+            bind gy = BOT - (gm - LO) / RANGE * PH
+            draw_line(0.0, gy, 1200.0, gy)
+            bind g = g + 1.0
+        }
+
+        # ── target note bars (Karaoke Hero) ──
+        bind targetMidi = 0.0
+        bind i = 0.0
+        while i < len(bars) {
+            bind nt = bars[i] + SYNC
+            bind nm = bars[i + 1.0]
+            bind nd = bars[i + 2.0]
+            bind x0 = NOWX + (nt - pos) * PPS
+            bind x1 = NOWX + (nt + nd - pos) * PPS
+            if x1 > 0.0 { if x0 < 1200.0 {
+                bind by = BOT - (nm - LO) / RANGE * PH
+                # active note straddles the NOW line
+                if nt < pos + 0.02 { if nt + nd > pos { bind targetMidi = nm } }
+                if x0 < NOWX { if x1 > NOWX {
+                    ui_bar(x0, by - 9.0, x1 - x0, 18.0, 1.0, 1.0, 60.0, 255.0, 170.0)
+                } else {
+                    ui_bar(x0, by - 7.0, x1 - x0, 14.0, 1.0, 1.0, 70.0, 150.0, 255.0)
+                } }
+            } }
+            bind i = i + 3.0
+        }
+
+        # ── NOW line ──
+        set_color(255, 240, 120)
+        draw_line(NOWX, TOP - 20.0, NOWX, BOT + 20.0)
+
+        # ── your live pitch ──
+        bind micHz = music_mic_pitch()
+        bind vol = mic_rms()
+        bind micMidi = 0.0
+        if micHz > 20.0 { bind micMidi = 69.0 + 12.0 * log(micHz / 440.0) / LN2 }
+        bind myY = py0
+        if micHz > 20.0 { bind myY = BOT - (micMidi - LO) / RANGE * PH }
+        # shift the trail
+        bind py5 = py4  bind py4 = py3  bind py3 = py2  bind py2 = py1  bind py1 = py0  bind py0 = myY
+        # match colour: green when near the target note, else pink
+        bind good = 0.0
+        if micHz > 20.0 { if targetMidi > 0.5 {
+            bind d = micMidi - targetMidi
+            bind d = d - floor(d / 12.0 + 0.5) * 12.0
+            if d < 0.0 { bind d = 0.0 - d }
+            if d < 0.6 { bind good = 1.0 }
+        } }
+        if good > 0.5 { set_color(60, 255, 120) } else { set_color(255, 120, 190) }
+        bind step = 26.0
+        draw_line(NOWX, py0, NOWX - step, py1)
+        draw_line(NOWX - step, py1, NOWX - step*2.0, py2)
+        draw_line(NOWX - step*2.0, py2, NOWX - step*3.0, py3)
+        draw_line(NOWX - step*3.0, py3, NOWX - step*4.0, py4)
+        draw_line(NOWX - step*4.0, py4, NOWX - step*5.0, py5)
+        if micHz > 20.0 { draw_disc(NOWX, py0, 6.0) }
+
+        # scoring
+        if good > 0.5 { bind score = score + 1.0 }
+        bind acc = acc * 0.96 + good * 0.04
+
+        # ── title ──
+        set_color(0, 230, 255)
+        if ui < 0.0 { ui_text(36.0, 22.0, 22.0, "KARAOKE HERO") } else { font_text_fill(ui, 36.0, 22.0, 26.0, "KARAOKE HERO") }
+        ui_counter(1020.0, 22.0, 14.0, 24.0, score, 5.0)
+
+        # ── tuner (top-right corner) ──
+        bind tx = 900.0  bind ty = 90.0
+        set_color(40, 60, 95)
+        ui_panel(tx, ty, 270.0, 120.0, 10.0)
+        # note name being sung
+        set_color(190, 235, 255)
+        if ui < 0.0 { } else { font_text_fill(ui, tx + 18.0, ty + 16.0, 40.0, music_note_name(micHz)) }
+        # cents needle
+        bind nearest = floor(micMidi + 0.5)
+        bind cents = (micMidi - nearest) * 100.0
+        bind cx = tx + 135.0
+        set_color(60, 90, 130)
+        draw_line(tx + 20.0, ty + 86.0, tx + 250.0, ty + 86.0)
+        draw_line(cx, ty + 78.0, cx, ty + 94.0)
+        if micHz > 20.0 {
+            if good > 0.5 { set_color(60, 255, 120) } else { set_color(255, 150, 90) }
+            draw_disc(cx + cents * 1.1, ty + 86.0, 6.0)
+        }
+        # mic volume bar
+        ui_bar(tx + 20.0, ty + 100.0, 230.0, 10.0, vol * 3.0, 1.0, 0.0, 220.0, 255.0)
+
+        set_blend(0)
+        present()
+    }
+}
