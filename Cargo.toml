@@ -115,6 +115,10 @@ glam = "0.28"
 ling-physics = { path = "crates/ling-physics", version = "2030.1" }
 ling-graphics = { path = "crates/ling-graphics", version = "2030.0.1" }
 ling-game = { path = "crates/ling-game", version = "2030.1" }
+ling-mir = { workspace = true }
+ling-ast = { workspace = true }
+ling-core = { workspace = true }
+ling-codegen = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"

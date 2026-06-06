@@ -15,6 +15,7 @@ impl LexiconRegistry {
         static REG: once_cell_stub::OnceCell<LexiconRegistry> = once_cell_stub::OnceCell::new();
         REG.get_or_init(|| LexiconRegistry)
     }
+
     pub fn translate(&self, text: &str, _from: &str, _to: &str) -> String {
         text.to_string()
     }
@@ -28,6 +29,7 @@ mod once_cell_stub {
         pub const fn new() -> Self {
             Self(OnceLock::new())
         }
+
         pub fn get_or_init(&'static self, f: impl FnOnce() -> T) -> &'static T {
             self.0.get_or_init(f)
         }
@@ -36,4 +38,3 @@ mod once_cell_stub {
 
 #[derive(Clone, Debug)]
 pub struct CanonicalToken(pub String);
-

@@ -1,9 +1,16 @@
-/* Placeholder module: crates/ling-core/src/types.rs */
-
-#[derive(Debug, Clone)]
-pub struct Type;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type {
+    Int,
+    Float,
+    Bool,
+    Str,
+    Unit,
+    List(Box<Type>),
+    Tuple(Vec<Type>),
+    Fn(Vec<Type>, Box<Type>),
+    Var(usize),
+    Any,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(pub u32);
-
-

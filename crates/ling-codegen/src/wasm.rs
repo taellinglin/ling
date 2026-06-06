@@ -9,7 +9,7 @@ pub struct WasmBackend {
 
 impl WasmBackend {
     pub fn new() -> Self {
-        let mut buf = vec![
+        let buf = vec![
             0x00, 0x61, 0x73, 0x6D, // magic: \0asm
             0x01, 0x00, 0x00, 0x00, // version: 1
         ];

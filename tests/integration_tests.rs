@@ -2,8 +2,9 @@ use ling::{CompilerConfig, LingCompiler};
 use std::path::PathBuf;
 
 fn temp_output_dir() -> PathBuf {
-    let mut p = std::env::temp_dir();
-    p.push("ling-tests-output");
+    let mut p = std::env::current_dir().unwrap();
+    p.push("target");
+    p.push("ling-test-output-user");
     let _ = std::fs::remove_dir_all(&p);
     std::fs::create_dir_all(&p).unwrap();
     p

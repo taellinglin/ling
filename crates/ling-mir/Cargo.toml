@@ -11,4 +11,5 @@ repository = "https://github.com/taellinglin/ling"
 ling-core = { path = "../ling-core", version = "2030.0.0" }
 ling-ast  = { path = "../ling-ast",  version = "2030.0.0" }
 anyhow = "1.0"
+rustc-hash = "2.0"
 

@@ -5,4 +5,3 @@ pub use crate::token::Token;
 
 mod lexer;
 mod token;
-mod lexicon;

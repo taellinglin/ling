@@ -1,15 +1,12 @@
-// src/semantic/mod.rs
 mod resolver;
-mod typeck;
-mod symbol;
 mod scope;
+mod symbol;
+mod typeck;
 
+use crate::core::LingResult;
 use crate::parser::ast::Program;
 use crate::semantic::typeck::TypeChecker;
-use crate::core::LingResult;
 
-// Semantic pipeline is WIP; provide a stub so the crate builds.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct SemanticAnalyzer {
     type_checker: TypeChecker,
@@ -17,13 +14,10 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        Self {
-            type_checker: TypeChecker::new(),
-        }
+        Self { type_checker: TypeChecker::new() }
     }
 
-    pub fn analyze(&mut self, _program: &Program) -> LingResult<()> {
-        Ok(())
+    pub fn analyze(&mut self, program: &Program) -> LingResult<()> {
+        self.type_checker.check(program)
     }
 }
-
