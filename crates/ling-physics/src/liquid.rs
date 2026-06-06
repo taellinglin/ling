@@ -12,12 +12,29 @@
 pub const WATER: i32 = 0;
 pub const OIL: i32 = 1;
 
+/// HSV → packed 0x00RRGGBB (h,s,v in 0..1).
+fn hsv(h: f32, s: f32, v: f32) -> u32 {
+    let h6 = (h.rem_euclid(1.0)) * 6.0;
+    let c = v * s;
+    let x = c * (1.0 - (h6 % 2.0 - 1.0).abs());
+    let m = v - c;
+    let (r, g, b) = match h6 as i32 {
+        0 => (c, x, 0.0), 1 => (x, c, 0.0), 2 => (0.0, c, x),
+        3 => (0.0, x, c), 4 => (x, 0.0, c), _ => (c, 0.0, x),
+    };
+    let f = |t: f32| (((t + m) * 255.0).clamp(0.0, 255.0)) as u32;
+    (f(r) << 16) | (f(g) << 8) | f(b)
+}
+
 pub struct LiquidGrid {
     pub w: usize,
     pub h: usize,
     pub wrap: bool,
     pub gx: f32,        // gravity direction (cells/s²-ish), rotate it to slosh
     pub gy: f32,
+    /// ROYGBIV mode: colour the fluid by a flowing rainbow instead of water/oil.
+    pub rainbow: bool,
+    pub phase: f32,     // advances each step to animate the rainbow
     vx: Vec<f32>, vy: Vec<f32>,
     water: Vec<f32>, oil: Vec<f32>,
     // scratch
@@ -29,6 +46,7 @@ impl LiquidGrid {
         let n = w.max(2) * h.max(2);
         Self {
             w: w.max(2), h: h.max(2), wrap: true, gx: 0.0, gy: 60.0,
+            rainbow: false, phase: 0.0,
             vx: vec![0.0; n], vy: vec![0.0; n],
             water: vec![0.0; n], oil: vec![0.0; n],
             s0: vec![0.0; n], s1: vec![0.0; n], p: vec![0.0; n], div: vec![0.0; n],
@@ -125,6 +143,7 @@ impl LiquidGrid {
     /// Advance the simulation by `dt` seconds.
     pub fn step(&mut self, dt: f32) {
         let n = self.w * self.h;
+        self.phase += dt * 0.25; // animate the rainbow
         // gravity + buoyancy: water (1.0) is heavier than oil (0.55) → along
         // gravity water sinks and oil floats, separating them at an interface.
         for i in 0..n {
@@ -178,6 +197,15 @@ impl LiquidGrid {
         let i = self.idx(x.min(self.w - 1), y.min(self.h - 1));
         let wv = self.water[i].min(1.0);
         let ov = self.oil[i].min(1.0);
+        if self.rainbow {
+            // ROYGBIV: hue flows across the grid + over time; the fluid interface
+            // (oil vs water) bends the hue so the marble swirls trippily.
+            let cover = (wv + ov).min(1.0);
+            if cover < 0.01 { return 0x05060E; }
+            let hue = (x as f32 / self.w as f32 + y as f32 / self.h as f32 * 0.5
+                       + self.phase + ov * 0.6).fract();
+            return hsv(hue, 0.95, (0.25 + cover * 0.75).min(1.0));
+        }
         // base colours
         let (wr, wg, wb) = (40.0, 110.0, 235.0);  // water (blue)
         let (or_, og, ob) = (240.0, 175.0, 45.0); // oil (amber)

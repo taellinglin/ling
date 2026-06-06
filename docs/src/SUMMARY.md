@@ -25,6 +25,7 @@
 - [Builtins — Vector Fonts](reference/fonts.md)
 - [Builtins — UI Toolkit](reference/ui.md)
 - [Builtins — Physics](reference/physics.md)
+- [Builtins — Dialog](reference/dialog.md)
 - [Builtins — Window & Camera](reference/window.md)
 
 ---

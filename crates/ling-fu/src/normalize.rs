@@ -458,6 +458,20 @@ static BUILTINS_PHYSICS_FN: &[Entry] = &[
     (&["liquid_step","液体步进","液体更新","액체스텝","ก้าวของเหลว"],         ["liquid_step","液体步进","液体更新","액체스텝","ก้าวของเหลว"]),
     (&["liquid_draw","绘制液体","液体描画","액체그리기","วาดของเหลว"],        ["liquid_draw","绘制液体","液体描画","액체그리기","วาดของเหลว"]),
     (&["liquid_draw_surface","液体贴面","液体曲面","액체곡면","ของเหลวบนพื้นผิว"],["liquid_draw_surface","液体贴面","液体曲面","액체곡면","ของเหลวบนพื้นผิว"]),
+    (&["liquid_rainbow","液体彩虹","液体虹","액체무지개","ของเหลวสายรุ้ง"],     ["liquid_rainbow","液体彩虹","液体虹","액체무지개","ของเหลวสายรุ้ง"]),
+    (&["sparkle","闪光","きらめき","반짝임","ประกาย"],                          ["sparkle","闪光","きらめき","반짝임","ประกาย"]),
+];
+
+// Builtins — cinematic dialog (ling-game/dialog.rs)
+static BUILTINS_DIALOG: &[Entry] = &[
+    (&["dialog_show","对话显示","会話表示","대화표시","แสดงบทสนทนา"],          ["dialog_show","对话显示","会話表示","대화표시","แสดงบทสนทนา"]),
+    (&["dialog_step","对话步进","会話更新","대화스텝","ก้าวบทสนทนา"],          ["dialog_step","对话步进","会話更新","대화스텝","ก้าวบทสนทนา"]),
+    (&["dialog_advance","对话推进","会話送り","대화진행","เลื่อนบทสนทนา"],      ["dialog_advance","对话推进","会話送り","대화진행","เลื่อนบทสนทนา"]),
+    (&["dialog_active","对话激活","会話中","대화중","บทสนทนาทำงาน"],           ["dialog_active","对话激活","会話中","대화중","บทสนทนาทำงาน"]),
+    (&["dialog_typing","对话打字","会話タイプ中","대화타이핑","กำลังพิมพ์บทสนทนา"],["dialog_typing","对话打字","会話タイプ中","대화타이핑","กำลังพิมพ์บทสนทนา"]),
+    (&["dialog_close","对话关闭","会話閉じる","대화닫기","ปิดบทสนทนา"],         ["dialog_close","对话关闭","会話閉じる","대화닫기","ปิดบทสนทนา"]),
+    (&["dialog_color","对话颜色","会話色","대화색","สีบทสนทนา"],               ["dialog_color","对话颜色","会話色","대화색","สีบทสนทนา"]),
+    (&["dialog_draw","对话绘制","会話描画","대화그리기","วาดบทสนทนา"],          ["dialog_draw","对话绘制","会話描画","대화그리기","วาดบทสนทนา"]),
 ];
 
 // Vocabulary — project/domain words used in filenames and folder names ─────
@@ -639,7 +653,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

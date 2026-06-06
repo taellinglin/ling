@@ -323,6 +323,8 @@ fn put_px(buf: &mut [u32], idx: usize, color: u32, blend: u8) {
 }
 
 fn draw_circle_outline(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
+    let r = r.clamp(0, 20000); // guard against overflow / runaway from tiny depths
+    if r == 0 { return; }
     let mut x = 0;
     let mut y = r;
     let mut d = 3 - 2 * r;
@@ -4011,6 +4013,14 @@ impl Interpreter {
                 if let Some(g)=self.liquids.get_mut(id) { g.step(dt); }
                 return Ok(Value::Unit);
             }
+            // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let on=self.arg_num(&args,1,1.0)? > 0.5;
+                if let Some(g)=self.liquids.get_mut(id) { g.rainbow = on; }
+                return Ok(Value::Unit);
+            }
             // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
             #[cfg(not(target_arch = "wasm32"))]
             "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" => {
@@ -4157,8 +4167,10 @@ impl Interpreter {
             }
             #[cfg(not(target_arch = "wasm32"))]
             "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" => {
-                let a = self.dialog.as_ref().map(|d| !d.is_closed() && d.is_typing()).unwrap_or(false);
-                return Ok(Value::Bool(a));
+                use ling_game::dialog::Dialog;
+                
+                let a = self.dialog.as_ref().map(|d: &Dialog | !d.is_closed() && d.is_typing()).unwrap_or(false);
+                return Ok(Value::Bool(a))
             }
             #[cfg(not(target_arch = "wasm32"))]
             "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" => {

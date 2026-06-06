@@ -1,0 +1,117 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# SOUL — a trippy ROYGBIV liquid marble you can roll around an infinite plane.
+#   • the marble's skin is a live water/oil liquid sim in rainbow (ROYGBIV) mode
+#   • a rapidly colour-cycling vector ring overlay glows on top (additive — the
+#     liquid shows underneath)
+#   • it HUMS: a ling-audio tone whose pitch follows the colour cycle and whose
+#     volume rises with motion + squash
+#   • WASD rolls it, SPACE jumps + double-jumps; it deforms (soft body) and
+#     bounces off the ground with springy restitution
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind start = do {
+    open_window(1000, 720)
+    set_ambient(0.4)
+    set_zdist(9.0)
+    audio_volume(0.6)
+
+    bind R = 1.4
+    bind GROUND = 3.0                       # +y is down, so the floor is below
+    bind ball = soft_ball(0.0, 0.0 - 2.0, 0.0, R)
+    soft_kick(ball, 0.4, 0.0, 0.3, 0.06)
+
+    # the marble's liquid skin (ROYGBIV)
+    bind liq = liquid_new(56.0, 56.0)
+    liquid_rainbow(liq, 1.0)
+    bind sx = 0.0
+    while sx < 56.0 {
+        liquid_splat(liq, sx, 18.0, 1.0, 0.9, 2.2)   # oil band
+        liquid_splat(liq, sx, 38.0, 0.0, 1.0, 2.4)   # water band
+        bind sx = sx + 3.0
+    }
+
+    bind jumps = 0.0
+    bind wasSpace = 0.0
+    bind px = 0.0  bind py = 0.0  bind pz = 0.0     # previous centroid (for speed)
+
+    while window_is_open() {
+        bind t = time_now()
+
+        # ── input: WASD roll, SPACE jump/double-jump ──
+        if key_down("a") { soft_kick(ball, 0.0-1.0, 0.0, 0.0, 0.04) }
+        if key_down("d") { soft_kick(ball, 1.0, 0.0, 0.0, 0.04) }
+        if key_down("w") { soft_kick(ball, 0.0, 0.0, 0.0-1.0, 0.04) }
+        if key_down("s") { soft_kick(ball, 0.0, 0.0, 1.0, 0.04) }
+        bind sp = 0.0
+        if key_down("space") { bind sp = 1.0 }
+        if sp > 0.5 { if wasSpace < 0.5 { if jumps < 2.0 { soft_kick(ball, 0.0, 0.0-1.0, 0.0, 0.30)  bind jumps = jumps + 1.0 } } }
+        bind wasSpace = sp
+
+        # ── physics: gravity, ground bounce (springy, deforms on impact) ──
+        soft_step(ball, 0.016, 12.0)
+        soft_bounce(ball, GROUND, 0.72)
+
+        bind c = soft_centroid(ball)
+        bind cx = c[0.0]  bind cy = c[1.0]  bind cz = c[2.0]
+        # grounded? reset the jump counter when resting on the floor
+        if cy + R > GROUND - 0.25 { bind jumps = 0.0 }
+        # slosh the marble's liquid in the direction it's moving
+        bind vx = cx - px  bind vy = cy - py  bind vz = cz - pz
+        bind speed = sqrt(vx*vx + vy*vy + vz*vz)
+        liquid_gravity(liq, 30.0 + vx*900.0, 50.0 + vy*900.0)
+        liquid_step(liq, 0.016)
+        bind def = soft_deform(ball)
+
+        # ── the HUM: pitch follows the colour cycle, volume follows motion+squash ──
+        bind hue = t * 1.3 - floor(t * 1.3)
+        bind freq = 140.0 + hue * 320.0
+        bind amp = 0.05 + speed * 6.0 + def * 0.4
+        if amp > 0.5 { bind amp = 0.5 }
+        audio_tone(0.0, 0.0, cy, 0.0, 1.0 + hue*3.0, freq, amp, 5.0, 0.04)
+        audio_listener(1.0, 0.0, cos(0.2), sin(0.2))
+
+        # ── render: ground grid (scrolls with the marble), then marble, then overlay ──
+        set_color(6, 6, 14)
+        fill()
+        set_camera(1.0, 0.0, cos(0.2), sin(0.2))
+        set_ambient(0.4)
+        set_blend(1)
+
+        # infinite ground: a grid centred under the marble (world offset by -cx,-cz)
+        set_color(40, 55, 95)
+        bind offx = cx - floor(cx / 2.0) * 2.0
+        bind offz = cz - floor(cz / 2.0) * 2.0
+        bind g = 0.0 - 12.0
+        while g <= 12.0 {
+            draw_line_3d(g - offx, GROUND, 0.0-12.0 - offz,  g - offx, GROUND, 12.0 - offz)
+            draw_line_3d(0.0-12.0 - offx, GROUND, g - offz,  12.0 - offx, GROUND, g - offz)
+            bind g = g + 2.0
+        }
+        flush_3d()
+
+        # the marble: liquid sphere drawn at the ball's height, centred (camera follows x/z)
+        liquid_draw_surface(liq, 1.0, 0.0, cy, 0.0, R * (1.0 + def*0.4), R)
+
+        # ── rapidly colour-cycling vector ring overlay (additive → liquid shows) ──
+        bind sc = project_3d(0.0, cy, 0.0)
+        if sc[0.0] > 0.0 - 90000.0 {
+            bind ssx = sc[0.0]  bind ssy = sc[1.0]  bind depth = sc[2.0]
+            bind rpx = R * 520.0 / depth
+            if rpx > 600.0 { bind rpx = 600.0 }
+            if rpx < 8.0 { bind rpx = 8.0 }
+            bind ring = 0.0
+            while ring < 7.0 {
+                bind rh = t * 2.2 + ring * 0.14         # fast ROYGBIV cycle
+                set_color((sin(rh*6.283)*0.5+0.5)*255.0, (sin(rh*6.283+2.094)*0.5+0.5)*255.0, (sin(rh*6.283+4.188)*0.5+0.5)*255.0)
+                draw_circle(ssx, ssy, rpx * (0.3 + ring * 0.12))
+                bind ring = ring + 1.0
+            }
+            # twinkles around the soul
+            sparkle(ssx - rpx, ssy - rpx, rpx*2.0, rpx*2.0, 36.0, t)
+        }
+
+        bind px = cx  bind py = cy  bind pz = cz
+        set_blend(0)
+        present()
+    }
+}
