@@ -127,13 +127,15 @@ impl MoveElision {
     ) -> bool {
         if let Operand::Copy(local) = op {
             if !live_after.contains(local) {
-                let decl = &locals[local.0];
-                if decl.ty.is_move_type() && decl.is_owning {
-                    *op = Operand::Move(*local);
-                    return true;
+                if let Some(decl) = locals.get(local.0) {
+                    if decl.ty.is_move_type() && decl.is_owning {
+                        *op = Operand::Move(*local);
+                        return true;
+                    }
                 }
             }
         }
         false
     }
 }
+

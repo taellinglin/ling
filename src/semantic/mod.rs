@@ -2,6 +2,7 @@ mod resolver;
 mod scope;
 mod symbol;
 mod typeck;
+mod builtins;
 
 use crate::core::LingResult;
 use crate::parser::ast::Program;

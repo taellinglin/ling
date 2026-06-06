@@ -2,6 +2,7 @@ use crate::core::LingResult;
 use crate::parser::ast;
 use ling_core::types::Type;
 use std::collections::HashMap;
+use super::builtins::is_builtin;
 
 type TypeEnv = HashMap<String, (Type, Vec<usize>)>;
 
@@ -76,7 +77,7 @@ impl TypeChecker {
         );
         env.insert(
             "int".into(),
-            (Type::Fn(vec![Type::Str], Box::new(Type::Float)), vec![]),
+            (Type::Fn(vec![Type::Any], Box::new(Type::Float)), vec![]),
         );
         env.insert(
             "str".into(),
@@ -224,14 +225,18 @@ impl TypeChecker {
     }
 
     fn lookup_env(&mut self, name: &str, env: &TypeEnv) -> Option<Type> {
-        env.get(name).map(|(t, generic)| {
+        if let Some((t, generic)) = env.get(name) {
             if generic.is_empty() {
-                self.subst(t)
+                Some(self.subst(t))
             } else {
                 let substituted = self.subst(t);
-                self.instantiate(&substituted, generic)
+                Some(self.instantiate(&substituted, generic))
             }
-        })
+        } else if is_builtin(name) {
+            Some(Type::Any)
+        } else {
+            None
+        }
     }
 
     fn unify(&mut self, a: Type, b: Type) {
