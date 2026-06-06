@@ -1,6 +1,6 @@
 [package]
 name = "ling-physics"
-version = "2030.1.4"
+version = "2030.1.5"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
 description = "Physics, world generation, and hyperbolic geometry for Ling"
