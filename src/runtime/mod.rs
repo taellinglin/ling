@@ -3989,6 +3989,14 @@ impl Interpreter {
                 let d=self.soft_bodies.get(id).map(|b| b.deformation()).unwrap_or(0.0);
                 return Ok(Value::Number(d as f64));
             }
+            // soft_angular_speed(id) -> magnitude of the body's angular velocity
+            // (how fast it is tumbling/rolling), derived from its node velocities.
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_angular_speed" | "软体角速" | "ソフト角速度" | "소프트각속도" | "ความเร็วเชิงมุมนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let w=self.soft_bodies.get(id).map(|b| b.angular_speed()).unwrap_or(0.0);
+                return Ok(Value::Number(w as f64));
+            }
             #[cfg(not(target_arch = "wasm32"))]
             "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" => {
                 let id=self.arg_num(&args,0,0.)? as usize;
@@ -4103,6 +4111,13 @@ impl Interpreter {
                 let on=self.arg_num(&args,1,1.0)? > 0.5;
                 if let Some(g)=self.liquids.get_mut(id) { g.rainbow = on; }
                 return Ok(Value::Unit);
+            }
+            // liquid_mix(id) -> 0 (oil/water separated) .. 1 (fully intermixed)
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let m=self.liquids.get(id).map(|g| g.mix_amount()).unwrap_or(0.0);
+                return Ok(Value::Number(m as f64));
             }
             // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
             #[cfg(not(target_arch = "wasm32"))]

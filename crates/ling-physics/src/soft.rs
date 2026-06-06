@@ -181,6 +181,39 @@ impl SoftBody {
         if count == 0.0 { Vec3::ZERO } else { sum / count }
     }
 
+    /// Mean (centre-of-mass) velocity of the body.
+    pub fn mean_velocity(&self) -> Vec3 {
+        let mut sum = Vec3::ZERO;
+        let mut count = 0.0f32;
+        for n in &self.nodes {
+            if n.vel.is_finite() { sum += n.vel; count += 1.0; }
+        }
+        if count == 0.0 { Vec3::ZERO } else { sum / count }
+    }
+
+    /// Approximate rigid angular velocity ω of the body, derived from the node
+    /// velocities: ω ≈ (Σ r × v) / (Σ |r|²) with r = node − centroid and v the
+    /// node velocity relative to the centre of mass. Tumbling/rolling shows up
+    /// here even though the body is soft.
+    pub fn angular_velocity(&self) -> Vec3 {
+        let c = self.centroid();
+        let cv = self.mean_velocity();
+        let mut l = Vec3::ZERO;
+        let mut inertia = 0.0f32;
+        for n in &self.nodes {
+            let r = n.pos - c;
+            let v = n.vel - cv;
+            l += r.cross(v);
+            inertia += r.length_squared();
+        }
+        if inertia > 1e-6 && l.is_finite() { l / inertia } else { Vec3::ZERO }
+    }
+
+    /// Magnitude of the angular velocity (spin rate).
+    pub fn angular_speed(&self) -> f32 {
+        self.angular_velocity().length()
+    }
+
     /// Deformation factor: 0 = perfect sphere, 1 = fully squished.
     pub fn deformation(&self) -> f32 {
         let c = self.centroid();

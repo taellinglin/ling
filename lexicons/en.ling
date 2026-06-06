@@ -398,3 +398,6 @@ dialog_draw = "dialog_draw"
 soft_spin = "soft_spin"
 
 orb_shell = "orb_shell"
+
+soft_angular_speed = "soft_angular_speed"
+liquid_mix = "liquid_mix"

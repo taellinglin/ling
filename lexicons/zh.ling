@@ -395,3 +395,6 @@ dialog_draw = "对话绘制"
 soft_spin = "软体自旋"
 
 orb_shell = "球壳"
+
+soft_angular_speed = "软体角速"
+liquid_mix = "液体混合"

@@ -395,3 +395,6 @@ dialog_draw = "会話描画"
 soft_spin = "ソフト回転"
 
 orb_shell = "オーブ殻"
+
+soft_angular_speed = "ソフト角速度"
+liquid_mix = "液体混合度"

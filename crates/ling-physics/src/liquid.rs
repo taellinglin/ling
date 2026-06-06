@@ -222,6 +222,23 @@ impl LiquidGrid {
 
     pub fn total_water(&self) -> f32 { self.water.iter().sum() }
     pub fn total_oil(&self) -> f32 { self.oil.iter().sum() }
+
+    /// How intermixed the two fluids are, `0` (fully separated) .. `1` (oil and
+    /// water coexist everywhere). Measured as the **interface fraction**: of all
+    /// cells holding fluid, what share hold *both* oil and water. It swings widely
+    /// as the churn interpenetrates them, which makes it useful as a control signal.
+    pub fn mix_amount(&self) -> f32 {
+        const EPS: f32 = 0.02;
+        let mut both = 0u32;
+        let mut any = 0u32;
+        for i in 0..self.water.len() {
+            let w = self.water[i] > EPS;
+            let o = self.oil[i] > EPS;
+            if w || o { any += 1; }
+            if w && o { both += 1; }
+        }
+        if any == 0 { 0.0 } else { (both as f32 / any as f32).clamp(0.0, 1.0) }
+    }
 }
 
 #[cfg(test)]
