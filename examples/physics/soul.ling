@@ -104,33 +104,22 @@ bind start = do {
         # the marble: liquid sphere drawn at the ball's height, centred (camera follows x/z)
         liquid_draw_surface(liq, 1.0, 0.0, cy, 0.0, R * (1.0 + def*0.4), R)
 
-        # ── outer shell: an ornate vector-filigree orb that spins around the marble.
-        # It's pure lines, so the fill between them is transparent and the liquid
-        # shows through the gaps. It rotates on its own + tilts with the ball's
-        # motion, and its filigree colour cycles through ROYGBIV.
-        bind shr = t * 1.7 - floor(t * 1.7)
-        bind sR = (sin(shr*6.283)*0.5+0.5)*200.0 + 50.0
-        bind sG = (sin(shr*6.283+2.094)*0.5+0.5)*200.0 + 50.0
-        bind sB = (sin(shr*6.283+4.188)*0.5+0.5)*200.0 + 50.0
-        orb_shell(0.0, cy, 0.0, R * 1.18, t * 0.9, t * 0.35 + vx * 4.0, 22.0, sR, sG, sB)
+        # ── outer shell: ONE trippy grayscale vector pattern wound around the orb.
+        # It's a guilloché weave of spirals whose brightness fades with depth
+        # (front bright, back dark) → a translucent grayscale "texture" with alpha,
+        # not a cage. It rolls with the ball (rot_y over time, rot_x tilts with vx)
+        # while the ROYGBIV liquid marble glows through underneath.
+        orb_shell(0.0, cy, 0.0, R * 1.16, t * 0.9, t * 0.35 + vx * 5.0, 11.0, 232.0, 232.0, 238.0)
         flush_3d()
 
-        # ── rapidly colour-cycling vector ring overlay (additive → liquid shows) ──
+        # ── a few twinkles around the soul ──
         bind sc = project_3d(0.0, cy, 0.0)
         if sc[0.0] > 0.0 - 90000.0 {
             bind ssx = sc[0.0]  bind ssy = sc[1.0]  bind depth = sc[2.0]
             bind rpx = R * 520.0 / depth
             if rpx > 600.0 { bind rpx = 600.0 }
             if rpx < 8.0 { bind rpx = 8.0 }
-            bind ring = 0.0
-            while ring < 7.0 {
-                bind rh = t * 2.2 + ring * 0.14         # fast ROYGBIV cycle
-                set_color((sin(rh*6.283)*0.5+0.5)*255.0, (sin(rh*6.283+2.094)*0.5+0.5)*255.0, (sin(rh*6.283+4.188)*0.5+0.5)*255.0)
-                draw_circle(ssx, ssy, rpx * (0.3 + ring * 0.12))
-                bind ring = ring + 1.0
-            }
-            # twinkles around the soul
-            sparkle(ssx - rpx, ssy - rpx, rpx*2.0, rpx*2.0, 36.0, t)
+            sparkle(ssx - rpx, ssy - rpx, rpx*2.0, rpx*2.0, 28.0, t)
         }
 
         bind px = cx  bind py = cy  bind pz = cz

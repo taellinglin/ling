@@ -1931,47 +1931,49 @@ impl Interpreter {
             }
 
             // orb_shell(cx,cy,cz, radius, rot_y, rot_x, density, r,g,b)
-            //   A rotating filigree SPHERE — an ornate lat/long net plus a diagonal
-            //   diamond interlace (Fabergé-egg style). It is pure vector lines, so
-            //   it reads as a black/transparent shell: whatever is inside (e.g. a
-            //   liquid marble) shows straight through the gaps. `rot_y`/`rot_x` spin
-            //   the texture around the orb; `density` sets the lat/long subdivisions.
+            //   A single trippy, grayscale, depth-faded vector pattern wound around
+            //   a sphere — two families of interleaved spherical spirals (a guilloché
+            //   weave), NOT a lat/long cage. Each segment's brightness follows its
+            //   facing (front bright, back dim), so it reads as a translucent
+            //   grayscale "texture" with alpha rather than a hard wireframe; the
+            //   inner marble shows through. `rot_y`/`rot_x` roll the texture around
+            //   the orb; `density` = spirals per winding direction. r,g,b tint it
+            //   (pass a gray like 230,230,230 for pure grayscale).
             #[cfg(not(target_arch = "wasm32"))]
             "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" => {
                 let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
                 let radius=self.arg_num(&args,3,1.0)? as f32;
                 let ry=self.arg_num(&args,4,0.)? as f32; let rx=self.arg_num(&args,5,0.)? as f32;
-                let density=(self.arg_num(&args,6,18.)? as i32).clamp(4, 96);
-                let cr=(self.arg_num(&args,7,180.)? as f32).clamp(0.,255.) as u32;
-                let cg=(self.arg_num(&args,8,210.)? as f32).clamp(0.,255.) as u32;
-                let cb=(self.arg_num(&args,9,255.)? as f32).clamp(0.,255.) as u32;
-                let color = (cr<<16)|(cg<<8)|cb;
-                let rings = density;            // latitude steps (incl. poles)
-                let sects = density;            // longitude steps
+                let density=(self.arg_num(&args,6,10.)? as i32).clamp(1, 48);
+                let tr=(self.arg_num(&args,7,230.)? as f32).clamp(0.,255.);
+                let tg=(self.arg_num(&args,8,230.)? as f32).clamp(0.,255.);
+                let tb=(self.arg_num(&args,9,235.)? as f32).clamp(0.,255.);
                 let (cyr, syr) = (ry.cos(), ry.sin());
                 let (cxr, sxr) = (rx.cos(), rx.sin());
                 let tau = std::f32::consts::TAU;
                 let pi = std::f32::consts::PI;
-                // a point on the unit sphere at (lat i, lon j), spun by ry/rx, in world space
-                let pt = |i: i32, j: i32| -> [f32;3] {
-                    let phi = pi * i as f32 / rings as f32;          // 0..pi
-                    let th  = tau * (j as f32 / sects as f32);       // 0..tau
-                    // scalloped radius for an engraved-egg feel
-                    let rr = radius * (1.0 + 0.06 * (th * 6.0).sin() * phi.sin());
-                    let (mut x, mut y, mut z) = (phi.sin()*th.cos()*rr, phi.cos()*rr, phi.sin()*th.sin()*rr);
-                    // yaw about Y
-                    let x1 =  x*cyr + z*syr;
+                let turns = 6.0_f32;            // how many times each spiral wraps pole→pole
+                let nseg  = 96;                 // segments per spiral (smoothness)
+                let inv_r = if radius.abs() > 1e-5 { 1.0 / radius } else { 0.0 };
+                // a point along a spiral (param u 0..1, start angle theta0, winding dir),
+                // spun by ry/rx — returns (world point, facing 0..1 where 1 = toward camera)
+                let pt = |u: f32, theta0: f32, dir: f32| -> ([f32;3], f32) {
+                    let phi = pi * u;                       // 0..pi  (north → south)
+                    let th  = dir * turns * tau * u + theta0;
+                    let (mut x, mut y, mut z) = (phi.sin()*th.cos()*radius, phi.cos()*radius, phi.sin()*th.sin()*radius);
+                    let x1 =  x*cyr + z*syr;                // yaw about Y
                     let z1 = -x*syr + z*cyr;
                     x = x1; z = z1;
-                    // pitch about X
-                    let y2 = y*cxr - z*sxr;
+                    let y2 = y*cxr - z*sxr;                 // pitch about X
                     let z2 = y*sxr + z*cxr;
-                    [cx + x, cy + y2, cz + z2]
+                    // facing: camera sits at -zdist looking +z, so smaller z2 = nearer = brighter
+                    let facing = (0.5 - 0.5 * z2 * inv_r).clamp(0.0, 1.0);
+                    ([cx + x, cy + y2, cz + z2], facing)
                 };
                 let mut gfx = self.gfx.borrow_mut();
                 let near = -gfx.camera.zdist + 0.05;
-                // draw one segment with near-plane clipping (same as draw_line_3d)
-                let mut seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3]| {
+                // draw one segment (near-clipped) in a grayscale tint scaled by `lum`
+                let mut seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3], lum: f32| {
                     let (mut lax,mut lay,mut laz)=(a[0],a[1],a[2]);
                     let (mut lbx,mut lby,mut lbz)=(b[0],b[1],b[2]);
                     let da=gfx.camera.depth(lax,lay,laz); let db=gfx.camera.depth(lbx,lby,lbz);
@@ -1980,15 +1982,22 @@ impl Interpreter {
                     else if db<=near { let t=(near-da)/(db-da); lbx=lax+t*(lbx-lax); lby=lay+t*(lby-lay); lbz=laz+t*(lbz-laz); }
                     let (sax,say,da2)=gfx.camera.project(lax,lay,laz);
                     let (sbx,sby,db2)=gfx.camera.project(lbx,lby,lbz);
+                    // grayscale-alpha: front-facing bright, back faded toward black
+                    let l = (0.12 + 0.88 * lum).clamp(0.0, 1.0);
+                    let cr=(tr*l) as u32; let cg=(tg*l) as u32; let cb=(tb*l) as u32;
+                    let color=(cr<<16)|(cg<<8)|cb;
                     gfx.depth_queue.push_line((da2+db2)*0.5, color, sax,say, sbx,sby);
                 };
-                for i in 0..rings {
-                    for j in 0..sects {
-                        let p   = pt(i, j);
-                        let pr  = pt(i, (j+1)%sects);     // next longitude (parallel)
-                        seg(&mut gfx, p, pr);
-                        if i < rings { let pd = pt(i+1, j); seg(&mut gfx, p, pd); }       // meridian
-                        if i < rings { let pdi = pt(i+1, (j+1)%sects); seg(&mut gfx, p, pdi); } // diagonal interlace
+                // two opposite winding directions → a soft guilloché weave (not a cage)
+                for &dir in &[1.0_f32, -1.0_f32] {
+                    for s in 0..density {
+                        let theta0 = s as f32 * tau / density as f32;
+                        let mut prev = pt(0.0, theta0, dir);
+                        for k in 1..=nseg {
+                            let cur = pt(k as f32 / nseg as f32, theta0, dir);
+                            seg(&mut gfx, prev.0, cur.0, (prev.1 + cur.1) * 0.5);
+                            prev = cur;
+                        }
                     }
                 }
                 return Ok(Value::Unit);
