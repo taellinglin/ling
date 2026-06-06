@@ -1930,6 +1930,70 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // orb_shell(cx,cy,cz, radius, rot_y, rot_x, density, r,g,b)
+            //   A rotating filigree SPHERE — an ornate lat/long net plus a diagonal
+            //   diamond interlace (Fabergé-egg style). It is pure vector lines, so
+            //   it reads as a black/transparent shell: whatever is inside (e.g. a
+            //   liquid marble) shows straight through the gaps. `rot_y`/`rot_x` spin
+            //   the texture around the orb; `density` sets the lat/long subdivisions.
+            #[cfg(not(target_arch = "wasm32"))]
+            "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
+                let radius=self.arg_num(&args,3,1.0)? as f32;
+                let ry=self.arg_num(&args,4,0.)? as f32; let rx=self.arg_num(&args,5,0.)? as f32;
+                let density=(self.arg_num(&args,6,18.)? as i32).clamp(4, 96);
+                let cr=(self.arg_num(&args,7,180.)? as f32).clamp(0.,255.) as u32;
+                let cg=(self.arg_num(&args,8,210.)? as f32).clamp(0.,255.) as u32;
+                let cb=(self.arg_num(&args,9,255.)? as f32).clamp(0.,255.) as u32;
+                let color = (cr<<16)|(cg<<8)|cb;
+                let rings = density;            // latitude steps (incl. poles)
+                let sects = density;            // longitude steps
+                let (cyr, syr) = (ry.cos(), ry.sin());
+                let (cxr, sxr) = (rx.cos(), rx.sin());
+                let tau = std::f32::consts::TAU;
+                let pi = std::f32::consts::PI;
+                // a point on the unit sphere at (lat i, lon j), spun by ry/rx, in world space
+                let pt = |i: i32, j: i32| -> [f32;3] {
+                    let phi = pi * i as f32 / rings as f32;          // 0..pi
+                    let th  = tau * (j as f32 / sects as f32);       // 0..tau
+                    // scalloped radius for an engraved-egg feel
+                    let rr = radius * (1.0 + 0.06 * (th * 6.0).sin() * phi.sin());
+                    let (mut x, mut y, mut z) = (phi.sin()*th.cos()*rr, phi.cos()*rr, phi.sin()*th.sin()*rr);
+                    // yaw about Y
+                    let x1 =  x*cyr + z*syr;
+                    let z1 = -x*syr + z*cyr;
+                    x = x1; z = z1;
+                    // pitch about X
+                    let y2 = y*cxr - z*sxr;
+                    let z2 = y*sxr + z*cxr;
+                    [cx + x, cy + y2, cz + z2]
+                };
+                let mut gfx = self.gfx.borrow_mut();
+                let near = -gfx.camera.zdist + 0.05;
+                // draw one segment with near-plane clipping (same as draw_line_3d)
+                let mut seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3]| {
+                    let (mut lax,mut lay,mut laz)=(a[0],a[1],a[2]);
+                    let (mut lbx,mut lby,mut lbz)=(b[0],b[1],b[2]);
+                    let da=gfx.camera.depth(lax,lay,laz); let db=gfx.camera.depth(lbx,lby,lbz);
+                    if da<=near && db<=near { return; }
+                    if da<=near { let t=(near-da)/(db-da); lax+=t*(lbx-lax); lay+=t*(lby-lay); laz+=t*(lbz-laz); }
+                    else if db<=near { let t=(near-da)/(db-da); lbx=lax+t*(lbx-lax); lby=lay+t*(lby-lay); lbz=laz+t*(lbz-laz); }
+                    let (sax,say,da2)=gfx.camera.project(lax,lay,laz);
+                    let (sbx,sby,db2)=gfx.camera.project(lbx,lby,lbz);
+                    gfx.depth_queue.push_line((da2+db2)*0.5, color, sax,say, sbx,sby);
+                };
+                for i in 0..rings {
+                    for j in 0..sects {
+                        let p   = pt(i, j);
+                        let pr  = pt(i, (j+1)%sects);     // next longitude (parallel)
+                        seg(&mut gfx, p, pr);
+                        if i < rings { let pd = pt(i+1, j); seg(&mut gfx, p, pd); }       // meridian
+                        if i < rings { let pdi = pt(i+1, (j+1)%sects); seg(&mut gfx, p, pdi); } // diagonal interlace
+                    }
+                }
+                return Ok(Value::Unit);
+            }
+
             // project_3d(x,y,z) -> [screen_x, screen_y, depth]; behind the camera
             // returns a sentinel ([-99999,-99999, depth]) so scripts can skip it.
             // Lets scripts place 2-D overlays (e.g. filled teardrop flames) onto 3-D points.
@@ -3898,6 +3962,16 @@ impl Interpreter {
                 let dx=self.arg_num(&args,1,0.)? as f32; let dy=self.arg_num(&args,2,0.)? as f32; let dz=self.arg_num(&args,3,0.)? as f32;
                 let s=self.arg_num(&args,4,0.1)? as f32;
                 if let Some(b)=self.soft_bodies.get_mut(id) { b.kick(ling_physics::Vec3::new(dx,dy,dz), s); }
+                return Ok(Value::Unit);
+            }
+            // soft_spin(id, ax, ay, az, rate) — add angular velocity about the axis
+            // through the centroid (rate = rad/step; ≈ surface_speed / radius to roll)
+            #[cfg(not(target_arch = "wasm32"))]
+            "soft_spin" | "软体自旋" | "ソフト回転" | "소프트회전" | "หมุนนุ่ม" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let ax=self.arg_num(&args,1,0.)? as f32; let ay=self.arg_num(&args,2,0.)? as f32; let az=self.arg_num(&args,3,0.)? as f32;
+                let rate=self.arg_num(&args,4,0.1)? as f32;
+                if let Some(b)=self.soft_bodies.get_mut(id) { b.spin(ling_physics::Vec3::new(ax,ay,az), rate); }
                 return Ok(Value::Unit);
             }
             #[cfg(not(target_arch = "wasm32"))]

@@ -126,19 +126,28 @@ impl SoftBody {
                 if !self.nodes[s.b].pinned { self.nodes[s.b].pos -= correction; }
             }
             // Shape-restoration: nudge each node toward `rest_radius` from the
-            // centroid so the ball stays round (squashes then recovers).
+            // centroid so the ball stays round (squashes then recovers). The
+            // displacements are de-meaned so the constraint preserves the centroid
+            // — otherwise an asymmetric/spinning body slowly translates itself
+            // (the marble "floating off" while you roll it).
             if self.rest_radius > 0.0 && self.shape_stiffness > 0.0 {
                 let c = self.centroid();
                 let k = self.shape_stiffness;
                 let r = self.rest_radius;
-                for n in &mut self.nodes {
-                    if n.pinned { continue; }
+                let inv_n = 1.0 / self.nodes.len().max(1) as f32;
+                let mut mean = Vec3::ZERO;
+                let mut disp: Vec<Vec3> = Vec::with_capacity(self.nodes.len());
+                for n in &self.nodes {
                     let d = n.pos - c;
                     let len = d.length();
-                    if len > 1e-5 {
-                        let target = c + d / len * r;
-                        n.pos += (target - n.pos) * k;
-                    }
+                    let dv = if len > 1e-5 { (c + d / len * r - n.pos) * k } else { Vec3::ZERO };
+                    mean += dv;
+                    disp.push(dv);
+                }
+                mean *= inv_n;
+                for (n, dv) in self.nodes.iter_mut().zip(disp) {
+                    if n.pinned { continue; }
+                    n.pos += dv - mean;
                 }
             }
         }
@@ -214,6 +223,38 @@ impl SoftBody {
         }
     }
 
+    /// Add angular velocity about `axis` (through the centroid): every node gains
+    /// the tangential velocity `ω × r` where `ω = axiŝ · rate` and `r` is the node
+    /// offset from the centroid. The springs resist the shear, so the body both
+    /// **spins/rolls and squashes** as it does. `rate` is the angular speed in
+    /// radians per step (for rolling-without-slip at surface speed `s` and radius
+    /// `R`, pass `rate = s / R`).
+    pub fn spin(&mut self, axis: Vec3, rate: f32) {
+        if axis.length_squared() < 1e-12 || rate.abs() < 1e-9 { return; }
+        let w = axis.normalize() * rate;
+        let c = self.centroid();
+        if !c.is_finite() { return; }
+        // Tangential velocity ω × r per node. The discrete sphere isn't perfectly
+        // symmetric, so the raw sum has a small bias that would translate the body
+        // (the marble "floating off" while you roll it). Subtract the mean so a
+        // spin is *pure rotation* — zero net linear momentum.
+        let inv_n = 1.0 / self.nodes.len().max(1) as f32;
+        let mut mean = Vec3::ZERO;
+        let mut tang: Vec<Vec3> = Vec::with_capacity(self.nodes.len());
+        for n in &self.nodes {
+            let v = w.cross(n.pos - c);
+            mean += v;
+            tang.push(v);
+        }
+        mean *= inv_n;
+        for (n, v) in self.nodes.iter_mut().zip(tang) {
+            if n.pinned { continue; }
+            // Verlet velocity is (pos - prev); bias prev backward by the (de-meaned)
+            // tangential velocity so the next step rotates the node forward.
+            n.prev_pos -= v - mean;
+        }
+    }
+
     /// Keep the body inside an axis-aligned box `[min,max]`, bouncing (and thus
     /// squashing) off every wall — a contained bouncy ball.
     pub fn contain(&mut self, min: Vec3, max: Vec3, restitution: f32) {
@@ -250,5 +291,29 @@ mod tests {
         assert!(c.y <= 3.0 + 1e-3, "ball must rest on/above the floor, y={}", c.y);
         assert!(b.deformation() >= 0.0 && b.deformation() <= 1.0);
         let _ = d0;
+    }
+
+    #[test]
+    fn spin_rolls_and_deforms_without_exploding() {
+        let mut b = SoftBody::sphere(Vec3::new(0.0, 0.0, 0.0), 1.0, 6, 8, 1.0);
+        // pick a node and remember its starting offset from the centroid
+        let c0 = b.centroid();
+        let start = b.nodes[2].pos - c0;
+        // spin about +z each step for a while (no gravity, no floor)
+        for _ in 0..40 {
+            b.spin(Vec3::Z, 0.15);
+            b.integrate(1.0 / 60.0, Vec3::ZERO, 4);
+        }
+        let c = b.centroid();
+        assert!(c.is_finite(), "centroid must stay finite, got {c:?}");
+        // spinning must not *explode* the body across the world (a little drift is
+        // fine — a deformed soft sphere isn't perfectly symmetric)
+        assert!(c.length() < 1.5, "spin should not fling the body: {c:?}");
+        // the marker node should have rotated tangentially (its xy direction moved)
+        let nowv = b.nodes[2].pos - c;
+        let moved = (nowv.normalize() - start.normalize()).length();
+        assert!(moved > 0.05, "node should have rotated, moved={moved}");
+        // and the shear should have deformed it a little
+        assert!(b.deformation() > 0.0 && b.deformation() <= 1.0);
     }
 }

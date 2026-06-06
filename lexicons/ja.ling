@@ -391,3 +391,7 @@ dialog_typing = "会話タイプ中"
 dialog_close = "会話閉じる"
 dialog_color = "会話色"
 dialog_draw = "会話描画"
+
+soft_spin = "ソフト回転"
+
+orb_shell = "オーブ殻"

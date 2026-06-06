@@ -391,3 +391,7 @@ dialog_typing = "대화타이핑"
 dialog_close = "대화닫기"
 dialog_color = "대화색"
 dialog_draw = "대화그리기"
+
+soft_spin = "소프트회전"
+
+orb_shell = "오브껍질"

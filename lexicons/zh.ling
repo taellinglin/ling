@@ -391,3 +391,7 @@ dialog_typing = "对话打字"
 dialog_close = "对话关闭"
 dialog_color = "对话颜色"
 dialog_draw = "对话绘制"
+
+soft_spin = "软体自旋"
+
+orb_shell = "球壳"

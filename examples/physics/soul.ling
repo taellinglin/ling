@@ -10,12 +10,12 @@
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 bind start = do {
-    open_window(1000, 720)
-    set_ambient(0.4)
-    set_zdist(9.0)
-    audio_volume(0.6)
+    open_window(1920, 1080)
+    set_ambient(0.2)
+    set_zdist(32.0)
+    audio_volume(0.5)
 
-    bind R = 1.4
+    bind R = 1.0
     bind GROUND = 3.0                       # +y is down, so the floor is below
     bind ball = soft_ball(0.0, 0.0 - 2.0, 0.0, R)
     soft_kick(ball, 0.4, 0.0, 0.3, 0.06)
@@ -37,11 +37,13 @@ bind start = do {
     while window_is_open() {
         bind t = time_now()
 
-        # ── input: WASD roll, SPACE jump/double-jump ──
-        if key_down("a") { soft_kick(ball, 0.0-1.0, 0.0, 0.0, 0.04) }
-        if key_down("d") { soft_kick(ball, 1.0, 0.0, 0.0, 0.04) }
-        if key_down("w") { soft_kick(ball, 0.0, 0.0, 0.0-1.0, 0.04) }
-        if key_down("s") { soft_kick(ball, 0.0, 0.0, 1.0, 0.04) }
+        # ── input: WASD roll (translate + spin so it tumbles & deforms), SPACE
+        # jump/double-jump. Roll axis = up × move_dir (screen-down up = −y), and
+        # the spin rate ≈ surface_speed / R so it rolls without obviously slipping.
+        if key_down("a") { soft_kick(ball, 0.0-1.0, 0.0, 0.0, 0.04)  soft_spin(ball, 0.0, 0.0, 0.0-1.0, 0.11) }
+        if key_down("d") { soft_kick(ball, 1.0, 0.0, 0.0, 0.04)      soft_spin(ball, 0.0, 0.0, 1.0, 0.11) }
+        if key_down("w") { soft_kick(ball, 0.0, 0.0, 0.0-1.0, 0.04)  soft_spin(ball, 1.0, 0.0, 0.0, 0.11) }
+        if key_down("s") { soft_kick(ball, 0.0, 0.0, 1.0, 0.04)      soft_spin(ball, 0.0-1.0, 0.0, 0.0, 0.11) }
         bind sp = 0.0
         if key_down("space") { bind sp = 1.0 }
         if sp > 0.5 { if wasSpace < 0.5 { if jumps < 2.0 { soft_kick(ball, 0.0, 0.0-1.0, 0.0, 0.30)  bind jumps = jumps + 1.0 } } }
@@ -101,6 +103,17 @@ bind start = do {
 
         # the marble: liquid sphere drawn at the ball's height, centred (camera follows x/z)
         liquid_draw_surface(liq, 1.0, 0.0, cy, 0.0, R * (1.0 + def*0.4), R)
+
+        # ── outer shell: an ornate vector-filigree orb that spins around the marble.
+        # It's pure lines, so the fill between them is transparent and the liquid
+        # shows through the gaps. It rotates on its own + tilts with the ball's
+        # motion, and its filigree colour cycles through ROYGBIV.
+        bind shr = t * 1.7 - floor(t * 1.7)
+        bind sR = (sin(shr*6.283)*0.5+0.5)*200.0 + 50.0
+        bind sG = (sin(shr*6.283+2.094)*0.5+0.5)*200.0 + 50.0
+        bind sB = (sin(shr*6.283+4.188)*0.5+0.5)*200.0 + 50.0
+        orb_shell(0.0, cy, 0.0, R * 1.18, t * 0.9, t * 0.35 + vx * 4.0, 22.0, sR, sG, sB)
+        flush_3d()
 
         # ── rapidly colour-cycling vector ring overlay (additive → liquid shows) ──
         bind sc = project_3d(0.0, cy, 0.0)

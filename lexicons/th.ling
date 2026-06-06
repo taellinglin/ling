@@ -444,3 +444,7 @@ dialog_typing = "กำลังพิมพ์บทสนทนา"
 dialog_close = "ปิดบทสนทนา"
 dialog_color = "สีบทสนทนา"
 dialog_draw = "วาดบทสนทนา"
+
+soft_spin = "หมุนนุ่ม"
+
+orb_shell = "เปลือกทรงกลม"

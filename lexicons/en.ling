@@ -394,3 +394,7 @@ dialog_typing = "dialog_typing"
 dialog_close = "dialog_close"
 dialog_color = "dialog_color"
 dialog_draw = "dialog_draw"
+
+soft_spin = "soft_spin"
+
+orb_shell = "orb_shell"
