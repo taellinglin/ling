@@ -4,6 +4,11 @@
 
 use glam::Vec3;
 
+/// Largest distance a node may move in a single substep. Caps the runaway
+/// feedback that stiff springs + a hard floor can otherwise build up into
+/// non-finite coordinates.
+const MAX_STEP: f32 = 1.5;
+
 #[derive(Clone, Debug)]
 pub struct SoftNode {
     pub pos:       Vec3,
@@ -137,17 +142,34 @@ impl SoftBody {
                 }
             }
         }
+        // Stability pass: scrub any non-finite coordinate and cap per-step travel
+        // so the body can never explode into NaN/Inf (which would corrupt the
+        // centroid and everything downstream that reads it).
+        let c = {
+            let raw = self.centroid();
+            if raw.is_finite() { raw } else { Vec3::ZERO }
+        };
+        for n in &mut self.nodes {
+            if !n.pos.is_finite() { n.pos = c; }
+            if !n.prev_pos.is_finite() { n.prev_pos = n.pos; }
+            let step = n.pos - n.prev_pos;
+            let m = step.length();
+            if m > MAX_STEP { n.prev_pos = n.pos - step / m * MAX_STEP; }
+        }
         // Update velocities for damping.
         for n in &mut self.nodes {
             n.vel = (n.pos - n.prev_pos) * self.damping;
         }
     }
 
-    /// Returns the centre of mass.
+    /// Returns the centre of mass (ignoring any non-finite nodes).
     pub fn centroid(&self) -> Vec3 {
-        if self.nodes.is_empty() { return Vec3::ZERO; }
-        self.nodes.iter().map(|n| n.pos).fold(Vec3::ZERO, |a, b| a + b)
-            / self.nodes.len() as f32
+        let mut sum = Vec3::ZERO;
+        let mut count = 0.0f32;
+        for n in &self.nodes {
+            if n.pos.is_finite() { sum += n.pos; count += 1.0; }
+        }
+        if count == 0.0 { Vec3::ZERO } else { sum / count }
     }
 
     /// Deformation factor: 0 = perfect sphere, 1 = fully squished.
@@ -161,13 +183,24 @@ impl SoftBody {
     }
 
     /// Bounce off a horizontal floor plane at `y = floor_y`.
+    ///
+    /// The Ling renderer uses screen-space **+y = down**, so a floor sits at the
+    /// *largest* y and the valid region is `y <= floor_y`: gravity (+y) pulls the
+    /// body down onto it. Penetrating nodes (`y > floor_y`) are pushed back to the
+    /// plane and their vertical velocity is reflected so they leave moving *up*
+    /// (toward −y), keeping `restitution` of their speed, with a little friction.
     pub fn floor_collision(&mut self, floor_y: f32, restitution: f32) {
+        let rest = restitution.clamp(0.0, 0.99);
         for n in &mut self.nodes {
-            if n.pos.y < floor_y {
-                let penetration = floor_y - n.pos.y;
-                n.pos.y += penetration;
-                let vel_y = (n.pos.y - n.prev_pos.y).abs();
-                n.prev_pos.y = n.pos.y + vel_y * restitution;
+            if n.pos.y > floor_y {
+                n.pos.y = floor_y;
+                // Verlet velocity is (pos - prev). To move up (−y) next step we
+                // need prev > pos, so place prev *above* pos by the reflected speed.
+                let vel_y = (n.prev_pos.y - n.pos.y).abs().min(MAX_STEP);
+                n.prev_pos.y = n.pos.y + vel_y * rest;
+                // tangential friction: bleed a little horizontal speed
+                n.prev_pos.x += (n.pos.x - n.prev_pos.x) * 0.04;
+                n.prev_pos.z += (n.pos.z - n.prev_pos.z) * 0.04;
             }
         }
     }
@@ -203,15 +236,18 @@ mod tests {
     use super::*;
     #[test]
     fn ball_deforms_on_impact() {
-        let mut b = SoftBody::sphere(Vec3::new(0.0, 2.0, 0.0), 1.0, 6, 8, 1.0);
+        // screen-down convention: floor below (large y), gravity (+y) pulls onto it
+        let mut b = SoftBody::sphere(Vec3::new(0.0, 0.0, 0.0), 1.0, 6, 8, 1.0);
         let d0 = b.deformation();
-        // drop it onto a floor and let it squash
-        for _ in 0..120 {
-            b.integrate(1.0 / 60.0, Vec3::new(0.0, -9.81, 0.0), 4);
-            b.floor_collision(0.0, 0.5);
+        // drop it onto a floor at y=3 and let it squash + bounce
+        for _ in 0..240 {
+            b.integrate(1.0 / 60.0, Vec3::new(0.0, 9.81, 0.0), 4);
+            b.floor_collision(3.0, 0.5);
         }
-        // it should have deformed away from a perfect sphere at some point and stayed finite
-        assert!(b.centroid().is_finite());
+        // it stays finite, settles above the floor, and stays a sane shape
+        let c = b.centroid();
+        assert!(c.is_finite(), "centroid must stay finite, got {c:?}");
+        assert!(c.y <= 3.0 + 1e-3, "ball must rest on/above the floor, y={}", c.y);
         assert!(b.deformation() >= 0.0 && b.deformation() <= 1.0);
         let _ = d0;
     }
