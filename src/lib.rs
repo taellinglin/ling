@@ -12,6 +12,8 @@ pub mod gfx;
 pub mod runtime;
 pub mod utils;
 pub mod visualize;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod convert;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use ling_audio;

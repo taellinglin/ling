@@ -26,6 +26,7 @@
 - [Builtins — UI Toolkit](reference/ui.md)
 - [Builtins — Physics](reference/physics.md)
 - [Builtins — Dialog](reference/dialog.md)
+- [Asset Conversion — ling convert](reference/convert.md)
 - [Builtins — Window & Camera](reference/window.md)
 
 ---

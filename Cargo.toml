@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.18"
+version = "2030.1.19"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -112,7 +112,9 @@ llvm = []
 
 [dependencies]
 glam = "0.28"
-ling-physics = { path = "crates/ling-physics", version = "2030.1" }
+base64 = "0.22"
+flate2 = "1"
+ling-physics = { path = "crates/ling-physics", version = "2030.1", features = ["with-gltf"] }
 ling-graphics = { path = "crates/ling-graphics", version = "2030.0.1" }
 ling-game = { path = "crates/ling-game", version = "2030.1" }
 ling-mir = { workspace = true }

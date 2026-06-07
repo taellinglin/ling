@@ -30,6 +30,11 @@ fn main() {
             run_file(file);
         }
 
+        Some("convert") => {
+            // ling convert <asset> [-o out.ling] [--no-compression]
+            std::process::exit(ling::convert::run(&args[1..]));
+        }
+
         Some("build") => {
             let target = args.get(2).map(|s| s.as_str()).unwrap_or(".");
             let out     = flag_value(&args, "--out").unwrap_or_else(|| "dist".into());
@@ -45,6 +50,10 @@ fn main() {
             println!("  ling build <file.ling|dir> [opts]   compile to distributable");
             println!("    --out <dir>                       output folder (default: dist)");
             println!("    --platform <targets>              web win lin mac all (comma-sep)");
+            println!("  ling convert <asset> [opts]         transcode an asset → importable .ling");
+            println!("    -o <out.ling>                     output path (default: <asset>.ling)");
+            println!("    --no-compression                  emit plain arrays instead of blobs");
+            println!("    (.gltf .glb .wav .ogg .flac .mid .svg .blend)");
         }
     }
 }

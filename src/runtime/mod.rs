@@ -190,6 +190,21 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// Decode a `ling convert` blob: base64 → zlib-inflate → raw little-endian bytes.
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_blob(s: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    use std::io::Read as _;
+    let comp = base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .map_err(|e| format!("base64: {e}"))?;
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(&comp[..])
+        .read_to_end(&mut out)
+        .map_err(|e| format!("inflate: {e}"))?;
+    Ok(out)
+}
+
 /// Decode a lowercase/uppercase hex string to bytes (ignores malformed tail).
 fn hex_decode(s: &str) -> Vec<u8> {
     let s = s.trim();
@@ -2596,6 +2611,33 @@ impl Interpreter {
                         .collect::<Vec<_>>().join(&sep)));
                 }
                 return Ok(Value::Str(String::new()));
+            }
+            // blob_f32("<deflate+base64>") / blob_i32(...) — decode an embedded,
+            // losslessly-compressed numeric blob into a list. Produced by
+            // `ling convert`; lets converted assets carry geometry/PCM/etc. compactly.
+            #[cfg(not(target_arch = "wasm32"))]
+            "blob_f32" | "blob_i32" => {
+                let s = self.arg_str(&args, 0, "");
+                let is_i32 = name == "blob_i32";
+                match decode_blob(&s) {
+                    Ok(bytes) => {
+                        let mut out = Vec::with_capacity(bytes.len() / 4);
+                        for ch in bytes.chunks_exact(4) {
+                            let arr = [ch[0], ch[1], ch[2], ch[3]];
+                            let n = if is_i32 {
+                                i32::from_le_bytes(arr) as f64
+                            } else {
+                                f32::from_le_bytes(arr) as f64
+                            };
+                            out.push(Value::Number(n));
+                        }
+                        return Ok(Value::List(out));
+                    }
+                    Err(e) => {
+                        eprintln!("blob decode failed: {e}");
+                        return Ok(Value::List(vec![]));
+                    }
+                }
             }
 
             // ══════════════════════════════════════════════════════════════════

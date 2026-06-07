@@ -641,7 +641,18 @@ fn main() -> anyhow::Result<()> {
         };
     }
 
-    if matches_cmd!(tr.new) {
+    if cmd == "convert" || cmd == "转换" || cmd == "変換" || cmd == "변환" || cmd == "แปลง" {
+        // Asset → .ling transcoding lives in the `ling` binary (it owns the
+        // glTF/audio/MIDI parsers); forward verbatim. Checked before `translate`
+        // because "convert" is also a translate alias.
+        let ling_bin = find_ling_binary();
+        let status = std::process::Command::new(&ling_bin)
+            .arg("convert")
+            .args(rest)
+            .status()
+            .map_err(|e| anyhow::anyhow!("ling: {e}"))?;
+        std::process::exit(status.code().unwrap_or(1));
+    } else if matches_cmd!(tr.new) {
         println!("{}", invocation_lang.welcome_message().cyan().bold());
         cmd_new(rest, &invocation_lang)?;
     } else if matches_cmd!(tr.init) {
