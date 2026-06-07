@@ -398,3 +398,5 @@ orb_shell = "オーブ殻"
 
 soft_angular_speed = "ソフト角速度"
 liquid_mix = "液体混合度"
+
+orb_particles = "オーブ粒子"

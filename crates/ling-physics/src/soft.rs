@@ -233,14 +233,25 @@ impl SoftBody {
     /// (toward −y), keeping `restitution` of their speed, with a little friction.
     pub fn floor_collision(&mut self, floor_y: f32, restitution: f32) {
         let rest = restitution.clamp(0.0, 0.99);
+        // Below this downward contact speed we treat the contact as *resting*
+        // rather than an impact: we simply settle the node on the plane instead of
+        // reflecting it. This stops a spinning/deforming ball from pumping its own
+        // tangential + shape-restoration jitter into an ever-growing vertical launch
+        // (the "rolling flings it into the air" bug) while still bouncing on real drops.
+        const IMPACT: f32 = 0.12;
         for n in &mut self.nodes {
             if n.pos.y > floor_y {
+                // signed vertical velocity in screen-down space: >0 = moving down
+                let v = n.pos.y - n.prev_pos.y;
                 n.pos.y = floor_y;
-                // Verlet velocity is (pos - prev). To move up (−y) next step we
-                // need prev > pos, so place prev *above* pos by the reflected speed.
-                let vel_y = (n.prev_pos.y - n.pos.y).abs().min(MAX_STEP);
-                n.prev_pos.y = n.pos.y + vel_y * rest;
-                // tangential friction: bleed a little horizontal speed
+                if v > IMPACT {
+                    // genuine downward impact → reflect up, keeping `rest` of speed
+                    n.prev_pos.y = n.pos.y + v.min(MAX_STEP) * rest;
+                } else {
+                    // resting / slow / already-rising contact → settle, add no energy
+                    n.prev_pos.y = n.pos.y;
+                }
+                // tangential (rolling) friction: bleed a little horizontal speed
                 n.prev_pos.x += (n.pos.x - n.prev_pos.x) * 0.04;
                 n.prev_pos.z += (n.pos.z - n.prev_pos.z) * 0.04;
             }
@@ -263,27 +274,31 @@ impl SoftBody {
     /// radians per step (for rolling-without-slip at surface speed `s` and radius
     /// `R`, pass `rate = s / R`).
     pub fn spin(&mut self, axis: Vec3, rate: f32) {
-        if axis.length_squared() < 1e-12 || rate.abs() < 1e-9 { return; }
-        let w = axis.normalize() * rate;
+        if axis.length_squared() < 1e-12 { return; }
+        let ax = axis.normalize();
+        // Drive the body's angular velocity *toward* `rate` (rad/step) about `axis`
+        // rather than adding to it every call — so holding a key settles to a steady
+        // roll instead of compounding into a runaway spin that the floor then pumps
+        // into a launch. We inject only the deficit (with a gentle gain).
+        let target = ax * rate;
+        let cur = self.angular_velocity();
+        let dw = (target - cur) * 0.5;
+        if dw.length() < 1e-7 { return; }
         let c = self.centroid();
         if !c.is_finite() { return; }
-        // Tangential velocity ω × r per node. The discrete sphere isn't perfectly
-        // symmetric, so the raw sum has a small bias that would translate the body
-        // (the marble "floating off" while you roll it). Subtract the mean so a
-        // spin is *pure rotation* — zero net linear momentum.
+        // Apply the tangential velocity ω × r, de-meaned so it's pure rotation with
+        // zero net linear momentum (no drift / float-off).
         let inv_n = 1.0 / self.nodes.len().max(1) as f32;
         let mut mean = Vec3::ZERO;
         let mut tang: Vec<Vec3> = Vec::with_capacity(self.nodes.len());
         for n in &self.nodes {
-            let v = w.cross(n.pos - c);
+            let v = dw.cross(n.pos - c);
             mean += v;
             tang.push(v);
         }
         mean *= inv_n;
         for (n, v) in self.nodes.iter_mut().zip(tang) {
             if n.pinned { continue; }
-            // Verlet velocity is (pos - prev); bias prev backward by the (de-meaned)
-            // tangential velocity so the next step rotates the node forward.
             n.prev_pos -= v - mean;
         }
     }

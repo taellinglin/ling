@@ -2003,6 +2003,64 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // orb_particles(cx,cy,cz, radius, count, t, r,g,b)
+            //   Fills the VOLUME of a sphere with `count` swirling vector points —
+            //   like motes suspended inside a snow-globe orb. Points are distributed
+            //   uniformly through the ball, slowly tumble as a cloud + wobble
+            //   individually over time `t`, and are depth-shaded (near = bright,
+            //   far = dim) so the cloud has real volume. Additive, so it layers under
+            //   a shell / over a liquid marble.
+            #[cfg(not(target_arch = "wasm32"))]
+            "orb_particles" | "球内粒子" | "オーブ粒子" | "오브입자" | "อนุภาคทรงกลม" => {
+                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
+                let radius=self.arg_num(&args,3,1.0)? as f32;
+                let count=(self.arg_num(&args,4,160.)? as i32).clamp(1, 4000);
+                let t=self.arg_num(&args,5,0.)? as f32;
+                let tr=(self.arg_num(&args,6,255.)? as f32).clamp(0.,255.);
+                let tg=(self.arg_num(&args,7,255.)? as f32).clamp(0.,255.);
+                let tb=(self.arg_num(&args,8,255.)? as f32).clamp(0.,255.);
+                let inv_r = if radius.abs() > 1e-5 { 1.0/radius } else { 0.0 };
+                // cheap deterministic hash → [0,1)
+                let h = |mut x: u32| -> f32 {
+                    x = x.wrapping_mul(747796405).wrapping_add(2891336453);
+                    x = ((x >> ((x >> 28).wrapping_add(4))) ^ x).wrapping_mul(277803737);
+                    (((x >> 22) ^ x) & 0xFFFFFF) as f32 / 16_777_216.0
+                };
+                let tau = std::f32::consts::TAU;
+                // slow tumble of the whole cloud
+                let (cyr, syr) = ((t*0.5).cos(), (t*0.5).sin());
+                let (cxr, sxr) = ((t*0.23).cos(), (t*0.23).sin());
+                let mut gfx = self.gfx.borrow_mut();
+                let near = -gfx.camera.zdist + 0.05;
+                let (sw, sh) = (gfx.width as i32, gfx.height as i32);
+                for i in 0..count {
+                    let i = i as u32;
+                    // uniform-in-volume: r = cbrt(u) * radius; direction from two hashes
+                    let u  = h(i.wrapping_mul(3) + 1);
+                    let rr = u.cbrt() * radius * (0.85 + 0.15 * (t*1.3 + i as f32).sin()); // gentle pulse
+                    let th = h(i.wrapping_mul(3) + 2) * tau + t * (0.3 + 0.5 * h(i*7+5)); // per-mote orbit
+                    let ph = (h(i.wrapping_mul(3) + 3) * 2.0 - 1.0).acos();               // uniform cos(phi)
+                    let (mut x, mut y, mut z) = (rr*ph.sin()*th.cos(), rr*ph.cos(), rr*ph.sin()*th.sin());
+                    // tumble the cloud (yaw then pitch)
+                    let x1 = x*cyr + z*syr; let z1 = -x*syr + z*cyr; x = x1; z = z1;
+                    let y2 = y*cxr - z*sxr; let z2 = y*sxr + z*cxr;
+                    let (wx, wy, wz) = (cx + x, cy + y2, cz + z2);
+                    if gfx.camera.depth(wx, wy, wz) <= near { continue; }
+                    let (sx, sy, dep) = gfx.camera.project(wx, wy, wz);
+                    let sxi = sx as i32; let syi = sy as i32;
+                    if sxi < 0 || syi < 0 || sxi >= sw || syi >= sh { continue; }
+                    // depth-shade: nearer (smaller z2) = brighter
+                    let facing = (0.5 - 0.5 * z2 * inv_r).clamp(0.15, 1.0);
+                    let l = facing;
+                    let cr=(tr*l) as u32; let cg=(tg*l) as u32; let cb=(tb*l) as u32;
+                    let color=(cr<<16)|(cg<<8)|cb;
+                    // a 1–2px dot (bigger when near) as a short segment in the depth queue
+                    let len = if facing > 0.7 { 1.0 } else { 0.0 };
+                    gfx.depth_queue.push_line(dep, color, sx, sy, sx + len, sy);
+                }
+                return Ok(Value::Unit);
+            }
+
             // project_3d(x,y,z) -> [screen_x, screen_y, depth]; behind the camera
             // returns a sentinel ([-99999,-99999, depth]) so scripts can skip it.
             // Lets scripts place 2-D overlays (e.g. filled teardrop flames) onto 3-D points.

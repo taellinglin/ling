@@ -40,13 +40,13 @@ bind start = do {
         # ── input: WASD roll (translate + spin so it tumbles & deforms), SPACE
         # jump/double-jump. Roll axis = up × move_dir (screen-down up = −y), and
         # the spin rate ≈ surface_speed / R so it rolls without obviously slipping.
-        if key_down("a") { soft_kick(ball, 0.0-1.0, 0.0, 0.0, 0.04)  soft_spin(ball, 0.0, 0.0, 0.0-1.0, 0.11) }
-        if key_down("d") { soft_kick(ball, 1.0, 0.0, 0.0, 0.04)      soft_spin(ball, 0.0, 0.0, 1.0, 0.11) }
-        if key_down("w") { soft_kick(ball, 0.0, 0.0, 0.0-1.0, 0.04)  soft_spin(ball, 1.0, 0.0, 0.0, 0.11) }
-        if key_down("s") { soft_kick(ball, 0.0, 0.0, 1.0, 0.04)      soft_spin(ball, 0.0-1.0, 0.0, 0.0, 0.11) }
-        bind sp = 0.0
-        if key_down("space") { bind sp = 0.25 }
-        if sp > 0.5 { if wasSpace < 0.5 { if jumps < 2.0 { soft_kick(ball, 0.0, 0.0-1.0, 0.0, 0.30)  bind jumps = jumps + 1.0 } } }
+        if key_down("a") { soft_kick(ball, 0.0-1.0, 0.0, 0.0, 0.018)  soft_spin(ball, 0.0, 0.0, 0.0-1.0, 0.12) }
+        if key_down("d") { soft_kick(ball, 1.0, 0.0, 0.0, 0.018)      soft_spin(ball, 0.0, 0.0, 1.0, 0.12) }
+        if key_down("w") { soft_kick(ball, 0.0, 0.0, 0.0-1.0, 0.018)  soft_spin(ball, 1.0, 0.0, 0.0, 0.12) }
+        if key_down("s") { soft_kick(ball, 0.0, 0.0, 1.0, 0.018)      soft_spin(ball, 0.0-1.0, 0.0, 0.0, 0.12) }
+        bind sp = 0.0-1.0
+        if key_down("space") { bind sp = 0.5 }
+        if sp > 0.5 { if wasSpace < 0.5 { if jumps < 2.0 { soft_kick(ball, 0.0, 0.0-1.0, 0.0, 0.750)  bind jumps = jumps + 1.0 } } }
         bind wasSpace = sp
 
         # ── physics: gravity, ground bounce (springy, deforms on impact) ──
@@ -85,13 +85,21 @@ bind start = do {
         bind ang = soft_angular_speed(ball)               # tumbling/rolling rate
         bind height = GROUND - cy                         # 0 at floor, grows when airborne
         if height < 0.0 { bind height = 0.0 }
-        bind freq = 130.0 + height * 70.0 + speed * 240.0
-        bind amp = 0.05 + speed * 5.0 + ang * 0.6 + def * 0.4
-        if amp > 0.55 { bind amp = 0.55 }
-        bind wdim = 1.0 + ang * 9.0                        # 4-D beating from spin
-        audio_tone(0.0, 0.0, cy, 0.0, wdim, freq, amp, 4.0 + ang*6.0, 0.03 + def*0.06)
         bind mix = liquid_mix(liq)                         # 0 separated .. 1 churned
-        audio_fx_lowpass(0.18 + mix * 0.8)                 # mixing opens the filter
+        # base pitch from height + linear speed; overall loudness from motion+squash
+        bind base = 120.0 + height * 55.0 + speed * 180.0
+        bind amp = 0.04 + speed * 4.0 + ang * 0.5 + def * 0.35
+        if amp > 0.5 { bind amp = 0.5 }
+        bind wdim = 1.0 + ang * 8.0                        # 4-D beating grows with spin
+        # ── a 5-voice additive synth; the spectral balance follows the physics ──
+        #   the harmonics swell with spin, the fifth blooms as the fluids mix,
+        #   a detuned voice shimmers with speed, and a sub-octave gives it body.
+        audio_tone(0.0, 0.0, cy, 0.0, wdim, base,        amp * 0.85,                 4.0 + ang*5.0, 0.03 + def*0.06)
+        audio_tone(1.0, 0.0, cy, 0.0, 1.0,  base * 2.0,  amp * (0.22 + ang * 1.1),   3.0, 0.02)
+        audio_tone(2.0, 0.0, cy, 0.0, 1.0,  base * 1.5,  amp * (0.16 + mix * 0.5),   2.0, 0.015)
+        audio_tone(3.0, 0.0, cy, 0.0, 0.0,  base * 0.5,  amp * 0.55,                 1.0, 0.01)
+        audio_tone(4.0, 0.0, cy, 0.0, 2.0,  base * 2.01, amp * (0.10 + speed * 0.6), 6.0 + ang*4.0, 0.05)
+        audio_fx_lowpass(0.18 + mix * 0.8)                 # mixing opens the master filter
         audio_listener(1.0, 0.0, cos(0.2), sin(0.2))
 
         # ── render: ground grid (scrolls with the marble), then marble, then overlay ──
@@ -115,6 +123,15 @@ bind start = do {
 
         # the marble: liquid sphere drawn at the ball's height, centred (camera follows x/z)
         liquid_draw_surface(liq, 1.0, 0.0, cy, 0.0, R * (1.0 + def*0.4), R)
+
+        # ── motes suspended *inside* the orb, filling its volume (snow-globe) ──
+        # they tumble as a cloud + wobble individually, depth-shaded so the orb has
+        # real interior volume. Tint shifts slowly through the spectrum.
+        bind pr = (sin(t*0.5)*0.5+0.5)*120.0 + 135.0
+        bind pg = (sin(t*0.5+2.094)*0.5+0.5)*120.0 + 135.0
+        bind pb = (sin(t*0.5+4.188)*0.5+0.5)*120.0 + 135.0
+        orb_particles(0.0, cy, 0.0, R * 0.92, 240.0, t, pr, pg, pb)
+        flush_3d()
 
         # ── outer shell: ONE trippy grayscale vector pattern wound around the orb.
         # It's a guilloché weave of spirals whose brightness fades with depth

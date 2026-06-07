@@ -451,3 +451,5 @@ orb_shell = "เปลือกทรงกลม"
 
 soft_angular_speed = "ความเร็วเชิงมุมนุ่ม"
 liquid_mix = "การผสมของเหลว"
+
+orb_particles = "อนุภาคทรงกลม"

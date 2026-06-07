@@ -398,3 +398,5 @@ orb_shell = "오브껍질"
 
 soft_angular_speed = "소프트각속도"
 liquid_mix = "액체혼합"
+
+orb_particles = "오브입자"
