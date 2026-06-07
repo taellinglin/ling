@@ -42,6 +42,7 @@ struct Glyph { contours: Vec<Contour>, advance: f32 }
 /// Flattened polylines for one glyph plus its advance — all in normalized em
 /// space (x→right, **y→up**, baseline at 0). Callers map this into 2D screen
 /// space or onto a 3D plane.
+#[derive(Clone)]
 pub struct GlyphOutline {
     pub polylines: Vec<Vec<[f32; 2]>>,
     pub advance: f32,
@@ -171,6 +172,10 @@ pub struct VectorFont {
     weight: Option<f32>,
     cache_dir: PathBuf,
     glyphs: HashMap<char, Glyph>,
+    /// Tessellated-outline cache keyed by (char, tolerance bucket). Flattening the
+    /// béziers is the per-call cost; caching it makes repeated per-frame draws of
+    /// the same glyphs (UI text, glyph rings, …) effectively free.
+    outline_cache: HashMap<(char, u32), GlyphOutline>,
 }
 
 impl VectorFont {
@@ -206,6 +211,7 @@ impl VectorFont {
             weight,
             cache_dir,
             glyphs: HashMap::new(),
+            outline_cache: HashMap::new(),
         })
     }
 
@@ -279,9 +285,15 @@ impl VectorFont {
     /// Flattened outline of `ch`, with curves subdivided so the deviation stays
     /// under `tol_em` (express your pixel tolerance as `tol_px / px`).
     pub fn glyph_outline(&mut self, ch: char, tol_em: f32) -> GlyphOutline {
+        let tol = tol_em.max(1e-5);
+        // Cache flattened outlines: béziers are only subdivided once per (char,
+        // tolerance), so drawing the same glyphs every frame stops re-tessellating.
+        let key = (ch, (tol * 100_000.0) as u32);
+        if let Some(o) = self.outline_cache.get(&key) {
+            return o.clone();
+        }
         self.ensure(ch);
         let g = &self.glyphs[&ch];
-        let tol = tol_em.max(1e-5);
         let mut polylines = Vec::with_capacity(g.contours.len());
         for c in &g.contours {
             let mut pl = Vec::new();
@@ -298,7 +310,9 @@ impl VectorFont {
             if pl.len() > 1 { pl.push(c.start); }
             polylines.push(pl);
         }
-        GlyphOutline { polylines, advance: g.advance }
+        let out = GlyphOutline { polylines, advance: g.advance };
+        self.outline_cache.insert(key, out.clone());
+        out
     }
 }
 
