@@ -54,6 +54,11 @@ pub struct GfxState {
     pub shade: ling_graphics::shading::ShadeParams,
     /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
     pub blend: u8,
+    /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
+    /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
+    pub fog_color: u32,
+    pub fog_start: f32,
+    pub fog_end:   f32,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -77,7 +82,27 @@ impl GfxState {
             shade_mode:     2, // holographic cel by default
             shade:          ling_graphics::shading::ShadeParams::default(),
             blend:          0, // normal (overwrite) by default
+            fog_color:   0x0000_0000,
+            fog_start:   0.0,
+            fog_end:     0.0, // fog off by default
         }
+    }
+
+    /// Blend a colour toward the fog colour by camera-space `depth`.
+    #[inline]
+    pub fn fog_apply(&self, color: u32, depth: f32) -> u32 {
+        if self.fog_end <= 0.0 { return color; }
+        let span = self.fog_end - self.fog_start;
+        if span <= 0.0 { return color; }
+        let f = ((depth - self.fog_start) / span).clamp(0.0, 1.0);
+        if f <= 0.0 { return color; }
+        let lerp = |a: u32, b: u32| -> u32 {
+            (a as f32 + (b as f32 - a as f32) * f) as u32 & 0xff
+        };
+        let r = lerp((color >> 16) & 0xff, (self.fog_color >> 16) & 0xff);
+        let g = lerp((color >> 8) & 0xff,  (self.fog_color >> 8) & 0xff);
+        let b = lerp(color & 0xff,         self.fog_color & 0xff);
+        (r << 16) | (g << 8) | b
     }
 
     pub fn sync_projection(&mut self) {

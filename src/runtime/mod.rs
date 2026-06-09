@@ -440,6 +440,9 @@ impl Default for UiTheme {
 
 pub struct Interpreter {
     globals:   HashMap<String, Expr>,
+    /// Globals evaluated ONCE at program start (immutable after load).
+    /// call_named clones this instead of re-evaluating every global per call.
+    global_seed: Env,
     functions: HashMap<String, FnDef>,
     _modules:  HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
@@ -514,6 +517,7 @@ impl Interpreter {
             .ok();
         Self {
             globals:   HashMap::new(),
+            global_seed: HashMap::new(),
             functions: HashMap::new(),
             _modules:  HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
@@ -701,6 +705,9 @@ impl Interpreter {
                 env.insert(k.clone(), v);
             }
         }
+        // Cache the evaluated globals so every user-function call can clone this
+        // seed instead of re-evaluating all globals (see call_named).
+        self.global_seed = env.clone();
         self.eval_expr(&entry, &mut env).map(|_| ()).map_err(|e| match e {
             EvalErr::Runtime(s) => s,
             EvalErr::Return(_)  => "unexpected top-level return".to_string(),
@@ -1712,6 +1719,15 @@ impl Interpreter {
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
             }
+            // ── mouse_scroll() → f64 — vertical scroll-wheel delta this frame ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" => {
+                let gfx = self.gfx.borrow();
+                let s = gfx.window.as_ref()
+                    .and_then(|w| w.get_scroll_wheel())
+                    .map(|(_, y)| y as f64).unwrap_or(0.0);
+                return Ok(Value::Number(s));
+            }
             "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
@@ -1844,6 +1860,21 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // ── set_fog(r,g,b, start, end) — distance fog toward (r,g,b).
+            //    triangles/lines fade from `start`..`end` camera depth. end<=0 = off.
+            "set_fog" | "ตั้งหมอก" | "雾" | "霧設定" | "안개설정" => {
+                let r = self.arg_num(&args, 0, 0.0)?.clamp(0.0, 255.0) as u32;
+                let g = self.arg_num(&args, 1, 0.0)?.clamp(0.0, 255.0) as u32;
+                let b = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 255.0) as u32;
+                let start = self.arg_num(&args, 3, 0.0)? as f32;
+                let end   = self.arg_num(&args, 4, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.fog_color = (r << 16) | (g << 8) | b;
+                gfx.fog_start = start;
+                gfx.fog_end   = end;
+                return Ok(Value::Unit);
+            }
+
             // ── วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, cx,cy,cz) ──
             // Computes lighting from world-space normal + active lights (cel shading),
             // projects via the stored camera, and pushes to the depth queue.
@@ -1898,6 +1929,7 @@ impl Interpreter {
                 // Average camera depth (used for painter's sort)
                 let depth = (da + db + dc) / 3.0;
 
+                let lit_color = gfx.fog_apply(lit_color, depth);
                 gfx.depth_queue.push_triangle(
                     depth, lit_color,
                     sax, say, sbx, sby, scx, scy,
@@ -1941,6 +1973,7 @@ impl Interpreter {
                 let (sax, say, da) = gfx.camera.project(lax, lay, laz);
                 let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
                 let depth = (da + db) / 2.0;
+                let color = gfx.fog_apply(color, depth);
                 gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
                 return Ok(Value::Unit);
             }
@@ -4498,32 +4531,11 @@ impl Interpreter {
 
         // User-defined function
         if let Some(def) = self.functions.get(name).cloned() {
-            let mut call_env = Env::new();
-            // Seed env with non-Do globals (skip entry-point blocks to avoid infinite recursion).
-            // Pass 1: evaluate each global with the call-site env — simple literals succeed.
-            // Pass 2: retry failed globals with the partially-built call_env so that compound
-            //         globals (e.g. `FM = (NZ + FZ) / 2.0`) can resolve their dependencies.
-            let non_do_globals: Vec<_> = self.globals.iter()
-                .filter(|(_, expr)| !matches!(expr, Expr::Do(_)))
-                .map(|(k, e)| (k.clone(), e.clone()))
-                .collect();
-            let mut pending: Vec<(String, Expr)> = Vec::new();
-            for (k, expr) in &non_do_globals {
-                let mut tmp = env.clone();
-                if let Ok(v) = self.eval_expr(expr, &mut tmp) {
-                    call_env.insert(k.clone(), v);
-                } else {
-                    pending.push((k.clone(), expr.clone()));
-                }
-            }
-            // Second pass: retry compound globals now that literals are in call_env.
-            for (k, expr) in &pending {
-                let mut tmp = env.clone();
-                tmp.extend(call_env.clone());
-                if let Ok(v) = self.eval_expr(expr, &mut tmp) {
-                    call_env.insert(k.clone(), v);
-                }
-            }
+            // Clone the pre-evaluated global seed (built once in run_program) and
+            // add the params. Globals are immutable after load, so re-evaluating
+            // them on every call was pure waste — this is the hot-path fix.
+            let mut call_env = self.global_seed.clone();
+            let _ = env; // call-site locals are intentionally NOT visible to fns
             for (param, arg) in def.params.iter().zip(args) {
                 call_env.insert(param.clone(), arg);
             }
@@ -4828,6 +4840,8 @@ fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
         "rshift" | "rightshift" => Key::RightShift,
         "lctrl"  | "leftctrl"   => Key::LeftCtrl,
         "rctrl"  | "rightctrl"  => Key::RightCtrl,
+        "lalt"   | "leftalt"    => Key::LeftAlt,
+        "ralt"   | "rightalt"   => Key::RightAlt,
         "tab"    => Key::Tab,
         "backspace" => Key::Backspace,
         "delete" => Key::Delete,

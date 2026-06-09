@@ -391,6 +391,7 @@ pub fn is_builtin(name: &str) -> bool {
         "s" => true,
         "schnorr_verify" => true,
         "set_ambient" => true,
+        "set_fog" => true,
         "set_blend" => true,
         "set_camera" => true,
         "set_camera_pos" => true,
