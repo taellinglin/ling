@@ -29,6 +29,7 @@ members = [
     "crates/ling-lex",
     "crates/ling-polyglot",
     "crates/ling-ai",
+    "crates/ling-icon",
     "crates/ling-crypto",
     "crates/ling-audio",
     "crates/ling-net",
@@ -124,6 +125,8 @@ ling-codegen = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
+ling-ai = { path = "crates/ling-ai", version = "2030.0.0" }
+ling-icon = { path = "crates/ling-icon", version = "2030.0.0" }
 ling-audio = { path = "crates/ling-audio", version = "2030.0.1" }
 ling-music = { path = "crates/ling-music", version = "2030.0.0" }
 ling-mic = { path = "crates/ling-mic", version = "2030.0.1" }
@@ -164,6 +167,9 @@ web-sys = { version = "0.3", features = [
 
 # Needed by build.rs for generating parser grammar via lalrpop
 lalrpop = "0.22"
+
+# Embeds assets/ling.ico into ling.exe / lingc.exe / lx.exe / ling-repl.exe.
+winresource = "0.1"
 
 
 

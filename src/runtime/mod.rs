@@ -1,4 +1,8 @@
 // src/runtime/mod.rs — tree-walking interpreter with graphics support
+#[cfg(not(target_arch = "wasm32"))]
+mod net;
+#[cfg(not(target_arch = "wasm32"))]
+mod ai;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::parser::ast::*;
@@ -1541,33 +1545,46 @@ impl Interpreter {
                     };
                     let mut gfx = self.gfx.borrow_mut();
                     if gfx.mouse_captured {
+                        let mut cur_my = gfx.last_my;
                         if let Some((mx, my)) = mouse_pos {
+                            cur_my = my;
                             if gfx.last_mx.is_nan() {
                                 gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
                             } else {
                                 gfx.mouse_dx = mx - gfx.last_mx;
                                 gfx.mouse_dy = my - gfx.last_my;
                             }
-                            gfx.last_mx = mx; gfx.last_my = my;
                         } else {
                             gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
                         }
-                        // Clip cursor to window bounds so it can't escape.
+                        // Recenter only the X axis each frame → INFINITE yaw (no 0-360
+                        // edge clamp) while leaving Y free so the camera can still tilt.
                         #[cfg(windows)]
                         unsafe {
                             #[repr(C)]
                             struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+                            #[repr(C)]
+                            struct POINT { x: i32, y: i32 }
                             extern "system" {
                                 fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32;
                                 fn GetForegroundWindow() -> isize;
                                 fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
+                                fn SetCursorPos(x: i32, y: i32) -> i32;
+                                fn GetCursorPos(lpPoint: *mut POINT) -> i32;
                             }
                             let hwnd = GetForegroundWindow();
                             let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
                             if GetWindowRect(hwnd, &mut rect) != 0 {
                                 ClipCursor(&rect as *const RECT as *const std::ffi::c_void);
+                                let mid_x = (rect.left + rect.right) / 2;
+                                let mut p = POINT { x: 0, y: 0 };
+                                GetCursorPos(&mut p);
+                                SetCursorPos(mid_x, p.y); // keep current Y → vertical tilt works
                             }
                         }
+                        // X resets to framebuffer centre; Y keeps its real position.
+                        gfx.last_mx = gfx.width as f32 / 2.0;
+                        gfx.last_my = cur_my;
                     } else if let Some((mx, my)) = mouse_pos {
                         if gfx.last_mx.is_nan() {
                             gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
@@ -1632,20 +1649,25 @@ impl Interpreter {
                             borderless: true,
                             title:      false,
                             resize:     false,
+                            topmost:    true,
                             scale:      minifb::Scale::X1,
                             ..Default::default()
                         },
                     ).map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
-                    #[allow(deprecated)]
-                    win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
+                    // Drive the loop at the monitor's real refresh rate instead of
+                    // a hard-coded cap, so a 144 Hz panel runs at 144 fps.
+                    win.set_target_fps(monitor_info().2.max(30) as usize);
+                    // Grab the native handle *before* moving the window into gfx.
+                    #[cfg(windows)]
+                    let hwnd = win.get_window_handle() as isize;
                     gfx.buffer = vec![0u32; w * h];
                     gfx.width  = w;
                     gfx.height = h;
                     gfx.window = Some(win);
                     gfx.sync_projection();
-                    // Snap to top-left, cover full screen, bring above taskbar.
+                    // Strip all chrome and cover the full screen, above the taskbar.
                     #[cfg(windows)]
-                    reposition_fullscreen(w as i32, h as i32);
+                    make_borderless_fullscreen(hwnd, w as i32, h as i32);
                     hide_console_window();
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -1665,6 +1687,42 @@ impl Interpreter {
             }
             "get_height" | "ความสูง" | "高" | "高取得" | "높이" => {
                 return Ok(Value::Number(self.gfx.borrow().height as f64));
+            }
+
+            // ── monitor detection: physical display, not the framebuffer ──────
+            // monitor_width() → primary-monitor pixel width
+            "monitor_width" | "screen_width" | "屏宽" | "画面幅" | "화면너비" | "ความกว้างจอ" => {
+                return Ok(Value::Number(monitor_info().0 as f64));
+            }
+            // monitor_height() → primary-monitor pixel height
+            "monitor_height" | "screen_height" | "屏高" | "画面高" | "화면높이" | "ความสูงจอ" => {
+                return Ok(Value::Number(monitor_info().1 as f64));
+            }
+            // monitor_refresh() → refresh rate in Hz (a.k.a. the monitor framerate)
+            "monitor_refresh" | "monitor_hz" | "monitor_fps" | "refresh_rate"
+                | "刷新率" | "リフレッシュレート" | "주사율" | "อัตรารีเฟรช" => {
+                return Ok(Value::Number(monitor_info().2 as f64));
+            }
+            // monitor_info() → [width, height, refresh_hz]
+            "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" => {
+                let (w, h, hz) = monitor_info();
+                return Ok(Value::List(vec![
+                    Value::Number(w as f64),
+                    Value::Number(h as f64),
+                    Value::Number(hz as f64),
+                ]));
+            }
+            // set_fps(n) → cap the render loop at n frames per second
+            "set_fps" | "set_target_fps" | "target_fps" | "设帧率" | "フレームレート設定" | "프레임설정" | "ตั้งเฟรมเรต" => {
+                let fps = self.arg_num(&args, 0, 60.0)?.max(1.0) as usize;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    if let Some(win) = gfx.window.as_mut() {
+                        win.set_target_fps(fps);
+                    }
+                }
+                return Ok(Value::Unit);
             }
 
             // ── หน้าต่างเปิดอยู่() → bool — is the window still open? ──
@@ -1911,13 +1969,15 @@ impl Interpreter {
                     gfx.color, normal, centroid, &gfx.lights, gfx.ambient,
                 );
 
-                // Near-plane cull — skip any triangle that has a vertex
-                // behind or at the camera near plane (avoids projected-to-infinity blowup).
-                let near = -gfx.camera.zdist + 0.05;
+                // Near-plane cull — cull only if the triangle's CENTROID is behind
+                // the near plane (not just any single vertex). This keeps large
+                // floor/wall tiles that merely straddle the plane when the camera is
+                // close, instead of popping the whole tile out of view.
+                let near = -gfx.camera.zdist + 0.02;
                 let da_raw = gfx.camera.depth(ax, ay, az);
                 let db_raw = gfx.camera.depth(bx, by, bz);
                 let dc_raw = gfx.camera.depth(cx, cy, cz);
-                if da_raw <= near || db_raw <= near || dc_raw <= near {
+                if (da_raw + db_raw + dc_raw) / 3.0 <= near {
                     return Ok(Value::Unit);
                 }
 
@@ -2510,6 +2570,168 @@ impl Interpreter {
                     .map(Value::Str)
                     .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
             }
+            // ── networking (TCP, 2-peer co-op) ───────────────────────────────
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_host" | "เน็ตโฮสต์" => {
+                let port = self.arg_num(&args, 0, 7777.0)? as u16;
+                net::host(port);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_join" | "เน็ตจอย" => {
+                let ip   = self.arg_str(&args, 0, "127.0.0.1");
+                let port = self.arg_num(&args, 1, 7777.0)? as u16;
+                net::join(&ip, port);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_send" | "เน็ตส่ง" => {
+                let s = self.arg_str(&args, 0, "");
+                net::send(&s);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_recv" | "เน็ตรับ" => {
+                return Ok(Value::Str(net::recv()));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_status" | "เน็ตสถานะ" => {
+                return Ok(Value::Number(net::status() as f64));
+            }
+
+            // ── game AI: neural networks ─────────────────────────────────────
+            // nn_new(inputs[, seed]) → handle
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" => {
+                let n_in = self.arg_num(&args, 0, 1.0)?.max(0.0) as usize;
+                let seed = self.arg_num(&args, 1, 1.0)? as u64;
+                return Ok(Value::Number(ai::nn_new(n_in, seed) as f64));
+            }
+            // nn_dense(handle, units[, activation]) — append a layer
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" => {
+                let id    = self.arg_num(&args, 0, -1.0)? as i64;
+                let units = self.arg_num(&args, 1, 1.0)?.max(1.0) as usize;
+                let act   = self.arg_str(&args, 2, "relu");
+                ai::nn_dense(id, units, &act);
+                return Ok(Value::Unit);
+            }
+            // nn_forward(handle, [inputs]) → [outputs]
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let input = self.arg_list_f32(&args, 1);
+                let out = ai::nn_forward(id, &input);
+                return Ok(Value::List(out.into_iter().map(|v| Value::Number(v as f64)).collect()));
+            }
+            // nn_train(handle, [inputs], [targets][, lr]) → loss
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย" => {
+                let id     = self.arg_num(&args, 0, -1.0)? as i64;
+                let input  = self.arg_list_f32(&args, 1);
+                let target = self.arg_list_f32(&args, 2);
+                let lr     = self.arg_num(&args, 3, 0.01)? as f32;
+                return Ok(Value::Number(ai::nn_train(id, &input, &target, lr) as f64));
+            }
+            // nn_save(handle, path) → bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" => {
+                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+                let path = self.arg_str(&args, 1, "model.lnn");
+                return Ok(Value::Bool(ai::nn_save(id, &path)));
+            }
+            // nn_load(path) → handle (-1 on failure)
+            #[cfg(not(target_arch = "wasm32"))]
+            "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" => {
+                let path = self.arg_str(&args, 0, "model.lnn");
+                return Ok(Value::Number(ai::nn_load(&path) as f64));
+            }
+
+            // ── game AI: behavior trees ──────────────────────────────────────
+            // bt_build(dsl_string) → handle
+            #[cfg(not(target_arch = "wasm32"))]
+            "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" => {
+                let spec = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(ai::bt_build(&spec) as f64));
+            }
+            // bt_set(handle, key, value) — set a blackboard fact
+            #[cfg(not(target_arch = "wasm32"))]
+            "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => {
+                let id  = self.arg_num(&args, 0, -1.0)? as i64;
+                let key = self.arg_str(&args, 1, "");
+                let val = self.arg_num(&args, 2, 0.0)? as f32;
+                ai::bt_set(id, &key, val);
+                return Ok(Value::Unit);
+            }
+            // bt_tick(handle) → chosen action name ("" if none)
+            #[cfg(not(target_arch = "wasm32"))]
+            "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                return Ok(Value::Str(ai::bt_tick(id)));
+            }
+            // bt_status(handle) → 0 fail / 1 success / 2 running
+            #[cfg(not(target_arch = "wasm32"))]
+            "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                return Ok(Value::Number(ai::bt_status(id) as f64));
+            }
+
+            // ── game AI: miniature dialog LLM ────────────────────────────────
+            // dialog_new([ctx, embed, hidden, seed]) → handle
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา" => {
+                let ctx    = self.arg_num(&args, 0, 3.0)?.max(1.0) as usize;
+                let embed  = self.arg_num(&args, 1, 32.0)?.max(1.0) as usize;
+                let hidden = self.arg_num(&args, 2, 64.0)?.max(1.0) as usize;
+                let seed   = self.arg_num(&args, 3, 1.0)? as u64;
+                return Ok(Value::Number(ai::dialog_new(ctx, embed, hidden, seed) as f64));
+            }
+            // dialog_learn(handle, text) — add one utterance to the corpus
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => {
+                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+                let text = self.arg_str(&args, 1, "");
+                ai::dialog_learn(id, &text);
+                return Ok(Value::Unit);
+            }
+            // dialog_load(handle, path) → lines added (-1 on error)
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" => {
+                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+                let path = self.arg_str(&args, 1, "");
+                return Ok(Value::Number(ai::dialog_load(id, &path) as f64));
+            }
+            // dialog_train(handle[, epochs, lr]) → loss
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา" => {
+                let id     = self.arg_num(&args, 0, -1.0)? as i64;
+                let epochs = self.arg_num(&args, 1, 20.0)?.max(1.0) as usize;
+                let lr     = self.arg_num(&args, 2, 0.1)? as f32;
+                return Ok(Value::Number(ai::dialog_train(id, epochs, lr) as f64));
+            }
+            // dialog_say(handle, prompt[, max_tokens, temperature]) → reply text
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" => {
+                let id     = self.arg_num(&args, 0, -1.0)? as i64;
+                let prompt = self.arg_str(&args, 1, "");
+                let max    = self.arg_num(&args, 2, 24.0)?.max(1.0) as usize;
+                let temp   = self.arg_num(&args, 3, 0.8)? as f32;
+                return Ok(Value::Str(ai::dialog_say(id, &prompt, max, temp)));
+            }
+            // dialog_save(handle, path) → bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" => {
+                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+                let path = self.arg_str(&args, 1, "model.llm");
+                return Ok(Value::Bool(ai::dialog_save(id, &path)));
+            }
+            // dialog_load_model(path) → handle (-1 on failure)
+            #[cfg(not(target_arch = "wasm32"))]
+            "dialog_load_model" | "对话载模" | "対話モデル読込" | "대화모델불러오기" | "โหลดโมเดลสนทนา" => {
+                let path = self.arg_str(&args, 0, "model.llm");
+                return Ok(Value::Number(ai::dialog_load_model(&path) as f64));
+            }
+
             "write_file" | "เขียนไฟล์" => {
                 let path    = self.arg_str(&args, 0, "");
                 let content = self.arg_str(&args, 1, "");
@@ -4894,23 +5116,73 @@ fn hide_console_window() {
     }
 }
 
-/// Move and resize the foreground window so it fills the primary monitor
-/// (0,0 → screen_w × screen_h) and sits above the taskbar (HWND_TOPMOST).
+/// Strip *all* window chrome from `hwnd` and make it cover the whole primary
+/// monitor (0,0 → screen_w × screen_h), above the taskbar. This turns the
+/// minifb window into a true borderless-fullscreen surface: no title bar, no
+/// frame, no resize grips — there is no visible window "handle" left.
 #[cfg(all(not(target_arch = "wasm32"), windows))]
-fn reposition_fullscreen(screen_w: i32, screen_h: i32) {
+fn make_borderless_fullscreen(hwnd: isize, screen_w: i32, screen_h: i32) {
+    if hwnd == 0 {
+        return;
+    }
     unsafe {
         extern "system" {
-            fn GetForegroundWindow() -> isize;
+            fn SetWindowLongPtrW(hwnd: isize, index: i32, new: isize) -> isize;
             fn SetWindowPos(hwnd: isize, insert_after: isize,
                             x: i32, y: i32, cx: i32, cy: i32,
                             flags: u32) -> i32;
+            fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
         }
-        let hwnd = GetForegroundWindow();
-        if hwnd != 0 {
-            // HWND_TOPMOST = -1, SWP_SHOWWINDOW = 0x0040
-            SetWindowPos(hwnd, -1isize, 0, 0, screen_w, screen_h, 0x0040);
-        }
+        const GWL_STYLE:   i32 = -16;
+        const GWL_EXSTYLE: i32 = -20;
+        // WS_POPUP (0x80000000) | WS_VISIBLE (0x10000000) — a bare top-level
+        // window with no caption, border, or system menu.
+        SetWindowLongPtrW(hwnd, GWL_STYLE, 0x9000_0000isize);
+        // Clear extended edges (WS_EX_WINDOWEDGE / CLIENTEDGE / DLGMODALFRAME).
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, 0);
+        // HWND_TOPMOST = -1; SWP_FRAMECHANGED (0x0020) | SWP_SHOWWINDOW (0x0040).
+        SetWindowPos(hwnd, -1isize, 0, 0, screen_w, screen_h, 0x0020 | 0x0040);
+        ShowWindow(hwnd, 3); // SW_MAXIMIZE-equivalent paint; 3 = SW_SHOWMAXIMIZED
     }
+}
+
+/// Primary-monitor resolution and refresh rate as `(width, height, hz)`.
+/// `hz` falls back to 60 when the driver reports an unknown/`default` rate.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn monitor_info() -> (i32, i32, i32) {
+    unsafe {
+        extern "system" {
+            fn GetSystemMetrics(index: i32) -> i32;
+            fn GetDC(hwnd: isize) -> isize;
+            fn ReleaseDC(hwnd: isize, hdc: isize) -> i32;
+            fn GetDeviceCaps(hdc: isize, index: i32) -> i32;
+        }
+        let w = GetSystemMetrics(0).max(1); // SM_CXSCREEN
+        let h = GetSystemMetrics(1).max(1); // SM_CYSCREEN
+        let hdc = GetDC(0);
+        let mut hz = if hdc != 0 { GetDeviceCaps(hdc, 116) } else { 0 }; // VREFRESH
+        if hdc != 0 {
+            ReleaseDC(0, hdc);
+        }
+        if hz <= 1 {
+            hz = 60; // 0 or 1 means "device default" → assume 60 Hz
+        }
+        (w, h, hz)
+    }
+}
+
+/// Non-Windows native fallback: resolution from [`native_screen_size`], 60 Hz.
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn monitor_info() -> (i32, i32, i32) {
+    let (w, h) = native_screen_size();
+    (w as i32, h as i32, 60)
+}
+
+/// WASM fallback: the canvas is the display surface; assume 60 Hz.
+#[cfg(target_arch = "wasm32")]
+fn monitor_info() -> (i32, i32, i32) {
+    let (w, h) = crate::gfx::webgl::canvas_size();
+    (w as i32, h as i32, 60)
 }
 
 /// Query the primary display resolution on non-Windows platforms.

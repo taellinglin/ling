@@ -224,6 +224,12 @@ static BUILTINS_GFX: &[Entry] = &[
     (&["key_pressed","键按","キー押した","키눌림","กดปุ่ม"],             ["key_pressed","键按","キー押した","키눌림","กดปุ่ม"]),
     (&["project_3d","投影3D","3D投影","3D투영","ฉาย3มิติ"],              ["project_3d","投影3D","3D投影","3D투영","ฉาย3มิติ"]),
     (&["draw_poly","填充多边形","ポリゴン塗り","다각형채우기","เติมรูปหลายเหลี่ยม"], ["draw_poly","填充多边形","ポリゴン塗り","다각형채우기","เติมรูปหลายเหลี่ยม"]),
+    // Monitor detection + framerate
+    (&["monitor_width","screen_width","屏宽","画面幅","화면너비","ความกว้างจอ"],     ["monitor_width","屏宽","画面幅","화면너비","ความกว้างจอ"]),
+    (&["monitor_height","screen_height","屏高","画面高","화면높이","ความสูงจอ"],     ["monitor_height","屏高","画面高","화면높이","ความสูงจอ"]),
+    (&["monitor_refresh","monitor_hz","monitor_fps","refresh_rate","刷新率","リフレッシュレート","주사율","อัตรารีเฟรช"], ["monitor_refresh","刷新率","リフレッシュレート","주사율","อัตรารีเฟรช"]),
+    (&["monitor_info","screen_info","屏幕信息","画面情報","화면정보","ข้อมูลจอ"],     ["monitor_info","屏幕信息","画面情報","화면정보","ข้อมูลจอ"]),
+    (&["set_fps","set_target_fps","target_fps","设帧率","フレームレート設定","프레임설정","ตั้งเฟรมเรต"], ["set_fps","设帧率","フレームレート設定","프레임설정","ตั้งเฟรมเรต"]),
 ];
 
 // Builtins — math & core (5-language parity with runtime match arms)
@@ -479,6 +485,30 @@ static BUILTINS_DIALOG: &[Entry] = &[
     (&["dialog_draw","对话绘制","会話描画","대화그리기","วาดบทสนทนา"],          ["dialog_draw","对话绘制","会話描画","대화그리기","วาดบทสนทนา"]),
 ];
 
+// Builtins — game AI (ling-ai): neural nets, behavior trees, dialog LLM ───────
+static BUILTINS_AI: &[Entry] = &[
+    // Neural network
+    (&["nn_new","建神经网","ニューラル作成","신경망생성","สร้างโครงข่าย"],          ["nn_new","建神经网","ニューラル作成","신경망생성","สร้างโครงข่าย"]),
+    (&["nn_dense","密集层","密層追加","밀집층","ชั้นหนาแน่น"],                     ["nn_dense","密集层","密層追加","밀집층","ชั้นหนาแน่น"]),
+    (&["nn_forward","神经前向","順伝播","순전파","ส่งต่อโครงข่าย"],                ["nn_forward","神经前向","順伝播","순전파","ส่งต่อโครงข่าย"]),
+    (&["nn_train","训练网","ニューラル学習","신경망학습","ฝึกโครงข่าย"],           ["nn_train","训练网","ニューラル学習","신경망학습","ฝึกโครงข่าย"]),
+    (&["nn_save","保存网","網保存","신경망저장","บันทึกโครงข่าย"],                ["nn_save","保存网","網保存","신경망저장","บันทึกโครงข่าย"]),
+    (&["nn_load","载入网","網読込","신경망불러오기","โหลดโครงข่าย"],              ["nn_load","载入网","網読込","신경망불러오기","โหลดโครงข่าย"]),
+    // Behavior tree
+    (&["bt_build","建行为树","行動木構築","행동트리구성","สร้างต้นไม้พฤติกรรม"],     ["bt_build","建行为树","行動木構築","행동트리구성","สร้างต้นไม้พฤติกรรม"]),
+    (&["bt_set","设事实","事実設定","사실설정","ตั้งข้อเท็จจริง"],                  ["bt_set","设事实","事実設定","사실설정","ตั้งข้อเท็จจริง"]),
+    (&["bt_tick","行为树滴答","行動木更新","행동트리틱","เดินต้นไม้พฤติกรรม"],       ["bt_tick","行为树滴答","行動木更新","행동트리틱","เดินต้นไม้พฤติกรรม"]),
+    (&["bt_status","行为树状态","行動木状態","행동트리상태","สถานะต้นไม้พฤติกรรม"],   ["bt_status","行为树状态","行動木状態","행동트리상태","สถานะต้นไม้พฤติกรรม"]),
+    // Dialog LLM
+    (&["dialog_new","建对话模型","対話モデル作成","대화모델생성","สร้างโมเดลสนทนา"],  ["dialog_new","建对话模型","対話モデル作成","대화모델생성","สร้างโมเดลสนทนา"]),
+    (&["dialog_learn","对话学习","対話学習","대화학습","เรียนรู้สนทนา"],            ["dialog_learn","对话学习","対話学習","대화학습","เรียนรู้สนทนา"]),
+    (&["dialog_load","对话载入","対話読込","대화불러오기","โหลดชุดสนทนา"],          ["dialog_load","对话载入","対話読込","대화불러오기","โหลดชุดสนทนา"]),
+    (&["dialog_train","对话训练","対話訓練","대화훈련","ฝึกสนทนา"],                ["dialog_train","对话训练","対話訓練","대화훈련","ฝึกสนทนา"]),
+    (&["dialog_say","对话生成","対話生成","대화생성","พูดสนทนา"],                  ["dialog_say","对话生成","対話生成","대화생성","พูดสนทนา"]),
+    (&["dialog_save","对话存模","対話モデル保存","대화모델저장","บันทึกโมเดลสนทนา"],  ["dialog_save","对话存模","対話モデル保存","대화모델저장","บันทึกโมเดลสนทนา"]),
+    (&["dialog_load_model","对话载模","対話モデル読込","대화모델불러오기","โหลดโมเดลสนทนา"],["dialog_load_model","对话载模","対話モデル読込","대화모델불러오기","โหลดโมเดลสนทนา"]),
+];
+
 // Vocabulary — project/domain words used in filenames and folder names ─────
 //
 // These supplement KEYWORDS and BUILTINS_* — they are also included in the
@@ -658,7 +688,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_AI, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

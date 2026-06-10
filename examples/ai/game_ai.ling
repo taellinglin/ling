@@ -1,0 +1,59 @@
+#!/usr/bin/env ling
+// ============================================================================
+//  Ling 2030 — Game AI showcase
+//  Run from the repo root:  ling examples/ai/game_ai.ling
+//
+//  Demonstrates the three pillars of the ling-ai toolkit:
+//    1. Optimized neural net   — learns XOR with SGD backprop
+//    2. Behavior tree          — NPC decision making over a blackboard
+//    3. Miniature dialog LLM    — learns an NPC's voice from a .lingdialog corpus
+// ============================================================================
+
+bind start = do {
+    // ── 1. Neural network: learn the non-linear XOR function ───────────────
+    print("== Neural net: learning XOR ==")
+    bind net = nn_new(2, 7)          // 2 inputs, RNG seed 7
+    nn_dense(net, 8, "tanh")         // hidden layer
+    nn_dense(net, 1, "sigmoid")      // output in [0,1]
+
+    for epoch in 0..2000 {
+        nn_train(net, [0, 0], [0], 0.5)
+        nn_train(net, [0, 1], [1], 0.5)
+        nn_train(net, [1, 0], [1], 0.5)
+        nn_train(net, [1, 1], [0], 0.5)
+    }
+    print("  0 XOR 0 = ", nn_forward(net, [0, 0]))
+    print("  0 XOR 1 = ", nn_forward(net, [0, 1]))
+    print("  1 XOR 0 = ", nn_forward(net, [1, 0]))
+    print("  1 XOR 1 = ", nn_forward(net, [1, 1]))
+
+    // ── 2. Behavior tree: reactive NPC brain ───────────────────────────────
+    // Conditions read blackboard facts; the chosen !action is returned.
+    print("== Behavior tree: NPC decisions ==")
+    bind brain = bt_build("selector { sequence { ?enemy_visible > 0 ?ammo >= 1 !attack } sequence { ?enemy_visible > 0 !flee } !patrol }")
+
+    bt_set(brain, "enemy_visible", 0)
+    print("  no threat        -> ", bt_tick(brain))
+
+    bt_set(brain, "enemy_visible", 1)
+    bt_set(brain, "ammo", 5)
+    print("  armed, enemy near -> ", bt_tick(brain))
+
+    bt_set(brain, "ammo", 0)
+    print("  out of ammo      -> ", bt_tick(brain))
+
+    // ── 3. Miniature dialog LLM: give the tavern keeper a voice ────────────
+    print("== Dialog LLM: training an NPC voice ==")
+    bind npc = dialog_new(3, 32, 64, 1)               // ctx=3, embed=32, hidden=64
+    bind lines = dialog_load(npc, "examples/ai/tavern.lingdialog")
+    print("  loaded ", lines, " dialog lines")
+
+    bind loss = dialog_train(npc, 80, 0.1)            // 80 epochs
+    print("  final cross-entropy loss = ", loss)
+
+    print("  Bram says: \"", dialog_say(npc, "welcome traveler", 12, 0.7), "\"")
+    print("  Bram says: \"", dialog_say(npc, "they say", 12, 0.7), "\"")
+
+    dialog_save(npc, "examples/ai/bram.llm")          // persist for reuse
+    print("  saved trained model to examples/ai/bram.llm")
+}

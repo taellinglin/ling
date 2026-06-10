@@ -1,0 +1,23 @@
+[package]
+name = "ling-icon"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>"]
+description = "Rasterize SVG/PNG icons to multi-resolution .ico and embed them in Windows executables"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[lib]
+name = "ling_icon"
+path = "src/lib.rs"
+
+[dependencies]
+# resvg re-exports `usvg` and `tiny_skia`, so depending on it alone keeps the
+# SVG stack version-locked and avoids mismatched-type errors.
+resvg = "0.44"
+ico = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
+
+# Embeds an .ico as a Windows resource from a build script. Windows-only.
+[target.'cfg(windows)'.dependencies]
+winresource = "0.1"

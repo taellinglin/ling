@@ -86,6 +86,12 @@ window_is_open = "หน้าต่างเปิดอยู่"
 capture_mouse = "จับเมาส์"
 get_width = "ความกว้าง"
 get_height = "ความสูง"
+# Monitor detection + framerate
+monitor_width = "ความกว้างจอ"
+monitor_height = "ความสูงจอ"
+monitor_refresh = "อัตรารีเฟรช"
+monitor_info = "ข้อมูลจอ"
+set_fps = "ตั้งเฟรมเรต"
 
 # ── 2-D drawing ───────────────────────────────────────────────────────────────
 fill = "เติม"
@@ -444,6 +450,25 @@ dialog_typing = "กำลังพิมพ์บทสนทนา"
 dialog_close = "ปิดบทสนทนา"
 dialog_color = "สีบทสนทนา"
 dialog_draw = "วาดบทสนทนา"
+
+# — game AI (ling-ai): neural net, behavior tree, dialog LLM —
+nn_new = "สร้างโครงข่าย"
+nn_dense = "ชั้นหนาแน่น"
+nn_forward = "ส่งต่อโครงข่าย"
+nn_train = "ฝึกโครงข่าย"
+nn_save = "บันทึกโครงข่าย"
+nn_load = "โหลดโครงข่าย"
+bt_build = "สร้างต้นไม้พฤติกรรม"
+bt_set = "ตั้งข้อเท็จจริง"
+bt_tick = "เดินต้นไม้พฤติกรรม"
+bt_status = "สถานะต้นไม้พฤติกรรม"
+dialog_new = "สร้างโมเดลสนทนา"
+dialog_learn = "เรียนรู้สนทนา"
+dialog_load = "โหลดชุดสนทนา"
+dialog_train = "ฝึกสนทนา"
+dialog_say = "พูดสนทนา"
+dialog_save = "บันทึกโมเดลสนทนา"
+dialog_load_model = "โหลดโมเดลสนทนา"
 
 soft_spin = "หมุนนุ่ม"
 

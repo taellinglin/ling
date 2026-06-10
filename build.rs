@@ -18,9 +18,33 @@ fn main() {
     
     // Generate lexicon lookup tables
     generate_lexicon_tables();
-    
+
     // Generate Unicode script detection tables
     generate_unicode_tables();
+
+    // Embed the default Ling icon into every Windows binary of this crate.
+    embed_default_icon("assets/ling.ico");
+}
+
+/// Embed `ico_rel` (relative to this crate) as the executable icon for all of
+/// the crate's binaries on Windows. A missing icon or absent resource compiler
+/// only warns — it must never fail the build.
+fn embed_default_icon(ico_rel: &str) {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
+    let ico = Path::new(&manifest).join(ico_rel);
+    if !ico.exists() {
+        println!("cargo:warning=icon '{}' not found; building without an app icon", ico.display());
+        return;
+    }
+    println!("cargo:rerun-if-changed={ico_rel}");
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(&ico.to_string_lossy());
+    if let Err(e) = res.compile() {
+        println!("cargo:warning=icon embed skipped ({e})");
+    }
 }
 
 fn generate_lexicon_tables() {

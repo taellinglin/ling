@@ -32,6 +32,27 @@ pub fn run(source: &str) -> Result<(), String> {
     run_file(source, None)
 }
 
+/// Self-extract resources packed into the executable by `ling build --pack`.
+///
+/// Each `(relative_path, bytes)` is written under a per-app temp directory, then
+/// the process's current directory is switched there so the app's relative asset
+/// paths (e.g. `music/song.wav`) resolve against the extracted files. A no-op for
+/// an empty table.
+pub fn unpack_resources(app: &str, resources: &[(&str, &[u8])]) {
+    if resources.is_empty() {
+        return;
+    }
+    let base = std::env::temp_dir().join(format!("ling-pack-{app}"));
+    for (rel, bytes) in resources {
+        let dst = base.join(rel);
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&dst, bytes);
+    }
+    let _ = std::env::set_current_dir(&base);
+}
+
 /// Run with an optional source directory for relative `use` imports.
 pub fn run_file(source: &str, source_dir: Option<std::path::PathBuf>) -> Result<(), String> {
     let program = parser::parse(source)

@@ -75,6 +75,10 @@ path = "src/main.rs"
 name = "lingfu-pl"
 path = "src/main.rs"
 
+[build-dependencies]
+# Embeds the default Ling icon into lingfu.exe (and its localized bin aliases).
+winresource = "0.1"
+
 [dependencies]
 clap = { version = "4.4", features = ["derive", "color"] }
 serde = { version = "1.0", features = ["derive"] }
