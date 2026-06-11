@@ -1,5 +1,4 @@
 use crate::camera::Camera3D;
-use crate::color::Color;
 use crate::renderer::{Renderer, SoftwareRenderer};
 use crate::scene::{Scene, Transform as SceneTransform};
 use crate::renderer::FrameBuffer;

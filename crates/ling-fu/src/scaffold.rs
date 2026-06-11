@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ─── Project kind ─────────────────────────────────────────────────────────────
 
@@ -128,6 +128,7 @@ pub struct DirNames {
     /// Library core dir  (本 / 本 / 핵심 / แกน / core)
     pub lib_core:   &'static str,
     /// "Spirit source" comment prefix for generated files
+    #[allow(dead_code)] // emitted by templates; not read by the CLI itself
     pub src_label:  &'static str,
 }
 
@@ -757,6 +758,7 @@ bind start = do {
     Ok(())
 }
 
+#[allow(dead_code)] // public helper retained for external callers / future use
 pub fn sanitize_project_kind(kind: &str) -> String {
     kind.trim().replace(' ', "_")
 }

@@ -45,7 +45,7 @@ impl VrfKeypair {
 
 /// Verify that `proof.output` is the correct VRF output for `pubkey` + `input`.
 pub fn vrf_verify(pubkey: &[u8; 32], input: &[u8], proof: &VrfProof) -> bool {
-    use ed25519_dalek::Verifier;
+    
     let vk = match VerifyingKey::from_bytes(pubkey) { Ok(k) => k, Err(_) => return false };
     let h = domain_hash(input);
     let sig = Signature::from_bytes(&proof.proof_bytes);

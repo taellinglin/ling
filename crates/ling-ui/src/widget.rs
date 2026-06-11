@@ -16,6 +16,7 @@ pub struct RenderCtx {
 /// Root view container — holds a tree of boxed widgets.
 pub struct View {
     pub children: Vec<Box<dyn Widget>>,
+    #[allow(dead_code)] // reserved for stable per-widget ids (not yet read)
     next_id: u64,
 }
 

@@ -179,7 +179,7 @@ fn icosphere(subdiv: i32) -> Mesh {
         let mut nm = Mesh::default();
         let mut mid: std::collections::HashMap<(u32,u32),u32> = std::collections::HashMap::new();
         for v in &m.verts { nm.verts.push(*v); }
-        let mut midpoint = |nm: &mut Mesh, a: u32, b: u32, mid: &mut std::collections::HashMap<(u32,u32),u32>| -> u32 {
+        let midpoint = |nm: &mut Mesh, a: u32, b: u32, mid: &mut std::collections::HashMap<(u32,u32),u32>| -> u32 {
             let key = if a < b { (a,b) } else { (b,a) };
             if let Some(&i) = mid.get(&key) { return i; }
             let pa = nm.verts[a as usize]; let pb = nm.verts[b as usize];
@@ -812,15 +812,25 @@ impl GfxState {
                     let da=self.camera.depth(a[0],a[1],a[2]);
                     let db=self.camera.depth(b[0],b[1],b[2]);
                     let dc=self.camera.depth(c[0],c[1],c[2]);
-                    if da<=near || db<=near || dc<=near { continue; }
-                    let ca = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ia], a, eye, &lights, &sp));
-                    let cb = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ib], b, eye, &lights, &sp));
-                    let cc = ling_graphics::shading::pack(ling_graphics::shading::lit_vertex(base, m.normals[ic], c, eye, &lights, &sp));
-                    let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
-                    let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
-                    let (scx,scy,pc)=self.camera.project(c[0],c[1],c[2]);
-                    let depth=(pa+pb+pc)/3.0;
-                    self.depth_queue.push_triangle_g(depth, sax,say,ca, sbx,sby,cb, scx,scy,cc, bands);
+                    if da<=near && db<=near && dc<=near { continue; } // all behind → drop
+                    // Lit colours per vertex (kept unpacked so clipping can lerp them).
+                    let la = ling_graphics::shading::lit_vertex(base, m.normals[ia], a, eye, &lights, &sp);
+                    let lb = ling_graphics::shading::lit_vertex(base, m.normals[ib], b, eye, &lights, &sp);
+                    let lc = ling_graphics::shading::lit_vertex(base, m.normals[ic], c, eye, &lights, &sp);
+                    // Near-plane clip (keeps large straddling tiles instead of dropping them).
+                    let poly = near_clip_poly(&[(a,la,da),(b,lb,db),(c,lc,dc)], near);
+                    if poly.len() < 3 { continue; }
+                    let proj: Vec<(f32,f32,f32,u32)> = poly.iter().map(|(p,col)| {
+                        let (sx,sy,pz)=self.camera.project(p[0],p[1],p[2]);
+                        (sx,sy,pz, ling_graphics::shading::pack(*col))
+                    }).collect();
+                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
+                    let mut k=1;
+                    while k+1 < proj.len() {
+                        self.depth_queue.push_triangle_g(depth,
+                            proj[0].0,proj[0].1,proj[0].3, proj[k].0,proj[k].1,proj[k].3, proj[k+1].0,proj[k+1].1,proj[k+1].3, bands);
+                        k+=1;
+                    }
                 }
             } else {
                 // ── flat per-face path (shade_mode 0) ─────────────────────────
@@ -836,12 +846,19 @@ impl GfxState {
                     let da=self.camera.depth(a[0],a[1],a[2]);
                     let db=self.camera.depth(b[0],b[1],b[2]);
                     let dc=self.camera.depth(c[0],c[1],c[2]);
-                    if da<=near || db<=near || dc<=near { continue; }
-                    let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
-                    let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
-                    let (scx,scy,pc)=self.camera.project(c[0],c[1],c[2]);
-                    let depth=(pa+pb+pc)/3.0;
-                    self.depth_queue.push_triangle(depth, lit, sax,say, sbx,sby, scx,scy);
+                    if da<=near && db<=near && dc<=near { continue; } // all behind → drop
+                    // Near-plane clip (flat colour, so vertex colour is irrelevant here).
+                    let poly = near_clip_poly(&[(a,[0.0;3],da),(b,[0.0;3],db),(c,[0.0;3],dc)], near);
+                    if poly.len() < 3 { continue; }
+                    let proj: Vec<(f32,f32,f32)> = poly.iter()
+                        .map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
+                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
+                    let mut k=1;
+                    while k+1 < proj.len() {
+                        self.depth_queue.push_triangle(depth, lit,
+                            proj[0].0,proj[0].1, proj[k].0,proj[k].1, proj[k+1].0,proj[k+1].1);
+                        k+=1;
+                    }
                 }
             }
         }
@@ -870,4 +887,29 @@ impl GfxState {
             }
         }
     }
+}
+
+/// Near-plane clip of a convex polygon (Sutherland–Hodgman). Each input vertex is
+/// `(world_pos, colour_rgb, camera_depth)`; a vertex is kept when `depth > near`.
+/// Vertices created on crossing edges interpolate both position and colour, so a
+/// large floor/wall tile straddling the near plane is trimmed to its in-front
+/// portion rather than dropped wholesale (which made tiles pop out when close).
+fn near_clip_poly(vin: &[([f32; 3], [f32; 3], f32)], near: f32) -> Vec<([f32; 3], [f32; 3])> {
+    let n = vin.len();
+    let mut out: Vec<([f32; 3], [f32; 3])> = Vec::with_capacity(n + 1);
+    for i in 0..n {
+        let a = &vin[i];
+        let b = &vin[(i + 1) % n];
+        let ain = a.2 > near;
+        let bin = b.2 > near;
+        if ain { out.push((a.0, a.1)); }
+        if ain != bin {
+            let t = (near - a.2) / (b.2 - a.2);
+            let lerp3 = |p: [f32; 3], q: [f32; 3]| {
+                [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t]
+            };
+            out.push((lerp3(a.0, b.0), lerp3(a.1, b.1)));
+        }
+    }
+    out
 }

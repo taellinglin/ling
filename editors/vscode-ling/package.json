@@ -1,0 +1,58 @@
+{
+  "name": "ling-lang",
+  "displayName": "Ling Language",
+  "description": "Syntax highlighting for the Ling (灵言) polyglot programming language.",
+  "version": "0.1.0",
+  "publisher": "ling-lang",
+  "license": "SEE LICENSE IN ../../LICENSE",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "ling",
+    "灵言",
+    "polyglot",
+    "syntax highlighting"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ling",
+        "aliases": [
+          "Ling",
+          "ling",
+          "灵言"
+        ],
+        "extensions": [
+          ".ling"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ling",
+        "scopeName": "source.ling",
+        "path": "./syntaxes/ling.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ling",
+        "path": "./snippets/ling.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "Ling Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/ling-dark-color-theme.json"
+      }
+    ]
+  }
+}

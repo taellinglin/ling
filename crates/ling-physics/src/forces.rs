@@ -13,6 +13,23 @@ use glam::{Vec3, Vec4};
 /// Gravitational acceleration (9.8 m/s² downward)
 pub const GRAVITY: f32 = 9.8;
 
+/// GPU-accelerated O(n²) N-body acceleration for `bodies` (positions + masses).
+///
+/// Returns the acceleration on each body from every other body:
+/// `a_i = Σ_{j≠i} g·m_j·(p_j−p_i)/(|Δ|²+ε²)^{3/2}`. Runs on CUDA when available
+/// (build with `--features cuda`), transparently falling back to the CPU — the
+/// caller gets the same result either way. `soften` (ε) avoids singularities at
+/// close range. Ideal for particle galaxies, charge fields, and flocking.
+pub fn nbody_accel(positions: &[Vec3], masses: &[f32], g: f32, soften: f32) -> Vec<Vec3> {
+    let n = positions.len().min(masses.len());
+    if n == 0 { return Vec::new(); }
+    let mut pos = Vec::with_capacity(3 * n);
+    for p in &positions[..n] { pos.push(p.x); pos.push(p.y); pos.push(p.z); }
+    let mut out = vec![0.0f32; 3 * n];
+    ling_gpu::backend().nbody_accel(&pos, &masses[..n], g, soften, &mut out);
+    (0..n).map(|i| Vec3::new(out[3 * i], out[3 * i + 1], out[3 * i + 2])).collect()
+}
+
 /// Calculate gravity force given mass
 pub fn gravity_force(mass: f32) -> Vec3 {
     Vec3::new(0.0, -GRAVITY * mass, 0.0)

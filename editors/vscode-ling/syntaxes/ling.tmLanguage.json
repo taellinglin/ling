@@ -1,0 +1,159 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Ling",
+  "scopeName": "source.ling",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#constants" },
+    { "include": "#declaration" },
+    { "include": "#keywords" },
+    { "include": "#keywords-i18n" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#function-call" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.ling",
+          "match": "#.*$"
+        },
+        {
+          "name": "comment.line.double-slash.ling",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.ling",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.ling",
+          "match": "\\\\[ntr\"\\\\0]"
+        }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.ling",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?\\b"
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.ling",
+          "match": "\\b(?:true|false|verdadero|falso|vrai|faux|wahr|falsch|verdadeiro)\\b"
+        },
+        {
+          "name": "constant.language.boolean.ling",
+          "match": "真|假|偽|참|거짓|จริง|เท็จ|सत्य|असत्य|صحيح|خطأ"
+        },
+        {
+          "name": "constant.language.ling",
+          "match": "\\b(?:ok|bad|none)\\b"
+        },
+        {
+          "name": "constant.language.ling",
+          "match": "好|可|坏|误|无"
+        }
+      ]
+    },
+    "declaration": {
+      "patterns": [
+        {
+          "comment": "binding/function name: `bind name = ...` or `fn name ...`",
+          "match": "\\b(bind|fn|enlazar|lier|binden|ligar|func)\\b\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "captures": {
+            "1": { "name": "storage.type.ling" },
+            "2": { "name": "entity.name.function.ling" }
+          }
+        },
+        {
+          "name": "storage.type.ling",
+          "match": "\\b(?:bind|fn|mod|type|use|own|lend|share|move|copy|pure|async|func|module|importar|nutzen|utiliser|enlazar|lier|binden|ligar)\\b"
+        },
+        {
+          "name": "storage.type.i18n.ling",
+          "match": "灵符|令|函数|関数|モジュール|바인드|束縛|实行|実行|函|核|符|载|引|拥有|独|借|共享|共|移动|移|复制|复|异步|异|纯|사용|使う|ใช้|นำเข้า|함수|모듈|모|묶|関|模|執|执"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ling",
+          "match": "\\b(?:if|else|while|for|in|match|return|post|give|again|stop|try|choose|can|change|where|fit|form|do|spawn|wait|as|start|result|sure|maybe)\\b"
+        },
+        {
+          "comment": "Latin keywords from non-English lexicons",
+          "name": "keyword.control.ling",
+          "match": "\\b(?:hacer|faire|machen|fazer|si|sino|sinon|sonst|senão|mientras|tantque|solange|enquanto|para|für|retornar|retourner|zurück|wenn|solange|verdadero)\\b"
+        }
+      ]
+    },
+    "keywords-i18n": {
+      "comment": "CJK / Thai / Arabic / Devanagari / Cyrillic keyword forms (no word boundaries). Multi-character forms are listed before single-character forms that share a prefix.",
+      "name": "keyword.control.i18n.ling",
+      "match": "否则|否|共享|移动|复制|异步|等待|形式|选择|改变|停止|继续|尝试|确定|可能|生成|拥有|止まれ|停め|戻る|帰る|試す|待つ|非同期|起動|一致|の中|ために|一方|아니면|기다려|비동기|반환|귀환|만약|조건|동안|반복|위해|안에|매치|시도|생성|멈춤|계속|실행|もし|執|執行|执|做|若|如|当|历|于|配|归|借|移|复|异|待|为|发布|出|给|予|适合|选|能|变|止|试|确|或|启|間|繰|他|バ|묶|связать|сделать|если|иначе|пока|для|вернуть|ผูก|ทำ|ฟังก์ชัน|ถ้า|มิฉะนั้น|ขณะที่|สำหรับ|ใน|จับคู่|คืน|รอ|ไม่พร้อมกัน|बाँधो|करो|अगर|नहींतो|जबकि|केलिए|वापस|ربط|افعل|إذا|وإلا|بينما|لأجل|في|أعد"
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.ling",
+          "match": "\\b(?:number|text|bool|list|map|tuple)\\b"
+        },
+        {
+          "name": "support.type.i18n.ling",
+          "match": "数|文|布|列|图|元"
+        }
+      ]
+    },
+    "builtins": {
+      "name": "support.function.builtin.ling",
+      "match": "\\b(?:print|debug|panic|open_window|open_fullscreen|fill|clear|set_color_hsl|set_color|present|draw_line_3d|draw_line|draw_pixel|triangle|draw_rect|draw_circle|draw_text|window_is_open|get_width|get_height|monitor_width|monitor_height|monitor_refresh|monitor_info|set_fps|key_down|key_pressed|mouse_x|mouse_y|mouse_dx|mouse_dy|mouse_button|capture_mouse|camera_pos|camera_look|camera_fov|draw_mesh|draw_triangle_3d|set_camera_pos|set_camera|set_zdist|set_projection|set_ambient|add_light|clear_lights|vtex_grid|vtex_rings|vtex_star|vtex_spiral|vtex_flower|vtex_lotus|vtex_chakra|vtex_yantra|vtex_letter_rain|vtex_hyperbolic_uv|vtex_tessellated|vtex_halftone|vtex_spiked_cog|vtex_torii|vtex_pagoda|tone|play_wav|stop_audio|set_volume|mic_open|mic_peak|mic_rms|mic_fft|audio_tone|audio_volume|audio_listener|audio_bgm_volume|audio_bgm|hsl_color|svg_begin|svg_rect|svg_circle|svg_line|svg_polyline|svg_text|svg_end|trunc|int|sin|cos|tan|sqrt|abs|floor|ceil|round|pow|log|min|max|clamp|pi|tau|lerp_color|lerp|smoothstep|rand|sign|vnoise|fbm|perlin|hsv_to_rgb|set_blend|time_now|frame_count|draw_disc|len|push|pop|new_list|new_map|keys|values|contains|time|sleep|http_get|http_post|ws_connect|ai_chat|ai_embed|hash|encrypt|decrypt|verify|physics_normalize|physics_dot|physics_cross|physics_distance|physics_magnitude|physics_lerp|physics_angle|physics_project|physics_reflect|physics_gravity|physics_drag|physics_spring|physics_damping|physics_attraction|physics_repulsion|physics_buoyancy|physics_wind|physics_bounce|physics_accel|cube|box|sphere|icosphere|dome|cylinder|cone|capsule_chain|capsule|torus|pyramid|prism|frustum|tetrahedron|octahedron|dodecahedron|icosahedron|gear|gyro|helix|spring|arch|stairs|star_prism|mobius|set_shade_mode|set_cel_bands|set_shadow_color|set_rim|crypto_hash|knot_points|knot_label|knot_keygen|knot_public|knot_encapsulate|knot_decapsulate|crypto_seal|crypto_open|holo_points|holo_fragment_count|ui_theme|ui_text|ui_frame|ui_bevel|ui_hot|ui_radar3d|ui_radar|ui_compass|ui_reticle|ui_target|ui_panel3d|ui_panel|ui_scanlines|ui_bar|ui_segbar|ui_gauge3d|ui_gauge|ui_ring|ui_vu|ui_spark|ui_battery|ui_button|ui_toggle|ui_slider|ui_checkbox|ui_tabs|ui_progress|ui_tooltip|ui_stepper|ui_healthbar|ui_cooldown|ui_counter|ui_minimap|ui_dpad|ui_slotgrid|ui_vignette|ui_sound|audio_blip|font_load|font_text_fill|font_text_3d|font_text|font_width|music_load|music_duration|music_bpm|music_key|music_onsets|music_beat_grid|music_play|music_pause|music_stop|music_seek|music_pos|music_volume|music_patch|music_note_on|music_note_off|music_note_name|music_note|music_judge|music_grade_name|music_lrc|music_lyric|music_mic_pitch|music_hz|music_pitch_score|music_midi_load|music_midi_count|music_midi_notes|music_midi_bars|music_fft|audio_sfx|audio_sample_load|audio_sample_play|audio_sample_stop|audio_fx_delay|audio_fx_reverb|audio_fx_lowpass|project_3d|draw_poly|soft_ball|soft_step|soft_bounce|soft_contain|soft_kick|soft_deform|soft_centroid|soft_nodes|soft_spin|soft_angular_speed|rb_add|rb_torque|rb_spin|rb_impulse|rb_floor|rb_gravity|rb_step|rb_pos|rb_rot|liquid_new|liquid_splat|liquid_gravity|liquid_step|liquid_draw_surface|liquid_draw|liquid_rainbow|liquid_mix|sparkle|dialog_show|dialog_step|dialog_advance|dialog_active|dialog_typing|dialog_close|dialog_color|dialog_draw|dialog_new|dialog_learn|dialog_load_model|dialog_load|dialog_train|dialog_say|dialog_save|nn_new|nn_dense|nn_forward|nn_train|nn_save|nn_load|bt_build|bt_set|bt_tick|bt_status|orb_shell|orb_particles)\\b"
+    },
+    "function-call": {
+      "match": "([\\p{L}_][\\p{L}\\p{N}_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.call.ling" }
+      }
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.range.ling",
+          "match": "\\.\\."
+        },
+        {
+          "name": "keyword.operator.path.ling",
+          "match": "::"
+        },
+        {
+          "name": "keyword.operator.arrow.ling",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.comparison.ling",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.ling",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.ling",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.assignment.ling",
+          "match": "="
+        }
+      ]
+    }
+  }
+}

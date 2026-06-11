@@ -23,6 +23,7 @@ fn main() {
     generate_unicode_tables();
 
     // Embed the default Ling icon into every Windows binary of this crate.
+    println!("cargo:rerun-if-changed=assets/ling.ico");
     embed_default_icon("assets/ling.ico");
 }
 

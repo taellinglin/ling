@@ -409,14 +409,14 @@ fn svg_path_to_polylines(d: &str) -> Vec<Vec<[f32; 2]>> {
     let mut cur: Vec<[f32; 2]> = Vec::new();
     let (mut x, mut y) = (0.0f32, 0.0f32);
     let (mut start_x, mut start_y) = (0.0f32, 0.0f32);
-    let mut toks = tokenize_path(d);
+    let toks = tokenize_path(d);
     let mut i = 0;
     let mut cmd = ' ';
     while i < toks.len() {
         if let Tok::Cmd(c) = toks[i] { cmd = c; i += 1; }
         let rel = cmd.is_ascii_lowercase();
         let uc = cmd.to_ascii_uppercase();
-        let mut next = |i: &mut usize| -> f32 {
+        let next = |i: &mut usize| -> f32 {
             while *i < toks.len() { if let Tok::Num(n) = toks[*i] { *i += 1; return n; } else { break; } }
             0.0
         };

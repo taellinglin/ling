@@ -68,6 +68,7 @@ pub trait Renderer {
 
 // ── Software rasterizer ───────────────────────────────────────────────────────
 
+#[allow(dead_code)] // `color` carried for future flat-shaded path (not yet read)
 struct ScreenVert {
     x: f32, y: f32,
     z: f32,       // NDC depth in [−1, 1]

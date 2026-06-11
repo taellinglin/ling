@@ -26,13 +26,17 @@ fn main() {
                 eprintln!("Usage: ling run <file.ling>");
                 std::process::exit(1);
             });
-            eprintln!("[ling] argv1={:?} argv2={:?} argv3={:?}", args.get(1), args.get(2), args.get(3));
             run_file(file);
         }
 
         Some("convert") => {
             // ling convert <asset> [-o out.ling] [--no-compression]
             std::process::exit(ling::convert::run(&args[1..]));
+        }
+
+        Some("ast") => {
+            // ling ast [path] [--technical] [--artwork] [--ling] [--all] [--out <dir>]
+            std::process::exit(run_ast(&args[2..]));
         }
 
         Some("build") => {
@@ -54,6 +58,8 @@ fn main() {
             println!("    --platform <targets>              web win lin mac all (comma-sep)");
             println!("    --icon <file.svg|png|ico>         app icon (overrides manifest icon)");
             println!("    --pack                            embed [includes] resources into the exe");
+            println!("  ling ast [path] [--technical|--artwork|--ling|--all]");
+            println!("                                      project-wide AST → SVG in ./AST/ (300 dpi)");
             println!("  ling convert <asset> [opts]         transcode an asset → importable .ling");
             println!("    -o <out.ling>                     output path (default: <asset>.ling)");
             println!("    --no-compression                  emit plain arrays instead of blobs");
@@ -63,7 +69,6 @@ fn main() {
 }
 
 fn run_file(path: &str) {
-    eprintln!("[ling] reading source file: {path}");
     let resolved = std::path::Path::new(path);
     if !resolved.exists() {
         eprintln!("[ling] error: file does not exist: {}", resolved.display());
@@ -80,9 +85,132 @@ fn run_file(path: &str) {
         eprintln!("[detected language: {}]", lang);
     }
     let src_dir = resolved.parent().map(|p| p.to_path_buf());
-    if let Err(e) = ling::run_file(&source, src_dir) {
+    if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
         eprintln!("{e}");
         std::process::exit(1);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AST visualisation — `ling ast`
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// `ling ast [path] [--technical|--artwork|--ling|--all] [--out <dir>]`
+///
+/// Treats the whole project (a directory of `.ling` files, or a single file) as
+/// one program while preserving file scope, then writes the requested SVG
+/// style(s) to `<out>/` (default `./AST/`). Returns a process exit code.
+fn run_ast(args: &[String]) -> i32 {
+    use ling::astviz::AstStyle;
+
+    let out_dir = flag_value(&Vec::from(args), "--out").unwrap_or_else(|| "AST".into());
+    let mut styles: Vec<AstStyle> = Vec::new();
+    let all = args.iter().any(|a| a == "--all");
+    if all || args.iter().any(|a| a == "--technical") { styles.push(AstStyle::Technical); }
+    if all || args.iter().any(|a| a == "--artwork")   { styles.push(AstStyle::Artwork); }
+    if all || args.iter().any(|a| a == "--ling")      { styles.push(AstStyle::Ling); }
+    if styles.is_empty() {
+        // No style flag → produce all three.
+        styles = vec![AstStyle::Technical, AstStyle::Artwork, AstStyle::Ling];
+    }
+
+    // First non-flag argument is the path (skipping the --out value); default ".".
+    let path = pick_ast_path(args).unwrap_or_else(|| ".".into());
+
+    let (proj_name, files) = gather_project(&path);
+    if files.is_empty() {
+        eprintln!("ling ast: no parseable .ling files found in '{path}'");
+        return 1;
+    }
+
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("ling ast: cannot create '{out_dir}': {e}");
+        return 1;
+    }
+
+    let n_fns: usize = files.iter()
+        .map(|(_, p)| p.items.iter().filter(|i| matches!(i, ling::parser::ast::Item::Fn(_))).count())
+        .sum();
+    println!("ling ast: '{proj_name}' — {} file(s), {n_fns} fn(s)", files.len());
+
+    for style in &styles {
+        let svg = ling::astviz::render(*style, &proj_name, &files);
+        let dst = std::path::Path::new(&out_dir).join(format!("{proj_name}.{}.svg", style.slug()));
+        match std::fs::write(&dst, svg.as_bytes()) {
+            Ok(()) => println!("  ✓ {}", dst.display()),
+            Err(e) => { eprintln!("  ✗ {}: {e}", dst.display()); return 1; }
+        }
+    }
+    0
+}
+
+/// First non-flag argument that is not the value of `--out`.
+fn pick_ast_path(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "--out" { i += 2; continue; }
+        if a.starts_with('-') { i += 1; continue; }
+        return Some(a.clone());
+    }
+    None
+}
+
+/// Gather the project as `(project_name, [(file_label, Program)])`. A directory is
+/// walked recursively (skipping build/output trees); a single file yields one entry.
+/// Files that fail to parse are skipped with a warning.
+fn gather_project(path: &str) -> (String, Vec<(String, ling::parser::ast::Program)>) {
+    let p = Path::new(path);
+    let mut files = Vec::new();
+
+    if p.is_file() {
+        let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "program".into());
+        if let Some(prog) = parse_one(p) {
+            files.push((p.file_name().unwrap_or_default().to_string_lossy().into_owned(), prog));
+        }
+        return (sanitise_name(&name), files);
+    }
+
+    // Directory: recurse for .ling files.
+    let mut paths = Vec::new();
+    collect_ling_files(p, &mut paths);
+    paths.sort();
+    let base = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    for fp in &paths {
+        if let Some(prog) = parse_one(fp) {
+            let label = fp.strip_prefix(&base).unwrap_or(fp).to_string_lossy().into_owned();
+            files.push((label, prog));
+        }
+    }
+    let proj = p.canonicalize().ok()
+        .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .or_else(|| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "project".into());
+    (sanitise_name(&proj), files)
+}
+
+fn parse_one(path: &Path) -> Option<ling::parser::ast::Program> {
+    let src = std::fs::read_to_string(path).ok()?;
+    match ling::parser::parse(&src) {
+        Ok(prog) => Some(prog),
+        Err(e) => { eprintln!("  [skip] {}: parse error: {e}", path.display()); None }
+    }
+}
+
+fn collect_ling_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if matches!(name.as_ref(), ".ling-build" | "灵碑" | "target" | "dist" | ".git" | "node_modules" | "AST") {
+                continue;
+            }
+            collect_ling_files(&path, out);
+        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("ling" | "灵" | "霊" | "령" | "ลิง")) {
+            out.push(path);
+        }
     }
 }
 

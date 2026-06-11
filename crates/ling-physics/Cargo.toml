@@ -10,10 +10,13 @@ repository = "https://github.com/taellinglin/ling"
 [features]
 default = []
 with-gltf = ["dep:gltf"]
+# Enable the CUDA fast-path for batched ops (N-body, etc.); CPU fallback otherwise.
+cuda = ["ling-gpu/cuda"]
 
 [dependencies]
 glam = "0.28"
 gltf = { version = "1.4", optional = true }
+ling-gpu = { path = "../ling-gpu", version = "2030.0.0" }
 
 [lib]
 name = "ling_physics"

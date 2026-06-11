@@ -161,6 +161,7 @@ impl SfxVoice {
 }
 
 /// A playing instance of a loaded sample buffer at a world position (looping or one-shot).
+#[allow(dead_code)] // `w` is reserved for spatial-audio weighting (not yet read)
 struct SampleVoice {
     id: u32,
     sample: usize,

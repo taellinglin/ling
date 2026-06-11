@@ -128,7 +128,7 @@ impl Atmosphere {
 
     /// Directional light colour (sun or moon).
     pub fn directional_light(&self) -> [f32; 3] {
-        let df   = self.time.day_fraction();
+        let _df  = self.time.day_fraction();
         let hour = self.time.hour;
         // Warm sunrise/sunset, white noon, blue moonlight.
         if self.time.is_day() {

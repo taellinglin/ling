@@ -1,7 +1,7 @@
 //! Authenticated encryption: AES-256-GCM and XChaCha20-Poly1305.
 
 use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit, OsRng, AeadCore}};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce, aead::Aead as _};
+use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use zeroize::Zeroizing;
 
 pub struct AesGcm256 {

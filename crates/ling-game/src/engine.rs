@@ -1,7 +1,5 @@
 //! Main game application loop.
 
-use crate::entity::Entity;
-use crate::physics::RigidBody;
 use std::time::{Duration, Instant};
 
 pub trait GameSystem: Send {

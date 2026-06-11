@@ -28,6 +28,7 @@ impl Draw {
     fn fill(&mut self, c: Rgba, poly: Vec<[f32; 2]>) { self.fills.push((c, poly)); }
     fn stroke(&mut self, c: Rgba, pl: Vec<[f32; 2]>) { self.strokes.push((c, pl)); }
     /// Stroke a list of disjoint segments `[x0,y0,x1,y1]` (e.g. from `holo`).
+    #[allow(dead_code)] // helper kept for holo/segment widgets (not yet called)
     fn segs(&mut self, c: Rgba, segs: &[[f32; 4]]) {
         for s in segs { self.strokes.push((c, vec![[s[0], s[1]], [s[2], s[3]]])); }
     }

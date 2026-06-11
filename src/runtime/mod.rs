@@ -511,6 +511,11 @@ pub struct Interpreter {
     dialog: Option<ling_game::dialog::Dialog>,
     /// Dialog highlight colours by role: text, name, place, item (0x00RRGGBB).
     dialog_colors: [u32; 4],
+    /// Active user-function call frames (names), for error tracebacks.
+    frames: Vec<String>,
+    /// Snapshot of `frames` captured the moment a runtime error first arose
+    /// (the deepest call). Consumed by `take_error_trace`.
+    error_trace: Option<Vec<String>>,
 }
 
 impl Interpreter {
@@ -563,7 +568,30 @@ impl Interpreter {
             liquids: Vec::new(),
             dialog: None,
             dialog_colors: [0xE6F2FF, 0xFFD24A, 0x4AD2FF, 0x6CFF8C], // text · name · place · item
+            frames: Vec::new(),
+            error_trace: None,
         }
+    }
+
+    /// Take the call-stack snapshot captured at the deepest runtime error, if any.
+    /// Frames are ordered outermost-first (entry point first, failing call last).
+    pub fn take_error_trace(&mut self) -> Vec<String> {
+        self.error_trace.take().unwrap_or_default()
+    }
+
+    /// Run `body`, recording `name` as a call frame and snapshotting the stack on
+    /// the first runtime error so a traceback can be reported.
+    fn framed<T, F>(&mut self, name: &str, body: F) -> Result<T, EvalErr>
+    where
+        F: FnOnce(&mut Self) -> Result<T, EvalErr>,
+    {
+        self.frames.push(name.to_string());
+        let result = body(self);
+        if matches!(result, Err(EvalErr::Runtime(_))) && self.error_trace.is_none() {
+            self.error_trace = Some(self.frames.clone());
+        }
+        self.frames.pop();
+        result
     }
 
     /// Render the active dialog box: beveled frame + dark fill, then the visible
@@ -712,7 +740,7 @@ impl Interpreter {
         // Cache the evaluated globals so every user-function call can clone this
         // seed instead of re-evaluating all globals (see call_named).
         self.global_seed = env.clone();
-        self.eval_expr(&entry, &mut env).map(|_| ()).map_err(|e| match e {
+        self.framed("start", |me| me.eval_expr(&entry, &mut env)).map(|_| ()).map_err(|e| match e {
             EvalErr::Runtime(s) => s,
             EvalErr::Return(_)  => "unexpected top-level return".to_string(),
             EvalErr::Break      => "unexpected break at top level".to_string(),
@@ -1969,31 +1997,48 @@ impl Interpreter {
                     gfx.color, normal, centroid, &gfx.lights, gfx.ambient,
                 );
 
-                // Near-plane cull — cull only if the triangle's CENTROID is behind
-                // the near plane (not just any single vertex). This keeps large
-                // floor/wall tiles that merely straddle the plane when the camera is
-                // close, instead of popping the whole tile out of view.
-                let near = -gfx.camera.zdist + 0.02;
-                let da_raw = gfx.camera.depth(ax, ay, az);
-                let db_raw = gfx.camera.depth(bx, by, bz);
-                let dc_raw = gfx.camera.depth(cx, cy, cz);
-                if (da_raw + db_raw + dc_raw) / 3.0 <= near {
-                    return Ok(Value::Unit);
+                // ── Near-plane CLIP (Sutherland–Hodgman) ──
+                // A vertex just in front of the eye divides by ~0 in the perspective
+                // projection and smears the triangle into a screen-filling fan. The old
+                // "cull if any vertex past near" still let a vertex sitting just inside
+                // near blow up. Clipping the triangle to the near plane keeps only the
+                // in-front portion (finite projection — no fan, no over-cull).
+                let near = -gfx.camera.zdist + 0.05;
+                let vw = [
+                    (ax, ay, az, gfx.camera.depth(ax, ay, az)),
+                    (bx, by, bz, gfx.camera.depth(bx, by, bz)),
+                    (cx, cy, cz, gfx.camera.depth(cx, cy, cz)),
+                ];
+                let mut poly: Vec<(f32, f32, f32)> = Vec::with_capacity(4);
+                let mut ei = 0;
+                while ei < 3 {
+                    let a = vw[ei];
+                    let b = vw[(ei + 1) % 3];
+                    let ain = a.3 > near;
+                    let bin = b.3 > near;
+                    if ain { poly.push((a.0, a.1, a.2)); }
+                    if ain != bin {
+                        let tt = (near - a.3) / (b.3 - a.3);
+                        poly.push((a.0 + (b.0 - a.0) * tt, a.1 + (b.1 - a.1) * tt, a.2 + (b.2 - a.2) * tt));
+                    }
+                    ei += 1;
                 }
-
-                // Project to screen
-                let (sax, say, da) = gfx.camera.project(ax, ay, az);
-                let (sbx, sby, db) = gfx.camera.project(bx, by, bz);
-                let (scx, scy, dc) = gfx.camera.project(cx, cy, cz);
-
-                // Average camera depth (used for painter's sort)
-                let depth = (da + db + dc) / 3.0;
-
+                if poly.len() < 3 { return Ok(Value::Unit); }
+                // Project the clipped polygon, painter-depth = mean, fan-triangulate.
+                let proj: Vec<(f32, f32, f32)> =
+                    poly.iter().map(|p| gfx.camera.project(p.0, p.1, p.2)).collect();
+                let mut dsum = 0.0f32;
+                for p in &proj { dsum += p.2; }
+                let depth = dsum / proj.len() as f32;
                 let lit_color = gfx.fog_apply(lit_color, depth);
-                gfx.depth_queue.push_triangle(
-                    depth, lit_color,
-                    sax, say, sbx, sby, scx, scy,
-                );
+                let mut fk = 1;
+                while fk + 1 < proj.len() {
+                    gfx.depth_queue.push_triangle(
+                        depth, lit_color,
+                        proj[0].0, proj[0].1, proj[fk].0, proj[fk].1, proj[fk + 1].0, proj[fk + 1].1,
+                    );
+                    fk += 1;
+                }
                 return Ok(Value::Unit);
             }
 
@@ -2068,7 +2113,7 @@ impl Interpreter {
                 let pt = |u: f32, theta0: f32, dir: f32| -> ([f32;3], f32) {
                     let phi = pi * u;                       // 0..pi  (north → south)
                     let th  = dir * turns * tau * u + theta0;
-                    let (mut x, mut y, mut z) = (phi.sin()*th.cos()*radius, phi.cos()*radius, phi.sin()*th.sin()*radius);
+                    let (mut x, y, mut z) = (phi.sin()*th.cos()*radius, phi.cos()*radius, phi.sin()*th.sin()*radius);
                     let x1 =  x*cyr + z*syr;                // yaw about Y
                     let z1 = -x*syr + z*cyr;
                     x = x1; z = z1;
@@ -2081,7 +2126,7 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let near = -gfx.camera.zdist + 0.05;
                 // draw one segment (near-clipped) in a grayscale tint scaled by `lum`
-                let mut seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3], lum: f32| {
+                let seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3], lum: f32| {
                     let (mut lax,mut lay,mut laz)=(a[0],a[1],a[2]);
                     let (mut lbx,mut lby,mut lbz)=(b[0],b[1],b[2]);
                     let da=gfx.camera.depth(lax,lay,laz); let db=gfx.camera.depth(lbx,lby,lbz);
@@ -2148,7 +2193,7 @@ impl Interpreter {
                     let rr = u.cbrt() * radius * (0.85 + 0.15 * (t*1.3 + i as f32).sin()); // gentle pulse
                     let th = h(i.wrapping_mul(3) + 2) * tau + t * (0.3 + 0.5 * h(i*7+5)); // per-mote orbit
                     let ph = (h(i.wrapping_mul(3) + 3) * 2.0 - 1.0).acos();               // uniform cos(phi)
-                    let (mut x, mut y, mut z) = (rr*ph.sin()*th.cos(), rr*ph.cos(), rr*ph.sin()*th.sin());
+                    let (mut x, y, mut z) = (rr*ph.sin()*th.cos(), rr*ph.cos(), rr*ph.sin()*th.sin());
                     // tumble the cloud (yaw then pitch)
                     let x1 = x*cyr + z*syr; let z1 = -x*syr + z*cyr; x = x1; z = z1;
                     let y2 = y*cxr - z*sxr; let z2 = y*sxr + z*cxr;
@@ -3427,6 +3472,16 @@ impl Interpreter {
             "mouse_down" => {
                 let gfx = self.gfx.borrow();
                 let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
+                return Ok(Value::Bool(d));
+            }
+            "mouse_down_right" | "เมาส์ขวา" => {
+                let gfx = self.gfx.borrow();
+                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Right)).unwrap_or(false);
+                return Ok(Value::Bool(d));
+            }
+            "mouse_down_middle" | "เมาส์กลาง" => {
+                let gfx = self.gfx.borrow();
+                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Middle)).unwrap_or(false);
                 return Ok(Value::Bool(d));
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -4761,7 +4816,7 @@ impl Interpreter {
             for (param, arg) in def.params.iter().zip(args) {
                 call_env.insert(param.clone(), arg);
             }
-            return match self.exec_block(&def.body, &mut call_env) {
+            return match self.framed(name, |me| me.exec_block(&def.body, &mut call_env)) {
                 Ok(v) => Ok(v.unwrap_or(Value::Unit)),
                 Err(EvalErr::Return(v)) => Ok(v),
                 Err(e) => Err(e),
@@ -4777,7 +4832,7 @@ impl Interpreter {
                 for (p, a) in params.iter().zip(args) {
                     captured.insert(p.clone(), a);
                 }
-                match self.exec_block(&body, &mut captured) {
+                match self.framed("<closure>", |me| me.exec_block(&body, &mut captured)) {
                     Ok(v) => Ok(v.unwrap_or(Value::Unit)),
                     Err(EvalErr::Return(v)) => Ok(v),
                     Err(e) => Err(e),

@@ -1,0 +1,95 @@
+{
+  "name": "Ling Dark",
+  "type": "dark",
+  "semanticHighlighting": true,
+  "colors": {
+    "editor.background": "#14233D",
+    "editor.foreground": "#CDD6E5",
+    "editorLineNumber.foreground": "#3D5172",
+    "editorLineNumber.activeForeground": "#8899BB",
+    "editorCursor.foreground": "#FFD700",
+    "editor.selectionBackground": "#FFD70033",
+    "editor.lineHighlightBackground": "#1B2E4F",
+    "editorWhitespace.foreground": "#26324d",
+    "editorIndentGuide.background1": "#26324d",
+    "editorBracketMatch.border": "#FFD700",
+    "editorBracketMatch.background": "#FFD70022",
+    "editorError.foreground": "#FF4444",
+    "editorWarning.foreground": "#FFD700",
+    "editorInfo.foreground": "#00bbff",
+    "editorGutter.background": "#14233D",
+    "sideBar.background": "#101D33",
+    "activityBar.background": "#101D33",
+    "statusBar.background": "#101D33",
+    "titleBar.activeBackground": "#101D33"
+  },
+  "tokenColors": [
+    {
+      "name": "Comments",
+      "scope": ["comment", "comment.line", "punctuation.definition.comment"],
+      "settings": { "foreground": "#8899BB", "fontStyle": "italic" }
+    },
+    {
+      "name": "Keywords (control & storage)",
+      "scope": [
+        "keyword.control.ling",
+        "keyword.control.i18n.ling",
+        "storage.type.ling",
+        "storage.type.i18n.ling"
+      ],
+      "settings": { "foreground": "#FFD700", "fontStyle": "bold" }
+    },
+    {
+      "name": "Types",
+      "scope": ["support.type.ling", "support.type.i18n.ling", "entity.name.type"],
+      "settings": { "foreground": "#FFD700" }
+    },
+    {
+      "name": "Builtins & function names & calls",
+      "scope": [
+        "support.function.builtin.ling",
+        "entity.name.function.ling",
+        "entity.name.function.call.ling"
+      ],
+      "settings": { "foreground": "#FF4444" }
+    },
+    {
+      "name": "Strings",
+      "scope": ["string", "string.quoted.double.ling"],
+      "settings": { "foreground": "#00bbff" }
+    },
+    {
+      "name": "Escapes",
+      "scope": ["constant.character.escape.ling"],
+      "settings": { "foreground": "#FFD700" }
+    },
+    {
+      "name": "Numbers & language constants",
+      "scope": [
+        "constant.numeric.ling",
+        "constant.language.ling",
+        "constant.language.boolean.ling"
+      ],
+      "settings": { "foreground": "#0080ff" }
+    },
+    {
+      "name": "Operators",
+      "scope": [
+        "keyword.operator.ling",
+        "keyword.operator.arithmetic.ling",
+        "keyword.operator.comparison.ling",
+        "keyword.operator.logical.ling",
+        "keyword.operator.assignment.ling",
+        "keyword.operator.arrow.ling",
+        "keyword.operator.range.ling",
+        "keyword.operator.path.ling"
+      ],
+      "settings": { "foreground": "#8899BB" }
+    },
+    {
+      "name": "Variables / identifiers",
+      "scope": ["variable", "variable.other"],
+      "settings": { "foreground": "#007204" }
+    }
+  ]
+}

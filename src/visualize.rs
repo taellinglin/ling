@@ -41,7 +41,7 @@ const SIDEBAR_BG:&str = "#0d0d22";
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[allow(dead_code)]
-enum Cat {
+pub(crate) enum Cat {
     Rings, Spiral, Star, Flower, Lotus, Chakra, Yantra,
     Hyper, Tess, Rain, Grid, Halftone,
     Tone, Vol, Listen,
@@ -50,7 +50,7 @@ enum Cat {
 }
 
 impl Cat {
-    fn color(self) -> &'static str {
+    pub(crate) fn color(self) -> &'static str {
         match self {
             Cat::Rings    => "#00e5ff",
             Cat::Spiral   => "#00ffb3",
@@ -77,7 +77,7 @@ impl Cat {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Cat::Rings    => "rings",
             Cat::Spiral   => "spiral",
@@ -105,7 +105,7 @@ impl Cat {
     }
 }
 
-fn categorize(name: &str) -> Cat {
+pub(crate) fn categorize(name: &str) -> Cat {
     if name.starts_with("vtex_rings")       || name == "ลายวงซ้อน"         { return Cat::Rings; }
     if name.starts_with("vtex_spiral")      || name == "ลายก้นหอย"         { return Cat::Spiral; }
     if name.starts_with("vtex_star")        || name == "ลายดาว"             { return Cat::Star; }
@@ -130,12 +130,12 @@ fn categorize(name: &str) -> Cat {
     }
 }
 
-fn is_vtex(c: Cat) -> bool {
+pub(crate) fn is_vtex(c: Cat) -> bool {
     matches!(c, Cat::Rings|Cat::Spiral|Cat::Star|Cat::Flower|Cat::Lotus|
                Cat::Chakra|Cat::Yantra|Cat::Hyper|Cat::Tess|Cat::Rain|
                Cat::Grid|Cat::Halftone)
 }
-fn is_audio(c: Cat) -> bool { matches!(c, Cat::Tone|Cat::Vol|Cat::Listen) }
+pub(crate) fn is_audio(c: Cat) -> bool { matches!(c, Cat::Tone|Cat::Vol|Cat::Listen) }
 
 const ENTRY_NAMES: &[&str] = &[
     "start","main","启","เริ่ม","시작","начать","начало",
@@ -288,7 +288,7 @@ impl Document {
 fn xe(s: &str) -> String { s.replace('&',"&amp;").replace('<',"&lt;").replace('>',"&gt;") }
 fn p(v: f32) -> String { format!("{:.2}", v) }
 
-fn icon(cat: Cat, cx: f32, cy: f32, r: f32) -> String {
+pub(crate) fn icon(cat: Cat, cx: f32, cy: f32, r: f32) -> String {
     let c = cat.color();
     match cat {
         Cat::Rings => {
@@ -781,9 +781,9 @@ pub fn render(filename: &str, program: &Program) -> String {
     let mut svg = String::new();
     write!(svg,
         r#"<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="{SVG_W}" height="{}"
+<svg xmlns="http://www.w3.org/2000/svg" width="{SVG_W}" height="{h}" viewBox="0 0 {SVG_W} {h}"
      style="font-family:'JetBrains Mono','Fira Code',monospace,sans-serif;background:{BG}">"#,
-        total_h
+        h = total_h
     ).ok();
 
     svg.push_str(DEFS);

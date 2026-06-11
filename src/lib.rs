@@ -10,8 +10,10 @@ pub mod lexicon;
 pub mod polyglot;
 pub mod gfx;
 pub mod runtime;
+pub mod diag;
 pub mod utils;
 pub mod visualize;
+pub mod astviz;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod convert;
 
@@ -29,7 +31,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Run a Ling source string through the interpreter.
 /// Lexes → parses → executes the `start` binding.
 pub fn run(source: &str) -> Result<(), String> {
-    run_file(source, None)
+    run_named(source, None, None)
 }
 
 /// Self-extract resources packed into the executable by `ling build --pack`.
@@ -55,12 +57,29 @@ pub fn unpack_resources(app: &str, resources: &[(&str, &[u8])]) {
 
 /// Run with an optional source directory for relative `use` imports.
 pub fn run_file(source: &str, source_dir: Option<std::path::PathBuf>) -> Result<(), String> {
+    run_named(source, source_dir, None)
+}
+
+/// Run with an optional source directory and the source file name (used to label
+/// diagnostics). Parse and runtime errors are returned as fully-rendered,
+/// colored, localized diagnostics (see [`diag`]).
+pub fn run_named(
+    source: &str,
+    source_dir: Option<std::path::PathBuf>,
+    file: Option<&str>,
+) -> Result<(), String> {
+    let lang = diag::OutputLang::from_env();
     let program = parser::parse(source)
-        .map_err(|e| format!("parse error: {e}"))?;
+        .map_err(|e| diag::render_parse(&e, source, file, lang))?;
     let mut interp = runtime::Interpreter::new();
     interp.source_dir = source_dir;
-    interp.run_program(&program)
-        .map_err(|e| format!("runtime error: {e}"))
+    match interp.run_program(&program) {
+        Ok(()) => Ok(()),
+        Err(msg) => {
+            let trace = interp.take_error_trace();
+            Err(diag::render_runtime(&msg, source, file, &trace, lang))
+        }
+    }
 }
 
 /// Detect the primary human language used for keywords in a Ling source file.

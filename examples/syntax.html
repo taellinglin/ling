@@ -1,0 +1,215 @@
+# ════════════════════════════════════════════════════════════════════════════<br />
+# <span style="color: #6A5ACD;">arcade.ling</span> — <span style="color: #FFD700;">โหมดอาร์เคด: ปรับแต่งลูก (สี/สแตมป์/แบนด์/ชื่อ) + ต่อสู้ศัตรู AI</span>
+#   <span style="color: #A9A9A9;">วาดลูกแต่ง = body orb (สีกำหนดเอง) + สแตมป์ขั้วบน/ล่าง + แบนด์รอบเส้นศูนย์สูตร</span>
+#   <span style="color: #32CD32;">สแตมป์/แบนด์ = สามเหลี่ยมเติม (fill) + สีดินสอ → คุมสี/รูปทรงได้แม่นยำ</span>
+# ════════════════════════════════════════════════════════════════════════════
+<span style="background-color: #000; color: #fff;">bind</span> <span style="background-color: #000; color: #fff;">STAMP_N</span> = <span style="background-color: #000; color: #fff;">5</span>
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">BAND_N</span>  = <span style="color: #FF4500;">4</span>
+
+# ── <span style="color: #32CD32;">สว็อตช์สี: สี่เหลี่ยมเติมที่ (x,y) ครึ่งขนาด s</span> ──
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">วาดสว็อตช์</span>(x, y, s, r, g, b) {
+    <span style="color: #FFD700;">สีดินสอ</span>(r, g, b)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(x-s, y-s, <span style="color: #FF4500;">0.0</span>,  x+s, y-s, <span style="color: #FF4500;">0.0</span>,  x+s, y+s, <span style="color: #FF4500;">0.0</span>)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(x-s, y-s, <span style="color: #FF4500;">0.0</span>,  x+s, y+s, <span style="color: #FF4500;">0.0</span>,  x-s, y+s, <span style="color: #FF4500;">0.0</span>)
+}
+
+# ── <span style="color: #32CD32;">เฉดสี (0..1) → [r,g,b] สดใส</span> ──
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">สีจากเฉด</span>(h) {
+	<span style="color: #FFD700;">bind</span> r = <span style="color: #6A5ACD;">ไซน์</span>(h*<span style="color: #FF4500;">6.28319</span>) * <span style="color: #FF4500;">0.5</span> + <span style="color: #FF4500;">0.5</span>
+	<span style="color: #FFD700;">bind</span> g = <span style="color: #6A5ACD;">ไซน์</span>(h*<span style="color: #FF4500;">6.28319</span> + <span style="color: #FF4500;">2.094</span>) * <span style="color: #FF4500;">0.5</span> + <span style="color: #FF4500;">0.5</span>
+	<span style="color: #FFD700;">bind</span> b = <span style="color: #6A5ACD;">ไซน์</span>(h*<span style="color: #FF4500;">6.28319</span> + <span style="color: #FF4500;">4.189</span>) * <span style="color: #FF4500;">0.5</span> + <span style="color: #FF4500;">0.5</span>
+	<span style="color: #FFD700;">คืน</span> [<span style="color: #6A5ACD;">floor</span>(r*<span style="color: #FF4500;">200</span>+<span style="color: #FF4500;">55</span>), 
+			<span style="color: #6A5ACD;">floor</span>(g*<span style="color: #FF4500;">200</span>+<span style="color: #FF4500;">55</span>), 
+			<span style="color: #6A5ACD;">floor</span>(b*<span style="color: #FF4500;">200</span>+<span style="color: #FF4500;">55</span>)<span style="color: #FF4500;">]</span>
+}
+
+
+# ── <span style="color: #32CD32;">สแตมป์: ตราเวกเตอร์เติม (fill) ในระนาบ xz ที่ (ox,oy,oz) ขนาด s, หมุน rot</span> ──
+#   (<span style="color: #A9A9A9;">ตั้งสีดินสอก่อนเรียก</span>)
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">วาดสแตมป์</span>(id, ox, oy, oz, s, rot) {
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">0</span> {                      # <span style="color: #32CD32;">ดาว 5 แฉก (พัดจากจุดศูนย์กลาง)</span>
+        <span style="color: #FFD700;">bind</span> k = <span style="color: #FF4500;">0</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < <span style="color: #FF4500;">10</span> {
+            <span style="color: #FFD700;">bind</span> a0 = rot + k * <span style="color: #FF4500;">0.62832</span>;  <span style="color: #FFD700;">bind</span> a1 = rot + (k + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">0.62832</span>
+            <span style="color: #FFD700;">bind</span> r0 = <span style="color: #FF4500;">0.42</span>;  <span style="color: #FFD700;">ถ้า</span> k - <span style="color: #6A5ACD;">ปัดลง</span>(k/<span style="color: #FF4500;">2.0</span>)*<span style="color: #FF4500;">2</span> == <span style="color: #FF4500;">0</span> { <span style="color: #FFD700;">bind</span> r0 = <span style="color: #FF4500;">1.0</span> }
+            <span style="color: #FFD700;">bind</span> r1 = <span style="color: #FF4500;">0.42</span>;  <span style="color: #FFD700;">ถ้า</span> (k + <span style="color: #FF4500;">1</span>) - <span style="color: #6A5ACD;">ปัดลง</span>((k + <span style="color: #FF4500;">1</span>)/<span style="color: #FF4500;">2.0</span>)*<span style="color: #FF4500;">2</span> == <span style="color: #FF4500;">0</span> { <span style="color: #FFD700;">bind</span> r1 = <span style="color: #FF4500;">1.0</span> }
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox, oy, oz,  ox+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*r0*s, oy, oz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*r0*s,  ox+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*r1*s, oy, oz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*r1*s)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">1</span> {                      # <span style="color: #32CD32;">เฟือง/จักร (พัด รัศมีสลับ = ฟันเฟือง)</span>
+        <span style="color: #FFD700;">bind</span> k = <span style="color: #FF4500;">0</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < <span style="color: #FF4500;">16</span> {
+            <span style="color: #FFD700;">bind</span> a0 = rot + k * <span style="color: #FF4500;">0.3927</span>;  <span style="color: #FFD700;">bind</span> a1 = rot + (k + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">0.3927</span>
+            <span style="color: #FFD700;">bind</span> r0 = <span style="color: #FF4500;">0.66</span>;  <span style="color: #FFD700;">ถ้า</span> k - <span style="color: #6A5ACD;">ปัดลง</span>(k/<span style="color: #FF4500;">2.0</span>)*<span style="color: #FF4500;">2</span> == <span style="color: #FF4500;">0</span> { <span style="color: #FFD700;">bind</span> r0 = <span style="color: #FF4500;">1.0</span> }
+            <span style="color: #FFD700;">bind</span> r1 = <span style="color: #FF4500;">0.66</span>;  <span style="color: #FFD700;">ถ้า</span> (k + <span style="color: #FF4500;">1</span>) - <span style="color: #6A5ACD;">ปัดลง</span>((k + <span style="color: #FF4500;">1</span>)/<span style="color: #FF4500;">2.0</span>)*<span style="color: #FF4500;">2</span> == <span style="color: #FF4500;">0</span> { <span style="color: #FFD700;">bind</span> r1 = <span style="color: #FF4500;">1.0</span> }
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox, oy, oz,  ox+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*r0*s, oy, oz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*r0*s,  ox+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*r1*s, oy, oz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*r1*s)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">2</span> {                      # <span style="color: #32CD32;">เพชร (ข้าวหลามตัด — 2 สามเหลี่ยม)</span>
+        <span style="color: #FFD700;">bind</span> p0x = ox+<span style="color: #6A5ACD;">โคไซน์</span>(rot)*s;          <span style="color: #FFD700;">bind</span> p0z = oz+<span style="color: #6A5ACD;">ไซน์</span>(rot)*s
+        <span style="color: #FFD700;">bind</span> p1x = ox+<span style="color: #6A5ACD;">โคไซน์</span>(rot+<span style="color: #FF4500;">1.5708</span>)*s;   <span style="color: #FFD700;">bind</span> p1z = oz+<span style="color: #6A5ACD;">ไซน์</span>(rot+<span style="color: #FF4500;">1.5708</span>)*s
+        <span style="color: #FFD700;">bind</span> p2x = ox+<span style="color: #6A5ACD;">โคไซน์</span>(rot+<span style="color: #FF4500;">3.14159</span>)*s;  <span style="color: #FFD700;">bind</span> p2z = oz+<span style="color: #6A5ACD;">ไซน์</span>(rot+<span style="color: #FF4500;">3.14159</span>)*s
+        <span style="color: #FFD700;">bind</span> p3x = ox+<span style="color: #6A5ACD;">โคไซน์</span>(rot+<span style="color: #FF4500;">4.71239</span>)*s;  <span style="color: #FFD700;">bind</span> p3z = oz+<span style="color: #6A5ACD;">ไซน์</span>(rot+<span style="color: #FF4500;">4.71239</span>)*s
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(p0x,oy,p0z, p1x,oy,p1z, p2x,oy,p2z)
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(p0x,oy,p0z, p2x,oy,p2z, p3x,oy,p3z)
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">3</span> {                      # <span style="color: #32CD32;">สามเหลี่ยม (1 ฟิล)</span>
+        <span style="color: #FFD700;">bind</span> a0 = rot;  <span style="color: #FFD700;">bind</span> a1 = rot + <span style="color: #FF4500;">2.0944</span>;  <span style="color: #FFD700;">bind</span> a2 = rot + <span style="color: #FF4500;">4.18879</span>
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*s,oy,oz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*s, ox+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*s,oy,oz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*s, ox+<span style="color: #6A5ACD;">โคไซน์</span>(a2)*s,oy,oz+<span style="color: #6A5ACD;">ไซน์</span>(a2)*s)
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">4</span> {                      # <span style="color: #32CD32;">กากบาท/บวก (2 แท่งเติม = 4 สามเหลี่ยม)</span>
+        <span style="color: #FFD700;">bind</span> w = s * <span style="color: #FF4500;">0.32</span>
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox-s,oy,oz-w, ox+s,oy,oz-w, ox+s,oy,oz+w)
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox-s,oy,oz-w, ox+s,oy,oz+w, ox-s,oy,oz+w)
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox-w,oy,oz-s, ox+w,oy,oz-s, ox+w,oy,oz+s)
+        <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ox-w,oy,oz-s, ox+w,oy,oz+s, ox-w,oy,oz+s)
+    }
+}
+
+# ── <span style="color: #32CD32;">แบนด์: ลายเติม (fill) รอบเส้นศูนย์สูตร (วนรอบไร้รอยต่อ) — ตั้งสีดินสอก่อน</span> ──
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">วาดแบนด์</span>(id, cx, cy, cz, R, t) {
+    <span style="color: #FFD700;">bind</span> N = <span style="color: #FF4500;">24</span>
+    <span style="color: #FFD700;">bind</span> k = <span style="color: #FF4500;">0</span>
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">0</span> {                      # <span style="color: #32CD32;">แท่งตั้งเติม (มีช่องว่างระหว่างแท่ง)</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < N {
+            <span style="color: #FFD700;">bind</span> a0 = t*<span style="color: #FF4500;">0.3</span> + k * <span style="color: #FF4500;">6.28319</span> / N;  <span style="color: #FFD700;">bind</span> a1 = t*<span style="color: #FF4500;">0.3</span> + (k + <span style="color: #FF4500;">0.5</span>) * <span style="color: #FF4500;">6.28319</span> / N
+            <span style="color: #FFD700;">bind</span> ax=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*R; <span style="color: #FFD700;">bind</span> az=cz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*R
+            <span style="color: #FFD700;">bind</span> bx=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*R; <span style="color: #FFD700;">bind</span> bz=cz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*R
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ax,cy-<span style="color: #FF4500;">0.6</span>,az, bx,cy-<span style="color: #FF4500;">0.6</span>,bz, bx,cy+<span style="color: #FF4500;">0.6</span>,bz)
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ax,cy-<span style="color: #FF4500;">0.6</span>,az, bx,cy+<span style="color: #FF4500;">0.6</span>,bz, ax,cy+<span style="color: #FF4500;">0.6</span>,az)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">1</span> {                      # <span style="color: #32CD32;">ฟันเลื่อย (สามเหลี่ยมยอดขึ้น/ลงสลับ)</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < N {
+            <span style="color: #FFD700;">bind</span> a0 = t*<span style="color: #FF4500;">0.3</span> + k * <span style="color: #FF4500;">6.28319</span> / N;  <span style="color: #FFD700;">bind</span> a1 = t*<span style="color: #FF4500;">0.3</span> + (k + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">6.28319</span> / N
+            <span style="color: #FFD700;">bind</span> am = (a0 + a1) * <span style="color: #FF4500;">0.5</span>
+            <span style="color: #FFD700;">bind</span> ax=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*R; <span style="color: #FFD700;">bind</span> az=cz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*R
+            <span style="color: #FFD700;">bind</span> bx=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*R; <span style="color: #FFD700;">bind</span> bz=cz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*R
+            <span style="color: #FFD700;">bind</span> mx=cx+<span style="color: #6A5ACD;">โคไซน์</span>(am)*R; <span style="color: #FFD700;">bind</span> mz=cz+<span style="color: #6A5ACD;">ไซน์</span>(am)*R
+            <span style="color: #FFD700;">bind</span> ty = cy - <span style="color: #FF4500;">0.85</span>;  <span style="color: #FFD700;">ถ้า</span> k - <span style="color: #6A5ACD;">ปัดลง</span>(k/<span style="color: #FF4500;">2.0</span>)*<span style="color: #FF4500;">2</span> == <span style="color: #FF4500;">0</span> { <span style="color: #FFD700;">bind</span> ty = cy + <span style="color: #FF4500;">0.85</span> }
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ax,cy,az, bx,cy,bz, mx,ty,mz)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">2</span> {                      # <span style="color: #32CD32;">แถบทึบ (วงแหวนตันรอบกลาง)</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < N {
+            <span style="color: #FFD700;">bind</span> a0 = t*<span style="color: #FF4500;">0.3</span> + k * <span style="color: #FF4500;">6.28319</span> / N;  <span style="color: #FFD700;">bind</span> a1 = t*<span style="color: #FF4500;">0.3</span> + (k + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">6.28319</span> / N
+            <span style="color: #FFD700;">bind</span> ax=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*R; <span style="color: #FFD700;">bind</span> az=cz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*R
+            <span style="color: #FFD700;">bind</span> bx=cx+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*R; <span style="color: #FFD700;">bind</span> bz=cz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*R
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ax,cy-<span style="color: #FF4500;">0.7</span>,az, bx,cy-<span style="color: #FF4500;">0.7</span>,bz, bx,cy+<span style="color: #FF4500;">0.7</span>,bz)
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(ax,cy-<span style="color: #FF4500;">0.7</span>,az, bx,cy+<span style="color: #FF4500;">0.7</span>,bz, ax,cy+<span style="color: #FF4500;">0.7</span>,az)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+    <span style="color: #FFD700;">ถ้า</span> id == <span style="color: #FF4500;">3</span> {                      # <span style="color: #32CD32;">เพชรเติมเรียงรอบ</span>
+        <span style="color: #FFD700;">bind</span> M = <span style="color: #FF4500;">12</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < M {
+            <span style="color: #FFD700;">bind</span> a = t*<span style="color: #FF4500;">0.3</span> + k * <span style="color: #FF4500;">6.28319</span> / M
+            <span style="color: #FFD700;">bind</span> px = cx + <span style="color: #6A5ACD;">โคไซน์</span>(a)*R;  <span style="color: #FFD700;">bind</span> pz = cz + <span style="color: #6A5ACD;">ไซน์</span>(a)*R
+            <span style="color: #FFD700;">bind</span> ox = <span style="color: #6A5ACD;">โคไซน์</span>(a)*<span style="color: #FF4500;">0.6</span>;  <span style="color: #FFD700;">bind</span> oz = <span style="color: #6A5ACD;">ไซน์</span>(a)*<span style="color: #FF4500;">0.6</span>
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(px,cy-<span style="color: #FF4500;">0.8</span>,pz, px+ox,cy,pz+oz, px,cy+<span style="color: #FF4500;">0.8</span>,pz)
+            <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(px,cy-<span style="color: #FF4500;">0.8</span>,pz, px,cy+<span style="color: #FF4500;">0.8</span>,pz, px-ox,cy,pz-oz)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+    }
+}
+
+# ── <span style="color: #32CD32;">ศัตรู: ตารางชื่อ + คำคัตเอาต์</span> ──
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">ศัตรูชื่อ</span> = [<span style="color: #32CD32;">"zarg"</span>,<span style="color: #32CD32;">"kael"</span>,<span style="color: #32CD32;">"vyx"</span>,<span style="color: #32CD32;">"mora"</span>,<span style="color: #32CD32;">"luno"</span>,<span style="color: #32CD32;">"rax"</span>,<span style="color: #32CD32;">"nyx"</span>,<span style="color: #32CD32;">"odin"</span>,<span style="color: #32CD32;">"blaze"</span>,<span style="color: #32CD32;">"drift"</span>,<span style="color: #32CD32;">"ember"</span>,<span style="color: #32CD32;">"frost"</span>,<span style="color: #32CD32;">"hex"</span>,<span style="color: #32CD32;">"ione"</span>,<span style="color: #32CD32;">"jolt"</span>,<span style="color: #32CD32;">"kuro"</span>,<span style="color: #32CD32;">"sable"</span>,<span style="color: #32CD32;">"wren"</span>]
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">คำเปิด</span> = [<span style="color: #32CD32;">"lets dance"</span>,<span style="color: #32CD32;">"you wont win"</span>,<span style="color: #32CD32;">"face me"</span>,<span style="color: #32CD32;">"begin"</span>,<span style="color: #32CD32;">"show your power"</span>,<span style="color: #32CD32;">"no mercy"</span>,<span style="color: #32CD32;">"prepare yourself"</span>]
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">คำตี</span>   = [<span style="color: #32CD32;">"nice hit"</span>,<span style="color: #32CD32;">"too slow"</span>,<span style="color: #32CD32;">"feel that"</span>,<span style="color: #32CD32;">"got you"</span>,<span style="color: #32CD32;">"is that all"</span>]
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">คำเพล</span>  = [<span style="color: #32CD32;">"my power dwindles"</span>,<span style="color: #32CD32;">"impossible"</span>,<span style="color: #32CD32;">"not yet"</span>,<span style="color: #32CD32;">"i wont fall"</span>,<span style="color: #32CD32;">"no more"</span>]
+<span style="color: #FFD700;">bind</span> <span style="color: #6A5ACD;">คำใบ้</span>   = [<span style="color: #32CD32;">"use your accuracy"</span>,<span style="color: #32CD32;">"come closer"</span>,<span style="color: #32CD32;">"predictable"</span>,<span style="color: #32CD32;">"try harder"</span>]
+
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">สุ่มในรายการ</span>(lst) { <span style="color: #FFD700;">คืน</span> <span style="color: #6A5ACD;">list_get</span>(lst, <span style="color: #6A5ACD;">floor</span>(<span style="color: #6A5ACD;">สุ่ม</span>() * <span style="color: #6A5ACD;">ความยาว</span>(lst))) }
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">ดึงคำเปิด</span>() { <span style="color: #FFD700;">คืน</span> <span style="color: #6A5ACD;">สุ่มในรายการ</span>(<span style="color: #6A5ACD;">คำเปิด</span>) }
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">ดึงคำตี</span>()   { <span style="color: #FFD700;">คืน</span> <span style="color: #6A5ACD;">สุ่มในรายการ</span>(<span style="color: #6A5ACD;">คำตี</span>) }
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">ดึงคำเพล</span>()  { <span style="color: #FFD700;">คืน</span> <span style="color: #6A5ACD;">สุ่มในรายการ</span>(<span style="color: #6A5ACD;">คำเพล</span>) }
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">ดึงคำใบ้</span>()   { <span style="color: #FFD700;">คืน</span> <span style="color: #6A5ACD;">สุ่มในรายการ</span>(<span style="color: #6A5ACD;">คำใบ้</span>) }
+
+# <span style="color: #32CD32;">สร้างศัตรู: คืน [hpMax, def, res, atk, cool, diff, bodyHue, stampHue, bandHue, stamp, band, name]</span>
+#   <span style="color: #A9A9A9;">สเตตัส/ดิฟ ขึ้นตามรอบ (Smash-style gauntlet)</span>
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">สร้างศัตรู</span>(รอบ) {
+    <span style="color: #FFD700;">bind</span> hpMax = <span style="color: #FF4500;">55.0</span> + รอบ * <span style="color: #FF4500;">16.0</span>
+    <span style="color: #FFD700;">bind</span> def = รอบ * <span style="color: #FF4500;">0.6</span>
+    <span style="color: #FFD700;">bind</span> res = รอบ * <span style="color: #FF4500;">0.04</span>;  <span style="color: #FFD700;">ถ้า</span> res > <span style="color: #FF4500;">0.45</span> { <span style="color: #FFD700;">bind</span> res = <span style="color: #FF4500;">0.45</span> }
+    <span style="color: #FFD700;">bind</span> atk = <span style="color: #FF4500;">4.0</span> + รอบ * <span style="color: #FF4500;">1.5</span>
+    <span style="color: #FFD700;">bind</span> cool = <span style="color: #FF4500;">1.7</span> - รอบ * <span style="color: #FF4500;">0.08</span>;  <span style="color: #FFD700;">ถ้า</span> cool < <span style="color: #FF4500;">0.6</span> { <span style="color: #FFD700;">bind</span> cool = <span style="color: #FF4500;">0.6</span> }
+    <span style="color: #FFD700;">bind</span> diff = รอบ * <span style="color: #FF4500;">0.09</span>;  <span style="color: #FFD700;">ถ้า</span> diff > <span style="color: #FF4500;">0.9</span> { <span style="color: #FFD700;">bind</span> diff = <span style="color: #FF4500;">0.9</span> }
+    <span style="color: #FFD700;">คืน</span> [hpMax, def, res, atk, cool, diff, <span style="color: #6A5ACD;">สุ่ม</span>(), <span style="color: #6A5ACD;">สุ่ม</span>(), <span style="color: #6A5ACD;">สุ่ม</span>(), <span style="color: #6A5ACD;">floor</span>(<span style="color: #6A5ACD;">สุ่ม</span>()*<span style="color: #6A5ACD;">STAMP_N</span>), <span style="color: #6A5ACD;">floor</span>(<span style="color: #6A5ACD;">สุ่ม</span>()*<span style="color: #6A5ACD;">BAND_N</span>), <span style="color: #6A5ACD;">สุ่มในรายการ</span>(<span style="color: #6A5ACD;">ศัตรูชื่อ</span>)]
+}
+
+# ── <span style="color: #32CD32;">วาดศัตรู: ลูกแต่ง (สีตามฮิว) + แฟลชโดนตี + วงการ์ด + ป้ายชื่อลอย</span> ──
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">วาดศัตรู</span>(fx, fy, fz, R, bh, sh, nh, stamp, band, t, hurt, guard, name) {
+    <span style="color: #FFD700;">bind</span> cb = <span style="color: #6A5ACD;">สีจากเฉด</span>(bh);  <span style="color: #FFD700;">bind</span> cs = <span style="color: #6A5ACD;">สีจากเฉด</span>(sh);  <span style="color: #FFD700;">bind</span> cn = <span style="color: #6A5ACD;">สีจากเฉด</span>(nh)
+    <span style="color: #FFD700;">bind</span> br = <span style="color: #6A5ACD;">list_get</span>(cb,<span style="color: #FF4500;">0</span>);  <span style="color: #FFD700;">bind</span> bg = <span style="color: #6A5ACD;">list_get</span>(cb,<span style="color: #FF4500;">1</span>);  <span style="color: #FFD700;">bind</span> bb = <span style="color: #6A5ACD;">list_get</span>(cb,<span style="color: #FF4500;">2</span>)
+    <span style="color: #FFD700;">ถ้า</span> hurt > <span style="color: #FF4500;">0.0</span> { <span style="color: #FFD700;">bind</span> br = <span style="color: #FF4500;">255</span>;  <span style="color: #FFD700;">bind</span> bg = <span style="color: #6A5ACD;">floor</span>(<span style="color: #FF4500;">120</span> + hurt*<span style="color: #FF4500;">400</span>);  <span style="color: #FFD700;">bind</span> bb = <span style="color: #6A5ACD;">floor</span>(<span style="color: #FF4500;">120</span> + hurt*<span style="color: #FF4500;">400</span>) }
+    <span style="color: #FFD700;">วาดลูกแต่ง</span>(fx, fy, fz, R, br,bg,bb,
+        <span style="color: #6A5ACD;">list_get</span>(cs,<span style="color: #FF4500;">0</span>),<span style="color: #6A5ACD;">list_get</span>(cs,<span style="color: #FF4500;">1</span>),<span style="color: #6A5ACD;">list_get</span>(cs,<span style="color: #FF4500;">2</span>),
+        <span style="color: #6A5ACD;">list_get</span>(cn,<span style="color: #FF4500;">0</span>),<span style="color: #6A5ACD;">list_get</span>(cn,<span style="color: #FF4500;">1</span>),<span style="color: #6A5ACD;">list_get</span>(cn,<span style="color: #FF4500;">2</span>),
+        stamp, band, t)
+    <span style="color: #FFD700;">ถ้า</span> guard > <span style="color: #FF4500;">0.5</span> {
+        <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">1</span>);  <span style="color: #FFD700;">สีดินสอ</span>(<span style="color: #FF4500;">255</span>, <span style="color: #FF4500;">210</span>, <span style="color: #FF4500;">90</span>)
+        <span style="color: #FFD700;">bind</span> gk = <span style="color: #FF4500;">0</span>
+        <span style="color: #FFD700;">ขณะที่</span> gk < <span style="color: #FF4500;">16</span> {
+            <span style="color: #FFD700;">bind</span> a0 = gk * <span style="color: #FF4500;">0.3927</span>;  <span style="color: #FFD700;">bind</span> a1 = (gk + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">0.3927</span>
+            <span style="color: #FFD700;">วาดเส้น3มิติ</span>(fx+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*R*<span style="color: #FF4500;">1.6</span>, fy, fz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*R*<span style="color: #FF4500;">1.6</span>,  fx+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*R*<span style="color: #FF4500;">1.6</span>, fy, fz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*R*<span style="color: #FF4500;">1.6</span>)
+            <span style="color: #FFD700;">bind</span> gk = gk + <span style="color: #FF4500;">1</span>
+        }
+        <span style="color: #FFD700;">flush_3d</span>();  <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">0</span>)
+    }
+    <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">1</span>);  <span style="color: #FFD700;">สีดินสอ</span>(<span style="color: #FF4500;">255</span>, <span style="color: #FF4500;">235</span>, <span style="color: #FF4500;">190</span>);  <span style="color: #FFD700;">วาดสตริง</span>(name, fx, fy - R - <span style="color: #FF4500;">3.5</span>, fz, <span style="color: #FF4500;">0.85</span>, <span style="color: #FF4500;">1</span>);  <span style="color: #FFD700;">flush_3d</span>();  <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">0</span>)
+}
+
+# ── <span style="color: #32CD32;">แถบเลือด HUD (มุมจอ): พื้นเทา + เติมตามอัตราส่วน, ป้ายชื่อ</span> ──
+#   <span style="color: #A9A9A9;">ใช้กล้องโอเวอร์เลย์ 2D (เรียกหลัง ตั้งกล้องมอง overlay) — x,y โลก, w กว้าง</span>
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">แถบHP</span>(x, y, w, frac, r, g, b, name, ชิด) {
+    <span style="color: #FFD700;">ถ้า</span> frac < <span style="color: #FF4500;">0.0</span> { <span style="color: #FFD700;">bind</span> frac = <span style="color: #FF4500;">0.0</span> }
+    <span style="color: #FFD700;">สีดินสอ</span>(<span style="color: #FF4500;">40</span>, <span style="color: #FF4500;">40</span>, <span style="color: #FF4500;">55</span>)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(x, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  x+w, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  x+w, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(x, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  x+w, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  x, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>)
+    <span style="color: #FFD700;">bind</span> fw = w * frac
+    <span style="color: #FFD700;">bind</span> fx0 = x;  <span style="color: #FFD700;">ถ้า</span> ชิด > <span style="color: #FF4500;">0.5</span> { <span style="color: #FFD700;">bind</span> fx0 = x + w - fw }    # <span style="color: #32CD32;">ชิด=1 → เติมจากขวา (ศัตรู)</span>
+    <span style="color: #FFD700;">สีดินสอ</span>(r, g, b)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(fx0, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  fx0+fw, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  fx0+fw, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>)
+    <span style="color: #FFD700;">วาดสามเหลี่ยม3มิติ</span>(fx0, y-<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  fx0+fw, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>,  fx0, y+<span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">0.0</span>)
+    <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">1</span>);  <span style="color: #FFD700;">สีดินสอ</span>(<span style="color: #FF4500;">235</span>, <span style="color: #FF4500;">235</span>, <span style="color: #FF4500;">255</span>)
+    <span style="color: #FFD700;">bind</span> nx = x;  <span style="color: #FFD700;">ถ้า</span> ชิด > <span style="color: #FF4500;">0.5</span> { <span style="color: #FFD700;">bind</span> nx = x + w - <span style="color: #6A5ACD;">ความยาว</span>(name)*<span style="color: #FF4500;">0.45</span> }
+    <span style="color: #FFD700;">วาดสตริง</span>(name, nx + <span style="color: #FF4500;">1.5</span>, y - <span style="color: #FF4500;">1.6</span>, <span style="color: #FF4500;">0.0</span>, <span style="color: #FF4500;">0.5</span>, <span style="color: #FF4500;">1</span>)
+    <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">0</span>)
+}
+
+# ── <span style="color: #32CD32;">ลูกแต่ง: body orb (สี) + โครงทรงกลม + สแตมป์ขั้วบน/ล่าง + แบนด์รอบกลาง</span> ──
+<span style="color: #FFD700;">ฟังก์ชัน</span> <span style="color: #6A5ACD;">วาดลูกแต่ง</span>(cx, cy, cz, R, br,bg,bb, sr,sg,sb, ar,ag,ab, stampId, bandId, t) {
+    # <span style="color: #32CD32;">body = อนุภาคเรืองแสง (additive)</span>
+    <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">1</span>)
+    <span style="color: #6A5ACD;">orb_particles</span>(cx, cy, cz, R*<span style="color: #FF4500;">0.95</span>, <span style="color: #FF4500;">700.0</span>, t,         br, bg, bb)
+    <span style="color: #6A5ACD;">orb_particles</span>(cx, cy, cz, R*<span style="color: #FF4500;">0.62</span>, <span style="color: #FF4500;">360.0</span>, t*<span style="color: #FF4500;">1.4</span>+<span style="color: #FF4500;">3.0</span>, <span style="color: #6A5ACD;">floor</span>(br*<span style="color: #FF4500;">0.6</span>+<span style="color: #FF4500;">90</span>), <span style="color: #6A5ACD;">floor</span>(bg*<span style="color: #FF4500;">0.6</span>+<span style="color: #FF4500;">90</span>), <span style="color: #6A5ACD;">floor</span>(bb*<span style="color: #FF4500;">0.6</span>+<span style="color: #FF4500;">90</span>))
+    <span style="color: #FFD700;">flush_3d</span>()
+    # <span style="color: #32CD32;">โครงทรงกลม (วงละติจูด) ให้เห็นเป็นลูกชัดขึ้น</span>
+    <span style="color: #FFD700;">สีดินสอ</span>(<span style="color: #6A5ACD;">floor</span>(br*<span style="color: #FF4500;">0.5</span>), <span style="color: #6A5ACD;">floor</span>(bg*<span style="color: #FF4500;">0.5</span>), <span style="color: #6A5ACD;">floor</span>(bb*<span style="color: #FF4500;">0.5</span>))
+    <span style="color: #FFD700;">bind</span> lat = <span style="color: #FF4500;">0</span>
+    <span style="color: #FFD700;">ขณะที่</span> lat < <span style="color: #FF4500;">3</span> {
+        <span style="color: #FFD700;">bind</span> ly = cy + (lat - <span style="color: #FF4500;">1</span>) * R * <span style="color: #FF4500;">0.55</span>
+        <span style="color: #FFD700;">bind</span> lr = <span style="color: #6A5ACD;">รากที่สอง</span>(R*R - (ly-cy)*(ly-cy))
+        <span style="color: #FFD700;">bind</span> k = <span style="color: #FF4500;">0</span>
+        <span style="color: #FFD700;">ขณะที่</span> k < <span style="color: #FF4500;">20</span> {
+            <span style="color: #FFD700;">bind</span> a0 = k * <span style="color: #FF4500;">0.31416</span>;  <span style="color: #FFD700;">bind</span> a1 = (k + <span style="color: #FF4500;">1</span>) * <span style="color: #FF4500;">0.31416</span>
+            <span style="color: #FFD700;">วาดเส้น3มิติ</span>(cx+<span style="color: #6A5ACD;">โคไซน์</span>(a0)*lr, ly, cz+<span style="color: #6A5ACD;">ไซน์</span>(a0)*lr,  cx+<span style="color: #6A5ACD;">โคไซน์</span>(a1)*lr, ly, cz+<span style="color: #6A5ACD;">ไซน์</span>(a1)*lr)
+            <span style="color: #FFD700;">bind</span> k = k + <span style="color: #FF4500;">1</span>
+        }
+        <span style="color: #FFD700;">bind</span> lat = lat + <span style="color: #FF4500;">1</span>
+    }
+    <span style="color: #FFD700;">flush_3d</span>()
+    # <span style="color: #32CD32;">สแตมป์ + แบนด์ = ฟิลทึบ (normal blend)</span>
+    <span style="color: #FFD700;">โหมดผสม</span>(<span style="color: #FF4500;">0</span>)
+    <span style="color: #FFD700;">สีดินสอ</span>(sr, sg, sb)
+    <span style="color: #FFD700;">วาดสแตมป์</span>(stampId, cx, cy - R*<span style="color: #FF4500;">1.04</span>, cz, R*<span style="color: #FF4500;">0.7</span>, t*<span style="color: #FF4500;">0.6</span>)          # <span style="color: #32CD32;">ขั้วบน (+y ลง → -R = บน)</span>
+    <span style="color: #FFD700;">วาดสแตมป์</span>(stampId, cx, cy + R*<span style="color: #FF4500;">1.04</span>, cz, R*<span style="color: #FF4500;">0.7</span>, <span style="color: #FF4500;">0.0</span> - t*<span style="color: #FF4500;">0.6</span>)    # <span style="color: #32CD32;">ขั้วล่าง</span>
+    <span style="color: #FFD700;">สีดินสอ</span>(ar, ag, ab)
+    <span style="color: #FFD700;">วาดแบนด์</span>(bandId, cx, cy, cz, R*<span style="color: #FF4500;">1.03</span>, t)
+    <span style="color: #FFD700;">flush_3d</span>()
+}

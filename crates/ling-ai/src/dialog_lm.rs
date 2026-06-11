@@ -304,7 +304,7 @@ impl DialogLM {
                 .unwrap_or(0);
         }
         let scaled: Vec<f32> = logits.iter().map(|&l| l / temperature).collect();
-        let mut probs = softmax(&scaled);
+        let probs = softmax(&scaled);
 
         // Rank indices by probability descending.
         let mut order: Vec<usize> = (0..probs.len()).collect();

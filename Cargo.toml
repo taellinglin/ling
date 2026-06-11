@@ -12,6 +12,9 @@ repository = "https://github.com/taellinglin/ling"
 homepage = "https://ling-lang.org"
 documentation = "https://docs.ling-lang.org"
 readme = "README.md"
+# Make `cargo run` build Ling itself (not lingfu) by default.
+# Run Lingfu with: cargo run -p lingfu --bin lingfu
+default-run = "ling"
 keywords = ["systems", "polyglot", "ai", "crypto", "game"]
 categories = ["compilers", "graphics", "game-development", "artificial-intelligence", "cryptography"]
 rust-version = "1.85"
@@ -47,6 +50,7 @@ members = [
     "crates/ling-physics",
     "crates/ling-py",
     "crates/ling-music",
+    "crates/ling-gpu",
 
 ]
 exclude = [
@@ -80,12 +84,8 @@ exclude = [
     # Docs build output (large fonts/woff2, rebuilt by CI)
     "docs/book",
     "docs/book/**",
-    
-]
 
-# Make `cargo run` build Ling itself (not lingfu) by default.
-# You can still run Lingfu with: cargo run -p lingfu --bin lingfu
-default-run = "ling"
+]
 
 [lib]
 name = "ling"

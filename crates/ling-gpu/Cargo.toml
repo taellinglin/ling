@@ -1,0 +1,28 @@
+[package]
+name = "ling-gpu"
+version = "2030.0.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>"]
+description = "GPU compute backend for Ling (CUDA via cudarc, with a portable CPU fallback)"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[features]
+default = []
+# Enable the CUDA backend (NVIDIA only). Requires the CUDA toolkit/driver at
+# runtime; kernels are compiled on the fly with NVRTC. Off by default so the
+# regular build is pure-Rust and runs everywhere.
+cuda = ["dep:cudarc"]
+
+[dependencies]
+# Optional: pulled in only with `--features cuda`. `dynamic-loading` means we
+# bind the CUDA driver at runtime, so the crate still *compiles* on machines
+# without a toolkit (detection simply returns None → CPU fallback).
+# `cuda-12060` pins the API surface; with `dynamic-linking` the real driver
+# (e.g. 12.8) is loaded at runtime, so a newer toolkit works against the 12.6 API.
+# Bump this when cudarc adds your exact CUDA version.
+cudarc = { version = "0.12", optional = true, default-features = false, features = ["driver", "nvrtc", "dynamic-linking", "cuda-12060"] }
+
+[lib]
+name = "ling_gpu"
+path = "src/lib.rs"

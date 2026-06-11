@@ -102,11 +102,80 @@ impl GltfModel {
     /// Load a .glb or .gltf file.
     #[cfg(feature = "with-gltf")]
     pub fn load(path: &str) -> Result<Self, String> {
-        use ::gltf::Gltf;
-        let gltf = Gltf::open(path).map_err(|e| e.to_string())?;
-        // Full parsing implementation omitted for brevity — returns stubs.
-        let _ = gltf;
-        Err("full glTF parsing not yet wired".to_string())
+        let (doc, buffers, _images) = ::gltf::import(path).map_err(|e| e.to_string())?;
+        let mut model = GltfModel::default();
+
+        // ── meshes: positions / normals / uvs / indices (per primitive, concatenated) ──
+        for mesh in doc.meshes() {
+            let mut verts: Vec<GltfVertex> = Vec::new();
+            let mut indices: Vec<u32> = Vec::new();
+            let mut mat_idx: Option<usize> = None;
+            for prim in mesh.primitives() {
+                let reader = prim.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+                let positions: Vec<[f32; 3]> = match reader.read_positions() {
+                    Some(p) => p.collect(),
+                    None => continue,
+                };
+                let base = verts.len() as u32;
+                let normals: Vec<[f32; 3]> =
+                    reader.read_normals().map(|n| n.collect()).unwrap_or_default();
+                let uvs: Vec<[f32; 2]> = reader
+                    .read_tex_coords(0)
+                    .map(|u| u.into_f32().collect())
+                    .unwrap_or_default();
+                for i in 0..positions.len() {
+                    let p = positions[i];
+                    let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+                    let uv = uvs.get(i).copied().unwrap_or([0.0, 0.0]);
+                    verts.push(GltfVertex {
+                        pos: Vec3::new(p[0], p[1], p[2]),
+                        normal: Vec3::new(n[0], n[1], n[2]),
+                        uv: Vec2::new(uv[0], uv[1]),
+                        joints: [0; 4],
+                        weights: [1.0, 0.0, 0.0, 0.0],
+                    });
+                }
+                match reader.read_indices() {
+                    Some(idx) => {
+                        for i in idx.into_u32() {
+                            indices.push(base + i);
+                        }
+                    }
+                    None => {
+                        for i in 0..positions.len() as u32 {
+                            indices.push(base + i);
+                        }
+                    }
+                }
+                if mat_idx.is_none() {
+                    mat_idx = prim.material().index();
+                }
+            }
+            model.meshes.push(GltfMesh {
+                name: mesh.name().unwrap_or("").to_string(),
+                verts,
+                indices,
+                mat_idx,
+            });
+        }
+
+        // ── node hierarchy (name, transform, mesh ref, children) ──
+        for node in doc.nodes() {
+            let transform = Mat4::from_cols_array_2d(&node.transform().matrix());
+            model.nodes.push(GltfNode {
+                name: node.name().unwrap_or("").to_string(),
+                transform,
+                mesh_idx: node.mesh().map(|m| m.index()),
+                children: node.children().map(|c| c.index()).collect(),
+            });
+        }
+        if let Some(scene) = doc.default_scene().or_else(|| doc.scenes().next()) {
+            for n in scene.nodes() {
+                model.root_nodes.push(n.index());
+            }
+        }
+
+        Ok(model)
     }
 
     #[cfg(not(feature = "with-gltf"))]

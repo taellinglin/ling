@@ -139,7 +139,7 @@ pub fn pentagon_vertices() -> [[f32; 2]; 5] {
         let sin_pi4 = (std::f32::consts::PI / 4.0).sin();
         let sin_2pi5 = (2.0 * std::f32::consts::PI / 5.0).sin();
         let cosh_r = cos_pi5 / sin_pi4;
-        let cosh_r2 = cos_pi5 / sin_2pi5;
+        let _cosh_r2 = cos_pi5 / sin_2pi5;
         // r = arccosh(cosh_r) but we need Poincaré radius = tanh(d/2)
         let d = cosh_r.max(1.0).acosh();
         d.tanh()

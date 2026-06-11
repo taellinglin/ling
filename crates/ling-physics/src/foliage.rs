@@ -1,6 +1,6 @@
 //! Procedural foliage — trees, grass, wind deformation.
 
-use glam::{Vec3, Mat3};
+use glam::Vec3;
 
 // ── LCG RNG for deterministic generation ─────────────────────────────────────
 

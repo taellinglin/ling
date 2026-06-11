@@ -652,6 +652,31 @@ fn main() -> anyhow::Result<()> {
             .status()
             .map_err(|e| anyhow::anyhow!("ling: {e}"))?;
         std::process::exit(status.code().unwrap_or(1));
+    } else if cmd == "ast" || cmd == "图谱" || cmd == "図譜" || cmd == "도표" || cmd == "ผังต้นไม้" {
+        // Project-wide AST → SVG. The renderer lives in the `ling` binary (it owns
+        // the parser). Treat the whole project as one program: pass the project
+        // root (manifest parent, else cwd) unless the user supplied a path.
+        let ling_bin = find_ling_binary();
+        let has_path = {
+            let mut i = 0;
+            let mut found = false;
+            while i < rest.len() {
+                if rest[i] == "--out" { i += 2; continue; }
+                if rest[i].starts_with('-') { i += 1; continue; }
+                found = true; break;
+            }
+            found
+        };
+        let root = find_manifest()
+            .and_then(|m| m.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut command = std::process::Command::new(&ling_bin);
+        command.arg("ast");
+        if !has_path { command.arg(&root); }
+        let status = command.args(rest)
+            .status()
+            .map_err(|e| anyhow::anyhow!("ling: {e}"))?;
+        std::process::exit(status.code().unwrap_or(1));
     } else if matches_cmd!(tr.new) {
         println!("{}", invocation_lang.welcome_message().cyan().bold());
         cmd_new(rest, &invocation_lang)?;

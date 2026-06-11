@@ -1,0 +1,61 @@
+{
+  "Function": {
+    "prefix": ["fn", "bind"],
+    "body": ["bind ${1:name} = (${2:n: number}) -> ${3:number} {", "\t$0", "}"],
+    "description": "Bind a function."
+  },
+  "Bind value": {
+    "prefix": "bindv",
+    "body": ["bind ${1:name} = ${0}"],
+    "description": "Bind a value."
+  },
+  "Entry point": {
+    "prefix": ["start", "main"],
+    "body": ["bind start = do {", "\t$0", "}"],
+    "description": "Program entry point."
+  },
+  "If": {
+    "prefix": "if",
+    "body": ["if ${1:condition} {", "\t$0", "}"],
+    "description": "If statement."
+  },
+  "If / Else": {
+    "prefix": "ifelse",
+    "body": ["if ${1:condition} {", "\t$2", "} else {", "\t$0", "}"],
+    "description": "If / else statement."
+  },
+  "While": {
+    "prefix": "while",
+    "body": ["while ${1:condition} {", "\t$0", "}"],
+    "description": "While loop."
+  },
+  "For range": {
+    "prefix": "for",
+    "body": ["for ${1:i} in ${2:0}..${3:10} {", "\t$0", "}"],
+    "description": "For loop over a range."
+  },
+  "Match": {
+    "prefix": "match",
+    "body": ["match ${1:value} {", "\t${2:pattern} => ${3:result}", "\t_ => ${0:default}", "}"],
+    "description": "Pattern match."
+  },
+  "Print": {
+    "prefix": "print",
+    "body": ["print(${0})"],
+    "description": "Print to stdout."
+  },
+  "Window render loop": {
+    "prefix": "window",
+    "body": [
+      "bind start = do {",
+      "\topen_window(${1:800}, ${2:600}, \"${3:Ling}\")",
+      "\twhile window_is_open() {",
+      "\t\tclear()",
+      "\t\t${0}",
+      "\t\tpresent()",
+      "\t}",
+      "}"
+    ],
+    "description": "Open a window and run a render loop."
+  }
+}
