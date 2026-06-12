@@ -143,8 +143,10 @@ impl<'a> Lexer<'a> {
             "post"   | "发布" | "出" => Token::Post,
             "give"   | "给" | "予"   => Token::Give,
             "fit"    | "适合"        => Token::Fit,
-            "form"   | "形式" | "形" => Token::Form,
-            "choose" | "选择" | "选" => Token::Choose,
+            // `form` — record/struct definition (EN · ZH · JA · KO · TH)
+            "form"   | "形式" | "形" | "構造" | "구조" | "โครงสร้าง" => Token::Form,
+            // `choose` — sum type / enum definition (EN · ZH · JA · KO · TH)
+            "choose" | "选择" | "选" | "選択" | "선택" | "เลือกแบบ" => Token::Choose,
             "can"    | "能"          => Token::Can,
             "change" | "改变" | "变" => Token::Change,
             "stop"   | "停止" | "止" => Token::Stop,

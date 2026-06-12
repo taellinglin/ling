@@ -785,8 +785,10 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                         ctx.func.basic_blocks[body_block.0].statements = saved;
                         ctx.func.basic_blocks[body_block.0].terminator = saved_term;
                     },
-                    parser::ast::Pattern::Constructor(_, _) => {
-                        // Constructor patterns: skip for now, fall through
+                    parser::ast::Pattern::Constructor(_, _)
+                    | parser::ast::Pattern::Variant(_, _) => {
+                        // Constructor / variant patterns: skip in MIR for now, fall through
+                        // (the tree-walking interpreter handles them directly).
                         let fallthrough = if idx + 1 < arm_blocks.len() {
                             arm_blocks[idx + 1].1
                         } else {

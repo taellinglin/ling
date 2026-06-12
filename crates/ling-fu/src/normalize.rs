@@ -509,6 +509,24 @@ static BUILTINS_AI: &[Entry] = &[
     (&["dialog_load_model","对话载模","対話モデル読込","대화모델불러오기","โหลดโมเดลสนทนา"],["dialog_load_model","对话载模","対話モデル読込","대화모델불러오기","โหลดโมเดลสนทนา"]),
 ];
 
+// Builtins — Anima animation drivers (ling-animation): organic 灵 + mechanical 机
+static BUILTINS_ANIM: &[Entry] = &[
+    (&["tween","补间","補間","트윈","แทรกค่า"],                            ["tween","补间","補間","트윈","แทรกค่า"]),
+    (&["tween_ease","缓动补间","緩和補間","이징트윈","แทรกนุ่ม"],            ["tween_ease","缓动补间","緩和補間","이징트윈","แทรกนุ่ม"]),
+    (&["breathe","呼吸","호흡","หายใจ"],                                   ["breathe","呼吸","呼吸","호흡","หายใจ"]),
+    (&["wobble","摆动","揺れ","흔들림","โยก"],                             ["wobble","摆动","揺れ","흔들림","โยก"]),
+    (&["gait_phase","步相","歩相","걸음위상","เฟสก้าว"],                    ["gait_phase","步相","歩相","걸음위상","เฟสก้าว"]),
+    (&["gait_swing","步摆","歩振り","걸음흔들","ก้าวแกว่ง"],                ["gait_swing","步摆","歩振り","걸음흔들","ก้าวแกว่ง"]),
+    (&["gait_lift","抬脚","足上げ","발들기","ยกเท้า"],                     ["gait_lift","抬脚","足上げ","발들기","ยกเท้า"]),
+    (&["spring_to","弹向","バネ寄せ","스프링이동","สปริงไป"],               ["spring_to","弹向","バネ寄せ","스프링이동","สปริงไป"]),
+    (&["ik2","反解","逆運動","역운동","ไอเค2"],                            ["ik2","反解","逆運動","역운동","ไอเค2"]),
+    (&["gear_couple","齿轮联动","歯車連動","기어연동","เฟืองทด"],            ["gear_couple","齿轮联动","歯車連動","기어연동","เฟืองทด"]),
+    (&["gear_train","齿轮组","歯車列","기어열","ชุดเฟือง"],                 ["gear_train","齿轮组","歯車列","기어열","ชุดเฟือง"]),
+    (&["cam_lift","凸轮升程","カム揚程","캠리프트","ยกลูกเบี้ยว"],           ["cam_lift","凸轮升程","カム揚程","캠리프트","ยกลูกเบี้ยว"]),
+    (&["piston","活塞","ピストン","피스톤","ลูกสูบ"],                       ["piston","活塞","ピストン","피스톤","ลูกสูบ"]),
+    (&["rack","齿条","ラック","랙","แร็ค"],                                ["rack","齿条","ラック","랙","แร็ค"]),
+];
+
 // Vocabulary — project/domain words used in filenames and folder names ─────
 //
 // These supplement KEYWORDS and BUILTINS_* — they are also included in the
@@ -688,7 +706,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_AI, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_AI, BUILTINS_ANIM, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

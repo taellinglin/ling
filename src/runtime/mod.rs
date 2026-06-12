@@ -30,6 +30,10 @@ pub enum Value {
     Ok(Box<Value>),
     Err(Box<Value>),
     Fn(Vec<String>, Vec<Stmt>, Env),
+    /// `form` record instance — ordered named fields.
+    Struct { name: String, fields: Vec<(String, Value)> },
+    /// `choose` enum instance — variant tag plus ordered payload.
+    Variant { enum_name: String, variant: String, payload: Vec<Value> },
 }
 
 type Env = HashMap<String, Value>;
@@ -55,6 +59,26 @@ impl std::fmt::Display for Value {
             Value::Ok(v)     => write!(f, "Ok({v})"),
             Value::Err(v)    => write!(f, "Err({v})"),
             Value::Fn(_, _, _) => write!(f, "<fn>"),
+            Value::Struct { name, fields } => {
+                write!(f, "{name} {{ ")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, " }}")
+            }
+            Value::Variant { variant, payload, .. } => {
+                write!(f, "{variant}")?;
+                if !payload.is_empty() {
+                    write!(f, "(")?;
+                    for (i, v) in payload.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{v}")?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -448,6 +472,10 @@ pub struct Interpreter {
     /// call_named clones this instead of re-evaluating every global per call.
     global_seed: Env,
     functions: HashMap<String, FnDef>,
+    /// `form` definitions: struct name → ordered field names.
+    structs:   HashMap<String, Vec<String>>,
+    /// `choose` variants: variant name (bare and `Enum::Variant`) → (enum name, arity).
+    enum_variants: HashMap<String, (String, usize)>,
     _modules:  HashMap<String, Vec<FnDef>>,
     gfx:       RefCell<GfxState>,
     svg:       RefCell<Option<SvgWriter>>,
@@ -528,6 +556,8 @@ impl Interpreter {
             globals:   HashMap::new(),
             global_seed: HashMap::new(),
             functions: HashMap::new(),
+            structs:   HashMap::new(),
+            enum_variants: HashMap::new(),
             _modules:  HashMap::new(),
             gfx:       RefCell::new(GfxState::new()),
             svg:       RefCell::new(None),
@@ -764,6 +794,19 @@ impl Interpreter {
                 }
             }
             Item::TypeAlias(_, _) => {}
+            Item::Struct(name, fields) => {
+                self.structs.insert(name.clone(), fields.clone());
+                if !ns.is_empty() { self.structs.insert(format!("{ns}::{name}"), fields.clone()); }
+            }
+            Item::Enum(name, variants) => {
+                for v in variants {
+                    self.enum_variants.insert(v.name.clone(), (name.clone(), v.arity));
+                    self.enum_variants.insert(format!("{name}::{}", v.name), (name.clone(), v.arity));
+                    if !ns.is_empty() {
+                        self.enum_variants.insert(format!("{ns}::{name}::{}", v.name), (name.clone(), v.arity));
+                    }
+                }
+            }
             Item::Use { path, alias } => {
                 self.load_module(path, alias.as_deref(), ns)?;
             }
@@ -1027,6 +1070,11 @@ impl Interpreter {
         if self.functions.contains_key(name) {
             let def = &self.functions[name];
             return Ok(Value::Fn(def.params.clone(), def.body.clone(), Env::new()));
+        }
+        // Bare nullary enum variant used as a value (e.g. `bind p = Origin`).
+        if let Some((enum_name, 0)) = self.enum_variants.get(name).cloned() {
+            let variant = name.rsplit("::").next().unwrap_or(name).to_string();
+            return Ok(Value::Variant { enum_name, variant, payload: Vec::new() });
         }
         // Math constants usable as plain identifiers (e.g. `sin(pi)`)
         match name {
@@ -3456,6 +3504,107 @@ impl Interpreter {
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
                 return Ok(Value::Number(ling_ui::Easing::from_name(&name).apply(t) as f64));
             }
+
+            // ══════════════════════════════════════════════════════════════════
+            // Anima — unified animation drivers (ling-animation). Organic 灵 +
+            // mechanical 机 scalar drivers, callable per frame from a script.
+            // ══════════════════════════════════════════════════════════════════
+            "tween" | "补间" | "補間" | "트윈" | "แทรกค่า" => {
+                let a = self.arg_num(&args, 0, 0.0)?;
+                let b = self.arg_num(&args, 1, 0.0)?;
+                let t = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 1.0);
+                return Ok(Value::Number(a + (b - a) * t));
+            }
+            "tween_ease" | "缓动补间" | "緩和補間" | "이징트윈" | "แทรกนุ่ม" => {
+                let a = self.arg_num(&args, 0, 0.0)? as f32;
+                let b = self.arg_num(&args, 1, 0.0)? as f32;
+                let t = self.arg_num(&args, 2, 0.0)? as f32;
+                let kind = self.arg_str(&args, 3, "linear");
+                let e = ling_animation::EaseFunction::from_name(&kind);
+                return Ok(Value::Number(ling_animation::ease::tween_ease(&a, &b, t, e) as f64));
+            }
+            // ── Organic 灵 ──
+            "breathe" | "呼吸" | "호흡" | "หายใจ" => {
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
+                let rate = self.arg_num(&args, 1, 1.0)? as f32;
+                let depth = self.arg_num(&args, 2, 0.1)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::breathe(t, rate, depth) as f64));
+            }
+            "wobble" | "摆动" | "揺れ" | "흔들림" | "โยก" => {
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
+                let freq = self.arg_num(&args, 1, 1.0)? as f32;
+                let amp = self.arg_num(&args, 2, 1.0)? as f32;
+                let phase = self.arg_num(&args, 3, 0.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::wobble(t, freq, amp, phase) as f64));
+            }
+            "gait_phase" | "步相" | "歩相" | "걸음위상" | "เฟสก้าว" => {
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
+                let speed = self.arg_num(&args, 1, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::gait_phase(t, speed) as f64));
+            }
+            "gait_swing" | "步摆" | "歩振り" | "걸음흔들" | "ก้าวแกว่ง" => {
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
+                let speed = self.arg_num(&args, 1, 1.0)? as f32;
+                let stride = self.arg_num(&args, 2, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::gait_swing(t, speed, stride) as f64));
+            }
+            "gait_lift" | "抬脚" | "足上げ" | "발들기" | "ยกเท้า" => {
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
+                let speed = self.arg_num(&args, 1, 1.0)? as f32;
+                let height = self.arg_num(&args, 2, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::gait_lift(t, speed, height) as f64));
+            }
+            "spring_to" | "弹向" | "バネ寄せ" | "스프링이동" | "สปริงไป" => {
+                let pos = self.arg_num(&args, 0, 0.0)? as f32;
+                let vel = self.arg_num(&args, 1, 0.0)? as f32;
+                let target = self.arg_num(&args, 2, 0.0)? as f32;
+                let stiffness = self.arg_num(&args, 3, 120.0)? as f32;
+                let damping = self.arg_num(&args, 4, 14.0)? as f32;
+                let dt = self.arg_num(&args, 5, 1.0 / 60.0)? as f32;
+                let (np, nv) = ling_animation::scalar::spring_step(pos, vel, target, stiffness, damping, dt);
+                return Ok(Value::List(vec![Value::Number(np as f64), Value::Number(nv as f64)]));
+            }
+            "ik2" | "反解" | "逆運動" | "역운동" | "ไอเค2" => {
+                let l1 = self.arg_num(&args, 0, 1.0)? as f32;
+                let l2 = self.arg_num(&args, 1, 1.0)? as f32;
+                let tx = self.arg_num(&args, 2, 0.0)? as f32;
+                let ty = self.arg_num(&args, 3, 0.0)? as f32;
+                let (sh, el) = ling_animation::scalar::two_bone_ik(l1, l2, tx, ty);
+                return Ok(Value::List(vec![Value::Number(sh as f64), Value::Number(el as f64)]));
+            }
+            // ── Mechanical 机 ──
+            "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" => {
+                let angle = self.arg_num(&args, 0, 0.0)? as f32;
+                let ti = self.arg_num(&args, 1, 1.0)? as f32;
+                let to = self.arg_num(&args, 2, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::gear(angle, ti, to) as f64));
+            }
+            "gear_train" | "齿轮组" | "歯車列" | "기어열" | "ชุดเฟือง" => {
+                let angle = self.arg_num(&args, 0, 0.0)? as f32;
+                let teeth: Vec<f32> = match args.get(1) {
+                    Some(Value::List(items)) => items.iter()
+                        .filter_map(|v| if let Value::Number(n) = v { Some(*n as f32) } else { None }).collect(),
+                    _ => Vec::new(),
+                };
+                let out = ling_animation::mechanism::gear_train(angle, &teeth);
+                return Ok(Value::List(out.into_iter().map(|a| Value::Number(a as f64)).collect()));
+            }
+            "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" => {
+                let angle = self.arg_num(&args, 0, 0.0)? as f32;
+                let lift = self.arg_num(&args, 1, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::cam_lift(angle, lift) as f64));
+            }
+            "piston" | "活塞" | "ピストン" | "피스톤" | "ลูกสูบ" => {
+                let angle = self.arg_num(&args, 0, 0.0)? as f32;
+                let crank = self.arg_num(&args, 1, 1.0)? as f32;
+                let rod = self.arg_num(&args, 2, 2.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::piston(angle, crank, rod) as f64));
+            }
+            "rack" | "齿条" | "ラック" | "랙" | "แร็ค" => {
+                let angle = self.arg_num(&args, 0, 0.0)? as f32;
+                let radius = self.arg_num(&args, 1, 1.0)? as f32;
+                return Ok(Value::Number(ling_animation::scalar::rack(angle, radius) as f64));
+            }
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_x" => {
                 let gfx = self.gfx.borrow();
@@ -4823,6 +4972,26 @@ impl Interpreter {
             };
         }
 
+        // `form` struct constructor: positional `Name(v0, v1, ...)`.
+        if let Some(field_names) = self.structs.get(name).cloned() {
+            if args.len() != field_names.len() {
+                return Err(EvalErr::from(format!(
+                    "{name} expects {} field(s), got {}", field_names.len(), args.len())));
+            }
+            let fields = field_names.into_iter().zip(args).collect();
+            return Ok(Value::Struct { name: name.to_string(), fields });
+        }
+
+        // `choose` enum variant constructor: `Variant(...)` or `Enum::Variant(...)`.
+        if let Some((enum_name, arity)) = self.enum_variants.get(name).cloned() {
+            if args.len() != arity {
+                return Err(EvalErr::from(format!(
+                    "{name} expects {arity} value(s), got {}", args.len())));
+            }
+            let variant = name.rsplit("::").next().unwrap_or(name).to_string();
+            return Ok(Value::Variant { enum_name, variant, payload: args });
+        }
+
         Err(EvalErr::from(format!("unknown function '{name}'")))
     }
 
@@ -4863,6 +5032,14 @@ impl Interpreter {
                 if let Some(a) = args.first() { v2.push(a.clone()); }
                 Ok(Value::List(v2))
             }
+            // `form` field access: `point.x` (no-arg method == field read).
+            (Value::Struct { fields, .. }, _) if args.is_empty() => {
+                fields.iter().find(|(k, _)| k == method).map(|(_, v)| v.clone())
+                    .ok_or_else(|| EvalErr::from(format!("no field '{method}' on {recv}")))
+            }
+            // Enum introspection: `.tag` → variant name, `.is(Name)` not needed for now.
+            (Value::Variant { variant, .. }, "tag" | "标签" | "タグ" | "태그" | "ป้าย") if args.is_empty() =>
+                Ok(Value::Str(variant.clone())),
             (Value::Ok(inner), _) | (Value::Err(inner), _) => Ok(*inner.clone()),
             _ => Err(EvalErr::from(format!("no method '{method}' on {recv}"))),
         }
@@ -4895,6 +5072,31 @@ impl Interpreter {
                     (Some(p), None)    => self.match_pattern(p, &Value::Unit),
                 }
             }
+            // User enum variant pattern: `Circle(r)`, `Pair(a, b)`, nullary `Origin()`.
+            (Pattern::Variant(vname, sub_pats), Value::Variant { variant, payload, .. }) => {
+                if vname != variant || sub_pats.len() != payload.len() { return None; }
+                let mut bindings = Env::new();
+                for (p, v) in sub_pats.iter().zip(payload.iter()) {
+                    bindings.extend(self.match_pattern(p, v)?);
+                }
+                Some(bindings)
+            }
+            // A zero-payload variant pattern also matches the bare result-style `ok`/`bad`
+            // values so `Ok()`-style patterns keep working uniformly.
+            (Pattern::Variant(vname, sub), Value::Ok(v)) if (vname == "ok" || vname == "好") => {
+                match sub.as_slice() {
+                    []  => Some(Env::new()),
+                    [p] => self.match_pattern(p, v),
+                    _   => None,
+                }
+            }
+            (Pattern::Variant(vname, sub), Value::Err(v)) if (vname == "bad" || vname == "坏" || vname == "err") => {
+                match sub.as_slice() {
+                    []  => Some(Env::new()),
+                    [p] => self.match_pattern(p, v),
+                    _   => None,
+                }
+            }
             _ => None,
         }
     }
@@ -4920,6 +5122,8 @@ impl Interpreter {
             Value::Ok(_)       => true,
             Value::Err(_)      => false,
             Value::Fn(_, _, _) => true,
+            Value::Struct { .. }  => true,
+            Value::Variant { .. } => true,
         }
     }
 

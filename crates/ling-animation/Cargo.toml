@@ -1,0 +1,13 @@
+[package]
+name = "ling-animation"
+version = "2030.0.0"
+edition = "2021"
+description = "Anima — Ling's unified animation system: one rig, any target, any temperament (organic 灵 ↔ mechanical 机)"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[dependencies]
+glam = "0.28"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]

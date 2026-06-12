@@ -11,8 +11,20 @@ pub enum Item {
     Fn(FnDef),
     Mod(String, Vec<Item>),
     TypeAlias(String, String), // type Name = RawType
+    /// `form Name { field, field, ... }` — record/struct definition.
+    /// Field types are parsed but ignored at runtime; only names (in order) survive.
+    Struct(String, Vec<String>),
+    /// `choose Name { Variant, Variant(a, b), ... }` — sum type / enum.
+    /// Each variant carries its name and payload arity (field names are ignored).
+    Enum(String, Vec<EnumVariant>),
     /// `use "path/to/module"` or `use "path" as ns`
     Use { path: String, alias: Option<String> },
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub name: String,
+    pub arity: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -113,4 +125,6 @@ pub enum Pattern {
     Ident(String),
     /// Ok(inner), Bad(inner), 好(inner), 坏(inner)
     Constructor(String, Option<Box<Pattern>>),
+    /// User enum variant: `Circle(r)`, `Pair(a, b)`, or nullary `Origin()`.
+    Variant(String, Vec<Pattern>),
 }

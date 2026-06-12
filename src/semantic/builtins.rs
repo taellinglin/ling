@@ -146,6 +146,10 @@ pub fn is_builtin(name: &str) -> bool {
         "draw_triangle_3d" => true,
         "e" => true,
         "ease" => true,
+        // ── Anima animation drivers (ling-animation) ──
+        "tween" | "tween_ease" | "breathe" | "wobble"
+            | "gait_phase" | "gait_swing" | "gait_lift" | "spring_to" | "ik2"
+            | "gear_couple" | "gear_train" | "cam_lift" | "piston" | "rack" => true,
         "ed25519" => true,
         "elasticity" => true,
         "encrypt" => true,

@@ -117,6 +117,8 @@ impl Parser {
                 let ty = self.parse_type_str();
                 Ok(Item::TypeAlias(name, ty))
             }
+            Token::Form => self.parse_struct_item(),
+            Token::Choose => self.parse_enum_item(),
             Token::Use => {
                 self.advance();
                 // Expect a string path: use "path/to/module"
@@ -135,6 +137,59 @@ impl Parser {
             }
             tok => Err(format!("unexpected token at top level: {:?}", tok)),
         }
+    }
+
+    /// `form Name { field (: Type)?, ... }` — record/struct definition.
+    /// Types after `:` are parsed and discarded; only field names (in order) survive.
+    fn parse_struct_item(&mut self) -> Result<Item, String> {
+        self.advance(); // consume `form`
+        let name = self.parse_name()?;
+        self.skip_generics();
+        self.expect(&Token::LBrace)?;
+        let mut fields = Vec::new();
+        while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+            fields.push(self.parse_name()?);
+            if matches!(self.peek(), Token::Colon) {
+                self.advance();
+                self.parse_type_str(); // ignored
+            }
+            if matches!(self.peek(), Token::Comma | Token::Semicolon) { self.advance(); }
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Item::Struct(name, fields))
+    }
+
+    /// `choose Name { Variant, Variant(a, b), ... }` — sum type / enum.
+    /// Each variant records its name and payload arity; payload field names/types
+    /// are parsed and discarded.
+    fn parse_enum_item(&mut self) -> Result<Item, String> {
+        self.advance(); // consume `choose`
+        let name = self.parse_name()?;
+        self.skip_generics();
+        self.expect(&Token::LBrace)?;
+        let mut variants = Vec::new();
+        while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+            let vname = self.parse_name()?;
+            let mut arity = 0usize;
+            if matches!(self.peek(), Token::LParen) {
+                self.advance();
+                while !matches!(self.peek(), Token::RParen | Token::Eof) {
+                    // A payload slot may be `name: Type`, just `Type`, or just a name.
+                    self.parse_name().ok();
+                    if matches!(self.peek(), Token::Colon) {
+                        self.advance();
+                        self.parse_type_str();
+                    }
+                    arity += 1;
+                    if matches!(self.peek(), Token::Comma) { self.advance(); }
+                }
+                self.expect(&Token::RParen)?;
+            }
+            variants.push(EnumVariant { name: vname, arity });
+            if matches!(self.peek(), Token::Comma | Token::Semicolon) { self.advance(); }
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(Item::Enum(name, variants))
     }
 
     fn parse_fn_item(&mut self, is_async: bool) -> Result<Item, String> {
@@ -611,10 +666,15 @@ impl Parser {
             _ => {
                 let name = self.parse_name()?;
                 if matches!(self.peek(), Token::LParen) {
+                    // User enum variant pattern: `Variant(p1, p2, ...)` or nullary `Variant()`.
                     self.advance();
-                    let inner = self.parse_pattern()?;
+                    let mut subs = Vec::new();
+                    while !matches!(self.peek(), Token::RParen | Token::Eof) {
+                        subs.push(self.parse_pattern()?);
+                        if matches!(self.peek(), Token::Comma) { self.advance(); }
+                    }
                     self.expect(&Token::RParen)?;
-                    Ok(Pattern::Constructor(name, Some(Box::new(inner))))
+                    Ok(Pattern::Variant(name, subs))
                 } else if name == "_" {
                     Ok(Pattern::Wildcard)
                 } else {

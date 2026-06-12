@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 use crate::parser::ast::*;
-use crate::visualize::{Cat, categorize, icon, is_vtex, is_audio};
+use crate::visualize::{Cat, categorize, icon, is_vtex, is_audio, is_crypto, is_physics, is_ai};
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -51,6 +51,9 @@ struct Func {
     is_entry: bool,
     vtex: usize,
     audio: usize,
+    crypto: usize,
+    physics: usize,
+    ai: usize,
 }
 
 struct FileScope {
@@ -97,6 +100,19 @@ impl Project {
     }
 
     fn total_funcs(&self) -> usize { self.files.iter().map(|f| f.funcs.len()).sum() }
+
+    /// `files · fns` plus any present domain tallies (vtex/audio/crypto/physics/ai).
+    fn subtitle(&self) -> String {
+        let mut parts = vec![format!("{} files", self.files.len()), format!("{} fns", self.total_funcs())];
+        let (mut v, mut a, mut c, mut ph, mut ai) = (0, 0, 0, 0, 0);
+        for fs in &self.files {
+            for fc in &fs.funcs { v += fc.vtex; a += fc.audio; c += fc.crypto; ph += fc.physics; ai += fc.ai; }
+        }
+        for (n, lbl) in [(v, "vtex"), (a, "audio"), (c, "crypto"), (ph, "physics"), (ai, "ai")] {
+            if n > 0 { parts.push(format!("{n} {lbl}")); }
+        }
+        parts.join(" · ")
+    }
 }
 
 fn short_label(path: &str) -> String {
@@ -131,6 +147,11 @@ fn collect_scope(items: &[Item], ns: &str, funcs: &mut Vec<Func>,
                 uses.push(format!("{path}{a}"));
             }
             Item::TypeAlias(n, t) => globals.push((q(n), format!("type {t}"))),
+            Item::Struct(n, fields) => globals.push((q(n), format!("form {{{}}}", fields.join(", ")))),
+            Item::Enum(n, variants) => {
+                let names: Vec<&str> = variants.iter().map(|v| v.name.as_str()).collect();
+                globals.push((q(n), format!("choose {{{}}}", names.join(" | "))));
+            }
         }
     }
 }
@@ -150,9 +171,13 @@ fn build_func(name: String, params: Vec<String>, body: &[Stmt], is_entry: bool) 
     let mut has_loop = false;
     walk_stmts(body, &mut raw, &mut has_loop);
     let calls = aggregate(raw);
-    let vtex  = calls.iter().filter(|c| is_vtex(c.cat)).map(|c| c.count).sum();
-    let audio = calls.iter().filter(|c| is_audio(c.cat)).map(|c| c.count).sum();
-    Func { name, params, calls, has_loop, is_entry, vtex, audio }
+    let sum = |pred: fn(Cat) -> bool| calls.iter().filter(|c| pred(c.cat)).map(|c| c.count).sum();
+    let vtex    = sum(is_vtex);
+    let audio   = sum(is_audio);
+    let crypto  = sum(is_crypto);
+    let physics = sum(is_physics);
+    let ai      = sum(is_ai);
+    Func { name, params, calls, has_loop, is_entry, vtex, audio, crypto, physics, ai }
 }
 
 fn aggregate(raw: Vec<(String, Cat)>) -> Vec<Call> {
@@ -264,12 +289,15 @@ fn frand(seed: u64, i: u64) -> f32 {
 /// Sides (3..=8) chosen deterministically from a call category + name.
 fn shape_sides(cat: Cat, name: &str) -> usize {
     let base = match cat {
-        Cat::Star | Cat::Yantra => 5,
-        Cat::Flower | Cat::Chakra => 6,
-        Cat::Lotus => 8,
-        Cat::Present => 3,
-        Cat::Fill | Cat::Grid => 4,
-        Cat::Rain => 7,
+        Cat::Star | Cat::Yantra | Cat::Sign | Cat::Shard      => 5,
+        Cat::Flower | Cat::Chakra | Cat::Cog | Cat::Music
+            | Cat::Hash | Cat::Trig                           => 6,
+        Cat::Lotus | Cat::Holo | Cat::Spectrum               => 8,
+        Cat::Present | Cat::Force | Cat::Fractal | Cat::Torii
+            | Cat::Draw3D | Cat::Pagoda                       => 3,
+        Cat::Fill | Cat::Grid | Cat::Window | Cat::Widget
+            | Cat::Rigid | Cat::Key | Cat::Cipher | Cat::File => 4,
+        Cat::Rain | Cat::Net | Cat::Neural | Cat::Sfx        => 7,
         _ => 0,
     };
     if base != 0 { base } else { 3 + (hash(name) % 6) as usize }
@@ -341,13 +369,11 @@ fn render_technical(p: &Project) -> String {
     let _ = write!(body, r##"<rect width="{}" height="{}" fill="url(#tgrid)" opacity="0.06"/>"##, f(w), f(h));
 
     // Title
-    let tf = p.total_funcs();
-    let nfiles = p.files.len();
     let _ = write!(body,
         r##"<text x="{}" y="44" fill="#ffd700" font-size="11" font-weight="bold" letter-spacing="3" opacity="0.7">LING · AST · TECHNICAL</text>
             <text x="{}" y="78" fill="#d8d8ff" font-size="30" font-weight="bold">{}</text>
-            <text x="{}" y="78" fill="#52528a" font-size="13" text-anchor="end">{} files · {} fns</text>"##,
-        f(T_MARGIN), f(T_MARGIN), esc(&p.name), f(w - T_MARGIN), nfiles, tf);
+            <text x="{}" y="78" fill="#52528a" font-size="13" text-anchor="end">{}</text>"##,
+        f(T_MARGIN), f(T_MARGIN), esc(&p.name), f(w - T_MARGIN), esc(&p.subtitle()));
 
     // Graph edges (behind cards): caller centre → callee centre, faint curves.
     for pl in &placed {
@@ -419,6 +445,9 @@ fn t_card(fc: &Func, x: f32, y: f32, h: f32) -> String {
     let mut st = Vec::new();
     if fc.vtex > 0 { st.push(format!("{} vtex", fc.vtex)); }
     if fc.audio > 0 { st.push(format!("{} audio", fc.audio)); }
+    if fc.crypto > 0 { st.push(format!("{} crypto", fc.crypto)); }
+    if fc.physics > 0 { st.push(format!("{} phys", fc.physics)); }
+    if fc.ai > 0 { st.push(format!("{} ai", fc.ai)); }
     if fc.has_loop { st.push("↺ loop".into()); }
     let _ = write!(s,
         r##"<text x="{}" y="{}" fill="#52528a" font-size="10">{}</text>
@@ -582,8 +611,8 @@ fn render_ling(p: &Project) -> String {
     let _ = write!(body,
         r##"<text x="{}" y="42" fill="#ffd700" font-size="11" font-weight="bold" letter-spacing="3" opacity="0.75">灵 · LING · AST</text>
             <text x="{}" y="78" fill="#e6e6ff" font-size="30" font-weight="bold">{}</text>
-            <text x="{}" y="78" fill="#6a6aa0" font-size="13" text-anchor="end">{} files · {} fns</text>"##,
-        f(L_MARGIN), f(L_MARGIN), esc(&p.name), f(w - L_MARGIN), p.files.len(), p.total_funcs());
+            <text x="{}" y="78" fill="#6a6aa0" font-size="13" text-anchor="end">{}</text>"##,
+        f(L_MARGIN), f(L_MARGIN), esc(&p.name), f(w - L_MARGIN), esc(&p.subtitle()));
 
     for (fi, py, ph) in &panels {
         let fs = &p.files[*fi];

@@ -345,6 +345,10 @@ impl TypeChecker {
                 env.extend(mod_env);
             },
             ast::Item::TypeAlias(_, _) => {},
+            // Nominal data types: recorded structurally elsewhere; inference treats
+            // their constructors as opaque for now (no field/variant typing yet).
+            ast::Item::Struct(_, _) => {},
+            ast::Item::Enum(_, _) => {},
             ast::Item::Use { .. } => {},
         }
     }
