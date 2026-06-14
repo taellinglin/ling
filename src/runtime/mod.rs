@@ -2,6 +2,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
 #[cfg(not(target_arch = "wasm32"))]
+mod gamepad;
+#[cfg(not(target_arch = "wasm32"))]
 mod ai;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -544,6 +546,18 @@ pub struct Interpreter {
     /// Snapshot of `frames` captured the moment a runtime error first arose
     /// (the deepest call). Consumed by `take_error_trace`.
     error_trace: Option<Vec<String>>,
+    /// Unified input (gamepads/joysticks/VR/touch via the ling-input
+    /// "Sensorium"). Lazily initialised on the first `pad_*` builtin call;
+    /// `None` if no native input backend is available.
+    #[cfg(not(target_arch = "wasm32"))]
+    input: RefCell<Option<InputState>>,
+}
+
+/// Live gamepad input state: a ling-input hub fed by the native `gilrs` backend.
+#[cfg(not(target_arch = "wasm32"))]
+struct InputState {
+    sensorium: ling_input::Sensorium,
+    backend: ling_input::backend::GilrsBackend,
 }
 
 impl Interpreter {
@@ -600,6 +614,40 @@ impl Interpreter {
             dialog_colors: [0xE6F2FF, 0xFFD24A, 0x4AD2FF, 0x6CFF8C], // text · name · place · item
             frames: Vec::new(),
             error_trace: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            input: RefCell::new(None),
+        }
+    }
+
+    /// Lazily initialise the input system and advance it one frame; returns the
+    /// number of connected gamepads. Call once per game-loop iteration (like a
+    /// window update) before reading `pad_*` state.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pad_poll(&self) -> usize {
+        let mut slot = self.input.borrow_mut();
+        if slot.is_none() {
+            match ling_input::backend::GilrsBackend::new() {
+                Ok(backend) => {
+                    *slot = Some(InputState { sensorium: ling_input::Sensorium::new(4), backend });
+                },
+                Err(_) => return 0,
+            }
+        }
+        let st = slot.as_mut().unwrap();
+        st.sensorium.begin_frame();
+        st.sensorium.pump(&mut st.backend);
+        st.sensorium.update(1.0 / 60.0);
+        st.sensorium.devices.count()
+    }
+
+    /// Read player `slot`'s gamepad with `f`, or return `default` if there is no
+    /// input system / no such pad.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn with_pad<T>(&self, slot: usize, default: T, f: impl FnOnce(&ling_input::Gamepad) -> T) -> T {
+        let inp = self.input.borrow();
+        match inp.as_ref().and_then(|s| s.sensorium.player(slot)) {
+            Some(p) => f(p),
+            None => default,
         }
     }
 
@@ -1897,6 +1945,144 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             }
 
+            // ── Gamepad / joystick input (ling-input "Sensorium" + gilrs) ──
+            // pad_poll() → number — advance input one frame; returns # connected pads.
+            "pad_poll" | "手柄轮询" | "パッド更新" | "패드폴링" | "อัปเดตแพด" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                return Ok(Value::Number(self.pad_poll() as f64));
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            // pad_count() → number — connected gamepads.
+            "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let inp = self.input.borrow();
+                    let n = inp.as_ref().map_or(0, |s| s.sensorium.devices.count());
+                    return Ok(Value::Number(n as f64));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            // pad_connected(i) → bool.
+            "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let inp = self.input.borrow();
+                    let c = inp.as_ref().is_some_and(|s| {
+                        s.sensorium.devices.for_player(i as u8).is_some()
+                    });
+                    return Ok(Value::Bool(c));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+            }
+            // pad_button(i, name) → bool — is the button held?
+            "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let name = self.arg_str(&args, 1, "");
+                    let down = parse_pad_button(&name)
+                        .is_some_and(|b| self.with_pad(i, false, |p| p.is_down(b)));
+                    return Ok(Value::Bool(down));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+            }
+            // pad_pressed(i, name) → bool — pressed this frame?
+            "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let name = self.arg_str(&args, 1, "");
+                    let p = parse_pad_button(&name)
+                        .is_some_and(|b| self.with_pad(i, false, |g| g.just_pressed(b)));
+                    return Ok(Value::Bool(p));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+            }
+            // pad_lx(i)/pad_ly(i)/pad_rx(i)/pad_ry(i) → number — stick axes (−1..=1).
+            "pad_lx" | "手柄左X" | "パッド左X" | "패드왼X" | "แพดซ้ายX" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_stick.x as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            "pad_ly" | "手柄左Y" | "パッド左Y" | "패드왼Y" | "แพดซ้ายY" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_stick.y as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            "pad_rx" | "手柄右X" | "パッド右X" | "패드오X" | "แพดขวาX" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_stick.x as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            "pad_ry" | "手柄右Y" | "パッド右Y" | "패드오Y" | "แพดขวาY" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_stick.y as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            // pad_lt(i)/pad_rt(i) → number — analog triggers (0..=1).
+            "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_trigger as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_trigger as f64)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Number(0.0));
+            }
+            // pad_rumble(i, lo, hi) → unit — set rumble motor amplitudes (0..=1).
+            "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    use ling_input::backend::InputBackend;
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let lo = self.arg_num(&args, 1, 0.0)? as f32;
+                    let hi = self.arg_num(&args, 2, lo as f64)? as f32;
+                    let mut inp = self.input.borrow_mut();
+                    if let Some(s) = inp.as_mut() {
+                        if let Some(dev) = s.sensorium.devices.for_player(i as u8).map(|d| d.id) {
+                            s.backend.set_rumble(
+                                dev,
+                                ling_input::Rumble { low: lo, high: hi, ..Default::default() },
+                            );
+                        }
+                    }
+                    return Ok(Value::Unit);
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Unit);
+            }
+
             // ── set_camera_pos(x, y, z) — move camera to world position ──
             "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
@@ -2802,6 +2988,27 @@ impl Interpreter {
             "net_discover" | "เน็ตค้นหา" => {
                 let port = self.arg_num(&args, 0, 7778.0)? as u16;
                 return Ok(Value::Str(net::discover(port)));
+            }
+            // ── gamepad (gilrs) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_poll" | "จอยโพล" => { gamepad::poll(); return Ok(Value::Unit); }
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_button" | "จอยปุ่ม" => {
+                let name = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(if gamepad::button(&name) { 1.0 } else { 0.0 }));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_axis" | "จอยแกน" => {
+                let name = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(gamepad::axis(&name) as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_rumble" | "จอยสั่น" => {
+                let low = self.arg_num(&args, 0, 0.0)? as f32;
+                let high = self.arg_num(&args, 1, 0.0)? as f32;
+                let ms = self.arg_num(&args, 2, 200.0)? as u32;
+                gamepad::rumble(low, high, ms);
+                return Ok(Value::Unit);
             }
 
             // ── game AI: neural networks ─────────────────────────────────────
@@ -5403,6 +5610,32 @@ impl Interpreter {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Map a friendly button name (any vendor / d-pad alias) to a gamepad button.
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_pad_button(name: &str) -> Option<ling_input::GamepadButton> {
+    use ling_input::GamepadButton as B;
+    Some(match name.to_ascii_lowercase().as_str() {
+        "a" | "south" | "cross" => B::South,
+        "b" | "east" | "circle" => B::East,
+        "x" | "west" | "square" => B::West,
+        "y" | "north" | "triangle" => B::North,
+        "lb" | "l1" | "left_shoulder" => B::LeftShoulder,
+        "rb" | "r1" | "right_shoulder" => B::RightShoulder,
+        "lt" | "l2" | "left_trigger" => B::LeftTrigger,
+        "rt" | "r2" | "right_trigger" => B::RightTrigger,
+        "start" | "menu" | "options" => B::Start,
+        "select" | "back" | "share" | "view" => B::Select,
+        "guide" | "home" => B::Guide,
+        "l3" | "left_stick" => B::LeftStick,
+        "r3" | "right_stick" => B::RightStick,
+        "up" | "dpad_up" => B::DpadUp,
+        "down" | "dpad_down" => B::DpadDown,
+        "left" | "dpad_left" => B::DpadLeft,
+        "right" | "dpad_right" => B::DpadRight,
+        _ => return None,
+    })
+}
+
 fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
     use minifb::Key;
     Some(match name {

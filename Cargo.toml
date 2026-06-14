@@ -136,6 +136,8 @@ ling-music = { path = "crates/ling-music", version = "2030.0.0" }
 ling-mic = { path = "crates/ling-mic", version = "2030.0.1" }
 ling-crypto = { path = "crates/ling-crypto", version = "2030.1.3" }
 ling-ui = { path = "crates/ling-ui", version = "2030.0.0" }
+gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
+ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
@@ -193,7 +195,7 @@ ling-graphics = { path = "crates/ling-graphics", version = "2030.0.0" }
 ling-ui       = { path = "crates/ling-ui",       version = "2030.0.0" }
 ling-game     = { path = "crates/ling-game",     version = "2030.0.0" }
 ling-animation = { path = "crates/ling-animation", version = "2030.0.0" }
-ling-input    = { path = "crates/ling-input",    version = "2030.0.0" }
+ling-input    = { path = "crates/ling-input",    version = "2030.0.1" }
 
 # AI
 ling-ai = { path = "crates/ling-ai", version = "2030.0.0" }
