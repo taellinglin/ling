@@ -1,0 +1,108 @@
+// ─────────────────────────────────────────────────────────────────────────
+//  Ling cross-language benchmark — base-language compute + graphics/audio math.
+//  Each line:  BENCH <name> RESULT <checksum> TIME <seconds>
+//  Mirrors bench.py / bench.c / bench.cpp / bench.rs / bench.go exactly.
+//  NOTE: Ling uses `while` (not `for`) for accumulation — `while` runs its body
+//  in the outer scope so re-`bind` mutates; `for` bodies get a fresh scope.
+// ─────────────────────────────────────────────────────────────────────────
+
+fn fib(n: number) -> number {
+    if n <= 1 {
+        n
+    } else {
+        fib(n - 1) + fib(n - 2)
+    }
+}
+
+bind start = do {
+    bind PI = 3.141592653589793
+
+    // 1. fib — recursion / function-call overhead
+    bind t0 = time_now()
+    bind r = fib(30)
+    print("BENCH fib RESULT ", r, " TIME ", time_now() - t0)
+
+    // 2. loop_sum — tight integer arithmetic loop
+    bind t0 = time_now()
+    bind s = 0
+    bind i = 0
+    while i < 10000000 {
+        bind s = s + (i % 7)
+        bind i = i + 1
+    }
+    print("BENCH loop_sum RESULT ", s, " TIME ", time_now() - t0)
+
+    // 3. leibniz — float division loop (π approximation)
+    bind t0 = time_now()
+    bind acc = 0.0
+    bind k = 0
+    bind sign = 1.0
+    while k < 5000000 {
+        bind acc = acc + sign / (2.0 * k + 1.0)
+        bind sign = 0.0 - sign
+        bind k = k + 1
+    }
+    bind piapprox = 4.0 * acc
+    print("BENCH leibniz RESULT ", piapprox, " TIME ", time_now() - t0)
+
+    // 4. primes — count primes below 50000 (trial division)
+    bind t0 = time_now()
+    bind count = 0
+    bind n = 2
+    while n < 50000 {
+        bind d = 2
+        bind is_p = 1
+        while d * d <= n {
+            if n % d == 0 {
+                bind is_p = 0
+                bind d = n        // force the inner loop to exit
+            }
+            bind d = d + 1
+        }
+        bind count = count + is_p
+        bind n = n + 1
+    }
+    print("BENCH primes RESULT ", count, " TIME ", time_now() - t0)
+
+    // 5. mandelbrot — float nested loops (graphics workload)
+    bind t0 = time_now()
+    bind W = 200
+    bind H = 200
+    bind maxiter = 100
+    bind total = 0
+    bind py = 0
+    while py < H {
+        bind px = 0
+        while px < W {
+            bind x0 = (px / W) * 3.5 - 2.5
+            bind y0 = (py / H) * 2.0 - 1.0
+            bind zx = 0.0
+            bind zy = 0.0
+            bind it = 0
+            while zx * zx + zy * zy <= 4.0 && it < maxiter {
+                bind xt = zx * zx - zy * zy + x0
+                bind zy = 2.0 * zx * zy + y0
+                bind zx = xt
+                bind it = it + 1
+            }
+            bind total = total + it
+            bind px = px + 1
+        }
+        bind py = py + 1
+    }
+    print("BENCH mandelbrot RESULT ", total, " TIME ", time_now() - t0)
+
+    // 6. fm_synth — FM/additive synthesis samples (audio workload)
+    bind t0 = time_now()
+    bind N = 1000000
+    bind sr = 44100.0
+    bind sum = 0.0
+    bind j = 0
+    while j < N {
+        bind t = j / sr
+        bind sample = sin(2.0 * PI * 220.0 * t + sin(2.0 * PI * 440.0 * t))
+        bind sum = sum + sample
+        bind j = j + 1
+    }
+    print("BENCH fm_synth RESULT ", sum, " TIME ", time_now() - t0)
+}
