@@ -334,8 +334,11 @@ static BUILTINS_GAME: &[Entry] = &[
     (&["sound","声音","サウンド","소리","เสียง"],                                   ["sound","声音","サウンド","소리","เสียง"]),
     (&["music","音乐","ミュージック","음악","เพลง"],                                ["music","音乐","ミュージック","음악","เพลง"]),
     (&["input","输入","インプット","입력","อินพุต"],                                ["input","输入","インプット","입력","อินพุต"]),
-    (&["key_down","按键按下","キー押下","키누름","ปุ่มกด"],                         ["key_down","按键按下","キー押下","키누름","ปุ่มกด"]),
-    (&["key_pressed","按键按压","キー押下","키눌림","ปุ่มกดค้าง"],                  ["key_pressed","按键按压","キー押下","키눌림","ปุ่มกดค้าง"]),
+    // Canonical forms below match the runtime aliases in src/runtime/mod.rs
+    // (key_down → 按键/キー押す/키누름/กดค้าง, key_pressed → 键按/キー押した/키눌림/กดปุ่ม)
+    // so normalized source actually executes. Older placeholder forms kept as aliases.
+    (&["key_down","按键","按键按下","キー押す","キー押下","키누름","กดค้าง","ปุ่มกด"],        ["key_down","按键","キー押す","키누름","กดค้าง"]),
+    (&["key_pressed","键按","按键按压","キー押した","キー押下","키눌림","กดปุ่ม","ปุ่มกดค้าง"], ["key_pressed","键按","キー押した","키눌림","กดปุ่ม"]),
     (&["key_released","按键释放","キー解放","키떼임","ปุ่มปล่อย"],                  ["key_released","按键释放","キー解放","키떼임","ปุ่มปล่อย"]),
     (&["mouse_pos","鼠标位置","マウス位置","마우스위치","ตำแหน่งเมาส์"],           ["mouse_pos","鼠标位置","マウス位置","마우스위치","ตำแหน่งเมาส์"]),
     (&["mouse_down","鼠标按下","マウス押下","마우스누름","ปุ่มเมาส์กด"],            ["mouse_down","鼠标按下","マウス押下","마우스누름","ปุ่มเมาส์กด"]),
@@ -348,6 +351,23 @@ static BUILTINS_GAME: &[Entry] = &[
     (&["resolution","分辨率","解像度","해상도","ความละเอียด"],                    ["resolution","分辨率","解像度","해상도","ความละเอียด"]),
     (&["fullscreen","全屏","フルスクリーン","전체화면","เต็มจอ"],                   ["fullscreen","全屏","フルスクリーン","전체화면","เต็มจอ"]),
     (&["windowed","窗口","ウィンドウ","윈도우","หน้าต่าง"],                         ["windowed","窗口","ウィンドウ","윈도우","หน้าต่าง"]),
+];
+
+// Builtins — gamepad/joystick input (ling-input "Sensorium" + pad_* runtime arms)
+// Output forms MUST match the 5-language aliases in src/runtime/mod.rs.
+static BUILTINS_INPUT: &[Entry] = &[
+    (&["pad_poll","手柄轮询","パッド更新","패드폴링","อัปเดตแพด"],           ["pad_poll","手柄轮询","パッド更新","패드폴링","อัปเดตแพด"]),
+    (&["pad_count","手柄数","パッド数","패드수","จำนวนแพด"],                 ["pad_count","手柄数","パッド数","패드수","จำนวนแพด"]),
+    (&["pad_connected","手柄连接","パッド接続","패드연결","แพดเชื่อม"],       ["pad_connected","手柄连接","パッド接続","패드연결","แพดเชื่อม"]),
+    (&["pad_button","手柄按键","パッドボタン","패드버튼","ปุ่มแพด"],          ["pad_button","手柄按键","パッドボタン","패드버튼","ปุ่มแพด"]),
+    (&["pad_pressed","手柄按下","パッド押下","패드눌림","แพดกด"],             ["pad_pressed","手柄按下","パッド押下","패드눌림","แพดกด"]),
+    (&["pad_lx","手柄左X","パッド左X","패드왼X","แพดซ้ายX"],                  ["pad_lx","手柄左X","パッド左X","패드왼X","แพดซ้ายX"]),
+    (&["pad_ly","手柄左Y","パッド左Y","패드왼Y","แพดซ้ายY"],                  ["pad_ly","手柄左Y","パッド左Y","패드왼Y","แพดซ้ายY"]),
+    (&["pad_rx","手柄右X","パッド右X","패드오X","แพดขวาX"],                  ["pad_rx","手柄右X","パッド右X","패드오X","แพดขวาX"]),
+    (&["pad_ry","手柄右Y","パッド右Y","패드오Y","แพดขวาY"],                  ["pad_ry","手柄右Y","パッド右Y","패드오Y","แพดขวาY"]),
+    (&["pad_lt","手柄左扳机","パッド左トリガー","패드왼트리거","ไกแพดซ้าย"],  ["pad_lt","手柄左扳机","パッド左トリガー","패드왼트리거","ไกแพดซ้าย"]),
+    (&["pad_rt","手柄右扳机","パッド右トリガー","패드오트리거","ไกแพดขวา"],  ["pad_rt","手柄右扳机","パッド右トリガー","패드오트리거","ไกแพดขวา"]),
+    (&["pad_rumble","手柄震动","パッド振動","패드진동","แพดสั่น"],            ["pad_rumble","手柄震动","パッド振動","패드진동","แพดสั่น"]),
 ];
 
 // Builtins — vector UI toolkit (ling-ui/widgets.rs + ui_* runtime arms)
@@ -706,7 +726,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
 
 /// Map used for rewriting .ling source content — includes builtins.
 fn build_replacement_map(target: Lang) -> Vec<(String, String)> {
-    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_AI, BUILTINS_ANIM, BUILTINS_GAME, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
+    build_map_from(target, &[KEYWORDS, BUILTINS_VTEX, BUILTINS_SHAPES, BUILTINS_OTHER, BUILTINS_GFX, BUILTINS_AUDIO, BUILTINS_MATH, BUILTINS_CRYPTO, BUILTINS_GEO_CRYPTO, BUILTINS_PHASE1, BUILTINS_PHYSICS, BUILTINS_PHYSICS_FN, BUILTINS_DIALOG, BUILTINS_AI, BUILTINS_ANIM, BUILTINS_GAME, BUILTINS_INPUT, BUILTINS_UI, BUILTINS_MUSIC, VOCABULARY])
 }
 
 /// Map used for renaming files/folders — keywords + vocabulary only.

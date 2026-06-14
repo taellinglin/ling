@@ -1697,46 +1697,47 @@ impl Interpreter {
                     };
                     let mut gfx = self.gfx.borrow_mut();
                     if gfx.mouse_captured {
-                        let mut cur_my = gfx.last_my;
+                        let w = gfx.width as f32;
+                        let h = gfx.height as f32;
                         if let Some((mx, my)) = mouse_pos {
-                            cur_my = my;
                             if gfx.last_mx.is_nan() {
                                 gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                                gfx.last_mx = mx; gfx.last_my = my;
                             } else {
                                 gfx.mouse_dx = mx - gfx.last_mx;
                                 gfx.mouse_dy = my - gfx.last_my;
+                                // Wrap the cursor at every edge (L/R/U/D) → infinite look
+                                // on both axes, and the cursor is NOT trapped (alt-tab works).
+                                let margin = 6.0;
+                                let (mut nx, mut ny, mut warp) = (mx, my, false);
+                                if mx < margin { nx = w - margin - 2.0; warp = true; }
+                                else if mx > w - margin { nx = margin + 2.0; warp = true; }
+                                if my < margin { ny = h - margin - 2.0; warp = true; }
+                                else if my > h - margin { ny = margin + 2.0; warp = true; }
+                                if warp {
+                                    #[cfg(windows)]
+                                    unsafe {
+                                        #[repr(C)]
+                                        struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+                                        extern "system" {
+                                            fn GetForegroundWindow() -> isize;
+                                            fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
+                                            fn SetCursorPos(x: i32, y: i32) -> i32;
+                                        }
+                                        let hwnd = GetForegroundWindow();
+                                        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                                        if GetWindowRect(hwnd, &mut rect) != 0 {
+                                            SetCursorPos(rect.left + nx as i32, rect.top + ny as i32);
+                                        }
+                                    }
+                                    gfx.last_mx = nx; gfx.last_my = ny;
+                                } else {
+                                    gfx.last_mx = mx; gfx.last_my = my;
+                                }
                             }
                         } else {
                             gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
                         }
-                        // Recenter only the X axis each frame → INFINITE yaw (no 0-360
-                        // edge clamp) while leaving Y free so the camera can still tilt.
-                        #[cfg(windows)]
-                        unsafe {
-                            #[repr(C)]
-                            struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
-                            #[repr(C)]
-                            struct POINT { x: i32, y: i32 }
-                            extern "system" {
-                                fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32;
-                                fn GetForegroundWindow() -> isize;
-                                fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
-                                fn SetCursorPos(x: i32, y: i32) -> i32;
-                                fn GetCursorPos(lpPoint: *mut POINT) -> i32;
-                            }
-                            let hwnd = GetForegroundWindow();
-                            let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                            if GetWindowRect(hwnd, &mut rect) != 0 {
-                                ClipCursor(&rect as *const RECT as *const std::ffi::c_void);
-                                let mid_x = (rect.left + rect.right) / 2;
-                                let mut p = POINT { x: 0, y: 0 };
-                                GetCursorPos(&mut p);
-                                SetCursorPos(mid_x, p.y); // keep current Y → vertical tilt works
-                            }
-                        }
-                        // X resets to framebuffer centre; Y keeps its real position.
-                        gfx.last_mx = gfx.width as f32 / 2.0;
-                        gfx.last_my = cur_my;
                     } else if let Some((mx, my)) = mouse_pos {
                         if gfx.last_mx.is_nan() {
                             gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;

@@ -69,6 +69,35 @@ fn normalize_to_thai() {
 }
 
 #[test]
+fn normalize_input_builtins() {
+    // Gamepad/joystick builtins must normalize to each language's *runtime*
+    // aliases (the forms src/runtime/mod.rs actually dispatches on).
+    let prog = "bind start = do {\n  pad_poll()\n  print(pad_button(0, \"a\"))\n  print(pad_lx(0))\n  pad_rumble(0, 1.0, 1.0)\n}\n";
+    let cases: [(&str, [&str; 4]); 4] = [
+        ("zh", ["手柄轮询", "手柄按键", "手柄左X", "手柄震动"]),
+        ("ja", ["パッド更新", "パッドボタン", "パッド左X", "パッド振動"]),
+        ("ko", ["패드폴링", "패드버튼", "패드왼X", "패드진동"]),
+        ("th", ["อัปเดตแพด", "ปุ่มแพด", "แพดซ้ายX", "แพดสั่น"]),
+    ];
+    for (lang, expect) in cases {
+        let dir = std::env::temp_dir().join(format!("lingfu_pad_{lang}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("prog.ling");
+        fs::write(&file, prog).unwrap();
+        let status = Command::new(LINGFU)
+            .arg("normalize").arg(lang).arg("--content-only")
+            .current_dir(&dir).status().expect("run lingfu");
+        assert!(status.success(), "normalize {lang} failed");
+        let out = fs::read_to_string(&file).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        for token in expect {
+            assert!(out.contains(token), "{lang}: expected `{token}`\n{out}");
+        }
+    }
+}
+
+#[test]
 fn normalize_to_english_uses_bind_not_let() {
     // Round-trip a Chinese program back to English; the canonical bind keyword
     // must be `bind` (never `let`, which the runtime does not accept).

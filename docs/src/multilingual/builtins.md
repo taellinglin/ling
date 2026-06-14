@@ -163,3 +163,38 @@ All names in the same row are valid aliases for the same function.
 | `key_pressed(key)` | `กดปุ่ม(key)` | True on key press event |
 | `mouse_dx()` | `เมาส์X()` | Mouse X delta |
 | `mouse_dy()` | `เมาส์Y()` | Mouse Y delta |
+
+## Gamepad / Joystick
+
+Powered by the [`ling-input`](https://docs.rs/ling-input) "Sensorium" crate
+(native gamepads via `gilrs`; rumble, sticks, triggers). Call `pad_poll()` once
+per frame before reading state. Player index `i` is 0-based; button names accept
+vendor-neutral aliases (`a`/`south`/`cross`, `b`/`east`/`circle`, …, `lb`, `rt`,
+`start`, `dpad_up`/`up`, `l3`, `guide`).
+
+| English | Chinese | Japanese | Korean | Thai | Description |
+|---------|---------|----------|--------|------|-------------|
+| `pad_poll()` | `手柄轮询()` | `パッド更新()` | `패드폴링()` | `อัปเดตแพด()` | Advance input one frame → # connected pads |
+| `pad_count()` | `手柄数()` | `パッド数()` | `패드수()` | `จำนวนแพด()` | Number of connected gamepads |
+| `pad_connected(i)` | `手柄连接(i)` | `パッド接続(i)` | `패드연결(i)` | `แพดเชื่อม(i)` | Is player `i`'s pad connected? |
+| `pad_button(i,name)` | `手柄按键(i,name)` | `パッドボタン(i,name)` | `패드버튼(i,name)` | `ปุ่มแพด(i,name)` | Is the button held? |
+| `pad_pressed(i,name)` | `手柄按下(i,name)` | `パッド押下(i,name)` | `패드눌림(i,name)` | `แพดกด(i,name)` | Pressed this frame (edge)? |
+| `pad_lx(i)` / `pad_ly(i)` | `手柄左X(i)` / `手柄左Y(i)` | `パッド左X(i)` / `パッド左Y(i)` | `패드왼X(i)` / `패드왼Y(i)` | `แพดซ้ายX(i)` / `แพดซ้ายY(i)` | Left stick axes (−1..1) |
+| `pad_rx(i)` / `pad_ry(i)` | `手柄右X(i)` / `手柄右Y(i)` | `パッド右X(i)` / `パッド右Y(i)` | `패드오X(i)` / `패드오Y(i)` | `แพดขวาX(i)` / `แพดขวาY(i)` | Right stick axes (−1..1) |
+| `pad_lt(i)` / `pad_rt(i)` | `手柄左扳机(i)` / `手柄右扳机(i)` | `パッド左トリガー(i)` / `パッド右トリガー(i)` | `패드왼트리거(i)` / `패드오트리거(i)` | `ไกแพดซ้าย(i)` / `ไกแพดขวา(i)` | Analog triggers (0..1) |
+| `pad_rumble(i,lo,hi)` | `手柄震动(i,lo,hi)` | `パッド振動(i,lo,hi)` | `패드진동(i,lo,hi)` | `แพดสั่น(i,lo,hi)` | Set rumble motor amplitudes (0..1) |
+
+```ling
+bind start = do {
+    open_window(640, 480, "pad test")
+    while true {
+        pad_poll()
+        if pad_pressed(0, "a") {
+            print("jump!")
+        }
+        bind mx = pad_lx(0)
+        // ... move player by mx, my ...
+        gfx_present()
+    }
+}
+```
