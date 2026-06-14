@@ -1,0 +1,124 @@
+# animation_map.ling — Anima state machine + blending for the moon_pond demo.
+#
+# Brings every clip into scope, decides which one plays from the character's
+# inputs, dispatches the pose, and cross-fades between clips. This is the one
+# file the example talks to (it `use`s this; this `use`s the clips).
+#
+# POSE vector (shared 16-value contract — see idle.ling):
+#   [0]=bob [1]=lean [2]=head
+#   [3]=lhipF [4]=lhipA [5]=lknee [6]=rhipF [7]=rhipA [8]=rknee
+#   [9]=lshF [10]=lshA [11]=lelb [12]=rshF [13]=rshA [14]=relb [15]=crouch
+#
+# State graph (priority order, computed from inputs):
+#   in water                  -> Swim
+#   sit requested, descending -> Sit
+#   sit requested, seated     -> Meditate
+#   moving + running          -> Run
+#   moving                    -> Walk
+#   otherwise                 -> Idle
+
+use "idle"
+use "walk"
+use "run"
+use "sit"
+use "meditate"
+use "swim"
+use "face"
+
+choose AnimState { Idle, Walk, Run, Sit, Meditate, Swim }
+
+fn anim_start() { return Idle }
+
+# Pick the next state from boolean inputs (all 0/1).
+fn anim_next(moving, running, want_sit, seated, in_water) {
+    bind s = Idle
+    if in_water == 1 {
+        bind s = Swim
+    } else {
+        if want_sit == 1 {
+            bind s = Sit
+            if seated == 1 { bind s = Meditate }
+        } else {
+            if moving == 1 {
+                bind s = Walk
+                if running == 1 { bind s = Run }
+            }
+        }
+    }
+    return s
+}
+
+# Dispatch the active clip. `phase` = time; `sit_amt` = sit progress 0..1.
+fn anim_pose(state, phase, sit_amt) {
+    return match state {
+        Idle()     => idle_pose(phase),
+        Walk()     => walk_pose(phase),
+        Run()      => run_pose(phase),
+        Sit()      => sit_pose(sit_amt),
+        Meditate() => meditate_pose(phase),
+        Swim()     => swim_pose(phase),
+        _          => idle_pose(phase),
+    }
+}
+
+fn state_code(state) {
+    return match state {
+        Idle()     => 0,
+        Walk()     => 1,
+        Run()      => 2,
+        Sit()      => 3,
+        Meditate() => 4,
+        Swim()     => 5,
+        _          => 0,
+    }
+}
+
+fn state_name(state) {
+    return match state {
+        Idle()     => "IDLE",
+        Walk()     => "WALK",
+        Run()      => "RUN",
+        Sit()      => "SIT",
+        Meditate() => "MEDITATE",
+        Swim()     => "SWIM",
+        _          => "IDLE",
+    }
+}
+
+# Is this a seated state (drives the renderer's sit_amt)?
+fn is_sit(state) {
+    bind r = 0
+    bind c = state_code(state)
+    if c == 3 { bind r = 1 }
+    if c == 4 { bind r = 1 }
+    return r
+}
+
+# Is this the swim state (drives the renderer's water immersion)?
+fn is_swim(state) {
+    bind r = 0
+    if state_code(state) == 5 { bind r = 1 }
+    return r
+}
+
+# Element-wise eased cross-fade between two 16-value poses (smooth transitions).
+fn blend_pose(a, b, t) {
+    return [
+        tween_ease(a[0],  b[0],  t, "cubic_in_out"),
+        tween_ease(a[1],  b[1],  t, "cubic_in_out"),
+        tween_ease(a[2],  b[2],  t, "cubic_in_out"),
+        tween_ease(a[3],  b[3],  t, "cubic_in_out"),
+        tween_ease(a[4],  b[4],  t, "cubic_in_out"),
+        tween_ease(a[5],  b[5],  t, "cubic_in_out"),
+        tween_ease(a[6],  b[6],  t, "cubic_in_out"),
+        tween_ease(a[7],  b[7],  t, "cubic_in_out"),
+        tween_ease(a[8],  b[8],  t, "cubic_in_out"),
+        tween_ease(a[9],  b[9],  t, "cubic_in_out"),
+        tween_ease(a[10], b[10], t, "cubic_in_out"),
+        tween_ease(a[11], b[11], t, "cubic_in_out"),
+        tween_ease(a[12], b[12], t, "cubic_in_out"),
+        tween_ease(a[13], b[13], t, "cubic_in_out"),
+        tween_ease(a[14], b[14], t, "cubic_in_out"),
+        tween_ease(a[15], b[15], t, "cubic_in_out"),
+    ]
+}

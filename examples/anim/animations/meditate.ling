@@ -1,0 +1,15 @@
+# meditate.ling — Anima clip: a real cross-legged LOTUS (padmasana).
+#
+# Hips flex forward AND abduct wide so the knees splay out to the sides; the
+# knees fold deep so the shins tuck under. The arms rest with elbows out and
+# forearms forward, hands settling toward the knees/lap. Very slow breathing.
+
+fn meditate_pose(p) {
+    bind breath = wobble(p, 0.12, 0.03, 0.0)         # slow belly breath
+    bind lean   = 0.06 + wobble(p, 0.12, 0.02, 0.0)
+    bind hsway  = wobble(p, 0.10, 0.03, 0.4)         # faint head sway
+    return [breath, lean, 0.08 + hsway,
+            0.85, 1.15, 2.30,  0.85, 1.15, 2.30,     # folded + splayed legs
+            0.35, 0.55, 1.10,  0.35, 0.55, 1.10,     # arms rest, hands to knees
+            1.0]
+}

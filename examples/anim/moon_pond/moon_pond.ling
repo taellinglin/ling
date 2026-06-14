@@ -1,0 +1,531 @@
+# ════════════════════════════════════════════════════════════════════════════
+# moon_pond.ling — Anima walking demo with filled, anime-styled characters.
+#
+#   A small world under a turning sun & moon: a grassy field, trees, and a
+#   flowing ink pond (ling-physics liquid). The KING is yours to drive; the
+#   QUEEN sits by the water, meditating.
+#
+#   Characters are built from FILLED geometry (no outlines): a stylised anime
+#   head with detailed eyes (white + iris ring + iris + pupil + twin
+#   highlights + lash line + brow), hair with bangs, and filled torso / hips /
+#   limbs — all posed by the Anima clips in ../animations.
+#
+#   Renderer convention: world +y is DOWN on screen, so "up" is −y (ground sits
+#   at y = 0, everything above it has negative y, trees grow toward −y).
+#
+#   Controls (free-fly):
+#     Mouse     look around          W A S D   fly (relative to look)
+#     Space     ascend               Ctrl      descend
+#     Shift     boost                C         sit/meditate pose
+#     fly high or into the pond → the swim/fly cycle · Esc to quit
+#
+#   The anime face emotes per state (blink, smile, brow) via ../animations/face.ling,
+#   which rides the face + skull vector map in crates/ling-animation/src/face.rs.
+#
+#   NOTE: ../models/king.glb / queen.glb are the eventual skinned meshes. Runtime
+#   glTF skin-loading isn't wired yet, so these are procedural figures posed by
+#   the same clips — drop-in ready for real skins later.
+#
+#   Run:  ling run examples/anim/moon_pond/moon_pond.ling
+# ════════════════════════════════════════════════════════════════════════════
+
+use "../animations/animation_map"
+
+bind PONDX  = 4.5
+bind PONDZ  = 0.0
+bind PONDR2 = 5.8
+bind WATERY = 0.02
+bind GW     = 70.0
+
+# ── rotate a local (x,z) offset by yaw (cos c, sin s) into world ─────────────
+fn rotx(lx, lz, c, s) { return lx * c + lz * s }
+fn rotz(lx, lz, c, s) { return (0.0 - lx) * s + lz * c }
+
+# ── filled quad as two triangles ─────────────────────────────────────────────
+fn quad(ax, ay, az, bx, by, bz, cx, cy, cz, dx, dy, dz) {
+    draw_triangle_3d(ax, ay, az, bx, by, bz, cx, cy, cz)
+    draw_triangle_3d(ax, ay, az, cx, cy, cz, dx, dy, dz)
+}
+
+# ── filled limb ribbon A→B, widened along the world right vector (rx,rz) ─────
+fn limb(ax, ay, az, bx, by, bz, wa, wb, rx, rz) {
+    quad(ax + rx * wa, ay, az + rz * wa,
+         bx + rx * wb, by, bz + rz * wb,
+         bx - rx * wb, by, bz - rz * wb,
+         ax - rx * wa, ay, az - rz * wa)
+}
+
+# limb with a lighter centre highlight for a shaded, "modelled" look
+fn limbsh(ax, ay, az, bx, by, bz, wa, wb, rx, rz, r, g, b) {
+    set_color(r, g, b)
+    limb(ax, ay, az, bx, by, bz, wa, wb, rx, rz)
+    set_color(r + (255.0 - r) * 0.28, g + (255.0 - g) * 0.28, b + (255.0 - b) * 0.28)
+    limb(ax, ay, az, bx, by, bz, wa * 0.45, wb * 0.45, rx, rz)
+}
+
+# ── filled ellipse (triangle fan) in the right/up plane ──────────────────────
+fn efan(cx, cy, cz, rx, rz, rw, rh, n) {
+    bind i = 0
+    while i < n {
+        bind a0 = (i * 6.28318) / n
+        bind a1 = ((i + 1.0) * 6.28318) / n
+        draw_triangle_3d(cx, cy, cz,
+            cx + rx * rw * cos(a0), cy - rh * sin(a0), cz + rz * rw * cos(a0),
+            cx + rx * rw * cos(a1), cy - rh * sin(a1), cz + rz * rw * cos(a1))
+        bind i = i + 1
+    }
+}
+
+# ── one anime eye: white · lash · iris ring · iris · pupil · twin highlights ──
+# (cx,cy,cz) eye centre; (rx,rz) right axis; (fx,fz) forward (offset toward cam = −F)
+# world point at the end of a limb segment of length L, at flexion f (forward/back)
+# and abduction a (out to the side, signed by dir = −1 left / +1 right), from (sx,sy,sz).
+fn limbpt(sx, sy, sz, L, f, a, dir, c, s) {
+    bind cf = cos(f)
+    bind lx = dir * L * cf * sin(a)
+    bind ly = L * cf * cos(a)
+    bind lz = L * sin(f)
+    return [sx + lx * c + lz * s, sy + ly, sz + (0.0 - lx) * s + lz * c]
+}
+
+# a small filled hand: palm lobe + fingertip lobe, pointing along the forearm
+fn draw_hand(hx, hy, hz, ex, ey, ez, rx, rz, r, g, b) {
+    bind dx = hx - ex
+    bind dy = hy - ey
+    bind dz = hz - ez
+    bind dl = sqrt(dx * dx + dy * dy + dz * dz) + 0.0001
+    bind ux = dx / dl
+    bind uy = dy / dl
+    bind uz = dz / dl
+    set_color(r, g, b)
+    efan(hx, hy, hz, rx, rz, 0.07, 0.085, 8)
+    efan(hx + ux * 0.07, hy + uy * 0.07, hz + uz * 0.07, rx, rz, 0.055, 0.05, 7)
+}
+
+fn draw_eye(cx, cy, cz, rx, rz, fx, fz, hr, er, eg, eb, blink) {
+    bind op = 1.0 - 0.88 * blink                     # eye openness (1 open .. ~0 shut)
+    # white of the eye (tall almond), squashed as the lid closes
+    set_color(250, 250, 255)
+    efan(cx - fx * 0.02, cy, cz - fz * 0.02, rx, rz, hr * 0.24, hr * 0.32 * op, 10)
+    # iris ring (darker) then iris
+    set_color(er * 0.5, eg * 0.5, eb * 0.5)
+    efan(cx - fx * 0.03, cy + hr * 0.02, cz - fz * 0.03, rx, rz, hr * 0.21, hr * 0.24 * op, 12)
+    set_color(er, eg, eb)
+    efan(cx - fx * 0.04, cy + hr * 0.02, cz - fz * 0.04, rx, rz, hr * 0.16, hr * 0.19 * op, 12)
+    # pupil
+    set_color(18, 14, 24)
+    efan(cx - fx * 0.05, cy + hr * 0.02, cz - fz * 0.05, rx, rz, hr * 0.08, hr * 0.10 * op, 10)
+    # twin highlights
+    set_color(255, 255, 255)
+    efan(cx - fx * 0.06 - rx * hr * 0.07, cy - hr * 0.05, cz - fz * 0.06 - rz * hr * 0.07, rx, rz, hr * 0.06, hr * 0.07 * op, 8)
+    efan(cx - fx * 0.06 + rx * hr * 0.06, cy + hr * 0.09, cz - fz * 0.06 + rz * hr * 0.06, rx, rz, hr * 0.03, hr * 0.035 * op, 6)
+    # thick upper lash line — drops as the eye closes, becoming the closed-eye line
+    set_color(34, 24, 40)
+    efan(cx - fx * 0.07, cy - hr * 0.24 * op, cz - fz * 0.07, rx, rz, hr * 0.28, hr * 0.10, 8)
+}
+
+# ── anime head: hair-back · (long hair) · skin · blush · eyes · brows · nose ··
+#    mouth · bangs ───────────────────────────────────────────────────────────
+fn draw_head(hx, hy, hz, c, s, hr, style, face) {
+    bind rx = c
+    bind rz = 0.0 - s
+    bind fx = s
+    bind fz = c
+    bind skr = style[0]
+    bind skg = style[1]
+    bind skb = style[2]
+    bind har = style[6]
+    bind hag = style[7]
+    bind hab = style[8]
+    bind eyr = style[9]
+    bind eyg = style[10]
+    bind eyb = style[11]
+    bind blink = face[0]
+    bind smile = face[1]
+    bind brow  = face[2]
+
+    # long hair (queen) — two strands hanging behind the shoulders (+F = behind)
+    if style[12] == 1 {
+        set_color(har, hag, hab)
+        efan(hx - rx * hr * 0.7 + fx * 0.04, hy + 0.55, hz - rz * hr * 0.7 + fz * 0.04, rx, rz, hr * 0.5, hr * 3.0, 10)
+        efan(hx + rx * hr * 0.7 + fx * 0.04, hy + 0.55, hz + rz * hr * 0.7 + fz * 0.04, rx, rz, hr * 0.5, hr * 3.0, 10)
+    }
+
+    # hair back (behind the head)
+    set_color(har, hag, hab)
+    efan(hx + fx * 0.03, hy + hr * 0.05, hz + fz * 0.03, rx, rz, hr * 1.18, hr * 1.3, 14)
+    # side locks framing the face
+    efan(hx - rx * hr * 0.95 + fx * 0.01, hy + hr * 0.5, hz - rz * hr * 0.95 + fz * 0.01, rx, rz, hr * 0.28, hr * 1.15, 9)
+    efan(hx + rx * hr * 0.95 + fx * 0.01, hy + hr * 0.5, hz + rz * hr * 0.95 + fz * 0.01, rx, rz, hr * 0.28, hr * 1.15, 9)
+    # crown / top tuft (in front of the hairline)
+    efan(hx - fx * 0.04, hy - hr * 0.92, hz - fz * 0.04, rx, rz, hr * 0.72, hr * 0.45, 10)
+
+    # head skin
+    set_color(skr, skg, skb)
+    efan(hx, hy, hz, rx, rz, hr, hr * 1.12, 16)
+
+    # ── face / skull topology (contour shading) ──
+    # forehead + chin highlights
+    set_color(skr + (255.0 - skr) * 0.14, skg + (255.0 - skg) * 0.14, skb + (255.0 - skb) * 0.14)
+    efan(hx - fx * 0.01, hy - hr * 0.55, hz - fz * 0.01, rx, rz, hr * 0.60, hr * 0.30, 10)
+    efan(hx - fx * 0.02, hy + hr * 1.00, hz - fz * 0.02, rx, rz, hr * 0.16, hr * 0.12, 8)
+    # jaw taper + cheekbone + nose-bridge shadows
+    set_color(skr * 0.80, skg * 0.80, skb * 0.80)
+    efan(hx - fx * 0.005, hy + hr * 0.72, hz - fz * 0.005, rx, rz, hr * 0.42, hr * 0.46, 10)
+    efan(hx - fx * 0.005 - rx * hr * 0.50, hy + hr * 0.30, hz - fz * 0.005 - rz * hr * 0.50, rx, rz, hr * 0.20, hr * 0.24, 8)
+    efan(hx - fx * 0.005 + rx * hr * 0.50, hy + hr * 0.30, hz - fz * 0.005 + rz * hr * 0.50, rx, rz, hr * 0.20, hr * 0.24, 8)
+    efan(hx - fx * 0.02, hy + hr * 0.05, hz - fz * 0.02, rx, rz, hr * 0.05, hr * 0.26, 6)
+
+    # blush
+    set_color(255, 158, 168)
+    efan(hx - fx * 0.015 - rx * hr * 0.58, hy + hr * 0.16, hz - fz * 0.015 - rz * hr * 0.58, rx, rz, hr * 0.18, hr * 0.12, 8)
+    efan(hx - fx * 0.015 + rx * hr * 0.58, hy + hr * 0.16, hz - fz * 0.015 + rz * hr * 0.58, rx, rz, hr * 0.18, hr * 0.12, 8)
+
+    # eyes (anime, large, eye centre slightly above middle = −y)
+    bind ey = hy - hr * 0.06
+    draw_eye(hx - rx * hr * 0.44, ey, hz - rz * hr * 0.44, rx, rz, fx, fz, hr, eyr, eyg, eyb, blink)
+    draw_eye(hx + rx * hr * 0.44, ey, hz + rz * hr * 0.44, rx, rz, fx, fz, hr, eyr, eyg, eyb, blink)
+
+    # eyebrows (thin, above each eye) — raised/furrowed by `brow`
+    bind browy = ey - hr * 0.34 - brow * hr * 0.22
+    set_color(har * 0.7, hag * 0.7, hab * 0.7)
+    efan(hx - fx * 0.04 - rx * hr * 0.44, browy, hz - fz * 0.04 - rz * hr * 0.44, rx, rz, hr * 0.18, hr * 0.04, 6)
+    efan(hx - fx * 0.04 + rx * hr * 0.44, browy, hz - fz * 0.04 + rz * hr * 0.44, rx, rz, hr * 0.18, hr * 0.04, 6)
+
+    # tiny nose shadow
+    set_color(skr * 0.82, skg * 0.82, skb * 0.82)
+    efan(hx - fx * 0.03, hy + hr * 0.22, hz - fz * 0.03, rx, rz, hr * 0.04, hr * 0.06, 6)
+
+    # mouth — rises and widens with `smile`, with lifted corners
+    bind mouthy = hy + hr * 0.48 - smile * hr * 0.06
+    set_color(206, 96, 116)
+    efan(hx - fx * 0.03, mouthy, hz - fz * 0.03, rx, rz, hr * 0.13 + smile * hr * 0.05, hr * 0.06, 8)
+    if smile > 0.05 {
+        bind lift = smile * hr * 0.16
+        draw_triangle_3d(hx + rx * hr * 0.12 - fx * 0.035, mouthy + hr * 0.02, hz + rz * hr * 0.12 - fz * 0.035,
+                         hx + rx * hr * 0.20 - fx * 0.035, mouthy, hz + rz * hr * 0.20 - fz * 0.035,
+                         hx + rx * hr * 0.16 - fx * 0.035, mouthy - lift, hz + rz * hr * 0.16 - fz * 0.035)
+        draw_triangle_3d(hx - rx * hr * 0.12 - fx * 0.035, mouthy + hr * 0.02, hz - rz * hr * 0.12 - fz * 0.035,
+                         hx - rx * hr * 0.20 - fx * 0.035, mouthy, hz - rz * hr * 0.20 - fz * 0.035,
+                         hx - rx * hr * 0.16 - fx * 0.035, mouthy - lift, hz - rz * hr * 0.16 - fz * 0.035)
+    }
+
+    # bangs — five overlapping spikes across the forehead, in front (−F)
+    set_color(har, hag, hab)
+    bind bj = 0
+    while bj < 5 {
+        bind off = (bj - 2.0) * hr * 0.34
+        bind cxx = hx + rx * off
+        bind czz = hz + rz * off
+        draw_triangle_3d(cxx - rx * hr * 0.26 - fx * 0.05, hy - hr * 0.80, czz - rz * hr * 0.26 - fz * 0.05,
+                         cxx + rx * hr * 0.26 - fx * 0.05, hy - hr * 0.80, czz + rz * hr * 0.26 - fz * 0.05,
+                         cxx - fx * 0.05, hy - hr * 0.12, czz - fz * 0.05)
+        bind bj = bj + 1
+    }
+}
+
+# ── full filled figure, posed by a 16-value Anima POSE vector ────────────────
+#   [0]=bob [1]=lean [2]=head
+#   [3]=lhipF [4]=lhipA [5]=lknee  [6]=rhipF [7]=rhipA [8]=rknee
+#   [9]=lshF [10]=lshA [11]=lelb  [12]=rshF [13]=rshA [14]=relb  [15]=crouch
+fn draw_figure(px, py, pz, yaw, pose, style, face) {
+    bind c = cos(yaw)
+    bind s = sin(yaw)
+    bind rx = c
+    bind rz = 0.0 - s
+
+    bind bob    = pose[0]
+    bind lean   = pose[1]
+    bind head   = pose[2]
+    bind lhipF  = pose[3]
+    bind lhipA  = pose[4]
+    bind lknee  = pose[5]
+    bind rhipF  = pose[6]
+    bind rhipA  = pose[7]
+    bind rknee  = pose[8]
+    bind lshF   = pose[9]
+    bind lshA   = pose[10]
+    bind lelb   = pose[11]
+    bind rshF   = pose[12]
+    bind rshA   = pose[13]
+    bind relb   = pose[14]
+    bind crouch = pose[15]
+
+    bind skr = style[0]
+    bind skg = style[1]
+    bind skb = style[2]
+    bind clr = style[3]
+    bind clg = style[4]
+    bind clb = style[5]
+
+    bind hipH = 0.95 - 0.55 * crouch
+    bind pelvx = px
+    bind pelvy = py - hipH - bob
+    bind pelvz = pz
+
+    bind torso = 0.55
+    bind fwd = torso * sin(lean)
+    bind chestx = pelvx + rotx(0.0, fwd, c, s)
+    bind chesty = pelvy - torso * cos(lean)
+    bind chestz = pelvz + rotz(0.0, fwd, c, s)
+
+    bind hx = chestx + rotx(0.0, 0.04 + head * 0.12, c, s)
+    bind hy = chesty - 0.30 + head * 0.05
+    bind hz = chestz + rotz(0.0, 0.04 + head * 0.12, c, s)
+
+    bind side  = 0.13
+    bind thigh = 0.42
+    bind shin  = 0.42
+    bind ashl  = 0.20
+    bind uarm  = 0.34
+    bind farm  = 0.32
+
+    # leg joints (knee, foot) — flexion + abduction + knee bend
+    bind lhx = pelvx + rotx(0.0 - side, 0.0, c, s)
+    bind lhz = pelvz + rotz(0.0 - side, 0.0, c, s)
+    bind lk = limbpt(lhx, pelvy, lhz, thigh, lhipF, lhipA, 0.0 - 1.0, c, s)
+    bind lf = limbpt(lk[0], lk[1], lk[2], shin, lhipF - lknee, lhipA, 0.0 - 1.0, c, s)
+    bind rhx = pelvx + rotx(side, 0.0, c, s)
+    bind rhz = pelvz + rotz(side, 0.0, c, s)
+    bind rk = limbpt(rhx, pelvy, rhz, thigh, rhipF, rhipA, 1.0, c, s)
+    bind rf = limbpt(rk[0], rk[1], rk[2], shin, rhipF - rknee, rhipA, 1.0, c, s)
+
+    # arm joints (elbow, hand) — flexion + abduction + elbow bend
+    bind lsx = chestx + rotx(0.0 - ashl, 0.0, c, s)
+    bind lsz = chestz + rotz(0.0 - ashl, 0.0, c, s)
+    bind le = limbpt(lsx, chesty, lsz, uarm, lshF, lshA, 0.0 - 1.0, c, s)
+    bind lh = limbpt(le[0], le[1], le[2], farm, lshF + lelb, lshA, 0.0 - 1.0, c, s)
+    bind rsx = chestx + rotx(ashl, 0.0, c, s)
+    bind rsz = chestz + rotz(ashl, 0.0, c, s)
+    bind re = limbpt(rsx, chesty, rsz, uarm, rshF, rshA, 1.0, c, s)
+    bind rh = limbpt(re[0], re[1], re[2], farm, rshF + relb, rshA, 1.0, c, s)
+
+    # ── filled body ──
+    # hips / skirt (wider at the bottom)
+    limbsh(pelvx, pelvy - 0.02, pelvz, pelvx, pelvy + 0.16, pelvz, 0.17, 0.20, rx, rz, clr * 0.85, clg * 0.85, clb * 0.85)
+    # torso
+    limbsh(pelvx, pelvy, pelvz, chestx, chesty, chestz, 0.17, 0.24, rx, rz, clr, clg, clb)
+    # thighs (cloth) + shins (skin)
+    limbsh(lhx, pelvy, lhz, lk[0], lk[1], lk[2], 0.11, 0.09, rx, rz, clr, clg, clb)
+    limbsh(rhx, pelvy, rhz, rk[0], rk[1], rk[2], 0.11, 0.09, rx, rz, clr, clg, clb)
+    limbsh(lk[0], lk[1], lk[2], lf[0], lf[1], lf[2], 0.09, 0.06, rx, rz, skr, skg, skb)
+    limbsh(rk[0], rk[1], rk[2], rf[0], rf[1], rf[2], 0.09, 0.06, rx, rz, skr, skg, skb)
+    # feet
+    set_color(clr * 0.7, clg * 0.7, clb * 0.7)
+    efan(lf[0], lf[1], lf[2], rx, rz, 0.10, 0.06, 6)
+    efan(rf[0], rf[1], rf[2], rx, rz, 0.10, 0.06, 6)
+    # upper arms + forearms (skin)
+    limbsh(lsx, chesty, lsz, le[0], le[1], le[2], 0.075, 0.06, rx, rz, skr, skg, skb)
+    limbsh(le[0], le[1], le[2], lh[0], lh[1], lh[2], 0.06, 0.045, rx, rz, skr, skg, skb)
+    limbsh(rsx, chesty, rsz, re[0], re[1], re[2], 0.075, 0.06, rx, rz, skr, skg, skb)
+    limbsh(re[0], re[1], re[2], rh[0], rh[1], rh[2], 0.06, 0.045, rx, rz, skr, skg, skb)
+    # hands
+    draw_hand(lh[0], lh[1], lh[2], le[0], le[1], le[2], rx, rz, skr, skg, skb)
+    draw_hand(rh[0], rh[1], rh[2], re[0], re[1], re[2], rx, rz, skr, skg, skb)
+    # neck
+    limbsh(chestx, chesty, chestz, hx, hy + 0.18, hz, 0.06, 0.06, rx, rz, skr, skg, skb)
+
+    # head + face
+    draw_head(hx, hy, hz, c, s, 0.24, style, face)
+}
+
+# ── world ────────────────────────────────────────────────────────────────────
+fn draw_ground(t) {
+    vtex_grid(0.0, 0.0, 0.0,  1.0, 0.0, 0.0,  0.0, 0.0, 1.0,  24, 24,  0.7, 0.7,  t, 2.5)
+}
+
+# filled grass blades (thin triangles, swaying up = −y)
+fn draw_grass(t, wind) {
+    set_color(74, 178, 84)
+    bind gx = 0.0 - 7.0
+    while gx < 7.0 {
+        bind gz = 0.0 - 7.0
+        while gz < 7.0 {
+            bind dx = gx - PONDX
+            bind dz = gz - PONDZ
+            if dx * dx + dz * dz > PONDR2 {
+                bind sway = sin(t * 1.6 + gx * 0.7 + gz * 0.5) * 0.14 * wind
+                draw_triangle_3d(gx - 0.06, 0.0, gz,  gx + 0.06, 0.0, gz,  gx + sway, 0.0 - 0.36, gz + sway * 0.4)
+            }
+            bind gz = gz + 1.2
+        }
+        bind gx = gx + 1.2
+    }
+}
+
+# filled tree: trunk quad + canopy triangles (up = −y)
+fn draw_tree(tx, tz, t, wind) {
+    bind sway = sin(t * 1.1 + tx * 0.5) * 0.18 * wind
+    set_color(120, 80, 48)
+    quad(tx - 0.12, 0.0, tz, tx + 0.12, 0.0, tz, tx + 0.12 + sway, 0.0 - 1.7, tz, tx - 0.12 + sway, 0.0 - 1.7, tz)
+    set_color(46, 152, 66)
+    bind ty = 0.0 - 1.7
+    draw_triangle_3d(tx - 0.8 + sway, ty, tz,  tx + 0.8 + sway, ty, tz,  tx + sway, ty - 1.2, tz)
+    draw_triangle_3d(tx + sway, ty, tz - 0.8,  tx + sway, ty, tz + 0.8,  tx + sway, ty - 1.2, tz)
+    set_color(60, 176, 80)
+    draw_triangle_3d(tx - 0.55 + sway, ty - 0.5, tz,  tx + 0.55 + sway, ty - 0.5, tz,  tx + sway, ty - 1.7, tz)
+}
+
+# sky + sun/moon (above horizon = −y) + lights
+fn world_sky(t) {
+    bind day = sin(t * 0.05) * 0.5 + 0.5
+    fill(tween(8.0, 92.0, day), tween(11.0, 150.0, day), tween(30.0, 205.0, day))
+
+    clear_lights()
+    bind ang  = t * 0.05
+    bind sunx = sin(ang) * 15.0
+    bind suny = 0.0 - cos(ang) * 15.0
+    add_light(sunx, suny, 6.0,  1.0, 0.92, 0.7,  tween(0.1, 2.6, day), 45.0)
+    bind mnx = sin(ang + 3.14159) * 15.0
+    bind mny = 0.0 - cos(ang + 3.14159) * 15.0
+    add_light(mnx, mny, 6.0,  0.5, 0.6, 1.0,  tween(1.7, 0.1, day), 45.0)
+
+    if suny < 0.0 {
+        set_color(255, 226, 120)
+        efan(sunx, suny, 6.0, 1.0, 0.0, 1.2, 1.2, 16)
+    }
+    if mny < 0.0 {
+        set_color(214, 224, 248)
+        efan(mnx, mny, 6.0, 1.0, 0.0, 0.85, 0.85, 14)
+    }
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ════════════════════════════════════════════════════════════════════════════
+bind start = do {
+    open_window(1000, 720)
+    capture_mouse()
+    set_ambient(0.4)
+    set_zdist(2.4)
+
+    # KING + QUEEN styles: [skin x3, cloth x3, hair x3, eye x3, longhair]
+    bind KING  = [232, 198, 168,  208, 168, 70,  96, 62, 40,  70, 132, 214, 0]
+    bind QUEEN = [238, 212, 192,  150, 88, 200,  44, 32, 60,  158, 74, 168, 1]
+
+    # flowing ink pond
+    bind liq = liquid_new(GW, GW)
+    bind sx = 0.0
+    while sx < GW {
+        liquid_splat(liq, sx, GW * 0.5, 0.0, 1.0, 3.0)
+        bind sx = sx + 3.0
+    }
+
+    bind kingx = 0.0 - 4.0
+    bind kingy = 0.0 - 1.2
+    bind kingz = 0.0 - 3.0
+    bind yaw   = 0.0
+    bind pitch = 0.0
+    bind sit_amt   = 0.0
+    bind want_sit  = 0
+    bind curstate  = anim_start()
+    bind prevstate = curstate
+    bind curcode   = state_code(curstate)
+    bind blend_t   = 1.0
+
+    while window_is_open() {
+        bind t = time_now()
+        bind wind = sin(t * 0.5) * 0.5 + 0.7
+
+        # ── Fly controls: mouse look (+ arrow keys), WASD fly, Space up / Ctrl down ──
+        bind yaw   = yaw + mouse_dx() * 0.0026
+        bind pitch = pitch + mouse_dy() * 0.0026
+        if key_down("left")  { bind yaw   = yaw - 0.03 }
+        if key_down("right") { bind yaw   = yaw + 0.03 }
+        if key_down("up")    { bind pitch = pitch - 0.03 }
+        if key_down("down")  { bind pitch = pitch + 0.03 }
+        if pitch > 1.35       { bind pitch = 1.35 }
+        if pitch < 0.0 - 1.35 { bind pitch = 0.0 - 1.35 }
+
+        # forward / right unit vectors (up = −y, so looking up gives −y)
+        bind cp  = cos(pitch)
+        bind fwx = sin(yaw) * cp
+        bind fwy = 0.0 - sin(pitch)
+        bind fwz = cos(yaw) * cp
+        bind rgx = cos(yaw)
+        bind rgz = 0.0 - sin(yaw)
+
+        bind spd = 0.10
+        bind running = 0
+        if key_down("lshift") { bind spd = 0.22  bind running = 1 }   # boost
+        bind moving = 0
+        if key_down("w") { bind kingx = kingx + fwx * spd  bind kingy = kingy + fwy * spd  bind kingz = kingz + fwz * spd  bind moving = 1 }
+        if key_down("s") { bind kingx = kingx - fwx * spd  bind kingy = kingy - fwy * spd  bind kingz = kingz - fwz * spd  bind moving = 1 }
+        if key_down("a") { bind kingx = kingx - rgx * spd  bind kingz = kingz - rgz * spd  bind moving = 1 }
+        if key_down("d") { bind kingx = kingx + rgx * spd  bind kingz = kingz + rgz * spd  bind moving = 1 }
+        if key_down("space")    { bind kingy = kingy - spd  bind moving = 1 }   # ascend (−y = up)
+        if key_down("leftctrl") { bind kingy = kingy + spd  bind moving = 1 }   # descend
+        # don't sink below the ground
+        if kingy > 0.0 - 0.05 { bind kingy = 0.0 - 0.05 }
+        if moving == 1 { bind want_sit = 0 }
+
+        # sit toggle (C) — pose while hovering
+        if key_pressed("c") {
+            if want_sit == 1 { bind want_sit = 0 } else { bind want_sit = 1 }
+        }
+        bind sit_target = 0.0
+        if want_sit == 1 { bind sit_target = 1.0 }
+        bind sit_amt = sit_amt + (sit_target - sit_amt) * 0.08
+        bind seated = 0
+        if sit_amt > 0.96 { bind seated = 1 }
+
+        # airborne (well above ground) or in the pond ⇒ the swim/fly cycle
+        bind ddx = kingx - PONDX
+        bind ddz = kingz - PONDZ
+        bind swimflag = 0
+        if ddx * ddx + ddz * ddz < PONDR2 { bind swimflag = 1 }
+        if kingy < 0.0 - 0.45 { bind swimflag = 1 }
+
+        # state machine + cross-fade
+        bind newstate = anim_next(moving, running, want_sit, seated, swimflag)
+        bind ncode = state_code(newstate)
+        if ncode != curcode {
+            bind prevstate = curstate
+            bind curstate  = newstate
+            bind curcode   = ncode
+            bind blend_t   = 0.0
+        }
+        bind blend_t = blend_t + 0.06
+        if blend_t > 1.0 { bind blend_t = 1.0 }
+
+        bind poseA = anim_pose(prevstate, t, sit_amt)
+        bind poseB = anim_pose(curstate,  t, sit_amt)
+        bind pose  = blend_pose(poseA, poseB, blend_t)
+
+        # camera: chase the flyer, sitting back along the look direction
+        bind camx = kingx - fwx * 4.2
+        bind camy = kingy - fwy * 4.2 - 0.25
+        bind camz = kingz - fwz * 4.2
+        set_camera(cos(yaw), sin(yaw), cos(pitch), sin(pitch))
+        set_camera_pos(camx, camy, camz)
+
+        # advance + render
+        liquid_gravity(liq, sin(t * 0.6) * 22.0 + wind * 14.0, cos(t * 0.6) * 22.0)
+        liquid_step(liq, 0.016)
+        liquid_step(liq, 0.016)
+
+        world_sky(t)
+        draw_ground(t)
+        liquid_draw_surface(liq, 0, PONDX, WATERY, PONDZ, 2.6, 2.6)
+        draw_grass(t, wind)
+        draw_tree(0.0 - 5.5, 4.0, t, wind)
+        draw_tree(5.0, 0.0 - 4.5, t, wind)
+        draw_tree(0.0 - 1.0, 6.0, t, wind)
+
+        # QUEEN meditating by the pond — closed eyes, serene smile
+        draw_figure(PONDX - 2.6, 0.0, PONDZ + 1.6, 0.0 - 1.3, meditate_pose(t), QUEEN, [1.0, 0.5, 0.10])
+        # KING — the flyer; face emotes per state
+        draw_figure(kingx, kingy, kingz, yaw, pose, KING, face_expr(curcode, t))
+
+        set_blend(1)
+        set_color(0, 230, 255)
+        ui_text(28.0, 22.0, 22.0, "MOON POND — Anima (fly)")
+        set_color(150, 255, 190)
+        ui_text(28.0, 52.0, 18.0, state_name(curstate))
+        set_color(120, 140, 180)
+        ui_text(28.0, 690.0, 14.0, "Mouse look · WASD fly · Space up · Ctrl down · Shift boost · C sit · Esc")
+        set_blend(0)
+
+        present()
+    }
+}

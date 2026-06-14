@@ -1,0 +1,19 @@
+# idle.ling — Anima clip: relaxed standing idle (organic 灵, breathing sway).
+#
+# Every clip returns a 16-value POSE vector consumed by moon_pond's draw_figure().
+# Angles are radians; flexion = forward/back, abduction = out to the side.
+#   [0]=bob   [1]=lean  [2]=head
+#   [3]=lhipF [4]=lhipA [5]=lknee   [6]=rhipF [7]=rhipA [8]=rknee
+#   [9]=lshF [10]=lshA [11]=lelb   [12]=rshF [13]=rshA [14]=relb
+#   [15]=crouch (0..1)
+
+fn idle_pose(p) {
+    bind bob  = wobble(p, 0.25, 0.035, 0.0)          # slow chest rise/fall
+    bind lean = 0.04 + wobble(p, 0.20, 0.02, 0.0)
+    bind head = wobble(p, 0.18, 0.04, 0.3)
+    bind sway = wobble(p, 0.22, 0.05, 0.0)           # gentle arm sway
+    return [bob, lean, head,
+            0.06, 0.05, 0.10,  0.0 - 0.06, 0.05, 0.10,
+            sway, 0.10, 0.18,  0.0 - sway, 0.10, 0.18,
+            0.0]
+}

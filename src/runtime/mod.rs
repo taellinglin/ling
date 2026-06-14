@@ -1093,6 +1093,34 @@ impl Interpreter {
                 println!("{s}");
                 return Ok(Value::Unit);
             }
+            // print_color(colorIdx, text...) — ANSI-coloured console line.
+            //   colorIdx 0..7 → bright fg (90+idx): 1=red 2=green 3=yellow 4=blue 6=cyan 7=white.
+            "print_color" | "พิมพ์สี" => {
+                #[cfg(windows)]
+                {
+                    use std::sync::Once;
+                    static VT: Once = Once::new();
+                    VT.call_once(|| {
+                        extern "system" {
+                            fn GetStdHandle(n: u32) -> *mut std::ffi::c_void;
+                            fn GetConsoleMode(h: *mut std::ffi::c_void, m: *mut u32) -> i32;
+                            fn SetConsoleMode(h: *mut std::ffi::c_void, m: u32) -> i32;
+                        }
+                        unsafe {
+                            let h = GetStdHandle(0xFFFF_FFF5u32); // STD_OUTPUT_HANDLE (-11)
+                            let mut mode = 0u32;
+                            if GetConsoleMode(h, &mut mode) != 0 {
+                                SetConsoleMode(h, mode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                            }
+                        }
+                    });
+                }
+                let col = self.arg_num(&args, 0, 7.0)? as i64;
+                let s = args.iter().skip(1).map(|v| v.to_string()).collect::<Vec<_>>().join("");
+                let code = 90 + col.clamp(0, 7);
+                println!("\x1b[1;{code}m{s}\x1b[0m");
+                return Ok(Value::Unit);
+            }
             // ── Format ──
             "format" | "格式" | "フォーマット" | "서식" | "รูปแบบ" | "форматировать" | "formatear" | "formater" => {
                 return Ok(Value::Str(self.builtin_format(&args)?));
@@ -1959,6 +1987,69 @@ impl Interpreter {
                 gfx.camera.cy    = cy;
                 gfx.camera.focal = focal;
                 gfx.camera.zdist = zdist;
+                return Ok(Value::Unit);
+            }
+
+            // ── draw_mesh(pos, idx, ox, oy, oz, scale, mode) ──
+            //   Native batched triangle mesh. pos = flat [x,y,z,…], idx = flat tri indices.
+            //   mode 0 = lit with current pen colour; 1 = per-face hue cycle.
+            //   Vertices are batch-projected via ling-gpu (CPU fallback, or CUDA when the
+            //   `cuda` feature is on); the per-triangle loop runs natively (not in the
+            //   interpreter) so dense meshes (imported glTF, grids) stay fast.
+            "draw_mesh" | "วาดเมช" => {
+                let pos = match args.first() { Some(Value::List(v)) => v, _ => return Ok(Value::Unit) };
+                let idx = match args.get(1)   { Some(Value::List(v)) => v, _ => return Ok(Value::Unit) };
+                let ox = self.arg_num(&args,2,0.0)? as f32;
+                let oy = self.arg_num(&args,3,0.0)? as f32;
+                let oz = self.arg_num(&args,4,0.0)? as f32;
+                let scale = self.arg_num(&args,5,1.0)? as f32;
+                let mode = self.arg_num(&args,6,0.0)? as i64;
+                let nv = pos.len() / 3;
+                if nv == 0 { return Ok(Value::Unit); }
+                let mut world = vec![0.0f32; nv*3];
+                for i in 0..nv {
+                    world[i*3]   = ox + self.to_number(&pos[i*3]).unwrap_or(0.0)   as f32 * scale;
+                    world[i*3+1] = oy + self.to_number(&pos[i*3+1]).unwrap_or(0.0) as f32 * scale;
+                    world[i*3+2] = oz + self.to_number(&pos[i*3+2]).unwrap_or(0.0) as f32 * scale;
+                }
+                let mut gfx = self.gfx.borrow_mut();
+                let cp = {
+                    let c = &gfx.camera;
+                    ling_gpu::CameraParams { cry:c.cry, sry:c.sry, crx:c.crx, srx:c.srx, cx:c.cx, cy:c.cy, focal:c.focal, zdist:c.zdist, tx:c.tx, ty:c.ty, tz:c.tz }
+                };
+                let near = -gfx.camera.zdist + 0.02;
+                let base = gfx.color;
+                let ambient = gfx.ambient;
+                let mut proj = vec![0.0f32; nv*3];   // (sx, sy, depth) per vertex
+                ling_gpu::backend().project_points(&world, &cp, &mut proj);
+                let nt = idx.len() / 3;
+                for t in 0..nt {
+                    let ia = self.to_number(&idx[t*3]).unwrap_or(0.0)   as usize;
+                    let ib = self.to_number(&idx[t*3+1]).unwrap_or(0.0) as usize;
+                    let ic = self.to_number(&idx[t*3+2]).unwrap_or(0.0) as usize;
+                    if ia>=nv || ib>=nv || ic>=nv { continue; }
+                    let (da, db, dc) = (proj[ia*3+2], proj[ib*3+2], proj[ic*3+2]);
+                    if (da+db+dc)/3.0 <= near { continue; }   // near-plane cull (centroid)
+                    let col = if mode == 1 {
+                        let h = t as f32 * 0.6;
+                        let r = ((h.sin()*0.5+0.5)*150.0+55.0) as u32;
+                        let g = (((h+2.094).sin()*0.5+0.5)*150.0+55.0) as u32;
+                        let b = (((h+4.189).sin()*0.5+0.5)*150.0+55.0) as u32;
+                        (r<<16)|(g<<8)|b
+                    } else {
+                        let (ax,ay,az)=(world[ia*3],world[ia*3+1],world[ia*3+2]);
+                        let (bx,by,bz)=(world[ib*3],world[ib*3+1],world[ib*3+2]);
+                        let (px,py,pz)=(world[ic*3],world[ic*3+1],world[ic*3+2]);
+                        let (ux,uy,uz)=(bx-ax,by-ay,bz-az);
+                        let (vx,vy,vz)=(px-ax,py-ay,pz-az);
+                        let normal=[uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
+                        let centroid=[(ax+bx+px)/3.0,(ay+by+py)/3.0,(az+bz+pz)/3.0];
+                        crate::gfx::light::compute_lit_color(base, normal, centroid, &gfx.lights, ambient)
+                    };
+                    let depth = (da+db+dc)/3.0;
+                    let col = gfx.fog_apply(col, depth);
+                    gfx.depth_queue.push_triangle(depth, col, proj[ia*3], proj[ia*3+1], proj[ib*3], proj[ib*3+1], proj[ic*3], proj[ic*3+1]);
+                }
                 return Ok(Value::Unit);
             }
 

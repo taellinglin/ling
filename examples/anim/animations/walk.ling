@@ -1,0 +1,18 @@
+# walk.ling — Anima clip: organic walk cycle, driven by the gait drivers.
+# Legs swing in anti-phase; arms counter-swing; the body double-bounces.
+
+fn walk_pose(p) {
+    bind spd  = 1.5
+    bind half = 0.5 / spd                            # half a stride in seconds
+    bind lhf = gait_swing(p, spd, 0.55)
+    bind rhf = gait_swing(p + half, spd, 0.55)
+    bind lkn = gait_lift(p, spd, 0.6)
+    bind rkn = gait_lift(p + half, spd, 0.6)
+    bind laf = gait_swing(p + half, spd, 0.45)       # arm opposite same-side leg
+    bind raf = gait_swing(p, spd, 0.45)
+    bind bob = wobble(p, spd * 2.0, 0.05, 0.0)
+    return [bob, 0.10, 0.0,
+            lhf, 0.05, lkn,  rhf, 0.05, rkn,
+            laf, 0.07, 0.28,  raf, 0.07, 0.28,
+            0.0]
+}

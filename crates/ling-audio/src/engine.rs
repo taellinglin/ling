@@ -52,17 +52,20 @@ struct Tone {
     phase:     f32,   // carrier oscillator phase [0, 1)
     lfo_phase: f32,   // LFO phase [0, 1)
     w_phase:   f32,   // 4D sub-oscillator phase [0, 1)
+    cur_amp:   f32,   // smoothed amplitude (glides to params.amp — de-click)
+    cur_freq:  f32,   // smoothed frequency (glides to params.freq — de-zipper)
 }
 
 impl Tone {
     fn new(params: ToneParams) -> Self {
-        Self { params, phase: 0.0, lfo_phase: 0.0, w_phase: 0.0 }
+        let (a, f) = (params.amp, params.freq);
+        Self { params, phase: 0.0, lfo_phase: 0.0, w_phase: 0.0, cur_amp: a, cur_freq: f }
     }
 }
 
 /// Oscillator waveform for one-shot UI blips.
 #[derive(Clone, Copy, Debug)]
-pub enum Wave { Sine, Square, Saw, Triangle }
+pub enum Wave { Sine, Square, Saw, Triangle, Noise }
 
 impl Wave {
     pub fn from_name(s: &str) -> Wave {
@@ -70,6 +73,7 @@ impl Wave {
             "square" | "sq"   => Wave::Square,
             "saw" | "sawtooth" => Wave::Saw,
             "tri" | "triangle" => Wave::Triangle,
+            "noise" | "wn" | "ns" => Wave::Noise,
             _ => Wave::Sine,
         }
     }
@@ -80,6 +84,7 @@ impl Wave {
             Wave::Square   => if phase < 0.5 { 1.0 } else { -1.0 },
             Wave::Saw      => phase * 2.0 - 1.0,
             Wave::Triangle => 1.0 - 4.0 * (phase - 0.5).abs(),
+            Wave::Noise    => 0.0,   // handled per-sample via LCG in voice render
         }
     }
 }
@@ -92,6 +97,7 @@ struct Blip {
     dur:   f32,   // seconds until it's removed
     age:   f32,   // seconds elapsed
     phase: f32,
+    seed:  u32,   // LCG state for Wave::Noise
 }
 
 impl Blip {
@@ -105,7 +111,11 @@ impl Blip {
         } else {
             (-(self.age - atk) / (self.dur * 0.4 + 1e-4)).exp()
         };
-        let s = self.wave.sample(self.phase) * self.amp * env;
+        let raw = if let Wave::Noise = self.wave {
+            self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            ((self.seed >> 8) as f32 / 8_388_608.0) - 1.0
+        } else { self.wave.sample(self.phase) };
+        let s = raw * self.amp * env;
         self.phase = (self.phase + self.freq * dt).fract();
         self.age += dt;
         s
@@ -141,7 +151,7 @@ fn spatial_gains(cry: f32, sry: f32, crx: f32, srx: f32, room_w: f32, x: f32, y:
 /// envelope — like a [`Blip`] but spatialized at a world position.
 struct SfxVoice {
     x: f32, y: f32, z: f32, w: f32,
-    freq: f32, amp: f32, wave: Wave, dur: f32, age: f32, phase: f32, w_phase: f32,
+    freq: f32, amp: f32, wave: Wave, dur: f32, age: f32, phase: f32, w_phase: f32, seed: u32,
 }
 impl SfxVoice {
     #[inline]
@@ -152,7 +162,11 @@ impl SfxVoice {
         let w_mod = (self.w_phase * TAU).sin() * 0.25;
         self.w_phase = (self.w_phase + self.freq * self.w.abs() * 0.007 * dt).fract();
         let f = self.freq * (1.0 + w_mod * 0.06);
-        let s = self.wave.sample(self.phase) * self.amp * env;
+        let raw = if let Wave::Noise = self.wave {
+            self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            ((self.seed >> 8) as f32 / 8_388_608.0) - 1.0
+        } else { self.wave.sample(self.phase) };
+        let s = raw * self.amp * env;
         self.phase = (self.phase + f * dt).fract();
         self.age += dt;
         s
@@ -317,14 +331,23 @@ impl AudioState {
 
         for slot in &mut self.tones {
             let tone = match slot.as_mut() { Some(t) => t, None => continue };
-            let p = &tone.params;
+            // Copy params to locals (no borrow held → free to mutate the tone below).
+            let (px, py, pz, pfreq, pamp, plfo_depth, plfo_rate, pw) = {
+                let p = &tone.params;
+                (p.x, p.y, p.z, p.freq, p.amp, p.lfo_depth, p.lfo_rate, p.w)
+            };
+            // ── De-click / de-zipper: glide amp & freq toward their targets ──
+            // The game re-sets tone params every frame; jumping amp/freq makes the
+            // waveform discontinuous → audible snaps/pops. One-pole smoothing fixes it.
+            tone.cur_amp  += (pamp  - tone.cur_amp)  * 0.004;
+            tone.cur_freq += (pfreq - tone.cur_freq) * 0.012;
 
             // ── World → camera-space ─────────────────────────────────────────
             // Apply Y-rotation (yaw) then X-rotation (pitch) — same as Camera3D.
-            let rz1   =  p.x * sry + p.z * cry;
-            let cam_x =  p.x * cry - p.z * sry;
-            let cam_y =  p.y * crx - rz1  * srx;
-            let cam_z =  p.y * srx + rz1  * crx;
+            let rz1   =  px * sry + pz * cry;
+            let cam_x =  px * cry - pz * sry;
+            let cam_y =  py * crx - rz1  * srx;
+            let cam_z =  py * srx + rz1  * crx;
 
             // ── Spatial attenuation ──────────────────────────────────────────
             let dist  = (cam_x * cam_x + cam_y * cam_y + cam_z * cam_z).sqrt().max(0.5);
@@ -337,19 +360,19 @@ impl AudioState {
             let r_gain = angle.sin() * atten;
 
             // ── LFO (vibrato) ────────────────────────────────────────────────
-            let lfo_mod = (tone.lfo_phase * TAU).sin() * p.lfo_depth;
-            tone.lfo_phase = (tone.lfo_phase + p.lfo_rate * dt).fract();
+            let lfo_mod = (tone.lfo_phase * TAU).sin() * plfo_depth;
+            tone.lfo_phase = (tone.lfo_phase + plfo_rate * dt).fract();
 
             // ── 4D sub-oscillator ─────────────────────────────────────────────
             // W drives a slow cross-modulator; the phase drift creates
             // hyperdimensional beating that is unique per sound-source.
             let w_mod  = (tone.w_phase * TAU).sin() * 0.25;
-            let w_freq = p.freq * p.w.abs() * 0.007;
+            let w_freq = tone.cur_freq * pw.abs() * 0.007;
             tone.w_phase = (tone.w_phase + w_freq * dt).fract();
 
-            // ── Carrier oscillator ────────────────────────────────────────────
-            let inst_freq = p.freq * (1.0 + lfo_mod) * (1.0 + w_mod * 0.08);
-            let sample    = (tone.phase * TAU).sin() * p.amp;
+            // ── Carrier oscillator (smoothed amp & freq) ──────────────────────
+            let inst_freq = tone.cur_freq * (1.0 + lfo_mod) * (1.0 + w_mod * 0.08);
+            let sample    = (tone.phase * TAU).sin() * tone.cur_amp;
             tone.phase    = (tone.phase + inst_freq * dt).fract();
 
             l += sample * l_gain;
@@ -480,7 +503,7 @@ impl AudioEngine {
     pub fn blip(&self, freq: f32, amp: f32, dur: f32, wave: Wave) {
         if let Ok(mut s) = self.state.lock() {
             if s.blips.len() >= 32 { s.blips.remove(0); }
-            s.blips.push(Blip { freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0 });
+            s.blips.push(Blip { freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0, seed: freq.to_bits().wrapping_mul(2654435761).wrapping_add(1) });
         }
     }
 
@@ -488,7 +511,7 @@ impl AudioEngine {
     pub fn sfx(&self, x: f32, y: f32, z: f32, w: f32, freq: f32, amp: f32, dur: f32, wave: Wave) {
         if let Ok(mut s) = self.state.lock() {
             if s.sfx.len() >= 64 { s.sfx.remove(0); }
-            s.sfx.push(SfxVoice { x, y, z, w, freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0, w_phase: 0.0 });
+            s.sfx.push(SfxVoice { x, y, z, w, freq, amp, wave, dur: dur.max(0.01), age: 0.0, phase: 0.0, w_phase: 0.0, seed: freq.to_bits().wrapping_mul(2654435761).wrapping_add(1) });
         }
     }
 
@@ -694,7 +717,7 @@ mod tests {
     #[test]
     fn sfx_voice_envelopes_and_ends() {
         let mut v = SfxVoice { x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 440.0, amp: 0.5,
-                               wave: Wave::Sine, dur: 0.02, age: 0.0, phase: 0.0, w_phase: 0.0 };
+                               wave: Wave::Sine, dur: 0.02, age: 0.0, phase: 0.0, w_phase: 0.0, seed: 1 };
         let dt = 1.0 / 44100.0;
         let mut peak = 0.0f32;
         let mut steps = 0;

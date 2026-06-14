@@ -1,0 +1,17 @@
+# sit.ling — Anima clip: sit-down / stand-up, parameterised by `amount` (0..1).
+#   amount 0 → standing   amount 1 → seated, legs forward, hands toward the lap
+# The renderer animates `amount` 0→1 to sit and 1→0 to stand (both directions).
+
+fn sit_pose(amount) {
+    bind hf  = 0.0 - 1.30 * amount                   # thighs fold up/forward
+    bind ab  = 0.20 * amount                          # knees ease apart
+    bind kn  = 1.60 * amount                          # knees bend
+    bind shf = 0.0 - 0.10 * amount
+    bind sha = 0.18 * amount
+    bind elb = 0.45 * amount                          # forearms come forward to lap
+    bind lean = 0.12 * amount
+    return [0.0, lean, 0.05 * amount,
+            hf, ab, kn,  hf, ab, kn,
+            shf, sha, elb,  shf, sha, elb,
+            amount]
+}

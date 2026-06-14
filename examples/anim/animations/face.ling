@@ -1,0 +1,37 @@
+# face.ling — facial-expression map for the moon_pond anime face.
+#
+# The full face + skull vector map (the topology these expressions ride on) lives
+# in the engine: crates/ling-animation/src/face.rs — labelled landmarks
+#   skull:  cranium_top glabella nasion temple_l/r brow_ridge_l/r zygomatic_l/r
+#           jaw_hinge_l/r gonion_l/r menton
+#   soft:   brow_(inner/mid/outer)_l/r  lid_(upper/lower)_l/r  eye_(inner/outer)_l/r
+#           iris_l/r  nose_bridge nose_tip nostril_l/r  cheek_l/r
+#           mouth_corner_l/r lip_top/bot_(mid/l/r) philtrum chin
+# and FACS blendshapes: Blink Smile Frown Surprise Squint JawOpen Anger Sad.
+#
+# Here we expose a tiny driver the renderer consumes each frame:
+#   face_expr(state_code, t) -> [blink, smile, brow]
+#     blink 0..1  (1 = eyes shut)
+#     smile 0..1  (mouth-corner lift)
+#     brow  -1..1 (− furrow / + raise)
+
+# A quick involuntary blink roughly every 3.4 s.
+fn auto_blink(t) {
+    bind ph = t - floor(t / 3.4) * 3.4
+    bind b = 0.0
+    if ph > 3.2 { bind b = sin((ph - 3.2) / 0.2 * 3.14159) }
+    return b
+}
+
+# Expression per animation state (codes: 0 idle 1 walk 2 run 3 sit 4 meditate 5 swim).
+fn face_expr(code, t) {
+    bind blink = auto_blink(t)
+    bind smile = 0.18
+    bind brow  = 0.0
+    if code == 1 { bind smile = 0.14 }
+    if code == 2 { bind smile = 0.05   bind brow = 0.0 - 0.30 }
+    if code == 3 { bind smile = 0.45   bind blink = 0.85 }
+    if code == 4 { bind smile = 0.50   bind blink = 1.00   bind brow = 0.10 }
+    if code == 5 { bind smile = 0.0    bind brow = 0.0 - 0.40 }
+    return [blink, smile, brow]
+}

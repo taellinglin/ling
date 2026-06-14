@@ -1,0 +1,16 @@
+# swim.ling — Anima clip: front-crawl swim for when the character is in the pond
+# (or flying). Big alternating arm strokes with bent elbows, a flutter kick, and
+# a strong forward lean. The renderer also lowers the body into the water.
+
+fn swim_pose(p) {
+    bind stroke = 0.9
+    bind laf = wobble(p, stroke, 1.4, 0.0)           # alternating crawl strokes
+    bind raf = wobble(p, stroke, 1.4, 0.5)
+    bind lk  = wobble(p, stroke * 1.6, 0.35, 0.0)    # flutter kick
+    bind rk  = wobble(p, stroke * 1.6, 0.35, 0.5)
+    bind bob = wobble(p, stroke, 0.06, 0.0)
+    return [bob, 0.95, 0.0,
+            lk, 0.05, 0.2,  rk, 0.05, 0.2,
+            laf, 0.10, 0.3,  raf, 0.10, 0.3,
+            0.45]
+}

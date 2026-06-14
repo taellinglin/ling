@@ -1,0 +1,18 @@
+# run.ling — Anima clip: a run cycle — same gait drivers, faster + longer stride,
+# more forward lean, a stronger bounce, and bigger arm drive with bent elbows.
+
+fn run_pose(p) {
+    bind spd  = 3.0
+    bind half = 0.5 / spd
+    bind lhf = gait_swing(p, spd, 0.9)
+    bind rhf = gait_swing(p + half, spd, 0.9)
+    bind lkn = gait_lift(p, spd, 1.1)
+    bind rkn = gait_lift(p + half, spd, 1.1)
+    bind laf = gait_swing(p + half, spd, 0.8)
+    bind raf = gait_swing(p, spd, 0.8)
+    bind bob = wobble(p, spd * 2.0, 0.09, 0.0)
+    return [bob, 0.28, 0.08,
+            lhf, 0.05, lkn,  rhf, 0.05, rkn,
+            laf, 0.08, 0.5,  raf, 0.08, 0.5,
+            0.0]
+}

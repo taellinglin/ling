@@ -27,11 +27,13 @@ pub mod temperament;
 pub mod scalar;
 pub mod mechanism;
 pub mod creature;
+pub mod face;
 
 pub use ease::{EaseFunction, Lerp, tween_ease};
 pub use track::{Keyframe, Track, Timeline};
 pub use rig::{Rig, Joint, JointId, Transform};
 pub use temperament::Temperament;
+pub use face::{FaceRig, FacePoint, Region, Expression};
 
 /// A small owner of animation state, indexed by handle. Hosts (like the Ling
 /// runtime) can park rigs and timelines here and drive them by integer handle.

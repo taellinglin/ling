@@ -1,0 +1,399 @@
+# ════════════════════════════════════════════════════════════════════════════
+# face_demo.ling — a really detailed anime face, in 2-D screen space.
+#
+#   Press 1-9 for emotions:
+#     1 neutral   2 happy    3 sad      4 angry    5 surprised
+#     6 wink      7 shy      8 sleepy   9 excited (star eyes)
+#
+#   Anime-eye anatomy used here (back→front layers):
+#     eye-white → upper-lid shadow → iris outer ring → iris body →
+#     lower iris glow (light pools low) → vertical pupil →
+#     big upper catchlight + small opposite catchlight + tiny sparkle →
+#     THICK outer-heavy upper lash line (with corner flick + spikes) → lower lash.
+#   The iris is tall and partly tucked under the bold upper lid; the lash line is
+#   the dominant feature. Everything is filled (no outlines).
+#
+#   Run:  ling run examples/anim/face_demo/face_demo.ling   (needs a display)
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── 2-D fill helpers ─────────────────────────────────────────────────────────
+fn efill(cx, cy, rw, rh, n) {                       # filled ellipse (current colour)
+    bind i = 0
+    while i < n {
+        bind a0 = (i * 6.28318) / n
+        bind a1 = ((i + 1.0) * 6.28318) / n
+        triangle(cx, cy,
+                 cx + rw * cos(a0), cy + rh * sin(a0),
+                 cx + rw * cos(a1), cy + rh * sin(a1))
+        bind i = i + 1
+    }
+}
+
+fn efill_rot(cx, cy, rw, rh, ang, n) {              # rotated filled ellipse
+    bind ca = cos(ang)
+    bind sa = sin(ang)
+    bind i = 0
+    while i < n {
+        bind a0 = (i * 6.28318) / n
+        bind a1 = ((i + 1.0) * 6.28318) / n
+        bind x0 = rw * cos(a0)
+        bind y0 = rh * sin(a0)
+        bind x1 = rw * cos(a1)
+        bind y1 = rh * sin(a1)
+        triangle(cx, cy,
+                 cx + x0 * ca - y0 * sa, cy + x0 * sa + y0 * ca,
+                 cx + x1 * ca - y1 * sa, cy + x1 * sa + y1 * ca)
+        bind i = i + 1
+    }
+}
+
+fn quad2(ax, ay, bx, by, cx, cy, dx, dy) {
+    triangle(ax, ay, bx, by, cx, cy)
+    triangle(ax, ay, cx, cy, dx, dy)
+}
+
+fn draw_star(cx, cy, r, sr, sg, sb) {               # filled 5-point star
+    set_color(sr, sg, sb)
+    bind i = 0
+    while i < 5 {
+        bind a0 = (i * 1.25664) - 1.5708
+        bind a1 = ((i + 0.5) * 1.25664) - 1.5708
+        bind a2 = ((i + 1.0) * 1.25664) - 1.5708
+        triangle(cx, cy, cx + r * cos(a0), cy + r * sin(a0), cx + r * 0.45 * cos(a1), cy + r * 0.45 * sin(a1))
+        triangle(cx, cy, cx + r * 0.45 * cos(a1), cy + r * 0.45 * sin(a1), cx + r * cos(a2), cy + r * sin(a2))
+        bind i = i + 1
+    }
+}
+
+# ── thick anime upper lash line: bowed band, heavier at the outer corner ─────
+fn top_lash(ex, topy, ew, dir) {
+    set_color(38, 26, 44)
+    bind segs = 11
+    bind i = 0
+    while i < segs {
+        bind u0 = i / segs
+        bind u1 = (i + 1.0) / segs
+        bind x0 = ex + (u0 * 2.0 - 1.0) * ew
+        bind x1 = ex + (u1 * 2.0 - 1.0) * ew
+        bind y0 = topy - sin(u0 * 3.14159) * ew * 0.16
+        bind y1 = topy - sin(u1 * 3.14159) * ew * 0.16
+        bind o0 = u0
+        bind o1 = u1
+        if dir < 0.0 { bind o0 = 1.0 - u0; bind o1 = 1.0 - u1 }
+        bind t0 = 6.0 + o0 * o0 * 18.0
+        bind t1 = 6.0 + o1 * o1 * 18.0
+        quad2(x0, y0 - t0, x1, y1 - t1, x1, y1 + 3.0, x0, y0 + 3.0)
+        bind i = i + 1
+    }
+    # outer-corner flick + lash spikes
+    bind ox = ex + dir * ew * 1.02
+    bind oy = topy - ew * 0.04
+    triangle(ox, oy, ox + dir * ew * 0.36, oy - ew * 0.36, ox - dir * ew * 0.02, oy + 5.0)
+    triangle(ox - dir * ew * 0.14, oy + 3.0, ox + dir * ew * 0.22, oy - ew * 0.24, ox - dir * ew * 0.04, oy + 7.0)
+}
+
+# ── one fully detailed anime eye ─────────────────────────────────────────────
+fn draw_eye_pro(ex, ey, dir, open, arc, idx, idy, pup, stars) {
+    bind ew = 80.0
+    bind eh = 98.0
+    bind er = 64.0
+    bind eg = 156.0
+    bind eb = 214.0
+
+    if arc > 0.5 {
+        # happy closed eye — a thick upward ∩ arc
+        set_color(44, 30, 50)
+        bind segs = 9
+        bind i = 0
+        while i < segs {
+            bind u0 = i / segs
+            bind u1 = (i + 1.0) / segs
+            bind x0 = ex + (u0 * 2.0 - 1.0) * ew
+            bind x1 = ex + (u1 * 2.0 - 1.0) * ew
+            bind y0 = ey - sin(u0 * 3.14159) * eh * 0.34
+            bind y1 = ey - sin(u1 * 3.14159) * eh * 0.34
+            quad2(x0, y0 - 8.0, x1, y1 - 8.0, x1, y1 + 7.0, x0, y0 + 7.0)
+            bind i = i + 1
+        }
+        return 0
+    }
+
+    bind bottom = ey + eh * 0.5
+    bind h = eh * open
+    bind top = bottom - h
+    bind midy = (top + bottom) * 0.5
+    bind hh = h * 0.5
+
+    # eye white
+    set_color(249, 250, 255)
+    efill(ex, midy, ew, hh, 18)
+    # upper-lid shadow cast on the sclera
+    set_color(206, 212, 230)
+    efill(ex, top + hh * 0.30, ew * 0.92, hh * 0.34, 12)
+
+    # iris — tall, sitting a touch low, top tucked under the lash
+    bind irx = ex + idx * ew * 0.34
+    bind iry = midy + idy * hh * 0.30 + hh * 0.06
+    bind irw = ew * 0.74
+    bind irh = hh * 1.18
+    set_color(er * 0.42, eg * 0.42, eb * 0.42)
+    efill(irx, iry, irw, irh, 18)
+    set_color(er * 0.72, eg * 0.72, eb * 0.72)
+    efill(irx, iry, irw * 0.90, irh * 0.90, 18)
+    set_color(er, eg, eb)
+    efill(irx, iry, irw * 0.74, irh * 0.74, 16)
+    # lower glow — light pools at the bottom of the iris
+    set_color(er + (255.0 - er) * 0.5, eg + (255.0 - eg) * 0.5, eb + (255.0 - eb) * 0.5)
+    efill(irx, iry + irh * 0.30, irw * 0.60, irh * 0.46, 14)
+    # pupil
+    set_color(22, 16, 30)
+    efill(irx, iry, irw * 0.40 * pup, irh * 0.46 * pup, 14)
+
+    # catchlights / star eyes
+    if stars > 0.5 {
+        draw_star(irx + dir * irw * 0.24, iry - irh * 0.24, irh * 0.42, 255, 255, 255)
+        draw_star(irx - dir * irw * 0.30, iry + irh * 0.22, irh * 0.20, 255, 255, 255)
+    } else {
+        set_color(255, 255, 255)
+        efill(irx + dir * irw * 0.22, iry - irh * 0.34, irw * 0.30, irh * 0.34, 12)
+        efill(irx - dir * irw * 0.26, iry + irh * 0.30, irw * 0.13, irh * 0.15, 8)
+        efill(irx - dir * irw * 0.05, iry - irh * 0.02, irw * 0.07, irh * 0.09, 8)
+    }
+
+    # lash lines
+    top_lash(ex, top, ew, dir)
+    set_color(78, 60, 84)
+    efill(ex + dir * ew * 0.42, bottom - 3.0, ew * 0.40, 3.5, 8)
+    return 0
+}
+
+# ── brows, mouth, face, hair, tears ─────────────────────────────────────────
+fn draw_brow(bx, by, dir, browy, browang) {
+    set_color(96, 62, 70)
+    bind y = by - browy * 26.0
+    bind ang = (0.0 - dir) * (0.08 + browang * 0.5)
+    efill_rot(bx, y, 50.0, 9.0, ang, 8)
+}
+
+fn draw_mouth(mx, my, curve, openv) {
+    if openv > 0.12 {
+        set_color(150, 64, 78)
+        efill(mx, my + openv * 6.0, 32.0, 8.0 + openv * 30.0, 12)
+        set_color(255, 255, 255)
+        efill(mx, my - openv * 7.0, 27.0, 4.0 + openv * 5.0, 8)
+        set_color(225, 120, 135)
+        efill(mx, my + 10.0 + openv * 18.0, 20.0, 6.0 + openv * 10.0, 8)
+    }
+    set_color(196, 96, 116)
+    bind segs = 9
+    bind i = 0
+    while i < segs {
+        bind u0 = i / segs
+        bind u1 = (i + 1.0) / segs
+        bind c0 = u0 * 2.0 - 1.0
+        bind c1 = u1 * 2.0 - 1.0
+        bind x0 = mx + c0 * 64.0
+        bind x1 = mx + c1 * 64.0
+        bind y0 = my - curve * 22.0 * (c0 * c0 - 0.35)
+        bind y1 = my - curve * 22.0 * (c1 * c1 - 0.35)
+        quad2(x0, y0 - 3.0, x1, y1 - 3.0, x1, y1 + 3.0, x0, y0 + 3.0)
+        bind i = i + 1
+    }
+}
+
+fn fmodw(a) {                                       # face width by angle (chin taper)
+    bind s = sin(a)
+    bind w = 1.0
+    if s > 0.0 { bind w = 1.0 - 0.40 * s * s }
+    return w
+}
+fn fmodh(a) {                                       # face height by angle (chin length)
+    bind s = sin(a)
+    bind h = 1.0
+    if s > 0.0 { bind h = 1.0 + 0.10 * s }
+    return h
+}
+fn face_shape(hx, fy, fw, fh) {
+    set_color(252, 226, 212)
+    bind n = 30
+    bind i = 0
+    while i < n {
+        bind a0 = (i * 6.28318) / n
+        bind a1 = ((i + 1.0) * 6.28318) / n
+        triangle(hx, fy,
+                 hx + fw * fmodw(a0) * cos(a0), fy + fh * fmodh(a0) * sin(a0),
+                 hx + fw * fmodw(a1) * cos(a1), fy + fh * fmodh(a1) * sin(a1))
+        bind i = i + 1
+    }
+}
+
+fn draw_bangs(hx, fy) {
+    set_color(86, 56, 90)
+    efill(hx, fy - 215.0, 245.0, 95.0, 18)          # crown mass over the top
+    bind n = 7
+    bind i = 0
+    while i < n {
+        bind u = i / (n - 1.0)
+        bind bx = hx + (u * 2.0 - 1.0) * 220.0
+        bind len = 160.0 - abs(u - 0.5) * 90.0
+        triangle(bx - 40.0, fy - 198.0, bx + 40.0, fy - 198.0, bx + 16.0, fy - 198.0 + len)
+        triangle(bx - 40.0, fy - 198.0, bx + 16.0, fy - 198.0 + len, bx - 22.0, fy - 198.0 + len * 0.78)
+        bind i = i + 1
+    }
+    set_color(150, 116, 158)                         # hair shine band
+    efill(hx, fy - 172.0, 165.0, 13.0, 12)
+}
+
+fn draw_tears(hx, eyeY, t) {
+    bind slide = (t - floor(t)) * 70.0
+    set_color(150, 200, 240)
+    efill(hx - 168.0, eyeY + 52.0 + slide, 7.0, 11.0, 8)
+    efill(hx + 168.0, eyeY + 52.0 + slide, 7.0, 11.0, 8)
+    set_color(225, 242, 255)
+    efill(hx - 170.0, eyeY + 49.0 + slide, 2.5, 4.0, 6)
+    efill(hx + 170.0, eyeY + 49.0 + slide, 2.5, 4.0, 6)
+}
+
+# ── compose the whole face from an expression param vector ───────────────────
+fn draw_face(p, t) {
+    bind bob  = sin(t * 1.2) * 4.0
+    bind sway = sin(t * 0.7) * 3.0
+    bind hx = 380.0 + sway
+    bind fy = 420.0 + bob
+
+    bind lopen = p[0]
+    bind ropen = p[1]
+    bind larc = p[2]
+    bind rarc = p[3]
+    bind idx = p[4]
+    bind idy = p[5]
+    bind pup = p[6]
+    bind browy = p[7]
+    bind browang = p[8]
+    bind mo = p[9]
+    bind mc = p[10]
+    bind blush = p[11]
+    bind tears = p[12]
+    bind stars = p[13]
+
+    # hair behind
+    set_color(78, 50, 82)
+    efill(hx, fy - 30.0, 290.0, 320.0, 22)
+    # side locks framing the face
+    set_color(90, 60, 95)
+    triangle(hx - 238.0, fy - 120.0, hx - 196.0, fy - 120.0, hx - 214.0, fy + 190.0)
+    triangle(hx - 238.0, fy - 120.0, hx - 214.0, fy + 190.0, hx - 252.0, fy + 60.0)
+    triangle(hx + 238.0, fy - 120.0, hx + 196.0, fy - 120.0, hx + 214.0, fy + 190.0)
+    triangle(hx + 238.0, fy - 120.0, hx + 214.0, fy + 190.0, hx + 252.0, fy + 60.0)
+
+    # face
+    face_shape(hx, fy, 235.0, 285.0)
+
+    # blush
+    if blush > 0.05 {
+        set_color(255, 150, 162)
+        efill(hx - 150.0, fy + 72.0, 28.0 + blush * 46.0, 24.0, 10)
+        efill(hx + 150.0, fy + 72.0, 28.0 + blush * 46.0, 24.0, 10)
+    }
+
+    # eyes
+    bind eyeY = fy + 12.0
+    draw_eye_pro(hx - 122.0, eyeY, 0.0 - 1.0, lopen, larc, idx, idy, pup, stars)
+    draw_eye_pro(hx + 122.0, eyeY, 1.0, ropen, rarc, idx, idy, pup, stars)
+
+    # brows
+    draw_brow(hx - 122.0, eyeY - 94.0, 0.0 - 1.0, browy, browang)
+    draw_brow(hx + 122.0, eyeY - 94.0, 1.0, browy, browang)
+
+    # nose (tiny shadow)
+    set_color(236, 198, 186)
+    triangle(hx - 7.0, fy + 78.0, hx + 7.0, fy + 78.0, hx, fy + 96.0)
+
+    # mouth
+    draw_mouth(hx, fy + 150.0, mc, mo)
+
+    # tears
+    if tears > 0.05 { draw_tears(hx, eyeY, t) }
+
+    # bangs in front
+    draw_bangs(hx, fy)
+}
+
+# auto-blink: a quick involuntary blink ~every 3.6 s (1 = shut)
+fn auto_blink_amt(t) {
+    bind ph = t - floor(t / 3.6) * 3.6
+    bind b = 0.0
+    if ph > 3.4 { bind b = sin((ph - 3.4) / 0.2 * 3.14159) }
+    return b
+}
+
+# expression presets → a 14-value parameter vector
+fn expr_params(key, t) {
+    bind lopen = 0.92
+    bind ropen = 0.92
+    bind larc = 0.0
+    bind rarc = 0.0
+    bind idx = 0.0
+    bind idy = 0.0
+    bind pup = 1.0
+    bind browy = 0.0
+    bind browang = 0.0
+    bind mo = 0.06
+    bind mc = 0.12
+    bind blush = 0.12
+    bind tears = 0.0
+    bind stars = 0.0
+
+    if key == 2 { bind lopen = 0.72; bind ropen = 0.72; bind mc = 0.85; bind mo = 0.45; bind blush = 0.25; bind browy = 0.18; bind pup = 1.05 }
+    if key == 3 { bind lopen = 0.72; bind ropen = 0.72; bind idy = 0.18; bind browy = 0.32; bind browang = 0.0 - 0.8; bind mc = 0.0 - 0.7; bind mo = 0.12; bind tears = 0.7; bind blush = 0.10 }
+    if key == 4 { bind lopen = 0.96; bind ropen = 0.96; bind pup = 0.78; bind browy = 0.0 - 0.32; bind browang = 0.9; bind mc = 0.0 - 0.5; bind mo = 0.30; bind blush = 0.06 }
+    if key == 5 { bind lopen = 1.25; bind ropen = 1.25; bind pup = 0.50; bind browy = 0.6; bind mc = 0.0; bind mo = 0.90 }
+    if key == 6 { bind lopen = 0.86; bind ropen = 0.0; bind rarc = 1.0; bind mc = 0.7; bind mo = 0.40; bind blush = 0.20; bind browy = 0.10 }
+    if key == 7 { bind lopen = 0.76; bind ropen = 0.76; bind idx = 0.40; bind idy = 0.08; bind blush = 1.0; bind mc = 0.40; bind mo = 0.12; bind browy = 0.20; bind browang = 0.0 - 0.3 }
+    if key == 8 { bind lopen = 0.40; bind ropen = 0.40; bind idy = 0.14; bind mc = 0.25; bind mo = 0.08; bind blush = 0.12 }
+    if key == 9 { bind lopen = 1.0; bind ropen = 1.0; bind stars = 1.0; bind pup = 1.10; bind mc = 1.0; bind mo = 0.60; bind blush = 0.30; bind browy = 0.30 }
+
+    # auto-blink (skip closed/arc eyes)
+    bind bl = auto_blink_amt(t)
+    if larc < 0.5 { bind lopen = lopen * (1.0 - 0.92 * bl) }
+    if rarc < 0.5 { bind ropen = ropen * (1.0 - 0.92 * bl) }
+
+    return [lopen, ropen, larc, rarc, idx, idy, pup, browy, browang, mo, mc, blush, tears, stars]
+}
+
+fn name_of(k) {
+    bind names = ["NEUTRAL", "HAPPY", "SAD", "ANGRY", "SURPRISED", "WINK", "SHY", "SLEEPY", "EXCITED"]
+    return names[k - 1]
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+bind start = do {
+    open_window(760, 860, "Anime Face — press 1-9")
+    bind expr = 1
+    while window_is_open() {
+        bind t = time_now()
+        if key_down("1") { bind expr = 1 }
+        if key_down("2") { bind expr = 2 }
+        if key_down("3") { bind expr = 3 }
+        if key_down("4") { bind expr = 4 }
+        if key_down("5") { bind expr = 5 }
+        if key_down("6") { bind expr = 6 }
+        if key_down("7") { bind expr = 7 }
+        if key_down("8") { bind expr = 8 }
+        if key_down("9") { bind expr = 9 }
+
+        fill(232, 224, 244)
+        set_color(244, 236, 252)
+        efill(380.0, 420.0, 335.0, 388.0, 30)        # soft halo behind the head
+
+        draw_face(expr_params(expr, t), t)
+
+        set_color(70, 60, 100)
+        ui_text(20.0, 24.0, 24.0, "ANIME FACE")
+        set_color(160, 90, 180)
+        ui_text(20.0, 56.0, 20.0, name_of(expr))
+        set_color(110, 100, 135)
+        ui_text(20.0, 832.0, 14.0, "1 neutral  2 happy  3 sad  4 angry  5 surprised  6 wink  7 shy  8 sleepy  9 excited")
+        present()
+    }
+}
