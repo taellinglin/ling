@@ -19,6 +19,8 @@ struct Pad {
     gilrs: Gilrs,
     active: Option<GamepadId>,
     effects: Vec<(Effect, Instant)>, // keep effects alive until they expire
+    start_edge: bool, // Start rising-edge this frame (Start acts as Enter)
+    start_prev: bool,
 }
 
 thread_local! {
@@ -29,7 +31,7 @@ fn ensure(p: &mut Option<Pad>) {
     if p.is_none() {
         if let Ok(gilrs) = Gilrs::new() {
             let active = gilrs.gamepads().next().map(|(id, _)| id);
-            *p = Some(Pad { gilrs, active, effects: Vec::new() });
+            *p = Some(Pad { gilrs, active, effects: Vec::new(), start_edge: false, start_prev: false });
         }
     }
 }
@@ -47,10 +49,19 @@ pub fn poll() {
         if pad.active.is_none() {
             pad.active = pad.gilrs.gamepads().next().map(|(id, _)| id);
         }
+        // Start rising-edge (Start behaves like Enter)
+        let cur_start = pad.active.map(|id| pad.gilrs.gamepad(id).is_pressed(GButton::Start)).unwrap_or(false);
+        pad.start_edge = cur_start && !pad.start_prev;
+        pad.start_prev = cur_start;
         // drop finished rumble effects
         let now = Instant::now();
         pad.effects.retain(|(_, exp)| *exp > now);
     });
+}
+
+/// True for the frame Start was just pressed (the host ORs this into `key_pressed("enter")`).
+pub fn start_edge() -> bool {
+    PAD.with(|cell| cell.borrow().as_ref().map(|p| p.start_edge).unwrap_or(false))
 }
 
 fn btn(name: &str) -> Option<GButton> {

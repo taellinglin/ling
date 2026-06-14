@@ -1911,11 +1911,15 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
-                    let gfx  = self.gfx.borrow();
-                    let pressed = gfx.window.as_ref()
-                        .and_then(|w| str_to_minifb_key(&name)
-                            .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No)))
-                        .unwrap_or(false);
+                    let pressed = {
+                        let gfx = self.gfx.borrow();
+                        gfx.window.as_ref()
+                            .and_then(|w| str_to_minifb_key(&name)
+                                .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No)))
+                            .unwrap_or(false)
+                    };
+                    // gamepad Start behaves like Enter everywhere
+                    let pressed = pressed || ((name == "enter" || name == "return") && gamepad::start_edge());
                     return Ok(Value::Bool(pressed));
                 }
                 #[cfg(target_arch = "wasm32")]
