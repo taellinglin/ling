@@ -64,6 +64,50 @@ pub fn start_edge() -> bool {
     PAD.with(|cell| cell.borrow().as_ref().map(|p| p.start_edge).unwrap_or(false))
 }
 
+/// Human-readable list of every gamepad gilrs sees (name, connection, rumble,
+/// mapping source). For diagnosing controllers that enumerate oddly.
+pub fn list() -> String {
+    let mut out = String::new();
+    PAD.with(|cell| {
+        let mut g = cell.borrow_mut();
+        ensure(&mut g);
+        match g.as_ref() {
+            Some(pad) => {
+                let mut n = 0;
+                for (_, gp) in pad.gilrs.gamepads() {
+                    n += 1;
+                    out.push_str(&format!(
+                        "{n}: \"{}\" connected={} rumble={} map={:?}\n",
+                        gp.name(), gp.is_connected(), gp.is_ff_supported(), gp.mapping_source()
+                    ));
+                }
+                if n == 0 { out.push_str("(no gamepads seen by gilrs — try the controller's PC/X-input mode)\n"); }
+            }
+            None => out.push_str("(gilrs failed to initialise)\n"),
+        }
+    });
+    out
+}
+
+/// True if ANY button on the active pad is down — works even when the mapping
+/// is missing (falls back to raw button codes), so it confirms the pad is read.
+pub fn any_button() -> bool {
+    PAD.with(|cell| {
+        let g = cell.borrow();
+        let Some(pad) = g.as_ref() else { return false };
+        let Some(id) = pad.active else { return false };
+        let gp = pad.gilrs.gamepad(id);
+        // mapped buttons
+        for b in [GButton::South, GButton::East, GButton::West, GButton::North,
+                  GButton::LeftTrigger, GButton::RightTrigger, GButton::LeftTrigger2, GButton::RightTrigger2,
+                  GButton::Start, GButton::Select, GButton::DPadUp, GButton::DPadDown,
+                  GButton::DPadLeft, GButton::DPadRight] {
+            if gp.is_pressed(b) { return true; }
+        }
+        false
+    })
+}
+
 fn btn(name: &str) -> Option<GButton> {
     Some(match name {
         "a" => GButton::South,

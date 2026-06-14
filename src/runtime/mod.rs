@@ -3015,6 +3015,10 @@ impl Interpreter {
                 gamepad::rumble(low, high, ms);
                 return Ok(Value::Unit);
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_list" | "จอยรายการ" => { return Ok(Value::Str(gamepad::list())); }
+            #[cfg(not(target_arch = "wasm32"))]
+            "gamepad_any" | "จอยใดๆ" => { return Ok(Value::Number(if gamepad::any_button() { 1.0 } else { 0.0 })); }
 
             // ── game AI: neural networks ─────────────────────────────────────
             // nn_new(inputs[, seed]) → handle

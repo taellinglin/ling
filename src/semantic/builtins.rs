@@ -396,6 +396,8 @@ pub fn is_builtin(name: &str) -> bool {
         "gamepad_button" | "จอยปุ่ม" => true,
         "gamepad_axis" | "จอยแกน" => true,
         "gamepad_rumble" | "จอยสั่น" => true,
+        "gamepad_list" | "จอยรายการ" => true,
+        "gamepad_any" | "จอยใดๆ" => true,
         // ── game AI (ling-ai) ──
         "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" => true,
         "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" => true,
