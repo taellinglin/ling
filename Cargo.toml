@@ -117,7 +117,7 @@ glam = "0.28"
 base64 = "0.22"
 flate2 = "1"
 ling-physics = { path = "crates/ling-physics", version = "2030.1", features = ["with-gltf"] }
-ling-gpu = { path = "crates/ling-gpu" }
+ling-gpu = { path = "crates/ling-gpu", version = "2030.0.1" }
 ling-graphics = { path = "crates/ling-graphics", version = "2030.0.1" }
 ling-game = { path = "crates/ling-game", version = "2030.1" }
 ling-animation = { workspace = true }
