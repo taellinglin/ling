@@ -52,6 +52,7 @@ members = [
     "crates/ling-music",
     "crates/ling-gpu",
     "crates/ling-animation",
+    "crates/ling-input",
 
 ]
 exclude = [
@@ -192,6 +193,7 @@ ling-graphics = { path = "crates/ling-graphics", version = "2030.0.0" }
 ling-ui       = { path = "crates/ling-ui",       version = "2030.0.0" }
 ling-game     = { path = "crates/ling-game",     version = "2030.0.0" }
 ling-animation = { path = "crates/ling-animation", version = "2030.0.0" }
+ling-input    = { path = "crates/ling-input",    version = "2030.0.0" }
 
 # AI
 ling-ai = { path = "crates/ling-ai", version = "2030.0.0" }

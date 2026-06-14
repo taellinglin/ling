@@ -1902,8 +1902,11 @@ impl Interpreter {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
-                let mut gfx = self.gfx.borrow_mut();
-                gfx.camera.tx = x; gfx.camera.ty = y; gfx.camera.tz = z;
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.camera.tx = x; gfx.camera.ty = y; gfx.camera.tz = z;
+                }
+                if let Some(audio) = &self.audio { audio.set_listener_pos(x, y, z); }
                 return Ok(Value::Unit);
             }
 
@@ -2781,6 +2784,24 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "net_status" | "เน็ตสถานะ" => {
                 return Ok(Value::Number(net::status() as f64));
+            }
+            // ── LAN lobby discovery (UDP broadcast) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_announce" | "เน็ตประกาศ" => {
+                let port = self.arg_num(&args, 0, 7778.0)? as u16;
+                let info = self.arg_str(&args, 1, "");
+                net::announce(port, &info);
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_announce_stop" | "เน็ตหยุดประกาศ" => {
+                net::announce_stop();
+                return Ok(Value::Unit);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_discover" | "เน็ตค้นหา" => {
+                let port = self.arg_num(&args, 0, 7778.0)? as u16;
+                return Ok(Value::Str(net::discover(port)));
             }
 
             // ── game AI: neural networks ─────────────────────────────────────

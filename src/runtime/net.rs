@@ -121,3 +121,77 @@ pub fn status() -> u8 {
     }
     0
 }
+
+// ── LAN lobby discovery (UDP broadcast) ─────────────────────────────────────
+// A host periodically broadcasts an "info" line; joiners listen and build a
+// live server list. Info is opaque to the transport (the game encodes
+// name|stage|private|... into it).
+
+use std::collections::HashMap;
+use std::net::UdpSocket;
+use std::time::{Duration, Instant};
+
+static ANNOUNCE: Mutex<Option<String>> = Mutex::new(None);          // Some(info) while announcing
+static ANNOUNCE_RUN: AtomicU8 = AtomicU8::new(0);
+static DISCOVER: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
+static DISCOVER_RUN: AtomicU8 = AtomicU8::new(0);
+
+/// Start (or update) broadcasting `info` on the LAN discovery `port` (~1 Hz).
+pub fn announce(port: u16, info: &str) {
+    if let Ok(mut g) = ANNOUNCE.lock() { *g = Some(info.to_string()); }
+    if ANNOUNCE_RUN.swap(1, Ordering::SeqCst) == 1 { return; }
+    std::thread::spawn(move || {
+        let sock = match UdpSocket::bind("0.0.0.0:0") { Ok(s) => s, Err(_) => { ANNOUNCE_RUN.store(0, Ordering::SeqCst); return; } };
+        let _ = sock.set_broadcast(true);
+        let addr = format!("255.255.255.255:{port}");
+        loop {
+            let info = ANNOUNCE.lock().ok().and_then(|g| g.clone());
+            match info {
+                Some(s) => { let _ = sock.send_to(s.as_bytes(), &addr); }
+                None => break,
+            }
+            std::thread::sleep(Duration::from_millis(1000));
+        }
+        ANNOUNCE_RUN.store(0, Ordering::SeqCst);
+    });
+}
+
+/// Stop broadcasting.
+pub fn announce_stop() {
+    if let Ok(mut g) = ANNOUNCE.lock() { *g = None; }
+}
+
+/// Return discovered servers seen in the last 5 s as "ip|info\n…" (starts the
+/// listener on first call).
+pub fn discover(port: u16) -> String {
+    if DISCOVER_RUN.swap(1, Ordering::SeqCst) == 0 {
+        if let Ok(mut g) = DISCOVER.lock() { *g = Some(HashMap::new()); }
+        std::thread::spawn(move || {
+            let sock = match UdpSocket::bind(("0.0.0.0", port)) {
+                Ok(s) => s,
+                Err(_) => { DISCOVER_RUN.store(0, Ordering::SeqCst); return; }
+            };
+            let _ = sock.set_read_timeout(Some(Duration::from_millis(700)));
+            let mut buf = [0u8; 512];
+            loop {
+                if let Ok((n, src)) = sock.recv_from(&mut buf) {
+                    let info = String::from_utf8_lossy(&buf[..n]).replace(['\n', '\r'], " ");
+                    if let Ok(mut g) = DISCOVER.lock() {
+                        if let Some(m) = g.as_mut() { m.insert(src.ip().to_string(), (info, Instant::now())); }
+                    }
+                }
+            }
+        });
+    }
+    let mut out = String::new();
+    if let Ok(g) = DISCOVER.lock() {
+        if let Some(m) = g.as_ref() {
+            for (ip, (info, t)) in m.iter() {
+                if t.elapsed() < Duration::from_secs(5) {
+                    out.push_str(ip); out.push('|'); out.push_str(info); out.push('\n');
+                }
+            }
+        }
+    }
+    out
+}

@@ -135,7 +135,8 @@ struct BgmTrack {
 /// Equal-power pan + distance attenuation gains for a world-space point, using
 /// the current listener (camera) orientation. Shared by tones, sfx and samples.
 #[inline]
-fn spatial_gains(cry: f32, sry: f32, crx: f32, srx: f32, room_w: f32, x: f32, y: f32, z: f32) -> (f32, f32) {
+fn spatial_gains(cry: f32, sry: f32, crx: f32, srx: f32, lx: f32, ly: f32, lz: f32, room_w: f32, x: f32, y: f32, z: f32) -> (f32, f32) {
+    let (x, y, z) = (x - lx, y - ly, z - lz);   // make the sound relative to the listener (camera) position
     let rz1   = x * sry + z * cry;
     let cam_x = x * cry - z * sry;
     let cam_y = y * crx - rz1 * srx;
@@ -291,6 +292,8 @@ struct AudioState {
     crx: f32, srx: f32,
     /// Half-width of the room (used to normalise the pan value).
     room_w: f32,
+    /// Listener (camera) world position — sounds are spatialised relative to it.
+    lx: f32, ly: f32, lz: f32,
     sample_rate: u32,
 }
 
@@ -311,6 +314,7 @@ impl AudioState {
             cry: 1.0, sry: 0.0,
             crx: 1.0, srx: 0.0,
             room_w: 9.0,
+            lx: 0.0, ly: 0.0, lz: 0.0,
             sample_rate,
         }
     }
@@ -324,6 +328,9 @@ impl AudioState {
         let crx   = self.crx;
         let srx   = self.srx;
         let room_w = self.room_w;
+        let lx    = self.lx;
+        let ly    = self.ly;
+        let lz    = self.lz;
         let dt    = 1.0 / self.sample_rate as f32;
 
         let mut l = 0.0f32;
@@ -391,7 +398,7 @@ impl AudioState {
         // ── Positional one-shot SFX (2D/3D/4D) ───────────────────────────────
         if !self.sfx.is_empty() {
             for v in &mut self.sfx {
-                let (lg, rg) = spatial_gains(cry, sry, crx, srx, room_w, v.x, v.y, v.z);
+                let (lg, rg) = spatial_gains(cry, sry, crx, srx, lx, ly, lz, room_w, v.x, v.y, v.z);
                 let s = v.next(dt);
                 l += s * lg;
                 r += s * rg;
@@ -410,7 +417,7 @@ impl AudioState {
                 let idx = v.pos as usize;
                 let frac = (v.pos - idx as f64) as f32;
                 let s = if idx + 1 < n { buf[idx] + (buf[idx + 1] - buf[idx]) * frac } else { buf[idx.min(n - 1)] };
-                let (lg, rg) = spatial_gains(cry, sry, crx, srx, room_w, v.x, v.y, v.z);
+                let (lg, rg) = spatial_gains(cry, sry, crx, srx, lx, ly, lz, room_w, v.x, v.y, v.z);
                 l += s * v.vol * lg;
                 r += s * v.vol * rg;
                 v.pos += *src_rate as f64 / out_rate;
@@ -572,6 +579,14 @@ impl AudioEngine {
         if let Ok(mut s) = self.state.lock() {
             s.cry = cry; s.sry = sry;
             s.crx = crx; s.srx = srx;
+        }
+    }
+
+    /// Update the listener (camera) world position so positional sounds pan and
+    /// attenuate relative to where the camera actually is.
+    pub fn set_listener_pos(&self, x: f32, y: f32, z: f32) {
+        if let Ok(mut s) = self.state.lock() {
+            s.lx = x; s.ly = y; s.lz = z;
         }
     }
 
