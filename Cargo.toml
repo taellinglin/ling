@@ -138,6 +138,7 @@ ling-crypto = { path = "crates/ling-crypto", version = "2030.1.3" }
 ling-ui = { path = "crates/ling-ui", version = "2030.0.0" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
+image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

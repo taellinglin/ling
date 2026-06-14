@@ -423,6 +423,7 @@ pub fn is_builtin(name: &str) -> bool {
         "set_fps" | "set_target_fps" | "target_fps" | "设帧率" | "フレームレート設定" | "프레임설정" | "ตั้งเฟรมเรต" => true,
         "record_count" => true,
         "record_frame" => true,
+        "screenshot" | "บันทึกภาพ" => true,
         "release_mouse" => true,
         "render" => true,
         "render_3d" => true,

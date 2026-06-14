@@ -5205,6 +5205,22 @@ impl Interpreter {
                 return Ok(Value::Number(n as f64));
             }
             "record_count" => return Ok(Value::Number(self.record_n as f64)),
+            // ── screenshot(mode) → PNG in ./screenshots/ with timestamp + mode + size ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "screenshot" | "บันทึกภาพ" => {
+                let mode = self.arg_str(&args, 0, "game");
+                let (buf, w, h) = { let gfx = self.gfx.borrow(); (gfx.buffer.clone(), gfx.width, gfx.height) };
+                let _ = std::fs::create_dir_all("screenshots");
+                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                let safe: String = mode.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+                let path = format!("screenshots/ss_{ts}_{safe}_{w}x{h}.png");
+                let mut rgb = Vec::with_capacity(w * h * 3);
+                for px in &buf { let p = *px; rgb.push((p >> 16) as u8); rgb.push((p >> 8) as u8); rgb.push(p as u8); }
+                if let Some(img) = image::RgbImage::from_raw(w as u32, h as u32, rgb) {
+                    let _ = img.save(&path);
+                }
+                return Ok(Value::Str(path));
+            }
             // ── microphone → crypto donut ──
             // mic_capture() — append the latest mic samples to the record buffer
             // (call each frame while recording). Returns the buffer length.
