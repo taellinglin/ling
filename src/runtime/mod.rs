@@ -1445,9 +1445,11 @@ impl Interpreter {
                         Ok(mic) => {
                             let _ = mic.start(|_samples: &[f32]| {});  // No-op callback
                             self.mic = Some(mic);
-                            return Ok(Value::Unit);
+                            return Ok(Value::Number(1.0));  // opened
                         }
-                        Err(e) => return Err(EvalErr::from(format!("mic_open failed: {e}"))),
+                        // No device / permission denied → graceful: don't crash the game loop.
+                        // Returns 0.0; mic_rms/mic_peak return 0.0 while self.mic is None.
+                        Err(_e) => { self.mic = None; return Ok(Value::Number(0.0)); }
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
