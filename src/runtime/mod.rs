@@ -9,8 +9,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::parser::ast::*;
 use crate::gfx::{GfxState, Light};
+// `raster` is wasm-safe (pure CPU framebuffer), so `draw_line` is available on
+// web too; `fill_triangle` is only reached from native-gated 3-D fill paths.
+use crate::gfx::raster::draw_line;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::gfx::raster::{fill_triangle, draw_line};
+use crate::gfx::raster::fill_triangle;
 #[cfg(not(target_arch = "wasm32"))]
 use ling_audio::{AudioEngine, ToneParams, Wave};
 
@@ -1555,6 +1558,7 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.width  = w;
                     gfx.height = h;
+                    gfx.buffer.resize(w * h, 0); // keep the CPU framebuffer in sync
                     gfx.sync_projection();
                     crate::gfx::webgl::resize(w as u32, h as u32);
                 }
@@ -1830,6 +1834,7 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.width  = w;
                     gfx.height = h;
+                    gfx.buffer.resize(w * h, 0); // keep the CPU framebuffer in sync
                     gfx.sync_projection();
                     crate::gfx::webgl::resize(w as u32, h as u32);
                 }
@@ -2099,6 +2104,7 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.camera.tx = x; gfx.camera.ty = y; gfx.camera.tz = z;
                 }
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(audio) = &self.audio { audio.set_listener_pos(x, y, z); }
                 return Ok(Value::Unit);
             }
@@ -3958,11 +3964,13 @@ impl Interpreter {
                 let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
                 return Ok(Value::Bool(d));
             }
+            #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_right" | "เมาส์ขวา" => {
                 let gfx = self.gfx.borrow();
                 let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Right)).unwrap_or(false);
                 return Ok(Value::Bool(d));
             }
+            #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_middle" | "เมาส์กลาง" => {
                 let gfx = self.gfx.borrow();
                 let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Middle)).unwrap_or(false);
@@ -5668,6 +5676,7 @@ fn parse_pad_button(name: &str) -> Option<ling_input::GamepadButton> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
     use minifb::Key;
     Some(match name {

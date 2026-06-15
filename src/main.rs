@@ -22,11 +22,22 @@ fn main() {
             print!("{}", ling::visualize::render(file, &program));
         }
         Some("run") => {
-            let file = args.get(2).map(|s| s.as_str()).unwrap_or_else(|| {
-                eprintln!("Usage: ling run <file.ling>");
-                std::process::exit(1);
-            });
-            run_file(file);
+            // `--wasm` builds the file to a WebAssembly bundle, serves it
+            // locally, and opens it in the browser to play.
+            let wasm = args.iter().any(|a| a == "--wasm" || a == "--web");
+            let file = args[2..]
+                .iter()
+                .map(|s| s.as_str())
+                .find(|a| a.ends_with(".ling"))
+                .unwrap_or_else(|| {
+                    eprintln!("Usage: ling run [--wasm] <file.ling>");
+                    std::process::exit(1);
+                });
+            if wasm {
+                run_wasm(file);
+            } else {
+                run_file(file);
+            }
         }
 
         Some("convert") => {
@@ -52,6 +63,7 @@ fn main() {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
             println!("  ling run <file.ling>");
+            println!("  ling run --wasm <file.ling>         build to WebAssembly, serve, open in browser");
             println!("  ling visualize <file.ling>          emit SVG AST to stdout");
             println!("  ling build <file.ling|dir> [opts]   compile to distributable");
             println!("    --out <dir>                       output folder (default: dist)");
@@ -499,6 +511,122 @@ fn build_web(project: &LingProject, out: &str) {
         std::process::exit(1);
     }
     println!("  [web] → {}/web/", out);
+}
+
+// ── `ling run --wasm` — build to WebAssembly, serve, and open in the browser ──
+
+fn run_wasm(file: &str) {
+    if !Path::new(file).exists() {
+        eprintln!("[ling] error: file does not exist: {file}");
+        std::process::exit(1);
+    }
+
+    // 1. Build the WebGL/WASM bundle next to the source (reuses `lingc webgl`).
+    let out = std::env::temp_dir().join(format!("ling-wasm-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&out);
+    let lingc = sibling_binary("lingc");
+    println!("[ling] building WebAssembly bundle (first run compiles the runtime, ~1 min)…");
+    let status = Command::new(&lingc)
+        .arg("webgl")
+        .arg(file)
+        .arg("--out")
+        .arg(&out)
+        .status()
+        .unwrap_or_else(|e| {
+            eprintln!("[ling] lingc not found ({e}); build it first: cargo build --bin lingc");
+            std::process::exit(1);
+        });
+    if !status.success() {
+        eprintln!("[ling] wasm build failed");
+        std::process::exit(1);
+    }
+
+    // 2. Serve the folder locally and open the browser.
+    serve_and_open(&out);
+}
+
+/// Minimal static file server (no deps) — serves `root` and opens the browser.
+/// Blocks until Ctrl+C. WASM is served as `application/wasm` so the browser can
+/// stream-compile it.
+fn serve_and_open(root: &Path) {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:8080")
+        .or_else(|_| TcpListener::bind("127.0.0.1:0"))
+        .unwrap_or_else(|e| {
+            eprintln!("[ling] could not bind a local port: {e}");
+            std::process::exit(1);
+        });
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(8080);
+    let url = format!("http://localhost:{port}/index.html");
+
+    println!("[ling] serving {} ", root.display());
+    println!("[ling] ▶ {url}");
+    println!("[ling] press Ctrl+C to stop.");
+    open_browser(&url);
+
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else { continue };
+        let root = root.to_path_buf();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let raw = req
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().nth(1))
+                .unwrap_or("/");
+            let path = raw.split('?').next().unwrap_or("/");
+            let rel = if path == "/" { "index.html" } else { path.trim_start_matches('/') };
+
+            // Resolve under root and reject path traversal.
+            let target = root.join(rel);
+            let safe = target.canonicalize().ok().filter(|p| {
+                root.canonicalize().map(|r| p.starts_with(r)).unwrap_or(false)
+            });
+
+            let (status_line, body, ctype) = match safe.and_then(|p| std::fs::read(p).ok()) {
+                Some(bytes) => ("200 OK", bytes, mime_for(rel)),
+                None => ("404 Not Found", b"404 not found".to_vec(), "text/plain"),
+            };
+            let header = format!(
+                "HTTP/1.1 {status_line}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(header.as_bytes());
+            let _ = stream.write_all(&body);
+        });
+    }
+}
+
+/// Content-Type for a served path (WASM must be `application/wasm`).
+fn mime_for(path: &str) -> &'static str {
+    let ext = path.rsplit('.').next().unwrap_or("");
+    match ext {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "json" => "application/json",
+        "css" => "text/css; charset=utf-8",
+        "ling" => "text/plain; charset=utf-8",
+        "png" => "image/png",
+        "svg" => "image/svg+xml",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Open `url` in the default browser (best-effort, per platform).
+fn open_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("cmd").args(["/C", "start", "", url]).status();
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = Command::new("xdg-open").arg(url).status();
 }
 
 // ── Native build ──────────────────────────────────────────────────────────────

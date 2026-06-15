@@ -8,7 +8,8 @@
 //   vtex    — vector texture primitives
 //   webgl   — WebGL2 backend (wasm32 only)
 
-#[cfg(not(target_arch = "wasm32"))]
+// `raster` is a pure-CPU software rasteriser (operates on `Vec<u32>`); it is
+// wasm-safe and powers the software framebuffer on both native and web.
 pub mod raster;
 pub mod camera;
 pub mod light;
@@ -132,6 +133,16 @@ pub struct GfxState {
     pub depth_queue: DepthQueue,
     pub shade_mode:  u8,
     pub shade:       ling_graphics::shading::ShadeParams,
+    /// Software framebuffer — the same CPU raster path as native. On the web,
+    /// `present()` uploads this to the canvas, so 2-D builtins render identically.
+    pub buffer:      Vec<u32>,
+    /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
+    pub blend:       u8,
+    /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
+    /// to `fog_end`. `fog_end <= 0` disables fog.
+    pub fog_color:   u32,
+    pub fog_start:   f32,
+    pub fog_end:     f32,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -150,7 +161,32 @@ impl GfxState {
             depth_queue: DepthQueue::default(),
             shade_mode:  2,
             shade:       ling_graphics::shading::ShadeParams::default(),
+            // Sized to width*height so the CPU-raster builtins (vtex / ui_*) can
+            // write safely; `present()` uploads it to the canvas.
+            buffer:      vec![0u32; 800 * 600],
+            blend:       0,
+            fog_color:   0x0000_0000,
+            fog_start:   0.0,
+            fog_end:     0.0,
         }
+    }
+
+    /// Blend a colour toward the fog colour by camera-space `depth`
+    /// (identical to the native path).
+    #[inline]
+    pub fn fog_apply(&self, color: u32, depth: f32) -> u32 {
+        if self.fog_end <= 0.0 { return color; }
+        let span = self.fog_end - self.fog_start;
+        if span <= 0.0 { return color; }
+        let f = ((depth - self.fog_start) / span).clamp(0.0, 1.0);
+        if f <= 0.0 { return color; }
+        let lerp = |a: u32, b: u32| -> u32 {
+            (a as f32 + (b as f32 - a as f32) * f) as u32 & 0xff
+        };
+        let r = lerp((color >> 16) & 0xff, (self.fog_color >> 16) & 0xff);
+        let g = lerp((color >> 8) & 0xff,  (self.fog_color >> 8) & 0xff);
+        let b = lerp(color & 0xff,         self.fog_color & 0xff);
+        (r << 16) | (g << 8) | b
     }
 
     pub fn sync_projection(&mut self) {
