@@ -23,24 +23,33 @@ fn main() {
     generate_unicode_tables();
 
     // Embed the default Ling icon into every Windows binary of this crate.
+    // `assets/` is excluded from the published crate (it holds ~1 GB of audio),
+    // so the published package ships a copy of just the icon at the repo root
+    // (`ling.ico`). Try the dev path first, then the packaged fallback.
     println!("cargo:rerun-if-changed=assets/ling.ico");
-    embed_default_icon("assets/ling.ico");
+    println!("cargo:rerun-if-changed=ling.ico");
+    embed_default_icon(&["assets/ling.ico", "ling.ico"]);
 }
 
-/// Embed `ico_rel` (relative to this crate) as the executable icon for all of
-/// the crate's binaries on Windows. A missing icon or absent resource compiler
-/// only warns — it must never fail the build.
-fn embed_default_icon(ico_rel: &str) {
+/// Embed the first existing icon in `candidates` (relative to this crate) as the
+/// executable icon for all of the crate's binaries on Windows. A missing icon or
+/// absent resource compiler only warns — it must never fail the build.
+fn embed_default_icon(candidates: &[&str]) {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     let manifest = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let ico = Path::new(&manifest).join(ico_rel);
-    if !ico.exists() {
-        println!("cargo:warning=icon '{}' not found; building without an app icon", ico.display());
+    let ico = candidates
+        .iter()
+        .map(|rel| Path::new(&manifest).join(rel))
+        .find(|p| p.exists());
+    let Some(ico) = ico else {
+        println!(
+            "cargo:warning=app icon not found ({}); building without one",
+            candidates.join(" or ")
+        );
         return;
-    }
-    println!("cargo:rerun-if-changed={ico_rel}");
+    };
     let mut res = winresource::WindowsResource::new();
     res.set_icon(&ico.to_string_lossy());
     if let Err(e) = res.compile() {
