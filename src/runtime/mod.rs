@@ -2994,6 +2994,11 @@ impl Interpreter {
                 let port = self.arg_num(&args, 0, 7778.0)? as u16;
                 return Ok(Value::Str(net::discover(port)));
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_test" | "เน็ตทดสอบ" => {
+                let port = self.arg_num(&args, 0, 7777.0)? as u16;
+                return Ok(Value::Str(net::test_bind(port)));
+            }
             // ── gamepad (gilrs) ──
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_poll" | "จอยโพล" => { gamepad::poll(); return Ok(Value::Unit); }

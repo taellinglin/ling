@@ -392,6 +392,7 @@ pub fn is_builtin(name: &str) -> bool {
         "net_announce" | "เน็ตประกาศ" => true,
         "net_announce_stop" | "เน็ตหยุดประกาศ" => true,
         "net_discover" | "เน็ตค้นหา" => true,
+        "net_test" | "เน็ตทดสอบ" => true,
         "gamepad_poll" | "จอยโพล" => true,
         "gamepad_button" | "จอยปุ่ม" => true,
         "gamepad_axis" | "จอยแกน" => true,

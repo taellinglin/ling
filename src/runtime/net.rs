@@ -161,6 +161,24 @@ pub fn announce_stop() {
     if let Ok(mut g) = ANNOUNCE.lock() { *g = None; }
 }
 
+/// Host self-test: can we actually bind the TCP host port, and what's our LAN IP?
+/// (External reachability still depends on firewall + router port-forward.)
+pub fn test_bind(port: u16) -> String {
+    let mut out = String::new();
+    match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(l) => { let _ = l; out.push_str(&format!("TCP bind 0.0.0.0:{port}: OK (host can listen)\n")); }
+        Err(e) => { out.push_str(&format!("TCP bind 0.0.0.0:{port}: FAILED -- {e}\n")); }
+    }
+    if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
+        if s.connect("8.8.8.8:80").is_ok() {
+            if let Ok(a) = s.local_addr() {
+                out.push_str(&format!("LAN IP (give to same-network joiners): {}\n", a.ip()));
+            }
+        }
+    }
+    out
+}
+
 /// Return discovered servers seen in the last 5 s as "ip|info\n…" (starts the
 /// listener on first call).
 pub fn discover(port: u16) -> String {
