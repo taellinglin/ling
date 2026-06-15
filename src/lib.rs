@@ -1,4 +1,10 @@
 // src/lib.rs - Public API entry point
+// Logo + favicon for the docs.rs page (the crate's public API docs).
+#![doc(
+    html_logo_url = "https://ling-lang.org/images/logo.svg",
+    html_favicon_url = "https://ling-lang.org/images/logo.svg"
+)]
+
 pub mod core;
 pub mod lexer;
 pub mod parser;
