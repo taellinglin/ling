@@ -129,7 +129,7 @@ fn link_program(ctx: &Gl, vs: &WebGlShader, fs: &WebGlShader) -> WebGlProgram {
 // ── public API ────────────────────────────────────────────────────────────────
 
 /// Called once from ling-wasm before running the program.
-pub fn init(canvas: web_sys::OffscreenCanvas) {
+pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
     let ctx: Gl = canvas
         .get_context("webgl2")
         .expect("get_context call")

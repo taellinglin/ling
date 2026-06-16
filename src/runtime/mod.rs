@@ -5023,15 +5023,17 @@ impl Interpreter {
                 return Ok(Value::Number(id as f64));
             }
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_draw" | "วาดเมช" | "绘制网格" | "メッシュ描画" | "메시그리기" => {
+            "mesh_draw" | "วาดเมชสี" => {        // ('วาดเมช' is taken by draw_mesh — use a distinct Thai alias)
                 let id = self.arg_num(&args,0,0.)? as usize;
                 let cx=self.arg_num(&args,1,0.)? as f32; let cy=self.arg_num(&args,2,0.)? as f32; let cz=self.arg_num(&args,3,0.)? as f32;
                 let sc=self.arg_num(&args,4,1.)? as f32; let yaw=self.arg_num(&args,5,0.)? as f32;
                 let sway=self.arg_num(&args,6,0.)? as f32; let arm=self.arg_num(&args,7,0.)? as f32;
+                let lean=self.arg_num(&args,8,0.)? as f32;
+                let leg=self.arg_num(&args,9,0.)? as f32; let tuck=self.arg_num(&args,10,0.)? as f32;
                 if id < self.meshes.len() {
                     let m = &self.meshes[id];
                     let mut gfx = self.gfx.borrow_mut();
-                    gfx.draw_color_mesh(m, cx,cy,cz, sc, yaw, sway, arm);
+                    gfx.draw_color_mesh(m, cx,cy,cz, sc, yaw, sway, arm, lean, leg, tuck);
                 }
                 return Ok(Value::Unit);
             }

@@ -7,10 +7,9 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(js_name = "init_canvas")]
 pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
     console_error_panic_hook::set_once();
-    // Set up the WebGL2 context + framebuffer-blit pipeline on this canvas.
-    ling::gfx::webgl::init(canvas);
+    // Set up the raster context + framebuffer-blit pipeline on this canvas.
+    ling::gfx::webgl::init_canvas(canvas);
 }
-
 /// Parse and execute a Ling source program.
 /// Graphics output is rendered via the context set up by init_canvas.
 #[wasm_bindgen(js_name = "run_program")]

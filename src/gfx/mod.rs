@@ -16,6 +16,7 @@ pub mod light;
 pub mod depth;
 pub mod vtex;
 pub mod shapes;
+// WebGL2 backend — wasm-only (depends on web_sys / js_sys / WebGL).
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
 #[cfg(target_arch = "wasm32")]
