@@ -39,6 +39,12 @@
 
 ---
 
+# Workspace
+
+- [Crates & Functions](reference/crates.md)
+
+---
+
 # Examples
 
 - [道场 — Shrine Room](examples/dao-chamber.md)

@@ -34,7 +34,9 @@
     "How Ling compares": ["灵 的对比", "灵 の比較", "灵 비교", "灵 เทียบกับเครื่องมืออื่น"],
     "See it run": ["运行示例", "実行してみる", "실행해 보기", "ดูการทำงาน"],
     "Capability": ["能力", "機能", "기능", "ความสามารถ"],
-    "Demo": ["演示", "デモ", "데모", "สาธิต"]
+    "Demo": ["演示", "デモ", "데모", "สาธิต"],
+    "Workspace": ["工作区", "ワークスペース", "워크스페이스", "เวิร์กสเปซ"],
+    "Crates & Functions": ["Crate 与函数", "クレートと関数", "크레이트 & 함수", "เครตและฟังก์ชัน"]
   };
 
   var langIndex = { en: -1, zh: 0, ja: 1, ko: 2, th: 3 };
@@ -51,11 +53,61 @@
     }
   }
 
+  // Header text → language code, for the per-function reference tables.
+  var LANG_HEADERS = {
+    "english": "en",
+    "chinese": "zh", "中文": "zh",
+    "japanese": "ja", "日本語": "ja",
+    "korean": "ko", "한국어": "ko",
+    "thai": "th", "ไทย": "th"
+  };
+
+  function headerLang(text) {
+    return LANG_HEADERS[(text || "").trim().toLowerCase()] || null;
+  }
+
+  // Show only the selected language column in any builtin/keyword table (the
+  // ones whose header cells are language names). Non-language columns (the
+  // function signature column, "Description", …) always stay visible. If the
+  // table has no column for the selected language, English is shown instead.
+  function filterCols(lang) {
+    var tables = document.querySelectorAll("#content table");
+    tables.forEach(function (t) {
+      var headRow = t.tHead && t.tHead.rows[0];
+      if (!headRow) return;
+      var heads = headRow.cells;
+      var colLangs = [];
+      var hasSelected = false;
+      for (var i = 0; i < heads.length; i++) {
+        var lc = headerLang(heads[i].textContent);
+        colLangs.push(lc);
+        if (lc === lang) hasSelected = true;
+      }
+      if (!colLangs.some(Boolean)) return; // not a language table
+      var show = hasSelected ? lang : "en";
+
+      function setCol(idx, visible) {
+        if (heads[idx]) heads[idx].style.display = visible ? "" : "none";
+        for (var b = 0; b < t.tBodies.length; b++) {
+          var rows = t.tBodies[b].rows;
+          for (var r = 0; r < rows.length; r++) {
+            var cell = rows[r].cells[idx];
+            if (cell) cell.style.display = visible ? "" : "none";
+          }
+        }
+      }
+      colLangs.forEach(function (lc, idx) {
+        if (lc) setCol(idx, lc === show);
+      });
+    });
+  }
+
   function apply(lang) {
     var idx = langIndex[lang];
     nodes.forEach(function (e) {
       e.node.nodeValue = (idx < 0) ? e.en : e.en.replace(e.key, DICT[e.key][idx]);
     });
+    filterCols(lang);
     document.documentElement.setAttribute("data-ling-lang", lang);
     try { localStorage.setItem("ling-doc-lang", lang); } catch (_) {}
   }
@@ -78,7 +130,7 @@
     var saved = "en";
     try { saved = localStorage.getItem("ling-doc-lang") || "en"; } catch (_) {}
     sel.value = saved;
-    if (saved !== "en") apply(saved);
+    apply(saved); // always apply so the function tables show one language column
   }
 
   function collect2() {
