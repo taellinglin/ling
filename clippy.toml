@@ -1,24 +1,12 @@
-# Clippy configuration
+# Clippy configuration — only real clippy.toml keys belong here.
+# Lint *levels* (warn/deny for clippy::all, pedantic, correctness, the rustc
+# `warnings`/`rust_2018_idioms`/`future_incompatible` groups, …) are NOT valid
+# clippy.toml fields — clippy errors with "unknown field" on them. Configure
+# those via a `[lints.clippy]` / `[lints.rust]` table in Cargo.toml (or via
+# RUSTFLAGS) instead.
 
 disallowed-types = []
 disallowed-macros = []
-disallowed-lints = []
+disallowed-methods = []
 
 avoid-breaking-exported-api = false
-
-#[lints]
-# Clippy lints
-clippy_all = { level = "warn", priority = -10 }
-clippy_pedantic = { level = "warn", priority = -10 }
-clippy_nursery = { level = "warn" }
-clippy_perf = "warn"
-clippy_complexity = "warn"
-clippy_correctness = "deny"
-clippy_suspicious = "warn"
-clippy_style = "warn"
-
-# Rust lints
-warnings = "warn"
-rust_2018_idioms = "warn"
-future_incompatible = "deny"
-

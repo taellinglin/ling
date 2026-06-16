@@ -35,6 +35,8 @@ pub struct LiquidGrid {
     /// ROYGBIV mode: colour the fluid by a flowing rainbow instead of water/oil.
     pub rainbow: bool,
     pub phase: f32,     // advances each step to animate the rainbow
+    pub base_w: [f32; 3], // water dye base colour 0..255 (default blue)
+    pub base_o: [f32; 3], // oil dye base colour 0..255 (default gold/amber)
     vx: Vec<f32>, vy: Vec<f32>,
     water: Vec<f32>, oil: Vec<f32>,
     // scratch
@@ -47,6 +49,7 @@ impl LiquidGrid {
         Self {
             w: w.max(2), h: h.max(2), wrap: true, gx: 0.0, gy: 60.0,
             rainbow: false, phase: 0.0,
+            base_w: [40.0, 110.0, 235.0], base_o: [240.0, 175.0, 45.0],
             vx: vec![0.0; n], vy: vec![0.0; n],
             water: vec![0.0; n], oil: vec![0.0; n],
             s0: vec![0.0; n], s1: vec![0.0; n], p: vec![0.0; n], div: vec![0.0; n],
@@ -57,6 +60,12 @@ impl LiquidGrid {
 
     /// Set the gravity direction (rotate to slosh the fluids around).
     pub fn set_gravity(&mut self, gx: f32, gy: f32) { self.gx = gx; self.gy = gy; }
+
+    /// Set the two dye base colours (water, oil) in 0..255 RGB.
+    pub fn set_colors(&mut self, wr: f32, wg: f32, wb: f32, or_: f32, og: f32, ob: f32) {
+        self.base_w = [wr, wg, wb];
+        self.base_o = [or_, og, ob];
+    }
 
     /// Add fluid (and a little outward velocity) in a disc around (cx,cy) cells.
     pub fn splat(&mut self, cx: f32, cy: f32, kind: i32, amount: f32, radius: f32) {
@@ -206,9 +215,9 @@ impl LiquidGrid {
                        + self.phase + ov * 0.6).fract();
             return hsv(hue, 0.95, (0.25 + cover * 0.75).min(1.0));
         }
-        // base colours
-        let (wr, wg, wb) = (40.0, 110.0, 235.0);  // water (blue)
-        let (or_, og, ob) = (240.0, 175.0, 45.0); // oil (amber)
+        // base colours (per-grid, settable via set_colors)
+        let (wr, wg, wb) = (self.base_w[0], self.base_w[1], self.base_w[2]);  // water dye
+        let (or_, og, ob) = (self.base_o[0], self.base_o[1], self.base_o[2]); // oil dye
         let cover = (wv + ov).min(1.0);
         if cover < 0.01 { return 0x05060E; }
         // weighted blend by density — only nonzero where the two overlap

@@ -8,7 +8,7 @@
 // Painter's algorithm is exact for convex non-intersecting geometry and
 // produces plausible results for the Sierpiński fractal + tesseract wireframe.
 
-#[cfg(not(target_arch = "wasm32"))]
+// `raster` is wasm-safe (pure CPU); the software-framebuffer flush runs on web too.
 use crate::gfx::raster;
 
 /// Tagged draw call stored in the queue.
@@ -72,7 +72,6 @@ impl DepthQueue {
 
     /// Sort back-to-front and rasterise everything into `buf`.
     /// Consumes `self` — call site does `mem::take` to avoid borrow conflict.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn flush(mut self, buf: &mut Vec<u32>, width: usize, height: usize) {
         // Sort largest depth first (furthest → painted first, nearest on top)
         self.calls.sort_unstable_by(|a, b| {

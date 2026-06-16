@@ -784,7 +784,103 @@ pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh>
     Some(m)
 }
 
+/// A flat-shaded, per-triangle-coloured mesh (triangle soup) for fast native-res
+/// model rendering. `pos` holds 3 verts per triangle; `col` one RGB per triangle.
+/// `height` is the model's Y-extent (feet→head), used to weight the deformation.
+#[derive(Default, Clone)]
+pub struct ColorMesh {
+    pub pos: Vec<[f32; 3]>,   // 3 * ntri  (triangle soup)
+    pub col: Vec<[u8; 3]>,    // ntri      (one flat colour per triangle)
+    pub height: f32,
+}
+
 impl GfxState {
+    /// Draw a per-triangle-coloured mesh **unlit** (colours used as-is → ignored by
+    /// the lighting pass, and fast), with the model transform (translate · uniform
+    /// scale · yaw about Y) and a baked procedural deformation: `sway` leans the
+    /// upper body (∝ |y|) and `arm` swings the arms fore/aft in antiphase with an
+    /// elbow-compound bend. Verts are flipped models (feet y≈0, head y≈-height).
+    pub fn draw_color_mesh(&mut self, m: &ColorMesh, cx:f32, cy:f32, cz:f32, sc:f32, yaw:f32, sway:f32, arm:f32) {
+        let near = -self.camera.zdist + 0.05;
+        let cs = yaw.cos(); let sn = yaw.sin();
+        let h = m.height.max(1e-4);
+        let yc = -0.68 * h;                          // shoulder band centre
+        let torso = 0.13 * h; let elbow = torso + 0.16 * h;
+        let nt = m.col.len();
+        let mut ti = 0usize;
+        while ti < nt {
+            let base = ti * 3;
+            let mut wv = [[0.0f32; 3]; 3];
+            let mut k = 0;
+            while k < 3 {
+                let p = m.pos[base + k];
+                let ax = p[0].abs();
+                let yb = (1.0 - (p[1] - yc).abs() / (0.30 * h)).clamp(0.0, 1.0);   // upper-body band
+                let aw = (((ax - torso) / (0.40 * h)).clamp(0.0, 1.0)) * yb;        // arm weight
+                let ew = (((ax - elbow) / (0.28 * h)).clamp(0.0, 1.0)) * yb;        // elbow/forearm weight
+                let side = if p[0] >= 0.0 { 1.0 } else { -1.0 };
+                let xs = p[0] + sway * p[1].abs();
+                let zs = p[2] + arm * side * (aw + ew * 0.7);
+                wv[k] = [cx + (xs*cs + zs*sn)*sc, cy + p[1]*sc, cz + (zs*cs - xs*sn)*sc];
+                k += 1;
+            }
+            let a = wv[0]; let b = wv[1]; let c = wv[2];
+            let da = self.camera.depth(a[0],a[1],a[2]);
+            let db = self.camera.depth(b[0],b[1],b[2]);
+            let dc = self.camera.depth(c[0],c[1],c[2]);
+            if !(da<=near && db<=near && dc<=near) {
+                let poly = near_clip_poly(&[(a,[0.0;3],da),(b,[0.0;3],db),(c,[0.0;3],dc)], near);
+                if poly.len() >= 3 {
+                    let col = m.col[ti];
+                    let packed = ((col[0] as u32)<<16)|((col[1] as u32)<<8)|(col[2] as u32);
+                    let proj: Vec<(f32,f32,f32)> = poly.iter().map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
+                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
+                    let mut j = 1;
+                    while j+1 < proj.len() {
+                        self.depth_queue.push_triangle(depth, packed, proj[0].0,proj[0].1, proj[j].0,proj[j].1, proj[j+1].0,proj[j+1].1);
+                        j += 1;
+                    }
+                }
+            }
+            ti += 1;
+        }
+    }
+
+    /// Viscous screen-space distortion of the current framebuffer: warps/puckers/
+    /// bloats in shifting regions and **wraps** at all four edges (toroidal sample).
+    /// Separable (per-row + per-column displacement) so it stays cheap full-screen.
+    /// `amount` = max displacement in pixels; `t` = time (animate the goo).
+    pub fn distort(&mut self, amount: f32, t: f32) {
+        let w = self.width; let h = self.height;
+        if w < 2 || h < 2 || amount <= 0.0 { return; }
+        let src = self.buffer.clone();
+        let a = amount;
+        // per-row horizontal shift + a vertical cross term
+        let mut rdx = vec![0i32; h]; let mut rdy = vec![0i32; h];
+        for y in 0..h {
+            let fy = y as f32;
+            rdx[y] = ((fy*0.018 + t*0.8).sin()*a + (fy*0.005 - t*0.5).sin()*a*0.6) as i32;
+            rdy[y] = ((fy*0.040 + t*1.1).sin()*a*0.4) as i32;
+        }
+        // per-column vertical shift + a horizontal cross term  (the two cross terms
+        // make the warp swirl in 2-D; multi-frequency sines give pucker/bloat zones)
+        let mut cdy = vec![0i32; w]; let mut cdx = vec![0i32; w];
+        for x in 0..w {
+            let fx = x as f32;
+            cdy[x] = ((fx*0.020 + t*0.7).sin()*a + (fx*0.006 + t*0.45).sin()*a*0.6) as i32;
+            cdx[x] = ((fx*0.050 + t*0.9).sin()*a*0.4) as i32;
+        }
+        let wi = w as i32; let hi = h as i32;
+        for y in 0..h {
+            let row = y * w;
+            for x in 0..w {
+                let sx = (x as i32 + rdx[y] + cdx[x]).rem_euclid(wi) as usize;
+                let sy = (y as i32 + cdy[x] + rdy[y]).rem_euclid(hi) as usize;
+                self.buffer[row + x] = src[sy * w + sx];
+            }
+        }
+    }
+
     /// Render a world-space mesh through the depth queue.
     /// mode: 0 filled, 1 wireframe, 2 both.
     pub fn emit_mesh(&mut self, m: &Mesh, mode: i32) {

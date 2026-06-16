@@ -13,6 +13,7 @@ use web_sys::{
     WebGlBuffer,
     WebGlProgram,
     WebGlShader,
+    WebGlTexture,
     WebGlUniformLocation,
 };
 
@@ -38,6 +39,12 @@ struct State {
     batches: Vec<Batch>,
     width:   f32,
     height:  f32,
+    // Software-framebuffer blit (the `present()` path): a textured fullscreen
+    // quad that uploads the CPU buffer to the canvas for full native parity.
+    tex_prog: WebGlProgram,
+    tex:      WebGlTexture,
+    quad:     WebGlBuffer,
+    u_tex:    WebGlUniformLocation,
 }
 
 thread_local! {
@@ -65,6 +72,28 @@ in vec3 vColor;
 out vec4 fragColor;
 void main() {
     fragColor = vec4(vColor, 1.0);
+}
+"#;
+
+// Fullscreen-quad shaders for blitting the software framebuffer to the canvas.
+const TEX_VERT: &str = r#"#version 300 es
+in vec2 aPos;
+out vec2 vUv;
+void main() {
+    // aPos spans the NDC quad [-1,1]; map to UV and flip Y so framebuffer row 0
+    // (top) lands at the top of the canvas.
+    vUv = vec2((aPos.x + 1.0) * 0.5, 1.0 - (aPos.y + 1.0) * 0.5);
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+"#;
+
+const TEX_FRAG: &str = r#"#version 300 es
+precision mediump float;
+in vec2 vUv;
+uniform sampler2D uTex;
+out vec4 fragColor;
+void main() {
+    fragColor = texture(uTex, vUv);
 }
 "#;
 
@@ -120,6 +149,28 @@ pub fn init(canvas: web_sys::OffscreenCanvas) {
     let u_size = ctx.get_uniform_location(&prog, "uSize")
         .expect("uniform uSize not found");
 
+    // Framebuffer-blit pipeline: textured fullscreen quad.
+    let tvs = compile_shader(&ctx, Gl::VERTEX_SHADER,   TEX_VERT);
+    let tfs = compile_shader(&ctx, Gl::FRAGMENT_SHADER, TEX_FRAG);
+    let tex_prog = link_program(&ctx, &tvs, &tfs);
+    let u_tex = ctx.get_uniform_location(&tex_prog, "uTex")
+        .expect("uniform uTex not found");
+    let tex = ctx.create_texture().expect("create_texture");
+    let quad = ctx.create_buffer().expect("create_buffer quad");
+    ctx.bind_buffer(Gl::ARRAY_BUFFER, Some(&quad));
+    {
+        // Two triangles covering NDC [-1,1]².
+        let verts: [f32; 12] = [
+            -1.0, -1.0,  1.0, -1.0,  1.0, 1.0,
+            -1.0, -1.0,  1.0,  1.0, -1.0, 1.0,
+        ];
+        // Safety: `verts` outlives this upload call.
+        unsafe {
+            let arr = js_sys::Float32Array::view(&verts);
+            ctx.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &arr, Gl::STATIC_DRAW);
+        }
+    }
+
     let width  = canvas.width()  as f32;
     let height = canvas.height() as f32;
     ctx.viewport(0, 0, canvas.width() as i32, canvas.height() as i32);
@@ -129,6 +180,7 @@ pub fn init(canvas: web_sys::OffscreenCanvas) {
             ctx, canvas, prog, buf, u_size,
             batches: Vec::new(),
             width, height,
+            tex_prog, tex, quad, u_tex,
         });
     });
 }
@@ -277,5 +329,55 @@ pub fn flush(fill_r: f32, fill_g: f32, fill_b: f32, width: usize, height: usize)
             // can read the finished frame (required by the OffscreenCanvas spec).
             ctx.flush();
         }
+    });
+}
+
+/// Upload the software framebuffer (`0x00RRGGBB`, row-major, top-left origin) as
+/// a texture and draw it across the whole canvas. This is the `present()` path:
+/// everything the CPU rasteriser produced — 3-D meshes, 2-D shapes, vector
+/// textures, holographic UI — shows on the web exactly as it does natively.
+pub fn blit_rgb(buffer: &[u32], width: usize, height: usize) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    STATE.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        let Some(s) = opt.as_mut() else { return };
+        let ctx = &s.ctx;
+
+        // 0x00RRGGBB → tightly packed RGBA8 (opaque).
+        let n = width * height;
+        let mut px = Vec::with_capacity(n * 4);
+        for i in 0..n {
+            let c = buffer.get(i).copied().unwrap_or(0);
+            px.push(((c >> 16) & 0xFF) as u8);
+            px.push(((c >> 8) & 0xFF) as u8);
+            px.push((c & 0xFF) as u8);
+            px.push(255);
+        }
+
+        ctx.active_texture(Gl::TEXTURE0);
+        ctx.bind_texture(Gl::TEXTURE_2D, Some(&s.tex));
+        ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_MIN_FILTER, Gl::NEAREST as i32);
+        ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_MAG_FILTER, Gl::NEAREST as i32);
+        ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_S, Gl::CLAMP_TO_EDGE as i32);
+        ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_T, Gl::CLAMP_TO_EDGE as i32);
+        let _ = ctx
+            .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+                Gl::TEXTURE_2D, 0, Gl::RGBA as i32,
+                width as i32, height as i32, 0,
+                Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&px),
+            );
+
+        ctx.use_program(Some(&s.tex_prog));
+        ctx.uniform1i(Some(&s.u_tex), 0);
+        ctx.bind_buffer(Gl::ARRAY_BUFFER, Some(&s.quad));
+        let loc = ctx.get_attrib_location(&s.tex_prog, "aPos") as u32;
+        ctx.enable_vertex_attrib_array(loc);
+        ctx.vertex_attrib_pointer_with_i32(loc, 2, Gl::FLOAT, false, 0, 0);
+        ctx.draw_arrays(Gl::TRIANGLES, 0, 6);
+
+        // Required so the OffscreenCanvas compositor reads the finished frame.
+        ctx.flush();
     });
 }

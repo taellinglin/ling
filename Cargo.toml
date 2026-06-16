@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.28"
+version = "2030.1.29"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -156,6 +156,7 @@ web-sys = { version = "0.3", features = [
     "WebGlShader",
     "WebGlBuffer",
     "WebGlUniformLocation",
+    "WebGlTexture",
     # Web Audio API
     "AudioContext",
     "AudioContextOptions",

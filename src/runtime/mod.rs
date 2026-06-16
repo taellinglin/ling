@@ -540,6 +540,7 @@ pub struct Interpreter {
     rigid_world: ling_physics::rigid::PhysicsWorld,
     /// Liquid grids (water/oil), by `liquid_new` handle.
     liquids: Vec<ling_physics::liquid::LiquidGrid>,
+    meshes: Vec<crate::gfx::shapes::ColorMesh>,
     /// Active cinematic dialog box (Ocarina/Majora-style), if any.
     dialog: Option<ling_game::dialog::Dialog>,
     /// Dialog highlight colours by role: text, name, place, item (0x00RRGGBB).
@@ -613,6 +614,7 @@ impl Interpreter {
             soft_bodies: Vec::new(),
             rigid_world: ling_physics::rigid::PhysicsWorld::new(),
             liquids: Vec::new(),
+            meshes: Vec::new(),
             dialog: None,
             dialog_colors: [0xE6F2FF, 0xFFD24A, 0x4AD2FF, 0x6CFF8C], // text · name · place · item
             frames: Vec::new(),
@@ -1581,6 +1583,10 @@ impl Interpreter {
                     gfx.fill_r = r as f32 / 255.0;
                     gfx.fill_g = g as f32 / 255.0;
                     gfx.fill_b = b as f32 / 255.0;
+                    // The web path renders into the software framebuffer and blits
+                    // it at present(), so clear the buffer too (mirrors native).
+                    let c = (r << 16) | (g << 8) | b;
+                    gfx.buffer.fill(c);
                 }
                 return Ok(Value::Unit);
             }
@@ -1758,14 +1764,20 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
+                    // Software-render everything (3-D depth queue + 2-D vtex/ui that
+                    // already wrote into the buffer) into the framebuffer, exactly
+                    // like native, then upload that buffer to the canvas in one blit.
                     let mut gfx = self.gfx.borrow_mut();
-                    let w  = gfx.width;
-                    let h  = gfx.height;
-                    let fr = gfx.fill_r;
-                    let fg = gfx.fill_g;
-                    let fb = gfx.fill_b;
-                    let queue = std::mem::take(&mut gfx.depth_queue);
-                    queue.flush_to_webgl(fr, fg, fb, w, h);
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    if gfx.buffer.len() != w * h {
+                        gfx.buffer.resize(w * h, 0);
+                    }
+                    if !gfx.depth_queue.is_empty() {
+                        let queue = std::mem::take(&mut gfx.depth_queue);
+                        queue.flush(&mut gfx.buffer, w, h);
+                    }
+                    crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                 }
                 // Update the click-edge latch for interactive UI widgets.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -4978,12 +4990,66 @@ impl Interpreter {
                 return Ok(Value::List(vec![Value::Number(q.x as f64),Value::Number(q.y as f64),Value::Number(q.z as f64),Value::Number(q.w as f64)]));
             }
 
+            // ── native-res mesh (.lmesh): load once, draw fast (unlit, per-tri colour) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" => {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
+                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
+                    else { path.clone() };
+                let bytes = match std::fs::read(&resolved) {
+                    Ok(b) => b,
+                    Err(e) => { eprintln!("mesh_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                };
+                if bytes.len() < 16 || &bytes[0..4] != b"LMSH" { eprintln!("mesh_load: bad header ({path})"); return Ok(Value::Number(-1.0)); }
+                let rd4 = |o: usize| -> [u8;4] { [bytes[o],bytes[o+1],bytes[o+2],bytes[o+3]] };
+                let height = f32::from_le_bytes(rd4(8));
+                let ntri = u32::from_le_bytes(rd4(12)) as usize;
+                let need = 16usize.saturating_add(ntri.saturating_mul(9*4 + 3));
+                if bytes.len() < need { eprintln!("mesh_load: truncated ({path})"); return Ok(Value::Number(-1.0)); }
+                let mut pos = Vec::with_capacity(ntri*3);
+                let mut col = Vec::with_capacity(ntri);
+                let mut off = 16usize;
+                for _ in 0..ntri {
+                    for _k in 0..3 {
+                        let x = f32::from_le_bytes(rd4(off)); let y = f32::from_le_bytes(rd4(off+4)); let z = f32::from_le_bytes(rd4(off+8));
+                        off += 12; pos.push([x,y,z]);
+                    }
+                    col.push([bytes[off],bytes[off+1],bytes[off+2]]); off += 3;
+                }
+                eprintln!("mesh_load: {} ({} tris, h={:.2})", path, ntri, height);
+                let id = self.meshes.len();
+                self.meshes.push(crate::gfx::shapes::ColorMesh{ pos, col, height });
+                return Ok(Value::Number(id as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "mesh_draw" | "วาดเมช" | "绘制网格" | "メッシュ描画" | "메시그리기" => {
+                let id = self.arg_num(&args,0,0.)? as usize;
+                let cx=self.arg_num(&args,1,0.)? as f32; let cy=self.arg_num(&args,2,0.)? as f32; let cz=self.arg_num(&args,3,0.)? as f32;
+                let sc=self.arg_num(&args,4,1.)? as f32; let yaw=self.arg_num(&args,5,0.)? as f32;
+                let sway=self.arg_num(&args,6,0.)? as f32; let arm=self.arg_num(&args,7,0.)? as f32;
+                if id < self.meshes.len() {
+                    let m = &self.meshes[id];
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.draw_color_mesh(m, cx,cy,cz, sc, yaw, sway, arm);
+                }
+                return Ok(Value::Unit);
+            }
+
             // ── liquid sim (water + oil, immiscible) ──
             #[cfg(not(target_arch = "wasm32"))]
             "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
                 let w=self.arg_num(&args,0,64.)? as usize; let h=self.arg_num(&args,1,64.)? as usize;
                 let id=self.liquids.len(); self.liquids.push(ling_physics::liquid::LiquidGrid::new(w,h));
                 return Ok(Value::Number(id as f64));
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" => {
+                let id=self.arg_num(&args,0,0.)? as usize;
+                let wr=self.arg_num(&args,1,40.)? as f32; let wg=self.arg_num(&args,2,110.)? as f32; let wb=self.arg_num(&args,3,235.)? as f32;
+                let or_=self.arg_num(&args,4,240.)? as f32; let og=self.arg_num(&args,5,175.)? as f32; let ob=self.arg_num(&args,6,45.)? as f32;
+                if let Some(g)=self.liquids.get_mut(id) { g.set_colors(wr,wg,wb,or_,og,ob); }
+                return Ok(Value::Unit);
             }
             #[cfg(not(target_arch = "wasm32"))]
             "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" => {
@@ -5276,6 +5342,16 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     queue.flush(&mut gfx.buffer, w, h);
                 }
+                return Ok(Value::Unit);
+            }
+
+            // Viscous full-screen distortion (warp/pucker/bloat, edge-wrapped). Call
+            // after the 3-D flush and before the UI so only the world layer warps.
+            #[cfg(not(target_arch = "wasm32"))]
+            "screen_distort" | "บิดจอ" | "屏幕扭曲" | "画面歪み" | "화면왜곡" => {
+                let amount = self.arg_num(&args, 0, 8.0)? as f32;
+                let t = self.arg_num(&args, 1, 0.0)? as f32;
+                self.gfx.borrow_mut().distort(amount, t);
                 return Ok(Value::Unit);
             }
 
