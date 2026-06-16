@@ -800,7 +800,8 @@ impl GfxState {
     /// scale · yaw about Y) and a baked procedural deformation: `sway` leans the
     /// upper body (∝ |y|) and `arm` swings the arms fore/aft in antiphase with an
     /// elbow-compound bend. Verts are flipped models (feet y≈0, head y≈-height).
-    pub fn draw_color_mesh(&mut self, m: &ColorMesh, cx:f32, cy:f32, cz:f32, sc:f32, yaw:f32, sway:f32, arm:f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_color_mesh(&mut self, m: &ColorMesh, cx:f32, cy:f32, cz:f32, sc:f32, yaw:f32, sway:f32, arm:f32, lean:f32, leg:f32, tuck:f32) {
         let near = -self.camera.zdist + 0.05;
         let cs = yaw.cos(); let sn = yaw.sin();
         let h = m.height.max(1e-4);
@@ -819,9 +820,21 @@ impl GfxState {
                 let aw = (((ax - torso) / (0.40 * h)).clamp(0.0, 1.0)) * yb;        // arm weight
                 let ew = (((ax - elbow) / (0.28 * h)).clamp(0.0, 1.0)) * yb;        // elbow/forearm weight
                 let side = if p[0] >= 0.0 { 1.0 } else { -1.0 };
+                // forward bend (running): upper body pitches forward (+z) above the waist,
+                // arms pulled back/tucked relative to the leaning torso.
+                let bw = (((p[1].abs() / h) - 0.40) / 0.60).clamp(0.0, 1.0);        // 0 below waist → 1 head
+                let zlean = lean * bw * bw * h - lean * aw * 0.6 * h;
+                // legs (lower body, not arms): swing fore/aft antiphase L/R; the forward
+                // foot lifts (knee bend). `tuck` raises both knees toward the chest (jump).
+                let lw = (((0.45*h - p[1].abs()) / (0.45*h)).clamp(0.0, 1.0)) * (1.0 - aw);
+                let fw = (((0.16*h - p[1].abs()) / (0.16*h)).clamp(0.0, 1.0)) * (1.0 - aw);
+                let legswing = leg * side * lw;
+                let mut ylift = 0.0f32;
+                if legswing > 0.0 { ylift -= legswing * fw * 0.45 * h; }            // forward foot lifts (up = -Y)
+                ylift -= tuck * lw * 0.22 * h;                                      // jump tuck: knees up
                 let xs = p[0] + sway * p[1].abs();
-                let zs = p[2] + arm * side * (aw + ew * 0.7);
-                wv[k] = [cx + (xs*cs + zs*sn)*sc, cy + p[1]*sc, cz + (zs*cs - xs*sn)*sc];
+                let zs = p[2] + arm * side * (aw + ew * 0.7) + zlean + legswing + tuck * lw * 0.16 * h;
+                wv[k] = [cx + (xs*cs + zs*sn)*sc, cy + (p[1] + ylift)*sc, cz + (zs*cs - xs*sn)*sc];
                 k += 1;
             }
             let a = wv[0]; let b = wv[1]; let c = wv[2];
@@ -873,10 +886,14 @@ impl GfxState {
         let wi = w as i32; let hi = h as i32;
         for y in 0..h {
             let row = y * w;
+            let ry = rdy[y];
             for x in 0..w {
-                let sx = (x as i32 + rdx[y] + cdx[x]).rem_euclid(wi) as usize;
-                let sy = (y as i32 + cdy[x] + rdy[y]).rem_euclid(hi) as usize;
-                self.buffer[row + x] = src[sy * w + sx];
+                // branchless small-shift wrap (displacements are a few px → one add wraps)
+                let mut sxi = x as i32 + rdx[y] + cdx[x];
+                if sxi < 0 { sxi += wi; } else if sxi >= wi { sxi -= wi; }
+                let mut syi = y as i32 + cdy[x] + ry;
+                if syi < 0 { syi += hi; } else if syi >= hi { syi -= hi; }
+                self.buffer[row + x] = src[syi as usize * w + sxi as usize];
             }
         }
     }
