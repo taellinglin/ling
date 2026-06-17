@@ -11,7 +11,9 @@ pub struct AudioMixer {
 }
 
 impl AudioMixer {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Register a sound; returns a reusable handle.
     pub fn register(&mut self) -> SoundHandle {

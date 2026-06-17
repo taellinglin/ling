@@ -1,24 +1,24 @@
 //! Rigid-body physics: linear + **angular** integration, AABB collision, impulse
 //! response, and a spin-inducing floor bounce (so bodies tumble and roll).
 
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
 
 #[derive(Clone, Debug)]
 pub struct RigidBody {
-    pub pos:         Vec3,
-    pub vel:         Vec3,
-    pub acc:         Vec3,
-    pub mass:        f32,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub acc: Vec3,
+    pub mass: f32,
     pub restitution: f32,   // bounciness 0..1
-    pub friction:    f32,   // 0..1
+    pub friction: f32,      // 0..1
     pub half_extents: Vec3, // AABB half-size
     pub gravity_scale: f32,
-    pub is_static:   bool,
+    pub is_static: bool,
     // ── angular state ──
-    pub orientation: Quat,  // current rotation
-    pub ang_vel:     Vec3,  // angular velocity (rad/s, world axes)
-    pub torque:      Vec3,  // accumulated torque this step
-    pub inv_inertia: f32,   // scalar inverse moment of inertia (sphere approx)
+    pub orientation: Quat, // current rotation
+    pub ang_vel: Vec3,     // angular velocity (rad/s, world axes)
+    pub torque: Vec3,      // accumulated torque this step
+    pub inv_inertia: f32,  // scalar inverse moment of inertia (sphere approx)
 }
 
 impl RigidBody {
@@ -45,7 +45,11 @@ impl RigidBody {
     fn inv_inertia_for(mass: f32, he: Vec3) -> f32 {
         let r = he.max_element().max(1e-3);
         let i = 0.4 * mass.max(1e-6) * r * r;
-        if i > 1e-9 { 1.0 / i } else { 0.0 }
+        if i > 1e-9 {
+            1.0 / i
+        } else {
+            0.0
+        }
     }
 
     /// Recompute the inertia after changing mass/half_extents.
@@ -67,18 +71,24 @@ impl RigidBody {
 
     /// Accumulate a torque (world axes) for this step.
     pub fn apply_torque(&mut self, t: Vec3) {
-        if !self.is_static { self.torque += t; }
+        if !self.is_static {
+            self.torque += t;
+        }
     }
 
     /// Instantly add to the angular velocity.
     pub fn apply_spin(&mut self, w: Vec3) {
-        if !self.is_static { self.ang_vel += w; }
+        if !self.is_static {
+            self.ang_vel += w;
+        }
     }
 
     /// Apply an impulse at a world-space contact point — produces both linear
     /// and angular response (the lever arm `point - pos` creates spin).
     pub fn apply_impulse_at(&mut self, impulse: Vec3, point: Vec3) {
-        if self.is_static || self.mass <= 0.0 { return; }
+        if self.is_static || self.mass <= 0.0 {
+            return;
+        }
         self.vel += impulse / self.mass;
         let r = point - self.pos;
         self.ang_vel += r.cross(impulse) * self.inv_inertia;
@@ -87,7 +97,9 @@ impl RigidBody {
     /// Semi-implicit Euler integration with gravity, plus angular integration
     /// (quaternion derivative) so the body tumbles.
     pub fn integrate(&mut self, dt: f32, gravity: Vec3) {
-        if self.is_static { return; }
+        if self.is_static {
+            return;
+        }
         self.acc += gravity * self.gravity_scale;
         self.vel += self.acc * dt;
         self.pos += self.vel * dt;
@@ -104,7 +116,8 @@ impl RigidBody {
                 self.orientation.y + 0.5 * dq.y * dt,
                 self.orientation.z + 0.5 * dq.z * dt,
                 self.orientation.w + 0.5 * dq.w * dt,
-            ).normalize();
+            )
+            .normalize();
         }
     }
 
@@ -119,32 +132,43 @@ impl RigidBody {
             let r = self.half_extents.max_element();
             // rolling about Z from x-motion, about X from z-motion (right-hand rule)
             self.ang_vel.z += -self.vel.x / r.max(1e-3) * friction;
-            self.ang_vel.x +=  self.vel.z / r.max(1e-3) * friction;
+            self.ang_vel.x += self.vel.z / r.max(1e-3) * friction;
             self.vel.x *= 1.0 - friction * 0.3;
             self.vel.z *= 1.0 - friction * 0.3;
         }
     }
 
-    pub fn aabb_min(&self) -> Vec3 { self.pos - self.half_extents }
-    pub fn aabb_max(&self) -> Vec3 { self.pos + self.half_extents }
+    pub fn aabb_min(&self) -> Vec3 {
+        self.pos - self.half_extents
+    }
+    pub fn aabb_max(&self) -> Vec3 {
+        self.pos + self.half_extents
+    }
 
     pub fn overlaps(&self, other: &RigidBody) -> bool {
         let a_min = self.aabb_min();
         let a_max = self.aabb_max();
         let b_min = other.aabb_min();
         let b_max = other.aabb_max();
-        a_min.x <= b_max.x && a_max.x >= b_min.x
-            && a_min.y <= b_max.y && a_max.y >= b_min.y
-            && a_min.z <= b_max.z && a_max.z >= b_min.z
+        a_min.x <= b_max.x
+            && a_max.x >= b_min.x
+            && a_min.y <= b_max.y
+            && a_max.y >= b_min.y
+            && a_min.z <= b_max.z
+            && a_max.z >= b_min.z
     }
 }
 
 /// Resolve an AABB collision between two bodies (impulse method).
 pub fn resolve_collision(a: &mut RigidBody, b: &mut RigidBody) {
-    if !a.overlaps(b) { return; }
+    if !a.overlaps(b) {
+        return;
+    }
 
-    let a_min = a.aabb_min(); let a_max = a.aabb_max();
-    let b_min = b.aabb_min(); let b_max = b.aabb_max();
+    let a_min = a.aabb_min();
+    let a_max = a.aabb_max();
+    let b_min = b.aabb_min();
+    let b_max = b.aabb_max();
 
     // Find smallest overlap axis.
     let overlaps = [
@@ -156,7 +180,8 @@ pub fn resolve_collision(a: &mut RigidBody, b: &mut RigidBody) {
         (a_max.z - b_min.z, Vec3::NEG_Z),
     ];
 
-    let (depth, normal) = overlaps.iter()
+    let (depth, normal) = overlaps
+        .iter()
         .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap())
         .cloned()
         .unwrap();
@@ -164,7 +189,9 @@ pub fn resolve_collision(a: &mut RigidBody, b: &mut RigidBody) {
     let restitution = (a.restitution + b.restitution) * 0.5;
     let rel_vel = (a.vel - b.vel).dot(normal);
 
-    if rel_vel > 0.0 { return; } // already separating
+    if rel_vel > 0.0 {
+        return;
+    } // already separating
 
     let inv_a = if a.is_static { 0.0 } else { 1.0 / a.mass };
     let inv_b = if b.is_static { 0.0 } else { 1.0 / b.mass };
@@ -176,13 +203,17 @@ pub fn resolve_collision(a: &mut RigidBody, b: &mut RigidBody) {
 
     // Positional correction (Baumgarte).
     let correction = normal * (depth * 0.8 / (inv_a + inv_b).max(1e-6));
-    if !a.is_static { a.pos += correction * inv_a; }
-    if !b.is_static { b.pos -= correction * inv_b; }
+    if !a.is_static {
+        a.pos += correction * inv_a;
+    }
+    if !b.is_static {
+        b.pos -= correction * inv_b;
+    }
 }
 
 /// Simple physics world holding all rigid bodies.
 pub struct PhysicsWorld {
-    pub bodies:  Vec<RigidBody>,
+    pub bodies: Vec<RigidBody>,
     pub gravity: Vec3,
 }
 
@@ -212,7 +243,9 @@ impl PhysicsWorld {
 }
 
 impl Default for PhysicsWorld {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -226,8 +259,13 @@ mod tests {
         b.integrate(1.0 / 60.0, Vec3::ZERO);
         assert!(b.ang_vel.y > 0.0, "torque should create angular velocity");
         let before = b.orientation;
-        for _ in 0..60 { b.integrate(1.0 / 60.0, Vec3::ZERO); }
-        assert!((b.orientation.dot(before)).abs() < 0.999, "body should have rotated");
+        for _ in 0..60 {
+            b.integrate(1.0 / 60.0, Vec3::ZERO);
+        }
+        assert!(
+            (b.orientation.dot(before)).abs() < 0.999,
+            "body should have rotated"
+        );
         assert!(b.orientation.is_normalized());
     }
     #[test]
@@ -243,6 +281,9 @@ mod tests {
         b.vel = Vec3::new(3.0, -2.0, 0.0);
         b.bounce_floor(0.0, 0.6, 0.8);
         assert!(b.vel.y > 0.0, "should bounce up");
-        assert!(b.ang_vel.z.abs() > 0.0, "horizontal motion should induce roll");
+        assert!(
+            b.ang_vel.z.abs() > 0.0,
+            "horizontal motion should induce roll"
+        );
     }
 }

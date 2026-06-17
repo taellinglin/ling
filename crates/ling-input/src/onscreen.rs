@@ -134,7 +134,11 @@ impl VirtualStick {
             if let Some(t) = pool.get(id) {
                 let raw = (t.pos - self.rt.base) / self.radius.max(1.0);
                 self.rt.value = self.shaping.vector(raw);
-                let clamped = if raw.length() > 1.0 { raw.normalize() } else { raw };
+                let clamped = if raw.length() > 1.0 {
+                    raw.normalize()
+                } else {
+                    raw
+                };
                 self.rt.knob = self.rt.base + clamped * self.radius;
                 self.rt.active = true;
             }
@@ -290,10 +294,30 @@ impl OnScreenControls {
         let br = size.y * 0.07;
         let bx = size.x - m;
         let by = size.y * 0.45;
-        s.buttons.push(VirtualButton::new(GamepadButton::South, Vec2::new(bx - br * 2.2, by + br * 2.2), br, "A"));
-        s.buttons.push(VirtualButton::new(GamepadButton::East, Vec2::new(bx, by), br, "B"));
-        s.buttons.push(VirtualButton::new(GamepadButton::West, Vec2::new(bx - br * 4.4, by), br, "X"));
-        s.buttons.push(VirtualButton::new(GamepadButton::North, Vec2::new(bx - br * 2.2, by - br * 2.2), br, "Y"));
+        s.buttons.push(VirtualButton::new(
+            GamepadButton::South,
+            Vec2::new(bx - br * 2.2, by + br * 2.2),
+            br,
+            "A",
+        ));
+        s.buttons.push(VirtualButton::new(
+            GamepadButton::East,
+            Vec2::new(bx, by),
+            br,
+            "B",
+        ));
+        s.buttons.push(VirtualButton::new(
+            GamepadButton::West,
+            Vec2::new(bx - br * 4.4, by),
+            br,
+            "X",
+        ));
+        s.buttons.push(VirtualButton::new(
+            GamepadButton::North,
+            Vec2::new(bx - br * 2.2, by - br * 2.2),
+            br,
+            "Y",
+        ));
         s
     }
 
@@ -323,10 +347,14 @@ impl OnScreenControls {
         }
         for d in &mut self.dpads {
             d.update(pool, dt);
-            self.pad.set_button(GamepadButton::DpadUp, d.up.is_down(), dt);
-            self.pad.set_button(GamepadButton::DpadDown, d.down.is_down(), dt);
-            self.pad.set_button(GamepadButton::DpadLeft, d.left.is_down(), dt);
-            self.pad.set_button(GamepadButton::DpadRight, d.right.is_down(), dt);
+            self.pad
+                .set_button(GamepadButton::DpadUp, d.up.is_down(), dt);
+            self.pad
+                .set_button(GamepadButton::DpadDown, d.down.is_down(), dt);
+            self.pad
+                .set_button(GamepadButton::DpadLeft, d.left.is_down(), dt);
+            self.pad
+                .set_button(GamepadButton::DpadRight, d.right.is_down(), dt);
         }
     }
 
@@ -344,13 +372,14 @@ mod tests {
     #[test]
     fn floating_stick_spawns_under_thumb_and_reports_vector() {
         let mut pool = TouchPool::new();
-        let mut s = VirtualStick::new(GamepadStick::Left, Vec2::new(200.0, 600.0), 100.0).floating();
+        let mut s =
+            VirtualStick::new(GamepadStick::Left, Vec2::new(200.0, 600.0), 100.0).floating();
         // Touch starts inside the zone, off the anchor.
         let start = Vec2::new(150.0, 620.0);
         pool.begin(1, start, 1.0);
         s.update(&pool, 0.016);
         assert_eq!(s.rt.base, start); // floating base moved to the thumb
-        // Drag right -> +x output.
+                                      // Drag right -> +x output.
         pool.begin_frame();
         pool.moved(1, start + Vec2::new(80.0, 0.0), 1.0);
         s.update(&pool, 0.016);

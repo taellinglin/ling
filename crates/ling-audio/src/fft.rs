@@ -11,25 +11,32 @@
 //! let _ = (bands, beat);
 //! ```
 
-use rustfft::{FftPlanner, num_complex::Complex};
+use rustfft::{num_complex::Complex, FftPlanner};
 
 /// Frequency analysis window shapes.
 #[derive(Clone, Copy, Debug)]
-pub enum Window { Hann, Hamming, Blackman, Rectangular }
+pub enum Window {
+    Hann,
+    Hamming,
+    Blackman,
+    Rectangular,
+}
 
 impl Window {
     fn apply(self, buf: &mut [f32]) {
         let n = buf.len();
         for (i, s) in buf.iter_mut().enumerate() {
             let w = match self {
-                Self::Hann =>
-                    0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos()),
-                Self::Hamming =>
-                    0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos(),
+                Self::Hann => {
+                    0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos())
+                },
+                Self::Hamming => {
+                    0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos()
+                },
                 Self::Blackman => {
                     let t = 2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32;
                     0.42 - 0.5 * t.cos() + 0.08 * (2.0 * t).cos()
-                }
+                },
                 Self::Rectangular => 1.0,
             };
             *s *= w;
@@ -39,18 +46,18 @@ impl Window {
 
 /// Holds the rolling sample buffer and performs FFT analysis.
 pub struct FftAnalyzer {
-    fft_size:    usize,
+    fft_size: usize,
     sample_rate: u32,
-    buffer:      Vec<f32>,
-    window:      Window,
+    buffer: Vec<f32>,
+    window: Window,
     /// Latest magnitude spectrum (fft_size/2 bins).
     pub magnitudes: Vec<f32>,
     /// Smoothed magnitudes for visuals.
-    pub smoothed:   Vec<f32>,
+    pub smoothed: Vec<f32>,
     /// Beat detection state.
-    beat_energy:    f32,
-    beat_avg:       f32,
-    planner:        FftPlanner<f32>,
+    beat_energy: f32,
+    beat_avg: f32,
+    planner: FftPlanner<f32>,
 }
 
 impl FftAnalyzer {
@@ -61,17 +68,19 @@ impl FftAnalyzer {
         Self {
             fft_size,
             sample_rate,
-            buffer:      vec![0.0; fft_size],
-            window:      Window::Hann,
-            magnitudes:  vec![0.0; bins],
-            smoothed:    vec![0.0; bins],
+            buffer: vec![0.0; fft_size],
+            window: Window::Hann,
+            magnitudes: vec![0.0; bins],
+            smoothed: vec![0.0; bins],
             beat_energy: 0.0,
-            beat_avg:    0.001,
-            planner:     FftPlanner::new(),
+            beat_avg: 0.001,
+            planner: FftPlanner::new(),
         }
     }
 
-    pub fn set_window(&mut self, w: Window) { self.window = w; }
+    pub fn set_window(&mut self, w: Window) {
+        self.window = w;
+    }
 
     /// Push new audio samples (mono f32).  Keeps a rolling window.
     pub fn push_samples(&mut self, samples: &[f32]) {
@@ -84,7 +93,9 @@ impl FftAnalyzer {
 
     fn compute(&mut self) {
         let fft = self.planner.plan_fft_forward(self.fft_size);
-        let mut buf: Vec<Complex<f32>> = self.buffer.iter()
+        let mut buf: Vec<Complex<f32>> = self
+            .buffer
+            .iter()
             .cloned()
             .map(|s| Complex { re: s, im: 0.0 })
             .collect();
@@ -93,7 +104,9 @@ impl FftAnalyzer {
         {
             let mut real: Vec<f32> = buf.iter().map(|c| c.re).collect();
             self.window.apply(&mut real);
-            for (c, &r) in buf.iter_mut().zip(real.iter()) { c.re = r; }
+            for (c, &r) in buf.iter_mut().zip(real.iter()) {
+                c.re = r;
+            }
         }
 
         fft.process(&mut buf);
@@ -123,34 +136,43 @@ impl FftAnalyzer {
     /// Return `bands` logarithmically-spaced frequency magnitudes.
     /// Index 0 = bass, index bands-1 = treble.
     pub fn freq_bands(&self, bands: usize) -> Vec<f32> {
-        if bands == 0 { return vec![]; }
-        let nyq   = self.sample_rate as f32 / 2.0;
-        let bins  = self.magnitudes.len();
+        if bands == 0 {
+            return vec![];
+        }
+        let nyq = self.sample_rate as f32 / 2.0;
+        let bins = self.magnitudes.len();
         let f_min = 20.0f32;
         let f_max = nyq;
         let log_lo = f_min.log2();
         let log_hi = f_max.log2();
 
-        (0..bands).map(|b| {
-            let lo = 2.0f32.powf(log_lo + (b as f32 / bands as f32) * (log_hi - log_lo));
-            let hi = 2.0f32.powf(log_lo + ((b + 1) as f32 / bands as f32) * (log_hi - log_lo));
-            let bin_lo = ((lo / nyq) * bins as f32) as usize;
-            let bin_hi = ((hi / nyq) * bins as f32) as usize + 1;
-            let bin_lo = bin_lo.min(bins - 1);
-            let bin_hi = bin_hi.min(bins);
-            if bin_hi <= bin_lo {
-                self.smoothed[bin_lo]
-            } else {
-                self.smoothed[bin_lo..bin_hi].iter().cloned().fold(0.0f32, f32::max)
-            }
-        }).collect()
+        (0..bands)
+            .map(|b| {
+                let lo = 2.0f32.powf(log_lo + (b as f32 / bands as f32) * (log_hi - log_lo));
+                let hi = 2.0f32.powf(log_lo + ((b + 1) as f32 / bands as f32) * (log_hi - log_lo));
+                let bin_lo = ((lo / nyq) * bins as f32) as usize;
+                let bin_hi = ((hi / nyq) * bins as f32) as usize + 1;
+                let bin_lo = bin_lo.min(bins - 1);
+                let bin_hi = bin_hi.min(bins);
+                if bin_hi <= bin_lo {
+                    self.smoothed[bin_lo]
+                } else {
+                    self.smoothed[bin_lo..bin_hi]
+                        .iter()
+                        .cloned()
+                        .fold(0.0f32, f32::max)
+                }
+            })
+            .collect()
     }
 
     /// Dominant frequency in Hz (peak of magnitude spectrum).
     pub fn dominant_freq(&self) -> f32 {
         let nyq = self.sample_rate as f32 / 2.0;
         let bins = self.magnitudes.len();
-        let peak_bin = self.magnitudes.iter()
+        let peak_bin = self
+            .magnitudes
+            .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .map(|(i, _)| i)
@@ -179,10 +201,10 @@ impl FftAnalyzer {
 /// IQ cosine palette: color(t) = a + b * cos(2π * (c*t + d))
 #[derive(Clone, Debug)]
 pub struct CosPalette {
-    pub a: [f32; 3],  // offset
-    pub b: [f32; 3],  // amplitude
-    pub c: [f32; 3],  // frequency
-    pub d: [f32; 3],  // phase
+    pub a: [f32; 3], // offset
+    pub b: [f32; 3], // amplitude
+    pub c: [f32; 3], // frequency
+    pub d: [f32; 3], // phase
 }
 
 impl CosPalette {
@@ -239,7 +261,8 @@ impl CosPalette {
     /// Evaluate the palette at parameter `t` (0..1), returns `[r, g, b]` in 0..1.
     pub fn eval(&self, t: f32) -> [f32; 3] {
         [0, 1, 2].map(|i| {
-            let v = self.a[i] + self.b[i] * (2.0 * std::f32::consts::PI * (self.c[i] * t + self.d[i])).cos();
+            let v = self.a[i]
+                + self.b[i] * (2.0 * std::f32::consts::PI * (self.c[i] * t + self.d[i])).cos();
             v.clamp(0.0, 1.0)
         })
     }
@@ -252,31 +275,46 @@ impl CosPalette {
     /// Map an array of frequency band magnitudes to colors.
     /// `magnitudes`: 0..1 per band.  Returns `bands` RGBA pixels.
     pub fn map_bands(&self, magnitudes: &[f32], time: f32, speed: f32) -> Vec<[u8; 4]> {
-        magnitudes.iter().enumerate().map(|(i, &m)| {
-            let t = i as f32 / magnitudes.len() as f32;
-            let [r, g, b] = self.eval_animated(t, time, speed);
-            let brightness = m.clamp(0.0, 1.0);
-            [(r * brightness * 255.0) as u8, (g * brightness * 255.0) as u8, (b * brightness * 255.0) as u8, (brightness * 255.0) as u8]
-        }).collect()
+        magnitudes
+            .iter()
+            .enumerate()
+            .map(|(i, &m)| {
+                let t = i as f32 / magnitudes.len() as f32;
+                let [r, g, b] = self.eval_animated(t, time, speed);
+                let brightness = m.clamp(0.0, 1.0);
+                [
+                    (r * brightness * 255.0) as u8,
+                    (g * brightness * 255.0) as u8,
+                    (b * brightness * 255.0) as u8,
+                    (brightness * 255.0) as u8,
+                ]
+            })
+            .collect()
     }
 }
 
 /// Generate an RGBA texture (width × height) where each column is a frequency band,
 /// brightness is magnitude, and colour is palette-based.
-pub fn freq_texture(bands: &[f32], palette: &CosPalette, width: u32, height: u32, time: f32) -> Vec<u8> {
+pub fn freq_texture(
+    bands: &[f32],
+    palette: &CosPalette,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut pixels = vec![0u8; w * h * 4];
     for x in 0..w {
         let band_idx = (x * bands.len() / w).min(bands.len() - 1);
-        let mag      = bands[band_idx].clamp(0.0, 1.0);
-        let fill_h   = (mag * h as f32) as usize;
-        let t        = x as f32 / w as f32;
+        let mag = bands[band_idx].clamp(0.0, 1.0);
+        let fill_h = (mag * h as f32) as usize;
+        let t = x as f32 / w as f32;
         let [r, g, b] = palette.eval_animated(t, time, 0.3);
         for y in (h - fill_h)..h {
             let alpha = (mag * (1.0 - (y as f32 / h as f32)) * 1.5).clamp(0.0, 1.0);
             let idx = (y * w + x) * 4;
-            pixels[idx    ] = (r * 255.0) as u8;
+            pixels[idx] = (r * 255.0) as u8;
             pixels[idx + 1] = (g * 255.0) as u8;
             pixels[idx + 2] = (b * 255.0) as u8;
             pixels[idx + 3] = (alpha * 255.0) as u8;
@@ -286,7 +324,13 @@ pub fn freq_texture(bands: &[f32], palette: &CosPalette, width: u32, height: u32
 }
 
 /// Build a circular waveform / scope texture (Lissajous-style).
-pub fn waveform_texture(samples: &[f32], palette: &CosPalette, width: u32, height: u32, time: f32) -> Vec<u8> {
+pub fn waveform_texture(
+    samples: &[f32],
+    palette: &CosPalette,
+    width: u32,
+    height: u32,
+    time: f32,
+) -> Vec<u8> {
     let w = width as usize;
     let h = height as usize;
     let mut pixels = vec![0u8; w * h * 4];
@@ -296,7 +340,7 @@ pub fn waveform_texture(samples: &[f32], palette: &CosPalette, width: u32, heigh
         let t = i as f32 / samples.len() as f32;
         let [r, g, b] = palette.eval_animated(t, time, 0.2);
         let idx = (y * w + x) * 4;
-        pixels[idx    ] = (r * 255.0) as u8;
+        pixels[idx] = (r * 255.0) as u8;
         pixels[idx + 1] = (g * 255.0) as u8;
         pixels[idx + 2] = (b * 255.0) as u8;
         pixels[idx + 3] = 255;

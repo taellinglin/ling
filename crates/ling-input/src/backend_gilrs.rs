@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use gilrs::{Axis as GAxis, Button as GButton, EventType, Gilrs, GamepadId};
+use gilrs::{Axis as GAxis, Button as GButton, EventType, GamepadId, Gilrs};
 
 use crate::device::{Capabilities, DeviceId, DeviceInfo, DeviceKind, DeviceRegistry};
 use crate::event::InputEvent;

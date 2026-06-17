@@ -2,29 +2,58 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Declaration keywords
-    Bind, Do, Fn, Mod, Type,
+    Bind,
+    Do,
+    Fn,
+    Mod,
+    Type,
     // Module imports
     Use,
 
     // Control flow
-    If, Else, While, For, In, Match, Return,
+    If,
+    Else,
+    While,
+    For,
+    In,
+    Match,
+    Return,
 
     // Ownership / borrow semantics
-    Own, Lend, Share, Move, Copy,
+    Own,
+    Lend,
+    Share,
+    Move,
+    Copy,
 
     // Concurrency
-    Async, Wait,
+    Async,
+    Wait,
 
     // Other keywords
-    Post, Give, Fit, Form, Choose, Can, Change,
-    Stop, Again, Try, Sure, Maybe,
-    Pure, Spawn,
+    Post,
+    Give,
+    Fit,
+    Form,
+    Choose,
+    Can,
+    Change,
+    Stop,
+    Again,
+    Try,
+    Sure,
+    Maybe,
+    Pure,
+    Spawn,
 
     // Result / Option helpers
-    Ok, Bad, None,
+    Ok,
+    Bad,
+    None,
 
     // Type / trait helpers
-    As, Where,
+    As,
+    Where,
 
     // Identifiers & literals
     Ident(String),
@@ -34,19 +63,44 @@ pub enum Token {
     Bool(bool),
 
     // Operators
-    Plus, Minus, Star, Slash, Percent,
-    Eq, EqEq, Ne, Lt, Gt, Le, Ge,
-    And, Or, Not,
-    Arrow, FatArrow, Dot, DotDot,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Eq,
+    EqEq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+    Not,
+    Arrow,
+    FatArrow,
+    Dot,
+    DotDot,
     Ampersand,
 
     // Path / namespace
     ColonColon,
 
     // Punctuation
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-    Comma, Colon, Semicolon,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Comma,
+    Colon,
+    Semicolon,
 
     // Special
-    Whitespace, Comment(std::string::String), Error(std::string::String), Eof,
+    Whitespace,
+    Comment(std::string::String),
+    Error(std::string::String),
+    Eof,
 }

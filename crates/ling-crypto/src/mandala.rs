@@ -17,21 +17,23 @@ const DOMAIN: &str = "ling-mandala-v1";
 /// Parameters describing a mandala visual pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MandalaParams {
-    pub n_rings:    u8,    // number of concentric rings (1–255)
-    pub n_spokes:   u8,    // chakra spokes (1–255)
-    pub n_petals:   u8,    // lotus petals (1–255)
-    pub n_spiral:   u8,    // spiral arms (0–255)
-    pub inner_r:    f32,   // inner radius (normalized 0.0–1.0)
-    pub outer_r:    f32,   // outer radius (normalized 0.0–1.0)
-    pub twist:      f32,   // spiral twist factor
-    pub hue_offset: f32,   // starting hue (0.0–1.0, visual only — included for uniqueness)
-    pub seed:       u64,   // extra entropy / version
+    pub n_rings: u8,     // number of concentric rings (1–255)
+    pub n_spokes: u8,    // chakra spokes (1–255)
+    pub n_petals: u8,    // lotus petals (1–255)
+    pub n_spiral: u8,    // spiral arms (0–255)
+    pub inner_r: f32,    // inner radius (normalized 0.0–1.0)
+    pub outer_r: f32,    // outer radius (normalized 0.0–1.0)
+    pub twist: f32,      // spiral twist factor
+    pub hue_offset: f32, // starting hue (0.0–1.0, visual only — included for uniqueness)
+    pub seed: u64,       // extra entropy / version
 }
 
 impl MandalaParams {
     pub fn new(n_rings: u8, n_spokes: u8, n_petals: u8) -> Self {
         Self {
-            n_rings, n_spokes, n_petals,
+            n_rings,
+            n_spokes,
+            n_petals,
             n_spiral: 4,
             inner_r: 0.1,
             outer_r: 0.9,

@@ -141,7 +141,7 @@ impl Tree {
                     }
                 }
                 Status::Failure
-            }
+            },
             Node::Sequence(children) => {
                 let kids = children.clone();
                 for c in kids {
@@ -151,7 +151,7 @@ impl Tree {
                     }
                 }
                 Status::Success
-            }
+            },
             Node::Parallel(children) => {
                 let kids = children.clone();
                 let mut all = true;
@@ -160,8 +160,12 @@ impl Tree {
                         all = false;
                     }
                 }
-                if all { Status::Success } else { Status::Failure }
-            }
+                if all {
+                    Status::Success
+                } else {
+                    Status::Failure
+                }
+            },
             Node::Inverter(child) => {
                 let c = *child;
                 match self.eval(c) {
@@ -169,7 +173,7 @@ impl Tree {
                     Status::Failure => Status::Success,
                     Status::Running => Status::Running,
                 }
-            }
+            },
             Node::Condition(key, cmp, val) => {
                 let (key, cmp, val) = (key.clone(), *cmp, *val);
                 if cmp.test(self.get(&key), val) {
@@ -177,11 +181,11 @@ impl Tree {
                 } else {
                     Status::Failure
                 }
-            }
+            },
             Node::Action(name) => {
                 self.last_action = name.clone();
                 Status::Success
-            }
+            },
         }
     }
 }
@@ -254,20 +258,18 @@ impl Parser<'_> {
                     "sequence" => Node::Sequence(kids),
                     _ => Node::Parallel(kids),
                 }))
-            }
+            },
             "not" => {
                 let child = self.node()?;
                 Some(self.push(Node::Inverter(child)))
-            }
+            },
             cond if cond.starts_with('?') => {
                 let key = cond[1..].to_string();
                 let cmp = Cmp::parse(self.bump()?)?;
                 let val: f32 = self.bump()?.parse().ok()?;
                 Some(self.push(Node::Condition(key, cmp, val)))
-            }
-            act if act.starts_with('!') => {
-                Some(self.push(Node::Action(act[1..].to_string())))
-            }
+            },
+            act if act.starts_with('!') => Some(self.push(Node::Action(act[1..].to_string()))),
             _ => None,
         }
     }
@@ -304,8 +306,8 @@ mod tests {
 
     #[test]
     fn inverter_flips_condition() {
-        let mut t = Tree::parse("selector { sequence { not ?safe > 0 !hide } !relax }")
-            .expect("parse");
+        let mut t =
+            Tree::parse("selector { sequence { not ?safe > 0 !hide } !relax }").expect("parse");
         assert_eq!(t.tick(), "hide"); // safe==0 → not(false)=success → hide
         t.set("safe", 1.0);
         assert_eq!(t.tick(), "relax");
@@ -313,9 +315,7 @@ mod tests {
 
     #[test]
     fn comments_and_whitespace_ok() {
-        let t = Tree::parse(
-            "# a tree\nselector {\n  !idle  # fallback\n}\n",
-        );
+        let t = Tree::parse("# a tree\nselector {\n  !idle  # fallback\n}\n");
         assert!(t.is_some());
     }
 

@@ -51,8 +51,8 @@ fn svg_to_ico(src: &Path, sizes: &[u32]) -> Result<Vec<u8>, String> {
     let mut dir = ico::IconDir::new(ico::ResourceType::Icon);
     for &n in sizes {
         let n = n.clamp(1, 256);
-        let mut pixmap = tiny_skia::Pixmap::new(n, n)
-            .ok_or_else(|| format!("alloc {n}x{n} pixmap"))?;
+        let mut pixmap =
+            tiny_skia::Pixmap::new(n, n).ok_or_else(|| format!("alloc {n}x{n} pixmap"))?;
         // Scale uniformly to fit the square and centre it.
         let scale = (n as f32 / sw).min(n as f32 / sh);
         let tx = (n as f32 - sw * scale) / 2.0;
@@ -61,7 +61,9 @@ fn svg_to_ico(src: &Path, sizes: &[u32]) -> Result<Vec<u8>, String> {
         resvg::render(&tree, transform, &mut pixmap.as_mut());
 
         // tiny_skia is premultiplied; encode_png writes straight-alpha PNG.
-        let png = pixmap.encode_png().map_err(|e| format!("encode png: {e}"))?;
+        let png = pixmap
+            .encode_png()
+            .map_err(|e| format!("encode png: {e}"))?;
         let image = ico::IconImage::read_png(&png[..]).map_err(|e| format!("ico read_png: {e}"))?;
         dir.add_entry(ico::IconDirEntry::encode(&image).map_err(|e| format!("ico encode: {e}"))?);
     }
@@ -96,7 +98,8 @@ pub fn embed_in_build(ico_path: &Path) -> Result<(), String> {
     let path = ico_path.to_str().ok_or("icon path is not valid UTF-8")?;
     let mut res = winresource::WindowsResource::new();
     res.set_icon(path);
-    res.compile().map_err(|e| format!("winresource compile: {e}"))
+    res.compile()
+        .map_err(|e| format!("winresource compile: {e}"))
 }
 
 #[cfg(not(windows))]
@@ -119,7 +122,11 @@ mod tests {
         for &n in sizes {
             let mut pm = tiny_skia::Pixmap::new(n, n).unwrap();
             let scale = (n as f32 / sz.width()).min(n as f32 / sz.height());
-            resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pm.as_mut());
+            resvg::render(
+                &tree,
+                tiny_skia::Transform::from_scale(scale, scale),
+                &mut pm.as_mut(),
+            );
             let png = pm.encode_png().unwrap();
             let img = ico::IconImage::read_png(&png[..]).unwrap();
             dir.add_entry(ico::IconDirEntry::encode(&img).unwrap());

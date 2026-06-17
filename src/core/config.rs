@@ -10,7 +10,6 @@ impl CompilerConfig {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Default)]
 pub enum OptimizationLevel {
     #[default]
@@ -19,5 +18,3 @@ pub enum OptimizationLevel {
     O2,
     O3,
 }
-
-

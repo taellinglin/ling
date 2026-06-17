@@ -23,9 +23,9 @@
 //! hybrid KEM combiner assumption.
 
 use crate::pq::{self, MlKem768Keypair};
+use rand::rngs::OsRng;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{PublicKey, StaticSecret};
-use rand::rngs::OsRng;
 use zeroize::Zeroize;
 
 const COMBINER_LABEL: &[u8] = b"ling-hybrid-x25519-mlkem768-v1";
@@ -61,7 +61,11 @@ impl HybridKeypair {
     pub fn generate() -> Self {
         let x25519_secret = StaticSecret::random_from_rng(OsRng);
         let x25519_public = PublicKey::from(&x25519_secret).to_bytes();
-        Self { x25519_secret, x25519_public, mlkem: MlKem768Keypair::generate() }
+        Self {
+            x25519_secret,
+            x25519_public,
+            mlkem: MlKem768Keypair::generate(),
+        }
     }
 
     /// The hybrid public key to publish: `X25519_pk ‖ MLKEM_ek` (1216 bytes).
@@ -98,7 +102,9 @@ impl HybridKeypair {
 ///
 /// Returns `(ciphertext, shared_secret)`. Send the ciphertext to the peer; both
 /// sides then share `shared_secret`.
-pub fn encapsulate(hybrid_public_key: &[u8]) -> Result<(Vec<u8>, [u8; SHARED_SECRET_LEN]), &'static str> {
+pub fn encapsulate(
+    hybrid_public_key: &[u8],
+) -> Result<(Vec<u8>, [u8; SHARED_SECRET_LEN]), &'static str> {
     if hybrid_public_key.len() != PUBLIC_KEY_LEN {
         return Err("hybrid public key wrong length");
     }
@@ -109,7 +115,9 @@ pub fn encapsulate(hybrid_public_key: &[u8]) -> Result<(Vec<u8>, [u8; SHARED_SEC
     // X25519 leg: ephemeral DH against the recipient's static X25519 key.
     let eph_secret = StaticSecret::random_from_rng(OsRng);
     let eph_public = PublicKey::from(&eph_secret).to_bytes();
-    let mut ss_x = eph_secret.diffie_hellman(&PublicKey::from(x_pk_arr)).to_bytes();
+    let mut ss_x = eph_secret
+        .diffie_hellman(&PublicKey::from(x_pk_arr))
+        .to_bytes();
 
     // ML-KEM leg.
     let (ct_pq, ss_pq) = pq::encapsulate(mlkem_ek)?;

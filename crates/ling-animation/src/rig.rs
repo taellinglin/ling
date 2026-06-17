@@ -3,8 +3,8 @@
 //! A `Rig` knows nothing about meshes or pixels — a [`crate::binding`] maps joint
 //! world-transforms onto a concrete target (3-D skin, 2-D vtex lattice, params…).
 
-use glam::{Vec3, Quat, Mat4};
 use crate::temperament::Temperament;
+use glam::{Mat4, Quat, Vec3};
 
 /// Local translate / rotate / scale, matching `ling-graphics::scene::Transform`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -15,8 +15,14 @@ pub struct Transform {
 }
 
 impl Transform {
-    pub const IDENTITY: Self = Self { translation: Vec3::ZERO, rotation: Quat::IDENTITY, scale: Vec3::ONE };
-    pub fn from_translation(t: Vec3) -> Self { Self { translation: t, ..Self::IDENTITY } }
+    pub const IDENTITY: Self = Self {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    pub fn from_translation(t: Vec3) -> Self {
+        Self { translation: t, ..Self::IDENTITY }
+    }
     pub fn matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
@@ -29,7 +35,11 @@ impl Transform {
     }
 }
 
-impl Default for Transform { fn default() -> Self { Self::IDENTITY } }
+impl Default for Transform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
 
 pub type JointId = usize;
 
@@ -50,7 +60,14 @@ pub struct Joint {
 
 impl Joint {
     pub fn new(name: impl Into<String>, parent: Option<JointId>, rest: Transform) -> Self {
-        Self { name: name.into(), parent, rest, local: rest, temperament: Temperament::ORGANIC, limits: None }
+        Self {
+            name: name.into(),
+            parent,
+            rest,
+            local: rest,
+            temperament: Temperament::ORGANIC,
+            limits: None,
+        }
     }
 }
 
@@ -62,7 +79,9 @@ pub struct Rig {
 }
 
 impl Rig {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Add a joint, returning its id. Parents must be added before children.
     pub fn add(&mut self, joint: Joint) -> JointId {
@@ -72,20 +91,28 @@ impl Rig {
         id
     }
 
-    pub fn len(&self) -> usize { self.joints.len() }
-    pub fn is_empty(&self) -> bool { self.joints.is_empty() }
+    pub fn len(&self) -> usize {
+        self.joints.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.joints.is_empty()
+    }
 
     pub fn find(&self, name: &str) -> Option<JointId> {
         self.joints.iter().position(|j| j.name == name)
     }
 
     pub fn set_local(&mut self, id: JointId, local: Transform) {
-        if let Some(j) = self.joints.get_mut(id) { j.local = local; }
+        if let Some(j) = self.joints.get_mut(id) {
+            j.local = local;
+        }
     }
 
     /// Reset every joint to its rest pose.
     pub fn reset(&mut self) {
-        for j in &mut self.joints { j.local = j.rest; }
+        for j in &mut self.joints {
+            j.local = j.rest;
+        }
     }
 
     /// Recompute world matrices from local transforms (parents resolved first,
@@ -100,7 +127,9 @@ impl Rig {
         }
     }
 
-    pub fn world(&self, id: JointId) -> Mat4 { self.world.get(id).copied().unwrap_or(Mat4::IDENTITY) }
+    pub fn world(&self, id: JointId) -> Mat4 {
+        self.world.get(id).copied().unwrap_or(Mat4::IDENTITY)
+    }
 
     /// World-space position of a joint's origin (after [`resolve`]).
     pub fn world_pos(&self, id: JointId) -> Vec3 {
@@ -131,8 +160,16 @@ mod tests {
     #[test]
     fn hierarchy_accumulates() {
         let mut r = Rig::new();
-        let root = r.add(Joint::new("root", None, Transform::from_translation(Vec3::new(1.0, 0.0, 0.0))));
-        let _tip = r.add(Joint::new("tip", Some(root), Transform::from_translation(Vec3::new(0.0, 2.0, 0.0))));
+        let root = r.add(Joint::new(
+            "root",
+            None,
+            Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+        ));
+        let _tip = r.add(Joint::new(
+            "tip",
+            Some(root),
+            Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+        ));
         r.resolve();
         let p = r.world_pos(1);
         assert!((p - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5, "got {p:?}");

@@ -49,9 +49,13 @@ impl MicInput {
     /// Open the default input device with the given config.
     pub fn open(config: MicConfig) -> Result<Self, MicError> {
         #[cfg(not(target_arch = "wasm32"))]
-        { Ok(Self { inner: native::NativeMic::open(config)? }) }
+        {
+            Ok(Self { inner: native::NativeMic::open(config)? })
+        }
         #[cfg(target_arch = "wasm32")]
-        { Ok(Self { inner: web::WebMic::open(config)? }) }
+        {
+            Ok(Self { inner: web::WebMic::open(config)? })
+        }
     }
 
     /// Begin streaming; `callback` is called with each buffer of f32 PCM samples.

@@ -24,28 +24,32 @@ pub fn lambda(p: Vec3) -> f32 {
 /// Hyperbolic distance between two Poincaré-ball points.
 pub fn distance(a: Vec3, b: Vec3) -> f32 {
     let diff2 = (a - b).length_squared();
-    let a2    = a.length_squared();
-    let b2    = b.length_squared();
+    let a2 = a.length_squared();
+    let b2 = b.length_squared();
     let denom = ((1.0 - a2) * (1.0 - b2)).max(EPSILON);
-    let arg   = 1.0 + 2.0 * diff2 / denom;
+    let arg = 1.0 + 2.0 * diff2 / denom;
     arg.max(1.0).acosh()
 }
 
 /// Möbius addition (translation by `y` in hyperbolic space).
 pub fn mobius_add(x: Vec3, y: Vec3) -> Vec3 {
-    let x2  = x.length_squared();
-    let y2  = y.length_squared();
-    let xy  = x.dot(y);
+    let x2 = x.length_squared();
+    let y2 = y.length_squared();
+    let xy = x.dot(y);
     let denom = 1.0 + 2.0 * xy + x2 * y2;
-    if denom.abs() < EPSILON { return x; }
+    if denom.abs() < EPSILON {
+        return x;
+    }
     ((1.0 + 2.0 * xy + y2) * x + (1.0 - x2) * y) / denom
 }
 
 /// Exponential map: geodesic starting at `base` in the direction `v` (in tangent space).
 pub fn exp_map(base: Vec3, v: Vec3) -> Vec3 {
     let lam = lambda(base);
-    let vn  = v.length();
-    if vn < EPSILON { return base; }
+    let vn = v.length();
+    if vn < EPSILON {
+        return base;
+    }
     let tanh_arg = (lam * vn * 0.5).tanh();
     let dir = v / vn;
     mobius_add(base, dir * tanh_arg)
@@ -55,7 +59,9 @@ pub fn exp_map(base: Vec3, v: Vec3) -> Vec3 {
 pub fn log_map(base: Vec3, target: Vec3) -> Vec3 {
     let minus_base = mobius_add(-base, target);
     let norm = minus_base.length();
-    if norm < EPSILON { return Vec3::ZERO; }
+    if norm < EPSILON {
+        return Vec3::ZERO;
+    }
     let lam = lambda(base);
     let scale = (2.0 / lam) * norm.atanh();
     minus_base * (scale / norm)
@@ -65,7 +71,9 @@ pub fn log_map(base: Vec3, target: Vec3) -> Vec3 {
 pub fn parallel_transport(a: Vec3, b: Vec3, v: Vec3) -> Vec3 {
     let gyrovec = mobius_add(-a, b);
     let norm = gyrovec.length();
-    if norm < EPSILON { return v; }
+    if norm < EPSILON {
+        return v;
+    }
     let cos = gyrovec.dot(v) / norm;
     let proj = gyrovec * (cos / norm);
     let perp = v - proj;
@@ -79,11 +87,11 @@ pub fn parallel_transport(a: Vec3, b: Vec3, v: Vec3) -> Vec3 {
 #[derive(Clone, Debug)]
 pub struct HyperbolicSphereWorld {
     /// Sphere radius in world units.
-    pub radius:    f32,
+    pub radius: f32,
     /// Hyperbolic curvature (negative, default -1.0).
     pub curvature: f32,
     /// Gravitational acceleration magnitude.
-    pub gravity:   f32,
+    pub gravity: f32,
 }
 
 impl Default for HyperbolicSphereWorld {
@@ -154,17 +162,20 @@ pub fn pentagon_vertices() -> [[f32; 2]; 5] {
 
 /// Translate a pentagon centred at origin to a Poincaré ball position `centre`.
 pub fn translate_pentagon(centre: Vec3, vertices: &[[f32; 2]; 5]) -> Vec<Vec3> {
-    vertices.iter().map(|&[x, y]| {
-        let p = Vec3::new(x, 0.0, y);
-        let wp = mobius_add(centre, p);
-        wp
-    }).collect()
+    vertices
+        .iter()
+        .map(|&[x, y]| {
+            let p = Vec3::new(x, 0.0, y);
+            let wp = mobius_add(centre, p);
+            wp
+        })
+        .collect()
 }
 
 /// Generate the first `depth` rings of a {5,4} tiling centred at the origin.
 pub fn pentagon_tiling(depth: u32) -> Vec<Vec3> {
     let mut centres = vec![Vec3::ZERO];
-    let base_verts  = pentagon_vertices();
+    let base_verts = pentagon_vertices();
     // Each adjacent pentagon is centred at a vertex translated outward.
     for _ in 0..depth {
         let mut new_centres = Vec::new();

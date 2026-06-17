@@ -12,15 +12,15 @@
 // Draw modes (the `mode` arg of every shape builtin):
 //   0 = filled      1 = wireframe      2 = both (wire on top of fill)
 
+use super::GfxState;
 use std::collections::HashSet;
 use std::f32::consts::PI;
-use super::GfxState;
 
 /// A triangle mesh plus an explicit edge list for clean wireframes.
 #[derive(Default, Clone)]
 pub struct Mesh {
     pub verts: Vec<[f32; 3]>,
-    pub tris:  Vec<[u32; 3]>,
+    pub tris: Vec<[u32; 3]>,
     pub edges: Vec<[u32; 2]>,
     /// Smooth (area-weighted averaged) per-vertex normals, world space.
     /// Populated by `build()` after transform; empty until then.
@@ -33,8 +33,12 @@ impl Mesh {
         self.verts.push([x, y, z]);
         i
     }
-    fn tri(&mut self, a: u32, b: u32, c: u32) { self.tris.push([a, b, c]); }
-    fn edge(&mut self, a: u32, b: u32)        { self.edges.push([a, b]); }
+    fn tri(&mut self, a: u32, b: u32, c: u32) {
+        self.tris.push([a, b, c]);
+    }
+    fn edge(&mut self, a: u32, b: u32) {
+        self.edges.push([a, b]);
+    }
 
     /// Add a convex polygon (fan-triangulated) and its perimeter edges.
     fn face(&mut self, idx: &[u32]) {
@@ -52,7 +56,9 @@ impl Mesh {
         for t in &self.tris {
             for &(a, b) in &[(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
                 let k = if a < b { (a, b) } else { (b, a) };
-                if seen.insert(k) { self.edges.push([k.0, k.1]); }
+                if seen.insert(k) {
+                    self.edges.push([k.0, k.1]);
+                }
             }
         }
     }
@@ -66,14 +72,27 @@ impl Mesh {
             let a = self.verts[t[0] as usize];
             let b = self.verts[t[1] as usize];
             let c = self.verts[t[2] as usize];
-            let u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
-            let v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
-            let f = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
-            for &i in t { let i = i as usize; n[i][0]+=f[0]; n[i][1]+=f[1]; n[i][2]+=f[2]; }
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let f = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            for &i in t {
+                let i = i as usize;
+                n[i][0] += f[0];
+                n[i][1] += f[1];
+                n[i][2] += f[2];
+            }
         }
         for p in &mut n {
-            let l = (p[0]*p[0]+p[1]*p[1]+p[2]*p[2]).sqrt();
-            if l > 1e-8 { p[0]/=l; p[1]/=l; p[2]/=l; }
+            let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+            if l > 1e-8 {
+                p[0] /= l;
+                p[1] /= l;
+                p[2] /= l;
+            }
         }
         self.normals = n;
     }
@@ -91,19 +110,39 @@ impl Mesh {
             let mut y = p[1] * sy;
             let mut z = p[2] * sz;
             // rotate X
-            let (ny, nz) = (y * crx - z * srx, y * srx + z * crx); y = ny; z = nz;
+            let (ny, nz) = (y * crx - z * srx, y * srx + z * crx);
+            y = ny;
+            z = nz;
             // rotate Y
-            let (nx, nz2) = (x * cry + z * sry, -x * sry + z * cry); x = nx; z = nz2;
+            let (nx, nz2) = (x * cry + z * sry, -x * sry + z * cry);
+            x = nx;
+            z = nz2;
             // rotate Z
-            let (nx2, ny2) = (x * crz - y * srz, x * srz + y * crz); x = nx2; y = ny2;
+            let (nx2, ny2) = (x * crz - y * srz, x * srz + y * crz);
+            x = nx2;
+            y = ny2;
             *p = [x + cx, y + cy, z + cz];
         }
     }
 }
 
 // ── small helpers ───────────────────────────────────────────────────────────
-#[inline] fn iarg(v: f32, default: i32) -> i32 { if v > 0.5 { v.round() as i32 } else { default } }
-#[inline] fn farg(v: f32, default: f32) -> f32 { if v > 1e-6 { v } else { default } }
+#[inline]
+fn iarg(v: f32, default: i32) -> i32 {
+    if v > 0.5 {
+        v.round() as i32
+    } else {
+        default
+    }
+}
+#[inline]
+fn farg(v: f32, default: f32) -> f32 {
+    if v > 1e-6 {
+        v
+    } else {
+        default
+    }
+}
 
 // ── Platonic / dice solids ───────────────────────────────────────────────────
 
@@ -111,88 +150,151 @@ fn cube() -> Mesh {
     let mut m = Mesh::default();
     let s = 1.0;
     let p = [
-        m.v(-s,-s,-s), m.v(s,-s,-s), m.v(s,s,-s), m.v(-s,s,-s), // back  0..3
-        m.v(-s,-s, s), m.v(s,-s, s), m.v(s,s, s), m.v(-s,s, s), // front 4..7
+        m.v(-s, -s, -s),
+        m.v(s, -s, -s),
+        m.v(s, s, -s),
+        m.v(-s, s, -s), // back  0..3
+        m.v(-s, -s, s),
+        m.v(s, -s, s),
+        m.v(s, s, s),
+        m.v(-s, s, s), // front 4..7
     ];
-    m.face(&[p[0],p[1],p[2],p[3]]); // -Z
-    m.face(&[p[5],p[4],p[7],p[6]]); // +Z
-    m.face(&[p[4],p[0],p[3],p[7]]); // -X
-    m.face(&[p[1],p[5],p[6],p[2]]); // +X
-    m.face(&[p[4],p[5],p[1],p[0]]); // -Y
-    m.face(&[p[3],p[2],p[6],p[7]]); // +Y
+    m.face(&[p[0], p[1], p[2], p[3]]); // -Z
+    m.face(&[p[5], p[4], p[7], p[6]]); // +Z
+    m.face(&[p[4], p[0], p[3], p[7]]); // -X
+    m.face(&[p[1], p[5], p[6], p[2]]); // +X
+    m.face(&[p[4], p[5], p[1], p[0]]); // -Y
+    m.face(&[p[3], p[2], p[6], p[7]]); // +Y
     m
 }
 
 fn tetrahedron() -> Mesh {
     let mut m = Mesh::default();
     let a = 1.0;
-    let p = [
-        m.v( a, a, a), m.v( a,-a,-a), m.v(-a, a,-a), m.v(-a,-a, a),
-    ];
-    m.face(&[p[0],p[1],p[2]]);
-    m.face(&[p[0],p[3],p[1]]);
-    m.face(&[p[0],p[2],p[3]]);
-    m.face(&[p[1],p[3],p[2]]);
+    let p = [m.v(a, a, a), m.v(a, -a, -a), m.v(-a, a, -a), m.v(-a, -a, a)];
+    m.face(&[p[0], p[1], p[2]]);
+    m.face(&[p[0], p[3], p[1]]);
+    m.face(&[p[0], p[2], p[3]]);
+    m.face(&[p[1], p[3], p[2]]);
     m
 }
 
 fn octahedron() -> Mesh {
     let mut m = Mesh::default();
     let p = [
-        m.v( 1.0,0.0,0.0), m.v(-1.0,0.0,0.0),
-        m.v(0.0, 1.0,0.0), m.v(0.0,-1.0,0.0),
-        m.v(0.0,0.0, 1.0), m.v(0.0,0.0,-1.0),
+        m.v(1.0, 0.0, 0.0),
+        m.v(-1.0, 0.0, 0.0),
+        m.v(0.0, 1.0, 0.0),
+        m.v(0.0, -1.0, 0.0),
+        m.v(0.0, 0.0, 1.0),
+        m.v(0.0, 0.0, -1.0),
     ];
-    m.face(&[p[0],p[2],p[4]]); m.face(&[p[2],p[1],p[4]]);
-    m.face(&[p[1],p[3],p[4]]); m.face(&[p[3],p[0],p[4]]);
-    m.face(&[p[2],p[0],p[5]]); m.face(&[p[1],p[2],p[5]]);
-    m.face(&[p[3],p[1],p[5]]); m.face(&[p[0],p[3],p[5]]);
+    m.face(&[p[0], p[2], p[4]]);
+    m.face(&[p[2], p[1], p[4]]);
+    m.face(&[p[1], p[3], p[4]]);
+    m.face(&[p[3], p[0], p[4]]);
+    m.face(&[p[2], p[0], p[5]]);
+    m.face(&[p[1], p[2], p[5]]);
+    m.face(&[p[3], p[1], p[5]]);
+    m.face(&[p[0], p[3], p[5]]);
     m
 }
 
 fn icosahedron_raw() -> Mesh {
     let mut m = Mesh::default();
     let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
-    let s = 1.0 / (1.0 + t*t).sqrt(); // normalise to unit radius
+    let s = 1.0 / (1.0 + t * t).sqrt(); // normalise to unit radius
     let vs = [
-        [-1., t, 0.],[1., t, 0.],[-1.,-t, 0.],[1.,-t, 0.],
-        [0.,-1., t],[0., 1., t],[0.,-1.,-t],[0., 1.,-t],
-        [ t, 0.,-1.],[ t, 0., 1.],[-t, 0.,-1.],[-t, 0., 1.],
+        [-1., t, 0.],
+        [1., t, 0.],
+        [-1., -t, 0.],
+        [1., -t, 0.],
+        [0., -1., t],
+        [0., 1., t],
+        [0., -1., -t],
+        [0., 1., -t],
+        [t, 0., -1.],
+        [t, 0., 1.],
+        [-t, 0., -1.],
+        [-t, 0., 1.],
     ];
-    for v in vs { m.v(v[0]*s, v[1]*s, v[2]*s); }
+    for v in vs {
+        m.v(v[0] * s, v[1] * s, v[2] * s);
+    }
     let f = [
-        [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
-        [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
-        [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
-        [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1],
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
     ];
-    for t in f { m.tri(t[0],t[1],t[2]); }
+    for t in f {
+        m.tri(t[0], t[1], t[2]);
+    }
     m
 }
 
-fn icosahedron() -> Mesh { let mut m = icosahedron_raw(); m.edges_from_tris(); m }
+fn icosahedron() -> Mesh {
+    let mut m = icosahedron_raw();
+    m.edges_from_tris();
+    m
+}
 
 fn icosphere(subdiv: i32) -> Mesh {
     let mut m = icosahedron_raw();
     let n = subdiv.clamp(0, 4);
     for _ in 0..n {
         let mut nm = Mesh::default();
-        let mut mid: std::collections::HashMap<(u32,u32),u32> = std::collections::HashMap::new();
-        for v in &m.verts { nm.verts.push(*v); }
-        let midpoint = |nm: &mut Mesh, a: u32, b: u32, mid: &mut std::collections::HashMap<(u32,u32),u32>| -> u32 {
-            let key = if a < b { (a,b) } else { (b,a) };
-            if let Some(&i) = mid.get(&key) { return i; }
-            let pa = nm.verts[a as usize]; let pb = nm.verts[b as usize];
-            let mut mp = [(pa[0]+pb[0])/2.0,(pa[1]+pb[1])/2.0,(pa[2]+pb[2])/2.0];
-            let l = (mp[0]*mp[0]+mp[1]*mp[1]+mp[2]*mp[2]).sqrt();
-            mp = [mp[0]/l, mp[1]/l, mp[2]/l];
-            let i = nm.verts.len() as u32; nm.verts.push(mp); mid.insert(key, i); i
+        let mut mid: std::collections::HashMap<(u32, u32), u32> = std::collections::HashMap::new();
+        for v in &m.verts {
+            nm.verts.push(*v);
+        }
+        let midpoint = |nm: &mut Mesh,
+                        a: u32,
+                        b: u32,
+                        mid: &mut std::collections::HashMap<(u32, u32), u32>|
+         -> u32 {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if let Some(&i) = mid.get(&key) {
+                return i;
+            }
+            let pa = nm.verts[a as usize];
+            let pb = nm.verts[b as usize];
+            let mut mp = [
+                (pa[0] + pb[0]) / 2.0,
+                (pa[1] + pb[1]) / 2.0,
+                (pa[2] + pb[2]) / 2.0,
+            ];
+            let l = (mp[0] * mp[0] + mp[1] * mp[1] + mp[2] * mp[2]).sqrt();
+            mp = [mp[0] / l, mp[1] / l, mp[2] / l];
+            let i = nm.verts.len() as u32;
+            nm.verts.push(mp);
+            mid.insert(key, i);
+            i
         };
         for t in &m.tris {
             let a = midpoint(&mut nm, t[0], t[1], &mut mid);
             let b = midpoint(&mut nm, t[1], t[2], &mut mid);
             let c = midpoint(&mut nm, t[2], t[0], &mut mid);
-            nm.tri(t[0],a,c); nm.tri(t[1],b,a); nm.tri(t[2],c,b); nm.tri(a,b,c);
+            nm.tri(t[0], a, c);
+            nm.tri(t[1], b, a);
+            nm.tri(t[2], c, b);
+            nm.tri(a, b, c);
         }
         m = nm;
     }
@@ -208,20 +310,47 @@ fn dodecahedron() -> Mesh {
     let r = (3.0_f32).sqrt(); // normalise so |(1,1,1)| family → unit-ish
     let s = 1.0 / r;
     let vs = [
-        [ 1., 1., 1.],[ 1., 1.,-1.],[ 1.,-1., 1.],[ 1.,-1.,-1.],
-        [-1., 1., 1.],[-1., 1.,-1.],[-1.,-1., 1.],[-1.,-1.,-1.],
-        [0., b, c],[0., b,-c],[0.,-b, c],[0.,-b,-c],
-        [ b, c, 0.],[ b,-c, 0.],[-b, c, 0.],[-b,-c, 0.],
-        [ c, 0., b],[ c, 0.,-b],[-c, 0., b],[-c, 0.,-b],
+        [1., 1., 1.],
+        [1., 1., -1.],
+        [1., -1., 1.],
+        [1., -1., -1.],
+        [-1., 1., 1.],
+        [-1., 1., -1.],
+        [-1., -1., 1.],
+        [-1., -1., -1.],
+        [0., b, c],
+        [0., b, -c],
+        [0., -b, c],
+        [0., -b, -c],
+        [b, c, 0.],
+        [b, -c, 0.],
+        [-b, c, 0.],
+        [-b, -c, 0.],
+        [c, 0., b],
+        [c, 0., -b],
+        [-c, 0., b],
+        [-c, 0., -b],
     ];
-    for v in vs { m.v(v[0]*s, v[1]*s, v[2]*s); }
-    let faces: [[u32;5];12] = [
-        [0,8,10,2,16],[0,16,17,1,12],[0,12,14,4,8],
-        [1,9,5,14,12],[1,17,3,11,9],[2,10,6,15,13],
-        [2,13,3,17,16],[3,13,15,7,11],[4,14,5,19,18],
-        [4,18,6,10,8],[5,9,11,7,19],[6,18,19,7,15],
+    for v in vs {
+        m.v(v[0] * s, v[1] * s, v[2] * s);
+    }
+    let faces: [[u32; 5]; 12] = [
+        [0, 8, 10, 2, 16],
+        [0, 16, 17, 1, 12],
+        [0, 12, 14, 4, 8],
+        [1, 9, 5, 14, 12],
+        [1, 17, 3, 11, 9],
+        [2, 10, 6, 15, 13],
+        [2, 13, 3, 17, 16],
+        [3, 13, 15, 7, 11],
+        [4, 14, 5, 19, 18],
+        [4, 18, 6, 10, 8],
+        [5, 9, 11, 7, 19],
+        [6, 18, 19, 7, 15],
     ];
-    for f in faces { m.face(&f); }
+    for f in faces {
+        m.face(&f);
+    }
     m
 }
 
@@ -233,7 +362,7 @@ fn uv_sphere(seg: i32, rings: i32) -> Mesh {
     let rings = rings.clamp(2, 128);
     for r in 0..=rings {
         let v = r as f32 / rings as f32;
-        let theta = v * PI;            // 0..pi
+        let theta = v * PI; // 0..pi
         let (st, ct) = theta.sin_cos();
         for s in 0..=seg {
             let u = s as f32 / seg as f32;
@@ -249,7 +378,8 @@ fn uv_sphere(seg: i32, rings: i32) -> Mesh {
             let b = (r * stride + s + 1) as u32;
             let cc = ((r + 1) * stride + s) as u32;
             let d = ((r + 1) * stride + s + 1) as u32;
-            m.tri(a, cc, b); m.tri(b, cc, d);
+            m.tri(a, cc, b);
+            m.tri(b, cc, d);
         }
     }
     m.edges_from_tris();
@@ -263,7 +393,7 @@ fn dome(seg: i32, rings: i32) -> Mesh {
     let rings = rings.clamp(1, 128);
     for r in 0..=rings {
         let v = r as f32 / rings as f32;
-        let theta = v * (PI / 2.0);    // 0..pi/2
+        let theta = v * (PI / 2.0); // 0..pi/2
         let (st, ct) = theta.sin_cos();
         for s in 0..=seg {
             let phi = s as f32 / seg as f32 * 2.0 * PI;
@@ -274,15 +404,19 @@ fn dome(seg: i32, rings: i32) -> Mesh {
     let stride = seg + 1;
     for r in 0..rings {
         for s in 0..seg {
-            let a = (r*stride+s) as u32; let b=(r*stride+s+1) as u32;
-            let cc=((r+1)*stride+s) as u32; let d=((r+1)*stride+s+1) as u32;
-            m.tri(a, cc, b); m.tri(b, cc, d);
+            let a = (r * stride + s) as u32;
+            let b = (r * stride + s + 1) as u32;
+            let cc = ((r + 1) * stride + s) as u32;
+            let d = ((r + 1) * stride + s + 1) as u32;
+            m.tri(a, cc, b);
+            m.tri(b, cc, d);
         }
     }
     // base cap
     let centre = m.v(0.0, 0.0, 0.0);
     for s in 0..seg {
-        let a = ((rings)*stride+s) as u32; let b=((rings)*stride+s+1) as u32;
+        let a = ((rings) * stride + s) as u32;
+        let b = ((rings) * stride + s + 1) as u32;
         m.tri(centre, b, a);
     }
     m.edges_from_tris();
@@ -297,19 +431,28 @@ fn cylinder(seg: i32) -> Mesh {
         let phi = s as f32 / seg as f32 * 2.0 * PI;
         let (sp, cp) = phi.sin_cos();
         m.v(cp, -1.0, sp);
-        m.v(cp,  1.0, sp);
+        m.v(cp, 1.0, sp);
     }
     for s in 0..seg {
-        let b0 = (2*s) as u32; let t0 = (2*s+1) as u32;
-        let b1 = (2*((s+1)%seg)) as u32; let t1 = (2*((s+1)%seg)+1) as u32;
-        m.tri(b0, t0, b1); m.tri(b1, t0, t1);
-        m.edge(b0, b1); m.edge(t0, t1); m.edge(b0, t0);
+        let b0 = (2 * s) as u32;
+        let t0 = (2 * s + 1) as u32;
+        let b1 = (2 * ((s + 1) % seg)) as u32;
+        let t1 = (2 * ((s + 1) % seg) + 1) as u32;
+        m.tri(b0, t0, b1);
+        m.tri(b1, t0, t1);
+        m.edge(b0, b1);
+        m.edge(t0, t1);
+        m.edge(b0, t0);
     }
-    let cb = m.v(0.0,-1.0,0.0); let ct = m.v(0.0,1.0,0.0);
+    let cb = m.v(0.0, -1.0, 0.0);
+    let ct = m.v(0.0, 1.0, 0.0);
     for s in 0..seg {
-        let b0=(2*s) as u32; let b1=(2*((s+1)%seg)) as u32;
-        let t0=(2*s+1) as u32; let t1=(2*((s+1)%seg)+1) as u32;
-        m.tri(cb, b1, b0); m.tri(ct, t0, t1);
+        let b0 = (2 * s) as u32;
+        let b1 = (2 * ((s + 1) % seg)) as u32;
+        let t0 = (2 * s + 1) as u32;
+        let t1 = (2 * ((s + 1) % seg) + 1) as u32;
+        m.tri(cb, b1, b0);
+        m.tri(ct, t0, t1);
     }
     m
 }
@@ -326,10 +469,12 @@ fn cone(seg: i32) -> Mesh {
     }
     let centre = m.v(0.0, -1.0, 0.0);
     for s in 0..seg {
-        let a = base0 + s as u32; let b = base0 + ((s+1)%seg) as u32;
-        m.tri(apex, a, b);   // side
+        let a = base0 + s as u32;
+        let b = base0 + ((s + 1) % seg) as u32;
+        m.tri(apex, a, b); // side
         m.tri(centre, b, a); // base
-        m.edge(a, b); m.edge(apex, a);
+        m.edge(a, b);
+        m.edge(apex, a);
     }
     m
 }
@@ -367,7 +512,8 @@ fn capsule(seg: i32, rings: i32) -> Mesh {
             let b = ring_start[row] + s as u32 + 1;
             let c = ring_start[row + 1] + s as u32;
             let d = ring_start[row + 1] + s as u32 + 1;
-            m.tri(a, c, b); m.tri(b, c, d);
+            m.tri(a, c, b);
+            m.tri(b, c, d);
         }
     }
     let _ = stride;
@@ -377,7 +523,7 @@ fn capsule(seg: i32, rings: i32) -> Mesh {
 
 fn torus(seg: i32, sides: i32, tube: f32) -> Mesh {
     let mut m = Mesh::default();
-    let seg = seg.clamp(3, 256);    // around the ring
+    let seg = seg.clamp(3, 256); // around the ring
     let sides = sides.clamp(3, 128); // around the tube
     let tube = tube.clamp(0.02, 0.9);
     for i in 0..seg {
@@ -392,11 +538,12 @@ fn torus(seg: i32, sides: i32, tube: f32) -> Mesh {
     }
     for i in 0..seg {
         for j in 0..sides {
-            let a = (i*sides + j) as u32;
-            let b = (i*sides + (j+1)%sides) as u32;
-            let c = (((i+1)%seg)*sides + j) as u32;
-            let d = (((i+1)%seg)*sides + (j+1)%sides) as u32;
-            m.tri(a, c, b); m.tri(b, c, d);
+            let a = (i * sides + j) as u32;
+            let b = (i * sides + (j + 1) % sides) as u32;
+            let c = (((i + 1) % seg) * sides + j) as u32;
+            let d = (((i + 1) % seg) * sides + (j + 1) % sides) as u32;
+            m.tri(a, c, b);
+            m.tri(b, c, d);
         }
     }
     m.edges_from_tris();
@@ -417,13 +564,18 @@ fn pyramid(sides: i32) -> Mesh {
         ring.push(m.v(cp, -1.0, sp));
     }
     for s in 0..sides as usize {
-        let a = ring[s]; let b = ring[(s+1)%sides as usize];
+        let a = ring[s];
+        let b = ring[(s + 1) % sides as usize];
         m.tri(apex, a, b);
-        m.edge(a, b); m.edge(apex, a);
+        m.edge(a, b);
+        m.edge(apex, a);
     }
     // base face (reversed for outward normal)
-    let mut rev: Vec<u32> = ring.clone(); rev.reverse();
-    for k in 1..rev.len()-1 { m.tri(rev[0], rev[k], rev[k+1]); }
+    let mut rev: Vec<u32> = ring.clone();
+    rev.reverse();
+    for k in 1..rev.len() - 1 {
+        m.tri(rev[0], rev[k], rev[k + 1]);
+    }
     let _ = base0;
     m
 }
@@ -431,22 +583,34 @@ fn pyramid(sides: i32) -> Mesh {
 fn prism(sides: i32) -> Mesh {
     let mut m = Mesh::default();
     let sides = sides.clamp(3, 128);
-    let mut bot = Vec::new(); let mut top = Vec::new();
+    let mut bot = Vec::new();
+    let mut top = Vec::new();
     for s in 0..sides {
         let phi = s as f32 / sides as f32 * 2.0 * PI;
         let (sp, cp) = phi.sin_cos();
         bot.push(m.v(cp, -1.0, sp));
-        top.push(m.v(cp,  1.0, sp));
+        top.push(m.v(cp, 1.0, sp));
     }
     let n = sides as usize;
     for s in 0..n {
-        let b0=bot[s]; let b1=bot[(s+1)%n]; let t0=top[s]; let t1=top[(s+1)%n];
-        m.tri(b0, t0, b1); m.tri(b1, t0, t1);
-        m.edge(b0,b1); m.edge(t0,t1); m.edge(b0,t0);
+        let b0 = bot[s];
+        let b1 = bot[(s + 1) % n];
+        let t0 = top[s];
+        let t1 = top[(s + 1) % n];
+        m.tri(b0, t0, b1);
+        m.tri(b1, t0, t1);
+        m.edge(b0, b1);
+        m.edge(t0, t1);
+        m.edge(b0, t0);
     }
-    for k in 1..n-1 { m.tri(top[0], top[k], top[k+1]); }
-    let mut rb: Vec<u32> = bot.clone(); rb.reverse();
-    for k in 1..rb.len()-1 { m.tri(rb[0], rb[k], rb[k+1]); }
+    for k in 1..n - 1 {
+        m.tri(top[0], top[k], top[k + 1]);
+    }
+    let mut rb: Vec<u32> = bot.clone();
+    rb.reverse();
+    for k in 1..rb.len() - 1 {
+        m.tri(rb[0], rb[k], rb[k + 1]);
+    }
     m
 }
 
@@ -454,22 +618,36 @@ fn frustum(sides: i32, top_ratio: f32) -> Mesh {
     let mut m = Mesh::default();
     let sides = sides.clamp(3, 256);
     let tr = top_ratio.clamp(0.0, 1.0);
-    let mut bot = Vec::new(); let mut top = Vec::new();
+    let mut bot = Vec::new();
+    let mut top = Vec::new();
     for s in 0..sides {
         let phi = s as f32 / sides as f32 * 2.0 * PI;
         let (sp, cp) = phi.sin_cos();
         bot.push(m.v(cp, -1.0, sp));
-        top.push(m.v(cp*tr, 1.0, sp*tr));
+        top.push(m.v(cp * tr, 1.0, sp * tr));
     }
     let n = sides as usize;
     for s in 0..n {
-        let b0=bot[s]; let b1=bot[(s+1)%n]; let t0=top[s]; let t1=top[(s+1)%n];
-        m.tri(b0, t0, b1); m.tri(b1, t0, t1);
-        m.edge(b0,b1); m.edge(t0,t1); m.edge(b0,t0);
+        let b0 = bot[s];
+        let b1 = bot[(s + 1) % n];
+        let t0 = top[s];
+        let t1 = top[(s + 1) % n];
+        m.tri(b0, t0, b1);
+        m.tri(b1, t0, t1);
+        m.edge(b0, b1);
+        m.edge(t0, t1);
+        m.edge(b0, t0);
     }
-    if tr > 0.001 { for k in 1..n-1 { m.tri(top[0], top[k], top[k+1]); } }
-    let mut rb: Vec<u32> = bot.clone(); rb.reverse();
-    for k in 1..rb.len()-1 { m.tri(rb[0], rb[k], rb[k+1]); }
+    if tr > 0.001 {
+        for k in 1..n - 1 {
+            m.tri(top[0], top[k], top[k + 1]);
+        }
+    }
+    let mut rb: Vec<u32> = bot.clone();
+    rb.reverse();
+    for k in 1..rb.len() - 1 {
+        m.tri(rb[0], rb[k], rb[k + 1]);
+    }
     m
 }
 
@@ -480,27 +658,39 @@ fn gear(teeth: i32, tooth: f32) -> Mesh {
     let mut m = Mesh::default();
     let teeth = teeth.clamp(3, 96);
     let tooth = tooth.clamp(0.02, 0.6);
-    let pts = teeth * 4;            // 4 control points per tooth
-    let mut bot = Vec::new(); let mut top = Vec::new();
+    let pts = teeth * 4; // 4 control points per tooth
+    let mut bot = Vec::new();
+    let mut top = Vec::new();
     for i in 0..pts {
         let phi = i as f32 / pts as f32 * 2.0 * PI;
         // square-ish tooth profile: outer for first half of each tooth, inner for second
         let phase = (i % 4) as f32;
         let r = if phase < 2.0 { 1.0 } else { 1.0 - tooth };
         let (sp, cp) = phi.sin_cos();
-        bot.push(m.v(cp*r, -1.0, sp*r));
-        top.push(m.v(cp*r,  1.0, sp*r));
+        bot.push(m.v(cp * r, -1.0, sp * r));
+        top.push(m.v(cp * r, 1.0, sp * r));
     }
     let n = pts as usize;
     for s in 0..n {
-        let b0=bot[s]; let b1=bot[(s+1)%n]; let t0=top[s]; let t1=top[(s+1)%n];
-        m.tri(b0, t0, b1); m.tri(b1, t0, t1);   // rim
-        m.edge(b0,b1); m.edge(t0,t1); m.edge(b0,t0);
+        let b0 = bot[s];
+        let b1 = bot[(s + 1) % n];
+        let t0 = top[s];
+        let t1 = top[(s + 1) % n];
+        m.tri(b0, t0, b1);
+        m.tri(b1, t0, t1); // rim
+        m.edge(b0, b1);
+        m.edge(t0, t1);
+        m.edge(b0, t0);
     }
-    let cb = m.v(0.0,-1.0,0.0); let ct = m.v(0.0,1.0,0.0);
+    let cb = m.v(0.0, -1.0, 0.0);
+    let ct = m.v(0.0, 1.0, 0.0);
     for s in 0..n {
-        let b0=bot[s]; let b1=bot[(s+1)%n]; let t0=top[s]; let t1=top[(s+1)%n];
-        m.tri(cb, b1, b0); m.tri(ct, t0, t1);   // caps
+        let b0 = bot[s];
+        let b1 = bot[(s + 1) % n];
+        let t0 = top[s];
+        let t1 = top[(s + 1) % n];
+        m.tri(cb, b1, b0);
+        m.tri(ct, t0, t1); // caps
     }
     m
 }
@@ -515,14 +705,20 @@ fn gyro(rings: i32) -> Mesh {
         // rotate each ring onto a different axis
         let rot = match k % 3 {
             0 => [0.0, 0.0, 0.0],
-            1 => [PI/2.0, 0.0, 0.0],
-            _ => [0.0, 0.0, PI/2.0],
+            1 => [PI / 2.0, 0.0, 0.0],
+            _ => [0.0, 0.0, PI / 2.0],
         };
-        ring.transform([0.0,0.0,0.0, scale,scale,scale, rot[0],rot[1],rot[2]]);
+        ring.transform([0.0, 0.0, 0.0, scale, scale, scale, rot[0], rot[1], rot[2]]);
         let base = m.verts.len() as u32;
-        for v in &ring.verts { m.verts.push(*v); }
-        for t in &ring.tris { m.tri(t[0]+base, t[1]+base, t[2]+base); }
-        for e in &ring.edges { m.edge(e[0]+base, e[1]+base); }
+        for v in &ring.verts {
+            m.verts.push(*v);
+        }
+        for t in &ring.tris {
+            m.tri(t[0] + base, t[1] + base, t[2] + base);
+        }
+        for e in &ring.edges {
+            m.edge(e[0] + base, e[1] + base);
+        }
     }
     m
 }
@@ -531,23 +727,35 @@ fn gyro(rings: i32) -> Mesh {
 
 fn append_mesh(dst: &mut Mesh, src: &Mesh) {
     let base = dst.verts.len() as u32;
-    for v in &src.verts { dst.verts.push(*v); }
-    for t in &src.tris  { dst.tri(t[0]+base, t[1]+base, t[2]+base); }
-    for e in &src.edges { dst.edge(e[0]+base, e[1]+base); }
+    for v in &src.verts {
+        dst.verts.push(*v);
+    }
+    for t in &src.tris {
+        dst.tri(t[0] + base, t[1] + base, t[2] + base);
+    }
+    for e in &src.edges {
+        dst.edge(e[0] + base, e[1] + base);
+    }
 }
 
-fn box_between(x0:f32,x1:f32,y0:f32,y1:f32,z0:f32,z1:f32) -> Mesh {
+fn box_between(x0: f32, x1: f32, y0: f32, y1: f32, z0: f32, z1: f32) -> Mesh {
     let mut m = Mesh::default();
-    let p=[
-        m.v(x0,y0,z0),m.v(x1,y0,z0),m.v(x1,y1,z0),m.v(x0,y1,z0),
-        m.v(x0,y0,z1),m.v(x1,y0,z1),m.v(x1,y1,z1),m.v(x0,y1,z1),
+    let p = [
+        m.v(x0, y0, z0),
+        m.v(x1, y0, z0),
+        m.v(x1, y1, z0),
+        m.v(x0, y1, z0),
+        m.v(x0, y0, z1),
+        m.v(x1, y0, z1),
+        m.v(x1, y1, z1),
+        m.v(x0, y1, z1),
     ];
-    m.face(&[p[0],p[1],p[2],p[3]]);
-    m.face(&[p[5],p[4],p[7],p[6]]);
-    m.face(&[p[4],p[0],p[3],p[7]]);
-    m.face(&[p[1],p[5],p[6],p[2]]);
-    m.face(&[p[4],p[5],p[1],p[0]]);
-    m.face(&[p[3],p[2],p[6],p[7]]);
+    m.face(&[p[0], p[1], p[2], p[3]]);
+    m.face(&[p[5], p[4], p[7], p[6]]);
+    m.face(&[p[4], p[0], p[3], p[7]]);
+    m.face(&[p[1], p[5], p[6], p[2]]);
+    m.face(&[p[4], p[5], p[1], p[0]]);
+    m.face(&[p[3], p[2], p[6], p[7]]);
     m
 }
 
@@ -556,7 +764,7 @@ fn helix(turns: i32, tube: f32, sides: i32) -> Mesh {
     let mut m = Mesh::default();
     let turns = turns.clamp(1, 24);
     let sides = sides.clamp(3, 32);
-    let tube  = tube.clamp(0.02, 0.5);
+    let tube = tube.clamp(0.02, 0.5);
     let seg_per = 24;
     let total = turns * seg_per;
     for i in 0..=total {
@@ -568,17 +776,22 @@ fn helix(turns: i32, tube: f32, sides: i32) -> Mesh {
         for j in 0..sides {
             let v = j as f32 / sides as f32 * 2.0 * PI;
             let (sv, cv) = v.sin_cos();
-            m.v(cen[0] + tube*(cv*radial[0] + sv*up[0]),
-                cen[1] + tube*(cv*radial[1] + sv*up[1]),
-                cen[2] + tube*(cv*radial[2] + sv*up[2]));
+            m.v(
+                cen[0] + tube * (cv * radial[0] + sv * up[0]),
+                cen[1] + tube * (cv * radial[1] + sv * up[1]),
+                cen[2] + tube * (cv * radial[2] + sv * up[2]),
+            );
         }
     }
     let s = sides;
     for i in 0..total {
         for j in 0..sides {
-            let a=(i*s+j) as u32; let b=(i*s+(j+1)%s) as u32;
-            let c=((i+1)*s+j) as u32; let d=((i+1)*s+(j+1)%s) as u32;
-            m.tri(a,c,b); m.tri(b,c,d);
+            let a = (i * s + j) as u32;
+            let b = (i * s + (j + 1) % s) as u32;
+            let c = ((i + 1) * s + j) as u32;
+            let d = ((i + 1) * s + (j + 1) % s) as u32;
+            m.tri(a, c, b);
+            m.tri(b, c, d);
         }
     }
     m.edges_from_tris();
@@ -592,23 +805,28 @@ fn arch(segs: i32, tube: f32) -> Mesh {
     let sides = 10i32;
     let tube = tube.clamp(0.05, 0.4);
     for i in 0..=segs {
-        let a = PI * (i as f32 / segs as f32);     // 0..π
+        let a = PI * (i as f32 / segs as f32); // 0..π
         let cen = [a.cos(), a.sin(), 0.0];
         let radial = [a.cos(), a.sin(), 0.0];
         let binorm = [0.0, 0.0, 1.0];
         for j in 0..sides {
             let v = j as f32 / sides as f32 * 2.0 * PI;
             let (sv, cv) = v.sin_cos();
-            m.v(cen[0] + tube*(cv*radial[0] + sv*binorm[0]),
-                cen[1] + tube*(cv*radial[1] + sv*binorm[1]),
-                cen[2] + tube*(cv*radial[2] + sv*binorm[2]));
+            m.v(
+                cen[0] + tube * (cv * radial[0] + sv * binorm[0]),
+                cen[1] + tube * (cv * radial[1] + sv * binorm[1]),
+                cen[2] + tube * (cv * radial[2] + sv * binorm[2]),
+            );
         }
     }
     for i in 0..segs {
         for j in 0..sides {
-            let a=(i*sides+j) as u32; let b=(i*sides+(j+1)%sides) as u32;
-            let c=((i+1)*sides+j) as u32; let d=((i+1)*sides+(j+1)%sides) as u32;
-            m.tri(a,c,b); m.tri(b,c,d);
+            let a = (i * sides + j) as u32;
+            let b = (i * sides + (j + 1) % sides) as u32;
+            let c = ((i + 1) * sides + j) as u32;
+            let d = ((i + 1) * sides + (j + 1) % sides) as u32;
+            m.tri(a, c, b);
+            m.tri(b, c, d);
         }
     }
     m.edges_from_tris();
@@ -622,8 +840,10 @@ fn stairs(steps: i32) -> Mesh {
     let sh = 2.0 / steps as f32;
     let sd = 2.0 / steps as f32;
     for i in 0..steps {
-        let y0 = -1.0 + i as f32 * sh; let y1 = y0 + sh;
-        let z0 = -1.0 + i as f32 * sd; let zf = z0 + sd;
+        let y0 = -1.0 + i as f32 * sh;
+        let y1 = y0 + sh;
+        let z0 = -1.0 + i as f32 * sd;
+        let zf = z0 + sd;
         let blk = box_between(-1.0, 1.0, y0, y1, z0, zf);
         append_mesh(&mut m, &blk);
     }
@@ -636,22 +856,34 @@ fn star_prism(points: i32, inner: f32) -> Mesh {
     let points = points.clamp(3, 32);
     let inner = inner.clamp(0.1, 0.95);
     let n = (points * 2) as usize;
-    let mut bot = Vec::new(); let mut top = Vec::new();
+    let mut bot = Vec::new();
+    let mut top = Vec::new();
     for k in 0..n {
         let ang = k as f32 / n as f32 * 2.0 * PI;
         let r = if k % 2 == 0 { 1.0 } else { inner };
         let (s, c) = ang.sin_cos();
-        bot.push(m.v(c*r, -1.0, s*r));
-        top.push(m.v(c*r,  1.0, s*r));
+        bot.push(m.v(c * r, -1.0, s * r));
+        top.push(m.v(c * r, 1.0, s * r));
     }
     for k in 0..n {
-        let b0=bot[k]; let b1=bot[(k+1)%n]; let t0=top[k]; let t1=top[(k+1)%n];
-        m.tri(b0,t0,b1); m.tri(b1,t0,t1);
-        m.edge(b0,b1); m.edge(t0,t1); m.edge(b0,t0);
+        let b0 = bot[k];
+        let b1 = bot[(k + 1) % n];
+        let t0 = top[k];
+        let t1 = top[(k + 1) % n];
+        m.tri(b0, t0, b1);
+        m.tri(b1, t0, t1);
+        m.edge(b0, b1);
+        m.edge(t0, t1);
+        m.edge(b0, t0);
     }
-    for k in 1..n-1 { m.tri(top[0], top[k], top[k+1]); }
-    let mut rb = bot.clone(); rb.reverse();
-    for k in 1..rb.len()-1 { m.tri(rb[0], rb[k], rb[k+1]); }
+    for k in 1..n - 1 {
+        m.tri(top[0], top[k], top[k + 1]);
+    }
+    let mut rb = bot.clone();
+    rb.reverse();
+    for k in 1..rb.len() - 1 {
+        m.tri(rb[0], rb[k], rb[k + 1]);
+    }
     m
 }
 
@@ -663,7 +895,17 @@ fn capsule_chain(count: i32) -> Mesh {
     for i in 0..count {
         let mut c = capsule(12, 4);
         let cx = -1.0 + (i as f32 + 0.5) * step;
-        c.transform([cx, 0.0, 0.0,  step*0.5, step*0.5, step*0.5,  0.0, 0.0, PI/2.0]);
+        c.transform([
+            cx,
+            0.0,
+            0.0,
+            step * 0.5,
+            step * 0.5,
+            step * 0.5,
+            0.0,
+            0.0,
+            PI / 2.0,
+        ]);
         append_mesh(&mut m, &c);
     }
     m
@@ -678,15 +920,19 @@ fn mobius(segs: i32, width: f32) -> Mesh {
         let u = i as f32 / segs as f32 * 2.0 * PI;
         for &vv in &[-1.0f32, 1.0] {
             let v = vv * w;
-            let x = (1.0 + v/2.0 * (u/2.0).cos()) * u.cos();
-            let y = v/2.0 * (u/2.0).sin();
-            let z = (1.0 + v/2.0 * (u/2.0).cos()) * u.sin();
+            let x = (1.0 + v / 2.0 * (u / 2.0).cos()) * u.cos();
+            let y = v / 2.0 * (u / 2.0).sin();
+            let z = (1.0 + v / 2.0 * (u / 2.0).cos()) * u.sin();
             m.v(x, y, z);
         }
     }
     for i in 0..segs {
-        let a=(2*i) as u32; let b=(2*i+1) as u32; let c=(2*(i+1)) as u32; let d=(2*(i+1)+1) as u32;
-        m.tri(a,c,b); m.tri(b,c,d);
+        let a = (2 * i) as u32;
+        let b = (2 * i + 1) as u32;
+        let c = (2 * (i + 1)) as u32;
+        let d = (2 * (i + 1) + 1) as u32;
+        m.tri(a, c, b);
+        m.tri(b, c, d);
     }
     m.edges_from_tris();
     m
@@ -697,16 +943,21 @@ fn mobius(segs: i32, width: f32) -> Mesh {
 pub fn canon(name: &str) -> Option<&'static str> {
     Some(match name {
         // cube / box
-        "cube" | "box" | "立方体" | "方块" | "箱" | "정육면체" | "상자"
-            | "ลูกบาศก์" | "กล่อง" => "cube",
+        "cube" | "box" | "立方体" | "方块" | "箱" | "정육면체" | "상자" | "ลูกบาศก์" | "กล่อง" => {
+            "cube"
+        },
         // sphere
         "sphere" | "球体" | "球" | "구" | "ทรงกลม" => "sphere",
         // icosphere
-        "icosphere" | "二十面球" | "アイコ球" | "아이코구체" | "ทรงกลมเหลี่ยม" => "icosphere",
+        "icosphere" | "二十面球" | "アイコ球" | "아이코구체" | "ทรงกลมเหลี่ยม" => {
+            "icosphere"
+        },
         // dome (hemisphere)
         "dome" | "穹顶" | "ドーム" | "돔" | "โดม" => "dome",
         // cylinder
-        "cylinder" | "圆柱" | "円柱" | "원기둥" | "ทรงกระบอก" => "cylinder",
+        "cylinder" | "圆柱" | "円柱" | "원기둥" | "ทรงกระบอก" => {
+            "cylinder"
+        },
         // cone
         "cone" | "圆锥" | "円錐" | "원뿔" | "กรวย" => "cone",
         // capsule
@@ -714,19 +965,29 @@ pub fn canon(name: &str) -> Option<&'static str> {
         // torus / ring
         "torus" | "ring" | "圆环" | "トーラス" | "토러스" | "ทอรัส" => "torus",
         // pyramid
-        "pyramid" | "金字塔" | "ピラミッド" | "피라미드" | "พีระมิด" => "pyramid",
+        "pyramid" | "金字塔" | "ピラミッド" | "피라미드" | "พีระมิด" => {
+            "pyramid"
+        },
         // prism
         "prism" | "棱柱" | "角柱" | "각기둥" | "ปริซึม" => "prism",
         // frustum
         "frustum" | "棱台" | "錐台" | "원뿔대" | "กรวยตัด" => "frustum",
         // tetrahedron / d4
-        "tetrahedron" | "d4" | "四面体" | "정사면체" | "ทรงสี่หน้า" => "tetrahedron",
+        "tetrahedron" | "d4" | "四面体" | "정사면체" | "ทรงสี่หน้า" => {
+            "tetrahedron"
+        },
         // octahedron / d8
-        "octahedron" | "d8" | "八面体" | "정팔면체" | "ทรงแปดหน้า" => "octahedron",
+        "octahedron" | "d8" | "八面体" | "정팔면체" | "ทรงแปดหน้า" => {
+            "octahedron"
+        },
         // dodecahedron / d12
-        "dodecahedron" | "d12" | "十二面体" | "정십이면체" | "ทรงสิบสองหน้า" => "dodecahedron",
+        "dodecahedron" | "d12" | "十二面体" | "정십이면체" | "ทรงสิบสองหน้า" => {
+            "dodecahedron"
+        },
         // icosahedron / d20
-        "icosahedron" | "d20" | "二十面体" | "정이십면체" | "ทรงยี่สิบหน้า" => "icosahedron",
+        "icosahedron" | "d20" | "二十面体" | "정이십면체" | "ทรงยี่สิบหน้า" => {
+            "icosahedron"
+        },
         // gear / cog
         "gear" | "cog" | "齿轮" | "歯車" | "톱니바퀴" | "เฟือง" => "gear",
         // gyro
@@ -740,11 +1001,17 @@ pub fn canon(name: &str) -> Option<&'static str> {
         // stairs
         "stairs" | "楼梯" | "階段" | "계단" | "บันได" => "stairs",
         // star prism
-        "star_prism" | "star" | "星柱" | "星型柱" | "별기둥" | "แท่งดาว" => "star_prism",
+        "star_prism" | "star" | "星柱" | "星型柱" | "별기둥" | "แท่งดาว" => {
+            "star_prism"
+        },
         // capsule chain
-        "capsule_chain" | "chain" | "胶囊链" | "カプセル鎖" | "캡슐체인" | "โซ่แคปซูล" => "capsule_chain",
+        "capsule_chain" | "chain" | "胶囊链" | "カプセル鎖" | "캡슐체인" | "โซ่แคปซูล" => {
+            "capsule_chain"
+        },
         // mobius
-        "mobius" | "莫比乌斯" | "メビウス" | "뫼비우스" | "เมอบีอุส" => "mobius",
+        "mobius" | "莫比乌斯" | "メビウス" | "뫼비우스" | "เมอบีอุส" => {
+            "mobius"
+        },
         _ => return None,
     })
 }
@@ -753,30 +1020,40 @@ pub fn canon(name: &str) -> Option<&'static str> {
 /// `c` = [cx,cy,cz, sx,sy,sz, rx,ry,rz]; `e0..e2` = shape-specific extras.
 pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh> {
     let mut m = match kind {
-        "cube" | "box"        => cube(),
-        "sphere"              => uv_sphere(iarg(e0,16), iarg(e1,12)),
-        "icosphere"           => icosphere(iarg(e0,1)),
-        "dome"                => dome(iarg(e0,24), iarg(e1,8)),
-        "cylinder"            => cylinder(iarg(e0,24)),
-        "cone"                => cone(iarg(e0,24)),
-        "capsule"             => capsule(iarg(e0,16), iarg(e1,6)),
-        "torus" | "ring"      => torus(iarg(e0,32), iarg(e1,12), farg(e2,0.35)),
-        "pyramid"             => pyramid(iarg(e0,4)),
-        "prism"               => prism(iarg(e0,6)),
-        "frustum"             => frustum(iarg(e0,24), farg(e1,0.5)),
-        "tetrahedron" | "d4"  => { let mut t = tetrahedron(); t.edges = vec![]; t.edges_from_tris(); t }
-        "octahedron"  | "d8"  => { let mut t = octahedron();  t.edges = vec![]; t.edges_from_tris(); t }
-        "dodecahedron"| "d12" => dodecahedron(),
+        "cube" | "box" => cube(),
+        "sphere" => uv_sphere(iarg(e0, 16), iarg(e1, 12)),
+        "icosphere" => icosphere(iarg(e0, 1)),
+        "dome" => dome(iarg(e0, 24), iarg(e1, 8)),
+        "cylinder" => cylinder(iarg(e0, 24)),
+        "cone" => cone(iarg(e0, 24)),
+        "capsule" => capsule(iarg(e0, 16), iarg(e1, 6)),
+        "torus" | "ring" => torus(iarg(e0, 32), iarg(e1, 12), farg(e2, 0.35)),
+        "pyramid" => pyramid(iarg(e0, 4)),
+        "prism" => prism(iarg(e0, 6)),
+        "frustum" => frustum(iarg(e0, 24), farg(e1, 0.5)),
+        "tetrahedron" | "d4" => {
+            let mut t = tetrahedron();
+            t.edges = vec![];
+            t.edges_from_tris();
+            t
+        },
+        "octahedron" | "d8" => {
+            let mut t = octahedron();
+            t.edges = vec![];
+            t.edges_from_tris();
+            t
+        },
+        "dodecahedron" | "d12" => dodecahedron(),
         "icosahedron" | "d20" => icosahedron(),
-        "gear" | "cog"        => gear(iarg(e0,12), farg(e1,0.25)),
-        "gyro"                => gyro(iarg(e0,3)),
-        "helix"               => helix(iarg(e0,3), farg(e1,0.15), iarg(e2,8)),
-        "spring"              => helix(iarg(e0,6), farg(e1,0.12), iarg(e2,8)),
-        "arch"                => arch(iarg(e0,24), farg(e1,0.18)),
-        "stairs"              => stairs(iarg(e0,5)),
-        "star_prism"          => star_prism(iarg(e0,5), farg(e1,0.5)),
-        "capsule_chain"       => capsule_chain(iarg(e0,3)),
-        "mobius"              => mobius(iarg(e0,60), farg(e1,0.3)),
+        "gear" | "cog" => gear(iarg(e0, 12), farg(e1, 0.25)),
+        "gyro" => gyro(iarg(e0, 3)),
+        "helix" => helix(iarg(e0, 3), farg(e1, 0.15), iarg(e2, 8)),
+        "spring" => helix(iarg(e0, 6), farg(e1, 0.12), iarg(e2, 8)),
+        "arch" => arch(iarg(e0, 24), farg(e1, 0.18)),
+        "stairs" => stairs(iarg(e0, 5)),
+        "star_prism" => star_prism(iarg(e0, 5), farg(e1, 0.5)),
+        "capsule_chain" => capsule_chain(iarg(e0, 3)),
+        "mobius" => mobius(iarg(e0, 60), farg(e1, 0.3)),
         _ => return None,
     };
     m.transform(c);
@@ -789,8 +1066,8 @@ pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh>
 /// `height` is the model's Y-extent (feet→head), used to weight the deformation.
 #[derive(Default, Clone)]
 pub struct ColorMesh {
-    pub pos: Vec<[f32; 3]>,   // 3 * ntri  (triangle soup)
-    pub col: Vec<[u8; 3]>,    // ntri      (one flat colour per triangle)
+    pub pos: Vec<[f32; 3]>, // 3 * ntri  (triangle soup)
+    pub col: Vec<[u8; 3]>,  // ntri      (one flat colour per triangle)
     pub height: f32,
 }
 
@@ -803,10 +1080,12 @@ impl GfxState {
     #[allow(clippy::too_many_arguments)]
     pub fn draw_color_mesh(&mut self, m: &ColorMesh, cx:f32, cy:f32, cz:f32, sc:f32, yaw:f32, sway:f32, arm:f32, lean:f32, leg:f32, tuck:f32) {
         let near = -self.camera.zdist + 0.05;
-        let cs = yaw.cos(); let sn = yaw.sin();
+        let cs = yaw.cos();
+        let sn = yaw.sin();
         let h = m.height.max(1e-4);
-        let yc = -0.68 * h;                          // shoulder band centre
-        let torso = 0.13 * h; let elbow = torso + 0.16 * h;
+        let yc = -0.68 * h; // shoulder band centre
+        let torso = 0.13 * h;
+        let elbow = torso + 0.16 * h;
         let nt = m.col.len();
         let mut ti = 0usize;
         while ti < nt {
@@ -816,9 +1095,9 @@ impl GfxState {
             while k < 3 {
                 let p = m.pos[base + k];
                 let ax = p[0].abs();
-                let yb = (1.0 - (p[1] - yc).abs() / (0.30 * h)).clamp(0.0, 1.0);   // upper-body band
-                let aw = (((ax - torso) / (0.40 * h)).clamp(0.0, 1.0)) * yb;        // arm weight
-                let ew = (((ax - elbow) / (0.28 * h)).clamp(0.0, 1.0)) * yb;        // elbow/forearm weight
+                let yb = (1.0 - (p[1] - yc).abs() / (0.30 * h)).clamp(0.0, 1.0); // upper-body band
+                let aw = (((ax - torso) / (0.40 * h)).clamp(0.0, 1.0)) * yb; // arm weight
+                let ew = (((ax - elbow) / (0.28 * h)).clamp(0.0, 1.0)) * yb; // elbow/forearm weight
                 let side = if p[0] >= 0.0 { 1.0 } else { -1.0 };
                 // forward bend (running): upper body pitches forward (+z) above the waist,
                 // arms pulled back/tucked relative to the leaning torso.
@@ -837,20 +1116,37 @@ impl GfxState {
                 wv[k] = [cx + (xs*cs + zs*sn)*sc, cy + (p[1] + ylift)*sc, cz + (zs*cs - xs*sn)*sc];
                 k += 1;
             }
-            let a = wv[0]; let b = wv[1]; let c = wv[2];
-            let da = self.camera.depth(a[0],a[1],a[2]);
-            let db = self.camera.depth(b[0],b[1],b[2]);
-            let dc = self.camera.depth(c[0],c[1],c[2]);
-            if !(da<=near && db<=near && dc<=near) {
-                let poly = near_clip_poly(&[(a,[0.0;3],da),(b,[0.0;3],db),(c,[0.0;3],dc)], near);
+            let a = wv[0];
+            let b = wv[1];
+            let c = wv[2];
+            let da = self.camera.depth(a[0], a[1], a[2]);
+            let db = self.camera.depth(b[0], b[1], b[2]);
+            let dc = self.camera.depth(c[0], c[1], c[2]);
+            if !(da <= near && db <= near && dc <= near) {
+                let poly = near_clip_poly(
+                    &[(a, [0.0; 3], da), (b, [0.0; 3], db), (c, [0.0; 3], dc)],
+                    near,
+                );
                 if poly.len() >= 3 {
                     let col = m.col[ti];
-                    let packed = ((col[0] as u32)<<16)|((col[1] as u32)<<8)|(col[2] as u32);
-                    let proj: Vec<(f32,f32,f32)> = poly.iter().map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
+                    let packed = ((col[0] as u32) << 16) | ((col[1] as u32) << 8) | (col[2] as u32);
+                    let proj: Vec<(f32, f32, f32)> = poly
+                        .iter()
+                        .map(|(p, _)| self.camera.project(p[0], p[1], p[2]))
+                        .collect();
                     let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
                     let mut j = 1;
-                    while j+1 < proj.len() {
-                        self.depth_queue.push_triangle(depth, packed, proj[0].0,proj[0].1, proj[j].0,proj[j].1, proj[j+1].0,proj[j+1].1);
+                    while j + 1 < proj.len() {
+                        self.depth_queue.push_triangle(
+                            depth,
+                            packed,
+                            proj[0].0,
+                            proj[0].1,
+                            proj[j].0,
+                            proj[j].1,
+                            proj[j + 1].0,
+                            proj[j + 1].1,
+                        );
                         j += 1;
                     }
                 }
@@ -864,26 +1160,34 @@ impl GfxState {
     /// Separable (per-row + per-column displacement) so it stays cheap full-screen.
     /// `amount` = max displacement in pixels; `t` = time (animate the goo).
     pub fn distort(&mut self, amount: f32, t: f32) {
-        let w = self.width; let h = self.height;
-        if w < 2 || h < 2 || amount <= 0.0 { return; }
+        let w = self.width;
+        let h = self.height;
+        if w < 2 || h < 2 || amount <= 0.0 {
+            return;
+        }
         let src = self.buffer.clone();
         let a = amount;
         // per-row horizontal shift + a vertical cross term
-        let mut rdx = vec![0i32; h]; let mut rdy = vec![0i32; h];
+        let mut rdx = vec![0i32; h];
+        let mut rdy = vec![0i32; h];
         for y in 0..h {
             let fy = y as f32;
-            rdx[y] = ((fy*0.018 + t*0.8).sin()*a + (fy*0.005 - t*0.5).sin()*a*0.6) as i32;
-            rdy[y] = ((fy*0.040 + t*1.1).sin()*a*0.4) as i32;
+            rdx[y] =
+                ((fy * 0.018 + t * 0.8).sin() * a + (fy * 0.005 - t * 0.5).sin() * a * 0.6) as i32;
+            rdy[y] = ((fy * 0.040 + t * 1.1).sin() * a * 0.4) as i32;
         }
         // per-column vertical shift + a horizontal cross term  (the two cross terms
         // make the warp swirl in 2-D; multi-frequency sines give pucker/bloat zones)
-        let mut cdy = vec![0i32; w]; let mut cdx = vec![0i32; w];
+        let mut cdy = vec![0i32; w];
+        let mut cdx = vec![0i32; w];
         for x in 0..w {
             let fx = x as f32;
-            cdy[x] = ((fx*0.020 + t*0.7).sin()*a + (fx*0.006 + t*0.45).sin()*a*0.6) as i32;
-            cdx[x] = ((fx*0.050 + t*0.9).sin()*a*0.4) as i32;
+            cdy[x] =
+                ((fx * 0.020 + t * 0.7).sin() * a + (fx * 0.006 + t * 0.45).sin() * a * 0.6) as i32;
+            cdx[x] = ((fx * 0.050 + t * 0.9).sin() * a * 0.4) as i32;
         }
-        let wi = w as i32; let hi = h as i32;
+        let wi = w as i32;
+        let hi = h as i32;
         for y in 0..h {
             let row = y * w;
             let ry = rdy[y];
@@ -912,37 +1216,90 @@ impl GfxState {
                 // interpolation → per-pixel posterise. No faceted edges.
                 let base = ling_graphics::shading::unpack(self.color);
                 let eye = [self.camera.tx, self.camera.ty, self.camera.tz];
-                let lights: Vec<ling_graphics::shading::LightS> = self.lights.iter().map(|l| {
-                    ling_graphics::shading::LightS { pos:[l.x,l.y,l.z], color:[l.r,l.g,l.b], intensity:l.intensity, radius:l.radius }
-                }).collect();
+                let lights: Vec<ling_graphics::shading::LightS> = self
+                    .lights
+                    .iter()
+                    .map(|l| ling_graphics::shading::LightS {
+                        pos: [l.x, l.y, l.z],
+                        color: [l.r, l.g, l.b],
+                        intensity: l.intensity,
+                        radius: l.radius,
+                    })
+                    .collect();
                 let mut sp = self.shade;
-                sp.ambient = self.ambient;              // scene ambient drives fill
-                if self.shade_mode == 1 { sp.holo = false; sp.rim *= 0.4; }
+                sp.ambient = self.ambient; // scene ambient drives fill
+                if self.shade_mode == 1 {
+                    sp.holo = false;
+                    sp.rim *= 0.4;
+                }
                 let bands = sp.bands;
                 for t in &m.tris {
-                    let ia=t[0] as usize; let ib=t[1] as usize; let ic=t[2] as usize;
-                    let a=m.verts[ia]; let b=m.verts[ib]; let c=m.verts[ic];
-                    let da=self.camera.depth(a[0],a[1],a[2]);
-                    let db=self.camera.depth(b[0],b[1],b[2]);
-                    let dc=self.camera.depth(c[0],c[1],c[2]);
-                    if da<=near && db<=near && dc<=near { continue; } // all behind → drop
-                    // Lit colours per vertex (kept unpacked so clipping can lerp them).
-                    let la = ling_graphics::shading::lit_vertex(base, m.normals[ia], a, eye, &lights, &sp);
-                    let lb = ling_graphics::shading::lit_vertex(base, m.normals[ib], b, eye, &lights, &sp);
-                    let lc = ling_graphics::shading::lit_vertex(base, m.normals[ic], c, eye, &lights, &sp);
+                    let ia = t[0] as usize;
+                    let ib = t[1] as usize;
+                    let ic = t[2] as usize;
+                    let a = m.verts[ia];
+                    let b = m.verts[ib];
+                    let c = m.verts[ic];
+                    let da = self.camera.depth(a[0], a[1], a[2]);
+                    let db = self.camera.depth(b[0], b[1], b[2]);
+                    let dc = self.camera.depth(c[0], c[1], c[2]);
+                    if da <= near && db <= near && dc <= near {
+                        continue;
+                    } // all behind → drop
+                      // Lit colours per vertex (kept unpacked so clipping can lerp them).
+                    let la = ling_graphics::shading::lit_vertex(
+                        base,
+                        m.normals[ia],
+                        a,
+                        eye,
+                        &lights,
+                        &sp,
+                    );
+                    let lb = ling_graphics::shading::lit_vertex(
+                        base,
+                        m.normals[ib],
+                        b,
+                        eye,
+                        &lights,
+                        &sp,
+                    );
+                    let lc = ling_graphics::shading::lit_vertex(
+                        base,
+                        m.normals[ic],
+                        c,
+                        eye,
+                        &lights,
+                        &sp,
+                    );
                     // Near-plane clip (keeps large straddling tiles instead of dropping them).
-                    let poly = near_clip_poly(&[(a,la,da),(b,lb,db),(c,lc,dc)], near);
-                    if poly.len() < 3 { continue; }
-                    let proj: Vec<(f32,f32,f32,u32)> = poly.iter().map(|(p,col)| {
-                        let (sx,sy,pz)=self.camera.project(p[0],p[1],p[2]);
-                        (sx,sy,pz, ling_graphics::shading::pack(*col))
-                    }).collect();
+                    let poly = near_clip_poly(&[(a, la, da), (b, lb, db), (c, lc, dc)], near);
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let proj: Vec<(f32, f32, f32, u32)> = poly
+                        .iter()
+                        .map(|(p, col)| {
+                            let (sx, sy, pz) = self.camera.project(p[0], p[1], p[2]);
+                            (sx, sy, pz, ling_graphics::shading::pack(*col))
+                        })
+                        .collect();
                     let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
-                    let mut k=1;
-                    while k+1 < proj.len() {
-                        self.depth_queue.push_triangle_g(depth,
-                            proj[0].0,proj[0].1,proj[0].3, proj[k].0,proj[k].1,proj[k].3, proj[k+1].0,proj[k+1].1,proj[k+1].3, bands);
-                        k+=1;
+                    let mut k = 1;
+                    while k + 1 < proj.len() {
+                        self.depth_queue.push_triangle_g(
+                            depth,
+                            proj[0].0,
+                            proj[0].1,
+                            proj[0].3,
+                            proj[k].0,
+                            proj[k].1,
+                            proj[k].3,
+                            proj[k + 1].0,
+                            proj[k + 1].1,
+                            proj[k + 1].3,
+                            bands,
+                        );
+                        k += 1;
                     }
                 }
             } else {
@@ -951,26 +1308,57 @@ impl GfxState {
                     let a = m.verts[t[0] as usize];
                     let b = m.verts[t[1] as usize];
                     let c = m.verts[t[2] as usize];
-                    let ux=b[0]-a[0]; let uy=b[1]-a[1]; let uz=b[2]-a[2];
-                    let vx=c[0]-a[0]; let vy=c[1]-a[1]; let vz=c[2]-a[2];
-                    let normal = [uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
-                    let centroid = [(a[0]+b[0]+c[0])/3.0,(a[1]+b[1]+c[1])/3.0,(a[2]+b[2]+c[2])/3.0];
-                    let lit = crate::gfx::light::compute_lit_color(self.color, normal, centroid, &self.lights, self.ambient);
-                    let da=self.camera.depth(a[0],a[1],a[2]);
-                    let db=self.camera.depth(b[0],b[1],b[2]);
-                    let dc=self.camera.depth(c[0],c[1],c[2]);
-                    if da<=near && db<=near && dc<=near { continue; } // all behind → drop
-                    // Near-plane clip (flat colour, so vertex colour is irrelevant here).
-                    let poly = near_clip_poly(&[(a,[0.0;3],da),(b,[0.0;3],db),(c,[0.0;3],dc)], near);
-                    if poly.len() < 3 { continue; }
-                    let proj: Vec<(f32,f32,f32)> = poly.iter()
-                        .map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
+                    let ux = b[0] - a[0];
+                    let uy = b[1] - a[1];
+                    let uz = b[2] - a[2];
+                    let vx = c[0] - a[0];
+                    let vy = c[1] - a[1];
+                    let vz = c[2] - a[2];
+                    let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+                    let centroid = [
+                        (a[0] + b[0] + c[0]) / 3.0,
+                        (a[1] + b[1] + c[1]) / 3.0,
+                        (a[2] + b[2] + c[2]) / 3.0,
+                    ];
+                    let lit = crate::gfx::light::compute_lit_color(
+                        self.color,
+                        normal,
+                        centroid,
+                        &self.lights,
+                        self.ambient,
+                    );
+                    let da = self.camera.depth(a[0], a[1], a[2]);
+                    let db = self.camera.depth(b[0], b[1], b[2]);
+                    let dc = self.camera.depth(c[0], c[1], c[2]);
+                    if da <= near && db <= near && dc <= near {
+                        continue;
+                    } // all behind → drop
+                      // Near-plane clip (flat colour, so vertex colour is irrelevant here).
+                    let poly = near_clip_poly(
+                        &[(a, [0.0; 3], da), (b, [0.0; 3], db), (c, [0.0; 3], dc)],
+                        near,
+                    );
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let proj: Vec<(f32, f32, f32)> = poly
+                        .iter()
+                        .map(|(p, _)| self.camera.project(p[0], p[1], p[2]))
+                        .collect();
                     let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
-                    let mut k=1;
-                    while k+1 < proj.len() {
-                        self.depth_queue.push_triangle(depth, lit,
-                            proj[0].0,proj[0].1, proj[k].0,proj[k].1, proj[k+1].0,proj[k+1].1);
-                        k+=1;
+                    let mut k = 1;
+                    while k + 1 < proj.len() {
+                        self.depth_queue.push_triangle(
+                            depth,
+                            lit,
+                            proj[0].0,
+                            proj[0].1,
+                            proj[k].0,
+                            proj[k].1,
+                            proj[k + 1].0,
+                            proj[k + 1].1,
+                        );
+                        k += 1;
                     }
                 }
             }
@@ -983,20 +1371,30 @@ impl GfxState {
             for e in &m.edges {
                 let mut a = m.verts[e[0] as usize];
                 let mut b = m.verts[e[1] as usize];
-                let da=self.camera.depth(a[0],a[1],a[2]);
-                let db=self.camera.depth(b[0],b[1],b[2]);
-                if da<=near && db<=near { continue; }
-                if da<=near {
-                    let t=(near-da)/(db-da);
-                    a=[a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), a[2]+t*(b[2]-a[2])];
-                } else if db<=near {
-                    let t=(near-da)/(db-da);
-                    b=[a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1]), a[2]+t*(b[2]-a[2])];
+                let da = self.camera.depth(a[0], a[1], a[2]);
+                let db = self.camera.depth(b[0], b[1], b[2]);
+                if da <= near && db <= near {
+                    continue;
                 }
-                let (sax,say,pa)=self.camera.project(a[0],a[1],a[2]);
-                let (sbx,sby,pb)=self.camera.project(b[0],b[1],b[2]);
-                let depth=(pa+pb)/2.0 - bias;
-                self.depth_queue.push_line(depth, color, sax,say, sbx,sby);
+                if da <= near {
+                    let t = (near - da) / (db - da);
+                    a = [
+                        a[0] + t * (b[0] - a[0]),
+                        a[1] + t * (b[1] - a[1]),
+                        a[2] + t * (b[2] - a[2]),
+                    ];
+                } else if db <= near {
+                    let t = (near - da) / (db - da);
+                    b = [
+                        a[0] + t * (b[0] - a[0]),
+                        a[1] + t * (b[1] - a[1]),
+                        a[2] + t * (b[2] - a[2]),
+                    ];
+                }
+                let (sax, say, pa) = self.camera.project(a[0], a[1], a[2]);
+                let (sbx, sby, pb) = self.camera.project(b[0], b[1], b[2]);
+                let depth = (pa + pb) / 2.0 - bias;
+                self.depth_queue.push_line(depth, color, sax, say, sbx, sby);
             }
         }
     }
@@ -1015,11 +1413,17 @@ fn near_clip_poly(vin: &[([f32; 3], [f32; 3], f32)], near: f32) -> Vec<([f32; 3]
         let b = &vin[(i + 1) % n];
         let ain = a.2 > near;
         let bin = b.2 > near;
-        if ain { out.push((a.0, a.1)); }
+        if ain {
+            out.push((a.0, a.1));
+        }
         if ain != bin {
             let t = (near - a.2) / (b.2 - a.2);
             let lerp3 = |p: [f32; 3], q: [f32; 3]| {
-                [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t]
+                [
+                    p[0] + (q[0] - p[0]) * t,
+                    p[1] + (q[1] - p[1]) * t,
+                    p[2] + (q[2] - p[2]) * t,
+                ]
             };
             out.push((lerp3(a.0, b.0), lerp3(a.1, b.1)));
         }

@@ -138,4 +138,3 @@ impl MoveElision {
         false
     }
 }
-

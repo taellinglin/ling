@@ -1,8 +1,8 @@
+use super::builtins::is_builtin;
 use crate::core::LingResult;
 use crate::parser::ast;
 use ling_core::types::Type;
 use std::collections::HashMap;
-use super::builtins::is_builtin;
 
 type TypeEnv = HashMap<String, (Type, Vec<usize>)>;
 
@@ -27,7 +27,7 @@ impl TypeChecker {
         // Built-in functions
         env.insert(
             "print".into(),
-            (Type::Fn(vec![Type::Str], Box::new(Type::Unit)), vec![]),
+            (Type::Fn(vec![Type::Var(0)], Box::new(Type::Unit)), vec![]),
         );
         env.insert(
             "now".into(),
@@ -39,13 +39,7 @@ impl TypeChecker {
         );
         env.insert(
             "len".into(),
-            (
-                Type::Fn(
-                    vec![Type::List(Box::new(Type::Var(0)))],
-                    Box::new(Type::Float),
-                ),
-                vec![0],
-            ),
+            (Type::Fn(vec![Type::Var(0)], Box::new(Type::Float)), vec![0]),
         );
         env.insert(
             "push".into(),

@@ -1,8 +1,8 @@
 //! Ling runtime library
 
-pub mod gc;
 pub mod alloc;
+pub mod gc;
 pub mod std;
 
-pub use gc::Gc;
 pub use alloc::LingBox;
+pub use gc::Gc;

@@ -4,11 +4,16 @@ use crate::note::hz_to_midi;
 
 /// One timed lyric line.
 #[derive(Clone, Debug)]
-pub struct LyricLine { pub time: f32, pub text: String }
+pub struct LyricLine {
+    pub time: f32,
+    pub text: String,
+}
 
 /// Parsed `.lrc` lyrics (lines sorted by time).
 #[derive(Clone, Debug, Default)]
-pub struct Lyrics { pub lines: Vec<LyricLine> }
+pub struct Lyrics {
+    pub lines: Vec<LyricLine>,
+}
 
 impl Lyrics {
     /// Parse `.lrc` content: lines like `[mm:ss.xx] text` (multiple stamps allowed).
@@ -21,30 +26,52 @@ impl Lyrics {
             while rest.starts_with('[') {
                 if let Some(end) = rest.find(']') {
                     let inside = &rest[1..end];
-                    if let Some(t) = parse_stamp(inside) { stamps.push(t); }
+                    if let Some(t) = parse_stamp(inside) {
+                        stamps.push(t);
+                    }
                     rest = rest[end + 1..].trim_start();
-                } else { break; }
+                } else {
+                    break;
+                }
             }
             let txt = rest.trim().to_string();
             for t in stamps {
-                if !txt.is_empty() { lines.push(LyricLine { time: t, text: txt.clone() }); }
+                if !txt.is_empty() {
+                    lines.push(LyricLine { time: t, text: txt.clone() });
+                }
             }
         }
-        lines.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        lines.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Self { lines }
     }
 
     /// The lyric line active at time `t` (the latest line whose time ≤ t).
     pub fn line_at(&self, t: f32) -> &str {
         let mut cur = "";
-        for l in &self.lines { if l.time <= t { cur = &l.text; } else { break; } }
+        for l in &self.lines {
+            if l.time <= t {
+                cur = &l.text;
+            } else {
+                break;
+            }
+        }
         cur
     }
 
     /// Index of the active line at time `t`, or -1 before the first.
     pub fn index_at(&self, t: f32) -> i32 {
         let mut idx = -1;
-        for (i, l) in self.lines.iter().enumerate() { if l.time <= t { idx = i as i32; } else { break; } }
+        for (i, l) in self.lines.iter().enumerate() {
+            if l.time <= t {
+                idx = i as i32;
+            } else {
+                break;
+            }
+        }
         idx
     }
 }
@@ -60,7 +87,9 @@ fn parse_stamp(s: &str) -> Option<f32> {
 /// Score a sung pitch against a target, by absolute cents error.
 /// Returns a value in [0,1] (1 = bang on, 0 = a semitone or more off).
 pub fn pitch_score(sung_hz: f32, target_hz: f32) -> f32 {
-    if sung_hz <= 0.0 || target_hz <= 0.0 { return 0.0; }
+    if sung_hz <= 0.0 || target_hz <= 0.0 {
+        return 0.0;
+    }
     let cents = ((hz_to_midi(sung_hz) - hz_to_midi(target_hz)).abs()) * 100.0;
     // ignore octave errors: fold to nearest octave
     let folded = (cents % 1200.0).min(1200.0 - (cents % 1200.0));

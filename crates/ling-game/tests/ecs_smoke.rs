@@ -1,6 +1,6 @@
 //! ling-game smoke tests: entity allocation and the sparse component store.
 
-use ling_game::entity::{Entity, ComponentStore};
+use ling_game::entity::{ComponentStore, Entity};
 
 #[test]
 fn spawns_unique_entities() {

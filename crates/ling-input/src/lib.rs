@@ -71,7 +71,9 @@ pub use onscreen::{OnScreenControls, Rect, StickMode, VirtualButton, VirtualDpad
 pub use pointer::{Mouse, MouseButton, Pointer, PointerKind};
 pub use theme::{Color, ControlShape, ControlTheme};
 pub use touch::{Touch, TouchId, TouchPhase, TouchPool};
-pub use vr::{Gaze, Hand, HandJoint, HandSkeleton, Headset, PlaySpace, Pose, Xr, XrButton, XrController};
+pub use vr::{
+    Gaze, Hand, HandJoint, HandSkeleton, Headset, PlaySpace, Pose, Xr, XrButton, XrController,
+};
 
 /// This crate's semantic version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -233,12 +235,18 @@ mod tests {
     #[test]
     fn end_to_end_button_through_action() {
         let mut s = Sensorium::new(2);
-        let id = s.devices.add(DeviceInfo::new(0, DeviceKind::Gamepad, "Pad"));
+        let id = s
+            .devices
+            .add(DeviceInfo::new(0, DeviceKind::Gamepad, "Pad"));
         s.devices.assign_player(id);
 
         let mut gameplay = ActionMap::new();
-        gameplay.set("jump", Action::new().bind(Binding::Pad(GamepadButton::South)));
-        s.actions.define("gameplay", ActionSet { map: gameplay, blocking: false });
+        gameplay.set(
+            "jump",
+            Action::new().bind(Binding::Pad(GamepadButton::South)),
+        );
+        s.actions
+            .define("gameplay", ActionSet { map: gameplay, blocking: false });
         s.actions.push("gameplay");
 
         s.begin_frame();

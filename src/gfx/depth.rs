@@ -18,15 +18,38 @@ pub struct DrawCall {
     pub depth: f32,
     /// Pre-lit 0x00RRGGBB colour.
     pub color: u32,
-    pub kind:  DrawKind,
+    pub kind: DrawKind,
 }
 
 #[derive(Debug, Clone)]
 pub enum DrawKind {
-    Triangle { x0:f32, y0:f32, x1:f32, y1:f32, x2:f32, y2:f32 },
+    Triangle {
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+    },
     /// Gouraud-interpolated + per-pixel posterised triangle (smooth cel).
-    TriangleG { x0:f32, y0:f32, c0:u32, x1:f32, y1:f32, c1:u32, x2:f32, y2:f32, c2:u32, bands:u32 },
-    Line     { x0:f32, y0:f32, x1:f32, y1:f32 },
+    TriangleG {
+        x0: f32,
+        y0: f32,
+        c0: u32,
+        x1: f32,
+        y1: f32,
+        c1: u32,
+        x2: f32,
+        y2: f32,
+        c2: u32,
+        bands: u32,
+    },
+    Line {
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+    },
 }
 
 /// Deferred depth-sorted draw queue.
@@ -38,11 +61,19 @@ pub struct DepthQueue {
 impl DepthQueue {
     /// Queue a filled triangle.
     pub fn push_triangle(
-        &mut self, depth: f32, color: u32,
-        x0:f32, y0:f32, x1:f32, y1:f32, x2:f32, y2:f32,
+        &mut self,
+        depth: f32,
+        color: u32,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
     ) {
         self.calls.push(DrawCall {
-            depth, color,
+            depth,
+            color,
             kind: DrawKind::Triangle { x0, y0, x1, y1, x2, y2 },
         });
     }
@@ -50,24 +81,30 @@ impl DepthQueue {
     /// Queue a Gouraud + posterised triangle (smooth cel).
     #[allow(clippy::too_many_arguments)]
     pub fn push_triangle_g(
-        &mut self, depth: f32,
-        x0:f32, y0:f32, c0:u32, x1:f32, y1:f32, c1:u32, x2:f32, y2:f32, c2:u32, bands:u32,
+        &mut self,
+        depth: f32,
+        x0: f32,
+        y0: f32,
+        c0: u32,
+        x1: f32,
+        y1: f32,
+        c1: u32,
+        x2: f32,
+        y2: f32,
+        c2: u32,
+        bands: u32,
     ) {
         self.calls.push(DrawCall {
-            depth, color: c0,
-            kind: DrawKind::TriangleG { x0,y0,c0, x1,y1,c1, x2,y2,c2, bands },
+            depth,
+            color: c0,
+            kind: DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands },
         });
     }
 
     /// Queue a line segment.
-    pub fn push_line(
-        &mut self, depth: f32, color: u32,
-        x0:f32, y0:f32, x1:f32, y1:f32,
-    ) {
-        self.calls.push(DrawCall {
-            depth, color,
-            kind: DrawKind::Line { x0, y0, x1, y1 },
-        });
+    pub fn push_line(&mut self, depth: f32, color: u32, x0: f32, y0: f32, x1: f32, y1: f32) {
+        self.calls
+            .push(DrawCall { depth, color, kind: DrawKind::Line { x0, y0, x1, y1 } });
     }
 
     /// Sort back-to-front and rasterise everything into `buf`.
@@ -75,50 +112,67 @@ impl DepthQueue {
     pub fn flush(mut self, buf: &mut Vec<u32>, width: usize, height: usize) {
         // Sort largest depth first (furthest → painted first, nearest on top)
         self.calls.sort_unstable_by(|a, b| {
-            b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal)
+            b.depth
+                .partial_cmp(&a.depth)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         for call in &self.calls {
             match call.kind {
-                DrawKind::Triangle { x0, y0, x1, y1, x2, y2 } =>
-                    raster::fill_triangle(buf, width, height, call.color,
-                                         x0, y0, x1, y1, x2, y2),
-                DrawKind::TriangleG { x0,y0,c0, x1,y1,c1, x2,y2,c2, bands } =>
-                    raster::fill_triangle_gouraud(buf, width, height,
-                                         x0,y0,c0, x1,y1,c1, x2,y2,c2, bands),
-                DrawKind::Line { x0, y0, x1, y1 } =>
-                    raster::draw_line(buf, width, height, call.color,
-                                      x0, y0, x1, y1),
+                DrawKind::Triangle { x0, y0, x1, y1, x2, y2 } => {
+                    raster::fill_triangle(buf, width, height, call.color, x0, y0, x1, y1, x2, y2)
+                },
+                DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands } => {
+                    raster::fill_triangle_gouraud(
+                        buf, width, height, x0, y0, c0, x1, y1, c1, x2, y2, c2, bands,
+                    )
+                },
+                DrawKind::Line { x0, y0, x1, y1 } => {
+                    raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1)
+                },
             }
         }
         // `self` dropped here — no need to clear explicitly
     }
 
-    pub fn is_empty(&self) -> bool { self.calls.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.calls.is_empty()
+    }
 
     /// Consume the queue and send all draw calls to the WebGL backend.
     /// Only compiled for wasm32 targets.
     #[cfg(target_arch = "wasm32")]
-    pub fn flush_to_webgl(mut self, fill_r: f32, fill_g: f32, fill_b: f32, width: usize, height: usize) {
+    pub fn flush_to_webgl(
+        mut self,
+        fill_r: f32,
+        fill_g: f32,
+        fill_b: f32,
+        width: usize,
+        height: usize,
+    ) {
         // Sort back-to-front (painter's algorithm) — same as the native path.
         self.calls.sort_unstable_by(|a, b| {
-            b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal)
+            b.depth
+                .partial_cmp(&a.depth)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         for call in &self.calls {
             match call.kind {
-                DrawKind::Triangle { x0, y0, x1, y1, x2, y2 } =>
-                    crate::gfx::webgl::push_triangle(call.color, x0, y0, x1, y1, x2, y2, call.depth),
-                DrawKind::TriangleG { x0,y0,c0, x1,y1,c1, x2,y2,c2, bands:_ } => {
+                DrawKind::Triangle { x0, y0, x1, y1, x2, y2 } => {
+                    crate::gfx::webgl::push_triangle(call.color, x0, y0, x1, y1, x2, y2, call.depth)
+                },
+                DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands: _ } => {
                     // WebGL path: approximate with the averaged vertex colour.
                     let avg = {
-                        let r=((c0>>16&0xFF)+(c1>>16&0xFF)+(c2>>16&0xFF))/3;
-                        let g=((c0>>8&0xFF)+(c1>>8&0xFF)+(c2>>8&0xFF))/3;
-                        let b=((c0&0xFF)+(c1&0xFF)+(c2&0xFF))/3;
-                        (r<<16)|(g<<8)|b
+                        let r = ((c0 >> 16 & 0xFF) + (c1 >> 16 & 0xFF) + (c2 >> 16 & 0xFF)) / 3;
+                        let g = ((c0 >> 8 & 0xFF) + (c1 >> 8 & 0xFF) + (c2 >> 8 & 0xFF)) / 3;
+                        let b = ((c0 & 0xFF) + (c1 & 0xFF) + (c2 & 0xFF)) / 3;
+                        (r << 16) | (g << 8) | b
                     };
                     crate::gfx::webgl::push_triangle(avg, x0, y0, x1, y1, x2, y2, call.depth);
-                }
-                DrawKind::Line { x0, y0, x1, y1 } =>
-                    crate::gfx::webgl::push_line(call.color, x0, y0, x1, y1, call.depth),
+                },
+                DrawKind::Line { x0, y0, x1, y1 } => {
+                    crate::gfx::webgl::push_line(call.color, x0, y0, x1, y1, call.depth)
+                },
             }
         }
         crate::gfx::webgl::flush(fill_r, fill_g, fill_b, width, height);

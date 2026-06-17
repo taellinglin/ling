@@ -4,5 +4,3 @@
 pub enum LingError {
     Placeholder,
 }
-
-

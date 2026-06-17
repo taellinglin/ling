@@ -11,24 +11,24 @@
 //! - [`dataset`] — the **Ling Dialog Standard** (`.lingdialog`): a tiny,
 //!   human-writable corpus format for training dialog models.
 
-pub mod tensor;
 pub mod model;
 pub mod prompt;
+pub mod tensor;
 pub mod tokenizer;
 
-pub mod nn;
 pub mod bt;
-pub mod dialog_lm;
 pub mod dataset;
+pub mod dialog_lm;
+pub mod nn;
 
-pub use tensor::{Tensor, Shape};
 pub use model::{InferenceEngine, ModelConfig};
-pub use prompt::{Message, Role, ChatHistory};
+pub use prompt::{ChatHistory, Message, Role};
+pub use tensor::{Shape, Tensor};
 pub use tokenizer::Tokenizer;
 
-pub use nn::{Net, Dense, Activation, Rng};
-pub use bt::{Tree, Status};
+pub use bt::{Status, Tree};
+pub use dataset::{Conversation, Dataset, Turn};
 pub use dialog_lm::{DialogLM, LmConfig};
-pub use dataset::{Dataset, Conversation, Turn};
+pub use nn::{Activation, Dense, Net, Rng};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

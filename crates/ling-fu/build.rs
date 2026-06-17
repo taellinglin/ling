@@ -11,7 +11,10 @@ fn main() {
     // crates/ling-fu → ../../assets/ling.ico
     let ico = Path::new(&manifest).join("../../assets/ling.ico");
     if !ico.exists() {
-        println!("cargo:warning=icon '{}' not found; lingfu built without an app icon", ico.display());
+        println!(
+            "cargo:warning=icon '{}' not found; lingfu built without an app icon",
+            ico.display()
+        );
         return;
     }
     println!("cargo:rerun-if-changed=../../assets/ling.ico");

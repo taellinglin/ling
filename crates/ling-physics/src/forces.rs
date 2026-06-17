@@ -22,12 +22,20 @@ pub const GRAVITY: f32 = 9.8;
 /// close range. Ideal for particle galaxies, charge fields, and flocking.
 pub fn nbody_accel(positions: &[Vec3], masses: &[f32], g: f32, soften: f32) -> Vec<Vec3> {
     let n = positions.len().min(masses.len());
-    if n == 0 { return Vec::new(); }
+    if n == 0 {
+        return Vec::new();
+    }
     let mut pos = Vec::with_capacity(3 * n);
-    for p in &positions[..n] { pos.push(p.x); pos.push(p.y); pos.push(p.z); }
+    for p in &positions[..n] {
+        pos.push(p.x);
+        pos.push(p.y);
+        pos.push(p.z);
+    }
     let mut out = vec![0.0f32; 3 * n];
     ling_gpu::backend().nbody_accel(&pos, &masses[..n], g, soften, &mut out);
-    (0..n).map(|i| Vec3::new(out[3 * i], out[3 * i + 1], out[3 * i + 2])).collect()
+    (0..n)
+        .map(|i| Vec3::new(out[3 * i], out[3 * i + 1], out[3 * i + 2]))
+        .collect()
 }
 
 /// Calculate gravity force given mass
@@ -75,7 +83,13 @@ pub fn damping_force(velocity: Vec3, damping_coeff: f32) -> Vec3 {
 /// target: position of attracted body
 /// mass1, mass2: masses
 /// G: gravitational constant (tune for desired strength)
-pub fn gravitational_attraction(source: Vec3, target: Vec3, mass1: f32, mass2: f32, g: f32) -> Vec3 {
+pub fn gravitational_attraction(
+    source: Vec3,
+    target: Vec3,
+    mass1: f32,
+    mass2: f32,
+    g: f32,
+) -> Vec3 {
     let displacement = target - source;
     let distance = displacement.length();
     if distance < 0.01 {
@@ -148,7 +162,12 @@ pub fn terminal_velocity(mass: f32, drag_coeff: f32, g: f32) -> f32 {
 /// electric_field: electric field vector
 /// velocity: particle velocity
 /// magnetic_field: magnetic field vector
-pub fn lorentz_force(charge: f32, electric_field: Vec3, velocity: Vec3, magnetic_field: Vec3) -> Vec3 {
+pub fn lorentz_force(
+    charge: f32,
+    electric_field: Vec3,
+    velocity: Vec3,
+    magnetic_field: Vec3,
+) -> Vec3 {
     let electric = charge * electric_field;
     let magnetic = charge * velocity.cross(magnetic_field);
     electric + magnetic
@@ -185,7 +204,12 @@ pub fn drag_force_4d(velocity: Vec4, drag_coeff: f32) -> Vec4 {
 }
 
 /// 4D spring force (Hooke's law in 4D)
-pub fn spring_force_4d(position: Vec4, anchor: Vec4, spring_constant: f32, rest_length: f32) -> Vec4 {
+pub fn spring_force_4d(
+    position: Vec4,
+    anchor: Vec4,
+    spring_constant: f32,
+    rest_length: f32,
+) -> Vec4 {
     let displacement = position - anchor;
     let distance = displacement.length();
     if distance < 0.001 {
@@ -202,7 +226,13 @@ pub fn damping_force_4d(velocity: Vec4, damping_coeff: f32) -> Vec4 {
 }
 
 /// 4D gravitational attraction (inverse square law in 4D space)
-pub fn gravitational_attraction_4d(source: Vec4, target: Vec4, mass1: f32, mass2: f32, g: f32) -> Vec4 {
+pub fn gravitational_attraction_4d(
+    source: Vec4,
+    target: Vec4,
+    mass1: f32,
+    mass2: f32,
+    g: f32,
+) -> Vec4 {
     let displacement = target - source;
     let distance = displacement.length();
     if distance < 0.01 {

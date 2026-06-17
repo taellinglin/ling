@@ -80,7 +80,13 @@ impl Axis {
     /// Trigger preset: one-sided `0..=1` (resting low, soft floor deadzone).
     #[must_use]
     pub fn trigger() -> Self {
-        Self { deadzone: 0.04, min: 0.0, center: 0.0, max: 1.0, ..Self::default() }
+        Self {
+            deadzone: 0.04,
+            min: 0.0,
+            center: 0.0,
+            max: 1.0,
+            ..Self::default()
+        }
     }
 
     /// Map a raw reading through calibration, deadzone, saturation and curve.
@@ -109,7 +115,11 @@ impl Axis {
         let mag = n.abs();
         let dz = self.deadzone.clamp(0.0, 0.999);
         let sat = self.saturation.clamp(dz + 1e-3, 1.0);
-        let shaped = if mag <= dz { 0.0 } else { ((mag - dz) / (sat - dz)).min(1.0) };
+        let shaped = if mag <= dz {
+            0.0
+        } else {
+            ((mag - dz) / (sat - dz)).min(1.0)
+        };
 
         let out = self.curve.apply(shaped) * sign;
         if self.invert {

@@ -300,8 +300,7 @@ impl PlaySpace {
         for i in 0..n {
             let (xi, zi) = (self.bounds[i].x, self.bounds[i].y);
             let (xj, zj) = (self.bounds[j].x, self.bounds[j].y);
-            let intersects = ((zi > z) != (zj > z))
-                && (x < (xj - xi) * (z - zi) / (zj - zi) + xi);
+            let intersects = ((zi > z) != (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi) + xi);
             if intersects {
                 inside = !inside;
             }

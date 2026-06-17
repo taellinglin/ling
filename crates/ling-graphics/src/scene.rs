@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use glam::{Vec3, Quat, Mat4};
 use crate::geometry::Mesh;
 use crate::material::Material;
+use glam::{Mat4, Quat, Vec3};
+use std::sync::Arc;
 
 // ── Transform ─────────────────────────────────────────────────────────────────
 
@@ -19,9 +19,15 @@ impl Transform {
         scale: Vec3::ONE,
     };
 
-    pub fn from_translation(t: Vec3) -> Self { Self { translation: t, ..Self::IDENTITY } }
-    pub fn from_rotation(r: Quat) -> Self    { Self { rotation: r, ..Self::IDENTITY } }
-    pub fn from_scale(s: Vec3) -> Self       { Self { scale: s, ..Self::IDENTITY } }
+    pub fn from_translation(t: Vec3) -> Self {
+        Self { translation: t, ..Self::IDENTITY }
+    }
+    pub fn from_rotation(r: Quat) -> Self {
+        Self { rotation: r, ..Self::IDENTITY }
+    }
+    pub fn from_scale(s: Vec3) -> Self {
+        Self { scale: s, ..Self::IDENTITY }
+    }
 
     pub fn from_trs(translation: Vec3, rotation: Quat, scale: Vec3) -> Self {
         Self { translation, rotation, scale }
@@ -35,13 +41,21 @@ impl Transform {
         *parent * self.matrix()
     }
 
-    pub fn forward(&self) -> Vec3 { self.rotation * -Vec3::Z }
-    pub fn right(&self)   -> Vec3 { self.rotation *  Vec3::X }
-    pub fn up(&self)      -> Vec3 { self.rotation *  Vec3::Y }
+    pub fn forward(&self) -> Vec3 {
+        self.rotation * -Vec3::Z
+    }
+    pub fn right(&self) -> Vec3 {
+        self.rotation * Vec3::X
+    }
+    pub fn up(&self) -> Vec3 {
+        self.rotation * Vec3::Y
+    }
 
     pub fn look_at(&mut self, target: Vec3, world_up: Vec3) {
         let dir = (target - self.translation).normalize();
-        if dir.length_squared() < 1e-8 { return; }
+        if dir.length_squared() < 1e-8 {
+            return;
+        }
         let mat = Mat4::look_at_rh(self.translation, target, world_up);
         let (_, rot, _) = mat.inverse().to_scale_rotation_translation();
         self.rotation = rot;
@@ -57,7 +71,9 @@ impl Transform {
 }
 
 impl Default for Transform {
-    fn default() -> Self { Self::IDENTITY }
+    fn default() -> Self {
+        Self::IDENTITY
+    }
 }
 
 // ── Scene graph ───────────────────────────────────────────────────────────────
@@ -88,9 +104,18 @@ impl SceneNode {
         }
     }
 
-    pub fn with_mesh(mut self, mesh: Arc<Mesh>) -> Self { self.mesh = Some(mesh); self }
-    pub fn with_material(mut self, mat: Arc<Material>) -> Self { self.material = Some(mat); self }
-    pub fn with_transform(mut self, t: Transform) -> Self { self.transform = t; self }
+    pub fn with_mesh(mut self, mesh: Arc<Mesh>) -> Self {
+        self.mesh = Some(mesh);
+        self
+    }
+    pub fn with_material(mut self, mat: Arc<Material>) -> Self {
+        self.material = Some(mat);
+        self
+    }
+    pub fn with_transform(mut self, t: Transform) -> Self {
+        self.transform = t;
+        self
+    }
 }
 
 #[derive(Debug, Default)]
@@ -100,7 +125,9 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn add_node(&mut self, node: SceneNode) -> NodeId {
         let id = self.nodes.len();
@@ -108,17 +135,25 @@ impl Scene {
         id
     }
 
-    pub fn add_root(&mut self, id: NodeId) { self.roots.push(id); }
+    pub fn add_root(&mut self, id: NodeId) {
+        self.roots.push(id);
+    }
 
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
         self.nodes[child].parent = Some(parent);
         self.nodes[parent].children.push(child);
     }
 
-    pub fn node(&self, id: NodeId) -> &SceneNode { &self.nodes[id] }
-    pub fn node_mut(&mut self, id: NodeId) -> &mut SceneNode { &mut self.nodes[id] }
+    pub fn node(&self, id: NodeId) -> &SceneNode {
+        &self.nodes[id]
+    }
+    pub fn node_mut(&mut self, id: NodeId) -> &mut SceneNode {
+        &mut self.nodes[id]
+    }
 
-    pub fn roots(&self) -> &[NodeId] { &self.roots }
+    pub fn roots(&self) -> &[NodeId] {
+        &self.roots
+    }
 
     pub fn global_transform(&self, id: NodeId) -> Mat4 {
         let node = &self.nodes[id];
@@ -139,7 +174,9 @@ impl Scene {
 
     fn collect_recursive(&self, id: NodeId, parent_mat: Mat4, out: &mut Vec<(NodeId, Mat4)>) {
         let node = &self.nodes[id];
-        if !node.visible { return; }
+        if !node.visible {
+            return;
+        }
         let mat = parent_mat * node.transform.matrix();
         if node.mesh.is_some() {
             out.push((id, mat));
@@ -150,7 +187,13 @@ impl Scene {
     }
 
     /// Convenience: create a mesh node, add it as a root, and return its id.
-    pub fn spawn_mesh(&mut self, name: impl Into<String>, mesh: Arc<Mesh>, material: Arc<Material>, transform: Transform) -> NodeId {
+    pub fn spawn_mesh(
+        &mut self,
+        name: impl Into<String>,
+        mesh: Arc<Mesh>,
+        material: Arc<Material>,
+        transform: Transform,
+    ) -> NodeId {
         let node = SceneNode::new(name)
             .with_mesh(mesh)
             .with_material(material)

@@ -91,7 +91,10 @@ fn test_struct_wrong_arity_errors() {
             bind p = Pair(1)
         }
     "#;
-    assert!(ling::run(source).is_err(), "wrong-arity construction should error");
+    assert!(
+        ling::run(source).is_err(),
+        "wrong-arity construction should error"
+    );
 }
 
 #[test]

@@ -14,26 +14,29 @@
 //! - [`vrf`]       — Verifiable Random Function (Ed25519-based)
 //! - [`mandala`]   — Mandala Hash — custom geometric key derivation
 
-pub mod hash;
-pub mod symmetric;
 pub mod asymmetric;
-pub mod kdf;
-pub mod pq;
-pub mod hybrid;
 pub mod geo;
-pub mod shamir;
-pub mod zkp;
-pub mod vrf;
+pub mod hash;
+pub mod hybrid;
+pub mod kdf;
 pub mod mandala;
+pub mod pq;
+pub mod shamir;
+pub mod symmetric;
+pub mod vrf;
+pub mod zkp;
 
-pub use hash::{Blake3, Sha3_256, Sha3_512, Shake256};
-pub use symmetric::{AesGcm256, XChaCha20};
 pub use asymmetric::{Ed25519Keypair, X25519Secret};
-pub use kdf::{Argon2idParams, hkdf_sha3};
-pub use pq::{MlKem768Keypair, encapsulate as mlkem768_encapsulate};
-pub use hybrid::{HybridKeypair, encapsulate as hybrid_encapsulate};
-pub use geo::{KnotIdentity, KnotShape, HoloFragment, knot_encapsulate, holo_hash, holo_seal, holo_open, scatter, gather};
-pub use shamir::{split_secret, reconstruct_secret, Share};
-pub use zkp::{SchnorrProof, SchnorrKeypair};
-pub use vrf::{VrfKeypair, VrfProof};
+pub use geo::{
+    gather, holo_hash, holo_open, holo_seal, knot_encapsulate, scatter, HoloFragment, KnotIdentity,
+    KnotShape,
+};
+pub use hash::{Blake3, Sha3_256, Sha3_512, Shake256};
+pub use hybrid::{encapsulate as hybrid_encapsulate, HybridKeypair};
+pub use kdf::{hkdf_sha3, Argon2idParams};
 pub use mandala::{MandalaHash, MandalaParams};
+pub use pq::{encapsulate as mlkem768_encapsulate, MlKem768Keypair};
+pub use shamir::{reconstruct_secret, split_secret, Share};
+pub use symmetric::{AesGcm256, XChaCha20};
+pub use vrf::{VrfKeypair, VrfProof};
+pub use zkp::{SchnorrKeypair, SchnorrProof};

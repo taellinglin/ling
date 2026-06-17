@@ -30,14 +30,32 @@ pub enum ActionPhase {
 pub enum InputEvent {
     DeviceConnected(DeviceInfo),
     DeviceDisconnected(DeviceId),
-    Button { device: DeviceId, button: GamepadButton, pressed: bool },
-    Axis { device: DeviceId, axis: GamepadAxis, value: f32 },
+    Button {
+        device: DeviceId,
+        button: GamepadButton,
+        pressed: bool,
+    },
+    Axis {
+        device: DeviceId,
+        axis: GamepadAxis,
+        value: f32,
+    },
     Touch(Touch),
     Gesture(Gesture),
-    Motion { device: DeviceId, sample: MotionSample },
-    Pose { device: DeviceId, pose: Pose },
+    Motion {
+        device: DeviceId,
+        sample: MotionSample,
+    },
+    Pose {
+        device: DeviceId,
+        pose: Pose,
+    },
     /// A resolved high-level action fired (name + analog value).
-    Action { name: String, phase: ActionPhase, value: f32 },
+    Action {
+        name: String,
+        phase: ActionPhase,
+        value: f32,
+    },
 }
 
 #[cfg(test)]

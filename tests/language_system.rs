@@ -11,8 +11,10 @@ use ling::run;
 /// A program that runs cleanly returns Ok(()).
 fn assert_runs(label: &str, src: &str) {
     match run(src) {
-        Ok(()) => {}
-        Err(e) => panic!("[{label}] expected program to run, got error: {e}\n--- source ---\n{src}"),
+        Ok(()) => {},
+        Err(e) => {
+            panic!("[{label}] expected program to run, got error: {e}\n--- source ---\n{src}")
+        },
     }
 }
 
@@ -27,18 +29,23 @@ fn runs_minimal_program() {
 
 #[test]
 fn arithmetic_and_bind_locals() {
-    assert_runs("arith", r#"
+    assert_runs(
+        "arith",
+        r#"
         bind start = do {
             bind a = 2
             bind b = 40
             print(a + b)
         }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn if_else_and_while() {
-    assert_runs("control-flow", r#"
+    assert_runs(
+        "control-flow",
+        r#"
         bind start = do {
             bind n = 0
             while n < 3 {
@@ -47,7 +54,8 @@ fn if_else_and_while() {
             }
             if n > 2 { print("done") } else { print("no") }
         }
-    "#);
+    "#,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,15 +123,25 @@ const MATH_TH: &str = r#"ผูก เริ่ม = ทำ {
 }"#;
 
 #[test]
-fn math_builtins_english() { assert_runs("math-en", MATH_EN); }
+fn math_builtins_english() {
+    assert_runs("math-en", MATH_EN);
+}
 #[test]
-fn math_builtins_chinese() { assert_runs("math-zh", MATH_ZH); }
+fn math_builtins_chinese() {
+    assert_runs("math-zh", MATH_ZH);
+}
 #[test]
-fn math_builtins_japanese() { assert_runs("math-ja", MATH_JA); }
+fn math_builtins_japanese() {
+    assert_runs("math-ja", MATH_JA);
+}
 #[test]
-fn math_builtins_korean() { assert_runs("math-ko", MATH_KO); }
+fn math_builtins_korean() {
+    assert_runs("math-ko", MATH_KO);
+}
 #[test]
-fn math_builtins_thai() { assert_runs("math-th", MATH_TH); }
+fn math_builtins_thai() {
+    assert_runs("math-th", MATH_TH);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mixed-language source — the killer feature: five languages in one file.
@@ -131,13 +149,16 @@ fn math_builtins_thai() { assert_runs("math-th", MATH_TH); }
 
 #[test]
 fn mixed_language_single_file() {
-    assert_runs("mixed", r#"bind start = do {
+    assert_runs(
+        "mixed",
+        r#"bind start = do {
         bind x = 正弦(0.0)
         bind y = 余弦(0.0)
         print(ปัดลง(3.7))
         출력(제곱근(9.0))
         印刷(べき乗(2.0, 3.0))
-    }"#);
+    }"#,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,35 +167,44 @@ fn mixed_language_single_file() {
 
 #[test]
 fn collections_and_fft_english() {
-    assert_runs("coll-en", r#"bind start = do {
+    assert_runs(
+        "coll-en",
+        r#"bind start = do {
         bind xs = list_new()
         bind xs2 = list_push(xs, 1.0)
         print(len(xs2))
         fft_push(0.1)
         print(fft_rms())
-    }"#);
+    }"#,
+    );
 }
 
 #[test]
 fn collections_and_fft_chinese() {
-    assert_runs("coll-zh", r#"令 启动 = 执 {
+    assert_runs(
+        "coll-zh",
+        r#"令 启动 = 执 {
         令 xs = 新建列表()
         令 xs2 = 列表添加(xs, 1.0)
         印(长度(xs2))
         频谱输入(0.1)
         印(均方根())
-    }"#);
+    }"#,
+    );
 }
 
 #[test]
 fn collections_and_fft_korean() {
-    assert_runs("coll-ko", r#"바인드 시작 = 실행 {
+    assert_runs(
+        "coll-ko",
+        r#"바인드 시작 = 실행 {
         바인드 xs = 새목록()
         바인드 xs2 = 목록추가(xs, 1.0)
         출력(길이(xs2))
         FFT입력(0.1)
         출력(RMS레벨())
-    }"#);
+    }"#,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,7 +214,9 @@ fn collections_and_fft_korean() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn crypto_kem_and_seal_round_trip() {
-    assert_runs("crypto-en", r#"bind start = do {
+    assert_runs(
+        "crypto-en",
+        r#"bind start = do {
         bind id = knot_keygen()
         bind pk = knot_public(id)
         bind enc = knot_encapsulate(pk)
@@ -193,19 +225,23 @@ fn crypto_kem_and_seal_round_trip() {
         print(crypto_open(ss, sealed))
         print(len(knot_points(pk)))
         print(crypto_hash("ling"))
-    }"#);
+    }"#,
+    );
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn crypto_builtins_chinese() {
-    assert_runs("crypto-zh", r#"令 启动 = 执 {
+    assert_runs(
+        "crypto-zh",
+        r#"令 启动 = 执 {
         令 id = 生成密钥()
         令 pk = 公钥(id)
         令 enc = 封装密钥(pk)
         令 ss = 解封装密钥(id, enc[0])
         印(解封(ss, 封印(enc[1], "你好")))
-    }"#);
+    }"#,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,5 +269,8 @@ fn detects_languages() {
 #[test]
 fn unknown_function_is_error_not_panic() {
     let res = run(r#"bind start = do { this_is_not_a_builtin(1) }"#);
-    assert!(res.is_err(), "calling an unknown builtin should be an error");
+    assert!(
+        res.is_err(),
+        "calling an unknown builtin should be an error"
+    );
 }

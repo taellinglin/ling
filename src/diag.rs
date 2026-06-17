@@ -10,11 +10,11 @@ use std::io::IsTerminal;
 
 // ─── Palette (truecolor RGB) ───────────────────────────────────────────────────
 
-pub const NAVY:  (u8, u8, u8) = (59, 110, 165);  // #3B6EA5 — notes / secondary
-pub const TEAL:  (u8, u8, u8) = (42, 157, 143);  // #2A9D8F — frames / structure
-pub const ROSE:  (u8, u8, u8) = (232, 74, 111);  // #E84A6F — errors
-pub const GREY:  (u8, u8, u8) = (141, 153, 174); // #8D99AE — locations / dim
-pub const VINE:  (u8, u8, u8) = (127, 176, 105); // #7FB069 — hints / success
+pub const NAVY: (u8, u8, u8) = (59, 110, 165); // #3B6EA5 — notes / secondary
+pub const TEAL: (u8, u8, u8) = (42, 157, 143); // #2A9D8F — frames / structure
+pub const ROSE: (u8, u8, u8) = (232, 74, 111); // #E84A6F — errors
+pub const GREY: (u8, u8, u8) = (141, 153, 174); // #8D99AE — locations / dim
+pub const VINE: (u8, u8, u8) = (127, 176, 105); // #7FB069 — hints / success
 
 // ─── Output language ────────────────────────────────────────────────────────────
 
@@ -30,12 +30,17 @@ pub enum OutputLang {
 impl OutputLang {
     /// Resolve from the `LING_LANG` env var; defaults to English.
     pub fn from_env() -> Self {
-        match std::env::var("LING_LANG").unwrap_or_default().trim().to_lowercase().as_str() {
-            "th" | "thai" | "ภาษาไทย"      => OutputLang::Thai,
-            "ko" | "korean" | "한국어"      => OutputLang::Korean,
-            "ja" | "japanese" | "日本語"    => OutputLang::Japanese,
-            "zh" | "chinese" | "中文"       => OutputLang::Chinese,
-            _                               => OutputLang::English,
+        match std::env::var("LING_LANG")
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "th" | "thai" | "ภาษาไทย" => OutputLang::Thai,
+            "ko" | "korean" | "한국어" => OutputLang::Korean,
+            "ja" | "japanese" | "日本語" => OutputLang::Japanese,
+            "zh" | "chinese" | "中文" => OutputLang::Chinese,
+            _ => OutputLang::English,
         }
     }
 }
@@ -45,38 +50,38 @@ fn t(lang: OutputLang, key: &str) -> &'static str {
     use OutputLang::*;
     match (key, lang) {
         ("error", English) => "error",
-        ("error", Thai)    => "ข้อผิดพลาด",
-        ("error", Korean)  => "오류",
+        ("error", Thai) => "ข้อผิดพลาด",
+        ("error", Korean) => "오류",
         ("error", Japanese) => "エラー",
         ("error", Chinese) => "错误",
 
         ("parse", English) => "parse",
-        ("parse", Thai)    => "แยกวิเคราะห์",
-        ("parse", Korean)  => "구문",
+        ("parse", Thai) => "แยกวิเคราะห์",
+        ("parse", Korean) => "구문",
         ("parse", Japanese) => "構文",
         ("parse", Chinese) => "解析",
 
         ("runtime", English) => "runtime",
-        ("runtime", Thai)    => "ขณะทำงาน",
-        ("runtime", Korean)  => "런타임",
+        ("runtime", Thai) => "ขณะทำงาน",
+        ("runtime", Korean) => "런타임",
         ("runtime", Japanese) => "実行時",
         ("runtime", Chinese) => "运行时",
 
         ("traceback", English) => "traceback (deepest call last)",
-        ("traceback", Thai)    => "การย้อนรอย (เรียกล่าสุดอยู่ท้าย)",
-        ("traceback", Korean)  => "역추적 (최근 호출이 마지막)",
+        ("traceback", Thai) => "การย้อนรอย (เรียกล่าสุดอยู่ท้าย)",
+        ("traceback", Korean) => "역추적 (최근 호출이 마지막)",
         ("traceback", Japanese) => "トレースバック (最新の呼び出しが最後)",
         ("traceback", Chinese) => "回溯（最近的调用在最后）",
 
         ("in", English) => "in",
-        ("in", Thai)    => "ใน",
-        ("in", Korean)  => "위치",
+        ("in", Thai) => "ใน",
+        ("in", Korean) => "위치",
         ("in", Japanese) => "内",
         ("in", Chinese) => "于",
 
         ("hint", English) => "hint",
-        ("hint", Thai)    => "คำแนะนำ",
-        ("hint", Korean)  => "힌트",
+        ("hint", Thai) => "คำแนะนำ",
+        ("hint", Korean) => "힌트",
         ("hint", Japanese) => "ヒント",
         ("hint", Chinese) => "提示",
 
@@ -220,21 +225,27 @@ pub fn render_parse(message: &str, _source: &str, file: Option<&str>, lang: Outp
 fn hint_for(message: &str, lang: OutputLang) -> Option<String> {
     use OutputLang::*;
     if message.contains("unknown function") || message.contains("undefined") {
-        Some(match lang {
-            English  => "check the spelling, or `use` the module that defines it",
-            Thai     => "ตรวจการสะกด หรือ `use` โมดูลที่กำหนดมัน",
-            Korean   => "철자를 확인하거나, 정의한 모듈을 `use` 하세요",
-            Japanese => "綴りを確認するか、定義しているモジュールを `use` してください",
-            Chinese  => "检查拼写，或 `use` 定义它的模块",
-        }.to_string())
+        Some(
+            match lang {
+                English => "check the spelling, or `use` the module that defines it",
+                Thai => "ตรวจการสะกด หรือ `use` โมดูลที่กำหนดมัน",
+                Korean => "철자를 확인하거나, 정의한 모듈을 `use` 하세요",
+                Japanese => "綴りを確認するか、定義しているモジュールを `use` してください",
+                Chinese => "检查拼写，或 `use` 定义它的模块",
+            }
+            .to_string(),
+        )
     } else if message.contains("no entry point") {
-        Some(match lang {
-            English  => "add `bind start = do { ... }`",
-            Thai     => "เพิ่ม `bind start = do { ... }`",
-            Korean   => "`bind start = do { ... }` 를 추가하세요",
-            Japanese => "`bind start = do { ... }` を追加してください",
-            Chinese  => "添加 `bind start = do { ... }`",
-        }.to_string())
+        Some(
+            match lang {
+                English => "add `bind start = do { ... }`",
+                Thai => "เพิ่ม `bind start = do { ... }`",
+                Korean => "`bind start = do { ... }` 를 추가하세요",
+                Japanese => "`bind start = do { ... }` を追加してください",
+                Chinese => "添加 `bind start = do { ... }`",
+            }
+            .to_string(),
+        )
     } else {
         None
     }
@@ -246,17 +257,55 @@ fn hint_for(message: &str, lang: OutputLang) -> Option<String> {
 /// thousands of `format!`-built messages in the runtime.
 fn localize_message(msg: &str, lang: OutputLang) -> String {
     use OutputLang::*;
-    if lang == English { return msg.to_string(); }
+    if lang == English {
+        return msg.to_string();
+    }
 
     // (english_prefix, [th, ko, ja, zh])
     let prefixes: &[(&str, [&str; 4])] = &[
-        ("unknown function ", ["ฟังก์ชันที่ไม่รู้จัก ", "알 수 없는 함수 ", "不明な関数 ", "未知函数 "]),
-        ("undefined: ",       ["ไม่ได้กำหนด: ",         "정의되지 않음: ",    "未定義: ",       "未定义： "]),
-        ("cannot call ",      ["เรียกใช้ไม่ได้ ",       "호출할 수 없음 ",     "呼び出せません ", "无法调用 "]),
-        ("division by zero",  ["หารด้วยศูนย์",          "0으로 나눔",         "ゼロ除算",        "除以零"]),
-        ("index out of",      ["ดัชนีเกินขอบเขต",       "인덱스 범위 초과",    "範囲外インデックス", "索引越界"]),
+        (
+            "unknown function ",
+            [
+                "ฟังก์ชันที่ไม่รู้จัก ",
+                "알 수 없는 함수 ",
+                "不明な関数 ",
+                "未知函数 ",
+            ],
+        ),
+        (
+            "undefined: ",
+            ["ไม่ได้กำหนด: ", "정의되지 않음: ", "未定義: ", "未定义： "],
+        ),
+        (
+            "cannot call ",
+            [
+                "เรียกใช้ไม่ได้ ",
+                "호출할 수 없음 ",
+                "呼び出せません ",
+                "无法调用 ",
+            ],
+        ),
+        (
+            "division by zero",
+            ["หารด้วยศูนย์", "0으로 나눔", "ゼロ除算", "除以零"],
+        ),
+        (
+            "index out of",
+            [
+                "ดัชนีเกินขอบเขต",
+                "인덱스 범위 초과",
+                "範囲外インデックス",
+                "索引越界",
+            ],
+        ),
     ];
-    let idx = match lang { Thai => 0, Korean => 1, Japanese => 2, Chinese => 3, English => return msg.to_string() };
+    let idx = match lang {
+        Thai => 0,
+        Korean => 1,
+        Japanese => 2,
+        Chinese => 3,
+        English => return msg.to_string(),
+    };
     for (en, tr) in prefixes {
         if let Some(rest) = msg.strip_prefix(en) {
             return format!("{}{}", tr[idx], rest);
@@ -265,12 +314,13 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
     // Whole-message special cases.
     if msg.starts_with("no entry point") {
         return match lang {
-            Thai     => "ไม่มีจุดเริ่มต้น — ต้องมี `bind เริ่ม = ทำ {...}`",
-            Korean   => "진입점 없음 — `bind 시작 = do {...}` 가 필요합니다",
+            Thai => "ไม่มีจุดเริ่มต้น — ต้องมี `bind เริ่ม = ทำ {...}`",
+            Korean => "진입점 없음 — `bind 시작 = do {...}` 가 필요합니다",
             Japanese => "エントリポイントがありません — `bind 始め = do {...}` が必要です",
-            Chinese  => "没有入口点 — 需要 `bind 始 = do {...}`",
-            English  => msg,
-        }.to_string();
+            Chinese => "没有入口点 — 需要 `bind 始 = do {...}`",
+            English => msg,
+        }
+        .to_string();
     }
     msg.to_string()
 }

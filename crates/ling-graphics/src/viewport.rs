@@ -16,4 +16,3 @@ impl Viewport {
         Self { width, height, clear_color }
     }
 }
-

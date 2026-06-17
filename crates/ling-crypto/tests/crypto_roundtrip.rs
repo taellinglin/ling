@@ -3,9 +3,9 @@
 //! establish matching shared secrets.
 
 use ling_crypto::hash::Blake3;
-use ling_crypto::symmetric::AesGcm256;
-use ling_crypto::pq::MlKem768Keypair;
 use ling_crypto::hybrid::HybridKeypair;
+use ling_crypto::pq::MlKem768Keypair;
+use ling_crypto::symmetric::AesGcm256;
 
 #[test]
 fn blake3_is_deterministic_and_sensitive() {
@@ -24,7 +24,11 @@ fn aes_gcm_256_round_trips() {
     let plaintext = b"the quick brown fox";
 
     let ct = cipher.encrypt(plaintext).expect("encrypt must succeed");
-    assert_ne!(&ct[..], &plaintext[..], "ciphertext must differ from plaintext");
+    assert_ne!(
+        &ct[..],
+        &plaintext[..],
+        "ciphertext must differ from plaintext"
+    );
 
     let pt = cipher.decrypt(&ct).expect("decrypt must succeed");
     assert_eq!(pt, plaintext, "decrypt(encrypt(x)) == x");
@@ -36,7 +40,10 @@ fn ml_kem_768_establishes_shared_secret() {
     let ek = recipient.encapsulation_key();
     let (ct, ss_sender) = ling_crypto::pq::encapsulate(&ek).expect("encapsulate");
     let ss_recipient = recipient.decapsulate(&ct).expect("decapsulate");
-    assert_eq!(ss_sender, ss_recipient, "ML-KEM-768 shared secrets must match");
+    assert_eq!(
+        ss_sender, ss_recipient,
+        "ML-KEM-768 shared secrets must match"
+    );
 }
 
 #[test]
@@ -59,5 +66,8 @@ fn aes_gcm_256_rejects_tampered_ciphertext() {
     // Flip a byte in the ciphertext body.
     let last = ct.len() - 1;
     ct[last] ^= 0xFF;
-    assert!(cipher.decrypt(&ct).is_err(), "tampered ciphertext must fail auth");
+    assert!(
+        cipher.decrypt(&ct).is_err(),
+        "tampered ciphertext must fail auth"
+    );
 }

@@ -66,15 +66,23 @@ impl CudaBackend {
     pub fn new() -> Option<Self> {
         let dev = CudaDevice::new(0).ok()?;
         let ptx = compile_ptx(KERNELS).ok()?;
-        dev.load_ptx(ptx, "ling_gpu", &["nbody_accel", "project_points"]).ok()?;
-        let name = format!("CUDA: {}", dev.name().unwrap_or_else(|_| "NVIDIA GPU".into()));
+        dev.load_ptx(ptx, "ling_gpu", &["nbody_accel", "project_points"])
+            .ok()?;
+        let name = format!(
+            "CUDA: {}",
+            dev.name().unwrap_or_else(|_| "NVIDIA GPU".into())
+        );
         Some(CudaBackend { dev, name })
     }
 }
 
 impl Backend for CudaBackend {
-    fn name(&self) -> &str { &self.name }
-    fn is_gpu(&self) -> bool { true }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn is_gpu(&self) -> bool {
+        true
+    }
 
     fn nbody_accel(&self, pos: &[f32], mass: &[f32], g: f32, soften: f32, out: &mut [f32]) {
         let n = mass.len();
@@ -84,7 +92,9 @@ impl Backend for CudaBackend {
             let mut out_d = self.dev.alloc_zeros::<f32>(3 * n)?;
             let f = self.dev.get_func("ling_gpu", "nbody_accel").unwrap();
             let cfg = LaunchConfig::for_num_elems(n as u32);
-            unsafe { f.launch(cfg, (&pos_d, &mass_d, &mut out_d, n as i32, g, soften))?; }
+            unsafe {
+                f.launch(cfg, (&pos_d, &mass_d, &mut out_d, n as i32, g, soften))?;
+            }
             self.dev.dtoh_sync_copy_into(&out_d, out)?;
             Ok(())
         };
@@ -96,9 +106,8 @@ impl Backend for CudaBackend {
     fn project_points(&self, world: &[f32], cam: &CameraParams, out: &mut [f32]) {
         let n = world.len() / 3;
         let cam_v = [
-            cam.cry, cam.sry, cam.crx, cam.srx,
-            cam.cx, cam.cy, cam.focal, cam.zdist,
-            cam.tx, cam.ty, cam.tz,
+            cam.cry, cam.sry, cam.crx, cam.srx, cam.cx, cam.cy, cam.focal, cam.zdist, cam.tx,
+            cam.ty, cam.tz,
         ];
         let mut run = || -> Result<(), cudarc::driver::DriverError> {
             let world_d = self.dev.htod_sync_copy(world)?;
@@ -106,7 +115,9 @@ impl Backend for CudaBackend {
             let mut out_d = self.dev.alloc_zeros::<f32>(3 * n)?;
             let f = self.dev.get_func("ling_gpu", "project_points").unwrap();
             let cfg = LaunchConfig::for_num_elems(n as u32);
-            unsafe { f.launch(cfg, (&world_d, &mut out_d, &cam_d, n as i32))?; }
+            unsafe {
+                f.launch(cfg, (&world_d, &mut out_d, &cam_d, n as i32))?;
+            }
             self.dev.dtoh_sync_copy_into(&out_d, out)?;
             Ok(())
         };

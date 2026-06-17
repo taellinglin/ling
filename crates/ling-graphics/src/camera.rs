@@ -1,5 +1,5 @@
-use glam::{Vec3, Vec4, Mat4, Quat};
-use crate::math::{Vec4H, Mat5, Ray3};
+use crate::math::{Mat5, Ray3, Vec4H};
+use glam::{Mat4, Quat, Vec3, Vec4};
 
 // ── 3D Camera ─────────────────────────────────────────────────────────────────
 
@@ -22,11 +22,7 @@ impl Camera3D {
         Self {
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
-            projection: Projection::Perspective {
-                fov_y: fov_y_deg.to_radians(),
-                near,
-                far,
-            },
+            projection: Projection::Perspective { fov_y: fov_y_deg.to_radians(), near, far },
             aspect,
         }
     }
@@ -40,13 +36,21 @@ impl Camera3D {
         }
     }
 
-    pub fn forward(&self) -> Vec3 { self.rotation * -Vec3::Z }
-    pub fn right(&self) -> Vec3   { self.rotation *  Vec3::X }
-    pub fn up(&self) -> Vec3      { self.rotation *  Vec3::Y }
+    pub fn forward(&self) -> Vec3 {
+        self.rotation * -Vec3::Z
+    }
+    pub fn right(&self) -> Vec3 {
+        self.rotation * Vec3::X
+    }
+    pub fn up(&self) -> Vec3 {
+        self.rotation * Vec3::Y
+    }
 
     pub fn look_at(&mut self, target: Vec3, world_up: Vec3) {
         let dir = (target - self.position).normalize();
-        if dir.length_squared() < 1e-8 { return; }
+        if dir.length_squared() < 1e-8 {
+            return;
+        }
         let mat = Mat4::look_at_rh(self.position, target, world_up);
         let (_, rot, _) = mat.inverse().to_scale_rotation_translation();
         self.rotation = rot;
@@ -58,12 +62,13 @@ impl Camera3D {
 
     pub fn projection_matrix(&self) -> Mat4 {
         match self.projection {
-            Projection::Perspective { fov_y, near, far } =>
-                Mat4::perspective_rh(fov_y, self.aspect, near, far),
+            Projection::Perspective { fov_y, near, far } => {
+                Mat4::perspective_rh(fov_y, self.aspect, near, far)
+            },
             Projection::Orthographic { half_width, near, far } => {
                 let h = half_width / self.aspect;
                 Mat4::orthographic_rh(-half_width, half_width, -h, h, near, far)
-            }
+            },
         }
     }
 
@@ -75,15 +80,21 @@ impl Camera3D {
     pub fn unproject_ray(&self, ndc_x: f32, ndc_y: f32) -> Ray3 {
         let inv_vp = self.view_proj().inverse();
         let near = inv_vp * Vec4::new(ndc_x, ndc_y, -1.0, 1.0);
-        let far  = inv_vp * Vec4::new(ndc_x, ndc_y,  1.0, 1.0);
+        let far = inv_vp * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
         let near = near.truncate() / near.w;
-        let far  = far.truncate()  / far.w;
+        let far = far.truncate() / far.w;
         Ray3::new(near, (far - near).normalize())
     }
 
-    pub fn move_forward(&mut self, dist: f32) { self.position += self.forward() * dist; }
-    pub fn move_right(&mut self, dist: f32)   { self.position += self.right()   * dist; }
-    pub fn move_up(&mut self, dist: f32)      { self.position += self.up()      * dist; }
+    pub fn move_forward(&mut self, dist: f32) {
+        self.position += self.forward() * dist;
+    }
+    pub fn move_right(&mut self, dist: f32) {
+        self.position += self.right() * dist;
+    }
+    pub fn move_up(&mut self, dist: f32) {
+        self.position += self.up() * dist;
+    }
 
     pub fn orbit(&mut self, target: Vec3, yaw: f32, pitch: f32) {
         let rot = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
@@ -94,7 +105,9 @@ impl Camera3D {
 }
 
 impl Default for Camera3D {
-    fn default() -> Self { Self::perspective(60.0, 16.0 / 9.0, 0.1, 1000.0) }
+    fn default() -> Self {
+        Self::perspective(60.0, 16.0 / 9.0, 0.1, 1000.0)
+    }
 }
 
 // ── 4D Hyperbolic Camera ──────────────────────────────────────────────────────
@@ -150,9 +163,17 @@ impl HyperPoint4D {
             - self.x2 * self.x2
             - self.x3 * self.x3
             - self.x4 * self.x4;
-        if sq <= 0.0 { return *self; }
+        if sq <= 0.0 {
+            return *self;
+        }
         let s = sq.sqrt();
-        Self::new(self.x0 / s, self.x1 / s, self.x2 / s, self.x3 / s, self.x4 / s)
+        Self::new(
+            self.x0 / s,
+            self.x1 / s,
+            self.x2 / s,
+            self.x3 / s,
+            self.x4 / s,
+        )
     }
 
     pub fn to_klein(&self) -> Vec4H {
@@ -166,12 +187,7 @@ impl HyperPoint4D {
 
     pub fn to_poincare(&self) -> Vec4H {
         let d = 1.0 + self.x0;
-        Vec4H::new(
-            self.x1 / d,
-            self.x2 / d,
-            self.x3 / d,
-            self.x4 / d,
-        )
+        Vec4H::new(self.x1 / d, self.x2 / d, self.x3 / d, self.x4 / d)
     }
 }
 
@@ -205,17 +221,19 @@ impl Camera4D {
                 let k = point.to_klein();
                 // Drop one spatial axis (x4 → w, render xyz)
                 Some(Vec3::new(k.x, k.y, k.z))
-            }
+            },
             HyperModel::Poincare => {
                 let p = point.to_poincare();
                 Some(Vec3::new(p.x, p.y, p.z))
-            }
+            },
             HyperModel::CrossSection { w_slice } => {
                 // Keep only points near the slice w_slice
                 let k = point.to_klein();
-                if (k.w - w_slice).abs() > 0.5 { return None; }
+                if (k.w - w_slice).abs() > 0.5 {
+                    return None;
+                }
                 Some(Vec3::new(k.x, k.y, k.z))
-            }
+            },
         }
     }
 
@@ -223,7 +241,9 @@ impl Camera4D {
     /// `direction` is a 4D spatial direction vector; `dist` is hyperbolic distance.
     pub fn move_by(&mut self, direction: Vec4H, dist: f32) {
         let len = direction.length();
-        if len < 1e-8 { return; }
+        if len < 1e-8 {
+            return;
+        }
         let d = direction * (1.0 / len);
         let ch = dist.cosh();
         let sh = dist.sinh();
@@ -231,14 +251,21 @@ impl Camera4D {
         let p = &self.position;
         self.position = HyperPoint4D::new(
             ch * p.x0 + sh * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4),
-            p.x1 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4)) * d.x,
-            p.x2 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4)) * d.y,
-            p.x3 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4)) * d.z,
-            p.x4 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4)) * d.w,
-        ).normalize();
+            p.x1 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4))
+                * d.x,
+            p.x2 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4))
+                * d.y,
+            p.x3 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4))
+                * d.z,
+            p.x4 + (sh * p.x0 + (ch - 1.0) * (d.x * p.x1 + d.y * p.x2 + d.z * p.x3 + d.w * p.x4))
+                * d.w,
+        )
+        .normalize();
     }
 }
 
 impl Default for Camera4D {
-    fn default() -> Self { Self::new(HyperModel::Klein) }
+    fn default() -> Self {
+        Self::new(HyperModel::Klein)
+    }
 }

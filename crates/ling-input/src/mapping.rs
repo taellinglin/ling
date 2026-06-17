@@ -49,7 +49,11 @@ impl<'a> Devices<'a> {
 pub enum Binding {
     Pad(GamepadButton),
     /// One side of a gamepad axis past `threshold` (`dir` = +1 / -1).
-    PadAxis { axis: GamepadAxis, dir: f32, threshold: f32 },
+    PadAxis {
+        axis: GamepadAxis,
+        dir: f32,
+        threshold: f32,
+    },
     Key(Key),
     Mouse(MouseButton),
 }

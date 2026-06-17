@@ -5,29 +5,29 @@
     html_favicon_url = "https://ling-lang.org/images/logo.svg"
 )]
 
-pub mod core;
-pub mod lexer;
-pub mod parser;
-pub mod semantic;
-pub mod borrowck;
-pub mod mir;
-pub mod codegen;
-pub mod lexicon;
-pub mod polyglot;
-pub mod gfx;
-pub mod runtime;
-pub mod diag;
-pub mod utils;
-pub mod visualize;
 pub mod astviz;
+pub mod borrowck;
+pub mod codegen;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod convert;
+pub mod core;
+pub mod diag;
+pub mod gfx;
+pub mod lexer;
+pub mod lexicon;
+pub mod mir;
+pub mod parser;
+pub mod polyglot;
+pub mod runtime;
+pub mod semantic;
+pub mod utils;
+pub mod visualize;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use ling_audio;
 
 // Re-exports
-pub use core::{LingCompiler, CompilerConfig, OptimizationLevel};
+pub use core::{CompilerConfig, LingCompiler, OptimizationLevel};
 pub use lexicon::{CanonicalToken, Lexicon, LexiconRegistry};
 pub use polyglot::{normalize_source, ScriptDetector};
 
@@ -75,8 +75,7 @@ pub fn run_named(
     file: Option<&str>,
 ) -> Result<(), String> {
     let lang = diag::OutputLang::from_env();
-    let program = parser::parse(source)
-        .map_err(|e| diag::render_parse(&e, source, file, lang))?;
+    let program = parser::parse(source).map_err(|e| diag::render_parse(&e, source, file, lang))?;
     let mut interp = runtime::Interpreter::new();
     interp.source_dir = source_dir;
     match interp.run_program(&program) {
@@ -84,27 +83,91 @@ pub fn run_named(
         Err(msg) => {
             let trace = interp.take_error_trace();
             Err(diag::render_runtime(&msg, source, file, &trace, lang))
-        }
+        },
     }
 }
 
 /// Detect the primary human language used for keywords in a Ling source file.
 pub fn detect_language(source: &str) -> &'static str {
     let languages: &[(&[&str], &str)] = &[
-        (&["令", "灵符", "执", "函", "核", "若", "否则", "历", "于", "配", "归", "印", "格式"], "Chinese (中文)"),
-        (&["束縛", "実行", "もし", "一方", "ために", "試す", "待つ", "帰る"], "Japanese (日本語)"),
-        (&["바인드", "만약", "동안", "출력", "시작"], "Korean (한국어)"),
-        (&["связать", "сделать", "если", "иначе", "пока", "для", "вернуть", "вывести"], "Russian (русский)"),
-        (&["ผูก", "ทำ", "ถ้า", "มิฉะนั้น", "สำหรับ", "คืน", "พิมพ์", "รูปแบบ", "เริ่ม"], "Thai (ภาษาไทย)"),
-        (&["बाँधो", "करो", "अगर", "जबकि", "वापस", "सत्य"], "Hindi (हिन्दी)"),
-        (&["ربط", "افعل", "إذا", "وإلا", "بينما", "أعد"], "Arabic (العربية)"),
-        (&["enlazar", "hacer", "mientras", "retornar", "verdadero"], "Spanish (Español)"),
-        (&["lier", "faire", "sinon", "tantque", "retourner", "vrai"], "French (Français)"),
-        (&["binden", "machen", "wenn", "solange", "zurück", "wahr"], "German (Deutsch)"),
-        (&["ligar", "fazer", "enquanto", "retornar", "verdadeiro"], "Portuguese (Português)"),
+        (
+            &[
+                "令", "灵符", "执", "函", "核", "若", "否则", "历", "于", "配", "归", "印", "格式",
+            ],
+            "Chinese (中文)",
+        ),
+        (
+            &[
+                "束縛",
+                "実行",
+                "もし",
+                "一方",
+                "ために",
+                "試す",
+                "待つ",
+                "帰る",
+            ],
+            "Japanese (日本語)",
+        ),
+        (
+            &["바인드", "만약", "동안", "출력", "시작"],
+            "Korean (한국어)",
+        ),
+        (
+            &[
+                "связать",
+                "сделать",
+                "если",
+                "иначе",
+                "пока",
+                "для",
+                "вернуть",
+                "вывести",
+            ],
+            "Russian (русский)",
+        ),
+        (
+            &[
+                "ผูก",
+                "ทำ",
+                "ถ้า",
+                "มิฉะนั้น",
+                "สำหรับ",
+                "คืน",
+                "พิมพ์",
+                "รูปแบบ",
+                "เริ่ม",
+            ],
+            "Thai (ภาษาไทย)",
+        ),
+        (
+            &["बाँधो", "करो", "अगर", "जबकि", "वापस", "सत्य"],
+            "Hindi (हिन्दी)",
+        ),
+        (
+            &["ربط", "افعل", "إذا", "وإلا", "بينما", "أعد"],
+            "Arabic (العربية)",
+        ),
+        (
+            &["enlazar", "hacer", "mientras", "retornar", "verdadero"],
+            "Spanish (Español)",
+        ),
+        (
+            &["lier", "faire", "sinon", "tantque", "retourner", "vrai"],
+            "French (Français)",
+        ),
+        (
+            &["binden", "machen", "wenn", "solange", "zurück", "wahr"],
+            "German (Deutsch)",
+        ),
+        (
+            &["ligar", "fazer", "enquanto", "retornar", "verdadeiro"],
+            "Portuguese (Português)",
+        ),
     ];
 
-    let best = languages.iter()
+    let best = languages
+        .iter()
         .map(|(keywords, lang)| {
             let count = keywords.iter().filter(|&&k| source.contains(k)).count();
             (count, *lang)

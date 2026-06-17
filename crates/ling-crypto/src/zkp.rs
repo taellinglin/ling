@@ -4,7 +4,7 @@
 //! on the Ristretto255 group, without revealing `x`.
 //! Uses Fiat-Shamir transform (non-interactive via BLAKE3).
 
-use curve25519_dalek::{RistrettoPoint, Scalar, constants::RISTRETTO_BASEPOINT_POINT as G};
+use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_POINT as G, RistrettoPoint, Scalar};
 use rand::rngs::OsRng;
 use zeroize::Zeroizing;
 
@@ -46,16 +46,25 @@ impl SchnorrKeypair {
 /// Non-interactive Schnorr proof: (R, s) where s = r + c·x, c = H(X||R||msg).
 #[derive(Clone, Debug)]
 pub struct SchnorrProof {
-    pub r_bytes: [u8; 32],   // commitment R = r·G
-    pub s_bytes: [u8; 32],   // response s
+    pub r_bytes: [u8; 32], // commitment R = r·G
+    pub s_bytes: [u8; 32], // response s
 }
 
 /// Verify a Schnorr proof against a public key and message.
 pub fn schnorr_verify(pubkey_bytes: &[u8; 32], msg: &[u8], proof: &SchnorrProof) -> bool {
     use curve25519_dalek::ristretto::CompressedRistretto;
-    let x_point = match CompressedRistretto(*pubkey_bytes).decompress() { Some(p) => p, None => return false };
-    let r_point = match CompressedRistretto(proof.r_bytes).decompress()  { Some(p) => p, None => return false };
-    let s = match Scalar::from_canonical_bytes(proof.s_bytes).into_option() { Some(s) => s, None => return false };
+    let x_point = match CompressedRistretto(*pubkey_bytes).decompress() {
+        Some(p) => p,
+        None => return false,
+    };
+    let r_point = match CompressedRistretto(proof.r_bytes).decompress() {
+        Some(p) => p,
+        None => return false,
+    };
+    let s = match Scalar::from_canonical_bytes(proof.s_bytes).into_option() {
+        Some(s) => s,
+        None => return false,
+    };
     let c = challenge(&x_point, &r_point, msg);
     // Check: s·G == R + c·X
     s * G == r_point + c * x_point

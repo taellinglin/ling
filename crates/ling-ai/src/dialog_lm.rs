@@ -51,7 +51,10 @@ impl Vocab {
         self.to_id.get(w).copied().unwrap_or(UNK)
     }
     fn word(&self, id: u32) -> &str {
-        self.to_word.get(id as usize).map(|s| s.as_str()).unwrap_or("<unk>")
+        self.to_word
+            .get(id as usize)
+            .map(|s| s.as_str())
+            .unwrap_or("<unk>")
     }
 }
 

@@ -2,8 +2,12 @@
 //!
 //! MIDI note 69 = A4 = 440 Hz; each semitone is a factor of 2^(1/12).
 
-const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-const NAMES_FLAT: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const NAMES: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+const NAMES_FLAT: [&str; 12] = [
+    "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
+];
 
 /// MIDI note number → frequency in Hz (A4=69→440).
 pub fn midi_to_hz(midi: f32) -> f32 {
@@ -12,7 +16,9 @@ pub fn midi_to_hz(midi: f32) -> f32 {
 
 /// Frequency in Hz → fractional MIDI note number.
 pub fn hz_to_midi(hz: f32) -> f32 {
-    if hz <= 0.0 { return 0.0; }
+    if hz <= 0.0 {
+        return 0.0;
+    }
     69.0 + 12.0 * (hz / 440.0).log2()
 }
 
@@ -21,16 +27,30 @@ pub fn hz_to_midi(hz: f32) -> f32 {
 pub fn name_to_midi(s: &str) -> Option<i32> {
     let s = s.trim();
     let b = s.as_bytes();
-    if b.is_empty() { return None; }
+    if b.is_empty() {
+        return None;
+    }
     // letter
     let letter = b[0].to_ascii_uppercase();
     let mut pc: i32 = match letter {
-        b'C' => 0, b'D' => 2, b'E' => 4, b'F' => 5, b'G' => 7, b'A' => 9, b'B' => 11,
+        b'C' => 0,
+        b'D' => 2,
+        b'E' => 4,
+        b'F' => 5,
+        b'G' => 7,
+        b'A' => 9,
+        b'B' => 11,
         _ => return None,
     };
     let mut i = 1;
-    while i < b.len() && (b[i] == b'#' || b[i] == b's') { pc += 1; i += 1; }
-    while i < b.len() && b[i] == b'b' { pc -= 1; i += 1; }
+    while i < b.len() && (b[i] == b'#' || b[i] == b's') {
+        pc += 1;
+        i += 1;
+    }
+    while i < b.len() && b[i] == b'b' {
+        pc -= 1;
+        i += 1;
+    }
     let oct: i32 = s[i..].trim().parse().ok()?;
     Some((oct + 1) * 12 + pc)
 }
@@ -54,26 +74,32 @@ pub fn midi_to_name(midi: i32) -> String {
 
 /// Hz → nearest note name (sharp spelling). Empty string for non-positive Hz.
 pub fn hz_to_name(hz: f32) -> String {
-    if hz <= 0.0 { return String::new(); }
+    if hz <= 0.0 {
+        return String::new();
+    }
     midi_to_name(hz_to_midi(hz).round() as i32)
 }
 
 /// Pitch-class name (no octave), sharp or flat spelling.
 pub fn pitch_class_name(pc: usize, flat: bool) -> &'static str {
-    if flat { NAMES_FLAT[pc % 12] } else { NAMES[pc % 12] }
+    if flat {
+        NAMES_FLAT[pc % 12]
+    } else {
+        NAMES[pc % 12]
+    }
 }
 
 /// Semitone offsets for a few common scales (from the root).
 pub fn scale_steps(name: &str) -> &'static [i32] {
     match name.to_ascii_lowercase().as_str() {
-        "minor" | "aeolian"    => &[0, 2, 3, 5, 7, 8, 10],
-        "harmonic_minor"       => &[0, 2, 3, 5, 7, 8, 11],
-        "pentatonic" | "pent"  => &[0, 2, 4, 7, 9],
-        "minor_pentatonic"     => &[0, 3, 5, 7, 10],
-        "blues"                => &[0, 3, 5, 6, 7, 10],
-        "dorian"               => &[0, 2, 3, 5, 7, 9, 10],
-        "chromatic"            => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-        _                      => &[0, 2, 4, 5, 7, 9, 11], // major / ionian
+        "minor" | "aeolian" => &[0, 2, 3, 5, 7, 8, 10],
+        "harmonic_minor" => &[0, 2, 3, 5, 7, 8, 11],
+        "pentatonic" | "pent" => &[0, 2, 4, 7, 9],
+        "minor_pentatonic" => &[0, 3, 5, 7, 10],
+        "blues" => &[0, 3, 5, 6, 7, 10],
+        "dorian" => &[0, 2, 3, 5, 7, 9, 10],
+        "chromatic" => &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+        _ => &[0, 2, 4, 5, 7, 9, 11], // major / ionian
     }
 }
 
@@ -91,6 +117,8 @@ mod tests {
         assert_eq!(midi_to_name(60), "C4");
         assert_eq!(hz_to_name(440.0), "A4");
         // round trip
-        for m in 24..96 { assert_eq!(hz_to_midi(midi_to_hz(m as f32)).round() as i32, m); }
+        for m in 24..96 {
+            assert_eq!(hz_to_midi(midi_to_hz(m as f32)).round() as i32, m);
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! Each leg reports `(swing, lift)`: a forward/back offset and an upward foot
 //! lift, phased so the gait reads as a natural walk/trot.
 
-use crate::scalar::{gait_swing, gait_lift, breathe};
+use crate::scalar::{breathe, gait_lift, gait_swing};
 
 fn leg(t: f32, speed: f32, stride: f32, height: f32, phase: f32) -> (f32, f32) {
     let pt = t + phase / speed.max(1e-3);
@@ -22,10 +22,10 @@ pub fn biped_legs(t: f32, speed: f32, stride: f32, height: f32) -> [(f32, f32); 
 /// Returns `[front_left, front_right, back_left, back_right]`.
 pub fn quadruped_legs(t: f32, speed: f32, stride: f32, height: f32) -> [(f32, f32); 4] {
     [
-        leg(t, speed, stride, height, 0.0),  // FL
-        leg(t, speed, stride, height, 0.5),  // FR
-        leg(t, speed, stride, height, 0.5),  // BL
-        leg(t, speed, stride, height, 0.0),  // BR
+        leg(t, speed, stride, height, 0.0), // FL
+        leg(t, speed, stride, height, 0.5), // FR
+        leg(t, speed, stride, height, 0.5), // BL
+        leg(t, speed, stride, height, 0.0), // BR
     ]
 }
 

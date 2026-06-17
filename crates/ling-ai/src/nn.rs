@@ -95,7 +95,13 @@ impl Activation {
     fn deriv(self, y: f32) -> f32 {
         match self {
             Activation::Linear => 1.0,
-            Activation::Relu => if y > 0.0 { 1.0 } else { 0.0 },
+            Activation::Relu => {
+                if y > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            },
             Activation::Tanh => 1.0 - y * y,
             Activation::Sigmoid => y * (1.0 - y),
         }
