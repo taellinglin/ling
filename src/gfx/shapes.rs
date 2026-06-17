@@ -937,11 +937,12 @@ impl GfxState {
                         let (sx,sy,pz)=self.camera.project(p[0],p[1],p[2]);
                         (sx,sy,pz, ling_graphics::shading::pack(*col))
                     }).collect();
-                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
                     let mut k=1;
                     while k+1 < proj.len() {
-                        self.depth_queue.push_triangle_g(depth,
-                            proj[0].0,proj[0].1,proj[0].3, proj[k].0,proj[k].1,proj[k].3, proj[k+1].0,proj[k+1].1,proj[k+1].3, bands);
+                        self.depth_queue.push_triangle_g_zv(
+                            proj[0].0,proj[0].1,proj[0].2,proj[0].3,
+                            proj[k].0,proj[k].1,proj[k].2,proj[k].3,
+                            proj[k+1].0,proj[k+1].1,proj[k+1].2,proj[k+1].3, bands);
                         k+=1;
                     }
                 }
@@ -965,11 +966,10 @@ impl GfxState {
                     if poly.len() < 3 { continue; }
                     let proj: Vec<(f32,f32,f32)> = poly.iter()
                         .map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
-                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
                     let mut k=1;
                     while k+1 < proj.len() {
-                        self.depth_queue.push_triangle(depth, lit,
-                            proj[0].0,proj[0].1, proj[k].0,proj[k].1, proj[k+1].0,proj[k+1].1);
+                        self.depth_queue.push_triangle_zv(lit,
+                            proj[0].0,proj[0].1,proj[0].2, proj[k].0,proj[k].1,proj[k].2, proj[k+1].0,proj[k+1].1,proj[k+1].2);
                         k+=1;
                     }
                 }

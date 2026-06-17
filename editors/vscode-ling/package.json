@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "ling-lang",
   "license": "SEE LICENSE IN ../../LICENSE",
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -20,6 +21,26 @@
   ],
   "main": "./src/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "Ling",
+      "properties": {
+        "ling.lint.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show diagnostics (unbalanced brackets, invalid `let`, unknown function calls)."
+        },
+        "ling.lint.unknownCalls": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when an ASCII-named function call is neither a builtin nor a defined binding (typo catcher). Non-English names are never flagged."
+        },
+        "ling.inlayHints.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inlay parameter-name hints at builtin call sites."
+        }
+      }
+    },
     "languages": [
       {
         "id": "ling",

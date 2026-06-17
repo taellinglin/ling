@@ -67,6 +67,23 @@ All aliases listed here are valid in the same source file simultaneously.
 | `clear_lights()` | `ล้างแสง()` | Remove all lights |
 | `set_ambient(level)` | `ตั้งแสงรอบข้าง(level)` | Ambient light level |
 
+## Surfaces, shadows & depth
+
+Translucent fills, smooth gradient surfaces (cheap per-vertex "lighting"), soft
+colored shadows, and a painter's-algorithm queue for depth-sorting 2-D draws.
+All names in a row are aliases for the same function.
+
+| English | Chinese | Japanese | Korean | Thai | Description |
+|---------|---------|----------|--------|------|-------------|
+| `set_alpha(a)` | `设透明` | `アルファ設定` | `투명도설정` | `ตั้งความโปร่งใส` | Pen opacity 0–1 for the alpha fills below |
+| `grad_triangle(x0,y0,r,g,b, x1,y1,r,g,b, x2,y2,r,g,b)` | `渐变三角` | `グラデ三角` | `그라데삼각` | `สามเหลี่ยมไล่สี` | Smooth per-vertex gradient triangle (fake directional lighting) |
+| `grad_rect(x,y,w,h, r0,g0,b0, r1,g1,b1, dir)` | `渐变矩形` | `グラデ矩形` | `그라데사각` | `สี่เหลี่ยมไล่สี` | Linear-gradient rectangle (`dir` 0=horizontal, 1=vertical) |
+| `shadow_blob(cx,cy, rx,ry, alpha)` | `阴影斑` | `影ブロブ` | `그림자블롭` | `เงาวงรี` | Soft colored shadow ellipse in the current pen colour |
+| `cast_shadow(cx,cy, height)` | `投射阴影` | `影を落とす` | `그림자드리우기` | `ทอดเงา` | Height-driven contact shadow (closer=smaller/darker, farther=bigger/softer) |
+| `shadow_params(base,grow,alpha,fade,soft)` | `阴影参数` | `影設定` | `그림자설정` | `ตั้งค่าเงา` | Tune the `cast_shadow` height ramp |
+| `depth_triangle(x0,y0, x1,y1, x2,y2, z)` | `深度三角` | `深度三角形` | `깊이삼각` | `สามเหลี่ยมเรียงลึก` | Queue a depth-sorted triangle (drawn back-to-front at `present`) |
+| `depth_line(x0,y0, x1,y1, z)` | `深度线` | `深度線` | `깊이선` | `เส้นเรียงลึก` | Queue a depth-sorted line |
+
 ## Vector geometry (vtex)
 
 All names in the same row are valid aliases for the same function.

@@ -11,6 +11,7 @@
 // `raster` is a pure-CPU software rasteriser (operates on `Vec<u32>`); it is
 // wasm-safe and powers the software framebuffer on both native and web.
 pub mod raster;
+pub mod color;
 pub mod camera;
 pub mod light;
 pub mod depth;
@@ -25,6 +26,31 @@ pub mod audio_web;
 pub use camera::Camera3D;
 pub use light::Light;
 pub use depth::DepthQueue;
+
+/// Tunable mapping for `cast_shadow`: how a blob/contact shadow's size and
+/// opacity change with the caster's height above the surface. Defaults give the
+/// natural look — small/dark/sharp when the caster touches down, growing larger,
+/// fainter and softer as it rises. Pass a negative `fade` to invert the opacity
+/// ramp (fainter when close, more opaque when far).
+#[derive(Clone, Copy)]
+pub struct ShadowParams {
+    /// Radius (px) when the caster sits on the surface (height 0).
+    pub base:  f32,
+    /// Extra radius per unit of height — the shadow grows as the caster rises.
+    pub grow:  f32,
+    /// Opacity at height 0 (0..1) — darkest/sharpest when touching the surface.
+    pub alpha: f32,
+    /// Opacity lost per unit of height — the shadow fades as the caster rises.
+    pub fade:  f32,
+    /// Edge softness 0..1 at height 0 — feathering also widens with height.
+    pub soft:  f32,
+}
+
+impl Default for ShadowParams {
+    fn default() -> Self {
+        Self { base: 14.0, grow: 0.6, alpha: 0.55, fade: 0.012, soft: 0.45 }
+    }
+}
 
 // ─── Native GfxState (minifb window + software framebuffer) ──────────────────
 
@@ -56,6 +82,23 @@ pub struct GfxState {
     pub shade: ling_graphics::shading::ShadeParams,
     /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
     pub blend: u8,
+    /// Pen opacity [0..1] for the alpha-blended fills (gradient surfaces,
+    /// shadow blobs). Set by `set_alpha`; 1.0 = fully opaque.
+    pub alpha: f32,
+    /// Tunable height→size/opacity mapping for `cast_shadow`.
+    pub shadow: ShadowParams,
+    /// Gamma-correct compositing: blend alpha/gradients in linear light instead
+    /// of sRGB. Set by `set_color_space`; default false (legacy sRGB).
+    pub linear_blend: bool,
+    /// Interpolate gradients perceptually through OkLab. Set by
+    /// `set_gradient_space`; default true.
+    pub grad_oklab: bool,
+    /// Per-pixel depth test (true z-buffer) for the deferred queue instead of
+    /// pure painter's sort. Set by `set_depth_test`; default false.
+    pub depth_test: bool,
+    /// Z-buffer (camera-space depth per pixel); sized to width*height when
+    /// depth testing is on and reset each `present`.
+    pub depth_buf: Vec<f32>,
     /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
     /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -84,6 +127,12 @@ impl GfxState {
             shade_mode:     2, // holographic cel by default
             shade:          ling_graphics::shading::ShadeParams::default(),
             blend:          0, // normal (overwrite) by default
+            alpha:          1.0,
+            shadow:         ShadowParams::default(),
+            linear_blend:   false,
+            grad_oklab:     true,
+            depth_test:     false,
+            depth_buf:      Vec::new(),
             fog_color:   0x0000_0000,
             fog_start:   0.0,
             fog_end:     0.0, // fog off by default
@@ -139,6 +188,18 @@ pub struct GfxState {
     pub buffer:      Vec<u32>,
     /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
     pub blend:       u8,
+    /// Pen opacity [0..1] for the alpha-blended fills (mirrors native).
+    pub alpha:       f32,
+    /// Tunable height→size/opacity mapping for `cast_shadow`.
+    pub shadow:      ShadowParams,
+    /// Gamma-correct (linear-light) compositing — mirrors native.
+    pub linear_blend: bool,
+    /// Perceptual OkLab gradient interpolation — mirrors native.
+    pub grad_oklab:  bool,
+    /// Per-pixel depth test (z-buffer) for the deferred queue — mirrors native.
+    pub depth_test:  bool,
+    /// Z-buffer (camera-space depth per pixel).
+    pub depth_buf:   Vec<f32>,
     /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
     /// to `fog_end`. `fog_end <= 0` disables fog.
     pub fog_color:   u32,
@@ -166,6 +227,12 @@ impl GfxState {
             // write safely; `present()` uploads it to the canvas.
             buffer:      vec![0u32; 800 * 600],
             blend:       0,
+            alpha:       1.0,
+            shadow:      ShadowParams::default(),
+            linear_blend: false,
+            grad_oklab:  true,
+            depth_test:  false,
+            depth_buf:   Vec::new(),
             fog_color:   0x0000_0000,
             fog_start:   0.0,
             fog_end:     0.0,

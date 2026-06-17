@@ -370,6 +370,15 @@ fn put_px(buf: &mut [u32], idx: usize, color: u32, blend: u8) {
     }
 }
 
+/// Pack three float colour channels (0..255) into a 0x00RRGGBB word, clamping.
+#[inline]
+fn rgb(r: f64, g: f64, b: f64) -> u32 {
+    let r = (r as i64).clamp(0, 255) as u32;
+    let g = (g as i64).clamp(0, 255) as u32;
+    let b = (b as i64).clamp(0, 255) as u32;
+    (r << 16) | (g << 8) | b
+}
+
 fn draw_circle_outline(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
     let r = r.clamp(0, 20000); // guard against overflow / runaway from tiny depths
     if r == 0 { return; }
@@ -1525,6 +1534,155 @@ impl Interpreter {
                 return Ok(Value::Unit);
             }
 
+            // ── Step 7: Transparent fills, gradient surfaces & colored shadows ──
+            // These all write straight into the software framebuffer (gfx.buffer)
+            // on both native and web, so no target gating is needed.
+
+            // set_alpha(a) — pen opacity 0..1 for the alpha-blended fills below.
+            "set_alpha" | "ตั้งความโปร่งใส" | "设透明" | "アルファ設定" | "투명도설정" => {
+                let a = self.arg_num(&args, 0, 1.0)? as f32;
+                self.gfx.borrow_mut().alpha = a.clamp(0.0, 1.0);
+                return Ok(Value::Unit);
+            }
+
+            // set_color_space(mode) — 0 = legacy sRGB compositing (default),
+            // 1 = gamma-correct linear-light compositing (blend in linear, store
+            // sRGB) so alpha and gradients don't darken/shift hue.
+            "set_color_space" | "ปริภูมิสี" | "色彩空间" | "色空間" | "색공간" => {
+                let m = self.arg_num(&args, 0, 0.0)? as i64;
+                self.gfx.borrow_mut().linear_blend = m != 0;
+                return Ok(Value::Unit);
+            }
+
+            // set_gradient_space(mode) — 1 = perceptual OkLab gradient interp
+            // (default), 0 = legacy sRGB. Affects grad_triangle / grad_rect.
+            "set_gradient_space" | "ปริภูมิไล่สี" | "渐变空间" | "グラデ空間" | "그라데이션공간" => {
+                let m = self.arg_num(&args, 0, 1.0)? as i64;
+                self.gfx.borrow_mut().grad_oklab = m != 0;
+                return Ok(Value::Unit);
+            }
+
+            // mix_color(r0,g0,b0, r1,g1,b1, t) — set the pen colour to the
+            // perceptual OkLab blend of two colours (t in 0..1). Far nicer
+            // mid-tones than a raw RGB lerp.
+            "mix_color" | "ผสมสี" | "混合颜色" | "色混合" | "색혼합" => {
+                let c0 = rgb(self.arg_num(&args,0,0.0)?, self.arg_num(&args,1,0.0)?, self.arg_num(&args,2,0.0)?);
+                let c1 = rgb(self.arg_num(&args,3,255.0)?, self.arg_num(&args,4,255.0)?, self.arg_num(&args,5,255.0)?);
+                let t  = self.arg_num(&args,6,0.5)? as f32;
+                self.gfx.borrow_mut().color = crate::gfx::color::mix_oklab(c0, c1, t);
+                return Ok(Value::Unit);
+            }
+
+            // set_depth_test(on) — enable the per-pixel z-buffer for the deferred
+            // 3-D/queued draws (correct interpenetration) instead of painter's-
+            // only sort. 0 = off (default), non-zero = on.
+            "set_depth_test" | "ทดสอบความลึก" | "深度测试" | "深度テスト" | "깊이테스트" => {
+                let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
+                self.gfx.borrow_mut().depth_test = on;
+                return Ok(Value::Unit);
+            }
+
+            // grad_triangle(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)
+            // Smooth per-vertex gradient triangle — a cheap lit surface: put the
+            // bright colour on the vertex facing the light. Honours set_alpha.
+            "grad_triangle" | "สามเหลี่ยมไล่สี" | "渐变三角" | "グラデ三角" | "그라데삼각" => {
+                let x0=self.arg_num(&args,0,0.0)? as f32; let y0=self.arg_num(&args,1,0.0)? as f32;
+                let c0=rgb(self.arg_num(&args,2,255.0)?, self.arg_num(&args,3,255.0)?, self.arg_num(&args,4,255.0)?);
+                let x1=self.arg_num(&args,5,0.0)? as f32; let y1=self.arg_num(&args,6,0.0)? as f32;
+                let c1=rgb(self.arg_num(&args,7,255.0)?, self.arg_num(&args,8,255.0)?, self.arg_num(&args,9,255.0)?);
+                let x2=self.arg_num(&args,10,0.0)? as f32; let y2=self.arg_num(&args,11,0.0)? as f32;
+                let c2=rgb(self.arg_num(&args,12,255.0)?, self.arg_num(&args,13,255.0)?, self.arg_num(&args,14,255.0)?);
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,alpha,mode,lin,ok) = (gfx.width, gfx.height, gfx.alpha, gfx.blend, gfx.linear_blend, gfx.grad_oklab);
+                crate::gfx::raster::fill_triangle_grad(&mut gfx.buffer, w, h, alpha, mode, lin, ok,
+                    x0,y0,c0, x1,y1,c1, x2,y2,c2);
+                return Ok(Value::Unit);
+            }
+
+            // grad_rect(x,y,w,h, r0,g0,b0, r1,g1,b1, dir) — linear-gradient rect.
+            // dir 0 = horizontal (left→right), else vertical (top→bottom).
+            "grad_rect" | "สี่เหลี่ยมไล่สี" | "渐变矩形" | "グラデ矩形" | "그라데사각" => {
+                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
+                let rw=self.arg_num(&args,2,0.0)? as f32; let rh=self.arg_num(&args,3,0.0)? as f32;
+                let c0=rgb(self.arg_num(&args,4,255.0)?, self.arg_num(&args,5,255.0)?, self.arg_num(&args,6,255.0)?);
+                let c1=rgb(self.arg_num(&args,7,0.0)?, self.arg_num(&args,8,0.0)?, self.arg_num(&args,9,0.0)?);
+                let dir=self.arg_num(&args,10,1.0)? as u8;
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,alpha,mode,lin,ok) = (gfx.width, gfx.height, gfx.alpha, gfx.blend, gfx.linear_blend, gfx.grad_oklab);
+                crate::gfx::raster::fill_rect_grad(&mut gfx.buffer, w, h, alpha, mode, lin, ok, x,y,rw,rh, c0,c1, dir);
+                return Ok(Value::Unit);
+            }
+
+            // shadow_blob(cx,cy, rx,ry, alpha) — soft colored shadow ellipse in
+            // the current pen colour. Dark colour = normal shadow; any hue = a
+            // tinted/coloured shadow. Edge softness comes from shadow_params.
+            "shadow_blob" | "เงาวงรี" | "阴影斑" | "影ブロブ" | "그림자블롭" => {
+                let cx=self.arg_num(&args,0,0.0)? as f32; let cy=self.arg_num(&args,1,0.0)? as f32;
+                let rx=self.arg_num(&args,2,16.0)? as f32; let ry=self.arg_num(&args,3,8.0)? as f32;
+                let a =self.arg_num(&args,4,0.5)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let (w,h,color,soft,mode,lin) = (gfx.width, gfx.height, gfx.color, gfx.shadow.soft, gfx.blend, gfx.linear_blend);
+                crate::gfx::raster::fill_disc_soft(&mut gfx.buffer, w, h, cx, cy, rx, ry, color, a, soft, mode, lin);
+                return Ok(Value::Unit);
+            }
+
+            // cast_shadow(cx,cy, height) — height-driven contact shadow in the
+            // current pen colour. Closer to the surface (small height) = smaller,
+            // darker, sharper; farther (large height) = bigger, fainter, softer.
+            // Tune the ramp with shadow_params.
+            "cast_shadow" | "ทอดเงา" | "投射阴影" | "影を落とす" | "그림자드리우기" => {
+                let cx=self.arg_num(&args,0,0.0)? as f32; let cy=self.arg_num(&args,1,0.0)? as f32;
+                let height=(self.arg_num(&args,2,0.0)? as f32).max(0.0);
+                let mut gfx = self.gfx.borrow_mut();
+                let sp = gfx.shadow;
+                let radius = (sp.base + sp.grow * height).max(0.5);
+                let alpha  = (sp.alpha - sp.fade * height).clamp(0.04, 1.0);
+                let soft   = (sp.soft + height * 0.004).clamp(0.0, 0.95);
+                let (w,h,color,mode,lin) = (gfx.width, gfx.height, gfx.color, gfx.blend, gfx.linear_blend);
+                crate::gfx::raster::fill_disc_soft(&mut gfx.buffer, w, h, cx, cy, radius, radius*0.62, color, alpha, soft, mode, lin);
+                return Ok(Value::Unit);
+            }
+
+            // shadow_params(base, grow, alpha, fade, soft) — tune cast_shadow.
+            // Each arg defaults to the current value, so you can set just one.
+            "shadow_params" | "ตั้งค่าเงา" | "阴影参数" | "影設定" | "그림자설정" => {
+                let cur = self.gfx.borrow().shadow;
+                let base  = self.arg_num(&args,0, cur.base  as f64)? as f32;
+                let grow  = self.arg_num(&args,1, cur.grow  as f64)? as f32;
+                let alpha = self.arg_num(&args,2, cur.alpha as f64)? as f32;
+                let fade  = self.arg_num(&args,3, cur.fade  as f64)? as f32;
+                let soft  = self.arg_num(&args,4, cur.soft  as f64)? as f32;
+                self.gfx.borrow_mut().shadow = crate::gfx::ShadowParams { base, grow, alpha, fade, soft };
+                return Ok(Value::Unit);
+            }
+
+            // depth_triangle(x0,y0, x1,y1, x2,y2, z) — queue a depth-sorted tri in
+            // the current colour. Drawn back-to-front (painter's algorithm) at
+            // present(); larger z = farther away. Lets 2-D sprites/quads sort by
+            // depth the same way 3-D faces do.
+            "depth_triangle" | "สามเหลี่ยมเรียงลึก" | "深度三角" | "深度三角形" | "깊이삼각" => {
+                let x0=self.arg_num(&args,0,0.0)? as f32; let y0=self.arg_num(&args,1,0.0)? as f32;
+                let x1=self.arg_num(&args,2,0.0)? as f32; let y1=self.arg_num(&args,3,0.0)? as f32;
+                let x2=self.arg_num(&args,4,0.0)? as f32; let y2=self.arg_num(&args,5,0.0)? as f32;
+                let z =self.arg_num(&args,6,0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let color = gfx.color;
+                gfx.depth_queue.push_triangle(z, color, x0,y0, x1,y1, x2,y2);
+                return Ok(Value::Unit);
+            }
+
+            // depth_line(x0,y0, x1,y1, z) — queue a depth-sorted line in the
+            // current colour (same painter's queue as depth_triangle).
+            "depth_line" | "เส้นเรียงลึก" | "深度线" | "深度線" | "깊이선" => {
+                let x0=self.arg_num(&args,0,0.0)? as f32; let y0=self.arg_num(&args,1,0.0)? as f32;
+                let x1=self.arg_num(&args,2,0.0)? as f32; let y1=self.arg_num(&args,3,0.0)? as f32;
+                let z =self.arg_num(&args,4,0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let color = gfx.color;
+                gfx.depth_queue.push_line(z, color, x0,y0, x1,y1);
+                return Ok(Value::Unit);
+            }
+
             // ══════════════════════════════════════════════════════════════════
             // GRAPHICS BUILTINS
             // Thai names first, then English aliases.
@@ -1690,8 +1848,11 @@ impl Interpreter {
                         if !gfx.depth_queue.is_empty() {
                             let w = gfx.width;
                             let h = gfx.height;
+                            let dt = gfx.depth_test;
                             let queue = std::mem::take(&mut gfx.depth_queue);
-                            queue.flush(&mut gfx.buffer, w, h);
+                            let g = &mut *gfx;
+                            let z = if dt { Some(&mut g.depth_buf) } else { None };
+                            queue.flush(&mut g.buffer, z, w, h);
                         }
                         let buf = gfx.buffer.clone();
                         let w   = gfx.width;
@@ -1774,8 +1935,11 @@ impl Interpreter {
                         gfx.buffer.resize(w * h, 0);
                     }
                     if !gfx.depth_queue.is_empty() {
+                        let dt = gfx.depth_test;
                         let queue = std::mem::take(&mut gfx.depth_queue);
-                        queue.flush(&mut gfx.buffer, w, h);
+                        let g = &mut *gfx;
+                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        queue.flush(&mut g.buffer, z, w, h);
                     }
                     crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                 }
@@ -2386,9 +2550,11 @@ impl Interpreter {
                 let lit_color = gfx.fog_apply(lit_color, depth);
                 let mut fk = 1;
                 while fk + 1 < proj.len() {
-                    gfx.depth_queue.push_triangle(
-                        depth, lit_color,
-                        proj[0].0, proj[0].1, proj[fk].0, proj[fk].1, proj[fk + 1].0, proj[fk + 1].1,
+                    gfx.depth_queue.push_triangle_zv(
+                        lit_color,
+                        proj[0].0, proj[0].1, proj[0].2,
+                        proj[fk].0, proj[fk].1, proj[fk].2,
+                        proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2,
                     );
                     fk += 1;
                 }
@@ -5341,8 +5507,11 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 if !gfx.depth_queue.is_empty() {
                     let w = gfx.width; let h = gfx.height;
+                    let dt = gfx.depth_test;
                     let queue = std::mem::take(&mut gfx.depth_queue);
-                    queue.flush(&mut gfx.buffer, w, h);
+                    let g = &mut *gfx;
+                    let z = if dt { Some(&mut g.depth_buf) } else { None };
+                    queue.flush(&mut g.buffer, z, w, h);
                 }
                 return Ok(Value::Unit);
             }

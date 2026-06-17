@@ -32,16 +32,31 @@
 
 ---
 
-# Multilingual Index
+# Glossary
 
-- [Keyword Aliases by Language](multilingual/keywords.md)
-- [Builtin Aliases by Language](multilingual/builtins.md)
+- [Overview](glossary/index.md)
+- [Keywords](glossary/keywords.md)
+- [Types](glossary/types.md)
+- [Literals & operators](glossary/literals.md)
+- [Builtins by Crate]()
+  - [ling (core runtime)](glossary/crate-core.md)
+  - [ling-graphics](glossary/crate-graphics.md)
+  - [ling-ui](glossary/crate-ui.md)
+  - [ling-audio](glossary/crate-audio.md)
+  - [ling-music](glossary/crate-music.md)
+  - [ling-physics](glossary/crate-physics.md)
+  - [ling-animation](glossary/crate-animation.md)
+  - [ling-ai](glossary/crate-ai.md)
+  - [ling-crypto](glossary/crate-crypto.md)
+  - [ling-input](glossary/crate-input.md)
+  - [ling-net](glossary/crate-net.md)
+  - [ling-dialog](glossary/crate-dialog.md)
 
 ---
 
 # Workspace
 
-- [Crates & Functions](reference/crates.md)
+- [Crates & Functions (Rust API)](reference/crates.md)
 
 ---
 

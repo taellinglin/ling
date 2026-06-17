@@ -193,6 +193,20 @@ time_now = "time_now"
 frame_count = "frame_count"
 # Drawing - filled
 draw_disc = "draw_disc"
+# Surfaces & shadows
+set_alpha = "set_alpha"
+grad_triangle = "grad_triangle"
+grad_rect = "grad_rect"
+shadow_blob = "shadow_blob"
+cast_shadow = "cast_shadow"
+shadow_params = "shadow_params"
+depth_triangle = "depth_triangle"
+depth_line = "depth_line"
+# 2030 compositing: linear-light, OkLab gradients, z-buffer
+set_color_space = "set_color_space"
+set_gradient_space = "set_gradient_space"
+mix_color = "mix_color"
+set_depth_test = "set_depth_test"
 # Collections
 len = "len"
 push = "push"

@@ -192,6 +192,20 @@ time_now = "当前时间"
 frame_count = "帧数"
 # Drawing
 draw_disc = "画实心圆"
+# Surfaces & shadows
+set_alpha = "设透明"
+grad_triangle = "渐变三角"
+grad_rect = "渐变矩形"
+shadow_blob = "阴影斑"
+cast_shadow = "投射阴影"
+shadow_params = "阴影参数"
+depth_triangle = "深度三角"
+depth_line = "深度线"
+# 2030 合成: 线性光、OkLab 渐变、Z 缓冲
+set_color_space = "色彩空间"
+set_gradient_space = "渐变空间"
+mix_color = "混合颜色"
+set_depth_test = "深度测试"
 # Collections
 len = "长"
 push = "加"

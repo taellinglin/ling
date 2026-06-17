@@ -192,6 +192,20 @@ time_now = "経過時間"
 frame_count = "フレーム数"
 # Drawing
 draw_disc = "塗りつぶし円"
+# Surfaces & shadows
+set_alpha = "アルファ設定"
+grad_triangle = "グラデ三角"
+grad_rect = "グラデ矩形"
+shadow_blob = "影ブロブ"
+cast_shadow = "影を落とす"
+shadow_params = "影設定"
+depth_triangle = "深度三角形"
+depth_line = "深度線"
+# 2030 合成: リニア光、OkLabグラデ、Zバッファ
+set_color_space = "色空間"
+set_gradient_space = "グラデ空間"
+mix_color = "色混合"
+set_depth_test = "深度テスト"
 # Collections
 len = "長さ"
 push = "追加"

@@ -192,6 +192,20 @@ time_now = "현재시간"
 frame_count = "프레임수"
 # Drawing
 draw_disc = "원채우기"
+# Surfaces & shadows
+set_alpha = "투명도설정"
+grad_triangle = "그라데삼각"
+grad_rect = "그라데사각"
+shadow_blob = "그림자블롭"
+cast_shadow = "그림자드리우기"
+shadow_params = "그림자설정"
+depth_triangle = "깊이삼각"
+depth_line = "깊이선"
+# 2030 합성: 선형광, OkLab 그라데이션, Z 버퍼
+set_color_space = "색공간"
+set_gradient_space = "그라데이션공간"
+mix_color = "색혼합"
+set_depth_test = "깊이테스트"
 # Collections
 len = "길이"
 push = "추가"
