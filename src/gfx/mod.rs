@@ -22,14 +22,6 @@ pub mod shapes;
 pub mod webgl;
 #[cfg(target_arch = "wasm32")]
 pub mod audio_web;
-pub mod camera;
-pub mod depth;
-pub mod light;
-pub mod raster;
-pub mod shapes;
-pub mod vtex;
-#[cfg(target_arch = "wasm32")]
-pub mod webgl;
 
 pub use camera::Camera3D;
 pub use depth::DepthQueue;
