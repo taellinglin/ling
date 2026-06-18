@@ -10,8 +10,12 @@ use core::f32::consts::PI;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Easing {
     Linear,
-    QuadIn, QuadOut, QuadInOut,
-    CubicIn, CubicOut, CubicInOut,
+    QuadIn,
+    QuadOut,
+    QuadInOut,
+    CubicIn,
+    CubicOut,
+    CubicInOut,
     QuartOut,
     SineInOut,
     ExpoOut,
@@ -25,18 +29,18 @@ impl Easing {
     pub fn from_name(s: &str) -> Easing {
         match s.to_ascii_lowercase().replace('-', "_").as_str() {
             "linear" => Easing::Linear,
-            "quad_in" | "ease_in"            => Easing::QuadIn,
-            "quad_out" | "ease_out"          => Easing::QuadOut,
+            "quad_in" | "ease_in" => Easing::QuadIn,
+            "quad_out" | "ease_out" => Easing::QuadOut,
             "quad_inout" | "ease" | "smooth" => Easing::QuadInOut,
-            "cubic_in"    => Easing::CubicIn,
-            "cubic_out"   => Easing::CubicOut,
+            "cubic_in" => Easing::CubicIn,
+            "cubic_out" => Easing::CubicOut,
             "cubic_inout" => Easing::CubicInOut,
             "quart_out" | "quartout" => Easing::QuartOut,
-            "sine" | "sine_inout"    => Easing::SineInOut,
-            "expo" | "expo_out"      => Easing::ExpoOut,
-            "back" | "back_out"      => Easing::BackOut,
-            "elastic" | "elastic_out"=> Easing::ElasticOut,
-            "bounce" | "bounce_out"  => Easing::BounceOut,
+            "sine" | "sine_inout" => Easing::SineInOut,
+            "expo" | "expo_out" => Easing::ExpoOut,
+            "back" | "back_out" => Easing::BackOut,
+            "elastic" | "elastic_out" => Easing::ElasticOut,
+            "bounce" | "bounce_out" => Easing::BounceOut,
             _ => Easing::QuadInOut,
         }
     }
@@ -45,36 +49,66 @@ impl Easing {
     pub fn apply(self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {
-            Easing::Linear     => t,
-            Easing::QuadIn     => t * t,
-            Easing::QuadOut    => 1.0 - (1.0 - t) * (1.0 - t),
-            Easing::QuadInOut  => if t < 0.5 { 2.0*t*t } else { 1.0 - (-2.0*t+2.0).powi(2)/2.0 },
-            Easing::CubicIn    => t*t*t,
-            Easing::CubicOut   => 1.0 - (1.0 - t).powi(3),
-            Easing::CubicInOut => if t < 0.5 { 4.0*t*t*t } else { 1.0 - (-2.0*t+2.0).powi(3)/2.0 },
-            Easing::QuartOut   => 1.0 - (1.0 - t).powi(4),
-            Easing::SineInOut  => -(PI * t).cos() * 0.5 + 0.5,
-            Easing::ExpoOut    => if t >= 1.0 { 1.0 } else { 1.0 - 2.0_f32.powf(-10.0 * t) },
-            Easing::BackOut    => {
-                let c1 = 1.70158; let c3 = c1 + 1.0;
+            Easing::Linear => t,
+            Easing::QuadIn => t * t,
+            Easing::QuadOut => 1.0 - (1.0 - t) * (1.0 - t),
+            Easing::QuadInOut => {
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+                }
+            },
+            Easing::CubicIn => t * t * t,
+            Easing::CubicOut => 1.0 - (1.0 - t).powi(3),
+            Easing::CubicInOut => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                }
+            },
+            Easing::QuartOut => 1.0 - (1.0 - t).powi(4),
+            Easing::SineInOut => -(PI * t).cos() * 0.5 + 0.5,
+            Easing::ExpoOut => {
+                if t >= 1.0 {
+                    1.0
+                } else {
+                    1.0 - 2.0_f32.powf(-10.0 * t)
+                }
+            },
+            Easing::BackOut => {
+                let c1 = 1.70158;
+                let c3 = c1 + 1.0;
                 1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
-            }
+            },
             Easing::ElasticOut => {
-                if t == 0.0 || t == 1.0 { return t; }
+                if t == 0.0 || t == 1.0 {
+                    return t;
+                }
                 let c4 = (2.0 * PI) / 3.0;
                 2.0_f32.powf(-10.0 * t) * ((t * 10.0 - 0.75) * c4).sin() + 1.0
-            }
-            Easing::BounceOut  => bounce_out(t),
+            },
+            Easing::BounceOut => bounce_out(t),
         }
     }
 }
 
 fn bounce_out(t: f32) -> f32 {
-    let n1 = 7.5625; let d1 = 2.75;
-    if t < 1.0 / d1 { n1 * t * t }
-    else if t < 2.0 / d1 { let t = t - 1.5/d1; n1 * t * t + 0.75 }
-    else if t < 2.5 / d1 { let t = t - 2.25/d1; n1 * t * t + 0.9375 }
-    else { let t = t - 2.625/d1; n1 * t * t + 0.984375 }
+    let n1 = 7.5625;
+    let d1 = 2.75;
+    if t < 1.0 / d1 {
+        n1 * t * t
+    } else if t < 2.0 / d1 {
+        let t = t - 1.5 / d1;
+        n1 * t * t + 0.75
+    } else if t < 2.5 / d1 {
+        let t = t - 2.25 / d1;
+        n1 * t * t + 0.9375
+    } else {
+        let t = t - 2.625 / d1;
+        n1 * t * t + 0.984375
+    }
 }
 
 /// Convenience: ease a value between `a` and `b` by curve at parameter `t`.
@@ -100,9 +134,13 @@ impl Spring {
         Self { value, target: value, velocity: 0.0, stiffness, damping }
     }
     /// A pleasant default for UI (snappy, slightly springy).
-    pub fn ui(value: f32) -> Self { Self::new(value, 180.0, 18.0) }
+    pub fn ui(value: f32) -> Self {
+        Self::new(value, 180.0, 18.0)
+    }
 
-    pub fn set_target(&mut self, target: f32) { self.target = target; }
+    pub fn set_target(&mut self, target: f32) {
+        self.target = target;
+    }
 
     /// Advance by `dt` seconds (sub-stepped for stability).
     pub fn update(&mut self, dt: f32) -> f32 {
@@ -144,7 +182,9 @@ impl Tween {
         let t = self.elapsed / self.duration;
         ease(self.curve, self.from, self.to, t)
     }
-    pub fn done(&self) -> bool { self.elapsed >= self.duration }
+    pub fn done(&self) -> bool {
+        self.elapsed >= self.duration
+    }
 }
 
 #[cfg(test)]
@@ -153,8 +193,16 @@ mod tests {
 
     #[test]
     fn easings_pin_endpoints() {
-        for c in [Easing::Linear, Easing::QuadInOut, Easing::CubicOut, Easing::ExpoOut,
-                  Easing::BackOut, Easing::ElasticOut, Easing::BounceOut, Easing::SineInOut] {
+        for c in [
+            Easing::Linear,
+            Easing::QuadInOut,
+            Easing::CubicOut,
+            Easing::ExpoOut,
+            Easing::BackOut,
+            Easing::ElasticOut,
+            Easing::BounceOut,
+            Easing::SineInOut,
+        ] {
             assert!((c.apply(0.0) - 0.0).abs() < 1e-3, "{c:?} f(0)≠0");
             assert!((c.apply(1.0) - 1.0).abs() < 1e-3, "{c:?} f(1)≠1");
         }
@@ -171,7 +219,9 @@ mod tests {
     fn spring_settles_at_target() {
         let mut s = Spring::ui(0.0);
         s.set_target(1.0);
-        for _ in 0..600 { s.update(1.0/60.0); }
+        for _ in 0..600 {
+            s.update(1.0 / 60.0);
+        }
         assert!(s.is_settled(), "value={} vel={}", s.value, s.velocity);
         assert!((s.value - 1.0).abs() < 1e-2);
     }
@@ -180,7 +230,9 @@ mod tests {
     fn tween_runs_to_completion() {
         let mut tw = Tween::new(10.0, 20.0, 0.5, Easing::CubicOut);
         assert!(!tw.done());
-        for _ in 0..60 { tw.update(1.0/60.0); }
+        for _ in 0..60 {
+            tw.update(1.0 / 60.0);
+        }
         assert!(tw.done());
         assert!((tw.value() - 20.0).abs() < 1e-3);
     }

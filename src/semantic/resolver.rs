@@ -2,4 +2,3 @@
 pub fn resolve_names(_program: &crate::parser::ast::Program) -> Result<(), String> {
     Ok(())
 }
-

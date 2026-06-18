@@ -11,11 +11,11 @@ const MAX_STEP: f32 = 1.5;
 
 #[derive(Clone, Debug)]
 pub struct SoftNode {
-    pub pos:       Vec3,
-    pub prev_pos:  Vec3,
-    pub vel:       Vec3,
-    pub mass:      f32,
-    pub pinned:    bool,
+    pub pos: Vec3,
+    pub prev_pos: Vec3,
+    pub vel: Vec3,
+    pub mass: f32,
+    pub pinned: bool,
 }
 
 impl SoftNode {
@@ -26,15 +26,15 @@ impl SoftNode {
 
 #[derive(Clone, Debug)]
 pub struct Spring {
-    pub a:           usize,
-    pub b:           usize,
+    pub a: usize,
+    pub b: usize,
     pub rest_length: f32,
-    pub stiffness:   f32,
+    pub stiffness: f32,
 }
 
 #[derive(Clone, Debug)]
 pub struct SoftBody {
-    pub nodes:   Vec<SoftNode>,
+    pub nodes: Vec<SoftNode>,
     pub springs: Vec<Spring>,
     pub damping: f32,
     /// Target radius from the centroid — a gentle shape-restoration constraint
@@ -48,7 +48,7 @@ pub struct SoftBody {
 impl SoftBody {
     /// Build a deformable sphere from lat/lon rings.
     pub fn sphere(center: Vec3, radius: f32, rings: u32, sectors: u32, mass_per_node: f32) -> Self {
-        let mut nodes  = Vec::new();
+        let mut nodes = Vec::new();
         let mut springs = Vec::new();
 
         // Pole nodes.
@@ -65,7 +65,10 @@ impl SoftBody {
                 let x = phi.sin() * theta.cos();
                 let y = phi.cos();
                 let z = phi.sin() * theta.sin();
-                nodes.push(SoftNode::new(center + Vec3::new(x, y, z) * radius, mass_per_node));
+                nodes.push(SoftNode::new(
+                    center + Vec3::new(x, y, z) * radius,
+                    mass_per_node,
+                ));
             }
         }
 
@@ -73,7 +76,7 @@ impl SoftBody {
         // so the vertical (`down`) spring only exists when r+1 is still a valid row.
         for r in 0..(rings - 1) {
             for s in 0..sectors {
-                let cur  = offset + (r * sectors + s) as usize;
+                let cur = offset + (r * sectors + s) as usize;
                 let next = offset + (r * sectors + (s + 1) % sectors) as usize;
                 let rest_h = (nodes[cur].pos - nodes[next].pos).length();
                 if rest_h > 0.0 {
@@ -83,7 +86,12 @@ impl SoftBody {
                     let down = offset + ((r + 1) * sectors + s) as usize;
                     let rest_v = (nodes[cur].pos - nodes[down].pos).length();
                     if rest_v > 0.0 {
-                        springs.push(Spring { a: cur, b: down, rest_length: rest_v, stiffness: 0.9 });
+                        springs.push(Spring {
+                            a: cur,
+                            b: down,
+                            rest_length: rest_v,
+                            stiffness: 0.9,
+                        });
                     }
                 }
             }
@@ -95,11 +103,21 @@ impl SoftBody {
             let bot_near = offset + ((rings - 2) * sectors) as usize + s;
             let r_top = (nodes[0].pos - nodes[top_near].pos).length();
             let r_bot = (nodes[1].pos - nodes[bot_near].pos).length();
-            if r_top > 0.0 { springs.push(Spring { a: 0, b: top_near, rest_length: r_top, stiffness: 0.9 }); }
-            if r_bot > 0.0 { springs.push(Spring { a: 1, b: bot_near, rest_length: r_bot, stiffness: 0.9 }); }
+            if r_top > 0.0 {
+                springs.push(Spring { a: 0, b: top_near, rest_length: r_top, stiffness: 0.9 });
+            }
+            if r_bot > 0.0 {
+                springs.push(Spring { a: 1, b: bot_near, rest_length: r_bot, stiffness: 0.9 });
+            }
         }
 
-        Self { nodes, springs, damping: 0.98, rest_radius: radius, shape_stiffness: 0.12 }
+        Self {
+            nodes,
+            springs,
+            damping: 0.98,
+            rest_radius: radius,
+            shape_stiffness: 0.12,
+        }
     }
 
     /// Verlet integration with gravity, then spring constraint projection.
@@ -108,7 +126,9 @@ impl SoftBody {
         for _ in 0..substeps {
             // Verlet step.
             for n in &mut self.nodes {
-                if n.pinned { continue; }
+                if n.pinned {
+                    continue;
+                }
                 let acc = gravity;
                 let next = n.pos * 2.0 - n.prev_pos + acc * sub_dt * sub_dt;
                 n.prev_pos = n.pos;
@@ -120,10 +140,16 @@ impl SoftBody {
                 let pb = self.nodes[s.b].pos;
                 let dir = pb - pa;
                 let dist = dir.length();
-                if dist < 1e-6 { continue; }
+                if dist < 1e-6 {
+                    continue;
+                }
                 let correction = dir / dist * (dist - s.rest_length) * s.stiffness * 0.5;
-                if !self.nodes[s.a].pinned { self.nodes[s.a].pos += correction; }
-                if !self.nodes[s.b].pinned { self.nodes[s.b].pos -= correction; }
+                if !self.nodes[s.a].pinned {
+                    self.nodes[s.a].pos += correction;
+                }
+                if !self.nodes[s.b].pinned {
+                    self.nodes[s.b].pos -= correction;
+                }
             }
             // Shape-restoration: nudge each node toward `rest_radius` from the
             // centroid so the ball stays round (squashes then recovers). The
@@ -140,13 +166,19 @@ impl SoftBody {
                 for n in &self.nodes {
                     let d = n.pos - c;
                     let len = d.length();
-                    let dv = if len > 1e-5 { (c + d / len * r - n.pos) * k } else { Vec3::ZERO };
+                    let dv = if len > 1e-5 {
+                        (c + d / len * r - n.pos) * k
+                    } else {
+                        Vec3::ZERO
+                    };
                     mean += dv;
                     disp.push(dv);
                 }
                 mean *= inv_n;
                 for (n, dv) in self.nodes.iter_mut().zip(disp) {
-                    if n.pinned { continue; }
+                    if n.pinned {
+                        continue;
+                    }
                     n.pos += dv - mean;
                 }
             }
@@ -156,14 +188,24 @@ impl SoftBody {
         // centroid and everything downstream that reads it).
         let c = {
             let raw = self.centroid();
-            if raw.is_finite() { raw } else { Vec3::ZERO }
+            if raw.is_finite() {
+                raw
+            } else {
+                Vec3::ZERO
+            }
         };
         for n in &mut self.nodes {
-            if !n.pos.is_finite() { n.pos = c; }
-            if !n.prev_pos.is_finite() { n.prev_pos = n.pos; }
+            if !n.pos.is_finite() {
+                n.pos = c;
+            }
+            if !n.prev_pos.is_finite() {
+                n.prev_pos = n.pos;
+            }
             let step = n.pos - n.prev_pos;
             let m = step.length();
-            if m > MAX_STEP { n.prev_pos = n.pos - step / m * MAX_STEP; }
+            if m > MAX_STEP {
+                n.prev_pos = n.pos - step / m * MAX_STEP;
+            }
         }
         // Update velocities for damping.
         for n in &mut self.nodes {
@@ -176,9 +218,16 @@ impl SoftBody {
         let mut sum = Vec3::ZERO;
         let mut count = 0.0f32;
         for n in &self.nodes {
-            if n.pos.is_finite() { sum += n.pos; count += 1.0; }
+            if n.pos.is_finite() {
+                sum += n.pos;
+                count += 1.0;
+            }
         }
-        if count == 0.0 { Vec3::ZERO } else { sum / count }
+        if count == 0.0 {
+            Vec3::ZERO
+        } else {
+            sum / count
+        }
     }
 
     /// Mean (centre-of-mass) velocity of the body.
@@ -186,9 +235,16 @@ impl SoftBody {
         let mut sum = Vec3::ZERO;
         let mut count = 0.0f32;
         for n in &self.nodes {
-            if n.vel.is_finite() { sum += n.vel; count += 1.0; }
+            if n.vel.is_finite() {
+                sum += n.vel;
+                count += 1.0;
+            }
         }
-        if count == 0.0 { Vec3::ZERO } else { sum / count }
+        if count == 0.0 {
+            Vec3::ZERO
+        } else {
+            sum / count
+        }
     }
 
     /// Approximate rigid angular velocity ω of the body, derived from the node
@@ -206,7 +262,11 @@ impl SoftBody {
             l += r.cross(v);
             inertia += r.length_squared();
         }
-        if inertia > 1e-6 && l.is_finite() { l / inertia } else { Vec3::ZERO }
+        if inertia > 1e-6 && l.is_finite() {
+            l / inertia
+        } else {
+            Vec3::ZERO
+        }
     }
 
     /// Magnitude of the angular velocity (spin rate).
@@ -218,7 +278,9 @@ impl SoftBody {
     pub fn deformation(&self) -> f32 {
         let c = self.centroid();
         let dists: Vec<f32> = self.nodes.iter().map(|n| (n.pos - c).length()).collect();
-        if dists.is_empty() { return 0.0; }
+        if dists.is_empty() {
+            return 0.0;
+        }
         let avg = dists.iter().sum::<f32>() / dists.len() as f32;
         let variance = dists.iter().map(|d| (d - avg).powi(2)).sum::<f32>() / dists.len() as f32;
         (variance.sqrt() / avg.max(1e-6)).min(1.0)
@@ -261,9 +323,15 @@ impl SoftBody {
     /// Kick the whole body in a direction (Verlet impulse): shifts each node's
     /// previous position so the next step gains `strength` of velocity along `dir`.
     pub fn kick(&mut self, dir: Vec3, strength: f32) {
-        let d = if dir.length_squared() > 1e-9 { dir.normalize() } else { return };
+        let d = if dir.length_squared() > 1e-9 {
+            dir.normalize()
+        } else {
+            return;
+        };
         for n in &mut self.nodes {
-            if !n.pinned { n.prev_pos -= d * strength; }
+            if !n.pinned {
+                n.prev_pos -= d * strength;
+            }
         }
     }
 
@@ -274,7 +342,9 @@ impl SoftBody {
     /// radians per step (for rolling-without-slip at surface speed `s` and radius
     /// `R`, pass `rate = s / R`).
     pub fn spin(&mut self, axis: Vec3, rate: f32) {
-        if axis.length_squared() < 1e-12 { return; }
+        if axis.length_squared() < 1e-12 {
+            return;
+        }
         let ax = axis.normalize();
         // Drive the body's angular velocity *toward* `rate` (rad/step) about `axis`
         // rather than adding to it every call — so holding a key settles to a steady
@@ -283,9 +353,13 @@ impl SoftBody {
         let target = ax * rate;
         let cur = self.angular_velocity();
         let dw = (target - cur) * 0.5;
-        if dw.length() < 1e-7 { return; }
+        if dw.length() < 1e-7 {
+            return;
+        }
         let c = self.centroid();
-        if !c.is_finite() { return; }
+        if !c.is_finite() {
+            return;
+        }
         // Apply the tangential velocity ω × r, de-meaned so it's pure rotation with
         // zero net linear momentum (no drift / float-off).
         let inv_n = 1.0 / self.nodes.len().max(1) as f32;
@@ -298,7 +372,9 @@ impl SoftBody {
         }
         mean *= inv_n;
         for (n, v) in self.nodes.iter_mut().zip(tang) {
-            if n.pinned { continue; }
+            if n.pinned {
+                continue;
+            }
             n.prev_pos -= v - mean;
         }
     }
@@ -308,14 +384,38 @@ impl SoftBody {
     pub fn contain(&mut self, min: Vec3, max: Vec3, restitution: f32) {
         for n in &mut self.nodes {
             // x
-            if n.pos.x < min.x { let v = (n.pos.x - n.prev_pos.x).abs(); n.pos.x = min.x; n.prev_pos.x = n.pos.x + v * restitution; }
-            if n.pos.x > max.x { let v = (n.pos.x - n.prev_pos.x).abs(); n.pos.x = max.x; n.prev_pos.x = n.pos.x - v * restitution; }
+            if n.pos.x < min.x {
+                let v = (n.pos.x - n.prev_pos.x).abs();
+                n.pos.x = min.x;
+                n.prev_pos.x = n.pos.x + v * restitution;
+            }
+            if n.pos.x > max.x {
+                let v = (n.pos.x - n.prev_pos.x).abs();
+                n.pos.x = max.x;
+                n.prev_pos.x = n.pos.x - v * restitution;
+            }
             // y
-            if n.pos.y < min.y { let v = (n.pos.y - n.prev_pos.y).abs(); n.pos.y = min.y; n.prev_pos.y = n.pos.y + v * restitution; }
-            if n.pos.y > max.y { let v = (n.pos.y - n.prev_pos.y).abs(); n.pos.y = max.y; n.prev_pos.y = n.pos.y - v * restitution; }
+            if n.pos.y < min.y {
+                let v = (n.pos.y - n.prev_pos.y).abs();
+                n.pos.y = min.y;
+                n.prev_pos.y = n.pos.y + v * restitution;
+            }
+            if n.pos.y > max.y {
+                let v = (n.pos.y - n.prev_pos.y).abs();
+                n.pos.y = max.y;
+                n.prev_pos.y = n.pos.y - v * restitution;
+            }
             // z
-            if n.pos.z < min.z { let v = (n.pos.z - n.prev_pos.z).abs(); n.pos.z = min.z; n.prev_pos.z = n.pos.z + v * restitution; }
-            if n.pos.z > max.z { let v = (n.pos.z - n.prev_pos.z).abs(); n.pos.z = max.z; n.prev_pos.z = n.pos.z - v * restitution; }
+            if n.pos.z < min.z {
+                let v = (n.pos.z - n.prev_pos.z).abs();
+                n.pos.z = min.z;
+                n.prev_pos.z = n.pos.z + v * restitution;
+            }
+            if n.pos.z > max.z {
+                let v = (n.pos.z - n.prev_pos.z).abs();
+                n.pos.z = max.z;
+                n.prev_pos.z = n.pos.z - v * restitution;
+            }
         }
     }
 }
@@ -336,7 +436,11 @@ mod tests {
         // it stays finite, settles above the floor, and stays a sane shape
         let c = b.centroid();
         assert!(c.is_finite(), "centroid must stay finite, got {c:?}");
-        assert!(c.y <= 3.0 + 1e-3, "ball must rest on/above the floor, y={}", c.y);
+        assert!(
+            c.y <= 3.0 + 1e-3,
+            "ball must rest on/above the floor, y={}",
+            c.y
+        );
         assert!(b.deformation() >= 0.0 && b.deformation() <= 1.0);
         let _ = d0;
     }

@@ -110,7 +110,10 @@ impl Dataset {
 
     /// Look up a metadata value by key.
     pub fn meta(&self, key: &str) -> Option<&str> {
-        self.meta.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+        self.meta
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Total number of turns across all conversations.

@@ -7,7 +7,9 @@ use crate::scalar::gear;
 /// Each successive gear reverses direction and scales by the tooth ratio.
 pub fn gear_train(input_angle: f32, teeth: &[f32]) -> Vec<f32> {
     let mut out = Vec::with_capacity(teeth.len());
-    if teeth.is_empty() { return out; }
+    if teeth.is_empty() {
+        return out;
+    }
     out.push(input_angle);
     for w in teeth.windows(2) {
         let prev = *out.last().unwrap();
@@ -22,7 +24,13 @@ pub fn gear_train(input_angle: f32, teeth: &[f32]) -> Vec<f32> {
 /// that crank angle.
 ///
 /// Pivots: A at origin, D at `(ground, 0)`. Crank A→B, coupler B→C, rocker D→C.
-pub fn four_bar(crank_angle: f32, ground: f32, crank: f32, coupler: f32, rocker: f32) -> Option<f32> {
+pub fn four_bar(
+    crank_angle: f32,
+    ground: f32,
+    crank: f32,
+    coupler: f32,
+    rocker: f32,
+) -> Option<f32> {
     // B from the crank.
     let bx = crank * crank_angle.cos();
     let by = crank * crank_angle.sin();
@@ -38,7 +46,9 @@ pub fn four_bar(crank_angle: f32, ground: f32, crank: f32, coupler: f32, rocker:
     }
     let a = (coupler * coupler - rocker * rocker + dist * dist) / (2.0 * dist);
     let h2 = coupler * coupler - a * a;
-    if h2 < 0.0 { return None; }
+    if h2 < 0.0 {
+        return None;
+    }
     let h = h2.sqrt();
     // Midpoint along B→D, then offset perpendicular by ±h (pick + branch).
     let mx = bx + a * dxbd / dist;
@@ -56,7 +66,7 @@ mod tests {
         let a = gear_train(6.0, &[12.0, 24.0, 12.0]);
         assert_eq!(a.len(), 3);
         assert!((a[1] - (-3.0)).abs() < 1e-6); // 12→24 halves and flips
-        assert!((a[2] - 6.0).abs() < 1e-6);    // 24→12 doubles and flips back
+        assert!((a[2] - 6.0).abs() < 1e-6); // 24→12 doubles and flips back
     }
     #[test]
     fn four_bar_closes_for_valid_linkage() {

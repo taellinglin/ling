@@ -9,8 +9,8 @@
 //! (hover/active/value) is passed in by the host; these functions are pure
 //! geometry and never read input themselves.
 
-use core::f32::consts::PI;
 use crate::holo;
+use core::f32::consts::PI;
 
 /// Packed `0x00RRGGBB` colour.
 pub type Rgba = u32;
@@ -19,30 +19,47 @@ pub type Rgba = u32;
 /// own colour so one widget can mix theme slots (track vs fill vs accent).
 #[derive(Default, Clone)]
 pub struct Draw {
-    pub fills:   Vec<(Rgba, Vec<[f32; 2]>)>,
+    pub fills: Vec<(Rgba, Vec<[f32; 2]>)>,
     pub strokes: Vec<(Rgba, Vec<[f32; 2]>)>,
 }
 
 impl Draw {
-    fn new() -> Self { Self::default() }
-    fn fill(&mut self, c: Rgba, poly: Vec<[f32; 2]>) { self.fills.push((c, poly)); }
-    fn stroke(&mut self, c: Rgba, pl: Vec<[f32; 2]>) { self.strokes.push((c, pl)); }
+    fn new() -> Self {
+        Self::default()
+    }
+    fn fill(&mut self, c: Rgba, poly: Vec<[f32; 2]>) {
+        self.fills.push((c, poly));
+    }
+    fn stroke(&mut self, c: Rgba, pl: Vec<[f32; 2]>) {
+        self.strokes.push((c, pl));
+    }
     /// Stroke a list of disjoint segments `[x0,y0,x1,y1]` (e.g. from `holo`).
     #[allow(dead_code)] // helper kept for holo/segment widgets (not yet called)
     fn segs(&mut self, c: Rgba, segs: &[[f32; 4]]) {
-        for s in segs { self.strokes.push((c, vec![[s[0], s[1]], [s[2], s[3]]])); }
+        for s in segs {
+            self.strokes.push((c, vec![[s[0], s[1]], [s[2], s[3]]]));
+        }
     }
     fn rect_outline(&mut self, c: Rgba, x: f32, y: f32, w: f32, h: f32) {
-        self.stroke(c, vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]);
+        self.stroke(
+            c,
+            vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]],
+        );
     }
     fn rect_fill(&mut self, c: Rgba, x: f32, y: f32, w: f32, h: f32) {
-        self.fill(c, vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]);
+        self.fill(
+            c,
+            vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]],
+        );
     }
 }
 
 // ── small helpers ─────────────────────────────────────────────────────────────
 
-#[inline] fn clamp01(v: f32) -> f32 { v.max(0.0).min(1.0) }
+#[inline]
+fn clamp01(v: f32) -> f32 {
+    v.max(0.0).min(1.0)
+}
 
 /// Mix two packed colours by `t∈[0,1]`.
 pub fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
@@ -62,18 +79,29 @@ pub fn shade(c: Rgba, k: f32) -> Rgba {
 /// Arc polyline from `a0` to `a1` radians (y-down screen space), `n` segments.
 fn arc(cx: f32, cy: f32, r: f32, a0: f32, a1: f32, n: usize) -> Vec<[f32; 2]> {
     let n = n.max(1);
-    (0..=n).map(|i| {
-        let a = a0 + (a1 - a0) * i as f32 / n as f32;
-        [cx + a.cos() * r, cy + a.sin() * r]
-    }).collect()
+    (0..=n)
+        .map(|i| {
+            let a = a0 + (a1 - a0) * i as f32 / n as f32;
+            [cx + a.cos() * r, cy + a.sin() * r]
+        })
+        .collect()
 }
 
 /// Beveled (cut-corner) panel polygon — the holographic panel silhouette.
 fn bevel_poly(x: f32, y: f32, w: f32, h: f32, b: f32) -> Vec<[f32; 2]> {
     let b = b.min(w * 0.5).min(h * 0.5);
     let (x1, y1) = (x + w, y + h);
-    vec![[x + b, y], [x1 - b, y], [x1, y + b], [x1, y1 - b],
-         [x1 - b, y1], [x + b, y1], [x, y1 - b], [x, y + b], [x + b, y]]
+    vec![
+        [x + b, y],
+        [x1 - b, y],
+        [x1, y + b],
+        [x1, y1 - b],
+        [x1 - b, y1],
+        [x + b, y1],
+        [x, y1 - b],
+        [x, y + b],
+        [x + b, y],
+    ]
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -82,9 +110,19 @@ fn bevel_poly(x: f32, y: f32, w: f32, h: f32, b: f32) -> Vec<[f32; 2]> {
 
 /// Circular radar with grid rings, cross axes and a sweeping wedge at `sweep`
 /// radians. `blip` ∈ [0,1] fraction along the sweep where a contact pings.
-pub fn radar(cx: f32, cy: f32, r: f32, sweep: f32, primary: Rgba, accent: Rgba, track: Rgba) -> Draw {
+pub fn radar(
+    cx: f32,
+    cy: f32,
+    r: f32,
+    sweep: f32,
+    primary: Rgba,
+    accent: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
-    for k in 1..=3 { d.stroke(track, arc(cx, cy, r * k as f32 / 3.0, 0.0, PI * 2.0, 48)); }
+    for k in 1..=3 {
+        d.stroke(track, arc(cx, cy, r * k as f32 / 3.0, 0.0, PI * 2.0, 48));
+    }
     d.stroke(track, vec![[cx - r, cy], [cx + r, cy]]);
     d.stroke(track, vec![[cx, cy - r], [cx, cy + r]]);
     // sweep wedge
@@ -93,7 +131,10 @@ pub fn radar(cx: f32, cy: f32, r: f32, sweep: f32, primary: Rgba, accent: Rgba, 
     wedge.extend(arc(cx, cy, r, sweep - sw, sweep, 10));
     wedge.push([cx, cy]);
     d.fill(shade(accent, 0.5), wedge);
-    d.stroke(accent, vec![[cx, cy], [cx + sweep.cos() * r, cy + sweep.sin() * r]]);
+    d.stroke(
+        accent,
+        vec![[cx, cy], [cx + sweep.cos() * r, cy + sweep.sin() * r]],
+    );
     // contact ping
     let pr = r * 0.62;
     let pa = sweep - 0.15;
@@ -117,12 +158,23 @@ pub fn compass(x: f32, y: f32, w: f32, h: f32, heading: f32, primary: Rgba, trac
         if px >= x && px <= x + w {
             let card = deg.rem_euclid(90) == 0;
             let th = if card { h * 0.6 } else { h * 0.3 };
-            d.stroke(if card { primary } else { track }, vec![[px, y + h], [px, y + h - th]]);
+            d.stroke(
+                if card { primary } else { track },
+                vec![[px, y + h], [px, y + h - th]],
+            );
         }
         deg += 15;
     }
     // centre marker
-    d.stroke(primary, vec![[cx, y - 4.0], [cx - 5.0, y - 12.0], [cx + 5.0, y - 12.0], [cx, y - 4.0]]);
+    d.stroke(
+        primary,
+        vec![
+            [cx, y - 4.0],
+            [cx - 5.0, y - 12.0],
+            [cx + 5.0, y - 12.0],
+            [cx, y - 4.0],
+        ],
+    );
     d
 }
 
@@ -132,13 +184,21 @@ pub fn reticle(cx: f32, cy: f32, r: f32, spread: f32, primary: Rgba) -> Draw {
     let g = 0.25 + spread * 0.5;
     for q in 0..4 {
         let base = q as f32 * PI * 0.5 + PI * 0.25;
-        d.stroke(primary, arc(cx, cy, r, base + g * 0.5, base + PI * 0.5 - g * 0.5, 10));
+        d.stroke(
+            primary,
+            arc(cx, cy, r, base + g * 0.5, base + PI * 0.5 - g * 0.5, 10),
+        );
     }
     let inner = r * 0.45 + spread * r * 0.4;
     for k in 0..4 {
         let a = k as f32 * PI * 0.5;
-        d.stroke(primary, vec![[cx + a.cos() * inner, cy + a.sin() * inner],
-                               [cx + a.cos() * (inner + 8.0), cy + a.sin() * (inner + 8.0)]]);
+        d.stroke(
+            primary,
+            vec![
+                [cx + a.cos() * inner, cy + a.sin() * inner],
+                [cx + a.cos() * (inner + 8.0), cy + a.sin() * (inner + 8.0)],
+            ],
+        );
     }
     d.fill(primary, arc(cx, cy, 1.8, 0.0, PI * 2.0, 8));
     d
@@ -154,7 +214,9 @@ pub fn target(x: f32, y: f32, w: f32, h: f32, lock: f32, primary: Rgba, accent: 
     for seg in holo::corner_brackets(xx, yy, ww, hh, l) {
         d.stroke(col, vec![[seg[0], seg[1]], [seg[2], seg[3]]]);
     }
-    if lock > 0.5 { d.stroke(col, vec![[x + w * 0.5, y - off - 6.0], [x + w * 0.5, y]]); }
+    if lock > 0.5 {
+        d.stroke(col, vec![[x + w * 0.5, y - off - 6.0], [x + w * 0.5, y]]);
+    }
     d
 }
 
@@ -166,7 +228,15 @@ pub fn panel(x: f32, y: f32, w: f32, h: f32, bevel: f32, primary: Rgba, bg: Rgba
     // header bar
     let hb = 16.0_f32.min(h * 0.25);
     d.stroke(primary, vec![[x + bevel, y + hb], [x + w - bevel, y + hb]]);
-    d.fill(shade(primary, 0.35), vec![[x + bevel, y], [x + w * 0.4, y], [x + w * 0.4 - 6.0, y + hb], [x + bevel, y + hb]]);
+    d.fill(
+        shade(primary, 0.35),
+        vec![
+            [x + bevel, y],
+            [x + w * 0.4, y],
+            [x + w * 0.4 - 6.0, y + hb],
+            [x + bevel, y + hb],
+        ],
+    );
     d
 }
 
@@ -190,12 +260,23 @@ pub fn bar(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Rgba, track: Rgba) -
     let mut d = Draw::new();
     d.rect_outline(track, x, y, w, h);
     let fw = w * clamp01(frac);
-    if fw > 0.5 { d.rect_fill(fill, x + 1.0, y + 1.0, (fw - 2.0).max(0.0), h - 2.0); }
+    if fw > 0.5 {
+        d.rect_fill(fill, x + 1.0, y + 1.0, (fw - 2.0).max(0.0), h - 2.0);
+    }
     d
 }
 
 /// Segmented/notched bar — `segs` cells, `frac` lit proportionally.
-pub fn segbar(x: f32, y: f32, w: f32, h: f32, frac: f32, segs: usize, fill: Rgba, track: Rgba) -> Draw {
+pub fn segbar(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    frac: f32,
+    segs: usize,
+    fill: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let n = segs.max(1);
     let gap = 2.0;
@@ -203,8 +284,11 @@ pub fn segbar(x: f32, y: f32, w: f32, h: f32, frac: f32, segs: usize, fill: Rgba
     let lit = (clamp01(frac) * n as f32).round() as usize;
     for i in 0..n {
         let cx = x + i as f32 * (cw + gap);
-        if i < lit { d.rect_fill(fill, cx, y, cw, h); }
-        else { d.rect_outline(track, cx, y, cw, h); }
+        if i < lit {
+            d.rect_fill(fill, cx, y, cw, h);
+        } else {
+            d.rect_outline(track, cx, y, cw, h);
+        }
     }
     d
 }
@@ -212,7 +296,7 @@ pub fn segbar(x: f32, y: f32, w: f32, h: f32, frac: f32, segs: usize, fill: Rgba
 /// Radial dial gauge with tick marks and a needle. Sweeps 225°→ -45° (270° arc).
 pub fn gauge(cx: f32, cy: f32, r: f32, frac: f32, needle: Rgba, accent: Rgba, track: Rgba) -> Draw {
     let mut d = Draw::new();
-    let a0 = PI * 0.75;          // 135° (down-left)
+    let a0 = PI * 0.75; // 135° (down-left)
     let a1 = PI * 0.25 + PI * 2.0; // wrap to up-right (270° sweep clockwise)
     let span = a1 - a0;
     d.stroke(track, arc(cx, cy, r, a0, a1, 60));
@@ -222,11 +306,23 @@ pub fn gauge(cx: f32, cy: f32, r: f32, frac: f32, needle: Rgba, accent: Rgba, tr
     for i in 0..=10 {
         let a = a0 + span * i as f32 / 10.0;
         let (c, s) = (a.cos(), a.sin());
-        d.stroke(track, vec![[cx + c * r, cy + s * r], [cx + c * (r - 7.0), cy + s * (r - 7.0)]]);
+        d.stroke(
+            track,
+            vec![
+                [cx + c * r, cy + s * r],
+                [cx + c * (r - 7.0), cy + s * (r - 7.0)],
+            ],
+        );
     }
     // needle
     let a = a0 + span * clamp01(frac);
-    d.stroke(needle, vec![[cx, cy], [cx + a.cos() * (r - 4.0), cy + a.sin() * (r - 4.0)]]);
+    d.stroke(
+        needle,
+        vec![
+            [cx, cy],
+            [cx + a.cos() * (r - 4.0), cy + a.sin() * (r - 4.0)],
+        ],
+    );
     d.fill(needle, arc(cx, cy, 3.0, 0.0, PI * 2.0, 8));
     d
 }
@@ -260,26 +356,49 @@ pub fn vu(x: f32, y: f32, w: f32, h: f32, levels: &[f32], fill: Rgba, peak: Rgba
 /// Sparkline polyline from a list of values (auto-scaled to [min,max]).
 pub fn spark(x: f32, y: f32, w: f32, h: f32, vals: &[f32], line: Rgba) -> Draw {
     let mut d = Draw::new();
-    if vals.len() < 2 { return d; }
+    if vals.len() < 2 {
+        return d;
+    }
     let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-    for &v in vals { lo = lo.min(v); hi = hi.max(v); }
+    for &v in vals {
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
     let rng = (hi - lo).max(1e-6);
-    let pl: Vec<[f32; 2]> = vals.iter().enumerate().map(|(i, &v)| {
-        [x + w * i as f32 / (vals.len() as f32 - 1.0), y + h - (v - lo) / rng * h]
-    }).collect();
+    let pl: Vec<[f32; 2]> = vals
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            [
+                x + w * i as f32 / (vals.len() as f32 - 1.0),
+                y + h - (v - lo) / rng * h,
+            ]
+        })
+        .collect();
     d.stroke(line, pl);
     d
 }
 
 /// Battery cell with bezel, terminal nub and proportional charge fill.
-pub fn battery(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Rgba, track: Rgba, warn: Rgba) -> Draw {
+pub fn battery(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    frac: f32,
+    fill: Rgba,
+    track: Rgba,
+    warn: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let bw = w - 4.0;
     d.rect_outline(track, x, y, bw, h);
     d.rect_fill(track, x + bw, y + h * 0.3, 4.0, h * 0.4); // terminal
     let f = clamp01(frac);
     let c = if f < 0.25 { warn } else { fill };
-    if f > 0.0 { d.rect_fill(c, x + 2.0, y + 2.0, (bw - 4.0) * f, h - 4.0); }
+    if f > 0.0 {
+        d.rect_fill(c, x + 2.0, y + 2.0, (bw - 4.0) * f, h - 4.0);
+    }
     d
 }
 
@@ -288,11 +407,33 @@ pub fn battery(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Rgba, track: Rgb
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Beveled button background (label drawn by the host). `hover`/`active` brighten.
-pub fn button(x: f32, y: f32, w: f32, h: f32, hover: bool, active: bool, primary: Rgba, bg: Rgba) -> Draw {
+pub fn button(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hover: bool,
+    active: bool,
+    primary: Rgba,
+    bg: Rgba,
+) -> Draw {
     let mut d = Draw::new();
-    let glow = if active { 0.55 } else if hover { 0.3 } else { 0.12 };
+    let glow = if active {
+        0.55
+    } else if hover {
+        0.3
+    } else {
+        0.12
+    };
     d.fill(shade(primary, glow), bevel_poly(x, y, w, h, 8.0));
-    d.stroke(if hover { mix(primary, 0xFFFFFF, 0.4) } else { primary }, bevel_poly(x, y, w, h, 8.0));
+    d.stroke(
+        if hover {
+            mix(primary, 0xFFFFFF, 0.4)
+        } else {
+            primary
+        },
+        bevel_poly(x, y, w, h, 8.0),
+    );
     let _ = bg;
     d
 }
@@ -325,27 +466,78 @@ pub fn slider(x: f32, y: f32, w: f32, frac: f32, hover: bool, fill: Rgba, track:
 }
 
 /// Checkbox; `checked` draws a tick.
-pub fn checkbox(x: f32, y: f32, s: f32, checked: bool, hover: bool, primary: Rgba, track: Rgba) -> Draw {
+pub fn checkbox(
+    x: f32,
+    y: f32,
+    s: f32,
+    checked: bool,
+    hover: bool,
+    primary: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
-    d.rect_outline(if hover { mix(primary, 0xFFFFFF, 0.4) } else { track }, x, y, s, s);
+    d.rect_outline(
+        if hover {
+            mix(primary, 0xFFFFFF, 0.4)
+        } else {
+            track
+        },
+        x,
+        y,
+        s,
+        s,
+    );
     if checked {
-        d.stroke(primary, vec![[x + s * 0.22, y + s * 0.55], [x + s * 0.42, y + s * 0.75], [x + s * 0.8, y + s * 0.25]]);
+        d.stroke(
+            primary,
+            vec![
+                [x + s * 0.22, y + s * 0.55],
+                [x + s * 0.42, y + s * 0.75],
+                [x + s * 0.8, y + s * 0.25],
+            ],
+        );
     }
     d
 }
 
 /// Tab strip: `count` tabs, `active` highlighted. Returns per-tab rects via geometry.
-pub fn tabs(x: f32, y: f32, w: f32, h: f32, count: usize, active: usize, hover: i32, primary: Rgba, track: Rgba) -> Draw {
+pub fn tabs(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    count: usize,
+    active: usize,
+    hover: i32,
+    primary: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let n = count.max(1);
     let tw = w / n as f32;
     for i in 0..n {
         let tx = x + i as f32 * tw;
         if i == active {
-            d.fill(shade(primary, 0.3), vec![[tx, y], [tx + tw, y], [tx + tw, y + h], [tx, y + h], [tx, y]]);
-            d.stroke(primary, vec![[tx, y + h], [tx, y], [tx + tw, y], [tx + tw, y + h]]);
+            d.fill(
+                shade(primary, 0.3),
+                vec![
+                    [tx, y],
+                    [tx + tw, y],
+                    [tx + tw, y + h],
+                    [tx, y + h],
+                    [tx, y],
+                ],
+            );
+            d.stroke(
+                primary,
+                vec![[tx, y + h], [tx, y], [tx + tw, y], [tx + tw, y + h]],
+            );
         } else {
-            let c = if hover == i as i32 { mix(track, primary, 0.5) } else { track };
+            let c = if hover == i as i32 {
+                mix(track, primary, 0.5)
+            } else {
+                track
+            };
             d.stroke(c, vec![[tx, y + h], [tx + tw, y + h]]);
         }
     }
@@ -357,7 +549,9 @@ pub fn progress(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Rgba, track: Rg
     let mut d = Draw::new();
     d.rect_outline(track, x, y, w, h);
     let fw = (w - 2.0) * clamp01(frac);
-    if fw > 0.5 { d.rect_fill(fill, x + 1.0, y + 1.0, fw, h - 2.0); }
+    if fw > 0.5 {
+        d.rect_fill(fill, x + 1.0, y + 1.0, fw, h - 2.0);
+    }
     d
 }
 
@@ -366,23 +560,61 @@ pub fn tooltip(x: f32, y: f32, w: f32, h: f32, primary: Rgba, bg: Rgba) -> Draw 
     let mut d = Draw::new();
     d.fill(bg, bevel_poly(x, y, w, h, 6.0));
     d.stroke(primary, bevel_poly(x, y, w, h, 6.0));
-    d.fill(bg, vec![[x + 12.0, y + h], [x + 22.0, y + h], [x + 14.0, y + h + 8.0]]);
-    d.stroke(primary, vec![[x + 12.0, y + h], [x + 14.0, y + h + 8.0], [x + 22.0, y + h]]);
+    d.fill(
+        bg,
+        vec![
+            [x + 12.0, y + h],
+            [x + 22.0, y + h],
+            [x + 14.0, y + h + 8.0],
+        ],
+    );
+    d.stroke(
+        primary,
+        vec![
+            [x + 12.0, y + h],
+            [x + 14.0, y + h + 8.0],
+            [x + 22.0, y + h],
+        ],
+    );
     d
 }
 
 /// Stepper: [ - value + ] frame (host draws value). Returns the two button rects' geometry.
-pub fn stepper(x: f32, y: f32, w: f32, h: f32, hover_minus: bool, hover_plus: bool, primary: Rgba, track: Rgba) -> Draw {
+pub fn stepper(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    hover_minus: bool,
+    hover_plus: bool,
+    primary: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let bw = h;
-    d.fill(shade(primary, if hover_minus { 0.4 } else { 0.12 }), bevel_poly(x, y, bw, h, 5.0));
+    d.fill(
+        shade(primary, if hover_minus { 0.4 } else { 0.12 }),
+        bevel_poly(x, y, bw, h, 5.0),
+    );
     d.stroke(primary, bevel_poly(x, y, bw, h, 5.0));
-    d.stroke(primary, vec![[x + bw * 0.3, y + h * 0.5], [x + bw * 0.7, y + h * 0.5]]);
+    d.stroke(
+        primary,
+        vec![[x + bw * 0.3, y + h * 0.5], [x + bw * 0.7, y + h * 0.5]],
+    );
     let px = x + w - bw;
-    d.fill(shade(primary, if hover_plus { 0.4 } else { 0.12 }), bevel_poly(px, y, bw, h, 5.0));
+    d.fill(
+        shade(primary, if hover_plus { 0.4 } else { 0.12 }),
+        bevel_poly(px, y, bw, h, 5.0),
+    );
     d.stroke(primary, bevel_poly(px, y, bw, h, 5.0));
-    d.stroke(primary, vec![[px + bw * 0.3, y + h * 0.5], [px + bw * 0.7, y + h * 0.5]]);
-    d.stroke(primary, vec![[px + bw * 0.5, y + h * 0.3], [px + bw * 0.5, y + h * 0.7]]);
+    d.stroke(
+        primary,
+        vec![[px + bw * 0.3, y + h * 0.5], [px + bw * 0.7, y + h * 0.5]],
+    );
+    d.stroke(
+        primary,
+        vec![[px + bw * 0.5, y + h * 0.3], [px + bw * 0.5, y + h * 0.7]],
+    );
     d.rect_outline(track, x + bw + 2.0, y, w - bw * 2.0 - 4.0, h);
     d
 }
@@ -393,14 +625,31 @@ pub fn stepper(x: f32, y: f32, w: f32, h: f32, hover_minus: bool, hover_plus: bo
 
 /// Health bar: notched fill that shifts colour low→high and can pulse (host
 /// passes a 0..1 `pulse`).
-pub fn healthbar(x: f32, y: f32, w: f32, h: f32, frac: f32, pulse: f32, full: Rgba, low: Rgba, track: Rgba) -> Draw {
+pub fn healthbar(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    frac: f32,
+    pulse: f32,
+    full: Rgba,
+    low: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     d.rect_outline(track, x, y, w, h);
     let f = clamp01(frac);
     let mut c = mix(low, full, f);
-    if f < 0.3 { c = mix(c, 0xFFFFFF, pulse * 0.6); }
-    if f > 0.0 { d.rect_fill(c, x + 1.0, y + 1.0, (w - 2.0) * f, h - 2.0); }
-    for i in 1..10 { let nx = x + w * i as f32 / 10.0; d.stroke(track, vec![[nx, y], [nx, y + h]]); }
+    if f < 0.3 {
+        c = mix(c, 0xFFFFFF, pulse * 0.6);
+    }
+    if f > 0.0 {
+        d.rect_fill(c, x + 1.0, y + 1.0, (w - 2.0) * f, h - 2.0);
+    }
+    for i in 1..10 {
+        let nx = x + w * i as f32 / 10.0;
+        d.stroke(track, vec![[nx, y], [nx, y + h]]);
+    }
     d
 }
 
@@ -417,10 +666,21 @@ pub fn cooldown(cx: f32, cy: f32, r: f32, frac: f32, fill: Rgba, track: Rgba) ->
 }
 
 /// 7-segment style vector number for `value` with `digits` places.
-pub fn counter(x: f32, y: f32, dw: f32, dh: f32, value: i64, digits: usize, on: Rgba, off: Rgba) -> Draw {
+pub fn counter(
+    x: f32,
+    y: f32,
+    dw: f32,
+    dh: f32,
+    value: i64,
+    digits: usize,
+    on: Rgba,
+    off: Rgba,
+) -> Draw {
     let mut d = Draw::new();
-    let segmap: [u8; 10] = [0b1111110, 0b0110000, 0b1101101, 0b1111001, 0b0110011,
-                            0b1011011, 0b1011111, 0b1110000, 0b1111111, 0b1111011];
+    let segmap: [u8; 10] = [
+        0b1111110, 0b0110000, 0b1101101, 0b1111001, 0b0110011, 0b1011011, 0b1011111, 0b1110000,
+        0b1111111, 0b1111011,
+    ];
     let gap = dw * 0.35;
     let v = value.unsigned_abs();
     for i in 0..digits {
@@ -437,13 +697,13 @@ fn seven_seg(d: &mut Draw, x: f32, y: f32, w: f32, h: f32, mask: u8, on: Rgba, o
     let mid = y + h * 0.5;
     // segments: a(top) b(tr) c(br) d(bottom) e(bl) f(tl) g(mid) — bit6..bit0
     let bars = [
-        (6, [x + t, y, w - 2.0 * t, t]),                  // a
-        (5, [x + w - t, y + t, t, h * 0.5 - 1.5 * t]),    // b
+        (6, [x + t, y, w - 2.0 * t, t]),                       // a
+        (5, [x + w - t, y + t, t, h * 0.5 - 1.5 * t]),         // b
         (4, [x + w - t, mid + 0.5 * t, t, h * 0.5 - 1.5 * t]), // c
-        (3, [x + t, y + h - t, w - 2.0 * t, t]),          // d
-        (2, [x, mid + 0.5 * t, t, h * 0.5 - 1.5 * t]),    // e
-        (1, [x, y + t, t, h * 0.5 - 1.5 * t]),            // f
-        (0, [x + t, mid - 0.5 * t, w - 2.0 * t, t]),      // g
+        (3, [x + t, y + h - t, w - 2.0 * t, t]),               // d
+        (2, [x, mid + 0.5 * t, t, h * 0.5 - 1.5 * t]),         // e
+        (1, [x, y + t, t, h * 0.5 - 1.5 * t]),                 // f
+        (0, [x + t, mid - 0.5 * t, w - 2.0 * t, t]),           // g
     ];
     for (bit, r) in bars {
         let c = if mask & (1 << bit) != 0 { on } else { off };
@@ -454,7 +714,10 @@ fn seven_seg(d: &mut Draw, x: f32, y: f32, w: f32, h: f32, mask: u8, on: Rgba, o
 /// Minimap frame with corner brackets (host plots blips separately).
 pub fn minimap(x: f32, y: f32, w: f32, h: f32, primary: Rgba, bg: Rgba) -> Draw {
     let mut d = Draw::new();
-    d.fill(bg, vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]);
+    d.fill(
+        bg,
+        vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]],
+    );
     for seg in holo::corner_brackets(x, y, w, h, 14.0) {
         d.stroke(primary, vec![[seg[0], seg[1]], [seg[2], seg[3]]]);
     }
@@ -473,19 +736,39 @@ pub fn dpad(cx: f32, cy: f32, r: f32, dir: i32, primary: Rgba, track: Rgba) -> D
         let bx = cx + dx * r * 0.55;
         let by = cy + dy * r * 0.55;
         let tri = vec![
-            [bx + dx * arm + dy * arm * 0.4, by + dy * arm + dx * arm * 0.4],
-            [bx + dx * arm - dy * arm * 0.4, by + dy * arm - dx * arm * 0.4],
+            [
+                bx + dx * arm + dy * arm * 0.4,
+                by + dy * arm + dx * arm * 0.4,
+            ],
+            [
+                bx + dx * arm - dy * arm * 0.4,
+                by + dy * arm - dx * arm * 0.4,
+            ],
             [bx - dx * arm * 0.3, by - dy * arm * 0.3],
-            [bx + dx * arm + dy * arm * 0.4, by + dy * arm + dx * arm * 0.4],
+            [
+                bx + dx * arm + dy * arm * 0.4,
+                by + dy * arm + dx * arm * 0.4,
+            ],
         ];
-        if on { d.fill(c, tri.clone()); }
+        if on {
+            d.fill(c, tri.clone());
+        }
         d.stroke(c, tri);
     }
     d
 }
 
 /// Item slot grid (`cols`×`rows`), `sel` index highlighted.
-pub fn slotgrid(x: f32, y: f32, cols: usize, rows: usize, cell: f32, sel: i32, primary: Rgba, track: Rgba) -> Draw {
+pub fn slotgrid(
+    x: f32,
+    y: f32,
+    cols: usize,
+    rows: usize,
+    cell: f32,
+    sel: i32,
+    primary: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let gap = 4.0;
     for r in 0..rows {
@@ -494,7 +777,16 @@ pub fn slotgrid(x: f32, y: f32, cols: usize, rows: usize, cell: f32, sel: i32, p
             let cx = x + c as f32 * (cell + gap);
             let cy = y + r as f32 * (cell + gap);
             if idx == sel {
-                d.fill(shade(primary, 0.3), vec![[cx, cy], [cx + cell, cy], [cx + cell, cy + cell], [cx, cy + cell], [cx, cy]]);
+                d.fill(
+                    shade(primary, 0.3),
+                    vec![
+                        [cx, cy],
+                        [cx + cell, cy],
+                        [cx + cell, cy + cell],
+                        [cx, cy + cell],
+                        [cx, cy],
+                    ],
+                );
                 d.rect_outline(primary, cx, cy, cell, cell);
             } else {
                 d.rect_outline(track, cx, cy, cell, cell);
@@ -512,7 +804,13 @@ pub fn vignette(w: f32, h: f32, intensity: f32, col: Rgba) -> Draw {
     for i in 0..layers {
         let inset = i as f32 * 3.0;
         let c = shade(col, t * (1.0 - i as f32 / layers as f32));
-        d.rect_outline(c, inset, inset, (w - inset * 2.0).max(0.0), (h - inset * 2.0).max(0.0));
+        d.rect_outline(
+            c,
+            inset,
+            inset,
+            (w - inset * 2.0).max(0.0),
+            (h - inset * 2.0).max(0.0),
+        );
     }
     d
 }
@@ -566,24 +864,67 @@ pub fn panel3d(x: f32, y: f32, w: f32, h: f32, depth: f32, primary: Rgba, bg: Rg
     let front = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
     let back: Vec<[f32; 2]> = front.iter().map(|p| [p[0] + dx, p[1] + dy]).collect();
     // side faces
-    d.fill(shade(primary, 0.18), vec![front[1], back[1], back[2], front[2], front[1]]);
-    d.fill(shade(primary, 0.28), vec![front[0], back[0], back[1], front[1], front[0]]);
-    for i in 0..4 { d.stroke(shade(primary, 0.6), vec![front[i], back[i]]); }
-    d.stroke(primary, back.iter().cloned().chain(std::iter::once(back[0])).collect());
-    d.fill(bg, front.iter().cloned().chain(std::iter::once(front[0])).collect());
-    d.stroke(primary, front.iter().cloned().chain(std::iter::once(front[0])).collect());
+    d.fill(
+        shade(primary, 0.18),
+        vec![front[1], back[1], back[2], front[2], front[1]],
+    );
+    d.fill(
+        shade(primary, 0.28),
+        vec![front[0], back[0], back[1], front[1], front[0]],
+    );
+    for i in 0..4 {
+        d.stroke(shade(primary, 0.6), vec![front[i], back[i]]);
+    }
+    d.stroke(
+        primary,
+        back.iter()
+            .cloned()
+            .chain(std::iter::once(back[0]))
+            .collect(),
+    );
+    d.fill(
+        bg,
+        front
+            .iter()
+            .cloned()
+            .chain(std::iter::once(front[0]))
+            .collect(),
+    );
+    d.stroke(
+        primary,
+        front
+            .iter()
+            .cloned()
+            .chain(std::iter::once(front[0]))
+            .collect(),
+    );
     d
 }
 
 /// Perspective radar dish — concentric rings tilted into the screen, with a sweep.
-pub fn radar3d(cx: f32, cy: f32, r: f32, tilt: f32, sweep: f32, primary: Rgba, track: Rgba) -> Draw {
+pub fn radar3d(
+    cx: f32,
+    cy: f32,
+    r: f32,
+    tilt: f32,
+    sweep: f32,
+    primary: Rgba,
+    track: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     for k in 1..=3 {
         let rr = r * k as f32 / 3.0;
         let mut pl = Vec::new();
         for i in 0..=40 {
             let a = i as f32 / 40.0 * PI * 2.0;
-            pl.push(proj3([a.cos() * rr / r, 0.0, a.sin() * rr / r], 0.0, tilt, cx, cy, r));
+            pl.push(proj3(
+                [a.cos() * rr / r, 0.0, a.sin() * rr / r],
+                0.0,
+                tilt,
+                cx,
+                cy,
+                r,
+            ));
         }
         d.stroke(track, pl);
     }
@@ -600,7 +941,7 @@ mod tests {
     #[test]
     fn bar_fill_is_proportional() {
         let empty = bar(0.0, 0.0, 100.0, 10.0, 0.0, 0xFFFFFF, 0x222222);
-        let half  = bar(0.0, 0.0, 100.0, 10.0, 0.5, 0xFFFFFF, 0x222222);
+        let half = bar(0.0, 0.0, 100.0, 10.0, 0.5, 0xFFFFFF, 0x222222);
         assert!(empty.fills.is_empty());
         assert_eq!(half.fills.len(), 1);
         // ~half width (minus the 2px inset)

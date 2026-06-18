@@ -43,7 +43,11 @@ pub fn holo_hash(data: &[u8]) -> [u8; 32] {
 }
 
 fn gcd(mut a: u32, mut b: u32) -> u32 {
-    while b != 0 { let t = b; b = a % b; a = t; }
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
     a
 }
 
@@ -80,14 +84,26 @@ impl KnotShape {
         // p, q ∈ [2,17], forced coprime & distinct → a genuine torus knot.
         let mut p = 2 + (d[0] as u32 % 16);
         let mut q = 2 + (d[1] as u32 % 16);
-        if p == q { q = 2 + ((q) % 16) + 1; }
-        while gcd(p, q) != 1 { q += 1; if q > 18 { q = 2; p += 1; if p > 18 { p = 2; } } }
+        if p == q {
+            q = 2 + ((q) % 16) + 1;
+        }
+        while gcd(p, q) != 1 {
+            q += 1;
+            if q > 18 {
+                q = 2;
+                p += 1;
+                if p > 18 {
+                    p = 2;
+                }
+            }
+        }
 
         // Radii and a decorative "volume" from later digest bytes.
         let major_r = 2.0 + (d[2] as f32 / 255.0) * 1.5;
         let minor_r = 0.4 + (d[3] as f32 / 255.0) * 0.8;
         let phase = (u16::from_le_bytes([d[4], d[5]]) as f32 / 65535.0) * std::f32::consts::TAU;
-        let volume = 1.0 + (u32::from_le_bytes([d[6], d[7], d[8], d[9]]) as f32 / u32::MAX as f32) * 11.0;
+        let volume =
+            1.0 + (u32::from_le_bytes([d[6], d[7], d[8], d[9]]) as f32 / u32::MAX as f32) * 11.0;
 
         let mut points = Vec::with_capacity(Self::SAMPLES);
         for i in 0..Self::SAMPLES {
@@ -208,7 +224,9 @@ pub fn scatter(data: &[u8]) -> Vec<HoloFragment> {
     // Length-prefix so we can trim padding on the way back.
     let mut msg = (data.len() as u64).to_le_bytes().to_vec();
     msg.extend_from_slice(data);
-    while msg.len() % HOLO_BLOCK != 0 { msg.push(0); }
+    while msg.len() % HOLO_BLOCK != 0 {
+        msg.push(0);
+    }
     let n = (msg.len() / HOLO_BLOCK) as u32;
 
     // Masked data blocks: c_i = m_i ⊕ KS_k(i)
@@ -216,55 +234,79 @@ pub fn scatter(data: &[u8]) -> Vec<HoloFragment> {
     for i in 0..n {
         let ks = ks_block(&k, i);
         let mut c = [0u8; 32];
-        for j in 0..HOLO_BLOCK { c[j] = msg[i as usize * HOLO_BLOCK + j] ^ ks[j]; }
+        for j in 0..HOLO_BLOCK {
+            c[j] = msg[i as usize * HOLO_BLOCK + j] ^ ks[j];
+        }
         blocks.push(c);
     }
 
     // Anchor block: c_n = k ⊕ H(c_0 ‖ … ‖ c_{n-1})
     let mut h = blake3::Hasher::new();
     h.update(b"ling-holo-anchor-v1");
-    for c in &blocks { h.update(c); }
+    for c in &blocks {
+        h.update(c);
+    }
     let digest = *h.finalize().as_bytes();
     let mut anchor = [0u8; 32];
-    for j in 0..HOLO_BLOCK { anchor[j] = k[j] ^ digest[j]; }
+    for j in 0..HOLO_BLOCK {
+        anchor[j] = k[j] ^ digest[j];
+    }
     blocks.push(anchor);
 
-    blocks.into_iter().enumerate().map(|(i, block)| HoloFragment {
-        index: i as u32,
-        coord: sphere4_point(i as u32, &block),
-        block,
-    }).collect()
+    blocks
+        .into_iter()
+        .enumerate()
+        .map(|(i, block)| HoloFragment {
+            index: i as u32,
+            coord: sphere4_point(i as u32, &block),
+            block,
+        })
+        .collect()
 }
 
 /// **Holographic gather** — invert [`scatter`]. Returns `None` if any fragment is
 /// missing/corrupt (the anchor hash won't match → no key → no plaintext).
 pub fn gather(fragments: &[HoloFragment]) -> Option<Vec<u8>> {
-    if fragments.len() < 2 { return None; }
+    if fragments.len() < 2 {
+        return None;
+    }
     let mut frags = fragments.to_vec();
     frags.sort_by_key(|f| f.index);
     // Indices must be exactly 0..len with no gaps.
     for (i, f) in frags.iter().enumerate() {
-        if f.index as usize != i { return None; }
+        if f.index as usize != i {
+            return None;
+        }
     }
     let n = frags.len() - 1; // data blocks; last is the anchor
 
     // Recover k = anchor ⊕ H(c_0 ‖ … ‖ c_{n-1})
     let mut h = blake3::Hasher::new();
     h.update(b"ling-holo-anchor-v1");
-    for f in &frags[..n] { h.update(&f.block); }
+    for f in &frags[..n] {
+        h.update(&f.block);
+    }
     let digest = *h.finalize().as_bytes();
     let mut k = [0u8; 32];
-    for j in 0..HOLO_BLOCK { k[j] = frags[n].block[j] ^ digest[j]; }
+    for j in 0..HOLO_BLOCK {
+        k[j] = frags[n].block[j] ^ digest[j];
+    }
 
     // Unmask: m_i = c_i ⊕ KS_k(i)
     let mut msg = Vec::with_capacity(n * HOLO_BLOCK);
     for i in 0..n {
         let ks = ks_block(&k, i as u32);
-        for j in 0..HOLO_BLOCK { msg.push(frags[i].block[j] ^ ks[j]); }
+        for j in 0..HOLO_BLOCK {
+            msg.push(frags[i].block[j] ^ ks[j]);
+        }
     }
-    if msg.len() < 8 { return None; }
+    if msg.len() < 8 {
+        return None;
+    }
     let len = u64::from_le_bytes(msg[..8].try_into().ok()?) as usize;
-    if 8 + len > msg.len() { return None; }
+    if 8 + len > msg.len() {
+        return None;
+    }
     Some(msg[8..8 + len].to_vec())
 }
 
@@ -273,7 +315,12 @@ fn sphere4_point(index: u32, block: &[u8; 32]) -> [f32; 4] {
     let a = (u16::from_le_bytes([block[0], block[1]]) as f32 / 65535.0) * std::f32::consts::PI;
     let b = (u16::from_le_bytes([block[2], block[3]]) as f32 / 65535.0) * std::f32::consts::TAU;
     let c = ((index as f32) * 0.61803398875).fract() * std::f32::consts::TAU;
-    [a.sin() * b.cos(), a.sin() * b.sin(), a.cos() * c.cos(), a.cos() * c.sin()]
+    [
+        a.sin() * b.cos(),
+        a.sin() * b.sin(),
+        a.cos() * c.cos(),
+        a.cos() * c.sin(),
+    ]
 }
 
 #[cfg(test)]
@@ -321,8 +368,15 @@ mod tests {
         assert_eq!(gather(&frags).as_deref(), Some(&secret[..]));
         // Drop any one fragment → unrecoverable.
         for drop in 0..frags.len() {
-            let partial: Vec<_> = frags.iter().cloned().filter(|f| f.index as usize != drop).collect();
-            assert!(gather(&partial).is_none(), "missing fragment {drop} must break recovery");
+            let partial: Vec<_> = frags
+                .iter()
+                .cloned()
+                .filter(|f| f.index as usize != drop)
+                .collect();
+            assert!(
+                gather(&partial).is_none(),
+                "missing fragment {drop} must break recovery"
+            );
         }
     }
 
@@ -332,7 +386,10 @@ mod tests {
         let secret = [0x41u8; 64]; // 'AAAA...'
         let frags = scatter(&secret);
         for f in &frags {
-            assert_ne!(f.block, [0x41u8; 32], "a lone hologram fragment reveals plaintext");
+            assert_ne!(
+                f.block, [0x41u8; 32],
+                "a lone hologram fragment reveals plaintext"
+            );
         }
     }
 }

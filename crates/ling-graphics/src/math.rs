@@ -1,4 +1,4 @@
-pub use glam::{Vec2, Vec3, Vec4, Mat3, Mat4, Quat, IVec2, IVec3, UVec2};
+pub use glam::{IVec2, IVec3, Mat3, Mat4, Quat, UVec2, Vec2, Vec3, Vec4};
 
 // ── 4D vector (spatial, not homogeneous) ─────────────────────────────────────
 
@@ -12,9 +12,11 @@ pub struct Vec4H {
 
 impl Vec4H {
     pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0, w: 0.0 };
-    pub const ONE: Self  = Self { x: 1.0, y: 1.0, z: 1.0, w: 1.0 };
+    pub const ONE: Self = Self { x: 1.0, y: 1.0, z: 1.0, w: 1.0 };
 
-    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self { Self { x, y, z, w } }
+    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self { x, y, z, w }
+    }
 
     pub fn dot(&self, other: Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w
@@ -25,11 +27,15 @@ impl Vec4H {
         -self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w
     }
 
-    pub fn length(&self) -> f32 { self.dot(*self).sqrt() }
+    pub fn length(&self) -> f32 {
+        self.dot(*self).sqrt()
+    }
 
     pub fn normalize(&self) -> Self {
         let l = self.length();
-        if l < 1e-8 { return *self; }
+        if l < 1e-8 {
+            return *self;
+        }
         Self::new(self.x / l, self.y / l, self.z / l, self.w / l)
     }
 
@@ -42,24 +48,34 @@ impl Vec4H {
         )
     }
 
-    pub fn xyz(&self) -> Vec3 { Vec3::new(self.x, self.y, self.z) }
+    pub fn xyz(&self) -> Vec3 {
+        Vec3::new(self.x, self.y, self.z)
+    }
 }
 
 impl std::ops::Add for Vec4H {
     type Output = Self;
-    fn add(self, r: Self) -> Self { Self::new(self.x+r.x, self.y+r.y, self.z+r.z, self.w+r.w) }
+    fn add(self, r: Self) -> Self {
+        Self::new(self.x + r.x, self.y + r.y, self.z + r.z, self.w + r.w)
+    }
 }
 impl std::ops::Sub for Vec4H {
     type Output = Self;
-    fn sub(self, r: Self) -> Self { Self::new(self.x-r.x, self.y-r.y, self.z-r.z, self.w-r.w) }
+    fn sub(self, r: Self) -> Self {
+        Self::new(self.x - r.x, self.y - r.y, self.z - r.z, self.w - r.w)
+    }
 }
 impl std::ops::Mul<f32> for Vec4H {
     type Output = Self;
-    fn mul(self, s: f32) -> Self { Self::new(self.x*s, self.y*s, self.z*s, self.w*s) }
+    fn mul(self, s: f32) -> Self {
+        Self::new(self.x * s, self.y * s, self.z * s, self.w * s)
+    }
 }
 impl std::ops::Neg for Vec4H {
     type Output = Self;
-    fn neg(self) -> Self { Self::new(-self.x, -self.y, -self.z, -self.w) }
+    fn neg(self) -> Self {
+        Self::new(-self.x, -self.y, -self.z, -self.w)
+    }
 }
 
 // ── 5×5 matrix for homogeneous 4D transforms ─────────────────────────────────
@@ -70,16 +86,22 @@ pub struct Mat5(pub [[f32; 5]; 5]);
 impl Mat5 {
     pub fn identity() -> Self {
         let mut m = [[0f32; 5]; 5];
-        for i in 0..5 { m[i][i] = 1.0; }
+        for i in 0..5 {
+            m[i][i] = 1.0;
+        }
         Self(m)
     }
 
-    pub fn zero() -> Self { Self([[0f32; 5]; 5]) }
+    pub fn zero() -> Self {
+        Self([[0f32; 5]; 5])
+    }
 
     pub fn mul_vec(&self, v: [f32; 5]) -> [f32; 5] {
         let mut out = [0f32; 5];
         for i in 0..5 {
-            for j in 0..5 { out[i] += self.0[i][j] * v[j]; }
+            for j in 0..5 {
+                out[i] += self.0[i][j] * v[j];
+            }
         }
         out
     }
@@ -88,7 +110,9 @@ impl Mat5 {
         let mut out = [[0f32; 5]; 5];
         for i in 0..5 {
             for j in 0..5 {
-                for k in 0..5 { out[i][j] += self.0[i][k] * rhs.0[k][j]; }
+                for k in 0..5 {
+                    out[i][j] += self.0[i][k] * rhs.0[k][j];
+                }
             }
         }
         Self(out)
@@ -97,7 +121,9 @@ impl Mat5 {
     pub fn transpose(&self) -> Self {
         let mut out = [[0f32; 5]; 5];
         for i in 0..5 {
-            for j in 0..5 { out[i][j] = self.0[j][i]; }
+            for j in 0..5 {
+                out[i][j] = self.0[j][i];
+            }
         }
         Self(out)
     }
@@ -122,7 +148,9 @@ pub struct Aabb {
 }
 
 impl Aabb {
-    pub fn new(min: Vec3, max: Vec3) -> Self { Self { min, max } }
+    pub fn new(min: Vec3, max: Vec3) -> Self {
+        Self { min, max }
+    }
 
     pub fn from_points(points: &[Vec3]) -> Self {
         let mut min = Vec3::splat(f32::INFINITY);
@@ -134,14 +162,23 @@ impl Aabb {
         Self { min, max }
     }
 
-    pub fn center(&self) -> Vec3 { (self.min + self.max) * 0.5 }
-    pub fn half_extents(&self) -> Vec3 { (self.max - self.min) * 0.5 }
-    pub fn size(&self) -> Vec3 { self.max - self.min }
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+    pub fn half_extents(&self) -> Vec3 {
+        (self.max - self.min) * 0.5
+    }
+    pub fn size(&self) -> Vec3 {
+        self.max - self.min
+    }
 
     pub fn contains(&self, p: Vec3) -> bool {
-        p.x >= self.min.x && p.x <= self.max.x
-            && p.y >= self.min.y && p.y <= self.max.y
-            && p.z >= self.min.z && p.z <= self.max.z
+        p.x >= self.min.x
+            && p.x <= self.max.x
+            && p.y >= self.min.y
+            && p.y <= self.max.y
+            && p.z >= self.min.z
+            && p.z <= self.max.z
     }
 
     pub fn union(&self, other: &Self) -> Self {
@@ -169,18 +206,28 @@ impl Ray3 {
         Self { origin, direction: direction.normalize() }
     }
 
-    pub fn at(&self, t: f32) -> Vec3 { self.origin + self.direction * t }
+    pub fn at(&self, t: f32) -> Vec3 {
+        self.origin + self.direction * t
+    }
 
     pub fn intersect_sphere(&self, center: Vec3, radius: f32) -> Option<f32> {
         let oc = self.origin - center;
         let b = oc.dot(self.direction);
         let c = oc.dot(oc) - radius * radius;
         let disc = b * b - c;
-        if disc < 0.0 { return None; }
+        if disc < 0.0 {
+            return None;
+        }
         let t = -b - disc.sqrt();
-        if t > 0.0 { Some(t) } else {
+        if t > 0.0 {
+            Some(t)
+        } else {
             let t2 = -b + disc.sqrt();
-            if t2 > 0.0 { Some(t2) } else { None }
+            if t2 > 0.0 {
+                Some(t2)
+            } else {
+                None
+            }
         }
     }
 
@@ -191,15 +238,25 @@ impl Ray3 {
         let tmin = t1.min(t2);
         let tmax = t1.max(t2);
         let enter = tmin.x.max(tmin.y).max(tmin.z);
-        let exit  = tmax.x.min(tmax.y).min(tmax.z);
-        if exit >= enter && exit >= 0.0 { Some(enter.max(0.0)) } else { None }
+        let exit = tmax.x.min(tmax.y).min(tmax.z);
+        if exit >= enter && exit >= 0.0 {
+            Some(enter.max(0.0))
+        } else {
+            None
+        }
     }
 
     pub fn intersect_plane(&self, plane: &Plane) -> Option<f32> {
         let denom = plane.normal.dot(self.direction);
-        if denom.abs() < 1e-8 { return None; }
+        if denom.abs() < 1e-8 {
+            return None;
+        }
         let t = -(plane.normal.dot(self.origin) + plane.d) / denom;
-        if t >= 0.0 { Some(t) } else { None }
+        if t >= 0.0 {
+            Some(t)
+        } else {
+            None
+        }
     }
 }
 
@@ -212,7 +269,9 @@ pub struct Plane {
 }
 
 impl Plane {
-    pub fn new(normal: Vec3, d: f32) -> Self { Self { normal: normal.normalize(), d } }
+    pub fn new(normal: Vec3, d: f32) -> Self {
+        Self { normal: normal.normalize(), d }
+    }
 
     pub fn from_point_normal(point: Vec3, normal: Vec3) -> Self {
         let n = normal.normalize();
@@ -224,7 +283,9 @@ impl Plane {
         Self::from_point_normal(a, n)
     }
 
-    pub fn signed_distance(&self, p: Vec3) -> f32 { self.normal.dot(p) + self.d }
+    pub fn signed_distance(&self, p: Vec3) -> f32 {
+        self.normal.dot(p) + self.d
+    }
 }
 
 // ── View frustum ──────────────────────────────────────────────────────────────
@@ -259,22 +320,40 @@ impl Frustum {
     }
 
     pub fn contains_point(&self, p: Vec3) -> bool {
-        self.planes.iter().all(|plane| plane.signed_distance(p) >= 0.0)
+        self.planes
+            .iter()
+            .all(|plane| plane.signed_distance(p) >= 0.0)
     }
 
     pub fn contains_aabb(&self, aabb: &Aabb) -> bool {
         for plane in &self.planes {
             let positive = Vec3::new(
-                if plane.normal.x > 0.0 { aabb.max.x } else { aabb.min.x },
-                if plane.normal.y > 0.0 { aabb.max.y } else { aabb.min.y },
-                if plane.normal.z > 0.0 { aabb.max.z } else { aabb.min.z },
+                if plane.normal.x > 0.0 {
+                    aabb.max.x
+                } else {
+                    aabb.min.x
+                },
+                if plane.normal.y > 0.0 {
+                    aabb.max.y
+                } else {
+                    aabb.min.y
+                },
+                if plane.normal.z > 0.0 {
+                    aabb.max.z
+                } else {
+                    aabb.min.z
+                },
             );
-            if plane.signed_distance(positive) < 0.0 { return false; }
+            if plane.signed_distance(positive) < 0.0 {
+                return false;
+            }
         }
         true
     }
 
     pub fn contains_sphere(&self, center: Vec3, radius: f32) -> bool {
-        self.planes.iter().all(|p| p.signed_distance(center) >= -radius)
+        self.planes
+            .iter()
+            .all(|p| p.signed_distance(center) >= -radius)
     }
 }

@@ -19,7 +19,7 @@ fn push<T>(slab: &Mutex<Vec<Option<T>>>, item: T) -> i64 {
         Ok(mut g) => {
             g.push(Some(item));
             (g.len() - 1) as i64
-        }
+        },
         Err(_) => -1,
     }
 }
@@ -52,7 +52,10 @@ pub fn nn_train(id: i64, input: &[f32], target: &[f32], lr: f32) -> f32 {
 }
 
 pub fn nn_save(id: i64, path: &str) -> bool {
-    with(&NETS, id, |net| std::fs::write(path, net.to_bytes()).is_ok()).unwrap_or(false)
+    with(&NETS, id, |net| {
+        std::fs::write(path, net.to_bytes()).is_ok()
+    })
+    .unwrap_or(false)
 }
 
 pub fn nn_load(path: &str) -> i64 {
@@ -118,7 +121,10 @@ pub fn dialog_save(id: i64, path: &str) -> bool {
 }
 
 pub fn dialog_load_model(path: &str) -> i64 {
-    match std::fs::read(path).ok().and_then(|b| DialogLM::from_bytes(&b)) {
+    match std::fs::read(path)
+        .ok()
+        .and_then(|b| DialogLM::from_bytes(&b))
+    {
         Some(lm) => push(&LMS, lm),
         None => -1,
     }

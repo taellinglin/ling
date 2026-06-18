@@ -27,7 +27,9 @@ fn main() {
         let (xi, yi, zi) = (pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
         let (mut ax, mut ay, mut az) = (0.0f32, 0.0, 0.0);
         for j in 0..n {
-            if j == i { continue; }
+            if j == i {
+                continue;
+            }
             let dx = pos[3 * j] - xi;
             let dy = pos[3 * j + 1] - yi;
             let dz = pos[3 * j + 2] - zi;
@@ -35,7 +37,9 @@ fn main() {
             let inv = r2.sqrt().recip();
             let inv3 = inv * inv * inv;
             let s = 0.5 * mass[j] * inv3;
-            ax += s * dx; ay += s * dy; az += s * dz;
+            ax += s * dx;
+            ay += s * dy;
+            az += s * dz;
         }
         for (k, r) in [ax, ay, az].into_iter().enumerate() {
             max_err = max_err.max((got[3 * i + k] - r).abs());

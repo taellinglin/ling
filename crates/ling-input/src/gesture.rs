@@ -28,14 +28,30 @@ pub enum SwipeDir {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Gesture {
-    Tap { pos: Vec2 },
-    DoubleTap { pos: Vec2 },
-    LongPress { pos: Vec2 },
-    Swipe { start: Vec2, end: Vec2, dir: SwipeDir },
+    Tap {
+        pos: Vec2,
+    },
+    DoubleTap {
+        pos: Vec2,
+    },
+    LongPress {
+        pos: Vec2,
+    },
+    Swipe {
+        start: Vec2,
+        end: Vec2,
+        dir: SwipeDir,
+    },
     /// `scale` is the multiplicative change *this frame* (≈1.0 = no change).
-    Pinch { center: Vec2, scale: f32 },
+    Pinch {
+        center: Vec2,
+        scale: f32,
+    },
     /// `radians` is the rotation *this frame* (signed, screen CW positive).
-    Rotate { center: Vec2, radians: f32 },
+    Rotate {
+        center: Vec2,
+        radians: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -159,9 +175,9 @@ impl GestureRecognizer {
                     dir: swipe_dir(drift),
                 });
             } else if held <= self.tap_time && drift.length() <= self.tap_dist && !tr.long_fired {
-                let is_double = self
-                    .last_tap
-                    .is_some_and(|(lt, lp)| self.clock - lt <= self.double_time && lp.distance(t.pos) <= self.tap_dist * 2.0);
+                let is_double = self.last_tap.is_some_and(|(lt, lp)| {
+                    self.clock - lt <= self.double_time && lp.distance(t.pos) <= self.tap_dist * 2.0
+                });
                 if is_double {
                     self.last_tap = None;
                     self.out.push(Gesture::DoubleTap { pos: t.pos });
@@ -248,14 +264,17 @@ mod tests {
             pool.begin_frame();
         }
         assert!(g.events().is_empty() || true); // long-press fired during the loop
-        // Re-run to confirm a long press was emitted at some point.
+                                                // Re-run to confirm a long press was emitted at some point.
         let mut pool2 = TouchPool::new();
         let mut g2 = GestureRecognizer::new();
         pool2.begin(7, Vec2::new(50.0, 50.0), 1.0);
         let mut saw = false;
         for _ in 0..60 {
             g2.update(&pool2, 0.016);
-            saw |= g2.events().iter().any(|e| matches!(e, Gesture::LongPress { .. }));
+            saw |= g2
+                .events()
+                .iter()
+                .any(|e| matches!(e, Gesture::LongPress { .. }));
             pool2.begin_frame();
         }
         assert!(saw);

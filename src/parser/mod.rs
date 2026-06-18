@@ -93,10 +93,8 @@ impl Parser {
                 self.expect(&Token::Eq)?;
                 let expr = self.parse_expr()?;
                 Ok(Item::Bind(name, expr))
-            }
-            Token::Fn => {
-                self.parse_fn_item(is_async)
-            }
+            },
+            Token::Fn => self.parse_fn_item(is_async),
             Token::Mod => {
                 self.advance();
                 let name = self.parse_name()?;
@@ -107,7 +105,7 @@ impl Parser {
                 }
                 self.expect(&Token::RBrace)?;
                 Ok(Item::Mod(name, body))
-            }
+            },
             Token::Type => {
                 self.advance();
                 let name = self.parse_name()?;
@@ -116,7 +114,7 @@ impl Parser {
                 self.expect(&Token::As)?;
                 let ty = self.parse_type_str();
                 Ok(Item::TypeAlias(name, ty))
-            }
+            },
             Token::Form => self.parse_struct_item(),
             Token::Choose => self.parse_enum_item(),
             Token::Use => {
@@ -134,7 +132,7 @@ impl Parser {
                     None
                 };
                 Ok(Item::Use { path, alias })
-            }
+            },
             tok => Err(format!("unexpected token at top level: {:?}", tok)),
         }
     }
@@ -153,7 +151,9 @@ impl Parser {
                 self.advance();
                 self.parse_type_str(); // ignored
             }
-            if matches!(self.peek(), Token::Comma | Token::Semicolon) { self.advance(); }
+            if matches!(self.peek(), Token::Comma | Token::Semicolon) {
+                self.advance();
+            }
         }
         self.expect(&Token::RBrace)?;
         Ok(Item::Struct(name, fields))
@@ -181,12 +181,16 @@ impl Parser {
                         self.parse_type_str();
                     }
                     arity += 1;
-                    if matches!(self.peek(), Token::Comma) { self.advance(); }
+                    if matches!(self.peek(), Token::Comma) {
+                        self.advance();
+                    }
                 }
                 self.expect(&Token::RParen)?;
             }
             variants.push(EnumVariant { name: vname, arity });
-            if matches!(self.peek(), Token::Comma | Token::Semicolon) { self.advance(); }
+            if matches!(self.peek(), Token::Comma | Token::Semicolon) {
+                self.advance();
+            }
         }
         self.expect(&Token::RBrace)?;
         Ok(Item::Enum(name, variants))
@@ -245,12 +249,23 @@ impl Parser {
         loop {
             match self.peek() {
                 Token::Eof => break,
-                Token::Lt => { depth += 1; result.push('<'); self.advance(); }
-                Token::Gt if depth > 0 => { depth -= 1; result.push('>'); self.advance(); }
+                Token::Lt => {
+                    depth += 1;
+                    result.push('<');
+                    self.advance();
+                },
+                Token::Gt if depth > 0 => {
+                    depth -= 1;
+                    result.push('>');
+                    self.advance();
+                },
                 Token::LBrace | Token::Where if depth == 0 => break,
                 Token::RParen | Token::Comma | Token::Semicolon if depth == 0 => break,
                 Token::Arrow if depth == 0 => break,
-                tok => { result.push_str(&format!("{:?}", tok)); self.advance(); }
+                tok => {
+                    result.push_str(&format!("{:?}", tok));
+                    self.advance();
+                },
             }
         }
         result
@@ -262,9 +277,14 @@ impl Parser {
             loop {
                 match self.advance() {
                     Token::Lt => depth += 1,
-                    Token::Gt => { depth -= 1; if depth == 0 { break; } }
+                    Token::Gt => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    },
                     Token::Eof => break,
-                    _ => {}
+                    _ => {},
                 }
             }
         }
@@ -292,7 +312,7 @@ impl Parser {
                 self.expect(&Token::Eq)?;
                 let expr = self.parse_expr()?;
                 Ok(Stmt::Bind(name, expr))
-            }
+            },
             Token::Return => {
                 self.advance();
                 if matches!(self.peek(), Token::Semicolon | Token::RBrace) {
@@ -300,7 +320,7 @@ impl Parser {
                 } else {
                     Ok(Stmt::Return(self.parse_expr()?))
                 }
-            }
+            },
             _ => Ok(Stmt::Expr(self.parse_expr()?)),
         }
     }
@@ -336,11 +356,11 @@ impl Parser {
         loop {
             let op = match self.peek() {
                 Token::EqEq => BinOp::Eq,
-                Token::Ne   => BinOp::Ne,
-                Token::Lt   => BinOp::Lt,
-                Token::Gt   => BinOp::Gt,
-                Token::Le   => BinOp::Le,
-                Token::Ge   => BinOp::Ge,
+                Token::Ne => BinOp::Ne,
+                Token::Lt => BinOp::Lt,
+                Token::Gt => BinOp::Gt,
+                Token::Le => BinOp::Le,
+                Token::Ge => BinOp::Ge,
                 _ => break,
             };
             self.advance();
@@ -354,7 +374,7 @@ impl Parser {
         let mut left = self.parse_mul_expr()?;
         loop {
             let op = match self.peek() {
-                Token::Plus  => BinOp::Add,
+                Token::Plus => BinOp::Add,
                 Token::Minus => BinOp::Sub,
                 _ => break,
             };
@@ -369,8 +389,8 @@ impl Parser {
         let mut left = self.parse_unary_expr()?;
         loop {
             let op = match self.peek() {
-                Token::Star    => BinOp::Mul,
-                Token::Slash   => BinOp::Div,
+                Token::Star => BinOp::Mul,
+                Token::Slash => BinOp::Div,
                 Token::Percent => BinOp::Rem,
                 _ => break,
             };
@@ -383,15 +403,35 @@ impl Parser {
 
     fn parse_unary_expr(&mut self) -> Result<Expr, String> {
         match self.peek().clone() {
-            Token::Ampersand => { self.advance(); Ok(Expr::Ref(Box::new(self.parse_postfix_expr()?))) }
-            Token::Not       => { self.advance(); Ok(Expr::BinOp(BinOp::Eq, Box::new(self.parse_postfix_expr()?), Box::new(Expr::Bool(false)))) }
-            Token::Minus     => { self.advance(); Ok(Expr::BinOp(BinOp::Sub, Box::new(Expr::Number(0.0)), Box::new(self.parse_postfix_expr()?))) }
-            Token::Wait      => { self.advance(); Ok(Expr::Await(Box::new(self.parse_postfix_expr()?))) }
+            Token::Ampersand => {
+                self.advance();
+                Ok(Expr::Ref(Box::new(self.parse_postfix_expr()?)))
+            },
+            Token::Not => {
+                self.advance();
+                Ok(Expr::BinOp(
+                    BinOp::Eq,
+                    Box::new(self.parse_postfix_expr()?),
+                    Box::new(Expr::Bool(false)),
+                ))
+            },
+            Token::Minus => {
+                self.advance();
+                Ok(Expr::BinOp(
+                    BinOp::Sub,
+                    Box::new(Expr::Number(0.0)),
+                    Box::new(self.parse_postfix_expr()?),
+                ))
+            },
+            Token::Wait => {
+                self.advance();
+                Ok(Expr::Await(Box::new(self.parse_postfix_expr()?)))
+            },
             // Ownership modifiers are hints; just evaluate the inner expression
             Token::Own | Token::Lend | Token::Share | Token::Move | Token::Copy => {
                 self.advance();
                 self.parse_unary_expr()
-            }
+            },
             _ => self.parse_postfix_expr(),
         }
     }
@@ -410,51 +450,47 @@ impl Parser {
                         self.advance();
                         let args = self.parse_call_args()?;
                         self.expect(&Token::RParen)?;
-                        base = Expr::MethodCall {
-                            receiver: Box::new(base),
-                            method,
-                            args,
-                        };
+                        base = Expr::MethodCall { receiver: Box::new(base), method, args };
                     } else {
                         // field access — treat as method call with no args
-                        base = Expr::MethodCall {
-                            receiver: Box::new(base),
-                            method,
-                            args: Vec::new(),
-                        };
+                        base =
+                            Expr::MethodCall { receiver: Box::new(base), method, args: Vec::new() };
                     }
-                }
+                },
                 // `::ident` — extend path
                 Token::ColonColon => {
                     self.advance();
                     let segment = self.parse_name()?;
                     // Collect any further `::` segments
                     base = match base {
-                        Expr::Path(mut segs) => { segs.push(segment); Expr::Path(segs) }
-                        Expr::Ident(s)       => Expr::Path(vec![s, segment]),
+                        Expr::Path(mut segs) => {
+                            segs.push(segment);
+                            Expr::Path(segs)
+                        },
+                        Expr::Ident(s) => Expr::Path(vec![s, segment]),
                         other => Expr::Path(vec![format!("{:?}", other), segment]),
                     };
-                }
+                },
                 // `(args)` — call
                 Token::LParen => {
                     self.advance();
                     let args = self.parse_call_args()?;
                     self.expect(&Token::RParen)?;
                     base = Expr::Call(Box::new(base), args);
-                }
+                },
                 // `[idx]`
                 Token::LBracket => {
                     self.advance();
                     let idx = self.parse_expr()?;
                     self.expect(&Token::RBracket)?;
                     base = Expr::Index(Box::new(base), Box::new(idx));
-                }
+                },
                 // `..hi` — range
                 Token::DotDot => {
                     self.advance();
                     let hi = self.parse_primary()?;
                     base = Expr::Range(Box::new(base), Box::new(hi));
-                }
+                },
                 _ => break,
             }
         }
@@ -465,7 +501,9 @@ impl Parser {
         let mut args = Vec::new();
         while !matches!(self.peek(), Token::RParen | Token::Eof) {
             args.push(self.parse_expr()?);
-            if matches!(self.peek(), Token::Comma) { self.advance(); }
+            if matches!(self.peek(), Token::Comma) {
+                self.advance();
+            }
         }
         Ok(args)
     }
@@ -473,9 +511,18 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expr, String> {
         match self.peek().clone() {
             // Literals
-            Token::String(s) => { self.advance(); Ok(Expr::Str(s)) }
-            Token::Number(n) => { self.advance(); Ok(Expr::Number(n.parse().unwrap_or(0.0))) }
-            Token::Bool(b)   => { self.advance(); Ok(Expr::Bool(b)) }
+            Token::String(s) => {
+                self.advance();
+                Ok(Expr::Str(s))
+            },
+            Token::Number(n) => {
+                self.advance();
+                Ok(Expr::Number(n.parse().unwrap_or(0.0)))
+            },
+            Token::Bool(b) => {
+                self.advance();
+                Ok(Expr::Bool(b))
+            },
 
             // Keywords that start expressions
             Token::Do => {
@@ -484,13 +531,13 @@ impl Parser {
                 let stmts = self.parse_block()?;
                 self.expect(&Token::RBrace)?;
                 Ok(Expr::Do(stmts))
-            }
+            },
             Token::LBrace => {
                 self.advance();
                 let stmts = self.parse_block()?;
                 self.expect(&Token::RBrace)?;
                 Ok(Expr::Do(stmts))
-            }
+            },
             Token::If => self.parse_if_expr(),
             Token::For => self.parse_for_expr(),
             Token::While => self.parse_while_expr(),
@@ -503,7 +550,7 @@ impl Parser {
                     self.parse_expr()?
                 };
                 Ok(Expr::Do(vec![Stmt::Return(val)]))
-            }
+            },
 
             // Array literal
             Token::LBracket => {
@@ -511,11 +558,13 @@ impl Parser {
                 let mut elems = Vec::new();
                 while !matches!(self.peek(), Token::RBracket | Token::Eof) {
                     elems.push(self.parse_expr()?);
-                    if matches!(self.peek(), Token::Comma) { self.advance(); }
+                    if matches!(self.peek(), Token::Comma) {
+                        self.advance();
+                    }
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(Expr::Array(elems))
-            }
+            },
 
             // Closure `|| expr` or `|params| expr`
             Token::Or => {
@@ -525,13 +574,15 @@ impl Parser {
                 if !matches!(self.peek(), Token::Or) {
                     while !matches!(self.peek(), Token::Or | Token::Eof) {
                         params.push(self.parse_name()?);
-                        if matches!(self.peek(), Token::Comma) { self.advance(); }
+                        if matches!(self.peek(), Token::Comma) {
+                            self.advance();
+                        }
                     }
                 }
                 self.advance(); // closing |
                 let body = self.parse_expr()?;
                 Ok(Expr::Closure(params, Box::new(body)))
-            }
+            },
 
             // Grouped expression
             Token::LParen => {
@@ -543,20 +594,20 @@ impl Parser {
                 let e = self.parse_expr()?;
                 self.expect(&Token::RParen)?;
                 Ok(e)
-            }
+            },
 
             // Async block
             Token::Async => {
                 self.advance();
                 let inner = self.parse_expr()?;
                 Ok(inner) // async is a hint; we just execute synchronously
-            }
+            },
 
             // Identifier — could start a path
             Token::Ident(name) => {
                 self.advance();
                 Ok(Expr::Ident(name))
-            }
+            },
 
             // Allow keywords as expression-position identifiers (e.g. 移动/move)
             tok => {
@@ -566,7 +617,7 @@ impl Parser {
                 } else {
                     Err(format!("unexpected token in expression: {:?}", tok))
                 }
-            }
+            },
         }
     }
 
@@ -633,7 +684,9 @@ impl Parser {
             self.expect(&Token::FatArrow)?;
             let body = self.parse_expr()?;
             // Optional trailing comma
-            if matches!(self.peek(), Token::Comma) { self.advance(); }
+            if matches!(self.peek(), Token::Comma) {
+                self.advance();
+            }
             arms.push(MatchArm { pattern, body });
         }
         self.expect(&Token::RBrace)?;
@@ -642,15 +695,27 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<Pattern, String> {
         match self.peek().clone() {
-            Token::Ident(s) if s == "_" => { self.advance(); Ok(Pattern::Wildcard) }
-            Token::String(s) => { self.advance(); Ok(Pattern::Str(s)) }
-            Token::Number(n) => { self.advance(); Ok(Pattern::Number(n.parse().unwrap_or(0.0))) }
-            Token::Bool(b)   => { self.advance(); Ok(Pattern::Bool(b)) }
+            Token::Ident(s) if s == "_" => {
+                self.advance();
+                Ok(Pattern::Wildcard)
+            },
+            Token::String(s) => {
+                self.advance();
+                Ok(Pattern::Str(s))
+            },
+            Token::Number(n) => {
+                self.advance();
+                Ok(Pattern::Number(n.parse().unwrap_or(0.0)))
+            },
+            Token::Bool(b) => {
+                self.advance();
+                Ok(Pattern::Bool(b))
+            },
             // Ok(inner), Bad(inner), 好(inner), 坏(inner)
             Token::Ok | Token::Bad => {
                 let ctor_tok = self.advance();
                 let ctor = match ctor_tok {
-                    Token::Ok  => "ok".to_string(),
+                    Token::Ok => "ok".to_string(),
                     Token::Bad => "bad".to_string(),
                     _ => unreachable!(),
                 };
@@ -662,7 +727,7 @@ impl Parser {
                 } else {
                     Ok(Pattern::Constructor(ctor, None))
                 }
-            }
+            },
             _ => {
                 let name = self.parse_name()?;
                 if matches!(self.peek(), Token::LParen) {
@@ -671,7 +736,9 @@ impl Parser {
                     let mut subs = Vec::new();
                     while !matches!(self.peek(), Token::RParen | Token::Eof) {
                         subs.push(self.parse_pattern()?);
-                        if matches!(self.peek(), Token::Comma) { self.advance(); }
+                        if matches!(self.peek(), Token::Comma) {
+                            self.advance();
+                        }
                     }
                     self.expect(&Token::RParen)?;
                     Ok(Pattern::Variant(name, subs))
@@ -680,7 +747,7 @@ impl Parser {
                 } else {
                     Ok(Pattern::Ident(name))
                 }
-            }
+            },
         }
     }
 }
@@ -690,26 +757,45 @@ impl Parser {
 /// Convert a keyword token to its string name for use as an identifier.
 fn token_to_name(tok: &Token) -> Option<&'static str> {
     match tok {
-        Token::Bind   => Some("bind"),   Token::Do     => Some("do"),
-        Token::Fn     => Some("fn"),     Token::Mod    => Some("mod"),
-        Token::Type   => Some("type"),   Token::If     => Some("if"),
-        Token::Else   => Some("else"),   Token::While  => Some("while"),
-        Token::For    => Some("for"),    Token::In     => Some("in"),
-        Token::Match  => Some("match"),  Token::Return => Some("return"),
-        Token::Own    => Some("own"),    Token::Lend   => Some("lend"),
-        Token::Share  => Some("share"),  Token::Move   => Some("move"),
-        Token::Copy   => Some("copy"),   Token::Async  => Some("async"),
-        Token::Wait   => Some("wait"),   Token::As     => Some("as"),
-        Token::Where  => Some("where"),  Token::Post   => Some("post"),
-        Token::Give   => Some("give"),   Token::Fit    => Some("fit"),
-        Token::Form   => Some("form"),   Token::Choose => Some("choose"),
-        Token::Can    => Some("can"),    Token::Change => Some("change"),
-        Token::Stop   => Some("stop"),   Token::Again  => Some("again"),
-        Token::Try    => Some("try"),    Token::Sure   => Some("sure"),
-        Token::Maybe  => Some("maybe"),  Token::Pure   => Some("pure"),
-        Token::Spawn  => Some("spawn"),  Token::Ok     => Some("ok"),
-        Token::Bad    => Some("bad"),    Token::None   => Some("none"),
-        Token::Use    => Some("use"),
+        Token::Bind => Some("bind"),
+        Token::Do => Some("do"),
+        Token::Fn => Some("fn"),
+        Token::Mod => Some("mod"),
+        Token::Type => Some("type"),
+        Token::If => Some("if"),
+        Token::Else => Some("else"),
+        Token::While => Some("while"),
+        Token::For => Some("for"),
+        Token::In => Some("in"),
+        Token::Match => Some("match"),
+        Token::Return => Some("return"),
+        Token::Own => Some("own"),
+        Token::Lend => Some("lend"),
+        Token::Share => Some("share"),
+        Token::Move => Some("move"),
+        Token::Copy => Some("copy"),
+        Token::Async => Some("async"),
+        Token::Wait => Some("wait"),
+        Token::As => Some("as"),
+        Token::Where => Some("where"),
+        Token::Post => Some("post"),
+        Token::Give => Some("give"),
+        Token::Fit => Some("fit"),
+        Token::Form => Some("form"),
+        Token::Choose => Some("choose"),
+        Token::Can => Some("can"),
+        Token::Change => Some("change"),
+        Token::Stop => Some("stop"),
+        Token::Again => Some("again"),
+        Token::Try => Some("try"),
+        Token::Sure => Some("sure"),
+        Token::Maybe => Some("maybe"),
+        Token::Pure => Some("pure"),
+        Token::Spawn => Some("spawn"),
+        Token::Ok => Some("ok"),
+        Token::Bad => Some("bad"),
+        Token::None => Some("none"),
+        Token::Use => Some("use"),
         _ => None,
     }
 }

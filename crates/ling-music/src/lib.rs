@@ -6,22 +6,22 @@
 //! rhythm games ([`rhythm`]) and karaoke ([`karaoke`]) — all driven live by the
 //! [`MusicEngine`].
 
-pub mod note;
-pub mod pitch;
 pub mod analysis;
-pub mod synth;
-pub mod patch;
-pub mod rhythm;
-pub mod karaoke;
 pub mod decode;
-pub mod midi;
 pub mod engine;
+pub mod karaoke;
+pub mod midi;
+pub mod note;
+pub mod patch;
+pub mod pitch;
+pub mod rhythm;
+pub mod synth;
 
 pub use decode::{load, DecodedAudio};
-pub use synth::{Patch, Synth, Wave};
-pub use rhythm::{Beatmap, Grade, Scorer, HitNote};
-pub use karaoke::{Lyrics, LyricLine, pitch_score};
 pub use engine::MusicEngine;
-pub use midi::{MidiSong, MidiNote};
+pub use karaoke::{pitch_score, LyricLine, Lyrics};
+pub use midi::{MidiNote, MidiSong};
+pub use rhythm::{Beatmap, Grade, HitNote, Scorer};
+pub use synth::{Patch, Synth, Wave};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -13,7 +13,9 @@ impl CpuBackend {
 }
 
 impl Backend for CpuBackend {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn nbody_accel(&self, pos: &[f32], mass: &[f32], g: f32, soften: f32, out: &mut [f32]) {
         let n = mass.len();
@@ -24,7 +26,9 @@ impl Backend for CpuBackend {
             let (xi, yi, zi) = (pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]);
             let (mut ax, mut ay, mut az) = (0.0f32, 0.0, 0.0);
             for j in 0..n {
-                if j == i { continue; }
+                if j == i {
+                    continue;
+                }
                 let dx = pos[3 * j] - xi;
                 let dy = pos[3 * j + 1] - yi;
                 let dz = pos[3 * j + 2] - zi;
@@ -32,9 +36,13 @@ impl Backend for CpuBackend {
                 let inv = r2.sqrt().recip();
                 let inv3 = inv * inv * inv;
                 let s = g * mass[j] * inv3;
-                ax += s * dx; ay += s * dy; az += s * dz;
+                ax += s * dx;
+                ay += s * dy;
+                az += s * dz;
             }
-            out[3 * i] = ax; out[3 * i + 1] = ay; out[3 * i + 2] = az;
+            out[3 * i] = ax;
+            out[3 * i + 1] = ay;
+            out[3 * i + 2] = az;
         }
     }
 

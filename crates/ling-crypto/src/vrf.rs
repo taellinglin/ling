@@ -6,9 +6,9 @@
 //!
 //! Construction: ECVRF-EDWARDS25519-SHA512-TAI (simplified, not full RFC 9381).
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Signature};
-use sha3::{Sha3_512, Digest};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
+use sha3::{Digest, Sha3_512};
 
 pub struct VrfKeypair {
     signing_key: SigningKey,
@@ -16,8 +16,8 @@ pub struct VrfKeypair {
 
 #[derive(Clone, Debug)]
 pub struct VrfProof {
-    pub proof_bytes: [u8; 64],  // Ed25519 signature over H(input)
-    pub output: [u8; 32],       // pseudorandom output derived from signature
+    pub proof_bytes: [u8; 64], // Ed25519 signature over H(input)
+    pub output: [u8; 32],      // pseudorandom output derived from signature
 }
 
 impl VrfKeypair {
@@ -45,11 +45,15 @@ impl VrfKeypair {
 
 /// Verify that `proof.output` is the correct VRF output for `pubkey` + `input`.
 pub fn vrf_verify(pubkey: &[u8; 32], input: &[u8], proof: &VrfProof) -> bool {
-    
-    let vk = match VerifyingKey::from_bytes(pubkey) { Ok(k) => k, Err(_) => return false };
+    let vk = match VerifyingKey::from_bytes(pubkey) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
     let h = domain_hash(input);
     let sig = Signature::from_bytes(&proof.proof_bytes);
-    if vk.verify_strict(&h, &sig).is_err() { return false; }
+    if vk.verify_strict(&h, &sig).is_err() {
+        return false;
+    }
     // Verify output matches
     proof.output == output_hash(&proof.proof_bytes)
 }

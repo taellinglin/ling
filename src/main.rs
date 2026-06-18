@@ -20,63 +20,72 @@ fn main() {
                 std::process::exit(1);
             });
             print!("{}", ling::visualize::render(file, &program));
-        }
+        },
         Some("run") => {
             // `--wasm` builds the file to a WebAssembly bundle, serves it
             // locally, and opens it in the browser to play.
+            // `--jit` uses the Cranelift JIT backend instead of the tree-walker.
             let wasm = args.iter().any(|a| a == "--wasm" || a == "--web");
+            let use_jit = args.iter().any(|a| a == "--jit");
             let file = args[2..]
                 .iter()
                 .map(|s| s.as_str())
                 .find(|a| a.ends_with(".ling"))
                 .unwrap_or_else(|| {
-                    eprintln!("Usage: ling run [--wasm] <file.ling>");
+                    eprintln!("Usage: ling run [--wasm|--jit] <file.ling>");
                     std::process::exit(1);
                 });
             if wasm {
                 run_wasm(file);
+            } else if use_jit {
+                run_file_jit(file);
             } else {
                 run_file(file);
             }
-        }
+        },
 
         Some("convert") => {
             // ling convert <asset> [-o out.ling] [--no-compression]
             std::process::exit(ling::convert::run(&args[1..]));
-        }
+        },
 
         Some("ast") => {
             // ling ast [path] [--technical] [--artwork] [--ling] [--all] [--out <dir>]
             std::process::exit(run_ast(&args[2..]));
-        }
+        },
 
         Some("build") => {
             let target = args.get(2).map(|s| s.as_str()).unwrap_or(".");
-            let out     = flag_value(&args, "--out").unwrap_or_else(|| "dist".into());
+            let out = flag_value(&args, "--out").unwrap_or_else(|| "dist".into());
             let platforms = collect_platforms(&args);
             let icon = flag_value(&args, "--icon").map(PathBuf::from);
             let pack = args.iter().any(|a| a == "--pack");
             run_build(target, &out, &platforms, icon, pack);
-        }
+        },
         Some(file) if file.ends_with(".ling") => run_file(file),
         _ => {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
             println!("  ling run <file.ling>");
             println!("  ling run --wasm <file.ling>         build to WebAssembly, serve, open in browser");
+            println!("  ling run --jit <file.ling>          run using Cranelift JIT backend");
             println!("  ling visualize <file.ling>          emit SVG AST to stdout");
             println!("  ling build <file.ling|dir> [opts]   compile to distributable");
             println!("    --out <dir>                       output folder (default: dist)");
             println!("    --platform <targets>              web win lin mac all (comma-sep)");
             println!("    --icon <file.svg|png|ico>         app icon (overrides manifest icon)");
-            println!("    --pack                            embed [includes] resources into the exe");
+            println!(
+                "    --pack                            embed [includes] resources into the exe"
+            );
             println!("  ling ast [path] [--technical|--artwork|--ling|--all]");
-            println!("                                      project-wide AST → SVG in ./AST/ (300 dpi)");
+            println!(
+                "                                      project-wide AST → SVG in ./AST/ (300 dpi)"
+            );
             println!("  ling convert <asset> [opts]         transcode an asset → importable .ling");
             println!("    -o <out.ling>                     output path (default: <asset>.ling)");
             println!("    --no-compression                  emit plain arrays instead of blobs");
             println!("    (.gltf .glb .wav .ogg .flac .mid .svg .blend)");
-        }
+        },
     }
 }
 
@@ -103,6 +112,32 @@ fn run_file(path: &str) {
     }
 }
 
+fn run_file_jit(path: &str) {
+    let resolved = std::path::Path::new(path);
+    if !resolved.exists() {
+        eprintln!("[ling] error: file does not exist: {}", resolved.display());
+        std::process::exit(1);
+    }
+
+    let source = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        eprintln!("error reading '{}': {}", path, e);
+        std::process::exit(1);
+    });
+
+    let lang = ling::detect_language(&source);
+    if lang != "English" {
+        eprintln!("[detected language: {}]", lang);
+    }
+
+    use ling::CompilerConfig;
+    let config = CompilerConfig::default();
+    let compiler = ling::LingCompiler::new(config);
+    if let Err(e) = compiler.compile_and_run_jit(path) {
+        eprintln!("JIT error: {:?}", e);
+        std::process::exit(1);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // AST visualisation — `ling ast`
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -118,9 +153,15 @@ fn run_ast(args: &[String]) -> i32 {
     let out_dir = flag_value(&Vec::from(args), "--out").unwrap_or_else(|| "AST".into());
     let mut styles: Vec<AstStyle> = Vec::new();
     let all = args.iter().any(|a| a == "--all");
-    if all || args.iter().any(|a| a == "--technical") { styles.push(AstStyle::Technical); }
-    if all || args.iter().any(|a| a == "--artwork")   { styles.push(AstStyle::Artwork); }
-    if all || args.iter().any(|a| a == "--ling")      { styles.push(AstStyle::Ling); }
+    if all || args.iter().any(|a| a == "--technical") {
+        styles.push(AstStyle::Technical);
+    }
+    if all || args.iter().any(|a| a == "--artwork") {
+        styles.push(AstStyle::Artwork);
+    }
+    if all || args.iter().any(|a| a == "--ling") {
+        styles.push(AstStyle::Ling);
+    }
     if styles.is_empty() {
         // No style flag → produce all three.
         styles = vec![AstStyle::Technical, AstStyle::Artwork, AstStyle::Ling];
@@ -140,17 +181,29 @@ fn run_ast(args: &[String]) -> i32 {
         return 1;
     }
 
-    let n_fns: usize = files.iter()
-        .map(|(_, p)| p.items.iter().filter(|i| matches!(i, ling::parser::ast::Item::Fn(_))).count())
+    let n_fns: usize = files
+        .iter()
+        .map(|(_, p)| {
+            p.items
+                .iter()
+                .filter(|i| matches!(i, ling::parser::ast::Item::Fn(_)))
+                .count()
+        })
         .sum();
-    println!("ling ast: '{proj_name}' — {} file(s), {n_fns} fn(s)", files.len());
+    println!(
+        "ling ast: '{proj_name}' — {} file(s), {n_fns} fn(s)",
+        files.len()
+    );
 
     for style in &styles {
         let svg = ling::astviz::render(*style, &proj_name, &files);
         let dst = std::path::Path::new(&out_dir).join(format!("{proj_name}.{}.svg", style.slug()));
         match std::fs::write(&dst, svg.as_bytes()) {
             Ok(()) => println!("  ✓ {}", dst.display()),
-            Err(e) => { eprintln!("  ✗ {}: {e}", dst.display()); return 1; }
+            Err(e) => {
+                eprintln!("  ✗ {}: {e}", dst.display());
+                return 1;
+            },
         }
     }
     0
@@ -161,8 +214,14 @@ fn pick_ast_path(args: &[String]) -> Option<String> {
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
-        if a == "--out" { i += 2; continue; }
-        if a.starts_with('-') { i += 1; continue; }
+        if a == "--out" {
+            i += 2;
+            continue;
+        }
+        if a.starts_with('-') {
+            i += 1;
+            continue;
+        }
         return Some(a.clone());
     }
     None
@@ -176,9 +235,18 @@ fn gather_project(path: &str) -> (String, Vec<(String, ling::parser::ast::Progra
     let mut files = Vec::new();
 
     if p.is_file() {
-        let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "program".into());
+        let name = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "program".into());
         if let Some(prog) = parse_one(p) {
-            files.push((p.file_name().unwrap_or_default().to_string_lossy().into_owned(), prog));
+            files.push((
+                p.file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                prog,
+            ));
         }
         return (sanitise_name(&name), files);
     }
@@ -190,11 +258,17 @@ fn gather_project(path: &str) -> (String, Vec<(String, ling::parser::ast::Progra
     let base = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     for fp in &paths {
         if let Some(prog) = parse_one(fp) {
-            let label = fp.strip_prefix(&base).unwrap_or(fp).to_string_lossy().into_owned();
+            let label = fp
+                .strip_prefix(&base)
+                .unwrap_or(fp)
+                .to_string_lossy()
+                .into_owned();
             files.push((label, prog));
         }
     }
-    let proj = p.canonicalize().ok()
+    let proj = p
+        .canonicalize()
+        .ok()
         .and_then(|c| c.file_name().map(|n| n.to_string_lossy().into_owned()))
         .or_else(|| p.file_name().map(|n| n.to_string_lossy().into_owned()))
         .unwrap_or_else(|| "project".into());
@@ -205,7 +279,10 @@ fn parse_one(path: &Path) -> Option<ling::parser::ast::Program> {
     let src = std::fs::read_to_string(path).ok()?;
     match ling::parser::parse(&src) {
         Ok(prog) => Some(prog),
-        Err(e) => { eprintln!("  [skip] {}: parse error: {e}", path.display()); None }
+        Err(e) => {
+            eprintln!("  [skip] {}: parse error: {e}", path.display());
+            None
+        },
     }
 }
 
@@ -216,11 +293,17 @@ fn collect_ling_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if matches!(name.as_ref(), ".ling-build" | "灵碑" | "target" | "dist" | ".git" | "node_modules" | "AST") {
+            if matches!(
+                name.as_ref(),
+                ".ling-build" | "灵碑" | "target" | "dist" | ".git" | "node_modules" | "AST"
+            ) {
                 continue;
             }
             collect_ling_files(&path, out);
-        } else if matches!(path.extension().and_then(|e| e.to_str()), Some("ling" | "灵" | "霊" | "령" | "ลิง")) {
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ling" | "灵" | "霊" | "령" | "ลิง")
+        ) {
             out.push(path);
         }
     }
@@ -233,9 +316,14 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
 }
 
 fn collect_platforms(args: &[String]) -> Vec<String> {
-    let mut platforms: Vec<String> = args.windows(2)
+    let mut platforms: Vec<String> = args
+        .windows(2)
         .filter(|w| w[0] == "--platform")
-        .flat_map(|w| w[1].split(',').map(|s| s.trim().to_lowercase()).collect::<Vec<_>>())
+        .flat_map(|w| {
+            w[1].split(',')
+                .map(|s| s.trim().to_lowercase())
+                .collect::<Vec<_>>()
+        })
         .collect();
     // Expand "all"
     if platforms.iter().any(|p| p == "all") {
@@ -250,9 +338,13 @@ fn collect_platforms(args: &[String]) -> Vec<String> {
 }
 
 fn native_platform() -> &'static str {
-    if cfg!(target_os = "windows") { "win" }
-    else if cfg!(target_os = "macos") { "mac" }
-    else { "lin" }
+    if cfg!(target_os = "windows") {
+        "win"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "lin"
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -261,7 +353,16 @@ fn native_platform() -> &'static str {
 
 /// Whether this is a graphical/windowed program (not headless).
 #[derive(Debug, Clone, PartialEq)]
-enum ProjKind { Bin, Web, Game, Ui, Ai, Crypto, Lib, Polyglot }
+enum ProjKind {
+    Bin,
+    Web,
+    Game,
+    Ui,
+    Ai,
+    Crypto,
+    Lib,
+    Polyglot,
+}
 
 impl ProjKind {
     #[allow(dead_code)]
@@ -274,14 +375,14 @@ impl ProjKind {
 }
 
 struct LingProject {
-    name:       String,
-    version:    String,
-    kind:       ProjKind,
-    entry:      PathBuf,     // absolute path to the entry .ling file
-    source_dir: PathBuf,     // directory that contains the .ling sources
-    build_dir:  PathBuf,     // where the temp Rust build project lives
-    icon:       Option<PathBuf>, // app icon source from the manifest (svg/png/ico)
-    includes:   Vec<String>, // resource globs from the manifest [includes] block
+    name: String,
+    version: String,
+    kind: ProjKind,
+    entry: PathBuf,        // absolute path to the entry .ling file
+    source_dir: PathBuf,   // directory that contains the .ling sources
+    build_dir: PathBuf,    // where the temp Rust build project lives
+    icon: Option<PathBuf>, // app icon source from the manifest (svg/png/ico)
+    includes: Vec<String>, // resource globs from the manifest [includes] block
 }
 
 fn discover_project(target: &str) -> LingProject {
@@ -290,31 +391,52 @@ fn discover_project(target: &str) -> LingProject {
 
     if path.is_file() {
         // Single .ling file
-        let name = sanitise_name(&path.file_stem().unwrap_or_default()
-            .to_string_lossy());
+        let name = sanitise_name(&path.file_stem().unwrap_or_default().to_string_lossy());
         let source_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let build_dir  = source_dir.join(".ling-build").join(&name);
-        LingProject { name, version: "0.1.0".into(), kind: ProjKind::Bin,
-                      entry: path, source_dir, build_dir, icon: None, includes: Vec::new() }
+        let build_dir = source_dir.join(".ling-build").join(&name);
+        LingProject {
+            name,
+            version: "0.1.0".into(),
+            kind: ProjKind::Bin,
+            entry: path,
+            source_dir,
+            build_dir,
+            icon: None,
+            includes: Vec::new(),
+        }
     } else if path.is_dir() {
         // ling-fu project: 灵符.toml
         let lf = path.join("灵符.toml");
-        if lf.exists() { return parse_lingfu_toml(&lf, &path); }
+        if lf.exists() {
+            return parse_lingfu_toml(&lf, &path);
+        }
 
         // Simple project: Ling.toml
         let lt = path.join("Ling.toml");
-        if lt.exists() { return parse_ling_toml(&lt, &path); }
+        if lt.exists() {
+            return parse_ling_toml(&lt, &path);
+        }
 
         // Bare directory: auto-detect entry
         let entry = auto_entry(&path).unwrap_or_else(|| {
             eprintln!("error: no .ling file found in '{}'", path.display());
             std::process::exit(1);
         });
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned())
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "app".into());
         let build_dir = path.join(".ling-build").join(&name);
-        LingProject { name, version: "0.1.0".into(), kind: ProjKind::Bin,
-                      entry, source_dir: path, build_dir, icon: None, includes: Vec::new() }
+        LingProject {
+            name,
+            version: "0.1.0".into(),
+            kind: ProjKind::Bin,
+            entry,
+            source_dir: path,
+            build_dir,
+            icon: None,
+            includes: Vec::new(),
+        }
     } else {
         eprintln!("error: '{}' is not a .ling file or directory", target);
         std::process::exit(1);
@@ -328,21 +450,31 @@ fn discover_project(target: &str) -> LingProject {
 ///   型 = "bin"
 ///   版 = "0.1.0"
 fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
-    let text = std::fs::read_to_string(toml)
-        .unwrap_or_else(|e| { eprintln!("read 灵符.toml: {e}"); std::process::exit(1); });
+    let text = std::fs::read_to_string(toml).unwrap_or_else(|e| {
+        eprintln!("read 灵符.toml: {e}");
+        std::process::exit(1);
+    });
 
-    let mut name    = base.file_name().map(|n| n.to_string_lossy().into_owned())
-                          .unwrap_or_else(|| "app".into());
+    let mut name = base
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".into());
     let mut version = "0.1.0".into();
-    let mut kind    = ProjKind::Bin;
+    let mut kind = ProjKind::Bin;
     let mut icon: Option<PathBuf> = None;
 
     for line in text.lines() {
         let line = line.trim();
         // 名 = "value"  or  名 = value
-        if let Some(v) = toml_kv(line, "名")  { name    = sanitise_name(&v); }
-        if let Some(v) = toml_kv(line, "版")  { version = v; }
-        if let Some(v) = toml_kv(line, "型")  { kind    = parse_kind(&v); }
+        if let Some(v) = toml_kv(line, "名") {
+            name = sanitise_name(&v);
+        }
+        if let Some(v) = toml_kv(line, "版") {
+            version = v;
+        }
+        if let Some(v) = toml_kv(line, "型") {
+            kind = parse_kind(&v);
+        }
         // 图标 = "logo.svg"  (also accept the English `icon`), relative to project root.
         if let Some(v) = toml_kv(line, "图标").or_else(|| toml_kv(line, "icon")) {
             icon = Some(base.join(v));
@@ -365,7 +497,16 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
     // ling-fu uses 灵碑/ for build artifacts
     let build_dir = base.join("灵碑").join(&name);
     let includes = parse_includes(&text);
-    LingProject { name, version, kind, entry, source_dir, build_dir, icon, includes }
+    LingProject {
+        name,
+        version,
+        kind,
+        entry,
+        source_dir,
+        build_dir,
+        icon,
+        includes,
+    }
 }
 
 /// Parse a simple English-key `Ling.toml`.
@@ -375,24 +516,38 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
 /// entry = "main.ling"
 /// kind = "bin"
 fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
-    let text = std::fs::read_to_string(toml)
-        .unwrap_or_else(|e| { eprintln!("read Ling.toml: {e}"); std::process::exit(1); });
+    let text = std::fs::read_to_string(toml).unwrap_or_else(|e| {
+        eprintln!("read Ling.toml: {e}");
+        std::process::exit(1);
+    });
 
-    let mut name       = base.file_name().map(|n| n.to_string_lossy().into_owned())
-                             .unwrap_or_else(|| "app".into());
-    let mut version    = "0.1.0".to_string();
+    let mut name = base
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "app".into());
+    let mut version = "0.1.0".to_string();
     let mut entry_name = "main.ling".to_string();
-    let mut kind       = ProjKind::Bin;
+    let mut kind = ProjKind::Bin;
     let mut icon: Option<PathBuf> = None;
 
     for line in text.lines() {
         let line = line.trim();
-        if let Some(v) = toml_kv(line, "name")    { name       = sanitise_name(&v); }
-        if let Some(v) = toml_kv(line, "version") { version    = v; }
-        if let Some(v) = toml_kv(line, "entry")   { entry_name = v; }
-        if let Some(v) = toml_kv(line, "kind")    { kind       = parse_kind(&v); }
+        if let Some(v) = toml_kv(line, "name") {
+            name = sanitise_name(&v);
+        }
+        if let Some(v) = toml_kv(line, "version") {
+            version = v;
+        }
+        if let Some(v) = toml_kv(line, "entry") {
+            entry_name = v;
+        }
+        if let Some(v) = toml_kv(line, "kind") {
+            kind = parse_kind(&v);
+        }
         // icon = "images/logo.svg"  (svg/png/ico), relative to the project root.
-        if let Some(v) = toml_kv(line, "icon")    { icon       = Some(base.join(v)); }
+        if let Some(v) = toml_kv(line, "icon") {
+            icon = Some(base.join(v));
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -402,21 +557,36 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     }
     let build_dir = base.join(".ling-build").join(&name);
     let includes = parse_includes(&text);
-    LingProject { name, version, kind, entry, source_dir: base.to_path_buf(), build_dir, icon, includes }
+    LingProject {
+        name,
+        version,
+        kind,
+        entry,
+        source_dir: base.to_path_buf(),
+        build_dir,
+        icon,
+        includes,
+    }
 }
 
 fn auto_entry(dir: &Path) -> Option<PathBuf> {
     for name in &["main.ling", "start.ling", "启.灵"] {
         let p = dir.join(name);
-        if p.exists() { return Some(p); }
+        if p.exists() {
+            return Some(p);
+        }
     }
     // Try source sub-directory (ling-fu: 灵源/)
     for subdir in &["灵源", "src"] {
         let sub = dir.join(subdir);
-        if let Some(e) = auto_entry(&sub) { return Some(e); }
+        if let Some(e) = auto_entry(&sub) {
+            return Some(e);
+        }
     }
     // Fall back to any .ling file
-    std::fs::read_dir(dir).ok()?.flatten()
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
         .find(|e| e.path().extension().map_or(false, |x| x == "ling"))
         .map(|e| e.path())
 }
@@ -437,16 +607,29 @@ fn parse_kind(s: &str) -> ProjKind {
 fn toml_kv(line: &str, key: &str) -> Option<String> {
     // key = "value"  or  key = value  (key may be unicode)
     let pat = format!("{key} =");
-    if !line.starts_with(&pat) { return None; }
+    if !line.starts_with(&pat) {
+        return None;
+    }
     let v = line[pat.len()..].trim().trim_matches('"').to_string();
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 fn sanitise_name(s: &str) -> String {
     // Cargo package names: alphanumeric + hyphen/underscore, must not start with a digit
-    let out: String = s.chars().map(|c| {
-        if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }
-    }).collect();
+    let out: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
     let out = out.trim_matches('-').to_string();
     let out = if out.is_empty() { "app".into() } else { out };
     if out.chars().next().map_or(false, |c| c.is_ascii_digit()) {
@@ -460,25 +643,37 @@ fn sanitise_name(s: &str) -> String {
 // Build orchestration
 // ═══════════════════════════════════════════════════════════════════════════════
 
-fn run_build(target: &str, out: &str, platforms: &[String], icon_override: Option<PathBuf>, pack: bool) {
+fn run_build(
+    target: &str,
+    out: &str,
+    platforms: &[String],
+    icon_override: Option<PathBuf>,
+    pack: bool,
+) {
     let project = discover_project(target);
-    println!("Building '{}' v{} ({:?})", project.name, project.version, project.kind);
+    println!(
+        "Building '{}' v{} ({:?})",
+        project.name, project.version, project.kind
+    );
 
     std::fs::create_dir_all(out).unwrap_or_else(|e| {
-        eprintln!("create dist dir '{}': {e}", out); std::process::exit(1);
+        eprintln!("create dist dir '{}': {e}", out);
+        std::process::exit(1);
     });
 
     let icon = icon_override.as_deref();
     for platform in platforms {
         match platform.as_str() {
-            "web"                     => build_web(&project, out),
-            "win" | "windows"         => build_native(&project, out, NativePlatform::Windows, icon, pack),
-            "lin" | "linux"           => build_native(&project, out, NativePlatform::Linux, icon, pack),
-            "mac" | "macos" | "darwin" => build_native(&project, out, NativePlatform::Mac, icon, pack),
+            "web" => build_web(&project, out),
+            "win" | "windows" => build_native(&project, out, NativePlatform::Windows, icon, pack),
+            "lin" | "linux" => build_native(&project, out, NativePlatform::Linux, icon, pack),
+            "mac" | "macos" | "darwin" => {
+                build_native(&project, out, NativePlatform::Mac, icon, pack)
+            },
             other => {
                 eprintln!("unknown platform '{}' — use web|win|lin|mac|all", other);
                 std::process::exit(1);
-            }
+            },
         }
     }
 
@@ -579,12 +774,18 @@ fn serve_and_open(root: &Path) {
                 .and_then(|l| l.split_whitespace().nth(1))
                 .unwrap_or("/");
             let path = raw.split('?').next().unwrap_or("/");
-            let rel = if path == "/" { "index.html" } else { path.trim_start_matches('/') };
+            let rel = if path == "/" {
+                "index.html"
+            } else {
+                path.trim_start_matches('/')
+            };
 
             // Resolve under root and reject path traversal.
             let target = root.join(rel);
             let safe = target.canonicalize().ok().filter(|p| {
-                root.canonicalize().map(|r| p.starts_with(r)).unwrap_or(false)
+                root.canonicalize()
+                    .map(|r| p.starts_with(r))
+                    .unwrap_or(false)
             });
 
             let (status_line, body, ctype) = match safe.and_then(|p| std::fs::read(p).ok()) {
@@ -632,24 +833,38 @@ fn open_browser(url: &str) {
 // ── Native build ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
-enum NativePlatform { Windows, Linux, Mac }
+enum NativePlatform {
+    Windows,
+    Linux,
+    Mac,
+}
 
 impl NativePlatform {
     fn dir_name(self) -> &'static str {
-        match self { Self::Windows => "windows", Self::Linux => "linux", Self::Mac => "macos" }
+        match self {
+            Self::Windows => "windows",
+            Self::Linux => "linux",
+            Self::Mac => "macos",
+        }
     }
 
     /// Best triple for the platform, given where we're compiling FROM.
     fn triple(self) -> &'static str {
         match self {
             Self::Windows => {
-                if cfg!(target_os = "windows") { "x86_64-pc-windows-msvc" }
-                else { "x86_64-pc-windows-gnu" }
-            }
+                if cfg!(target_os = "windows") {
+                    "x86_64-pc-windows-msvc"
+                } else {
+                    "x86_64-pc-windows-gnu"
+                }
+            },
             Self::Linux => {
-                if cfg!(target_os = "linux") { "x86_64-unknown-linux-gnu" }
-                else { "x86_64-unknown-linux-musl" }
-            }
+                if cfg!(target_os = "linux") {
+                    "x86_64-unknown-linux-gnu"
+                } else {
+                    "x86_64-unknown-linux-musl"
+                }
+            },
             Self::Mac => {
                 // On Apple Silicon build arm64; everywhere else (including cross) use x86_64
                 if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -657,26 +872,39 @@ impl NativePlatform {
                 } else {
                     "x86_64-apple-darwin"
                 }
-            }
+            },
         }
     }
 
     fn exe_suffix(self) -> &'static str {
-        match self { Self::Windows => ".exe", _ => "" }
+        match self {
+            Self::Windows => ".exe",
+            _ => "",
+        }
     }
 
     fn is_current_host(self) -> bool {
         match self {
             Self::Windows => cfg!(target_os = "windows"),
-            Self::Linux   => cfg!(target_os = "linux"),
-            Self::Mac     => cfg!(target_os = "macos"),
+            Self::Linux => cfg!(target_os = "linux"),
+            Self::Mac => cfg!(target_os = "macos"),
         }
     }
 }
 
-fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon: Option<&Path>, pack: bool) {
+fn build_native(
+    project: &LingProject,
+    out: &str,
+    platform: NativePlatform,
+    icon: Option<&Path>,
+    pack: bool,
+) {
     let triple = platform.triple();
-    println!("  [{}] building {} ({triple})…", platform.dir_name(), platform.dir_name());
+    println!(
+        "  [{}] building {} ({triple})…",
+        platform.dir_name(),
+        platform.dir_name()
+    );
 
     let ling_root = find_ling_root().unwrap_or_else(|| {
         eprintln!(
@@ -689,20 +917,26 @@ fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon
     // ── 1. Set up build directory ────────────────────────────────────────────
     let build_dir = &project.build_dir;
     std::fs::create_dir_all(build_dir.join("src")).unwrap_or_else(|e| {
-        eprintln!("  create build dir: {e}"); std::process::exit(1);
+        eprintln!("  create build dir: {e}");
+        std::process::exit(1);
     });
 
     // Copy all .ling files from source_dir (recurse one level for ling-fu 灵源/)
     copy_ling_sources(&project.source_dir, build_dir);
 
     // ── 2. Write generated Cargo.toml + src/main.rs ──────────────────────────
-    let entry_filename = project.entry.file_name()
-        .unwrap_or_default().to_string_lossy().into_owned();
+    let entry_filename = project
+        .entry
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
 
     std::fs::write(
         build_dir.join("Cargo.toml"),
         gen_cargo_toml(&project.name, &project.version, &ling_root),
-    ).expect("write Cargo.toml");
+    )
+    .expect("write Cargo.toml");
 
     // Resources declared in the manifest [includes] block (glob-expanded).
     let resources = expand_includes(project);
@@ -711,12 +945,16 @@ fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon
     std::fs::write(
         build_dir.join("src/main.rs"),
         gen_main_rs(&entry_filename, do_pack),
-    ).expect("write src/main.rs");
+    )
+    .expect("write src/main.rs");
 
     // ── 2a. Pack resources into the executable (when --pack) ─────────────────
     if do_pack {
         write_packed_resources(build_dir, &resources);
-        println!("  packing {} resource(s) into the executable", resources.len());
+        println!(
+            "  packing {} resource(s) into the executable",
+            resources.len()
+        );
     } else if pack {
         println!("  --pack: no [includes] resources to pack");
     }
@@ -724,17 +962,16 @@ fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon
     // ── 2b. Build script + app icon ──────────────────────────────────────────
     // The generated build.rs embeds app.ico on Windows; we rasterize the icon
     // source (manifest / --icon / default logo) into app.ico beside it.
-    std::fs::write(build_dir.join("build.rs"), gen_build_rs())
-        .expect("write build.rs");
+    std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
     if matches!(platform, NativePlatform::Windows) {
         match resolve_icon(icon, project, &ling_root) {
             Some(src) => {
                 let out_ico = build_dir.join("app.ico");
                 match ling_icon::write_ico(&src, &out_ico, ling_icon::DEFAULT_SIZES) {
-                    Ok(())  => println!("  [windows] icon: {}", src.display()),
-                    Err(e)  => eprintln!("  [windows] icon skipped: {e}"),
+                    Ok(()) => println!("  [windows] icon: {}", src.display()),
+                    Err(e) => eprintln!("  [windows] icon skipped: {e}"),
                 }
-            }
+            },
             None => println!("  [windows] no icon found; building without one"),
         }
     }
@@ -767,7 +1004,11 @@ fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon
 
     // ── 5. Copy binary to dist/<platform>/ ──────────────────────────────────
     let exe = format!("{}{}", project.name, platform.exe_suffix());
-    let src_bin = build_dir.join("target").join(triple).join("release").join(&exe);
+    let src_bin = build_dir
+        .join("target")
+        .join(triple)
+        .join("release")
+        .join(&exe);
     let platform_dir = Path::new(out).join(platform.dir_name());
     std::fs::create_dir_all(&platform_dir).expect("create platform dir");
     let dst = platform_dir.join(&exe);
@@ -788,7 +1029,11 @@ fn build_native(project: &LingProject, out: &str, platform: NativePlatform, icon
                 eprintln!("  resource copy {}: {e}", rel);
             }
         }
-        println!("  [{}] bundled {} resource(s)", platform.dir_name(), resources.len());
+        println!(
+            "  [{}] bundled {} resource(s)",
+            platform.dir_name(),
+            resources.len()
+        );
     }
 }
 
@@ -817,7 +1062,7 @@ fn gen_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     // On Windows canonicalize gives UNC paths; forward-slashes work fine in TOML paths.
     let root_str = ling_root.display().to_string().replace('\\', "/");
     format!(
-r#"[package]
+        r#"[package]
 name = "{name}"
 version = "{version}"
 edition = "2021"
@@ -838,7 +1083,8 @@ lto = "fat"
 codegen-units = 1
 opt-level = 3
 panic = "abort"
-"#)
+"#
+    )
 }
 
 /// The build script written into each generated app crate. It embeds `app.ico`
@@ -862,7 +1108,8 @@ fn main() {
         println!("cargo:warning=icon embed skipped ({e})");
     }
 }
-"#.to_string()
+"#
+    .to_string()
 }
 
 /// Pick the icon source: explicit `--icon` flag, else the manifest field, else
@@ -870,11 +1117,17 @@ fn main() {
 fn resolve_icon(cli: Option<&Path>, project: &LingProject, ling_root: &Path) -> Option<PathBuf> {
     // Explicit --icon / manifest icon wins, but if the file is missing we warn
     // and fall through to the bundled default rather than shipping no icon.
-    for candidate in [cli.map(Path::to_path_buf), project.icon.clone()].into_iter().flatten() {
+    for candidate in [cli.map(Path::to_path_buf), project.icon.clone()]
+        .into_iter()
+        .flatten()
+    {
         if candidate.exists() {
             return Some(candidate);
         }
-        eprintln!("  [icon] '{}' not found; using default", candidate.display());
+        eprintln!(
+            "  [icon] '{}' not found; using default",
+            candidate.display()
+        );
     }
     let default = ling_root.join("ling-lang.org/images/logo.svg");
     default.exists().then_some(default)
@@ -890,7 +1143,7 @@ fn gen_main_rs(entry_file: &str, packed: bool) -> String {
         ""
     };
     format!(
-r#"// Built by ling build — no console window on Windows.
+        r#"// Built by ling build — no console window on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 {res_mod}
 fn main() {{
@@ -904,7 +1157,8 @@ fn main() {{
         std::process::exit(1);
     }}
 }}
-"#)
+"#
+    )
 }
 
 // ── [includes] resource handling ───────────────────────────────────────────────
@@ -1022,7 +1276,10 @@ fn walk_files(root: &Path) -> Vec<(String, PathBuf)> {
             let name = name.to_string_lossy();
             if path.is_dir() {
                 // Don't descend into generated/output trees.
-                if matches!(name.as_ref(), ".ling-build" | "灵碑" | "target" | "dist" | ".git") {
+                if matches!(
+                    name.as_ref(),
+                    ".ling-build" | "灵碑" | "target" | "dist" | ".git"
+                ) {
                     continue;
                 }
                 rec(base, &path, out);
@@ -1050,7 +1307,7 @@ fn seg_match(pat: &[&str], seg: &[&str]) -> bool {
         Some(&"**") => {
             // Match zero or more path segments.
             (0..=seg.len()).any(|i| seg_match(&pat[1..], &seg[i..]))
-        }
+        },
         Some(p) => match seg.first() {
             Some(s) if wildcard(p.as_bytes(), s.as_bytes()) => seg_match(&pat[1..], &seg[1..]),
             _ => false,
@@ -1111,18 +1368,28 @@ fn write_packed_resources(build_dir: &Path, resources: &[(String, PathBuf)]) {
 }
 
 fn ensure_rustup_target(triple: &str) {
-    let Ok(out) = Command::new("rustup").args(["target", "list", "--installed"]).output()
-    else { return };
+    let Ok(out) = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+    else {
+        return;
+    };
     let installed = String::from_utf8_lossy(&out.stdout);
     if !installed.contains(triple) {
         println!("    installing target {triple}…");
-        let _ = Command::new("rustup").args(["target", "add", triple]).status();
+        let _ = Command::new("rustup")
+            .args(["target", "add", triple])
+            .status();
     }
 }
 
 /// Use `cross` for cross-compilation when available; otherwise fall back to `cargo`.
 fn choose_build_tool(platform: NativePlatform) -> &'static str {
-    if !platform.is_current_host() && has_cross() { "cross" } else { "cargo" }
+    if !platform.is_current_host() && has_cross() {
+        "cross"
+    } else {
+        "cargo"
+    }
 }
 
 fn has_cross() -> bool {
@@ -1132,10 +1399,17 @@ fn has_cross() -> bool {
 /// Return the path to a sibling binary in the same directory as this executable.
 fn sibling_binary(name: &str) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
-        let candidate = exe.parent().unwrap_or(Path::new(".")).join(
-            if cfg!(target_os = "windows") { format!("{name}.exe") } else { name.to_string() }
-        );
-        if candidate.exists() { return candidate; }
+        let candidate =
+            exe.parent()
+                .unwrap_or(Path::new("."))
+                .join(if cfg!(target_os = "windows") {
+                    format!("{name}.exe")
+                } else {
+                    name.to_string()
+                });
+        if candidate.exists() {
+            return candidate;
+        }
     }
     PathBuf::from(name)
 }
@@ -1145,20 +1419,27 @@ fn find_ling_root() -> Option<PathBuf> {
     // 1. Explicit env var
     if let Ok(home) = std::env::var("LING_HOME") {
         let p = PathBuf::from(home);
-        if p.join("Cargo.toml").exists() { return Some(p); }
+        if p.join("Cargo.toml").exists() {
+            return Some(p);
+        }
     }
     // 2. Relative to this binary: target/{debug,release}/ling → 3 levels up
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(repo) = exe.parent()
+        if let Some(repo) = exe
+            .parent()
             .and_then(|p| p.parent())
             .and_then(|p| p.parent())
         {
-            if repo.join("Cargo.toml").exists() { return Some(repo.to_path_buf()); }
+            if repo.join("Cargo.toml").exists() {
+                return Some(repo.to_path_buf());
+            }
         }
     }
     // 3. Current working directory
     let cwd = std::env::current_dir().ok()?;
-    if cwd.join("Cargo.toml").exists() { return Some(cwd); }
+    if cwd.join("Cargo.toml").exists() {
+        return Some(cwd);
+    }
     None
 }
 

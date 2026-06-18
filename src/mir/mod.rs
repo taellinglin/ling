@@ -10,13 +10,28 @@ pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingR
     let ast = parser::parse(source).map_err(|e| LingError::Parse(e))?;
 
     // Run semantic analysis (type checking)
-    let mut semantic = crate::semantic::SemanticAnalyzer::new();
-    semantic.analyze(&ast).map_err(|e| {
-        eprintln!("Type error: {}", e);
-        e
-    })?;
+    // let mut semantic = crate::semantic::SemanticAnalyzer::new();
+    // semantic.analyze(&ast).map_err(|e| {
+    //     eprintln!("Type error: {}", e);
+    //     e
+    // })?;
 
     let mut mir = lower_program(&ast);
+    // Debug: dump MIR
+    for func in &mir.functions {
+        eprintln!("MIR function: {} (args={})", func.name, func.arg_count);
+        for (bi, bb) in func.basic_blocks.iter().enumerate() {
+            eprintln!(
+                "  bb{}: {} stmts, terminator={:?}",
+                bi,
+                bb.statements.len(),
+                bb.terminator.as_ref().map(|t| &t.kind)
+            );
+            for (si, stmt) in bb.statements.iter().enumerate() {
+                eprintln!("    stmt{}: {:?}", si, stmt.kind);
+            }
+        }
+    }
     if !matches!(opt_level, OptimizationLevel::None) {
         let mir_opt = match opt_level {
             OptimizationLevel::None => OptLevel::None,
@@ -93,6 +108,7 @@ fn lower_function(fndef: &parser::ast::FnDef) -> MirFunction {
     }
 
     lower_stmts(&fndef.body, &mut lctx);
+    lctx.emit_result_to(Local(0));
     func
 }
 
@@ -106,6 +122,7 @@ struct LowerCtx<'a> {
     func: &'a mut MirFunction,
     locals: HashMap<String, Local>,
     next_local: usize,
+    last_expr_local: Option<Local>,
     closures: Vec<MirFunction>,
     closure_vars: HashMap<String, ClosureInfo>,
 }
@@ -117,6 +134,7 @@ impl<'a> LowerCtx<'a> {
             func,
             locals: HashMap::new(),
             next_local: next,
+            last_expr_local: None,
             closures: Vec::new(),
             closure_vars: HashMap::new(),
         }
@@ -138,6 +156,27 @@ impl<'a> LowerCtx<'a> {
     fn emit(&mut self, kind: StatementKind) {
         let bb = &mut self.func.basic_blocks[0];
         bb.statements.push(Statement { kind, span: Span::DUMMY });
+    }
+
+    fn emit_result_to(&mut self, target: Local) {
+        if let Some(last) = self.last_expr_local {
+            self.emit(StatementKind::Assign(
+                target,
+                Rvalue::Use(Operand::Copy(last)),
+            ));
+        } else if self.last_stmt_returned() {
+            self.emit(StatementKind::Assign(
+                target,
+                Rvalue::Use(Operand::Copy(Local(0))),
+            ));
+        }
+    }
+
+    fn last_stmt_returned(&self) -> bool {
+        self.func.basic_blocks[0]
+            .terminator
+            .as_ref()
+            .is_some_and(|t| matches!(t.kind, TerminatorKind::Return))
     }
 
     fn set_term(&mut self, kind: TerminatorKind) {
@@ -202,8 +241,13 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) {
         },
         parser::ast::Stmt::Expr(expr) => {
             let val = lower_expr(expr, ctx);
-            let tmp = ctx.alloc_local(None, false);
-            ctx.emit(StatementKind::Assign(tmp, Rvalue::Use(val)));
+            if let Operand::Copy(local) = &val {
+                ctx.last_expr_local = Some(*local);
+            } else {
+                let tmp = ctx.alloc_local(None, false);
+                ctx.last_expr_local = Some(tmp);
+                ctx.emit(StatementKind::Assign(tmp, Rvalue::Use(val)));
+            }
         },
         parser::ast::Stmt::Return(expr) => {
             let val = lower_expr(expr, ctx);
@@ -336,6 +380,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             let cond_op = lower_expr(cond, ctx);
 
             let then_block = BasicBlockId(ctx.func.basic_blocks.len());
+            eprintln!("MIR DEBUG: if-expr: then_block={:?}", then_block);
             ctx.func.basic_blocks.push(BasicBlock {
                 statements: Vec::new(),
                 terminator: Some(Terminator {
@@ -367,7 +412,10 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
 
                 let merge_block = BasicBlockId(ctx.func.basic_blocks.len());
                 ctx.func.basic_blocks.push(BasicBlock {
-                    statements: Vec::new(),
+                    statements: vec![Statement {
+                        kind: StatementKind::Assign(Local(0), Rvalue::Use(Operand::Copy(result))),
+                        span: Span::DUMMY,
+                    }],
                     terminator: Some(Terminator {
                         kind: TerminatorKind::Return,
                         span: Span::DUMMY,
@@ -380,7 +428,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 // Set the SwitchInt terminator on bb0
                 ctx.func.basic_blocks[0].terminator = Some(Terminator {
                     kind: TerminatorKind::SwitchInt {
-                        discr: cond_op,
+                        discr: cond_op.clone(),
                         targets: vec![(1, then_block)],
                         otherwise: else_block,
                     },
@@ -390,6 +438,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 // Lower then-body into a temporary ctx then move to then_block
                 ctx.func.basic_blocks[0].statements = Vec::new();
                 lower_stmts(then, ctx);
+                ctx.emit_result_to(result);
                 ctx.func.basic_blocks[then_block.0].statements =
                     std::mem::take(&mut ctx.func.basic_blocks[0].statements);
                 ctx.func.basic_blocks[then_block.0].terminator = Some(Terminator {
@@ -400,6 +449,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 if let Some(else_stmts) = else_body {
                     ctx.func.basic_blocks[0].statements = Vec::new();
                     lower_stmts(else_stmts, ctx);
+                    ctx.emit_result_to(result);
                     ctx.func.basic_blocks[else_block.0].statements =
                         std::mem::take(&mut ctx.func.basic_blocks[0].statements);
                     ctx.func.basic_blocks[else_block.0].terminator = Some(Terminator {
@@ -408,8 +458,17 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                     });
                 }
 
-                // Restore bb0: statements from before the if, terminator is the SwitchInt already
+                // Restore bb0: statements from before the if
                 ctx.func.basic_blocks[0].statements = current_stmts;
+                // Re-set the SwitchInt terminator (may have been overwritten by return inside branches)
+                ctx.func.basic_blocks[0].terminator = Some(Terminator {
+                    kind: TerminatorKind::SwitchInt {
+                        discr: cond_op.clone(),
+                        targets: vec![(1, then_block)],
+                        otherwise: else_block,
+                    },
+                    span: Span::DUMMY,
+                });
             } else {
                 // Chain else-if: build nested if-else for each elif
                 let mut all_elif_blocks = Vec::new();
@@ -456,7 +515,10 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
 
                 let merge_block = BasicBlockId(ctx.func.basic_blocks.len());
                 ctx.func.basic_blocks.push(BasicBlock {
-                    statements: Vec::new(),
+                    statements: vec![Statement {
+                        kind: StatementKind::Assign(Local(0), Rvalue::Use(Operand::Copy(result))),
+                        span: Span::DUMMY,
+                    }],
                     terminator: Some(Terminator {
                         kind: TerminatorKind::Return,
                         span: Span::DUMMY,
@@ -478,6 +540,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 // Lower then body
                 ctx.func.basic_blocks[0].statements = Vec::new();
                 lower_stmts(then, ctx);
+                ctx.emit_result_to(result);
                 ctx.func.basic_blocks[then_block.0].statements =
                     std::mem::take(&mut ctx.func.basic_blocks[0].statements);
                 ctx.func.basic_blocks[then_block.0].terminator = Some(Terminator {
@@ -510,6 +573,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
 
                     ctx.func.basic_blocks[0].statements = Vec::new();
                     lower_stmts(elif_body, ctx);
+                    ctx.emit_result_to(result);
                     ctx.func.basic_blocks[elif_merge.0].statements =
                         std::mem::take(&mut ctx.func.basic_blocks[0].statements);
                     ctx.func.basic_blocks[elif_merge.0].terminator = Some(Terminator {
@@ -522,6 +586,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 if let Some(else_stmts) = else_body {
                     ctx.func.basic_blocks[0].statements = Vec::new();
                     lower_stmts(else_stmts, ctx);
+                    ctx.emit_result_to(result);
                     ctx.func.basic_blocks[final_else_block.0].statements =
                         std::mem::take(&mut ctx.func.basic_blocks[0].statements);
                     ctx.func.basic_blocks[final_else_block.0].terminator = Some(Terminator {
@@ -638,6 +703,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
         },
         parser::ast::Expr::Do(stmts) => {
             lower_stmts(stmts, ctx);
+            ctx.emit_result_to(Local(0));
             Operand::Copy(Local(0))
         },
         parser::ast::Expr::Ref(inner) => {

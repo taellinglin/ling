@@ -29,7 +29,12 @@ impl Rumble {
     /// Both main motors at the same strength.
     #[must_use]
     pub const fn both(strength: f32) -> Self {
-        Self { low: strength, high: strength, left_trigger: 0.0, right_trigger: 0.0 }
+        Self {
+            low: strength,
+            high: strength,
+            left_trigger: 0.0,
+            right_trigger: 0.0,
+        }
     }
 
     /// Scale every channel.
@@ -92,7 +97,11 @@ impl HapticEffect {
             return Rumble::OFF;
         }
         let dur = self.duration();
-        let t = if self.looping && dur > 0.0 { t.rem_euclid(dur) } else { t };
+        let t = if self.looping && dur > 0.0 {
+            t.rem_euclid(dur)
+        } else {
+            t
+        };
         if t <= self.keys[0].t {
             let k = self.keys[0];
             return Rumble { low: k.low, high: k.high, ..Rumble::OFF };

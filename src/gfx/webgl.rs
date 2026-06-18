@@ -9,11 +9,7 @@
 
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
-    WebGl2RenderingContext as Gl,
-    WebGlBuffer,
-    WebGlProgram,
-    WebGlShader,
-    WebGlTexture,
+    WebGl2RenderingContext as Gl, WebGlBuffer, WebGlProgram, WebGlShader, WebGlTexture,
     WebGlUniformLocation,
 };
 
@@ -31,20 +27,20 @@ enum Batch {
 }
 
 struct State {
-    ctx:     Gl,
-    canvas:  web_sys::OffscreenCanvas,
-    prog:    WebGlProgram,
-    buf:     WebGlBuffer,
-    u_size:  WebGlUniformLocation,
+    ctx: Gl,
+    canvas: web_sys::OffscreenCanvas,
+    prog: WebGlProgram,
+    buf: WebGlBuffer,
+    u_size: WebGlUniformLocation,
     batches: Vec<Batch>,
-    width:   f32,
-    height:  f32,
+    width: f32,
+    height: f32,
     // Software-framebuffer blit (the `present()` path): a textured fullscreen
     // quad that uploads the CPU buffer to the canvas for full native parity.
     tex_prog: WebGlProgram,
-    tex:      WebGlTexture,
-    quad:     WebGlBuffer,
-    u_tex:    WebGlUniformLocation,
+    tex: WebGlTexture,
+    quad: WebGlBuffer,
+    u_tex: WebGlUniformLocation,
 }
 
 thread_local! {
@@ -105,7 +101,8 @@ fn compile_shader(ctx: &Gl, kind: u32, src: &str) -> WebGlShader {
     ctx.compile_shader(&sh);
     assert!(
         ctx.get_shader_parameter(&sh, Gl::COMPILE_STATUS)
-            .as_bool().unwrap_or(false),
+            .as_bool()
+            .unwrap_or(false),
         "shader compile: {}",
         ctx.get_shader_info_log(&sh).unwrap_or_default()
     );
@@ -119,7 +116,8 @@ fn link_program(ctx: &Gl, vs: &WebGlShader, fs: &WebGlShader) -> WebGlProgram {
     ctx.link_program(&prog);
     assert!(
         ctx.get_program_parameter(&prog, Gl::LINK_STATUS)
-            .as_bool().unwrap_or(false),
+            .as_bool()
+            .unwrap_or(false),
         "program link: {}",
         ctx.get_program_info_log(&prog).unwrap_or_default()
     );
@@ -137,23 +135,25 @@ pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
         .dyn_into::<Gl>()
         .expect("cast to WebGl2RenderingContext");
 
-    let vs = compile_shader(&ctx, Gl::VERTEX_SHADER,   VERT);
+    let vs = compile_shader(&ctx, Gl::VERTEX_SHADER, VERT);
     let fs = compile_shader(&ctx, Gl::FRAGMENT_SHADER, FRAG);
     let prog = link_program(&ctx, &vs, &fs);
-    let buf  = ctx.create_buffer().expect("create_buffer");
+    let buf = ctx.create_buffer().expect("create_buffer");
 
     // No GPU depth testing — painter's algorithm in the CPU depth queue
     // already sorts draw calls back-to-front.  WebGL draw order handles the rest.
     ctx.disable(Gl::DEPTH_TEST);
 
-    let u_size = ctx.get_uniform_location(&prog, "uSize")
+    let u_size = ctx
+        .get_uniform_location(&prog, "uSize")
         .expect("uniform uSize not found");
 
     // Framebuffer-blit pipeline: textured fullscreen quad.
-    let tvs = compile_shader(&ctx, Gl::VERTEX_SHADER,   TEX_VERT);
+    let tvs = compile_shader(&ctx, Gl::VERTEX_SHADER, TEX_VERT);
     let tfs = compile_shader(&ctx, Gl::FRAGMENT_SHADER, TEX_FRAG);
     let tex_prog = link_program(&ctx, &tvs, &tfs);
-    let u_tex = ctx.get_uniform_location(&tex_prog, "uTex")
+    let u_tex = ctx
+        .get_uniform_location(&tex_prog, "uTex")
         .expect("uniform uTex not found");
     let tex = ctx.create_texture().expect("create_texture");
     let quad = ctx.create_buffer().expect("create_buffer quad");
@@ -161,8 +161,7 @@ pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
     {
         // Two triangles covering NDC [-1,1]².
         let verts: [f32; 12] = [
-            -1.0, -1.0,  1.0, -1.0,  1.0, 1.0,
-            -1.0, -1.0,  1.0,  1.0, -1.0, 1.0,
+            -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, 1.0, -1.0, 1.0,
         ];
         // Safety: `verts` outlives this upload call.
         unsafe {
@@ -171,16 +170,24 @@ pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
         }
     }
 
-    let width  = canvas.width()  as f32;
+    let width = canvas.width() as f32;
     let height = canvas.height() as f32;
     ctx.viewport(0, 0, canvas.width() as i32, canvas.height() as i32);
 
     STATE.with(|cell| {
         *cell.borrow_mut() = Some(State {
-            ctx, canvas, prog, buf, u_size,
+            ctx,
+            canvas,
+            prog,
+            buf,
+            u_size,
             batches: Vec::new(),
-            width, height,
-            tex_prog, tex, quad, u_tex,
+            width,
+            height,
+            tex_prog,
+            tex,
+            quad,
+            u_tex,
         });
     });
 }
@@ -188,7 +195,8 @@ pub fn init_canvas(canvas: web_sys::OffscreenCanvas) {
 /// Return the current canvas backing-store dimensions.
 pub fn canvas_size() -> (u32, u32) {
     STATE.with(|cell| {
-        cell.borrow().as_ref()
+        cell.borrow()
+            .as_ref()
             .map(|s| (s.canvas.width(), s.canvas.height()))
             .unwrap_or((800, 600))
     })
@@ -200,7 +208,7 @@ pub fn resize(width: u32, height: u32) {
         if let Some(s) = cell.borrow_mut().as_mut() {
             s.canvas.set_width(width);
             s.canvas.set_height(height);
-            s.width  = width  as f32;
+            s.width = width as f32;
             s.height = height as f32;
             s.ctx.viewport(0, 0, width as i32, height as i32);
         }
@@ -211,8 +219,8 @@ pub fn resize(width: u32, height: u32) {
 fn unpack(color: u32) -> (f32, f32, f32) {
     (
         ((color >> 16) & 0xFF) as f32 / 255.0,
-        ((color >>  8) & 0xFF) as f32 / 255.0,
-        ( color        & 0xFF) as f32 / 255.0,
+        ((color >> 8) & 0xFF) as f32 / 255.0,
+        (color & 0xFF) as f32 / 255.0,
     )
 }
 
@@ -221,15 +229,18 @@ fn unpack(color: u32) -> (f32, f32, f32) {
 /// while preserving painter's sort order from the depth queue.
 pub fn push_triangle(
     color: u32,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-    x2: f32, y2: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
     _depth: f32,
 ) {
     STATE.with(|cell| {
         if let Some(s) = cell.borrow_mut().as_mut() {
             let (r, g, b) = unpack(color);
-            let verts = [x0,y0,r,g,b, x1,y1,r,g,b, x2,y2,r,g,b];
+            let verts = [x0, y0, r, g, b, x1, y1, r, g, b, x2, y2, r, g, b];
             match s.batches.last_mut() {
                 Some(Batch::Tri(v)) => v.extend_from_slice(&verts),
                 _ => s.batches.push(Batch::Tri(verts.to_vec())),
@@ -239,16 +250,11 @@ pub fn push_triangle(
 }
 
 /// Queue a projected screen-space line for this frame.
-pub fn push_line(
-    color: u32,
-    x0: f32, y0: f32,
-    x1: f32, y1: f32,
-    _depth: f32,
-) {
+pub fn push_line(color: u32, x0: f32, y0: f32, x1: f32, y1: f32, _depth: f32) {
     STATE.with(|cell| {
         if let Some(s) = cell.borrow_mut().as_mut() {
             let (r, g, b) = unpack(color);
-            let verts = [x0,y0,r,g,b, x1,y1,r,g,b];
+            let verts = [x0, y0, r, g, b, x1, y1, r, g, b];
             match s.batches.last_mut() {
                 Some(Batch::Line(v)) => v.extend_from_slice(&verts),
                 _ => s.batches.push(Batch::Line(verts.to_vec())),
@@ -258,13 +264,14 @@ pub fn push_line(
 }
 
 fn upload_and_draw(
-    ctx:    &Gl,
-    prog:   &WebGlProgram,
-    buf:    &WebGlBuffer,
+    ctx: &Gl,
+    prog: &WebGlProgram,
+    buf: &WebGlBuffer,
     u_size: &WebGlUniformLocation,
-    verts:  &[f32],
-    w: f32, h: f32,
-    mode:   u32,
+    verts: &[f32],
+    w: f32,
+    h: f32,
+    mode: u32,
 ) {
     ctx.bind_buffer(Gl::ARRAY_BUFFER, Some(buf));
 
@@ -277,16 +284,16 @@ fn upload_and_draw(
     ctx.use_program(Some(prog));
     ctx.uniform2f(Some(u_size), w, h);
 
-    let stride = (FLOATS_PER_VERT * 4) as i32;  // 5 floats × 4 bytes = 20
+    let stride = (FLOATS_PER_VERT * 4) as i32; // 5 floats × 4 bytes = 20
 
     let loc_screen = ctx.get_attrib_location(prog, "aScreen") as u32;
-    let loc_color  = ctx.get_attrib_location(prog, "aColor")  as u32;
+    let loc_color = ctx.get_attrib_location(prog, "aColor") as u32;
 
     ctx.enable_vertex_attrib_array(loc_screen);
     ctx.vertex_attrib_pointer_with_i32(loc_screen, 2, Gl::FLOAT, false, stride, 0);
 
     ctx.enable_vertex_attrib_array(loc_color);
-    ctx.vertex_attrib_pointer_with_i32(loc_color,  3, Gl::FLOAT, false, stride, 8);
+    ctx.vertex_attrib_pointer_with_i32(loc_color, 3, Gl::FLOAT, false, stride, 8);
 
     ctx.draw_arrays(mode, 0, (verts.len() / FLOATS_PER_VERT) as i32);
 }
@@ -362,12 +369,17 @@ pub fn blit_rgb(buffer: &[u32], width: usize, height: usize) {
         ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_MAG_FILTER, Gl::NEAREST as i32);
         ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_S, Gl::CLAMP_TO_EDGE as i32);
         ctx.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_T, Gl::CLAMP_TO_EDGE as i32);
-        let _ = ctx
-            .tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-                Gl::TEXTURE_2D, 0, Gl::RGBA as i32,
-                width as i32, height as i32, 0,
-                Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&px),
-            );
+        let _ = ctx.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+            Gl::TEXTURE_2D,
+            0,
+            Gl::RGBA as i32,
+            width as i32,
+            height as i32,
+            0,
+            Gl::RGBA,
+            Gl::UNSIGNED_BYTE,
+            Some(&px),
+        );
 
         ctx.use_program(Some(&s.tex_prog));
         ctx.uniform1i(Some(&s.u_tex), 0);

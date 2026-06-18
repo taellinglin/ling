@@ -19,4 +19,3 @@ pub enum Script {
 pub fn normalize_source(source: &str) -> String {
     source.to_string()
 }
-

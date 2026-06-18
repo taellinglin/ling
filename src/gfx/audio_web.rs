@@ -8,22 +8,22 @@
 //   lfo_osc → lfo_gain → osc.frequency   (LFO → freq mod)
 //   osc → amp_gain → panner → master_gain → destination
 
+use js_sys::{Array, Function, Reflect};
 use std::cell::RefCell;
 use wasm_bindgen::{JsCast, JsValue};
-use js_sys::{Array, Function, Reflect};
 use web_sys::{AudioContext, GainNode, OscillatorNode, OscillatorType, PannerNode};
 
 struct Tone {
-    osc:      OscillatorNode,
-    lfo:      OscillatorNode,
+    osc: OscillatorNode,
+    lfo: OscillatorNode,
     lfo_gain: GainNode,
-    amp:      GainNode,
-    panner:   PannerNode,
+    amp: GainNode,
+    panner: PannerNode,
 }
 
 struct AudioState {
-    ctx:    AudioContext,
-    tones:  Vec<Option<Tone>>,
+    ctx: AudioContext,
+    tones: Vec<Option<Tone>>,
     master: GainNode,
 }
 
@@ -48,7 +48,9 @@ fn js_call(obj: &JsValue, method: &str, args: &[f64]) {
 /// Lazily create the AudioContext and master gain on first use.
 fn ensure_init() -> bool {
     AUDIO.with(|a| {
-        if a.borrow().is_some() { return true; }
+        if a.borrow().is_some() {
+            return true;
+        }
         match AudioContext::new() {
             Ok(ctx) => {
                 let master = match ctx.create_gain() {
@@ -57,17 +59,14 @@ fn ensure_init() -> bool {
                 };
                 master.gain().set_value(1.0);
                 master.connect_with_audio_node(&ctx.destination()).ok();
-                *a.borrow_mut() = Some(AudioState {
-                    ctx,
-                    tones: (0..16).map(|_| None).collect(),
-                    master,
-                });
+                *a.borrow_mut() =
+                    Some(AudioState { ctx, tones: (0..16).map(|_| None).collect(), master });
                 true
-            }
+            },
             Err(e) => {
                 web_sys::console::warn_1(&e);
                 false
-            }
+            },
         }
     })
 }
@@ -81,26 +80,34 @@ fn ensure_init() -> bool {
 /// `lfo_depth`— depth as fraction of base frequency
 pub fn set_tone(
     idx: usize,
-    x: f32, y: f32, z: f32,
+    x: f32,
+    y: f32,
+    z: f32,
     _w: f32,
-    freq: f32, amp: f32,
-    lfo_rate: f32, lfo_depth: f32,
+    freq: f32,
+    amp: f32,
+    lfo_rate: f32,
+    lfo_depth: f32,
 ) {
-    if !ensure_init() { return; }
+    if !ensure_init() {
+        return;
+    }
     AUDIO.with(|a| {
         let mut opt = a.borrow_mut();
         if let Some(state) = opt.as_mut() {
-            if idx >= state.tones.len() { return; }
+            if idx >= state.tones.len() {
+                return;
+            }
 
             // Create channel on first use
             if state.tones[idx].is_none() {
                 let ctx = &state.ctx;
                 let result = (|| -> Option<Tone> {
-                    let osc      = ctx.create_oscillator().ok()?;
-                    let lfo      = ctx.create_oscillator().ok()?;
+                    let osc = ctx.create_oscillator().ok()?;
+                    let lfo = ctx.create_oscillator().ok()?;
                     let lfo_gain = ctx.create_gain().ok()?;
                     let amp_node = ctx.create_gain().ok()?;
-                    let panner   = ctx.create_panner().ok()?;
+                    let panner = ctx.create_panner().ok()?;
 
                     osc.set_type(OscillatorType::Sine);
                     lfo.set_type(OscillatorType::Sine);
@@ -151,7 +158,7 @@ pub fn set_listener(cry: f32, sry: f32, crx: f32, srx: f32) {
         if let Some(state) = opt.as_ref() {
             let listener = state.ctx.listener();
             // Forward vector: camera looks along -Z rotated by yaw then pitch
-            let fx =  sry;
+            let fx = sry;
             let fy = -srx * cry;
             let fz = -crx * cry;
             // setOrientation(forwardX, forwardY, forwardZ, upX, upY, upZ)

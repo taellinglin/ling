@@ -19,10 +19,12 @@ ling-core = { workspace = true }
 ling-mir  = { workspace = true }
 ling-ast  = { workspace = true }
 anyhow    = "1.0"
-cranelift = { version = "0.131.1", features = ["module", "object", "native"] }
+cranelift = { version = "0.131.1", features = ["module", "object", "native", "jit"] }
 cranelift-frontend = "0.131.1"
 cranelift-module = "0.131.1"
 cranelift-object = "0.131.1"
+cranelift-jit = "0.131.1"
+cranelift-native = "0.131.1"
 
 [lib]
 name = "ling_codegen"

@@ -9,4 +9,4 @@ pub mod engine;
 pub mod fft;
 
 pub use engine::{AudioEngine, ToneParams, Wave};
-pub use fft::{FftAnalyzer, CosPalette, Window, freq_texture, waveform_texture};
+pub use fft::{freq_texture, waveform_texture, CosPalette, FftAnalyzer, Window};

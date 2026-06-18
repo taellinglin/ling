@@ -29,17 +29,31 @@ fn adsr(v: &str) -> Adsr {
 fn op_index(s: &str) -> Option<usize> {
     // "op2" → 1, "2" → 1
     let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
-    digits.parse::<usize>().ok().filter(|&n| n >= 1).map(|n| n - 1)
+    digits
+        .parse::<usize>()
+        .ok()
+        .filter(|&n| n >= 1)
+        .map(|n| n - 1)
 }
 
 /// Parse a patch from DSL text.
 pub fn from_str(text: &str) -> Patch {
-    let mut p = Patch { ops: Vec::new(), filter: Filter::default(), ..Patch::default() };
-    let ensure = |ops: &mut Vec<Op>, idx: usize| { while ops.len() <= idx { ops.push(Op::default()); } };
+    let mut p = Patch {
+        ops: Vec::new(),
+        filter: Filter::default(),
+        ..Patch::default()
+    };
+    let ensure = |ops: &mut Vec<Op>, idx: usize| {
+        while ops.len() <= idx {
+            ops.push(Op::default());
+        }
+    };
 
     for raw in text.lines() {
         let line = raw.split('#').next().unwrap_or("").trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         // name may contain spaces → take the rest of the line
         if let Some(rest) = line.strip_prefix("name") {
             if let Some(eq) = rest.find('=') {
@@ -49,23 +63,45 @@ pub fn from_str(text: &str) -> Patch {
         }
         // Collapse spaces around '=' so both `gm = 5` and `op1.wave=sine` tokenize.
         // (Values never contain spaces; the spaced `name = "..."` line is handled above.)
-        let norm: String = line.split('=').map(|p| p.trim()).collect::<Vec<_>>().join("=");
+        let norm: String = line
+            .split('=')
+            .map(|p| p.trim())
+            .collect::<Vec<_>>()
+            .join("=");
         for tok in norm.split_whitespace() {
-            let (key, val) = match tok.split_once('=') { Some(kv) => kv, None => continue };
-            let key = key.trim(); let val = val.trim();
+            let (key, val) = match tok.split_once('=') {
+                Some(kv) => kv,
+                None => continue,
+            };
+            let key = key.trim();
+            let val = val.trim();
             match key {
-                "gm"   => p.gm   = val.parse().unwrap_or(0),
+                "gm" => p.gm = val.parse().unwrap_or(0),
                 "poly" => p.poly = val.parse::<usize>().unwrap_or(16).max(1),
-                "amp"  => p.amp  = val.parse().unwrap_or(0.8),
-                "lfo.rate"   => p.lfo.rate   = val.parse().unwrap_or(5.0),
-                "lfo.pitch"  => p.lfo.pitch  = val.parse().unwrap_or(0.0),
+                "amp" => p.amp = val.parse().unwrap_or(0.8),
+                "lfo.rate" => p.lfo.rate = val.parse().unwrap_or(5.0),
+                "lfo.pitch" => p.lfo.pitch = val.parse().unwrap_or(0.0),
                 "lfo.cutoff" => p.lfo.cutoff = val.parse().unwrap_or(0.0),
-                "lfo.amp"    => p.lfo.amp    = val.parse().unwrap_or(0.0),
-                "filter.cutoff" => { p.filter.cutoff = val.parse().unwrap_or(1.0); p.filter.on = true; }
-                "filter.reso"   => { p.filter.reso   = val.parse().unwrap_or(0.2); p.filter.on = true; }
-                "filter.env"    => { p.filter.env    = val.parse().unwrap_or(0.0); p.filter.on = true; }
-                "filter.adsr"   => { p.filter.adsr   = adsr(val); p.filter.on = true; }
-                "filter.on"     => { p.filter.on = val != "0" && val != "false"; }
+                "lfo.amp" => p.lfo.amp = val.parse().unwrap_or(0.0),
+                "filter.cutoff" => {
+                    p.filter.cutoff = val.parse().unwrap_or(1.0);
+                    p.filter.on = true;
+                },
+                "filter.reso" => {
+                    p.filter.reso = val.parse().unwrap_or(0.2);
+                    p.filter.on = true;
+                },
+                "filter.env" => {
+                    p.filter.env = val.parse().unwrap_or(0.0);
+                    p.filter.on = true;
+                },
+                "filter.adsr" => {
+                    p.filter.adsr = adsr(val);
+                    p.filter.on = true;
+                },
+                "filter.on" => {
+                    p.filter.on = val != "0" && val != "false";
+                },
                 k if k.starts_with("op") => {
                     let mut parts = k.splitn(2, '.');
                     let opn = parts.next().unwrap_or("");
@@ -74,22 +110,24 @@ pub fn from_str(text: &str) -> Patch {
                         ensure(&mut p.ops, idx);
                         let op = &mut p.ops[idx];
                         match field {
-                            "wave"   => op.wave = Wave::from_name(val),
-                            "ratio"  => op.ratio = val.parse().unwrap_or(1.0),
-                            "fixed"  => op.fixed_hz = val.parse().unwrap_or(0.0),
-                            "level"  => op.level = val.parse().unwrap_or(1.0),
+                            "wave" => op.wave = Wave::from_name(val),
+                            "ratio" => op.ratio = val.parse().unwrap_or(1.0),
+                            "fixed" => op.fixed_hz = val.parse().unwrap_or(0.0),
+                            "level" => op.level = val.parse().unwrap_or(1.0),
                             "detune" => op.detune = val.parse().unwrap_or(0.0),
-                            "adsr"   => op.adsr = adsr(val),
-                            "fm"     => op.fm_target = op_index(val).map(|i| i as i32).unwrap_or(-1),
-                            _ => {}
+                            "adsr" => op.adsr = adsr(val),
+                            "fm" => op.fm_target = op_index(val).map(|i| i as i32).unwrap_or(-1),
+                            _ => {},
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
-    if p.ops.is_empty() { p.ops.push(Op::default()); }
+    if p.ops.is_empty() {
+        p.ops.push(Op::default());
+    }
     p
 }
 
@@ -103,7 +141,8 @@ mod tests {
     use super::*;
     #[test]
     fn parses_fm_patch() {
-        let p = from_str(r#"
+        let p = from_str(
+            r#"
             name = "Rhodes EP"
             gm = 5
             poly = 12
@@ -112,7 +151,8 @@ mod tests {
             filter.cutoff=0.8 filter.env=0.3
             lfo.rate=5.0 lfo.pitch=0.05
             amp = 0.7
-        "#);
+        "#,
+        );
         assert_eq!(p.name, "Rhodes EP");
         assert_eq!(p.gm, 5);
         assert_eq!(p.poly, 12);

@@ -1,10 +1,10 @@
 // src/lexer/mod.rs — hand-written polyglot lexer
-mod token;
 mod cursor;
+mod token;
 mod unicode;
 
-pub use token::Token;
 pub use cursor::Cursor;
+pub use token::Token;
 
 pub struct Lexer<'a> {
     source: &'a str,
@@ -36,7 +36,10 @@ impl<'a> Lexer<'a> {
 
     fn skip_whitespace_and_comments(&mut self) {
         loop {
-            while matches!(self.peek(), Some(' ') | Some('\t') | Some('\n') | Some('\r') | Some('\x0C')) {
+            while matches!(
+                self.peek(),
+                Some(' ') | Some('\t') | Some('\n') | Some('\r') | Some('\x0C')
+            ) {
                 self.advance();
             }
             if self.peek() == Some('/') && self.peek_nth(1) == Some('/') {
@@ -64,14 +67,17 @@ impl<'a> Lexer<'a> {
                 None => break,
                 Some('"') => break,
                 Some('\\') => match self.advance() {
-                    Some('n')  => s.push('\n'),
-                    Some('t')  => s.push('\t'),
-                    Some('r')  => s.push('\r'),
-                    Some('"')  => s.push('"'),
+                    Some('n') => s.push('\n'),
+                    Some('t') => s.push('\t'),
+                    Some('r') => s.push('\r'),
+                    Some('"') => s.push('"'),
                     Some('\\') => s.push('\\'),
-                    Some('0')  => s.push('\0'),
-                    Some(c)    => { s.push('\\'); s.push(c); }
-                    None       => break,
+                    Some('0') => s.push('\0'),
+                    Some(c) => {
+                        s.push('\\');
+                        s.push(c);
+                    },
+                    None => break,
                 },
                 Some(c) => s.push(c),
             }
@@ -84,11 +90,13 @@ impl<'a> Lexer<'a> {
         let mut has_dot = false;
         loop {
             match self.peek() {
-                Some('0'..='9') => { self.advance(); }
+                Some('0'..='9') => {
+                    self.advance();
+                },
                 Some('.') if !has_dot && matches!(self.peek_nth(1), Some('0'..='9')) => {
                     has_dot = true;
                     self.advance();
-                }
+                },
                 _ => break,
             }
         }
@@ -117,135 +125,174 @@ impl<'a> Lexer<'a> {
     fn classify_word(word: &str) -> Token {
         match word {
             // ── English keywords ────────────────────────────────────────────
-            "bind"   | "令" | "灵符" => Token::Bind,
-            "do"     | "执"          => Token::Do,
-            "fn"     | "函"          => Token::Fn,
-            "mod"    | "核"          => Token::Mod,
-            "type"   | "符"          => Token::Type,
+            "bind" | "令" | "灵符" => Token::Bind,
+            "do" | "执" => Token::Do,
+            "fn" | "函" => Token::Fn,
+            "mod" | "核" => Token::Mod,
+            "type" | "符" => Token::Type,
             // Module imports: use / 载 (zh) / 使う (ja) / 사용 (ko) / ใช้ / นำเข้า (th)
-            "use" | "载" | "引" | "사용" | "使う" | "ใช้" | "นำเข้า" | "importar" | "nutzen" | "utiliser" => Token::Use,
-            "if"     | "若" | "如"   => Token::If,
-            "else"   | "否则" | "否" => Token::Else,
-            "while"  | "循" | "当"   => Token::While,
-            "for"    | "历"          => Token::For,
-            "in"     | "于"          => Token::In,
-            "match"  | "配"          => Token::Match,
-            "return" | "归"          => Token::Return,
-            "own"    | "拥有" | "独" => Token::Own,
-            "lend"   | "借"          => Token::Lend,
-            "share"  | "共享" | "共" => Token::Share,
-            "move"   | "移动" | "移" => Token::Move,
-            "copy"   | "复制" | "复" => Token::Copy,
-            "async"  | "异步" | "异" => Token::Async,
-            "wait"   | "等待" | "待" => Token::Wait,
-            "as"     | "为"          => Token::As,
-            "where"  | "条件"        => Token::Where,
-            "post"   | "发布" | "出" => Token::Post,
-            "give"   | "给" | "予"   => Token::Give,
-            "fit"    | "适合"        => Token::Fit,
+            "use" | "载" | "引" | "사용" | "使う" | "ใช้" | "นำเข้า" | "importar" | "nutzen"
+            | "utiliser" => Token::Use,
+            "if" | "若" | "如" => Token::If,
+            "else" | "否则" | "否" => Token::Else,
+            "while" | "循" | "当" => Token::While,
+            "for" | "历" => Token::For,
+            "in" | "于" => Token::In,
+            "match" | "配" => Token::Match,
+            "return" | "归" => Token::Return,
+            "own" | "拥有" | "独" => Token::Own,
+            "lend" | "借" => Token::Lend,
+            "share" | "共享" | "共" => Token::Share,
+            "move" | "移动" | "移" => Token::Move,
+            "copy" | "复制" | "复" => Token::Copy,
+            "async" | "异步" | "异" => Token::Async,
+            "wait" | "等待" | "待" => Token::Wait,
+            "as" | "为" => Token::As,
+            "where" | "条件" => Token::Where,
+            "post" | "发布" | "出" => Token::Post,
+            "give" | "给" | "予" => Token::Give,
+            "fit" | "适合" => Token::Fit,
             // `form` — record/struct definition (EN · ZH · JA · KO · TH)
-            "form"   | "形式" | "形" | "構造" | "구조" | "โครงสร้าง" => Token::Form,
+            "form" | "形式" | "形" | "構造" | "구조" | "โครงสร้าง" => {
+                Token::Form
+            },
             // `choose` — sum type / enum definition (EN · ZH · JA · KO · TH)
-            "choose" | "选择" | "选" | "選択" | "선택" | "เลือกแบบ" => Token::Choose,
-            "can"    | "能"          => Token::Can,
+            "choose" | "选择" | "选" | "選択" | "선택" | "เลือกแบบ" => {
+                Token::Choose
+            },
+            "can" | "能" => Token::Can,
             "change" | "改变" | "变" => Token::Change,
-            "stop"   | "停止" | "止" => Token::Stop,
-            "again"  | "继续"        => Token::Again,
-            "try"    | "尝试" | "试" => Token::Try,
-            "sure"   | "确定" | "确" => Token::Sure,
-            "maybe"  | "可能" | "或" => Token::Maybe,
-            "pure"   | "纯"          => Token::Pure,
-            "spawn"  | "生成" | "启" => Token::Spawn,
-            "ok"     | "好" | "可"   => Token::Ok,
-            "bad"    | "坏" | "误"   => Token::Bad,
-            "none"   | "无"          => Token::None,
+            "stop" | "停止" | "止" => Token::Stop,
+            "again" | "继续" => Token::Again,
+            "try" | "尝试" | "试" => Token::Try,
+            "sure" | "确定" | "确" => Token::Sure,
+            "maybe" | "可能" | "或" => Token::Maybe,
+            "pure" | "纯" => Token::Pure,
+            "spawn" | "生成" | "启" => Token::Spawn,
+            "ok" | "好" | "可" => Token::Ok,
+            "bad" | "坏" | "误" => Token::Bad,
+            "none" | "无" => Token::None,
             // Japanese — full keyword set with short kanji shorthands
-            "束縛" | "バ"  => Token::Bind,
-            "実行" | "執"  => Token::Do,
-            "関数" | "関"  => Token::Fn,
+            "束縛" | "バ" => Token::Bind,
+            "実行" | "執" => Token::Do,
+            "関数" | "関" => Token::Fn,
             "モジュール" | "模" => Token::Mod,
-            "もし"         => Token::If,
-            "他"           => Token::Else,
-            "間" | "一方"  => Token::While,
+            "もし" => Token::If,
+            "他" => Token::Else,
+            "間" | "一方" => Token::While,
             "繰" | "ために" => Token::For,
-            "の中"         => Token::In,
-            "一致"         => Token::Match,
+            "の中" => Token::In,
+            "一致" => Token::Match,
             "戻る" | "帰る" => Token::Return,
-            "試す"         => Token::Try,
-            "待つ"         => Token::Wait,
-            "非同期"       => Token::Async,
-            "起動"         => Token::Spawn,
+            "試す" => Token::Try,
+            "待つ" => Token::Wait,
+            "非同期" => Token::Async,
+            "起動" => Token::Spawn,
             "止まれ" | "停め" => Token::Stop,
-            "継続"         => Token::Again,
+            "継続" => Token::Again,
             // Booleans — shared across Chinese, Japanese, Korean, Thai (already in Thai section)
-            "true"  | "真" => Token::Bool(true),
+            "true" | "真" => Token::Bool(true),
             "false" | "假" | "偽" => Token::Bool(false),
             // Korean — full keyword set with short Hangul forms
             "바인드" | "묶" => Token::Bind,
-            "실행"          => Token::Do,
-            "함수"          => Token::Fn,
-            "모듈"          => Token::Mod,
+            "실행" => Token::Do,
+            "함수" => Token::Fn,
+            "모듈" => Token::Mod,
             "만약" | "조건" => Token::If,
-            "아니면"        => Token::Else,
+            "아니면" => Token::Else,
             "동안" | "반복" => Token::While,
-            "위해"          => Token::For,
-            "안에"          => Token::In,
-            "매치"          => Token::Match,
+            "위해" => Token::For,
+            "안에" => Token::In,
+            "매치" => Token::Match,
             "반환" | "귀환" => Token::Return,
-            "시도"          => Token::Try,
-            "기다려"        => Token::Wait,
-            "비동기"        => Token::Async,
-            "생성"          => Token::Spawn,
-            "멈춤"          => Token::Stop,
-            "계속"          => Token::Again,
-            "참"            => Token::Bool(true),
-            "거짓"          => Token::Bool(false),
+            "시도" => Token::Try,
+            "기다려" => Token::Wait,
+            "비동기" => Token::Async,
+            "생성" => Token::Spawn,
+            "멈춤" => Token::Stop,
+            "계속" => Token::Again,
+            "참" => Token::Bool(true),
+            "거짓" => Token::Bool(false),
             // Russian
-            "связать" => Token::Bind, "сделать" => Token::Do, "если" => Token::If,
-            "иначе" => Token::Else,   "пока" => Token::While, "для" => Token::For,
+            "связать" => Token::Bind,
+            "сделать" => Token::Do,
+            "если" => Token::If,
+            "иначе" => Token::Else,
+            "пока" => Token::While,
+            "для" => Token::For,
             "вернуть" => Token::Return,
             // Thai
-            "ผูก" => Token::Bind,      "ทำ" => Token::Do,
-            "ฟังก์ชัน" => Token::Fn,  "โมดูล" => Token::Mod,
-            "ถ้า" => Token::If,        "มิฉะนั้น" => Token::Else,
-            "ขณะที่" => Token::While,  "สำหรับ" => Token::For,
-            "ใน" => Token::In,         "จับคู่" => Token::Match,
-            "คืน" => Token::Return,    "รอ" => Token::Wait,
+            "ผูก" => Token::Bind,
+            "ทำ" => Token::Do,
+            "ฟังก์ชัน" => Token::Fn,
+            "โมดูล" => Token::Mod,
+            "ถ้า" => Token::If,
+            "มิฉะนั้น" => Token::Else,
+            "ขณะที่" => Token::While,
+            "สำหรับ" => Token::For,
+            "ใน" => Token::In,
+            "จับคู่" => Token::Match,
+            "คืน" => Token::Return,
+            "รอ" => Token::Wait,
             "ไม่พร้อมกัน" => Token::Async,
-            "จริง" => Token::Bool(true), "เท็จ" => Token::Bool(false),
+            "จริง" => Token::Bool(true),
+            "เท็จ" => Token::Bool(false),
             // Hindi
-            "बाँधो" => Token::Bind, "करो" => Token::Do,
-            "अगर" => Token::If,     "नहींतो" => Token::Else,
-            "जबकि" => Token::While, "केलिए" => Token::For,
+            "बाँधो" => Token::Bind,
+            "करो" => Token::Do,
+            "अगर" => Token::If,
+            "नहींतो" => Token::Else,
+            "जबकि" => Token::While,
+            "केलिए" => Token::For,
             "वापस" => Token::Return,
-            "सत्य" => Token::Bool(true), "असत्य" => Token::Bool(false),
+            "सत्य" => Token::Bool(true),
+            "असत्य" => Token::Bool(false),
             // Arabic
-            "ربط" => Token::Bind, "افعل" => Token::Do,
-            "إذا" => Token::If,   "وإلا" => Token::Else,
-            "بينما" => Token::While, "لأجل" => Token::For,
-            "في" => Token::In,    "أعد" => Token::Return,
-            "صحيح" => Token::Bool(true), "خطأ" => Token::Bool(false),
+            "ربط" => Token::Bind,
+            "افعل" => Token::Do,
+            "إذا" => Token::If,
+            "وإلا" => Token::Else,
+            "بينما" => Token::While,
+            "لأجل" => Token::For,
+            "في" => Token::In,
+            "أعد" => Token::Return,
+            "صحيح" => Token::Bool(true),
+            "خطأ" => Token::Bool(false),
             // Spanish
-            "enlazar" => Token::Bind, "hacer" => Token::Do,
-            "si" => Token::If,        "sino" => Token::Else,
-            "mientras" => Token::While, "para" => Token::For,
+            "enlazar" => Token::Bind,
+            "hacer" => Token::Do,
+            "si" => Token::If,
+            "sino" => Token::Else,
+            "mientras" => Token::While,
+            "para" => Token::For,
             "retornar" => Token::Return,
-            "verdadero" => Token::Bool(true), "falso" => Token::Bool(false),
+            "verdadero" => Token::Bool(true),
+            "falso" => Token::Bool(false),
             // French
-            "lier" => Token::Bind,    "faire" => Token::Do,
-            "func" => Token::Fn,      "module" => Token::Mod,
-            "sinon" => Token::Else,   "tantque" => Token::While,
+            "lier" => Token::Bind,
+            "faire" => Token::Do,
+            "func" => Token::Fn,
+            "module" => Token::Mod,
+            "sinon" => Token::Else,
+            "tantque" => Token::While,
             "retourner" => Token::Return,
-            "vrai" => Token::Bool(true), "faux" => Token::Bool(false),
+            "vrai" => Token::Bool(true),
+            "faux" => Token::Bool(false),
             // German
-            "binden" => Token::Bind, "machen" => Token::Do,
-            "wenn" => Token::If,     "sonst" => Token::Else,
-            "solange" => Token::While, "für" => Token::For,
+            "binden" => Token::Bind,
+            "machen" => Token::Do,
+            "wenn" => Token::If,
+            "sonst" => Token::Else,
+            "solange" => Token::While,
+            "für" => Token::For,
             "zurück" => Token::Return,
-            "wahr" => Token::Bool(true), "falsch" => Token::Bool(false),
+            "wahr" => Token::Bool(true),
+            "falsch" => Token::Bool(false),
             // Portuguese (deduplicated from Spanish)
-            "ligar" => Token::Bind,    "fazer" => Token::Do,
-            "se" => Token::If,         "senão" => Token::Else,
+            "ligar" => Token::Bind,
+            "fazer" => Token::Do,
+            "se" => Token::If,
+            "senão" => Token::Else,
             "enquanto" => Token::While,
             "verdadeiro" => Token::Bool(true),
             // Everything else is an identifier
@@ -258,65 +305,81 @@ impl<'a> Lexer<'a> {
         let ch = self.peek()?;
 
         // String literal
-        if ch == '"' { return Some(self.lex_string()); }
+        if ch == '"' {
+            return Some(self.lex_string());
+        }
 
         // Number literal
-        if ch.is_ascii_digit() { return Some(self.lex_number()); }
+        if ch.is_ascii_digit() {
+            return Some(self.lex_number());
+        }
 
         // Word (keyword or identifier) — handles ASCII and all Unicode letters/ideographs
-        if ch.is_alphabetic() || ch == '_' || is_unicode_combining(ch) { return Some(self.lex_word()); }
+        if ch.is_alphabetic() || ch == '_' || is_unicode_combining(ch) {
+            return Some(self.lex_word());
+        }
 
         // Multi-character punctuation / operators
         let rest = self.rest();
 
         // `..`
         if rest.starts_with("..") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::DotDot);
         }
         // `::`
         if rest.starts_with("::") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::ColonColon);
         }
         // `==`
         if rest.starts_with("==") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::EqEq);
         }
         // `!=`
         if rest.starts_with("!=") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::Ne);
         }
         // `<=`
         if rest.starts_with("<=") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::Le);
         }
         // `>=`
         if rest.starts_with(">=") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::Ge);
         }
         // `->`
         if rest.starts_with("->") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::Arrow);
         }
         // `=>`
         if rest.starts_with("=>") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::FatArrow);
         }
         // `&&`
         if rest.starts_with("&&") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::And);
         }
         // `||`
         if rest.starts_with("||") {
-            self.advance(); self.advance();
+            self.advance();
+            self.advance();
             return Some(Token::Or);
         }
 
@@ -344,7 +407,7 @@ impl<'a> Lexer<'a> {
             ':' => Token::Colon,
             ';' => Token::Semicolon,
             '|' => Token::Or, // single | treated as Or (for closure context)
-            c   => Token::Error(c.to_string()),
+            c => Token::Error(c.to_string()),
         })
     }
 }

@@ -11,10 +11,14 @@ const POLY: u16 = 0x11b; // x^8 + x^4 + x^3 + x + 1
 fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     let mut result = 0u8;
     while b > 0 {
-        if b & 1 != 0 { result ^= a; }
+        if b & 1 != 0 {
+            result ^= a;
+        }
         let hi = a & 0x80;
         a <<= 1;
-        if hi != 0 { a ^= (POLY & 0xff) as u8; }
+        if hi != 0 {
+            a ^= (POLY & 0xff) as u8;
+        }
         b >>= 1;
     }
     result
@@ -27,12 +31,16 @@ fn gf_mul(mut a: u8, mut b: u8) -> u8 {
 /// square-and-multiply (a fixed 8 squarings + multiplies → no secret-dependent
 /// branching on the loop count, unlike an extended-Euclid implementation).
 fn gf_inv(x: u8) -> u8 {
-    if x == 0 { return 0; }
+    if x == 0 {
+        return 0;
+    }
     let mut result = 1u8;
     let mut base = x;
     let mut exp = 254u16;
     while exp > 0 {
-        if exp & 1 == 1 { result = gf_mul(result, base); }
+        if exp & 1 == 1 {
+            result = gf_mul(result, base);
+        }
         base = gf_mul(base, base);
         exp >>= 1;
     }
@@ -50,8 +58,8 @@ fn eval_poly(coeffs: &[u8], x: u8) -> u8 {
 
 #[derive(Debug, Clone)]
 pub struct Share {
-    pub x: u8,          // x-coordinate (1..=255, unique per share)
-    pub y: Vec<u8>,     // y-coordinates (one per secret byte)
+    pub x: u8,      // x-coordinate (1..=255, unique per share)
+    pub y: Vec<u8>, // y-coordinates (one per secret byte)
 }
 
 /// Split `secret` into `n` shares, any `threshold` of which can reconstruct.
@@ -125,7 +133,9 @@ pub fn reconstruct_secret(shares: &[Share]) -> Vec<u8> {
             let mut num = 1u8;
             let mut den = 1u8;
             for (k, sk) in shares.iter().enumerate() {
-                if k == j { continue; }
+                if k == j {
+                    continue;
+                }
                 let xk = sk.x;
                 num = gf_mul(num, xk);
                 den = gf_mul(den, xj ^ xk);

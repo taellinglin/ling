@@ -4,12 +4,14 @@ use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct Tokenizer {
-    vocab:       HashMap<String, u32>,
+    vocab: HashMap<String, u32>,
     id_to_token: Vec<String>,
 }
 
 impl Tokenizer {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     /// Build from an iterator of `(token, id)` pairs.
     pub fn from_vocab(pairs: impl IntoIterator<Item = (String, u32)>) -> Self {
@@ -25,7 +27,9 @@ impl Tokenizer {
         t
     }
 
-    pub fn vocab_size(&self) -> usize { self.id_to_token.len() }
+    pub fn vocab_size(&self) -> usize {
+        self.id_to_token.len()
+    }
 
     pub fn token_to_id(&self, token: &str) -> Option<u32> {
         self.vocab.get(token).copied()
@@ -46,8 +50,6 @@ impl Tokenizer {
     }
 
     pub fn decode(&self, ids: &[u32]) -> String {
-        ids.iter()
-            .filter_map(|&id| self.id_to_token(id))
-            .collect()
+        ids.iter().filter_map(|&id| self.id_to_token(id)).collect()
     }
 }

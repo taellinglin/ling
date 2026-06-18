@@ -20,20 +20,20 @@
 //! - [`mechanism`] — exact linkages (gear trains, four-bar).
 //! - [`creature`] — procedural biped/quadruped gaits + breathing.
 
-pub mod ease;
-pub mod track;
-pub mod rig;
-pub mod temperament;
-pub mod scalar;
-pub mod mechanism;
 pub mod creature;
+pub mod ease;
 pub mod face;
+pub mod mechanism;
+pub mod rig;
+pub mod scalar;
+pub mod temperament;
+pub mod track;
 
-pub use ease::{EaseFunction, Lerp, tween_ease};
-pub use track::{Keyframe, Track, Timeline};
-pub use rig::{Rig, Joint, JointId, Transform};
+pub use ease::{tween_ease, EaseFunction, Lerp};
+pub use face::{Expression, FacePoint, FaceRig, Region};
+pub use rig::{Joint, JointId, Rig, Transform};
 pub use temperament::Temperament;
-pub use face::{FaceRig, FacePoint, Region, Expression};
+pub use track::{Keyframe, Timeline, Track};
 
 /// A small owner of animation state, indexed by handle. Hosts (like the Ling
 /// runtime) can park rigs and timelines here and drive them by integer handle.
@@ -44,33 +44,46 @@ pub struct Animator {
 }
 
 impl Animator {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn add_rig(&mut self, rig: Rig) -> usize {
         self.rigs.push(rig);
         self.rigs.len() - 1
     }
-    pub fn rig(&self, h: usize) -> Option<&Rig> { self.rigs.get(h) }
-    pub fn rig_mut(&mut self, h: usize) -> Option<&mut Rig> { self.rigs.get_mut(h) }
+    pub fn rig(&self, h: usize) -> Option<&Rig> {
+        self.rigs.get(h)
+    }
+    pub fn rig_mut(&mut self, h: usize) -> Option<&mut Rig> {
+        self.rigs.get_mut(h)
+    }
 
     /// Create a looping timeline of `duration` seconds; returns its handle.
     pub fn add_timeline(&mut self, duration: f32) -> usize {
         self.timelines.push(Timeline::new(duration));
         self.timelines.len() - 1
     }
-    pub fn timeline(&self, h: usize) -> Option<&Timeline> { self.timelines.get(h) }
+    pub fn timeline(&self, h: usize) -> Option<&Timeline> {
+        self.timelines.get(h)
+    }
 
     /// Advance one timeline by `dt`; returns its new normalized progress `[0,1]`.
     pub fn tick(&mut self, h: usize, dt: f32) -> f32 {
         match self.timelines.get_mut(h) {
-            Some(tl) => { tl.tick(dt); tl.normalized() }
+            Some(tl) => {
+                tl.tick(dt);
+                tl.normalized()
+            },
             None => 0.0,
         }
     }
 
     /// Advance every timeline by `dt`.
     pub fn tick_all(&mut self, dt: f32) {
-        for tl in &mut self.timelines { tl.tick(dt); }
+        for tl in &mut self.timelines {
+            tl.tick(dt);
+        }
     }
 }
 

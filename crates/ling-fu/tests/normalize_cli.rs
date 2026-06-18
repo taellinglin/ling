@@ -28,7 +28,10 @@ fn normalize_to(lang: &str) -> String {
         .current_dir(&dir)
         .status()
         .expect("run lingfu");
-    assert!(status.success(), "lingfu normalize {lang} exited with failure");
+    assert!(
+        status.success(),
+        "lingfu normalize {lang} exited with failure"
+    );
 
     let out = fs::read_to_string(&file).expect("read normalized program");
     let _ = fs::remove_dir_all(&dir);
@@ -75,7 +78,10 @@ fn normalize_input_builtins() {
     let prog = "bind start = do {\n  pad_poll()\n  print(pad_button(0, \"a\"))\n  print(pad_lx(0))\n  pad_rumble(0, 1.0, 1.0)\n}\n";
     let cases: [(&str, [&str; 4]); 4] = [
         ("zh", ["手柄轮询", "手柄按键", "手柄左X", "手柄震动"]),
-        ("ja", ["パッド更新", "パッドボタン", "パッド左X", "パッド振動"]),
+        (
+            "ja",
+            ["パッド更新", "パッドボタン", "パッド左X", "パッド振動"],
+        ),
         ("ko", ["패드폴링", "패드버튼", "패드왼X", "패드진동"]),
         ("th", ["อัปเดตแพด", "ปุ่มแพด", "แพดซ้ายX", "แพดสั่น"]),
     ];
@@ -86,8 +92,12 @@ fn normalize_input_builtins() {
         let file = dir.join("prog.ling");
         fs::write(&file, prog).unwrap();
         let status = Command::new(LINGFU)
-            .arg("normalize").arg(lang).arg("--content-only")
-            .current_dir(&dir).status().expect("run lingfu");
+            .arg("normalize")
+            .arg(lang)
+            .arg("--content-only")
+            .current_dir(&dir)
+            .status()
+            .expect("run lingfu");
         assert!(status.success(), "normalize {lang} failed");
         let out = fs::read_to_string(&file).unwrap();
         let _ = fs::remove_dir_all(&dir);
@@ -107,7 +117,9 @@ fn normalize_to_english_uses_bind_not_let() {
     let file: PathBuf = dir.join("prog.ling");
     fs::write(&file, "令 start = 执 { 印(正弦(0.0)) }\n").unwrap();
     let status = Command::new(LINGFU)
-        .arg("normalize").arg("en").arg("--content-only")
+        .arg("normalize")
+        .arg("en")
+        .arg("--content-only")
         .current_dir(&dir)
         .status()
         .expect("run lingfu");

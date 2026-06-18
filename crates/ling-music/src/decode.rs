@@ -24,12 +24,20 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
-    if let Some(ext) = std::path::Path::new(path).extension().and_then(|e| e.to_str()) {
+    if let Some(ext) = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
         hint.with_extension(ext);
     }
 
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions { enable_gapless: true, ..Default::default() }, &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions { enable_gapless: true, ..Default::default() },
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("probe failed: {e}"))?;
     let mut format = probed.format;
 
@@ -40,7 +48,12 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
         .map_err(|e| format!("decoder: {e}"))?;
 
     let mut rate = track.codec_params.sample_rate.unwrap_or(44100);
-    let mut channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2).max(1);
+    let mut channels = track
+        .codec_params
+        .channels
+        .map(|c| c.count())
+        .unwrap_or(2)
+        .max(1);
     let mut inter: Vec<f32> = Vec::new();
     let mut sbuf: Option<SampleBuffer<f32>> = None;
 
@@ -50,7 +63,9 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
             Err(SymError::IoError(_)) => break, // end of stream
             Err(e) => return Err(format!("read: {e}")),
         };
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id() != track_id {
+            continue;
+        }
         match decoder.decode(&packet) {
             Ok(decoded) => {
                 let spec = *decoded.spec();
@@ -63,13 +78,15 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
                     sb.copy_interleaved_ref(decoded);
                     inter.extend_from_slice(sb.samples());
                 }
-            }
+            },
             Err(SymError::DecodeError(_)) => continue, // skip a bad frame
             Err(_) => break,
         }
     }
 
-    if inter.is_empty() { return Err("decoded zero samples".into()); }
+    if inter.is_empty() {
+        return Err("decoded zero samples".into());
+    }
 
     // Build interleaved stereo + a mono downmix.
     let frames = inter.len() / channels;
@@ -82,7 +99,9 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
         stereo.push(l);
         stereo.push(r);
         let mut sum = 0.0;
-        for c in 0..channels { sum += inter[base + c]; }
+        for c in 0..channels {
+            sum += inter[base + c];
+        }
         mono.push(sum / channels as f32);
     }
 

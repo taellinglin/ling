@@ -16,26 +16,42 @@ pub struct Track<T: Lerp> {
 }
 
 impl<T: Lerp> Track<T> {
-    pub fn new() -> Self { Self { keyframes: Vec::new() } }
+    pub fn new() -> Self {
+        Self { keyframes: Vec::new() }
+    }
 
     /// Add a keyframe (kept time-sorted). Chainable.
     pub fn key(mut self, time: f32, value: T, ease: EaseFunction) -> Self {
         self.keyframes.push(Keyframe { time, value, ease });
-        self.keyframes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        self.keyframes.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         self
     }
 
-    pub fn is_empty(&self) -> bool { self.keyframes.is_empty() }
+    pub fn is_empty(&self) -> bool {
+        self.keyframes.is_empty()
+    }
 
-    pub fn duration(&self) -> f32 { self.keyframes.last().map(|k| k.time).unwrap_or(0.0) }
+    pub fn duration(&self) -> f32 {
+        self.keyframes.last().map(|k| k.time).unwrap_or(0.0)
+    }
 
     /// Sample the track at `t`, easing into the next key. Clamps at the ends.
     pub fn sample(&self, t: f32) -> Option<T> {
         let ks = &self.keyframes;
-        if ks.is_empty() { return None; }
-        if t <= ks[0].time { return Some(ks[0].value.clone()); }
+        if ks.is_empty() {
+            return None;
+        }
+        if t <= ks[0].time {
+            return Some(ks[0].value.clone());
+        }
         let last = ks.last().unwrap();
-        if t >= last.time { return Some(last.value.clone()); }
+        if t >= last.time {
+            return Some(last.value.clone());
+        }
         for w in ks.windows(2) {
             let (a, b) = (&w[0], &w[1]);
             if t >= a.time && t <= b.time {
@@ -47,7 +63,11 @@ impl<T: Lerp> Track<T> {
     }
 }
 
-impl<T: Lerp> Default for Track<T> { fn default() -> Self { Self::new() } }
+impl<T: Lerp> Default for Track<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// A clock that advances time, loops, and reports normalized progress.
 #[derive(Debug, Clone)]
@@ -61,11 +81,24 @@ pub struct Timeline {
 
 impl Timeline {
     pub fn new(duration: f32) -> Self {
-        Self { time: 0.0, speed: 1.0, playing: true, looping: true, duration: duration.max(0.0) }
+        Self {
+            time: 0.0,
+            speed: 1.0,
+            playing: true,
+            looping: true,
+            duration: duration.max(0.0),
+        }
     }
-    pub fn play(&mut self)  { self.playing = true; }
-    pub fn pause(&mut self) { self.playing = false; }
-    pub fn stop(&mut self)  { self.playing = false; self.time = 0.0; }
+    pub fn play(&mut self) {
+        self.playing = true;
+    }
+    pub fn pause(&mut self) {
+        self.playing = false;
+    }
+    pub fn stop(&mut self) {
+        self.playing = false;
+        self.time = 0.0;
+    }
 
     /// Advance by `dt` seconds, honoring speed/loop. Returns the new time.
     pub fn tick(&mut self, dt: f32) -> f32 {
@@ -84,7 +117,11 @@ impl Timeline {
     }
 
     pub fn normalized(&self) -> f32 {
-        if self.duration <= 0.0 { 0.0 } else { (self.time / self.duration).clamp(0.0, 1.0) }
+        if self.duration <= 0.0 {
+            0.0
+        } else {
+            (self.time / self.duration).clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -93,9 +130,11 @@ mod tests {
     use super::*;
     #[test]
     fn track_samples_and_clamps() {
-        let t = Track::new()
-            .key(0.0, 0.0f32, EaseFunction::Linear)
-            .key(1.0, 10.0, EaseFunction::Linear);
+        let t = Track::new().key(0.0, 0.0f32, EaseFunction::Linear).key(
+            1.0,
+            10.0,
+            EaseFunction::Linear,
+        );
         assert_eq!(t.sample(-1.0), Some(0.0));
         assert_eq!(t.sample(0.5), Some(5.0));
         assert_eq!(t.sample(2.0), Some(10.0));

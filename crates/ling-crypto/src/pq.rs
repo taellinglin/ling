@@ -30,9 +30,9 @@
 //! assert_eq!(ss_send, ss_recv);                 // shared 32-byte secret
 //! ```
 
-use ml_kem::{MlKem768, EncapsulationKey, DecapsulationKey, Kem, KeyExport};
-use ml_kem::{Encapsulate, Decapsulate};
 use ml_kem::array::Array;
+use ml_kem::{Decapsulate, Encapsulate};
+use ml_kem::{DecapsulationKey, EncapsulationKey, Kem, KeyExport, MlKem768};
 
 /// Byte length of an ML-KEM-768 encapsulation (public) key.
 pub const ENCAPS_KEY_LEN: usize = 1184;
@@ -87,7 +87,10 @@ impl MlKem768Keypair {
     /// deterministic pseudo-random secret rather than an error, so this only
     /// fails on a wrong-length input.
     pub fn decapsulate(&self, ciphertext: &[u8]) -> Result<[u8; SHARED_SECRET_LEN], &'static str> {
-        let ss = self.dk.decapsulate_slice(ciphertext).map_err(|_| "ciphertext wrong length")?;
+        let ss = self
+            .dk
+            .decapsulate_slice(ciphertext)
+            .map_err(|_| "ciphertext wrong length")?;
         let mut out = [0u8; SHARED_SECRET_LEN];
         out.copy_from_slice(ss.as_slice());
         Ok(out)
@@ -121,7 +124,10 @@ mod tests {
         assert_eq!(ct.len(), CIPHERTEXT_LEN);
 
         let ss_recv = kp.decapsulate(&ct).expect("decapsulate");
-        assert_eq!(ss_send, ss_recv, "both parties derive the same shared secret");
+        assert_eq!(
+            ss_send, ss_recv,
+            "both parties derive the same shared secret"
+        );
     }
 
     #[test]

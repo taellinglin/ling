@@ -26,7 +26,12 @@ static NET: Mutex<Option<NetInner>> = Mutex::new(None);
 
 // Drive an established stream: spawn a reader thread (newest line → `latest`),
 // then drain the outgoing channel on this thread (writer).
-fn run_stream(stream: TcpStream, status: Arc<AtomicU8>, latest: Arc<Mutex<String>>, rx: Receiver<String>) {
+fn run_stream(
+    stream: TcpStream,
+    status: Arc<AtomicU8>,
+    latest: Arc<Mutex<String>>,
+    rx: Receiver<String>,
+) {
     let _ = stream.set_nodelay(true);
     status.store(2, Ordering::SeqCst);
 
@@ -38,13 +43,19 @@ fn run_stream(stream: TcpStream, status: Arc<AtomicU8>, latest: Arc<Mutex<String
             loop {
                 let mut line = String::new();
                 match reader.read_line(&mut line) {
-                    Ok(0) => { rstat.store(0, Ordering::SeqCst); break; }
+                    Ok(0) => {
+                        rstat.store(0, Ordering::SeqCst);
+                        break;
+                    },
                     Ok(_) => {
                         if let Ok(mut g) = latest.lock() {
                             *g = line.trim_end_matches(['\r', '\n']).to_string();
                         }
-                    }
-                    Err(_) => { rstat.store(0, Ordering::SeqCst); break; }
+                    },
+                    Err(_) => {
+                        rstat.store(0, Ordering::SeqCst);
+                        break;
+                    },
                 }
             }
         });
@@ -72,25 +83,21 @@ fn install() -> (Arc<AtomicU8>, Arc<Mutex<String>>, Receiver<String>) {
 
 pub fn host(port: u16) {
     let (status, latest, rx) = install();
-    std::thread::spawn(move || {
-        match TcpListener::bind(("0.0.0.0", port)) {
-            Ok(listener) => match listener.accept() {
-                Ok((stream, _)) => run_stream(stream, status, latest, rx),
-                Err(_) => status.store(0, Ordering::SeqCst),
-            },
+    std::thread::spawn(move || match TcpListener::bind(("0.0.0.0", port)) {
+        Ok(listener) => match listener.accept() {
+            Ok((stream, _)) => run_stream(stream, status, latest, rx),
             Err(_) => status.store(0, Ordering::SeqCst),
-        }
+        },
+        Err(_) => status.store(0, Ordering::SeqCst),
     });
 }
 
 pub fn join(ip: &str, port: u16) {
     let (status, latest, rx) = install();
     let addr = format!("{ip}:{port}");
-    std::thread::spawn(move || {
-        match TcpStream::connect(&addr) {
-            Ok(stream) => run_stream(stream, status, latest, rx),
-            Err(_) => status.store(0, Ordering::SeqCst),
-        }
+    std::thread::spawn(move || match TcpStream::connect(&addr) {
+        Ok(stream) => run_stream(stream, status, latest, rx),
+        Err(_) => status.store(0, Ordering::SeqCst),
     });
 }
 
@@ -131,23 +138,35 @@ use std::collections::HashMap;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
-static ANNOUNCE: Mutex<Option<String>> = Mutex::new(None);          // Some(info) while announcing
+static ANNOUNCE: Mutex<Option<String>> = Mutex::new(None); // Some(info) while announcing
 static ANNOUNCE_RUN: AtomicU8 = AtomicU8::new(0);
 static DISCOVER: Mutex<Option<HashMap<String, (String, Instant)>>> = Mutex::new(None);
 static DISCOVER_RUN: AtomicU8 = AtomicU8::new(0);
 
 /// Start (or update) broadcasting `info` on the LAN discovery `port` (~1 Hz).
 pub fn announce(port: u16, info: &str) {
-    if let Ok(mut g) = ANNOUNCE.lock() { *g = Some(info.to_string()); }
-    if ANNOUNCE_RUN.swap(1, Ordering::SeqCst) == 1 { return; }
+    if let Ok(mut g) = ANNOUNCE.lock() {
+        *g = Some(info.to_string());
+    }
+    if ANNOUNCE_RUN.swap(1, Ordering::SeqCst) == 1 {
+        return;
+    }
     std::thread::spawn(move || {
-        let sock = match UdpSocket::bind("0.0.0.0:0") { Ok(s) => s, Err(_) => { ANNOUNCE_RUN.store(0, Ordering::SeqCst); return; } };
+        let sock = match UdpSocket::bind("0.0.0.0:0") {
+            Ok(s) => s,
+            Err(_) => {
+                ANNOUNCE_RUN.store(0, Ordering::SeqCst);
+                return;
+            },
+        };
         let _ = sock.set_broadcast(true);
         let addr = format!("255.255.255.255:{port}");
         loop {
             let info = ANNOUNCE.lock().ok().and_then(|g| g.clone());
             match info {
-                Some(s) => { let _ = sock.send_to(s.as_bytes(), &addr); }
+                Some(s) => {
+                    let _ = sock.send_to(s.as_bytes(), &addr);
+                },
                 None => break,
             }
             std::thread::sleep(Duration::from_millis(1000));
@@ -158,7 +177,9 @@ pub fn announce(port: u16, info: &str) {
 
 /// Stop broadcasting.
 pub fn announce_stop() {
-    if let Ok(mut g) = ANNOUNCE.lock() { *g = None; }
+    if let Ok(mut g) = ANNOUNCE.lock() {
+        *g = None;
+    }
 }
 
 /// Host self-test: can we actually bind the TCP host port, and what's our LAN IP?
@@ -166,13 +187,21 @@ pub fn announce_stop() {
 pub fn test_bind(port: u16) -> String {
     let mut out = String::new();
     match TcpListener::bind(("0.0.0.0", port)) {
-        Ok(l) => { let _ = l; out.push_str(&format!("TCP bind 0.0.0.0:{port}: OK (host can listen)\n")); }
-        Err(e) => { out.push_str(&format!("TCP bind 0.0.0.0:{port}: FAILED -- {e}\n")); }
+        Ok(l) => {
+            let _ = l;
+            out.push_str(&format!("TCP bind 0.0.0.0:{port}: OK (host can listen)\n"));
+        },
+        Err(e) => {
+            out.push_str(&format!("TCP bind 0.0.0.0:{port}: FAILED -- {e}\n"));
+        },
     }
     if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
         if s.connect("8.8.8.8:80").is_ok() {
             if let Ok(a) = s.local_addr() {
-                out.push_str(&format!("LAN IP (give to same-network joiners): {}\n", a.ip()));
+                out.push_str(&format!(
+                    "LAN IP (give to same-network joiners): {}\n",
+                    a.ip()
+                ));
             }
         }
     }
@@ -183,11 +212,16 @@ pub fn test_bind(port: u16) -> String {
 /// listener on first call).
 pub fn discover(port: u16) -> String {
     if DISCOVER_RUN.swap(1, Ordering::SeqCst) == 0 {
-        if let Ok(mut g) = DISCOVER.lock() { *g = Some(HashMap::new()); }
+        if let Ok(mut g) = DISCOVER.lock() {
+            *g = Some(HashMap::new());
+        }
         std::thread::spawn(move || {
             let sock = match UdpSocket::bind(("0.0.0.0", port)) {
                 Ok(s) => s,
-                Err(_) => { DISCOVER_RUN.store(0, Ordering::SeqCst); return; }
+                Err(_) => {
+                    DISCOVER_RUN.store(0, Ordering::SeqCst);
+                    return;
+                },
             };
             let _ = sock.set_read_timeout(Some(Duration::from_millis(700)));
             let mut buf = [0u8; 512];
@@ -195,7 +229,9 @@ pub fn discover(port: u16) -> String {
                 if let Ok((n, src)) = sock.recv_from(&mut buf) {
                     let info = String::from_utf8_lossy(&buf[..n]).replace(['\n', '\r'], " ");
                     if let Ok(mut g) = DISCOVER.lock() {
-                        if let Some(m) = g.as_mut() { m.insert(src.ip().to_string(), (info, Instant::now())); }
+                        if let Some(m) = g.as_mut() {
+                            m.insert(src.ip().to_string(), (info, Instant::now()));
+                        }
                     }
                 }
             }
@@ -206,7 +242,10 @@ pub fn discover(port: u16) -> String {
         if let Some(m) = g.as_ref() {
             for (ip, (info, t)) in m.iter() {
                 if t.elapsed() < Duration::from_secs(5) {
-                    out.push_str(ip); out.push('|'); out.push_str(info); out.push('\n');
+                    out.push_str(ip);
+                    out.push('|');
+                    out.push_str(info);
+                    out.push('\n');
                 }
             }
         }

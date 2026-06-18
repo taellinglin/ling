@@ -4,26 +4,30 @@
 pub struct Shape(pub Vec<usize>);
 
 impl Shape {
-    pub fn numel(&self) -> usize { self.0.iter().product() }
-    pub fn rank(&self) -> usize  { self.0.len() }
+    pub fn numel(&self) -> usize {
+        self.0.iter().product()
+    }
+    pub fn rank(&self) -> usize {
+        self.0.len()
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Tensor {
     pub shape: Shape,
-    pub data:  Vec<f32>,
+    pub data: Vec<f32>,
 }
 
 impl Tensor {
     pub fn zeros(shape: impl Into<Vec<usize>>) -> Self {
         let shape = Shape(shape.into());
-        let n     = shape.numel();
+        let n = shape.numel();
         Self { shape, data: vec![0.0; n] }
     }
 
     pub fn ones(shape: impl Into<Vec<usize>>) -> Self {
         let shape = Shape(shape.into());
-        let n     = shape.numel();
+        let n = shape.numel();
         Self { shape, data: vec![1.0; n] }
     }
 
@@ -47,7 +51,7 @@ impl Tensor {
         let mut flat = 0;
         let mut stride = 1;
         for (i, &dim) in self.shape.0.iter().enumerate().rev() {
-            flat   += idx[i] * stride;
+            flat += idx[i] * stride;
             stride *= dim;
         }
         flat
@@ -58,7 +62,11 @@ impl Tensor {
         assert_eq!(self.shape, rhs.shape);
         Self::from_vec(
             self.shape.0.clone(),
-            self.data.iter().zip(&rhs.data).map(|(a, b)| a + b).collect(),
+            self.data
+                .iter()
+                .zip(&rhs.data)
+                .map(|(a, b)| a + b)
+                .collect(),
         )
     }
 
@@ -67,7 +75,11 @@ impl Tensor {
         assert_eq!(self.shape, rhs.shape);
         Self::from_vec(
             self.shape.0.clone(),
-            self.data.iter().zip(&rhs.data).map(|(a, b)| a * b).collect(),
+            self.data
+                .iter()
+                .zip(&rhs.data)
+                .map(|(a, b)| a * b)
+                .collect(),
         )
     }
 
@@ -76,12 +88,16 @@ impl Tensor {
         assert_eq!(self.shape.rank(), 2);
         assert_eq!(rhs.shape.rank(), 2);
         let (m, k) = (self.shape.0[0], self.shape.0[1]);
-        let n      = rhs.shape.0[1];
+        let n = rhs.shape.0[1];
         assert_eq!(k, rhs.shape.0[0]);
         let mut out = vec![0.0f32; m * n];
-        for i in 0..m { for j in 0..n { for p in 0..k {
-            out[i * n + j] += self.data[i * k + p] * rhs.data[p * n + j];
-        }}}
+        for i in 0..m {
+            for j in 0..n {
+                for p in 0..k {
+                    out[i * n + j] += self.data[i * k + p] * rhs.data[p * n + j];
+                }
+            }
+        }
         Self::from_vec(vec![m, n], out)
     }
 
@@ -89,9 +105,13 @@ impl Tensor {
     pub fn softmax(&self) -> Self {
         let mut out = self.data.clone();
         let max = out.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        for v in &mut out { *v = (*v - max).exp(); }
+        for v in &mut out {
+            *v = (*v - max).exp();
+        }
         let sum: f32 = out.iter().sum();
-        for v in &mut out { *v /= sum; }
+        for v in &mut out {
+            *v /= sum;
+        }
         Self::from_vec(self.shape.0.clone(), out)
     }
 

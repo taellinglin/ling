@@ -16,22 +16,31 @@ impl TextureData {
 
     pub fn from_color(width: usize, height: usize, color: Color) -> Self {
         let bytes = color.to_rgba_bytes();
-        let data = bytes.iter().cloned().cycle().take(width * height * 4).collect();
+        let data = bytes
+            .iter()
+            .cloned()
+            .cycle()
+            .take(width * height * 4)
+            .collect();
         Self { width, height, data }
     }
 
     pub fn set_pixel(&mut self, x: usize, y: usize, color: Color) {
-        if x >= self.width || y >= self.height { return; }
+        if x >= self.width || y >= self.height {
+            return;
+        }
         let idx = (y * self.width + x) * 4;
         let b = color.to_rgba_bytes();
         self.data[idx..idx + 4].copy_from_slice(&b);
     }
 
     pub fn get_pixel(&self, x: usize, y: usize) -> Color {
-        if x >= self.width || y >= self.height { return Color::TRANSPARENT; }
+        if x >= self.width || y >= self.height {
+            return Color::TRANSPARENT;
+        }
         let idx = (y * self.width + x) * 4;
         Color::new(
-            self.data[idx]     as f32 / 255.0,
+            self.data[idx] as f32 / 255.0,
             self.data[idx + 1] as f32 / 255.0,
             self.data[idx + 2] as f32 / 255.0,
             self.data[idx + 3] as f32 / 255.0,
@@ -42,11 +51,11 @@ impl TextureData {
     pub fn sample(&self, u: f32, v: f32) -> Color {
         let u = u.fract().abs();
         let v = v.fract().abs();
-        let fx = u * (self.width  as f32 - 1.0);
+        let fx = u * (self.width as f32 - 1.0);
         let fy = v * (self.height as f32 - 1.0);
         let x0 = fx as usize;
         let y0 = fy as usize;
-        let x1 = (x0 + 1).min(self.width  - 1);
+        let x1 = (x0 + 1).min(self.width - 1);
         let y1 = (y0 + 1).min(self.height - 1);
         let tx = fx - x0 as f32;
         let ty = fy - y0 as f32;
@@ -54,7 +63,7 @@ impl TextureData {
         let c10 = self.get_pixel(x1, y0);
         let c01 = self.get_pixel(x0, y1);
         let c11 = self.get_pixel(x1, y1);
-        let top    = c00.lerp(c10, tx);
+        let top = c00.lerp(c10, tx);
         let bottom = c01.lerp(c11, tx);
         top.lerp(bottom, ty)
     }
@@ -66,7 +75,9 @@ impl TextureData {
 pub enum AlphaMode {
     Opaque,
     /// Alpha tested: fragments with alpha < cutoff are discarded.
-    Mask { cutoff: f32 },
+    Mask {
+        cutoff: f32,
+    },
     /// Alpha blended (order-dependent).
     Blend,
     /// Premultiplied alpha blending.
@@ -136,5 +147,7 @@ impl Material {
 }
 
 impl Default for Material {
-    fn default() -> Self { Self::new(Color::WHITE) }
+    fn default() -> Self {
+        Self::new(Color::WHITE)
+    }
 }

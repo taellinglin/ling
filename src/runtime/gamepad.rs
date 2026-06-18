@@ -19,7 +19,7 @@ struct Pad {
     gilrs: Gilrs,
     active: Option<GamepadId>,
     effects: Vec<(Effect, Instant)>, // keep effects alive until they expire
-    start_edge: bool, // Start rising-edge this frame (Start acts as Enter)
+    start_edge: bool,                // Start rising-edge this frame (Start acts as Enter)
     start_prev: bool,
 }
 
@@ -31,7 +31,13 @@ fn ensure(p: &mut Option<Pad>) {
     if p.is_none() {
         if let Ok(gilrs) = Gilrs::new() {
             let active = gilrs.gamepads().next().map(|(id, _)| id);
-            *p = Some(Pad { gilrs, active, effects: Vec::new(), start_edge: false, start_prev: false });
+            *p = Some(Pad {
+                gilrs,
+                active,
+                effects: Vec::new(),
+                start_edge: false,
+                start_prev: false,
+            });
         }
     }
 }
@@ -50,7 +56,10 @@ pub fn poll() {
             pad.active = pad.gilrs.gamepads().next().map(|(id, _)| id);
         }
         // Start rising-edge (Start behaves like Enter)
-        let cur_start = pad.active.map(|id| pad.gilrs.gamepad(id).is_pressed(GButton::Start)).unwrap_or(false);
+        let cur_start = pad
+            .active
+            .map(|id| pad.gilrs.gamepad(id).is_pressed(GButton::Start))
+            .unwrap_or(false);
         pad.start_edge = cur_start && !pad.start_prev;
         pad.start_prev = cur_start;
         // drop finished rumble effects
@@ -61,7 +70,12 @@ pub fn poll() {
 
 /// True for the frame Start was just pressed (the host ORs this into `key_pressed("enter")`).
 pub fn start_edge() -> bool {
-    PAD.with(|cell| cell.borrow().as_ref().map(|p| p.start_edge).unwrap_or(false))
+    PAD.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|p| p.start_edge)
+            .unwrap_or(false)
+    })
 }
 
 /// Human-readable list of every gamepad gilrs sees (name, connection, rumble,
@@ -78,11 +92,18 @@ pub fn list() -> String {
                     n += 1;
                     out.push_str(&format!(
                         "{n}: \"{}\" connected={} rumble={} map={:?}\n",
-                        gp.name(), gp.is_connected(), gp.is_ff_supported(), gp.mapping_source()
+                        gp.name(),
+                        gp.is_connected(),
+                        gp.is_ff_supported(),
+                        gp.mapping_source()
                     ));
                 }
-                if n == 0 { out.push_str("(no gamepads seen by gilrs — try the controller's PC/X-input mode)\n"); }
-            }
+                if n == 0 {
+                    out.push_str(
+                        "(no gamepads seen by gilrs — try the controller's PC/X-input mode)\n",
+                    );
+                }
+            },
             None => out.push_str("(gilrs failed to initialise)\n"),
         }
     });
@@ -98,11 +119,25 @@ pub fn any_button() -> bool {
         let Some(id) = pad.active else { return false };
         let gp = pad.gilrs.gamepad(id);
         // mapped buttons
-        for b in [GButton::South, GButton::East, GButton::West, GButton::North,
-                  GButton::LeftTrigger, GButton::RightTrigger, GButton::LeftTrigger2, GButton::RightTrigger2,
-                  GButton::Start, GButton::Select, GButton::DPadUp, GButton::DPadDown,
-                  GButton::DPadLeft, GButton::DPadRight] {
-            if gp.is_pressed(b) { return true; }
+        for b in [
+            GButton::South,
+            GButton::East,
+            GButton::West,
+            GButton::North,
+            GButton::LeftTrigger,
+            GButton::RightTrigger,
+            GButton::LeftTrigger2,
+            GButton::RightTrigger2,
+            GButton::Start,
+            GButton::Select,
+            GButton::DPadUp,
+            GButton::DPadDown,
+            GButton::DPadLeft,
+            GButton::DPadRight,
+        ] {
+            if gp.is_pressed(b) {
+                return true;
+            }
         }
         false
     })
@@ -166,16 +201,29 @@ pub fn rumble(low: f32, high: f32, ms: u32) {
         ensure(&mut g);
         let Some(pad) = g.as_mut() else { return };
         let Some(id) = pad.active else { return };
-        if !pad.gilrs.gamepad(id).is_ff_supported() { return; }
+        if !pad.gilrs.gamepad(id).is_ff_supported() {
+            return;
+        }
         let play = Replay { play_for: Ticks::from_ms(ms), ..Default::default() };
         let built = EffectBuilder::new()
-            .add_effect(BaseEffect { kind: BaseEffectType::Strong { magnitude: hi }, scheduling: play, ..Default::default() })
-            .add_effect(BaseEffect { kind: BaseEffectType::Weak { magnitude: lo }, scheduling: play, ..Default::default() })
+            .add_effect(BaseEffect {
+                kind: BaseEffectType::Strong { magnitude: hi },
+                scheduling: play,
+                ..Default::default()
+            })
+            .add_effect(BaseEffect {
+                kind: BaseEffectType::Weak { magnitude: lo },
+                scheduling: play,
+                ..Default::default()
+            })
             .gamepads(&[id])
             .finish(&mut pad.gilrs);
         if let Ok(effect) = built {
             let _ = effect.play();
-            pad.effects.push((effect, Instant::now() + Duration::from_millis(ms as u64 + 50)));
+            pad.effects.push((
+                effect,
+                Instant::now() + Duration::from_millis(ms as u64 + 50),
+            ));
         }
     });
 }

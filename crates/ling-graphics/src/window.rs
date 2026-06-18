@@ -1,7 +1,7 @@
 use crate::camera::Camera3D;
+use crate::renderer::FrameBuffer;
 use crate::renderer::{Renderer, SoftwareRenderer};
 use crate::scene::{Scene, Transform as SceneTransform};
-use crate::renderer::FrameBuffer;
 use crate::viewport::Viewport;
 
 /// Terminal-based "window" that renders frames via `SoftwareRenderer`.
@@ -60,7 +60,8 @@ impl Window {
             if let (Some(mesh), Some(material)) = (node.mesh.as_ref(), node.material.as_ref()) {
                 let global = scene.global_transform(node_id);
                 let _ = global;
-                self.renderer.draw_mesh(mesh, &node.transform, material, camera);
+                self.renderer
+                    .draw_mesh(mesh, &node.transform, material, camera);
             }
             // Collect children first to avoid borrow conflict
             let children: Vec<usize> = node.children.clone();
@@ -94,7 +95,7 @@ impl Window {
         for y in (0..h).step_by(step_y) {
             for x in (0..w).step_by(step_x) {
                 let i = (y * w + x) * 4;
-                let r = fb.pixels[i]     as f32 / 255.0;
+                let r = fb.pixels[i] as f32 / 255.0;
                 let g = fb.pixels[i + 1] as f32 / 255.0;
                 let b = fb.pixels[i + 2] as f32 / 255.0;
                 let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;

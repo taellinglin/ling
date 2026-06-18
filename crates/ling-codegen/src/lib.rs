@@ -25,3 +25,5 @@ pub trait CodegenBackend {
 
 pub use bytecode::{BytecodeBackend, Vm, VmProgram, compile_mir_program};
 pub use wasm::WasmBackend;
+pub use cranelift::jit::JitBackend;
+pub use cranelift::runtime;

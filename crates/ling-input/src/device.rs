@@ -160,13 +160,17 @@ impl DeviceRegistry {
         self.devices.iter()
     }
     pub fn of_kind(&self, kind: DeviceKind) -> impl Iterator<Item = &DeviceInfo> {
-        self.devices.iter().filter(move |d| d.kind == kind && d.connected)
+        self.devices
+            .iter()
+            .filter(move |d| d.kind == kind && d.connected)
     }
 
     /// First connected device assigned to `player`.
     #[must_use]
     pub fn for_player(&self, player: u8) -> Option<&DeviceInfo> {
-        self.devices.iter().find(|d| d.connected && d.player == Some(player))
+        self.devices
+            .iter()
+            .find(|d| d.connected && d.player == Some(player))
     }
 
     /// Assign the lowest free player slot to a device; returns the slot.

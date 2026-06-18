@@ -18,7 +18,10 @@ pub enum Item {
     /// Each variant carries its name and payload arity (field names are ignored).
     Enum(String, Vec<EnumVariant>),
     /// `use "path/to/module"` or `use "path" as ns`
-    Use { path: String, alias: Option<String> },
+    Use {
+        path: String,
+        alias: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +34,7 @@ pub struct EnumVariant {
 pub struct FnDef {
     pub name: String,
     pub is_async: bool,
-    pub params: Vec<String>,   // just names; types are parsed but ignored
+    pub params: Vec<String>, // just names; types are parsed but ignored
     pub body: Vec<Stmt>,
 }
 
@@ -94,9 +97,19 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Rem,
-    Eq, Ne, Lt, Gt, Le, Ge,
-    And, Or,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
 }
 
 // ─── Statements ──────────────────────────────────────────────────────────────

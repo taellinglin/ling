@@ -7,22 +7,28 @@
 /// Returns `None` when the signal is too quiet or no clear period is found.
 pub fn detect_range(samples: &[f32], rate: u32, fmin: f32, fmax: f32) -> Option<f32> {
     let n = samples.len();
-    if n < 256 { return None; }
+    if n < 256 {
+        return None;
+    }
 
     // Reject near-silence.
     let rms = (samples.iter().map(|s| s * s).sum::<f32>() / n as f32).sqrt();
-    if rms < 1e-3 { return None; }
+    if rms < 1e-3 {
+        return None;
+    }
 
     let rate = rate as f32;
     let min_lag = (rate / fmax).floor().max(2.0) as usize;
     let max_lag = (rate / fmin).ceil().min((n / 2) as f32) as usize;
-    if max_lag <= min_lag { return None; }
+    if max_lag <= min_lag {
+        return None;
+    }
 
     // Normalized square-difference / autocorrelation (McLeod NSDF).
     let mut nsdf = vec![0.0f32; max_lag + 1];
     for lag in min_lag..=max_lag {
         let mut ac = 0.0f32; // autocorrelation
-        let mut m = 0.0f32;  // sum of squares (both windows)
+        let mut m = 0.0f32; // sum of squares (both windows)
         for i in 0..(n - lag) {
             let a = samples[i];
             let b = samples[i + lag];
@@ -33,8 +39,13 @@ pub fn detect_range(samples: &[f32], rate: u32, fmin: f32, fmax: f32) -> Option<
     }
 
     // Pick the first strong peak above a threshold of the global max.
-    let global_max = nsdf[min_lag..=max_lag].iter().cloned().fold(0.0f32, f32::max);
-    if global_max < 0.3 { return None; }
+    let global_max = nsdf[min_lag..=max_lag]
+        .iter()
+        .cloned()
+        .fold(0.0f32, f32::max);
+    if global_max < 0.3 {
+        return None;
+    }
     let thresh = global_max * 0.85;
 
     let mut best_lag = 0usize;
@@ -46,16 +57,24 @@ pub fn detect_range(samples: &[f32], rate: u32, fmin: f32, fmax: f32) -> Option<
         }
         lag += 1;
     }
-    if best_lag == 0 { return None; }
+    if best_lag == 0 {
+        return None;
+    }
 
     // Parabolic interpolation around the peak for sub-sample accuracy.
     let y0 = nsdf[best_lag - 1];
     let y1 = nsdf[best_lag];
     let y2 = nsdf[best_lag + 1];
     let denom = y0 - 2.0 * y1 + y2;
-    let shift = if denom.abs() > 1e-9 { 0.5 * (y0 - y2) / denom } else { 0.0 };
+    let shift = if denom.abs() > 1e-9 {
+        0.5 * (y0 - y2) / denom
+    } else {
+        0.0
+    };
     let refined = best_lag as f32 + shift;
-    if refined <= 0.0 { return None; }
+    if refined <= 0.0 {
+        return None;
+    }
     Some(rate / refined)
 }
 

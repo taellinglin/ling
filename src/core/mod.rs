@@ -57,6 +57,110 @@ impl LingCompiler {
         Ok(())
     }
 
+    /// Compile and run using the Cranelift JIT backend.
+    pub fn compile_and_run_jit<P: AsRef<Path>>(&self, input: P) -> LingResult<()> {
+        let source =
+            std::fs::read_to_string(input.as_ref()).map_err(|e| LingError::Io(e.to_string()))?;
+        let mir = mir::compile_and_optimize(&source, self.config.optimization)?;
+        println!(
+            "JIT compiling {} functions, optimized at {:?}",
+            mir.functions.len(),
+            self.config.optimization
+        );
+
+        let mir_prog = ling_codegen::MirProgram::new(mir, input.as_ref().to_string_lossy());
+
+        use crate::runtime::jit_abi::{
+            ling_abs, ling_add, ling_alloc, ling_and, ling_bool_to_u64, ling_builtin, ling_ceil,
+            ling_cos, ling_div, ling_eq, ling_f64_add, ling_f64_div, ling_f64_eq, ling_f64_ge,
+            ling_f64_gt, ling_f64_le, ling_f64_lt, ling_f64_mul, ling_f64_neg, ling_f64_rem,
+            ling_f64_sub, ling_floor, ling_free, ling_ge, ling_gt, ling_le, ling_list_get,
+            ling_list_len, ling_list_new, ling_list_push, ling_lt, ling_mul, ling_ne, ling_neg,
+            ling_not, ling_or, ling_panic, ling_print, ling_print_newline, ling_print_val,
+            ling_rem, ling_round, ling_sin, ling_sqrt, ling_str_concat, ling_str_eq, ling_str_len,
+            ling_str_new, ling_struct_get, ling_struct_new, ling_sub, ling_time_now,
+        };
+        use crate::runtime::Interpreter;
+
+        let mut jit = ling_codegen::JitBackend::new(|builder| {
+            macro_rules! reg {
+                ($rust:ident, $jit:literal) => {
+                    builder.symbol(concat!("__ling_", $jit), $rust as *const u8);
+                };
+                ($name:ident) => {
+                    reg!($name, stringify!($name));
+                };
+            }
+            reg!(ling_f64_add, "f64_add");
+            reg!(ling_f64_sub, "f64_sub");
+            reg!(ling_f64_mul, "f64_mul");
+            reg!(ling_f64_div, "f64_div");
+            reg!(ling_f64_rem, "f64_rem");
+            reg!(ling_f64_neg, "f64_neg");
+            reg!(ling_f64_eq, "f64_eq");
+            reg!(ling_f64_lt, "f64_lt");
+            reg!(ling_f64_gt, "f64_gt");
+            reg!(ling_f64_le, "f64_le");
+            reg!(ling_f64_ge, "f64_ge");
+            reg!(ling_sin, "sin");
+            reg!(ling_cos, "cos");
+            reg!(ling_sqrt, "sqrt");
+            reg!(ling_abs, "abs");
+            reg!(ling_floor, "floor");
+            reg!(ling_ceil, "ceil");
+            reg!(ling_round, "round");
+            reg!(ling_add, "add");
+            reg!(ling_sub, "sub");
+            reg!(ling_mul, "mul");
+            reg!(ling_div, "div");
+            reg!(ling_rem, "rem");
+            reg!(ling_neg, "neg");
+            reg!(ling_eq, "eq");
+            reg!(ling_ne, "ne");
+            reg!(ling_lt, "lt");
+            reg!(ling_le, "le");
+            reg!(ling_gt, "gt");
+            reg!(ling_ge, "ge");
+            reg!(ling_and, "and");
+            reg!(ling_or, "or");
+            reg!(ling_not, "not");
+            reg!(ling_bool_to_u64, "bool_to_u64");
+            reg!(ling_alloc, "alloc");
+            reg!(ling_free, "free");
+            reg!(ling_panic, "panic");
+            reg!(ling_str_new, "str_new");
+            reg!(ling_str_len, "str_len");
+            reg!(ling_str_concat, "str_concat");
+            reg!(ling_str_eq, "str_eq");
+            reg!(ling_list_new, "list_new");
+            reg!(ling_list_push, "list_push");
+            reg!(ling_list_get, "list_get");
+            reg!(ling_list_len, "list_len");
+            reg!(ling_struct_new, "struct_new");
+            reg!(ling_struct_get, "struct_get");
+            reg!(ling_print, "print");
+            reg!(ling_print_val, "print_val");
+            reg!(ling_print_newline, "print_newline");
+            reg!(ling_time_now, "time_now");
+            reg!(ling_builtin, "builtin");
+        });
+
+        // Initialize JIT runtime with interpreter for fallback operations
+        crate::runtime::jit_abi::init(Interpreter::new());
+
+        // Compile all functions
+        jit.compile(&mir_prog)
+            .map_err(|e| LingError::Codegen(e.to_string()))?;
+
+        // Execute main
+        let result = jit
+            .run_main()
+            .map_err(|e| LingError::Codegen(e.to_string()))?;
+
+        println!("JIT execution completed, result: {:?}", result);
+        Ok(())
+    }
+
     pub fn dump_mir<P: AsRef<Path>>(&self, input: P) -> LingResult<()> {
         let source =
             std::fs::read_to_string(input.as_ref()).map_err(|e| LingError::Io(e.to_string()))?;

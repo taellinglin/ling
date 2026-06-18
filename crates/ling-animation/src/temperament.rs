@@ -15,10 +15,18 @@ impl Temperament {
     /// Half-and-half — e.g. a hydraulic limb with organic sag.
     pub const HYBRID: Self = Self(0.5);
 
-    pub fn new(t: f32) -> Self { Self(t.clamp(0.0, 1.0)) }
-    pub fn value(self) -> f32 { self.0 }
-    pub fn is_organic(self) -> bool { self.0 < 0.5 }
-    pub fn is_mechanical(self) -> bool { self.0 >= 0.5 }
+    pub fn new(t: f32) -> Self {
+        Self(t.clamp(0.0, 1.0))
+    }
+    pub fn value(self) -> f32 {
+        self.0
+    }
+    pub fn is_organic(self) -> bool {
+        self.0 < 0.5
+    }
+    pub fn is_mechanical(self) -> bool {
+        self.0 >= 0.5
+    }
 
     /// Blend an organic result with a mechanical one by this temperament.
     /// `0` → all organic, `1` → all mechanical.
@@ -28,18 +36,26 @@ impl Temperament {
 
     /// How much secondary "life" (idle sway, jiggle, breath) to apply — fades out
     /// as the chain becomes mechanical.
-    pub fn liveliness(self) -> f32 { 1.0 - self.0 }
+    pub fn liveliness(self) -> f32 {
+        1.0 - self.0
+    }
 
     /// How exact/rigid the coupling should be — rises as the chain becomes mechanical.
-    pub fn rigidity(self) -> f32 { self.0 }
+    pub fn rigidity(self) -> f32 {
+        self.0
+    }
 }
 
 impl Default for Temperament {
-    fn default() -> Self { Self::ORGANIC }
+    fn default() -> Self {
+        Self::ORGANIC
+    }
 }
 
 impl From<f32> for Temperament {
-    fn from(v: f32) -> Self { Self::new(v) }
+    fn from(v: f32) -> Self {
+        Self::new(v)
+    }
 }
 
 #[cfg(test)]

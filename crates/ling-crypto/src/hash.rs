@@ -1,7 +1,7 @@
 //! Cryptographic hashing: BLAKE3, SHA3-256, SHA3-512, SHAKE-256.
 
-use sha3::{Digest, Sha3_256 as Sha3_256Inner, Sha3_512 as Sha3_512Inner};
 use sha3::digest::{ExtendableOutput, Update as XofUpdate};
+use sha3::{Digest, Sha3_256 as Sha3_256Inner, Sha3_512 as Sha3_512Inner};
 
 // ── BLAKE3 ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +47,9 @@ impl Sha3_256 {
 
     pub fn hash_many(parts: &[&[u8]]) -> [u8; 32] {
         let mut h = Sha3_256Inner::new();
-        for part in parts { Digest::update(&mut h, part); }
+        for part in parts {
+            Digest::update(&mut h, part);
+        }
         h.finalize().into()
     }
 }

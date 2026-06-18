@@ -1,8 +1,8 @@
 //! Ed25519 digital signatures and X25519 Diffie-Hellman key exchange.
 
-use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
-use x25519_dalek::{StaticSecret, PublicKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
+use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 // ── Ed25519 ───────────────────────────────────────────────────────────────────

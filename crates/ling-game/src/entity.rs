@@ -6,12 +6,14 @@ pub type EntityId = u32;
 
 /// Sparse-set component storage for one component type.
 pub struct ComponentStore<T> {
-    dense:  Vec<T>,
+    dense: Vec<T>,
     sparse: HashMap<EntityId, usize>,
 }
 
 impl<T> ComponentStore<T> {
-    pub fn new() -> Self { Self { dense: vec![], sparse: HashMap::new() } }
+    pub fn new() -> Self {
+        Self { dense: vec![], sparse: HashMap::new() }
+    }
 
     pub fn insert(&mut self, entity: EntityId, component: T) {
         if let Some(&idx) = self.sparse.get(&entity) {
@@ -31,13 +33,19 @@ impl<T> ComponentStore<T> {
         self.sparse.get(&entity).map(|&i| &mut self.dense[i])
     }
 
-    pub fn remove(&mut self, entity: EntityId) { self.sparse.remove(&entity); }
+    pub fn remove(&mut self, entity: EntityId) {
+        self.sparse.remove(&entity);
+    }
     pub fn iter(&self) -> impl Iterator<Item = (&EntityId, &T)> {
         self.sparse.iter().map(|(id, &i)| (id, &self.dense[i]))
     }
 }
 
-impl<T> Default for ComponentStore<T> { fn default() -> Self { Self::new() } }
+impl<T> Default for ComponentStore<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Simple entity allocator.
 pub struct Entity {
@@ -46,7 +54,9 @@ pub struct Entity {
 }
 
 impl Entity {
-    pub fn new() -> Self { Self { next: 1, free: vec![] } }
+    pub fn new() -> Self {
+        Self { next: 1, free: vec![] }
+    }
 
     pub fn spawn(&mut self) -> EntityId {
         self.free.pop().unwrap_or_else(|| {
@@ -56,7 +66,13 @@ impl Entity {
         })
     }
 
-    pub fn despawn(&mut self, id: EntityId) { self.free.push(id); }
+    pub fn despawn(&mut self, id: EntityId) {
+        self.free.push(id);
+    }
 }
 
-impl Default for Entity { fn default() -> Self { Self::new() } }
+impl Default for Entity {
+    fn default() -> Self {
+        Self::new()
+    }
+}

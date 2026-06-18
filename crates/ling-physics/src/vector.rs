@@ -6,7 +6,7 @@
 //! - Vector rotation and transformation
 //! - Linear interpolation and smoothing
 
-use glam::{Vec2, Vec3, Vec4, Mat4, Quat};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 /// Create a normalized vector (magnitude = 1.0)
 pub fn normalize(v: Vec3) -> Vec3 {

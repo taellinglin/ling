@@ -32,7 +32,10 @@ fn distance_and_magnitude() {
 fn normalize_yields_unit_length() {
     let v = Vec3::new(0.0, 3.0, 4.0);
     let n = vector::normalize(v);
-    assert!((vector::magnitude(n) - 1.0).abs() < EPS, "normalized vector is unit length");
+    assert!(
+        (vector::magnitude(n) - 1.0).abs() < EPS,
+        "normalized vector is unit length"
+    );
 }
 
 #[test]

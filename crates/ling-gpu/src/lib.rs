@@ -21,12 +21,17 @@ mod cuda;
 /// `ling::gfx::camera::Camera3D` so a whole vertex buffer can be projected at once.
 #[derive(Clone, Copy, Debug)]
 pub struct CameraParams {
-    pub cry: f32, pub sry: f32, // cos/sin yaw
-    pub crx: f32, pub srx: f32, // cos/sin pitch
-    pub cx: f32,  pub cy: f32,  // screen centre (px)
+    pub cry: f32,
+    pub sry: f32, // cos/sin yaw
+    pub crx: f32,
+    pub srx: f32, // cos/sin pitch
+    pub cx: f32,
+    pub cy: f32, // screen centre (px)
     pub focal: f32,
     pub zdist: f32,
-    pub tx: f32, pub ty: f32, pub tz: f32, // camera world position
+    pub tx: f32,
+    pub ty: f32,
+    pub tz: f32, // camera world position
 }
 
 /// A compute device. Implementations must be cheap to share (`Send + Sync`).
@@ -35,7 +40,9 @@ pub trait Backend: Send + Sync {
     fn name(&self) -> &str;
 
     /// Whether this backend runs on a GPU (vs. the CPU fallback).
-    fn is_gpu(&self) -> bool { false }
+    fn is_gpu(&self) -> bool {
+        false
+    }
 
     /// 3-D N-body acceleration. `pos` and `out` are interleaved xyz of length
     /// `3*n`; `mass` has length `n`. `out[i] = Σ_{j≠i} g·m_j·(p_j−p_i)/(|Δ|²+ε²)^{3/2}`.
@@ -62,10 +69,14 @@ pub fn backend() -> &'static dyn Backend {
 }
 
 /// Convenience: the active device's name (for logging / `--version` banners).
-pub fn device_name() -> &'static str { backend().name() }
+pub fn device_name() -> &'static str {
+    backend().name()
+}
 
 /// Whether a GPU backend is actually active.
-pub fn gpu_active() -> bool { backend().is_gpu() }
+pub fn gpu_active() -> bool {
+    backend().is_gpu()
+}
 
 #[cfg(test)]
 mod tests {
@@ -81,8 +92,14 @@ mod tests {
         b.nbody_accel(&pos, &mass, 1.0, 0.01, &mut out);
         assert!(out[0] > 0.0, "body0 should pull toward +x");
         assert!(out[3] < 0.0, "body1 should pull toward -x");
-        assert!((out[0] + out[3]).abs() < 1e-3, "equal-mass pair is symmetric");
-        assert!(out[1].abs() < 1e-6 && out[2].abs() < 1e-6, "no off-axis accel");
+        assert!(
+            (out[0] + out[3]).abs() < 1e-3,
+            "equal-mass pair is symmetric"
+        );
+        assert!(
+            out[1].abs() < 1e-6 && out[2].abs() < 1e-6,
+            "no off-axis accel"
+        );
     }
 
     #[test]
@@ -90,14 +107,29 @@ mod tests {
         let b = backend();
         // Identity-ish camera: no rotation, focal 100, zdist 5, centre (0,0).
         let cam = CameraParams {
-            cry: 1.0, sry: 0.0, crx: 1.0, srx: 0.0,
-            cx: 0.0, cy: 0.0, focal: 100.0, zdist: 5.0, tx: 0.0, ty: 0.0, tz: 0.0,
+            cry: 1.0,
+            sry: 0.0,
+            crx: 1.0,
+            srx: 0.0,
+            cx: 0.0,
+            cy: 0.0,
+            focal: 100.0,
+            zdist: 5.0,
+            tx: 0.0,
+            ty: 0.0,
+            tz: 0.0,
         };
         let world = [1.0, 2.0, 0.0]; // depth rz=0 → d=5
         let mut out = [0.0f32; 3];
         b.project_points(&world, &cam, &mut out);
-        assert!((out[0] - 20.0).abs() < 1e-3, "sx = focal*x/d = 100*1/5 = 20");
-        assert!((out[1] - 40.0).abs() < 1e-3, "sy = focal*y/d = 100*2/5 = 40");
+        assert!(
+            (out[0] - 20.0).abs() < 1e-3,
+            "sx = focal*x/d = 100*1/5 = 20"
+        );
+        assert!(
+            (out[1] - 40.0).abs() < 1e-3,
+            "sy = focal*y/d = 100*2/5 = 40"
+        );
         assert!((out[2] - 0.0).abs() < 1e-6, "depth rz = 0");
     }
 }

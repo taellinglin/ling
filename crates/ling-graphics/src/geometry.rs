@@ -1,7 +1,7 @@
-use glam::{Vec2, Vec3};
-use std::collections::HashMap;
 use crate::color::Color;
 use crate::math::Aabb;
+use glam::{Vec2, Vec3};
+use std::collections::HashMap;
 
 // ── Vertex ────────────────────────────────────────────────────────────────────
 
@@ -19,7 +19,10 @@ impl Vertex {
         Self { position, normal, uv, color: Color::WHITE, tangent: Vec3::X }
     }
 
-    pub fn with_color(mut self, c: Color) -> Self { self.color = c; self }
+    pub fn with_color(mut self, c: Color) -> Self {
+        self.color = c;
+        self
+    }
 }
 
 // ── Mesh ──────────────────────────────────────────────────────────────────────
@@ -42,7 +45,9 @@ impl Mesh {
         Self { vertices, indices, aabb }
     }
 
-    pub fn triangle_count(&self) -> usize { self.indices.len() / 3 }
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
 
     /// Recompute smooth normals from triangle face normals.
     pub fn compute_normals(&mut self) {
@@ -80,7 +85,9 @@ impl Mesh {
             let du2 = uv2.x - uv0.x;
             let dv2 = uv2.y - uv0.y;
             let denom = du1 * dv2 - du2 * dv1;
-            if denom.abs() < 1e-8 { continue; }
+            if denom.abs() < 1e-8 {
+                continue;
+            }
             let inv = 1.0 / denom;
             let t = (e1 * dv2 - e2 * dv1) * inv;
             tangents[i0] += t;
@@ -101,7 +108,9 @@ pub struct MeshBuilder {
 }
 
 impl MeshBuilder {
-    pub fn new() -> Self { Self { vertices: Vec::new(), indices: Vec::new() } }
+    pub fn new() -> Self {
+        Self { vertices: Vec::new(), indices: Vec::new() }
+    }
 
     pub fn add_vertex(&mut self, v: Vertex) -> u32 {
         let idx = self.vertices.len() as u32;
@@ -113,10 +122,16 @@ impl MeshBuilder {
         self.indices.extend_from_slice(&[i0, i1, i2]);
     }
 
-    pub fn build(self) -> Mesh { Mesh::new(self.vertices, self.indices) }
+    pub fn build(self) -> Mesh {
+        Mesh::new(self.vertices, self.indices)
+    }
 }
 
-impl Default for MeshBuilder { fn default() -> Self { Self::new() } }
+impl Default for MeshBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 // ── Procedural primitives ─────────────────────────────────────────────────────
 
@@ -125,12 +140,12 @@ pub fn cube(half: f32) -> Mesh {
     let h = half;
     let faces: &[(Vec3, Vec3, Vec3)] = &[
         // normal, tangent_u, tangent_v
-        ( Vec3::Z,  Vec3::X,  Vec3::Y),  // +Z
-        (-Vec3::Z, -Vec3::X,  Vec3::Y),  // -Z
-        ( Vec3::Y,  Vec3::X, -Vec3::Z),  // +Y
-        (-Vec3::Y,  Vec3::X,  Vec3::Z),  // -Y
-        ( Vec3::X, -Vec3::Z,  Vec3::Y),  // +X
-        (-Vec3::X,  Vec3::Z,  Vec3::Y),  // -X
+        (Vec3::Z, Vec3::X, Vec3::Y),   // +Z
+        (-Vec3::Z, -Vec3::X, Vec3::Y), // -Z
+        (Vec3::Y, Vec3::X, -Vec3::Z),  // +Y
+        (-Vec3::Y, Vec3::X, Vec3::Z),  // -Y
+        (Vec3::X, -Vec3::Z, Vec3::Y),  // +X
+        (-Vec3::X, Vec3::Z, Vec3::Y),  // -X
     ];
     let mut verts = Vec::new();
     let mut idx = Vec::new();
@@ -143,11 +158,22 @@ pub fn cube(half: f32) -> Mesh {
             center + tu * h + tv * h,
             center - tu * h + tv * h,
         ];
-        let uvs = [Vec2::new(0.0,0.0), Vec2::new(1.0,0.0), Vec2::new(1.0,1.0), Vec2::new(0.0,1.0)];
+        let uvs = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(0.0, 1.0),
+        ];
         for (p, uv) in corners.iter().zip(uvs.iter()) {
-            verts.push(Vertex { position: *p, normal: n, uv: *uv, color: Color::WHITE, tangent: tu });
+            verts.push(Vertex {
+                position: *p,
+                normal: n,
+                uv: *uv,
+                color: Color::WHITE,
+                tangent: tu,
+            });
         }
-        idx.extend_from_slice(&[base, base+1, base+2, base, base+2, base+3]);
+        idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     Mesh::new(verts, idx)
 }
@@ -171,7 +197,13 @@ pub fn sphere(radius: f32, rings: u32, sectors: u32) -> Mesh {
             let p = Vec3::new(x, y, z);
             let u = s as f32 / sectors as f32;
             let v = r as f32 / rings as f32;
-            verts.push(Vertex { position: p * radius, normal: p, uv: Vec2::new(u, v), color: Color::WHITE, tangent: Vec3::new(-sin_t, 0.0, cos_t) });
+            verts.push(Vertex {
+                position: p * radius,
+                normal: p,
+                uv: Vec2::new(u, v),
+                color: Color::WHITE,
+                tangent: Vec3::new(-sin_t, 0.0, cos_t),
+            });
         }
     }
 
@@ -192,18 +224,44 @@ pub fn sphere(radius: f32, rings: u32, sectors: u32) -> Mesh {
 pub fn icosphere(radius: f32, subdivisions: u32) -> Mesh {
     let t = (1.0 + 5.0_f32.sqrt()) / 2.0;
     let base_verts: &[[f32; 3]] = &[
-        [-1.0,  t,  0.0], [ 1.0,  t,  0.0], [-1.0, -t,  0.0], [ 1.0, -t,  0.0],
-        [ 0.0, -1.0,  t], [ 0.0,  1.0,  t], [ 0.0, -1.0, -t], [ 0.0,  1.0, -t],
-        [ t,  0.0, -1.0], [ t,  0.0,  1.0], [-t,  0.0, -1.0], [-t,  0.0,  1.0],
+        [-1.0, t, 0.0],
+        [1.0, t, 0.0],
+        [-1.0, -t, 0.0],
+        [1.0, -t, 0.0],
+        [0.0, -1.0, t],
+        [0.0, 1.0, t],
+        [0.0, -1.0, -t],
+        [0.0, 1.0, -t],
+        [t, 0.0, -1.0],
+        [t, 0.0, 1.0],
+        [-t, 0.0, -1.0],
+        [-t, 0.0, 1.0],
     ];
     let base_faces: &[[u32; 3]] = &[
-        [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
-        [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
-        [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
-        [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1],
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
     ];
 
-    let mut points: Vec<Vec3> = base_verts.iter()
+    let mut points: Vec<Vec3> = base_verts
+        .iter()
         .map(|v| Vec3::new(v[0], v[1], v[2]).normalize())
         .collect();
     let mut faces: Vec<[u32; 3]> = base_faces.to_vec();
@@ -211,8 +269,14 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> Mesh {
     let mut midpoint_cache: HashMap<u64, u32> = HashMap::new();
 
     let mut get_midpoint = |a: u32, b: u32, pts: &mut Vec<Vec3>| -> u32 {
-        let key = if a < b { ((a as u64) << 32) | b as u64 } else { ((b as u64) << 32) | a as u64 };
-        if let Some(&idx) = midpoint_cache.get(&key) { return idx; }
+        let key = if a < b {
+            ((a as u64) << 32) | b as u64
+        } else {
+            ((b as u64) << 32) | a as u64
+        };
+        if let Some(&idx) = midpoint_cache.get(&key) {
+            return idx;
+        }
         let mid = (pts[a as usize] + pts[b as usize]).normalize();
         let idx = pts.len() as u32;
         pts.push(mid);
@@ -234,11 +298,20 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> Mesh {
         faces = new_faces;
     }
 
-    let verts: Vec<Vertex> = points.iter().map(|&p| {
-        let u = p.z.atan2(p.x) / (2.0 * std::f32::consts::PI) + 0.5;
-        let v = p.y.asin() / std::f32::consts::PI + 0.5;
-        Vertex { position: p * radius, normal: p, uv: Vec2::new(u, v), color: Color::WHITE, tangent: Vec3::new(-p.z, 0.0, p.x).normalize_or_zero() }
-    }).collect();
+    let verts: Vec<Vertex> = points
+        .iter()
+        .map(|&p| {
+            let u = p.z.atan2(p.x) / (2.0 * std::f32::consts::PI) + 0.5;
+            let v = p.y.asin() / std::f32::consts::PI + 0.5;
+            Vertex {
+                position: p * radius,
+                normal: p,
+                uv: Vec2::new(u, v),
+                color: Color::WHITE,
+                tangent: Vec3::new(-p.z, 0.0, p.x).normalize_or_zero(),
+            }
+        })
+        .collect();
 
     let indices: Vec<u32> = faces.iter().flat_map(|t| t.iter().cloned()).collect();
     Mesh::new(verts, indices)
@@ -248,12 +321,24 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> Mesh {
 pub fn cone(radius: f32, height: f32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut idx = Vec::new();
     let apex = Vec3::new(0.0, height * 0.5, 0.0);
     let apex_idx = verts.len() as u32;
-    verts.push(Vertex { position: apex, normal: Vec3::Y, uv: Vec2::new(0.5, 0.0), color: Color::WHITE, tangent: Vec3::X });
+    verts.push(Vertex {
+        position: apex,
+        normal: Vec3::Y,
+        uv: Vec2::new(0.5, 0.0),
+        color: Color::WHITE,
+        tangent: Vec3::X,
+    });
     let base_center_idx = verts.len() as u32;
-    verts.push(Vertex { position: Vec3::new(0.0, -height * 0.5, 0.0), normal: -Vec3::Y, uv: Vec2::new(0.5, 0.5), color: Color::WHITE, tangent: Vec3::X });
+    verts.push(Vertex {
+        position: Vec3::new(0.0, -height * 0.5, 0.0),
+        normal: -Vec3::Y,
+        uv: Vec2::new(0.5, 0.5),
+        color: Color::WHITE,
+        tangent: Vec3::X,
+    });
 
     let first_base = verts.len() as u32;
     for i in 0..=segments {
@@ -262,7 +347,13 @@ pub fn cone(radius: f32, height: f32, segments: u32) -> Mesh {
         let pos = Vec3::new(c * radius, -height * 0.5, s * radius);
         let side_n = Vec3::new(c * height, radius, s * height).normalize();
         let uv = Vec2::new(i as f32 / segments as f32, 1.0);
-        verts.push(Vertex { position: pos, normal: side_n, uv, color: Color::WHITE, tangent: Vec3::new(-s, 0.0, c) });
+        verts.push(Vertex {
+            position: pos,
+            normal: side_n,
+            uv,
+            color: Color::WHITE,
+            tangent: Vec3::new(-s, 0.0, c),
+        });
     }
     let first_base_cap = verts.len() as u32;
     for i in 0..=segments {
@@ -270,7 +361,13 @@ pub fn cone(radius: f32, height: f32, segments: u32) -> Mesh {
         let (s, c) = angle.sin_cos();
         let pos = Vec3::new(c * radius, -height * 0.5, s * radius);
         let uv = Vec2::new(c * 0.5 + 0.5, s * 0.5 + 0.5);
-        verts.push(Vertex { position: pos, normal: -Vec3::Y, uv, color: Color::WHITE, tangent: Vec3::X });
+        verts.push(Vertex {
+            position: pos,
+            normal: -Vec3::Y,
+            uv,
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
     }
     // Sides
     for i in 0..segments {
@@ -286,18 +383,18 @@ pub fn cone(radius: f32, height: f32, segments: u32) -> Mesh {
 /// Square pyramid: apex at +Y, base at −Y.
 pub fn pyramid(base_half: f32, height: f32) -> Mesh {
     let h2 = height * 0.5;
-    let b  = base_half;
+    let b = base_half;
     let apex = Vec3::new(0.0, h2, 0.0);
 
     let base_pts = [
         Vec3::new(-b, -h2, -b),
-        Vec3::new( b, -h2, -b),
-        Vec3::new( b, -h2,  b),
-        Vec3::new(-b, -h2,  b),
+        Vec3::new(b, -h2, -b),
+        Vec3::new(b, -h2, b),
+        Vec3::new(-b, -h2, b),
     ];
 
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut idx = Vec::new();
 
     // Four triangular faces
     for i in 0..4 {
@@ -305,9 +402,27 @@ pub fn pyramid(base_half: f32, height: f32) -> Mesh {
         let c = base_pts[(i + 1) % 4];
         let n = (c - a).cross(apex - a).normalize();
         let base = verts.len() as u32;
-        verts.push(Vertex { position: apex, normal: n, uv: Vec2::new(0.5, 0.0), color: Color::WHITE, tangent: Vec3::X });
-        verts.push(Vertex { position: a, normal: n, uv: Vec2::new(0.0, 1.0), color: Color::WHITE, tangent: Vec3::X });
-        verts.push(Vertex { position: c, normal: n, uv: Vec2::new(1.0, 1.0), color: Color::WHITE, tangent: Vec3::X });
+        verts.push(Vertex {
+            position: apex,
+            normal: n,
+            uv: Vec2::new(0.5, 0.0),
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
+        verts.push(Vertex {
+            position: a,
+            normal: n,
+            uv: Vec2::new(0.0, 1.0),
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
+        verts.push(Vertex {
+            position: c,
+            normal: n,
+            uv: Vec2::new(1.0, 1.0),
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
         idx.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
@@ -317,9 +432,22 @@ pub fn pyramid(base_half: f32, height: f32) -> Mesh {
     for (i, &p) in base_pts.iter().enumerate() {
         let u = if i == 1 || i == 2 { 1.0 } else { 0.0 };
         let v = if i == 2 || i == 3 { 1.0 } else { 0.0 };
-        verts.push(Vertex { position: p, normal: bn, uv: Vec2::new(u, v), color: Color::WHITE, tangent: Vec3::X });
+        verts.push(Vertex {
+            position: p,
+            normal: bn,
+            uv: Vec2::new(u, v),
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
     }
-    idx.extend_from_slice(&[base_start, base_start+2, base_start+1, base_start, base_start+3, base_start+2]);
+    idx.extend_from_slice(&[
+        base_start,
+        base_start + 2,
+        base_start + 1,
+        base_start,
+        base_start + 3,
+        base_start + 2,
+    ]);
 
     Mesh::new(verts, idx)
 }
@@ -329,7 +457,7 @@ pub fn cylinder(radius: f32, height: f32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let h2 = height * 0.5;
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut idx = Vec::new();
 
     // Side
     let side_start = 0u32;
@@ -338,23 +466,47 @@ pub fn cylinder(radius: f32, height: f32, segments: u32) -> Mesh {
         let (s, c) = angle.sin_cos();
         let n = Vec3::new(c, 0.0, s);
         let u = i as f32 / segments as f32;
-        verts.push(Vertex { position: Vec3::new(c * radius,  h2, s * radius), normal: n, uv: Vec2::new(u, 0.0), color: Color::WHITE, tangent: Vec3::new(-s, 0.0, c) });
-        verts.push(Vertex { position: Vec3::new(c * radius, -h2, s * radius), normal: n, uv: Vec2::new(u, 1.0), color: Color::WHITE, tangent: Vec3::new(-s, 0.0, c) });
+        verts.push(Vertex {
+            position: Vec3::new(c * radius, h2, s * radius),
+            normal: n,
+            uv: Vec2::new(u, 0.0),
+            color: Color::WHITE,
+            tangent: Vec3::new(-s, 0.0, c),
+        });
+        verts.push(Vertex {
+            position: Vec3::new(c * radius, -h2, s * radius),
+            normal: n,
+            uv: Vec2::new(u, 1.0),
+            color: Color::WHITE,
+            tangent: Vec3::new(-s, 0.0, c),
+        });
     }
     for i in 0..segments {
         let b = side_start + i * 2;
-        idx.extend_from_slice(&[b, b+2, b+1, b+1, b+2, b+3]);
+        idx.extend_from_slice(&[b, b + 2, b + 1, b + 1, b + 2, b + 3]);
     }
 
     // Caps
-    for (cap_y, cap_n, flip) in [( h2, Vec3::Y, false), (-h2, -Vec3::Y, true)] {
+    for (cap_y, cap_n, flip) in [(h2, Vec3::Y, false), (-h2, -Vec3::Y, true)] {
         let center = verts.len() as u32;
-        verts.push(Vertex { position: Vec3::new(0.0, cap_y, 0.0), normal: cap_n, uv: Vec2::new(0.5, 0.5), color: Color::WHITE, tangent: Vec3::X });
+        verts.push(Vertex {
+            position: Vec3::new(0.0, cap_y, 0.0),
+            normal: cap_n,
+            uv: Vec2::new(0.5, 0.5),
+            color: Color::WHITE,
+            tangent: Vec3::X,
+        });
         let first = verts.len() as u32;
         for i in 0..=segments {
             let angle = 2.0 * std::f32::consts::PI * i as f32 / segments as f32;
             let (s, c) = angle.sin_cos();
-            verts.push(Vertex { position: Vec3::new(c * radius, cap_y, s * radius), normal: cap_n, uv: Vec2::new(c * 0.5 + 0.5, s * 0.5 + 0.5), color: Color::WHITE, tangent: Vec3::X });
+            verts.push(Vertex {
+                position: Vec3::new(c * radius, cap_y, s * radius),
+                normal: cap_n,
+                uv: Vec2::new(c * 0.5 + 0.5, s * 0.5 + 0.5),
+                color: Color::WHITE,
+                tangent: Vec3::X,
+            });
         }
         for i in 0..segments {
             if flip {
@@ -371,20 +523,20 @@ pub fn cylinder(radius: f32, height: f32, segments: u32) -> Mesh {
 /// Torus centered at origin, with major radius R and tube radius r.
 pub fn torus(major_radius: f32, tube_radius: f32, major_segs: u32, tube_segs: u32) -> Mesh {
     let major_segs = major_segs.max(3);
-    let tube_segs  = tube_segs.max(3);
+    let tube_segs = tube_segs.max(3);
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut idx = Vec::new();
 
     for i in 0..=major_segs {
         let u = 2.0 * std::f32::consts::PI * i as f32 / major_segs as f32;
         let (su, cu) = u.sin_cos();
         let center = Vec3::new(cu * major_radius, 0.0, su * major_radius);
-        let radial  = Vec3::new(cu, 0.0, su);
+        let radial = Vec3::new(cu, 0.0, su);
         for j in 0..=tube_segs {
             let v = 2.0 * std::f32::consts::PI * j as f32 / tube_segs as f32;
             let (sv, cv) = v.sin_cos();
             let pos = center + (radial * cv + Vec3::Y * sv) * tube_radius;
-            let n   = (radial * cv + Vec3::Y * sv).normalize();
+            let n = (radial * cv + Vec3::Y * sv).normalize();
             verts.push(Vertex {
                 position: pos,
                 normal: n,
@@ -412,7 +564,7 @@ pub fn torus(major_radius: f32, tube_radius: f32, major_segs: u32, tube_segs: u3
 pub fn plane(half_size: f32, subdivisions: u32) -> Mesh {
     let n = subdivisions.max(1) + 1;
     let mut verts = Vec::new();
-    let mut idx   = Vec::new();
+    let mut idx = Vec::new();
     let step = half_size * 2.0 / subdivisions.max(1) as f32;
     for row in 0..n {
         for col in 0..n {
@@ -420,7 +572,13 @@ pub fn plane(half_size: f32, subdivisions: u32) -> Mesh {
             let z = -half_size + row as f32 * step;
             let u = col as f32 / (n - 1) as f32;
             let v = row as f32 / (n - 1) as f32;
-            verts.push(Vertex { position: Vec3::new(x, 0.0, z), normal: Vec3::Y, uv: Vec2::new(u, v), color: Color::WHITE, tangent: Vec3::X });
+            verts.push(Vertex {
+                position: Vec3::new(x, 0.0, z),
+                normal: Vec3::Y,
+                uv: Vec2::new(u, v),
+                color: Color::WHITE,
+                tangent: Vec3::X,
+            });
         }
     }
     for row in 0..n - 1 {

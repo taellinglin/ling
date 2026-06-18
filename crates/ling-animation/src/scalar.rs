@@ -54,7 +54,14 @@ pub fn gait_lift(t: f32, speed: f32, height: f32) -> f32 {
 
 /// Semi-implicit Euler spring step (organic secondary motion / spring-bone).
 /// Returns `(new_pos, new_vel)`.
-pub fn spring_step(pos: f32, vel: f32, target: f32, stiffness: f32, damping: f32, dt: f32) -> (f32, f32) {
+pub fn spring_step(
+    pos: f32,
+    vel: f32,
+    target: f32,
+    stiffness: f32,
+    damping: f32,
+    dt: f32,
+) -> (f32, f32) {
     let accel = (target - pos) * stiffness - vel * damping;
     let new_vel = vel + accel * dt;
     let new_pos = pos + new_vel * dt;
@@ -89,7 +96,9 @@ pub fn two_bone_fk(l1: f32, l2: f32, shoulder: f32, elbow: f32) -> (f32, f32) {
 /// Meshed gear coupling: output angle for a given input angle and tooth counts.
 /// Meshed gears spin opposite, by the tooth ratio. Exact, deterministic.
 pub fn gear(input_angle: f32, teeth_in: f32, teeth_out: f32) -> f32 {
-    if teeth_out.abs() < 1e-6 { return 0.0; }
+    if teeth_out.abs() < 1e-6 {
+        return 0.0;
+    }
     -input_angle * teeth_in / teeth_out
 }
 
@@ -124,10 +133,15 @@ mod tests {
         for &(tx, ty) in &[(1.2f32, 0.4f32), (0.5, 1.0), (1.0, -0.6), (-0.7, 0.9)] {
             // keep within reach for an exact round-trip
             let d = (tx * tx + ty * ty).sqrt();
-            if d > l1 + l2 - 0.05 || d < (l1 - l2).abs() + 0.05 { continue; }
+            if d > l1 + l2 - 0.05 || d < (l1 - l2).abs() + 0.05 {
+                continue;
+            }
             let (sh, el) = two_bone_ik(l1, l2, tx, ty);
             let (fx, fy) = two_bone_fk(l1, l2, sh, el);
-            assert!((fx - tx).hypot(fy - ty) < 1e-3, "({tx},{ty}) -> ({fx},{fy})");
+            assert!(
+                (fx - tx).hypot(fy - ty) < 1e-3,
+                "({tx},{ty}) -> ({fx},{fy})"
+            );
         }
     }
     #[test]
@@ -138,7 +152,11 @@ mod tests {
     #[test]
     fn spring_settles_toward_target() {
         let (mut p, mut v) = (0.0f32, 0.0f32);
-        for _ in 0..2000 { let (np, nv) = spring_step(p, v, 1.0, 120.0, 14.0, 1.0/120.0); p = np; v = nv; }
+        for _ in 0..2000 {
+            let (np, nv) = spring_step(p, v, 1.0, 120.0, 14.0, 1.0 / 120.0);
+            p = np;
+            v = nv;
+        }
         assert!((p - 1.0).abs() < 1e-2, "settled at {p}");
     }
 }

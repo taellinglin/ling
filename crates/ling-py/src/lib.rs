@@ -22,9 +22,7 @@ impl PyAudioEngine {
     fn new() -> PyResult<Self> {
         ling_audio::AudioEngine::new()
             .map(|e| PyAudioEngine { inner: e })
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("audio init: {e}"))
-            })
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("audio init: {e}")))
     }
 
     /// set_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth)
@@ -40,13 +38,19 @@ impl PyAudioEngine {
     fn set_tone(
         &self,
         idx: usize,
-        x: f32, y: f32, z: f32, w: f32,
-        freq: f32, amp: f32,
-        lfo_rate: f32, lfo_depth: f32,
+        x: f32,
+        y: f32,
+        z: f32,
+        w: f32,
+        freq: f32,
+        amp: f32,
+        lfo_rate: f32,
+        lfo_depth: f32,
     ) {
-        self.inner.set_tone(idx, ling_audio::ToneParams {
-            x, y, z, w, freq, amp, lfo_rate, lfo_depth,
-        });
+        self.inner.set_tone(
+            idx,
+            ling_audio::ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth },
+        );
     }
 
     fn clear_tone(&self, idx: usize) {
@@ -74,8 +78,8 @@ impl PyAudioEngine {
 
 // ── HyperbolicWorld ───────────────────────────────────────────────────────────
 
-use ling_physics::hyperbolic::HyperbolicSphereWorld;
 use glam::Vec3;
+use ling_physics::hyperbolic::HyperbolicSphereWorld;
 
 #[pyclass(name = "HyperbolicWorld")]
 struct PyHyperbolicWorld {
@@ -87,9 +91,7 @@ impl PyHyperbolicWorld {
     #[new]
     #[pyo3(signature = (radius=100.0, curvature=-1.0, gravity=9.81))]
     fn new(radius: f32, curvature: f32, gravity: f32) -> Self {
-        PyHyperbolicWorld {
-            inner: HyperbolicSphereWorld { radius, curvature, gravity },
-        }
+        PyHyperbolicWorld { inner: HyperbolicSphereWorld { radius, curvature, gravity } }
     }
 
     /// Returns the outward gravity direction at world-space pos (x,y,z).
@@ -111,12 +113,9 @@ impl PyHyperbolicWorld {
     }
 
     /// Hyperbolic distance between two world-space points.
-    fn world_distance(
-        &self,
-        ax: f32, ay: f32, az: f32,
-        bx: f32, by: f32, bz: f32,
-    ) -> f32 {
-        self.inner.world_distance(Vec3::new(ax, ay, az), Vec3::new(bx, by, bz))
+    fn world_distance(&self, ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
+        self.inner
+            .world_distance(Vec3::new(ax, ay, az), Vec3::new(bx, by, bz))
     }
 
     /// Convert world-space position to Poincaré ball coordinate.
@@ -139,19 +138,13 @@ fn hyp_distance(ax: f32, ay: f32, az: f32, bx: f32, by: f32, bz: f32) -> f32 {
 }
 
 #[pyfunction]
-fn exp_map(
-    bx: f32, by: f32, bz: f32,
-    vx: f32, vy: f32, vz: f32,
-) -> (f32, f32, f32) {
+fn exp_map(bx: f32, by: f32, bz: f32, vx: f32, vy: f32, vz: f32) -> (f32, f32, f32) {
     let v = ling_physics::hyperbolic::exp_map(Vec3::new(bx, by, bz), Vec3::new(vx, vy, vz));
     (v.x, v.y, v.z)
 }
 
 #[pyfunction]
-fn log_map(
-    bx: f32, by: f32, bz: f32,
-    tx: f32, ty: f32, tz: f32,
-) -> (f32, f32, f32) {
+fn log_map(bx: f32, by: f32, bz: f32, tx: f32, ty: f32, tz: f32) -> (f32, f32, f32) {
     let v = ling_physics::hyperbolic::log_map(Vec3::new(bx, by, bz), Vec3::new(tx, ty, tz));
     (v.x, v.y, v.z)
 }
@@ -167,8 +160,8 @@ fn log_map(
 ///   msg = net.try_recv()            # returns None or str
 #[pyclass(name = "NetClient")]
 struct PyNetClient {
-    outbox:    Arc<Mutex<Vec<String>>>,
-    inbox:     Arc<Mutex<VecDeque<String>>>,
+    outbox: Arc<Mutex<Vec<String>>>,
+    inbox: Arc<Mutex<VecDeque<String>>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -177,16 +170,16 @@ impl PyNetClient {
     #[new]
     fn new() -> Self {
         PyNetClient {
-            outbox:    Arc::new(Mutex::new(Vec::new())),
-            inbox:     Arc::new(Mutex::new(VecDeque::new())),
+            outbox: Arc::new(Mutex::new(Vec::new())),
+            inbox: Arc::new(Mutex::new(VecDeque::new())),
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
     /// Connect to a WebSocket server (non-blocking; returns immediately).
     fn connect(&self, url: String) {
-        let outbox    = Arc::clone(&self.outbox);
-        let inbox     = Arc::clone(&self.inbox);
+        let outbox = Arc::clone(&self.outbox);
+        let inbox = Arc::clone(&self.inbox);
         let connected = Arc::clone(&self.connected);
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -215,9 +208,9 @@ impl PyNetClient {
 }
 
 async fn ws_run(
-    url:       String,
-    outbox:    Arc<Mutex<Vec<String>>>,
-    inbox:     Arc<Mutex<VecDeque<String>>>,
+    url: String,
+    outbox: Arc<Mutex<Vec<String>>>,
+    inbox: Arc<Mutex<VecDeque<String>>>,
     connected: Arc<std::sync::atomic::AtomicBool>,
 ) {
     use futures_util::{SinkExt, StreamExt};
@@ -226,7 +219,10 @@ async fn ws_run(
 
     let ws = match connect_async(&url).await {
         Ok((ws, _)) => ws,
-        Err(e) => { eprintln!("[ling-py netplay] connect failed ({url}): {e}"); return; }
+        Err(e) => {
+            eprintln!("[ling-py netplay] connect failed ({url}): {e}");
+            return;
+        },
     };
     connected.store(true, std::sync::atomic::Ordering::Relaxed);
     eprintln!("[ling-py netplay] connected to {url}");
@@ -241,7 +237,9 @@ async fn ws_run(
             vec![]
         };
         for m in msgs {
-            if write.send(Message::Text(m)).await.is_err() { break; }
+            if write.send(Message::Text(m)).await.is_err() {
+                break;
+            }
         }
 
         // Read one incoming frame or yield after 1 ms

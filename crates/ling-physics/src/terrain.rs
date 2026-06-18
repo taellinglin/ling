@@ -16,16 +16,18 @@ fn hash2(x: i32, y: i32, seed: u32) -> f32 {
     h as f32 / u32::MAX as f32
 }
 
-fn smoothstep(t: f32) -> f32 { t * t * (3.0 - 2.0 * t) }
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
+}
 
 fn value_noise(x: f32, y: f32, seed: u32) -> f32 {
     let xi = x.floor() as i32;
     let yi = y.floor() as i32;
     let xf = smoothstep(x - xi as f32);
     let yf = smoothstep(y - yi as f32);
-    let a = hash2(xi,     yi,     seed);
-    let b = hash2(xi + 1, yi,     seed);
-    let c = hash2(xi,     yi + 1, seed);
+    let a = hash2(xi, yi, seed);
+    let b = hash2(xi + 1, yi, seed);
+    let c = hash2(xi, yi + 1, seed);
     let d = hash2(xi + 1, yi + 1, seed);
     let ab = a + (b - a) * xf;
     let cd = c + (d - c) * xf;
@@ -38,8 +40,8 @@ pub fn fbm(x: f32, y: f32, octaves: u32, seed: u32) -> f32 {
     let mut amp = 0.5f32;
     let mut freq = 1.0f32;
     for i in 0..octaves {
-        val  += value_noise(x * freq, y * freq, seed.wrapping_add(i * 3571)) * amp;
-        amp  *= 0.5;
+        val += value_noise(x * freq, y * freq, seed.wrapping_add(i * 3571)) * amp;
+        amp *= 0.5;
         freq *= 2.0;
     }
     val
@@ -49,34 +51,34 @@ pub fn fbm(x: f32, y: f32, octaves: u32, seed: u32) -> f32 {
 
 #[derive(Clone, Debug)]
 pub struct TerrainConfig {
-    pub chunk_size:  u32,   // number of quads per side
-    pub max_height:  f32,
+    pub chunk_size: u32, // number of quads per side
+    pub max_height: f32,
     pub noise_scale: f32,
-    pub octaves:     u32,
-    pub lod_levels:  u32,
-    pub lod_dist:    f32,   // distance at which to reduce LOD
+    pub octaves: u32,
+    pub lod_levels: u32,
+    pub lod_dist: f32, // distance at which to reduce LOD
 }
 
 impl Default for TerrainConfig {
     fn default() -> Self {
         Self {
-            chunk_size:  64,
-            max_height:  80.0,
+            chunk_size: 64,
+            max_height: 80.0,
             noise_scale: 0.005,
-            octaves:     6,
-            lod_levels:  4,
-            lod_dist:    128.0,
+            octaves: 6,
+            lod_levels: 4,
+            lod_dist: 128.0,
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Chunk {
-    pub cx:      i32,
-    pub cz:      i32,
-    pub lod:     u32,
-    pub heights: Vec<f32>,    // (verts_per_side)² height values
-    pub verts:   Vec<[f32; 3]>,
+    pub cx: i32,
+    pub cz: i32,
+    pub lod: u32,
+    pub heights: Vec<f32>, // (verts_per_side)² height values
+    pub verts: Vec<[f32; 3]>,
     pub normals: Vec<[f32; 3]>,
     pub indices: Vec<u32>,
 }
@@ -114,11 +116,11 @@ impl Chunk {
 }
 
 fn build_chunk(cx: i32, cz: i32, lod: u32, cfg: &TerrainConfig, seed: u32) -> Chunk {
-    let step    = 1u32 << lod;
-    let verts   = (cfg.chunk_size / step) as usize + 1;
+    let step = 1u32 << lod;
+    let verts = (cfg.chunk_size / step) as usize + 1;
     let world_x = cx as f32 * cfg.chunk_size as f32;
     let world_z = cz as f32 * cfg.chunk_size as f32;
-    let cell    = step as f32;
+    let cell = step as f32;
 
     let mut heights = vec![0.0f32; verts * verts];
     let mut pos_arr = vec![[0.0f32; 3]; verts * verts];
@@ -128,8 +130,12 @@ fn build_chunk(cx: i32, cz: i32, lod: u32, cfg: &TerrainConfig, seed: u32) -> Ch
         for xi in 0..verts {
             let wx = world_x + xi as f32 * cell;
             let wz = world_z + zi as f32 * cell;
-            let h  = fbm(wx * cfg.noise_scale, wz * cfg.noise_scale, cfg.octaves, seed)
-                * cfg.max_height;
+            let h = fbm(
+                wx * cfg.noise_scale,
+                wz * cfg.noise_scale,
+                cfg.octaves,
+                seed,
+            ) * cfg.max_height;
             heights[zi * verts + xi] = h;
             pos_arr[zi * verts + xi] = [wx, h, wz];
         }
@@ -145,7 +151,7 @@ fn build_chunk(cx: i32, cz: i32, lod: u32, cfg: &TerrainConfig, seed: u32) -> Ch
             };
             let dx = get(1, 0) - get(-1, 0);
             let dz = get(0, 1) - get(0, -1);
-            let n  = dz.cross(dx).normalize_or_zero();
+            let n = dz.cross(dx).normalize_or_zero();
             nrm_arr[zi * verts + xi] = n.to_array();
         }
     }
@@ -162,15 +168,23 @@ fn build_chunk(cx: i32, cz: i32, lod: u32, cfg: &TerrainConfig, seed: u32) -> Ch
         }
     }
 
-    Chunk { cx, cz, lod, heights, verts: pos_arr, normals: nrm_arr, indices }
+    Chunk {
+        cx,
+        cz,
+        lod,
+        heights,
+        verts: pos_arr,
+        normals: nrm_arr,
+        indices,
+    }
 }
 
 // ── Terrain manager ───────────────────────────────────────────────────────────
 
 pub struct TerrainManager {
     pub config: TerrainConfig,
-    pub seed:   u32,
-    chunks:     HashMap<(i32, i32), Chunk>,
+    pub seed: u32,
+    chunks: HashMap<(i32, i32), Chunk>,
 }
 
 impl TerrainManager {
@@ -179,14 +193,18 @@ impl TerrainManager {
     }
 
     pub fn get_height(&self, wx: f32, wz: f32) -> f32 {
-        let cs  = self.config.chunk_size as f32;
-        let cx  = (wx / cs).floor() as i32;
-        let cz  = (wz / cs).floor() as i32;
+        let cs = self.config.chunk_size as f32;
+        let cx = (wx / cs).floor() as i32;
+        let cz = (wz / cs).floor() as i32;
         if let Some(c) = self.chunks.get(&(cx, cz)) {
             c.sample_height(&self.config, wx, wz)
         } else {
-            fbm(wx * self.config.noise_scale, wz * self.config.noise_scale,
-                self.config.octaves, self.seed) * self.config.max_height
+            fbm(
+                wx * self.config.noise_scale,
+                wz * self.config.noise_scale,
+                self.config.octaves,
+                self.seed,
+            ) * self.config.max_height
         }
     }
 
@@ -202,20 +220,19 @@ impl TerrainManager {
 
     /// Update loaded chunks and their LOD based on camera position.
     pub fn update_lod(&mut self, camera: Vec3, view_radius: i32) {
-        let cs  = self.config.chunk_size as f32;
+        let cs = self.config.chunk_size as f32;
         let ccx = (camera.x / cs).floor() as i32;
         let ccz = (camera.z / cs).floor() as i32;
 
         for cz in (ccz - view_radius)..=(ccz + view_radius) {
             for cx in (ccx - view_radius)..=(ccx + view_radius) {
-                let dx  = (cx - ccx) as f32;
-                let dz  = (cz - ccz) as f32;
+                let dx = (cx - ccx) as f32;
+                let dz = (cz - ccz) as f32;
                 let dist = (dx * dx + dz * dz).sqrt() * cs;
-                let lod  = (dist / self.config.lod_dist) as u32;
-                let lod  = lod.min(self.config.lod_levels - 1);
+                let lod = (dist / self.config.lod_dist) as u32;
+                let lod = lod.min(self.config.lod_levels - 1);
 
-                let needs_rebuild = self.chunks.get(&(cx, cz))
-                    .map_or(true, |c| c.lod != lod);
+                let needs_rebuild = self.chunks.get(&(cx, cz)).map_or(true, |c| c.lod != lod);
 
                 if needs_rebuild {
                     self.load_chunk(cx, cz, lod);
@@ -225,8 +242,7 @@ impl TerrainManager {
 
         // Unload distant chunks.
         let far = view_radius + 2;
-        self.chunks.retain(|&(cx, cz), _| {
-            (cx - ccx).abs() <= far && (cz - ccz).abs() <= far
-        });
+        self.chunks
+            .retain(|&(cx, cz), _| (cx - ccx).abs() <= far && (cz - ccz).abs() <= far);
     }
 }

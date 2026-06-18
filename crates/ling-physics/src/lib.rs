@@ -13,16 +13,16 @@
 //! - [`world`]     — scene descriptor, chunk manager, entity placement
 //! - [`gltf`]      — glTF 2.0 model loading with skeletal animation
 
-pub mod vector;
+pub mod foliage;
 pub mod forces;
+pub mod gltf;
+pub mod hyperbolic;
+pub mod liquid;
 pub mod rigid;
 pub mod soft;
-pub mod liquid;
 pub mod terrain;
-pub mod foliage;
+pub mod vector;
 pub mod weather;
-pub mod hyperbolic;
 pub mod world;
-pub mod gltf;
 
-pub use glam::{Vec2, Vec3, Vec4, Mat4, Quat};
+pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};

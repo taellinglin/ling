@@ -1,14 +1,15 @@
 // src/runtime/mod.rs — tree-walking interpreter with graphics support
 #[cfg(not(target_arch = "wasm32"))]
-mod net;
+mod ai;
 #[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
+pub(crate) mod jit_abi;
 #[cfg(not(target_arch = "wasm32"))]
-mod ai;
+mod net;
+use crate::gfx::{GfxState, Light};
+use crate::parser::ast::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use crate::parser::ast::*;
-use crate::gfx::{GfxState, Light};
 // `raster` is wasm-safe (pure CPU framebuffer), so `draw_line` is available on
 // web too; `fill_triangle` is only reached from native-gated 3-D fill paths.
 use crate::gfx::raster::draw_line;
@@ -36,9 +37,16 @@ pub enum Value {
     Err(Box<Value>),
     Fn(Vec<String>, Vec<Stmt>, Env),
     /// `form` record instance — ordered named fields.
-    Struct { name: String, fields: Vec<(String, Value)> },
+    Struct {
+        name: String,
+        fields: Vec<(String, Value)>,
+    },
     /// `choose` enum instance — variant tag plus ordered payload.
-    Variant { enum_name: String, variant: String, payload: Vec<Value> },
+    Variant {
+        enum_name: String,
+        variant: String,
+        payload: Vec<Value>,
+    },
 }
 
 type Env = HashMap<String, Value>;
@@ -46,44 +54,53 @@ type Env = HashMap<String, Value>;
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Str(s)    => write!(f, "{s}"),
+            Value::Str(s) => write!(f, "{s}"),
             Value::Number(n) => {
-                if n.fract() == 0.0 && n.abs() < 1e15 { write!(f, "{}", *n as i64) }
-                else { write!(f, "{n}") }
-            }
-            Value::Bool(b)   => write!(f, "{b}"),
-            Value::Unit      => write!(f, "()"),
-            Value::List(v)   => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{n}")
+                }
+            },
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Unit => write!(f, "()"),
+            Value::List(v) => {
                 write!(f, "[")?;
                 for (i, x) in v.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{x}")?;
                 }
                 write!(f, "]")
-            }
-            Value::Ok(v)     => write!(f, "Ok({v})"),
-            Value::Err(v)    => write!(f, "Err({v})"),
+            },
+            Value::Ok(v) => write!(f, "Ok({v})"),
+            Value::Err(v) => write!(f, "Err({v})"),
             Value::Fn(_, _, _) => write!(f, "<fn>"),
             Value::Struct { name, fields } => {
                 write!(f, "{name} {{ ")?;
                 for (i, (k, v)) in fields.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{k}: {v}")?;
                 }
                 write!(f, " }}")
-            }
+            },
             Value::Variant { variant, payload, .. } => {
                 write!(f, "{variant}")?;
                 if !payload.is_empty() {
                     write!(f, "(")?;
                     for (i, v) in payload.iter().enumerate() {
-                        if i > 0 { write!(f, ", ")?; }
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
                         write!(f, "{v}")?;
                     }
                     write!(f, ")")?;
                 }
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -91,7 +108,7 @@ impl std::fmt::Display for Value {
 // ─── Control flow ────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
-enum EvalErr {
+pub(crate) enum EvalErr {
     Runtime(String),
     Return(Value),
     #[allow(dead_code)] // reserved for future `break` statement support
@@ -99,7 +116,9 @@ enum EvalErr {
 }
 
 impl From<String> for EvalErr {
-    fn from(s: String) -> Self { EvalErr::Runtime(s) }
+    fn from(s: String) -> Self {
+        EvalErr::Runtime(s)
+    }
 }
 
 type EvalResult = Result<Value, EvalErr>;
@@ -109,17 +128,15 @@ type EvalResult = Result<Value, EvalErr>;
 // ─── SVG writer ───────────────────────────────────────────────────────────────
 
 struct SvgWriter {
-    path:     String,
-    width:    f64,
-    height:   f64,
+    path: String,
+    width: f64,
+    height: f64,
     elements: Vec<String>,
 }
 
 impl SvgWriter {
     fn new(path: String, width: f64, height: f64) -> Self {
-        let bg = format!(
-            "<rect width=\"{width}\" height=\"{height}\" fill=\"#0a0a0a\"/>"
-        );
+        let bg = format!("<rect width=\"{width}\" height=\"{height}\" fill=\"#0a0a0a\"/>");
         Self { path, width, height, elements: vec![bg] }
     }
 
@@ -153,12 +170,19 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
     let m = l - c / 2.0;
-    let (r1, g1, b1) = if h < 60.0       { (c, x, 0.0) }
-                       else if h < 120.0  { (x, c, 0.0) }
-                       else if h < 180.0  { (0.0, c, x) }
-                       else if h < 240.0  { (0.0, x, c) }
-                       else if h < 300.0  { (x, 0.0, c) }
-                       else               { (c, 0.0, x) };
+    let (r1, g1, b1) = if h < 60.0 {
+        (c, x, 0.0)
+    } else if h < 120.0 {
+        (x, c, 0.0)
+    } else if h < 180.0 {
+        (0.0, c, x)
+    } else if h < 240.0 {
+        (0.0, x, c)
+    } else if h < 300.0 {
+        (x, 0.0, c)
+    } else {
+        (c, 0.0, x)
+    };
     let r = ((r1 + m) * 255.0).round() as u8;
     let g = ((g1 + m) * 255.0).round() as u8;
     let b = ((b1 + m) * 255.0).round() as u8;
@@ -168,39 +192,81 @@ fn hsl_to_hex(h: f64, s: f64, l: f64) -> String {
 // ─── Procedural texture helpers ───────────────────────────────────────────────
 
 fn tex_hash(x: i32, y: i32, seed: u32) -> f32 {
-    let mut h = (x as u32).wrapping_add((y as u32).wrapping_mul(2654435769)).wrapping_add(seed.wrapping_mul(1234567891));
-    h ^= h >> 16; h = h.wrapping_mul(0x45d9f3b); h ^= h >> 16;
+    let mut h = (x as u32)
+        .wrapping_add((y as u32).wrapping_mul(2654435769))
+        .wrapping_add(seed.wrapping_mul(1234567891));
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x45d9f3b);
+    h ^= h >> 16;
     h as f32 / u32::MAX as f32
 }
 
 fn tex_vnoise(x: f32, y: f32, seed: u32) -> f32 {
-    let xi = x.floor() as i32; let yi = y.floor() as i32;
+    let xi = x.floor() as i32;
+    let yi = y.floor() as i32;
     let sm = |t: f32| t * t * (3.0 - 2.0 * t);
-    let xf = sm(x - xi as f32); let yf = sm(y - yi as f32);
-    let a = tex_hash(xi, yi, seed); let b = tex_hash(xi+1, yi, seed);
-    let c = tex_hash(xi, yi+1, seed); let d = tex_hash(xi+1, yi+1, seed);
-    a + (b-a)*xf + (c-a)*yf + (a-b-c+d)*xf*yf
+    let xf = sm(x - xi as f32);
+    let yf = sm(y - yi as f32);
+    let a = tex_hash(xi, yi, seed);
+    let b = tex_hash(xi + 1, yi, seed);
+    let c = tex_hash(xi, yi + 1, seed);
+    let d = tex_hash(xi + 1, yi + 1, seed);
+    a + (b - a) * xf + (c - a) * yf + (a - b - c + d) * xf * yf
 }
 
 fn tex_fbm(x: f32, y: f32, octaves: u32, seed: u32) -> f32 {
-    let mut v = 0.0f32; let mut amp = 0.5f32; let mut f = 1.0f32;
+    let mut v = 0.0f32;
+    let mut amp = 0.5f32;
+    let mut f = 1.0f32;
     for i in 0..octaves {
         v += tex_vnoise(x * f, y * f, seed.wrapping_add(i * 7919)) * amp;
-        amp *= 0.5; f *= 2.0;
+        amp *= 0.5;
+        f *= 2.0;
     }
     v
 }
 
 fn tex_palette(name: &str, t: f32) -> [f32; 3] {
-    let (a, b, c, d): ([f32;3],[f32;3],[f32;3],[f32;3]) = match name {
-        "fire"        => ([0.8,0.4,0.1],[0.7,0.3,0.1],[1.0,0.5,0.3],[0.0,0.5,0.8]),
-        "ocean"       => ([0.1,0.4,0.7],[0.3,0.3,0.4],[0.8,1.0,0.5],[0.3,0.0,0.6]),
-        "psychedelic" => ([0.5,0.5,0.5],[0.8,0.8,0.8],[1.0,1.3,0.7],[0.0,0.15,0.3]),
-        "neon"        => ([0.5,0.5,0.5],[0.5,0.5,0.5],[2.0,1.0,0.0],[0.5,0.2,0.25]),
-        "forest"      => ([0.3,0.5,0.2],[0.2,0.3,0.1],[1.0,0.5,0.8],[0.1,0.3,0.6]),
-        _             => ([0.5,0.5,0.5],[0.5,0.5,0.5],[1.0,1.0,1.0],[0.0,0.333,0.667]),
+    let (a, b, c, d): ([f32; 3], [f32; 3], [f32; 3], [f32; 3]) = match name {
+        "fire" => (
+            [0.8, 0.4, 0.1],
+            [0.7, 0.3, 0.1],
+            [1.0, 0.5, 0.3],
+            [0.0, 0.5, 0.8],
+        ),
+        "ocean" => (
+            [0.1, 0.4, 0.7],
+            [0.3, 0.3, 0.4],
+            [0.8, 1.0, 0.5],
+            [0.3, 0.0, 0.6],
+        ),
+        "psychedelic" => (
+            [0.5, 0.5, 0.5],
+            [0.8, 0.8, 0.8],
+            [1.0, 1.3, 0.7],
+            [0.0, 0.15, 0.3],
+        ),
+        "neon" => (
+            [0.5, 0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [2.0, 1.0, 0.0],
+            [0.5, 0.2, 0.25],
+        ),
+        "forest" => (
+            [0.3, 0.5, 0.2],
+            [0.2, 0.3, 0.1],
+            [1.0, 0.5, 0.8],
+            [0.1, 0.3, 0.6],
+        ),
+        _ => (
+            [0.5, 0.5, 0.5],
+            [0.5, 0.5, 0.5],
+            [1.0, 1.0, 1.0],
+            [0.0, 0.333, 0.667],
+        ),
     };
-    [0,1,2].map(|i| (a[i] + b[i] * (std::f32::consts::TAU * (c[i] * t + d[i])).cos()).clamp(0.0, 1.0))
+    [0, 1, 2]
+        .map(|i| (a[i] + b[i] * (std::f32::consts::TAU * (c[i] * t + d[i])).cos()).clamp(0.0, 1.0))
 }
 
 /// Map a physical key to a typed character for ling-ui text input (lowercase).
@@ -208,10 +274,45 @@ fn tex_palette(name: &str, t: f32) -> [f32; 3] {
 fn key_char(k: minifb::Key) -> Option<char> {
     use minifb::Key::*;
     Some(match k {
-        A=>'a',B=>'b',C=>'c',D=>'d',E=>'e',F=>'f',G=>'g',H=>'h',I=>'i',J=>'j',K=>'k',L=>'l',M=>'m',
-        N=>'n',O=>'o',P=>'p',Q=>'q',R=>'r',S=>'s',T=>'t',U=>'u',V=>'v',W=>'w',X=>'x',Y=>'y',Z=>'z',
-        Key0=>'0',Key1=>'1',Key2=>'2',Key3=>'3',Key4=>'4',Key5=>'5',Key6=>'6',Key7=>'7',Key8=>'8',Key9=>'9',
-        Space=>' ', Minus=>'-', Period=>'.',
+        A => 'a',
+        B => 'b',
+        C => 'c',
+        D => 'd',
+        E => 'e',
+        F => 'f',
+        G => 'g',
+        H => 'h',
+        I => 'i',
+        J => 'j',
+        K => 'k',
+        L => 'l',
+        M => 'm',
+        N => 'n',
+        O => 'o',
+        P => 'p',
+        Q => 'q',
+        R => 'r',
+        S => 's',
+        T => 't',
+        U => 'u',
+        V => 'v',
+        W => 'w',
+        X => 'x',
+        Y => 'y',
+        Z => 'z',
+        Key0 => '0',
+        Key1 => '1',
+        Key2 => '2',
+        Key3 => '3',
+        Key4 => '4',
+        Key5 => '5',
+        Key6 => '6',
+        Key7 => '7',
+        Key8 => '8',
+        Key9 => '9',
+        Space => ' ',
+        Minus => '-',
+        Period => '.',
         _ => return None,
     })
 }
@@ -219,7 +320,9 @@ fn key_char(k: minifb::Key) -> Option<char> {
 /// Lowercase-hex encode bytes (the wire format for crypto values in Ling).
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes { s.push_str(&format!("{b:02x}")); }
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
     s
 }
 
@@ -262,39 +365,32 @@ fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
 // ─── 3D Perlin Noise (Improved Perlin 2002) ───────────────────────────────────
 
 const PERM: [u8; 512] = [
-    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
-    140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
-    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
-    57,177,33,88,237,149,56,87,174,35,63,189,114,56,42,123,
-    165,38,72,93,69,139,138,78,149,159,56,89,152,78,61,140,
-    63,26,142,76,124,132,72,11,90,44,82,59,96,41,148,126,
-    157,13,49,27,176,33,47,14,97,78,71,40,87,183,4,122,
-    92,7,72,3,246,17,225,87,91,106,203,190,57,74,76,88,
-    207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,
-    168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,
-    210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,
-    115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,
-    219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,
-    121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,
-    8,186,120,37,46,28,166,180,198,232,221,116,31,75,189,139,
-    138,112,62,181,102,72,3,246,14,97,53,87,185,134,193,29,
-    158,225,248,152,17,105,217,142,148,155,30,135,233,206,85,40,
-    223,140,161,137,13,191,230,66,104,153,199,167,147,99,179,92,
+    151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69,
+    142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219,
+    203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 35, 63, 189, 114, 56, 42, 123,
+    165, 38, 72, 93, 69, 139, 138, 78, 149, 159, 56, 89, 152, 78, 61, 140, 63, 26, 142, 76, 124,
+    132, 72, 11, 90, 44, 82, 59, 96, 41, 148, 126, 157, 13, 49, 27, 176, 33, 47, 14, 97, 78, 71,
+    40, 87, 183, 4, 122, 92, 7, 72, 3, 246, 17, 225, 87, 91, 106, 203, 190, 57, 74, 76, 88, 207,
+    208, 239, 170, 251, 67, 77, 51, 133, 69, 249, 2, 127, 80, 60, 159, 168, 81, 163, 64, 143, 146,
+    157, 56, 245, 188, 182, 218, 33, 16, 255, 243, 210, 205, 12, 19, 236, 95, 151, 68, 23, 196,
+    167, 126, 61, 100, 93, 25, 115, 96, 129, 79, 220, 34, 42, 144, 136, 70, 238, 184, 20, 222, 94,
+    11, 219, 224, 50, 58, 10, 73, 6, 36, 92, 194, 211, 172, 98, 145, 149, 228, 121, 231, 200, 55,
+    109, 141, 213, 78, 169, 108, 86, 244, 234, 101, 122, 174, 8, 186, 120, 37, 46, 28, 166, 180,
+    198, 232, 221, 116, 31, 75, 189, 139, 138, 112, 62, 181, 102, 72, 3, 246, 14, 97, 53, 87, 185,
+    134, 193, 29, 158, 225, 248, 152, 17, 105, 217, 142, 148, 155, 30, 135, 233, 206, 85, 40, 223,
+    140, 161, 137, 13, 191, 230, 66, 104, 153, 199, 167, 147, 99, 179, 92,
     // Duplicate for wrap-around indexing
-    151,160,137,91,90,15,131,13,201,95,96,53,194,233,7,225,
-    140,36,103,30,69,142,8,99,37,240,21,10,23,190,6,148,
-    247,120,234,75,0,26,197,62,94,252,219,203,117,35,11,32,
-    57,177,33,88,237,149,56,87,174,35,63,189,114,56,42,123,
-    165,38,72,93,69,139,138,78,149,159,56,89,152,78,61,140,
-    63,26,142,76,124,132,72,11,90,44,82,59,96,41,148,126,
-    157,13,49,27,176,33,47,14,97,78,71,40,87,183,4,122,
-    92,7,72,3,246,17,225,87,91,106,203,190,57,74,76,88,
-    207,208,239,170,251,67,77,51,133,69,249,2,127,80,60,159,
-    168,81,163,64,143,146,157,56,245,188,182,218,33,16,255,243,
-    210,205,12,19,236,95,151,68,23,196,167,126,61,100,93,25,
-    115,96,129,79,220,34,42,144,136,70,238,184,20,222,94,11,
-    219,224,50,58,10,73,6,36,92,194,211,172,98,145,149,228,
-    121,231,200,55,109,141,213,78,169,108,86,244,234,101,122,174,
+    151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30, 69,
+    142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62, 94, 252, 219,
+    203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 35, 63, 189, 114, 56, 42, 123,
+    165, 38, 72, 93, 69, 139, 138, 78, 149, 159, 56, 89, 152, 78, 61, 140, 63, 26, 142, 76, 124,
+    132, 72, 11, 90, 44, 82, 59, 96, 41, 148, 126, 157, 13, 49, 27, 176, 33, 47, 14, 97, 78, 71,
+    40, 87, 183, 4, 122, 92, 7, 72, 3, 246, 17, 225, 87, 91, 106, 203, 190, 57, 74, 76, 88, 207,
+    208, 239, 170, 251, 67, 77, 51, 133, 69, 249, 2, 127, 80, 60, 159, 168, 81, 163, 64, 143, 146,
+    157, 56, 245, 188, 182, 218, 33, 16, 255, 243, 210, 205, 12, 19, 236, 95, 151, 68, 23, 196,
+    167, 126, 61, 100, 93, 25, 115, 96, 129, 79, 220, 34, 42, 144, 136, 70, 238, 184, 20, 222, 94,
+    11, 219, 224, 50, 58, 10, 73, 6, 36, 92, 194, 211, 172, 98, 145, 149, 228, 121, 231, 200, 55,
+    109, 141, 213, 78, 169, 108, 86, 244, 234, 101, 122, 174,
 ];
 
 fn fade(t: f32) -> f32 {
@@ -329,13 +425,33 @@ fn perlin3(x: f32, y: f32, z: f32) -> f32 {
     let pd = PERM[(p1 + ((yi + 1) & 255) as usize) & 255] as usize;
 
     let g000 = grad(PERM[(pa + zi as usize) & 255], xf, yf, zf);
-    let g001 = grad(PERM[(pa + ((zi + 1) & 255) as usize) & 255], xf, yf, zf - 1.0);
+    let g001 = grad(
+        PERM[(pa + ((zi + 1) & 255) as usize) & 255],
+        xf,
+        yf,
+        zf - 1.0,
+    );
     let g010 = grad(PERM[(pb + zi as usize) & 255], xf, yf - 1.0, zf);
-    let g011 = grad(PERM[(pb + ((zi + 1) & 255) as usize) & 255], xf, yf - 1.0, zf - 1.0);
+    let g011 = grad(
+        PERM[(pb + ((zi + 1) & 255) as usize) & 255],
+        xf,
+        yf - 1.0,
+        zf - 1.0,
+    );
     let g100 = grad(PERM[(pc + zi as usize) & 255], xf - 1.0, yf, zf);
-    let g101 = grad(PERM[(pc + ((zi + 1) & 255) as usize) & 255], xf - 1.0, yf, zf - 1.0);
+    let g101 = grad(
+        PERM[(pc + ((zi + 1) & 255) as usize) & 255],
+        xf - 1.0,
+        yf,
+        zf - 1.0,
+    );
     let g110 = grad(PERM[(pd + zi as usize) & 255], xf - 1.0, yf - 1.0, zf);
-    let g111 = grad(PERM[(pd + ((zi + 1) & 255) as usize) & 255], xf - 1.0, yf - 1.0, zf - 1.0);
+    let g111 = grad(
+        PERM[(pd + ((zi + 1) & 255) as usize) & 255],
+        xf - 1.0,
+        yf - 1.0,
+        zf - 1.0,
+    );
 
     let l00 = g000 + u * (g100 - g000);
     let l01 = g001 + u * (g101 - g001);
@@ -349,7 +465,9 @@ fn perlin3(x: f32, y: f32, z: f32) -> f32 {
 }
 
 fn fast_rand_f64(state: &mut u64) -> f64 {
-    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    *state = state
+        .wrapping_mul(6364136223846793005)
+        .wrapping_add(1442695040888963407);
     ((*state >> 32) as u32) as f64 / 4294967296.0
 }
 
@@ -358,7 +476,9 @@ fn fast_rand_f64(state: &mut u64) -> f64 {
 /// Write one pixel into the framebuffer (normal or additive blend).
 #[inline]
 fn put_px(buf: &mut [u32], idx: usize, color: u32, blend: u8) {
-    if idx >= buf.len() { return; }
+    if idx >= buf.len() {
+        return;
+    }
     if blend == 0 {
         buf[idx] = color;
     } else {
@@ -381,7 +501,9 @@ fn rgb(r: f64, g: f64, b: f64) -> u32 {
 
 fn draw_circle_outline(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
     let r = r.clamp(0, 20000); // guard against overflow / runaway from tiny depths
-    if r == 0 { return; }
+    if r == 0 {
+        return;
+    }
     let mut x = 0;
     let mut y = r;
     let mut d = 3 - 2 * r;
@@ -397,9 +519,27 @@ fn draw_circle_outline(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32
     }
 }
 
-fn plot_circle_points(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, x: i32, y: i32, color: u32, blend: u8) {
-    let points = [(cx+x, cy+y), (cx-x, cy+y), (cx+x, cy-y), (cx-x, cy-y),
-                  (cx+y, cy+x), (cx-y, cy+x), (cx+y, cy-x), (cx-y, cy-x)];
+fn plot_circle_points(
+    buf: &mut [u32],
+    w: i32,
+    h: i32,
+    cx: i32,
+    cy: i32,
+    x: i32,
+    y: i32,
+    color: u32,
+    blend: u8,
+) {
+    let points = [
+        (cx + x, cy + y),
+        (cx - x, cy + y),
+        (cx + x, cy - y),
+        (cx - x, cy - y),
+        (cx + y, cy + x),
+        (cx - y, cy + x),
+        (cx + y, cy - x),
+        (cx - y, cy - x),
+    ];
     for &(px, py) in &points {
         if px >= 0 && px < w && py >= 0 && py < h {
             put_px(buf, (py * w + px) as usize, color, blend);
@@ -407,12 +547,25 @@ fn plot_circle_points(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, x: i32,
     }
 }
 
-fn draw_circle_filled(buf: &mut [u32], w: i32, h: i32, cx: i32, cy: i32, r: i32, color: u32, blend: u8) {
-    if r <= 0 { return; }
+fn draw_circle_filled(
+    buf: &mut [u32],
+    w: i32,
+    h: i32,
+    cx: i32,
+    cy: i32,
+    r: i32,
+    color: u32,
+    blend: u8,
+) {
+    if r <= 0 {
+        return;
+    }
     for dy in -r..=r {
-        let dx_max = ((r*r - dy*dy) as f64).sqrt() as i32;
+        let dx_max = ((r * r - dy * dy) as f64).sqrt() as i32;
         let py = cy + dy;
-        if py < 0 || py >= h { continue; }
+        if py < 0 || py >= h {
+            continue;
+        }
         for dx in -dx_max..=dx_max {
             let px = cx + dx;
             if px >= 0 && px < w {
@@ -441,7 +594,10 @@ mod draw_tests {
         let mut buf = vec![0u32; 100 * 100];
         draw_circle_outline(&mut buf, 100, 100, 50, 50, 20, 0x00FF00, 0);
         assert_eq!(buf[50 * 100 + 50], 0, "outline must NOT fill the centre");
-        assert!(buf.iter().any(|&p| p == 0x00FF00), "outline must draw a ring");
+        assert!(
+            buf.iter().any(|&p| p == 0x00FF00),
+            "outline must draw a ring"
+        );
     }
 
     #[test]
@@ -460,48 +616,48 @@ mod draw_tests {
 #[derive(Clone, Copy)]
 pub struct UiTheme {
     pub primary: u32,
-    pub accent:  u32,
-    pub track:   u32,
-    pub warn:    u32,
-    pub text:    u32,
-    pub bg:      u32,
+    pub accent: u32,
+    pub track: u32,
+    pub warn: u32,
+    pub text: u32,
+    pub bg: u32,
 }
 
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
             primary: 0x00D2FF, // holographic cyan
-            accent:  0x28FFB4, // mint
-            track:   0x2C3E64, // dim slate
-            warn:    0xFF5A5A, // alert red
-            text:    0xBEEBFF, // pale cyan
-            bg:      0x0A1018, // near-black panel
+            accent: 0x28FFB4,  // mint
+            track: 0x2C3E64,   // dim slate
+            warn: 0xFF5A5A,    // alert red
+            text: 0xBEEBFF,    // pale cyan
+            bg: 0x0A1018,      // near-black panel
         }
     }
 }
 
 pub struct Interpreter {
-    globals:   HashMap<String, Expr>,
+    globals: HashMap<String, Expr>,
     /// Globals evaluated ONCE at program start (immutable after load).
     /// call_named clones this instead of re-evaluating every global per call.
     global_seed: Env,
     functions: HashMap<String, FnDef>,
     /// `form` definitions: struct name → ordered field names.
-    structs:   HashMap<String, Vec<String>>,
+    pub(crate) structs: HashMap<String, Vec<String>>,
     /// `choose` variants: variant name (bare and `Enum::Variant`) → (enum name, arity).
     enum_variants: HashMap<String, (String, usize)>,
-    _modules:  HashMap<String, Vec<FnDef>>,
-    gfx:       RefCell<GfxState>,
-    svg:       RefCell<Option<SvgWriter>>,
+    _modules: HashMap<String, Vec<FnDef>>,
+    gfx: RefCell<GfxState>,
+    svg: RefCell<Option<SvgWriter>>,
     /// Directory of the primary source file, for relative `use` resolution.
     pub source_dir: Option<std::path::PathBuf>,
     /// Files already loaded — prevents circular imports.
     loaded_files: std::collections::HashSet<String>,
     /// Optional audio engine — `None` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
-    audio:     Option<AudioEngine>,
+    audio: Option<AudioEngine>,
     #[cfg(not(target_arch = "wasm32"))]
-    fft:       RefCell<FftAnalyzer>,
+    fft: RefCell<FftAnalyzer>,
     fft_bands_cache: RefCell<Vec<f32>>,
     /// Real-time clock — initialized at startup
     start_time: std::time::Instant,
@@ -580,14 +736,14 @@ impl Interpreter {
             .map_err(|e| eprintln!("audio init failed (no sound): {e}"))
             .ok();
         Self {
-            globals:   HashMap::new(),
+            globals: HashMap::new(),
             global_seed: HashMap::new(),
             functions: HashMap::new(),
-            structs:   HashMap::new(),
+            structs: HashMap::new(),
             enum_variants: HashMap::new(),
-            _modules:  HashMap::new(),
-            gfx:       RefCell::new(GfxState::new()),
-            svg:       RefCell::new(None),
+            _modules: HashMap::new(),
+            gfx: RefCell::new(GfxState::new()),
+            svg: RefCell::new(None),
             source_dir: None,
             loaded_files: std::collections::HashSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -693,24 +849,52 @@ impl Interpreter {
     fn render_dialog(&mut self, x: f32, y: f32, w: f32, h: f32, font: i64, t: f32) {
         let (runs, typing) = match &self.dialog {
             Some(d) if !d.is_closed() => {
-                let runs: Vec<(String, usize, bool)> = d.visible_runs().into_iter()
-                    .map(|r| (r.text, r.role.index(), r.newline_before)).collect();
+                let runs: Vec<(String, usize, bool)> = d
+                    .visible_runs()
+                    .into_iter()
+                    .map(|r| (r.text, r.role.index(), r.newline_before))
+                    .collect();
                 (runs, d.is_typing())
-            }
+            },
             _ => return,
         };
         let colors = self.dialog_colors;
         // ── frame + fill ──
         let b = 12.0;
         let corners: Vec<[f32; 2]> = vec![
-            [x+b,y],[x+w-b,y],[x+w,y+b],[x+w,y+h-b],[x+w-b,y+h],[x+b,y+h],[x,y+h-b],[x,y+b],[x+b,y],
+            [x + b, y],
+            [x + w - b, y],
+            [x + w, y + b],
+            [x + w, y + h - b],
+            [x + w - b, y + h],
+            [x + b, y + h],
+            [x, y + h - b],
+            [x, y + b],
+            [x + b, y],
         ];
         {
             let mut gfx = self.gfx.borrow_mut();
             let (bw, bh) = (gfx.width, gfx.height);
-            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, 0x0A1018, false, std::slice::from_ref(&corners));
+            crate::gfx::raster::fill_contours_aa(
+                &mut gfx.buffer,
+                bw,
+                bh,
+                0x0A1018,
+                false,
+                std::slice::from_ref(&corners),
+            );
             for seg in corners.windows(2) {
-                crate::gfx::raster::draw_line_aa(&mut gfx.buffer, bw, bh, 0x00D2FF, false, seg[0][0], seg[0][1], seg[1][0], seg[1][1]);
+                crate::gfx::raster::draw_line_aa(
+                    &mut gfx.buffer,
+                    bw,
+                    bh,
+                    0x00D2FF,
+                    false,
+                    seg[0][0],
+                    seg[0][1],
+                    seg[1][0],
+                    seg[1][1],
+                );
             }
         }
         // ── word-wrapped, colour-coded text ──
@@ -721,36 +905,68 @@ impl Interpreter {
         let mut cy = y + pad;
         let use_font = font >= 0 && (font as usize) < self.fonts.len();
         for (text, role, nl) in &runs {
-            if *nl { cx = x + pad; cy += line_h; }
+            if *nl {
+                cx = x + pad;
+                cy += line_h;
+            }
             for word in text.split_inclusive(' ') {
-                let wpx = if use_font { self.fonts[font as usize].measure(word, px) }
-                          else { ling_ui::holo::text_width(word, px * 0.6, px * 0.24) };
-                if cx + wpx > x + w - pad && cx > x + pad + 1.0 { cx = x + pad; cy += line_h; }
-                if cy + line_h > y + h { break; }
+                let wpx = if use_font {
+                    self.fonts[font as usize].measure(word, px)
+                } else {
+                    ling_ui::holo::text_width(word, px * 0.6, px * 0.24)
+                };
+                if cx + wpx > x + w - pad && cx > x + pad + 1.0 {
+                    cx = x + pad;
+                    cy += line_h;
+                }
+                if cy + line_h > y + h {
+                    break;
+                }
                 let col = colors[(*role).min(3)];
                 if use_font {
                     let glyphs = self.font_layout_2d_glyphs(font as usize, cx, cy, px, word);
                     let mut gfx = self.gfx.borrow_mut();
                     let (bw, bh, add) = (gfx.width, gfx.height, gfx.blend == 1);
                     for contours in &glyphs {
-                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, col, add, contours);
+                        crate::gfx::raster::fill_contours_aa(
+                            &mut gfx.buffer,
+                            bw,
+                            bh,
+                            col,
+                            add,
+                            contours,
+                        );
                     }
                 } else {
                     let segs = ling_ui::holo::text_lines(word, cx, cy, px * 0.6, px, px * 0.24);
                     let mut gfx = self.gfx.borrow_mut();
                     let (bw, bh) = (gfx.width, gfx.height);
-                    for s in segs { draw_line(&mut gfx.buffer, bw, bh, col, s[0], s[1], s[2], s[3]); }
+                    for s in segs {
+                        draw_line(&mut gfx.buffer, bw, bh, col, s[0], s[1], s[2], s[3]);
+                    }
                 }
                 cx += wpx;
             }
         }
         // ── blinking advance arrow when fully typed ──
         if !typing && (t * 3.0).sin() > 0.0 {
-            let ax = x + w - 26.0; let ay = y + h - 22.0;
+            let ax = x + w - 26.0;
+            let ay = y + h - 22.0;
             let mut gfx = self.gfx.borrow_mut();
             let (bw, bh) = (gfx.width, gfx.height);
-            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, bw, bh, 0x00D2FF, false,
-                std::slice::from_ref(&vec![[ax-7.0,ay],[ax+7.0,ay],[ax,ay+9.0],[ax-7.0,ay]]));
+            crate::gfx::raster::fill_contours_aa(
+                &mut gfx.buffer,
+                bw,
+                bh,
+                0x00D2FF,
+                false,
+                std::slice::from_ref(&vec![
+                    [ax - 7.0, ay],
+                    [ax + 7.0, ay],
+                    [ax, ay + 9.0],
+                    [ax - 7.0, ay],
+                ]),
+            );
         }
     }
 
@@ -758,12 +974,22 @@ impl Interpreter {
     /// analysis/decoding do not). Returns `false` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
     fn ensure_music(&mut self) -> bool {
-        if self.music.is_some() { return true; }
-        if self.music_init { return false; }
+        if self.music.is_some() {
+            return true;
+        }
+        if self.music_init {
+            return false;
+        }
         self.music_init = true;
         match ling_music::MusicEngine::new() {
-            Ok(m) => { self.music = Some(m); true }
-            Err(e) => { eprintln!("music engine init failed (no music playback): {e}"); false }
+            Ok(m) => {
+                self.music = Some(m);
+                true
+            },
+            Err(e) => {
+                eprintln!("music engine init failed (no music playback): {e}");
+                false
+            },
         }
     }
 
@@ -771,16 +997,32 @@ impl Interpreter {
     /// a screen-space polyline (x→right, y→down). `(x, y)` is the text box top-left;
     /// the baseline is placed `ascent*px` below it. Curves are flattened to 0.3 px.
     #[cfg(not(target_arch = "wasm32"))]
-    fn font_layout_2d(&mut self, id: usize, x: f32, y: f32, px: f32, text: &str) -> Vec<Vec<[f32; 2]>> {
+    fn font_layout_2d(
+        &mut self,
+        id: usize,
+        x: f32,
+        y: f32,
+        px: f32,
+        text: &str,
+    ) -> Vec<Vec<[f32; 2]>> {
         let mut out = Vec::new();
-        for g in self.font_layout_2d_glyphs(id, x, y, px, text) { out.extend(g); }
+        for g in self.font_layout_2d_glyphs(id, x, y, px, text) {
+            out.extend(g);
+        }
         out
     }
 
     /// Same as [`font_layout_2d`] but grouped per glyph (so a fill can apply the
     /// non-zero winding rule within each glyph, preserving interior holes).
     #[cfg(not(target_arch = "wasm32"))]
-    fn font_layout_2d_glyphs(&mut self, id: usize, x: f32, y: f32, px: f32, text: &str) -> Vec<Vec<Vec<[f32; 2]>>> {
+    fn font_layout_2d_glyphs(
+        &mut self,
+        id: usize,
+        x: f32,
+        y: f32,
+        px: f32,
+        text: &str,
+    ) -> Vec<Vec<Vec<[f32; 2]>>> {
         let font = &mut self.fonts[id];
         let asc = font.ascent();
         let tol = 0.3 / px;
@@ -790,7 +1032,8 @@ impl Interpreter {
             let go = font.glyph_outline(ch, tol);
             let mut contours = Vec::with_capacity(go.polylines.len());
             for pl in &go.polylines {
-                let mapped: Vec<[f32; 2]> = pl.iter()
+                let mapped: Vec<[f32; 2]> = pl
+                    .iter()
                     .map(|p| [x + (pen + p[0]) * px, y + (asc - p[1]) * px])
                     .collect();
                 contours.push(mapped);
@@ -805,12 +1048,15 @@ impl Interpreter {
         for item in &program.items {
             self.register_item("", item)?;
         }
-        let entry = self.find_entry()
+        let entry = self
+            .find_entry()
             .ok_or("no entry point — need `bind start = do {...}` or `ผูก เริ่ม = ทำ {...}`")?;
         // Seed the entry env with non-Do globals so top-level `令` bindings
         // are visible in the main Do block (same two-pass logic as call_named).
         let mut env = Env::new();
-        let non_do: Vec<_> = self.globals.iter()
+        let non_do: Vec<_> = self
+            .globals
+            .iter()
             .filter(|(_, e)| !matches!(e, Expr::Do(_)))
             .map(|(k, e)| (k.clone(), e.clone()))
             .collect();
@@ -832,46 +1078,65 @@ impl Interpreter {
         // Cache the evaluated globals so every user-function call can clone this
         // seed instead of re-evaluating all globals (see call_named).
         self.global_seed = env.clone();
-        self.framed("start", |me| me.eval_expr(&entry, &mut env)).map(|_| ()).map_err(|e| match e {
-            EvalErr::Runtime(s) => s,
-            EvalErr::Return(_)  => "unexpected top-level return".to_string(),
-            EvalErr::Break      => "unexpected break at top level".to_string(),
-        })
+        self.framed("start", |me| me.eval_expr(&entry, &mut env))
+            .map(|_| ())
+            .map_err(|e| match e {
+                EvalErr::Runtime(s) => s,
+                EvalErr::Return(_) => "unexpected top-level return".to_string(),
+                EvalErr::Break => "unexpected break at top level".to_string(),
+            })
     }
 
     fn register_item(&mut self, ns: &str, item: &Item) -> Result<(), String> {
         match item {
             Item::Bind(name, expr) => {
-                let key = if ns.is_empty() { name.clone() } else { format!("{ns}::{name}") };
+                let key = if ns.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{ns}::{name}")
+                };
                 self.globals.insert(key, expr.clone());
-            }
+            },
             Item::Fn(def) => {
-                let key = if ns.is_empty() { def.name.clone() } else { format!("{ns}::{}", def.name) };
+                let key = if ns.is_empty() {
+                    def.name.clone()
+                } else {
+                    format!("{ns}::{}", def.name)
+                };
                 self.functions.insert(key, def.clone());
-            }
+            },
             Item::Mod(name, body) => {
-                let child_ns = if ns.is_empty() { name.clone() } else { format!("{ns}::{name}") };
+                let child_ns = if ns.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{ns}::{name}")
+                };
                 for child in body {
                     self.register_item(&child_ns, child)?;
                 }
-            }
-            Item::TypeAlias(_, _) => {}
+            },
+            Item::TypeAlias(_, _) => {},
             Item::Struct(name, fields) => {
                 self.structs.insert(name.clone(), fields.clone());
-                if !ns.is_empty() { self.structs.insert(format!("{ns}::{name}"), fields.clone()); }
-            }
+                if !ns.is_empty() {
+                    self.structs.insert(format!("{ns}::{name}"), fields.clone());
+                }
+            },
             Item::Enum(name, variants) => {
                 for v in variants {
-                    self.enum_variants.insert(v.name.clone(), (name.clone(), v.arity));
-                    self.enum_variants.insert(format!("{name}::{}", v.name), (name.clone(), v.arity));
+                    self.enum_variants
+                        .insert(v.name.clone(), (name.clone(), v.arity));
+                    self.enum_variants
+                        .insert(format!("{name}::{}", v.name), (name.clone(), v.arity));
                     if !ns.is_empty() {
-                        self.enum_variants.insert(format!("{ns}::{name}::{}", v.name), (name.clone(), v.arity));
+                        self.enum_variants
+                            .insert(format!("{ns}::{name}::{}", v.name), (name.clone(), v.arity));
                     }
                 }
-            }
+            },
             Item::Use { path, alias } => {
                 self.load_module(path, alias.as_deref(), ns)?;
-            }
+            },
         }
         Ok(())
     }
@@ -880,9 +1145,17 @@ impl Interpreter {
     /// register all its definitions.  If `alias` is given, every name is
     /// prefixed with `<parent_ns>::<alias>`.  Circular imports are silently
     /// skipped.
-    fn load_module(&mut self, path: &str, alias: Option<&str>, parent_ns: &str) -> Result<(), String> {
+    fn load_module(
+        &mut self,
+        path: &str,
+        alias: Option<&str>,
+        parent_ns: &str,
+    ) -> Result<(), String> {
         // Build candidate file paths (.ling extension variants)
-        let base_dir = self.source_dir.clone().unwrap_or_else(|| std::path::PathBuf::from("."));
+        let base_dir = self
+            .source_dir
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
         let raw = std::path::Path::new(path);
         let candidates: Vec<std::path::PathBuf> = vec![
             base_dir.join(format!("{}.ling", path)),
@@ -896,10 +1169,13 @@ impl Interpreter {
             std::path::PathBuf::from(path),
         ];
 
-        let resolved = candidates.into_iter().find(|p| p.exists())
+        let resolved = candidates
+            .into_iter()
+            .find(|p| p.exists())
             .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
 
-        let canonical = resolved.canonicalize()
+        let canonical = resolved
+            .canonicalize()
             .unwrap_or_else(|_| resolved.clone())
             .to_string_lossy()
             .to_string();
@@ -925,7 +1201,7 @@ impl Interpreter {
             (_, Some(a)) if !parent_ns.is_empty() => format!("{parent_ns}::{a}"),
             (_, Some(a)) => a.to_string(),
             (false, None) => parent_ns.to_string(),
-            (true,  None) => String::new(),
+            (true, None) => String::new(),
         };
 
         for item in &program.items {
@@ -939,44 +1215,57 @@ impl Interpreter {
     fn find_entry(&self) -> Option<Expr> {
         // Try all known entry-point names in multiple human languages
         for key in &[
-            "start", "main",
+            "start",
+            "main",
             "启",
-            "เริ่ม",           // Thai
+            "เริ่ม", // Thai
             "시작",
-            "начать", "начало",
-            "inicio", "comenzar",
-            "début", "commencer",
-            "anfang", "starten",
+            "начать",
+            "начало",
+            "inicio",
+            "comenzar",
+            "début",
+            "commencer",
+            "anfang",
+            "starten",
             "início",
             "शुरू",
             "ابدأ",
         ] {
-            if let Some(e) = self.globals.get(*key) { return Some(e.clone()); }
+            if let Some(e) = self.globals.get(*key) {
+                return Some(e.clone());
+            }
         }
-        self.globals.values().find(|e| matches!(e, Expr::Do(_))).cloned()
+        self.globals
+            .values()
+            .find(|e| matches!(e, Expr::Do(_)))
+            .cloned()
     }
 
     // ─── Expression evaluation ────────────────────────────────────────────────
 
     fn eval_expr(&mut self, expr: &Expr, env: &mut Env) -> EvalResult {
         match expr {
-            Expr::Str(s)    => Ok(Value::Str(s.clone())),
+            Expr::Str(s) => Ok(Value::Str(s.clone())),
             Expr::Number(n) => Ok(Value::Number(*n)),
-            Expr::Bool(b)   => Ok(Value::Bool(*b)),
-            Expr::Unit      => Ok(Value::Unit),
+            Expr::Bool(b) => Ok(Value::Bool(*b)),
+            Expr::Unit => Ok(Value::Unit),
             Expr::Array(elems) => {
-                let vs: Vec<_> = elems.iter()
+                let vs: Vec<_> = elems
+                    .iter()
                     .map(|e| self.eval_expr(e, env))
-                    .collect::<Result<_,_>>()?;
+                    .collect::<Result<_, _>>()?;
                 Ok(Value::List(vs))
-            }
+            },
 
             Expr::Ident(name) => self.lookup(name, env),
 
             Expr::Path(segs) => {
-                if segs.len() == 1 { return self.lookup(&segs[0], env); }
+                if segs.len() == 1 {
+                    return self.lookup(&segs[0], env);
+                }
                 Ok(Value::Str(segs.join("::")))
-            }
+            },
 
             Expr::Ref(inner) => self.eval_expr(inner, env),
             Expr::Await(inner) => self.eval_expr(inner, env),
@@ -984,13 +1273,13 @@ impl Interpreter {
             Expr::Do(stmts) => {
                 let mut local = env.clone();
                 Ok(self.exec_block(stmts, &mut local)?.unwrap_or(Value::Unit))
-            }
+            },
 
             Expr::BinOp(op, lhs, rhs) => {
                 let l = self.eval_expr(lhs, env)?;
                 let r = self.eval_expr(rhs, env)?;
                 self.apply_binop(op, l, r)
-            }
+            },
 
             Expr::If { cond, then, elseifs, else_body } => {
                 let cond_val = self.eval_expr(cond, env)?;
@@ -1007,7 +1296,7 @@ impl Interpreter {
                     return Ok(self.exec_block(eb, env)?.unwrap_or(Value::Unit));
                 }
                 Ok(Value::Unit)
-            }
+            },
 
             Expr::While { cond, body } => {
                 // Run the body directly in the *outer* env so that
@@ -1015,15 +1304,17 @@ impl Interpreter {
                 // which is the expected behaviour in a scripting language.
                 loop {
                     let cv = self.eval_expr(cond, env)?;
-                    if !self.is_truthy(&cv) { break; }
+                    if !self.is_truthy(&cv) {
+                        break;
+                    }
                     match self.exec_block(body, env) {
-                        Ok(_) => {}
+                        Ok(_) => {},
                         Err(EvalErr::Break) => break,
                         Err(e) => return Err(e),
                     }
                 }
                 Ok(Value::Unit)
-            }
+            },
 
             Expr::For { var, iter, body } => {
                 let iter_val = self.eval_expr(iter, env)?;
@@ -1032,13 +1323,13 @@ impl Interpreter {
                     let mut local = env.clone();
                     local.insert(var.clone(), item);
                     match self.exec_block(body, &mut local) {
-                        Ok(_) => {}
+                        Ok(_) => {},
                         Err(EvalErr::Break) => break,
                         Err(e) => return Err(e),
                     }
                 }
                 Ok(Value::Unit)
-            }
+            },
 
             Expr::Match(subject, arms) => {
                 let subj = self.eval_expr(subject, env)?;
@@ -1050,55 +1341,65 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::Unit)
-            }
+            },
 
             Expr::Range(lo, hi) => {
                 let lo_v = self.eval_expr(lo, env)?;
                 let hi_v = self.eval_expr(hi, env)?;
                 let lo_n = self.to_number(&lo_v)? as i64;
                 let hi_n = self.to_number(&hi_v)? as i64;
-                Ok(Value::List((lo_n..hi_n).map(|i| Value::Number(i as f64)).collect()))
-            }
+                Ok(Value::List(
+                    (lo_n..hi_n).map(|i| Value::Number(i as f64)).collect(),
+                ))
+            },
 
             Expr::Index(base, idx) => {
                 let b = self.eval_expr(base, env)?;
                 let i = self.eval_expr(idx, env)?;
                 let n = self.to_number(&i)? as usize;
                 match b {
-                    Value::List(v) => v.get(n).cloned()
+                    Value::List(v) => v
+                        .get(n)
+                        .cloned()
                         .ok_or_else(|| EvalErr::from(format!("index {n} out of bounds"))),
-                    Value::Str(s)  => s.chars().nth(n)
+                    Value::Str(s) => s
+                        .chars()
+                        .nth(n)
                         .map(|c| Value::Str(c.to_string()))
                         .ok_or_else(|| EvalErr::from(format!("index {n} out of bounds"))),
                     other => Err(EvalErr::from(format!("cannot index {:?}", other))),
                 }
-            }
+            },
 
             Expr::Call(callee, args) => {
-                let arg_vals: Vec<Value> = args.iter()
+                let arg_vals: Vec<Value> = args
+                    .iter()
                     .map(|a| self.eval_expr(a, env))
-                    .collect::<Result<_,_>>()?;
+                    .collect::<Result<_, _>>()?;
                 match callee.as_ref() {
                     Expr::Ident(name) => self.call_named(name, arg_vals, env),
-                    Expr::Path(segs)  => self.call_named(&segs.join("::"), arg_vals, env),
+                    Expr::Path(segs) => self.call_named(&segs.join("::"), arg_vals, env),
                     _ => {
                         let v = self.eval_expr(callee, env)?;
                         self.call_value(v, arg_vals)
-                    }
+                    },
                 }
-            }
+            },
 
             Expr::MethodCall { receiver, method, args } => {
                 let recv = self.eval_expr(receiver, env)?;
-                let arg_vals: Vec<Value> = args.iter()
+                let arg_vals: Vec<Value> = args
+                    .iter()
                     .map(|a| self.eval_expr(a, env))
-                    .collect::<Result<_,_>>()?;
+                    .collect::<Result<_, _>>()?;
                 self.call_method(recv, method, arg_vals)
-            }
+            },
 
-            Expr::Closure(params, body) => {
-                Ok(Value::Fn(params.clone(), vec![Stmt::Expr(*body.clone())], env.clone()))
-            }
+            Expr::Closure(params, body) => Ok(Value::Fn(
+                params.clone(),
+                vec![Stmt::Expr(*body.clone())],
+                env.clone(),
+            )),
         }
     }
 
@@ -1112,14 +1413,14 @@ impl Interpreter {
                     let v = self.eval_expr(expr, env)?;
                     env.insert(name.clone(), v);
                     last = None;
-                }
+                },
                 Stmt::Return(expr) => {
                     let v = self.eval_expr(expr, env)?;
                     return Err(EvalErr::Return(v));
-                }
+                },
                 Stmt::Expr(expr) => {
                     last = Some(self.eval_expr(expr, env)?);
-                }
+                },
             }
         }
         Ok(last)
@@ -1128,7 +1429,9 @@ impl Interpreter {
     // ─── Dispatch helpers ─────────────────────────────────────────────────────
 
     fn lookup(&self, name: &str, env: &Env) -> EvalResult {
-        if let Some(v) = env.get(name) { return Ok(v.clone()); }
+        if let Some(v) = env.get(name) {
+            return Ok(v.clone());
+        }
         if self.functions.contains_key(name) {
             let def = &self.functions[name];
             return Ok(Value::Fn(def.params.clone(), def.body.clone(), Env::new()));
@@ -1140,21 +1443,30 @@ impl Interpreter {
         }
         // Math constants usable as plain identifiers (e.g. `sin(pi)`)
         match name {
-            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => return Ok(Value::Number(std::f64::consts::PI)),
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว"        => return Ok(Value::Number(std::f64::consts::TAU)),
-            _ => {}
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => {
+                return Ok(Value::Number(std::f64::consts::PI))
+            },
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" => {
+                return Ok(Value::Number(std::f64::consts::TAU))
+            },
+            _ => {},
         }
         Err(EvalErr::from(format!("undefined: '{name}'")))
     }
 
-    fn call_named(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
+    pub(crate) fn call_named(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
         match name {
             // ── Print ──
-            "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести" | "imprimir" | "afficher" => {
-                let s = args.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("");
+            "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести"
+            | "imprimir" | "afficher" => {
+                let s = args
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
                 println!("{s}");
                 return Ok(Value::Unit);
-            }
+            },
             // print_color(colorIdx, text...) — ANSI-coloured console line.
             //   colorIdx 0..7 → bright fg (90+idx): 1=red 2=green 3=yellow 4=blue 6=cyan 7=white.
             "print_color" | "พิมพ์สี" => {
@@ -1178,53 +1490,64 @@ impl Interpreter {
                     });
                 }
                 let col = self.arg_num(&args, 0, 7.0)? as i64;
-                let s = args.iter().skip(1).map(|v| v.to_string()).collect::<Vec<_>>().join("");
+                let s = args
+                    .iter()
+                    .skip(1)
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
                 let code = 90 + col.clamp(0, 7);
                 println!("\x1b[1;{code}m{s}\x1b[0m");
                 return Ok(Value::Unit);
-            }
+            },
             // ── Format ──
-            "format" | "格式" | "フォーマット" | "서식" | "รูปแบบ" | "форматировать" | "formatear" | "formater" => {
+            "format"
+            | "格式"
+            | "フォーマット"
+            | "서식"
+            | "รูปแบบ"
+            | "форматировать"
+            | "formatear"
+            | "formater" => {
                 return Ok(Value::Str(self.builtin_format(&args)?));
-            }
+            },
             // ── String join / concatenation ──
-            "格式::拼接" | "format::join" => {
-                match args.first() {
-                    Some(Value::List(items)) => {
-                        return Ok(Value::Str(items.iter().map(|v| v.to_string()).collect()));
-                    }
-                    _ => return Ok(Value::Str(self.builtin_format(&args)?)),
-                }
-            }
+            "格式::拼接" | "format::join" => match args.first() {
+                Some(Value::List(items)) => {
+                    return Ok(Value::Str(items.iter().map(|v| v.to_string()).collect()));
+                },
+                _ => return Ok(Value::Str(self.builtin_format(&args)?)),
+            },
             // ── Result constructors ──
             "ok" | "好" | "良し" | "좋아" | "โอเค" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Ok(Box::new(val)));
-            }
+            },
             "bad" | "坏" | "err" | "悪い" | "나쁨" | "ผิด" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Err(Box::new(val)));
-            }
+            },
             // ── Vec constructors ──
             "向量::从" | "Vec::from" => {
                 if let Some(Value::List(v)) = args.first() {
                     return Ok(Value::List(v.clone()));
                 }
                 return Ok(Value::List(args));
-            }
+            },
             "向量::有容量" | "Vec::with_capacity" => return Ok(Value::List(Vec::new())),
             // ── Timer stubs ──
             "计时::获取当前小时" | "Timer::hour" => return Ok(Value::Number(14.0)),
-            "计时::现在" | "Timer::now"          => return Ok(Value::Number(1000.0)),
+            "计时::现在" | "Timer::now" => return Ok(Value::Number(1000.0)),
             // ── Sleep ──
-            "sleep" | "หยุด" | "นอน" | "sleep_ms" | "睡眠" | "眠る" | "スリープ" | "잠자기" | "잠" | "流水::睡眠" | "Flow::sleep" => {
+            "sleep" | "หยุด" | "นอน" | "sleep_ms" | "睡眠" | "眠る" | "スリープ" | "잠자기"
+            | "잠" | "流水::睡眠" | "Flow::sleep" => {
                 if let Some(ms_val) = args.first() {
                     if let Ok(ms) = self.to_number(ms_val) {
                         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
             // ── Flow::parallel stub ──
             "流水::并行" | "Flow::parallel" => {
                 if let Some(Value::Fn(params, body, mut cap)) = args.first().cloned() {
@@ -1237,7 +1560,7 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // MATH BUILTINS  (all args and results are f64)
@@ -1249,182 +1572,222 @@ impl Interpreter {
             // ── Trigonometry (input in radians) ──
             "sin" | "ไซน์" | "正弦" | "サイン" | "사인" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sin()));
-            }
+            },
             "cos" | "โคไซน์" | "余弦" | "コサイン" | "코사인" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cos()));
-            }
+            },
 
             // ── Hyperbolic functions ──
             // Hyperbolic tangent
             "tanh" | "tanhf" | "双曲正切" | "双曲線正接" | "쌍곡탄젠트" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tanh()));
-            }
-
+            },
 
             "tan" | "แทนเจนต์" | "正切" | "タンジェント" | "탄젠트" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tan()));
-            }
-            "asin" | "arcsin" | "反正弦" | "アークサイン" | "아크사인" | "อาร์กไซน์" => {
+            },
+            "asin" | "arcsin" | "反正弦" | "アークサイン" | "아크사인" | "อาร์กไซน์" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.asin()));
-            }
-            "acos" | "arccos" | "反余弦" | "アークコサイン" | "아크코사인" | "อาร์กโคไซน์" => {
+            },
+            "acos" | "arccos" | "反余弦" | "アークコサイン" | "아크코사인" | "อาร์กโคไซน์" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.acos()));
-            }
-            "atan" | "arctan" | "反正切" | "アークタンジェント" | "아크탄젠트" | "อาร์กแทนเจนต์" => {
+            },
+            "atan" | "arctan" | "反正切" | "アークタンジェント" | "아크탄젠트" | "อาร์กแทนเจนต์" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.atan()));
-            }
-            "atan2" | "arctan2" | "反正切2" | "アークタンジェント2" | "아크탄젠트2" => {
+            },
+            "atan2" | "arctan2" | "反正切2" | "アークタンジェント2" | "아크탄젠트2" =>
+            {
                 let y = self.arg_num(&args, 0, 0.0)?;
                 let x = self.arg_num(&args, 1, 1.0)?;
                 return Ok(Value::Number(y.atan2(x)));
-            }
+            },
 
             // ── Roots / powers ──
             "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sqrt()));
-            }
+            },
             "cbrt" | "立方根" | "세제곱근" | "รากที่สาม" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cbrt()));
-            }
+            },
             "pow" | "ยกกำลัง" | "幂" | "べき乗" | "거듭제곱" => {
                 let base = self.arg_num(&args, 0, 0.0)?;
-                let exp  = self.arg_num(&args, 1, 1.0)?;
+                let exp = self.arg_num(&args, 1, 1.0)?;
                 return Ok(Value::Number(base.powf(exp)));
-            }
+            },
             "exp" | "指数" | "指数関数" | "지수" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.exp()));
-            }
+            },
             "hypot" | "斜边" | "斜辺" | "빗변" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let y = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(x.hypot(y)));
-            }
+            },
 
             // ── Logarithms ──
             "ln" | "log" | "ลอการิทึม" | "对数" | "対数" | "로그" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.ln()));
-            }
+            },
             "log2" | "对数2" | "対数2" | "로그2" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.log2()));
-            }
+            },
             "log10" | "对数10" | "対数10" | "로그10" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.log10()));
-            }
+            },
 
             // ── Rounding / truncation ──
-            "abs" | "ค่าสัมบูรณ์" | "绝对值" | "绝对" | "絶対値" | "절댓값" | "절대값" => {
+            "abs" | "ค่าสัมบูรณ์" | "绝对值" | "绝对" | "絶対値" | "절댓값" | "절대값" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.abs()));
-            }
+            },
             "floor" | "ปัดลง" | "向下取整" | "下整" | "床関数" | "내림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.floor()));
-            }
-            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" => {
+            },
+            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.ceil()));
-            }
-            "round" | "ปัดเศษ" | "四舍五入" | "四舍" | "四捨五入" | "반올림" => {
+            },
+            "round" | "ปัดเศษ" | "四舍五入" | "四舍" | "四捨五入" | "반올림" =>
+            {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.round()));
-            }
-            "trunc" | "int" | "ตัดทศนิยม" | "取整" | "整数化" | "整数" | "截整"
-                    | "정수화" | "정수" | "切り捨て" | "버림" => {
+            },
+            "trunc"
+            | "int"
+            | "ตัดทศนิยม"
+            | "取整"
+            | "整数化"
+            | "整数"
+            | "截整"
+            | "정수화"
+            | "정수"
+            | "切り捨て"
+            | "버림" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.trunc()));
-            }
+            },
             "fract" | "小数部分" | "小数部" | "소수부" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.fract()));
-            }
+            },
 
             // ── min / max / clamp ──
             "min" | "ต่ำสุด" | "最小" | "최솟값" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.min(b)));
-            }
+            },
             "max" | "สูงสุด" | "最大" | "최댓값" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.max(b)));
-            }
+            },
             "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" => {
-                let x  = self.arg_num(&args, 0, 0.0)?;
+                let x = self.arg_num(&args, 0, 0.0)?;
                 let lo = self.arg_num(&args, 1, 0.0)?;
                 let hi = self.arg_num(&args, 2, 1.0)?;
                 return Ok(Value::Number(x.clamp(lo, hi)));
-            }
+            },
 
             // ── Constants (also accessible as plain identifiers via lookup) ──
-            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => return Ok(Value::Number(std::f64::consts::PI)),
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว"        => return Ok(Value::Number(std::f64::consts::TAU)),
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => {
+                return Ok(Value::Number(std::f64::consts::PI))
+            },
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" => {
+                return Ok(Value::Number(std::f64::consts::TAU))
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // PHASE 1: DMT TRIP CODER FEATURES
             // ══════════════════════════════════════════════════════════════════
 
             // ── Step 1: Noise Functions ──
-            "vnoise" | "noise2" | "นอยส์2ดี" | "柏林噪声2D" | "バリューノイズ2D" | "값노이즈2D" => {
+            "vnoise" | "noise2" | "นอยส์2ดี" | "柏林噪声2D" | "バリューノイズ2D" | "값노이즈2D" =>
+            {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let seed = self.arg_num(&args, 2, 0.0)? as u32;
                 return Ok(Value::Number(tex_vnoise(x, y, seed) as f64));
-            }
+            },
 
-            "fbm" | "นอยส์ออร์แกนิก" | "分形噪声" | "フラクタルノイズ" | "프랙탈노이즈" => {
+            "fbm" | "นอยส์ออร์แกนิก" | "分形噪声" | "フラクタルノイズ" | "프랙탈노이즈" =>
+            {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let octaves = self.arg_num(&args, 2, 4.0)? as u32;
                 let seed = self.arg_num(&args, 3, 0.0)? as u32;
                 return Ok(Value::Number(tex_fbm(x, y, octaves, seed) as f64));
-            }
+            },
 
-            "perlin" | "perlin3" | "เพอร์ลิน3ดี" | "柏林噪声3D" | "パーリンノイズ3D" | "펄린노이즈3D" => {
+            "perlin"
+            | "perlin3"
+            | "เพอร์ลิน3ดี"
+            | "柏林噪声3D"
+            | "パーリンノイズ3D"
+            | "펄린노이즈3D" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
                 return Ok(Value::Number(perlin3(x, y, z) as f64));
-            }
+            },
 
             // ── Step 2: Math Ergonomics ──
-            "lerp" | "ค่าระหว่าง" | "线性插值" | "線形補間" | "선형보간" => {
+            "lerp" | "ค่าระหว่าง" | "线性插值" | "線形補間" | "선형보간" =>
+            {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 1.0)?;
                 let t = self.arg_num(&args, 2, 0.0)?;
                 return Ok(Value::Number(a + (b - a) * t));
-            }
+            },
 
-            "smoothstep" | "เปลี่ยนแบบนุ่ม" | "平滑步进" | "スムーズステップ" | "스무스스텝" => {
+            "smoothstep" | "เปลี่ยนแบบนุ่ม" | "平滑步进" | "スムーズステップ" | "스무스스텝" =>
+            {
                 let lo = self.arg_num(&args, 0, 0.0)?;
                 let hi = self.arg_num(&args, 1, 1.0)?;
                 let x = self.arg_num(&args, 2, 0.5)?;
                 let t = ((x - lo) / (hi - lo)).clamp(0.0, 1.0);
                 return Ok(Value::Number(t * t * (3.0 - 2.0 * t)));
-            }
+            },
 
             "rand" | "สุ่ม" | "随机" | "乱数" | "난수" => {
                 let val = fast_rand_f64(&mut self.rand_state);
                 return Ok(Value::Number(val));
-            }
+            },
 
             "sign" | "เครื่องหมาย" | "符号" | "符号関数" | "부호" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 return Ok(Value::Number(x.signum()));
-            }
+            },
 
-            "hsv_to_rgb" | "เอชเอสวีเป็นRGB" | "HSV转RGB" | "HSV変換RGB" | "HSV변환RGB" => {
+            "hsv_to_rgb" | "เอชเอสวีเป็นRGB" | "HSV转RGB" | "HSV変換RGB" | "HSV변환RGB" =>
+            {
                 let h = self.arg_num(&args, 0, 0.0)?; // 0-360
                 let s = self.arg_num(&args, 1, 1.0)?; // 0-1
                 let v = self.arg_num(&args, 2, 1.0)?; // 0-1
                 let c = v * s;
                 let x = c * (1.0 - (((h / 60.0) % 2.0) - 1.0).abs());
                 let m = v - c;
-                let (r1, g1, b1) = if h < 60.0       { (c, x, 0.0) }
-                                    else if h < 120.0  { (x, c, 0.0) }
-                                    else if h < 180.0  { (0.0, c, x) }
-                                    else if h < 240.0  { (0.0, x, c) }
-                                    else if h < 300.0  { (x, 0.0, c) }
-                                    else               { (c, 0.0, x) };
+                let (r1, g1, b1) = if h < 60.0 {
+                    (c, x, 0.0)
+                } else if h < 120.0 {
+                    (x, c, 0.0)
+                } else if h < 180.0 {
+                    (0.0, c, x)
+                } else if h < 240.0 {
+                    (0.0, x, c)
+                } else if h < 300.0 {
+                    (x, 0.0, c)
+                } else {
+                    (c, 0.0, x)
+                };
                 let r = ((r1 + m) * 255.0).round();
                 let g = ((g1 + m) * 255.0).round();
                 let b = ((b1 + m) * 255.0).round();
-                return Ok(Value::List(vec![Value::Number(r), Value::Number(g), Value::Number(b)]));
-            }
+                return Ok(Value::List(vec![
+                    Value::Number(r),
+                    Value::Number(g),
+                    Value::Number(b),
+                ]));
+            },
 
             "lerp_color" | "ไล่สี" | "颜色插值" | "色補間" | "색보간" => {
                 let r1 = self.arg_num(&args, 0, 0.0)?;
@@ -1440,57 +1803,73 @@ impl Interpreter {
                 let c = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
                 self.gfx.borrow_mut().color = c;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Step 3: Real-Time Clock ──
-            "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" => {
+            "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
+            {
                 return Ok(Value::Number(self.start_time.elapsed().as_secs_f64()));
-            }
+            },
 
             "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" => {
                 return Ok(Value::Number(self.frame_num as f64));
-            }
+            },
 
             // ── Step 4: Microphone Input ──
-            "mic_open" | "เปิดไมค์" | "开麦克风" | "マイク開く" | "마이크열기" => {
+            "mic_open" | "เปิดไมค์" | "开麦克风" | "マイク開く" | "마이크열기" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     match ling_mic::MicInput::open(Default::default()) {
                         Ok(mic) => {
-                            let _ = mic.start(|_samples: &[f32]| {});  // No-op callback
+                            let _ = mic.start(|_samples: &[f32]| {}); // No-op callback
                             self.mic = Some(mic);
-                            return Ok(Value::Number(1.0));  // opened
-                        }
+                            return Ok(Value::Number(1.0)); // opened
+                        },
                         // No device / permission denied → graceful: don't crash the game loop.
                         // Returns 0.0; mic_rms/mic_peak return 0.0 while self.mic is None.
-                        Err(_e) => { self.mic = None; return Ok(Value::Number(0.0)); }
+                        Err(_e) => {
+                            self.mic = None;
+                            return Ok(Value::Number(0.0));
+                        },
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Unit);
-            }
+            },
 
-            "mic_rms" | "เสียงRMS" | "麦克风音量" | "マイクRMS" | "마이크RMS" => {
+            "mic_rms" | "เสียงRMS" | "麦克风音量" | "マイクRMS" | "마이크RMS" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let rms = self.mic.as_ref().map(|m: &ling_mic::MicInput| m.rms()).unwrap_or(0.0);
+                    let rms = self
+                        .mic
+                        .as_ref()
+                        .map(|m: &ling_mic::MicInput| m.rms())
+                        .unwrap_or(0.0);
                     return Ok(Value::Number(rms as f64));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
 
-            "mic_peak" | "เสียงพีค" | "麦克风峰值" | "マイクピーク" | "마이크피크" => {
+            "mic_peak" | "เสียงพีค" | "麦克风峰值" | "マイクピーク" | "마이크피크" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let peak = self.mic.as_ref().map(|m: &ling_mic::MicInput| m.peak()).unwrap_or(0.0);
+                    let peak = self
+                        .mic
+                        .as_ref()
+                        .map(|m: &ling_mic::MicInput| m.peak())
+                        .unwrap_or(0.0);
                     return Ok(Value::Number(peak as f64));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
 
-            "mic_fft" | "วิเคราะห์เสียงสด" | "实时频谱" | "リアルタイムFFT" | "실시간FFT" => {
+            "mic_fft" | "วิเคราะห์เสียงสด" | "实时频谱" | "リアルタイムFFT" | "실시간FFT" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let n = self.arg_num(&args, 0, 8.0)? as usize;
@@ -1504,38 +1883,47 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::List(vec![]));
-            }
+            },
 
             // ── Step 5: Additive Blend Mode ──
-            "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" => {
+            "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" =>
+            {
                 let mode = self.arg_num(&args, 0, 0.0)? as u8;
                 let mut gfx = self.gfx.borrow_mut();
                 gfx.blend = mode;
                 let a = gfx.alpha;
                 gfx.depth_queue.set_state(mode, a);   // 3-D queue captures blend for subsequent pushes
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Step 6: Circle Primitives ──
-            "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" => {
+            "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" =>
+            {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
                 let r = self.arg_num(&args, 2, 10.0)? as i32;
                 let mut gfx = self.gfx.borrow_mut();
-                let (w, h, color, blend) = (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
+                let (w, h, color, blend) =
+                    (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
                 draw_circle_outline(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
                 return Ok(Value::Unit);
-            }
+            },
 
-            "draw_filled_circle" | "draw_disc" | "วาดวงกลมทึบ" | "画实心圆" | "塗りつぶし円" | "원채우기" => {
+            "draw_filled_circle"
+            | "draw_disc"
+            | "วาดวงกลมทึบ"
+            | "画实心圆"
+            | "塗りつぶし円"
+            | "원채우기" => {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
                 let r = self.arg_num(&args, 2, 10.0)? as i32;
                 let mut gfx = self.gfx.borrow_mut();
-                let (w, h, color, blend) = (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
+                let (w, h, color, blend) =
+                    (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
                 draw_circle_filled(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Step 7: Transparent fills, gradient surfaces & colored shadows ──
             // These all write straight into the software framebuffer (gfx.buffer)
@@ -1695,25 +2083,32 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── เปิดหน้าต่าง(width, height, title) — open_window ──
-            "เปิดหน้าต่าง" | "open_window" | "gfx_window" | "开窗" | "ウィンドウ開く" | "창열기" => {
+            "เปิดหน้าต่าง" | "open_window" | "gfx_window" | "开窗" | "ウィンドウ開く" | "창열기" =>
+            {
                 let w = self.arg_num(&args, 0, 800.0)? as usize;
                 let h = self.arg_num(&args, 1, 600.0)? as usize;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let title = args.get(2).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
+                    let title = args
+                        .get(2)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "Ling".into());
                     let mut gfx = self.gfx.borrow_mut();
                     let mut win = minifb::Window::new(
-                        &title, w, h,
+                        &title,
+                        w,
+                        h,
                         minifb::WindowOptions {
                             resize: false,
                             scale: minifb::Scale::X1,
                             ..Default::default()
                         },
-                    ).map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
+                    )
+                    .map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
                     #[allow(deprecated)]
                     win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
                     gfx.buffer = vec![0u32; w * h];
-                    gfx.width  = w;
+                    gfx.width = w;
                     gfx.height = h;
                     gfx.window = Some(win);
                     gfx.sync_projection();
@@ -1722,17 +2117,18 @@ impl Interpreter {
                 #[cfg(target_arch = "wasm32")]
                 {
                     let mut gfx = self.gfx.borrow_mut();
-                    gfx.width  = w;
+                    gfx.width = w;
                     gfx.height = h;
                     gfx.buffer.resize(w * h, 0); // keep the CPU framebuffer in sync
                     gfx.sync_projection();
                     crate::gfx::webgl::resize(w as u32, h as u32);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── เติม(r, g, b) — fill / clear screen with colour ──
-            "เติม" | "fill" | "gfx_fill" | "clear" | "填" | "塗り潰し" | "채우기" | "清" | "消去" | "지우기" => {
+            "เติม" | "fill" | "gfx_fill" | "clear" | "填" | "塗り潰し" | "채우기" | "清"
+            | "消去" | "지우기" => {
                 let r = self.arg_num(&args, 0, 0.0)? as u32;
                 let g = self.arg_num(&args, 1, 0.0)? as u32;
                 let b = self.arg_num(&args, 2, 0.0)? as u32;
@@ -1753,11 +2149,12 @@ impl Interpreter {
                     gfx.buffer.fill(c);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_color_hsl(h, s, l) — set drawing colour from HSL ──
             // h: 0–360 degrees, s: 0–100 saturation, l: 0–100 lightness
-            "set_color_hsl" | "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" => {
+            "set_color_hsl" | "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" =>
+            {
                 let h = self.arg_num(&args, 0, 0.0)?;
                 let s = self.arg_num(&args, 1, 70.0)?;
                 let l = self.arg_num(&args, 2, 50.0)?;
@@ -1767,19 +2164,26 @@ impl Interpreter {
                 let b = u32::from_str_radix(&hex[5..7], 16).unwrap_or(255);
                 self.gfx.borrow_mut().color = (r << 16) | (g << 8) | b;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── สีดินสอ(r, g, b) — set drawing colour ──
-            "สีดินสอ" | "set_color" | "gfx_color" | "color" | "设色" | "色設定" | "색설정" => {
+            "สีดินสอ" | "set_color" | "gfx_color" | "color" | "设色" | "色設定" | "색설정" =>
+            {
                 let r = self.arg_num(&args, 0, 255.0)? as u32;
                 let g = self.arg_num(&args, 1, 255.0)? as u32;
                 let b = self.arg_num(&args, 2, 255.0)? as u32;
                 self.gfx.borrow_mut().color = (r << 16) | (g << 8) | b;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── วาดสามเหลี่ยม(x1,y1, x2,y2, x3,y3) — draw filled triangle ──
-            "วาดสามเหลี่ยม" | "draw_triangle" | "gfx_triangle" | "triangle" | "画三角" | "三角形描画" | "삼각형그리기" => {
+            "วาดสามเหลี่ยม"
+            | "draw_triangle"
+            | "gfx_triangle"
+            | "triangle"
+            | "画三角"
+            | "三角形描画"
+            | "삼각형그리기" => {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
                 let x1 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -1795,12 +2199,14 @@ impl Interpreter {
                     fill_triangle(&mut gfx.buffer, w, h, color, x0, y0, x1, y1, x2, y2);
                 }
                 #[cfg(target_arch = "wasm32")]
-                gfx.depth_queue.push_triangle(0.0, color, x0, y0, x1, y1, x2, y2);
+                gfx.depth_queue
+                    .push_triangle(0.0, color, x0, y0, x1, y1, x2, y2);
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── วาดเส้น(x1,y1, x2,y2) — draw line ──
-            "วาดเส้น" | "draw_line" | "gfx_line" | "line" | "画线" | "線描く" | "선그리기" => {
+            "วาดเส้น" | "draw_line" | "gfx_line" | "line" | "画线" | "線描く" | "선그리기" =>
+            {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
                 let x1 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -1816,10 +2222,11 @@ impl Interpreter {
                 #[cfg(target_arch = "wasm32")]
                 gfx.depth_queue.push_line(0.0, color, x0, y0, x1, y1);
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── วาดจุด(x, y) — plot a single pixel ──
-            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" | "画点" | "点描く" | "점그리기" => {
+            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" | "画点" | "点描く" | "점그리기" =>
+            {
                 let px = self.arg_num(&args, 0, 0.0)? as i32;
                 let py = self.arg_num(&args, 1, 0.0)? as i32;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1837,15 +2244,19 @@ impl Interpreter {
                     // Render pixel as a 1×1 square via two triangles.
                     let mut gfx = self.gfx.borrow_mut();
                     let color = gfx.color;
-                    let x = px as f32; let y = py as f32;
-                    gfx.depth_queue.push_triangle(0.0, color, x, y, x+1.0, y, x+1.0, y+1.0);
-                    gfx.depth_queue.push_triangle(0.0, color, x, y, x+1.0, y+1.0, x, y+1.0);
+                    let x = px as f32;
+                    let y = py as f32;
+                    gfx.depth_queue
+                        .push_triangle(0.0, color, x, y, x + 1.0, y, x + 1.0, y + 1.0);
+                    gfx.depth_queue
+                        .push_triangle(0.0, color, x, y, x + 1.0, y + 1.0, x, y + 1.0);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── แสดงผล() — flush depth queue, then present frame to screen ──
-            "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" => {
+            "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     // Flush depth queue and present — release borrow before reading mouse.
@@ -1865,8 +2276,8 @@ impl Interpreter {
                             gfx.depth_queue.set_state(bm, ba);
                         }
                         let buf = gfx.buffer.clone();
-                        let w   = gfx.width;
-                        let h   = gfx.height;
+                        let w = gfx.width;
+                        let h = gfx.height;
                         if let Some(win) = gfx.window.as_mut() {
                             win.update_with_buffer(&buf, w, h)
                                 .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
@@ -1875,7 +2286,8 @@ impl Interpreter {
                     // Read mouse AFTER update_with_buffer so events are processed.
                     let mouse_pos = {
                         let gfx = self.gfx.borrow();
-                        gfx.window.as_ref()
+                        gfx.window
+                            .as_ref()
                             .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
                     };
                     let mut gfx = self.gfx.borrow_mut();
@@ -1884,8 +2296,10 @@ impl Interpreter {
                         let h = gfx.height as f32;
                         if let Some((mx, my)) = mouse_pos {
                             if gfx.last_mx.is_nan() {
-                                gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
-                                gfx.last_mx = mx; gfx.last_my = my;
+                                gfx.mouse_dx = 0.0;
+                                gfx.mouse_dy = 0.0;
+                                gfx.last_mx = mx;
+                                gfx.last_my = my;
                             } else {
                                 gfx.mouse_dx = mx - gfx.last_mx;
                                 gfx.mouse_dy = my - gfx.last_my;
@@ -1893,44 +2307,70 @@ impl Interpreter {
                                 // on both axes, and the cursor is NOT trapped (alt-tab works).
                                 let margin = 6.0;
                                 let (mut nx, mut ny, mut warp) = (mx, my, false);
-                                if mx < margin { nx = w - margin - 2.0; warp = true; }
-                                else if mx > w - margin { nx = margin + 2.0; warp = true; }
-                                if my < margin { ny = h - margin - 2.0; warp = true; }
-                                else if my > h - margin { ny = margin + 2.0; warp = true; }
+                                if mx < margin {
+                                    nx = w - margin - 2.0;
+                                    warp = true;
+                                } else if mx > w - margin {
+                                    nx = margin + 2.0;
+                                    warp = true;
+                                }
+                                if my < margin {
+                                    ny = h - margin - 2.0;
+                                    warp = true;
+                                } else if my > h - margin {
+                                    ny = margin + 2.0;
+                                    warp = true;
+                                }
                                 if warp {
                                     #[cfg(windows)]
                                     unsafe {
                                         #[repr(C)]
-                                        struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+                                        struct RECT {
+                                            left: i32,
+                                            top: i32,
+                                            right: i32,
+                                            bottom: i32,
+                                        }
                                         extern "system" {
                                             fn GetForegroundWindow() -> isize;
-                                            fn GetWindowRect(hwnd: isize, lpRect: *mut RECT) -> i32;
+                                            fn GetWindowRect(hwnd: isize, lpRect: *mut RECT)
+                                                -> i32;
                                             fn SetCursorPos(x: i32, y: i32) -> i32;
                                         }
                                         let hwnd = GetForegroundWindow();
-                                        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                                        let mut rect =
+                                            RECT { left: 0, top: 0, right: 0, bottom: 0 };
                                         if GetWindowRect(hwnd, &mut rect) != 0 {
-                                            SetCursorPos(rect.left + nx as i32, rect.top + ny as i32);
+                                            SetCursorPos(
+                                                rect.left + nx as i32,
+                                                rect.top + ny as i32,
+                                            );
                                         }
                                     }
-                                    gfx.last_mx = nx; gfx.last_my = ny;
+                                    gfx.last_mx = nx;
+                                    gfx.last_my = ny;
                                 } else {
-                                    gfx.last_mx = mx; gfx.last_my = my;
+                                    gfx.last_mx = mx;
+                                    gfx.last_my = my;
                                 }
                             }
                         } else {
-                            gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                            gfx.mouse_dx = 0.0;
+                            gfx.mouse_dy = 0.0;
                         }
                     } else if let Some((mx, my)) = mouse_pos {
                         if gfx.last_mx.is_nan() {
-                            gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                            gfx.mouse_dx = 0.0;
+                            gfx.mouse_dy = 0.0;
                         } else {
                             gfx.mouse_dx = mx - gfx.last_mx;
                             gfx.mouse_dy = my - gfx.last_my;
                         }
-                        gfx.last_mx = mx; gfx.last_my = my;
+                        gfx.last_mx = mx;
+                        gfx.last_my = my;
                     } else {
-                        gfx.mouse_dx = 0.0; gfx.mouse_dy = 0.0;
+                        gfx.mouse_dx = 0.0;
+                        gfx.mouse_dy = 0.0;
                     }
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -1962,10 +2402,15 @@ impl Interpreter {
                 // Increment frame counter
                 self.frame_num += 1;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── เปิดหน้าต่างเต็มจอ(title) — true native-res fullscreen window ──
-            "เปิดหน้าต่างเต็มจอ" | "open_fullscreen" | "fullscreen" | "全屏" | "全画面" | "전체화면" => {
+            "เปิดหน้าต่างเต็มจอ"
+            | "open_fullscreen"
+            | "fullscreen"
+            | "全屏"
+            | "全画面"
+            | "전체화면" => {
                 // In WASM the canvas defines the viewport; use its current size
                 // as the default so the projection matches what's actually visible.
                 #[cfg(target_arch = "wasm32")]
@@ -1976,29 +2421,43 @@ impl Interpreter {
                 // On native: query the actual primary monitor resolution.
                 #[cfg(all(not(target_arch = "wasm32"), windows))]
                 let (default_w, default_h) = unsafe {
-                    extern "system" { fn GetSystemMetrics(nIndex: i32) -> i32; }
+                    extern "system" {
+                        fn GetSystemMetrics(nIndex: i32) -> i32;
+                    }
                     (GetSystemMetrics(0) as f64, GetSystemMetrics(1) as f64)
                 };
                 #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
                 let (default_w, default_h) = native_screen_size();
 
-                let w = args.get(1).map(|v| self.to_number(v).unwrap_or(default_w) as usize).unwrap_or(default_w as usize);
-                let h = args.get(2).map(|v| self.to_number(v).unwrap_or(default_h) as usize).unwrap_or(default_h as usize);
+                let w = args
+                    .get(1)
+                    .map(|v| self.to_number(v).unwrap_or(default_w) as usize)
+                    .unwrap_or(default_w as usize);
+                let h = args
+                    .get(2)
+                    .map(|v| self.to_number(v).unwrap_or(default_h) as usize)
+                    .unwrap_or(default_h as usize);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let title = args.get(0).map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
+                    let title = args
+                        .get(0)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "Ling".into());
                     let mut gfx = self.gfx.borrow_mut();
                     let mut win = minifb::Window::new(
-                        &title, w, h,
+                        &title,
+                        w,
+                        h,
                         minifb::WindowOptions {
                             borderless: true,
-                            title:      false,
-                            resize:     false,
-                            topmost:    true,
-                            scale:      minifb::Scale::X1,
+                            title: false,
+                            resize: false,
+                            topmost: true,
+                            scale: minifb::Scale::X1,
                             ..Default::default()
                         },
-                    ).map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
+                    )
+                    .map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
                     // Drive the loop at the monitor's real refresh rate instead of
                     // a hard-coded cap, so a 144 Hz panel runs at 144 fps.
                     win.set_target_fps(monitor_info().2.max(30) as usize);
@@ -2006,7 +2465,7 @@ impl Interpreter {
                     #[cfg(windows)]
                     let hwnd = win.get_window_handle() as isize;
                     gfx.buffer = vec![0u32; w * h];
-                    gfx.width  = w;
+                    gfx.width = w;
                     gfx.height = h;
                     gfx.window = Some(win);
                     gfx.sync_projection();
@@ -2018,48 +2477,63 @@ impl Interpreter {
                 #[cfg(target_arch = "wasm32")]
                 {
                     let mut gfx = self.gfx.borrow_mut();
-                    gfx.width  = w;
+                    gfx.width = w;
                     gfx.height = h;
                     gfx.buffer.resize(w * h, 0); // keep the CPU framebuffer in sync
                     gfx.sync_projection();
                     crate::gfx::webgl::resize(w as u32, h as u32);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── ความกว้าง() / ความสูง() — current framebuffer size ──
             "get_width" | "ความกว้าง" | "宽" | "幅取得" | "너비" => {
                 return Ok(Value::Number(self.gfx.borrow().width as f64));
-            }
+            },
             "get_height" | "ความสูง" | "高" | "高取得" | "높이" => {
                 return Ok(Value::Number(self.gfx.borrow().height as f64));
-            }
+            },
 
             // ── monitor detection: physical display, not the framebuffer ──────
             // monitor_width() → primary-monitor pixel width
-            "monitor_width" | "screen_width" | "屏宽" | "画面幅" | "화면너비" | "ความกว้างจอ" => {
+            "monitor_width" | "screen_width" | "屏宽" | "画面幅" | "화면너비" | "ความกว้างจอ" =>
+            {
                 return Ok(Value::Number(monitor_info().0 as f64));
-            }
+            },
             // monitor_height() → primary-monitor pixel height
-            "monitor_height" | "screen_height" | "屏高" | "画面高" | "화면높이" | "ความสูงจอ" => {
+            "monitor_height" | "screen_height" | "屏高" | "画面高" | "화면높이" | "ความสูงจอ" =>
+            {
                 return Ok(Value::Number(monitor_info().1 as f64));
-            }
+            },
             // monitor_refresh() → refresh rate in Hz (a.k.a. the monitor framerate)
-            "monitor_refresh" | "monitor_hz" | "monitor_fps" | "refresh_rate"
-                | "刷新率" | "リフレッシュレート" | "주사율" | "อัตรารีเฟรช" => {
+            "monitor_refresh"
+            | "monitor_hz"
+            | "monitor_fps"
+            | "refresh_rate"
+            | "刷新率"
+            | "リフレッシュレート"
+            | "주사율"
+            | "อัตรารีเฟรช" => {
                 return Ok(Value::Number(monitor_info().2 as f64));
-            }
+            },
             // monitor_info() → [width, height, refresh_hz]
-            "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" => {
+            "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" =>
+            {
                 let (w, h, hz) = monitor_info();
                 return Ok(Value::List(vec![
                     Value::Number(w as f64),
                     Value::Number(h as f64),
                     Value::Number(hz as f64),
                 ]));
-            }
+            },
             // set_fps(n) → cap the render loop at n frames per second
-            "set_fps" | "set_target_fps" | "target_fps" | "设帧率" | "フレームレート設定" | "프레임설정" | "ตั้งเฟรมเรต" => {
+            "set_fps"
+            | "set_target_fps"
+            | "target_fps"
+            | "设帧率"
+            | "フレームレート設定"
+            | "프레임설정"
+            | "ตั้งเฟรมเรต" => {
                 let fps = self.arg_num(&args, 0, 60.0)?.max(1.0) as usize;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -2069,36 +2543,46 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── หน้าต่างเปิดอยู่() → bool — is the window still open? ──
-            "หน้าต่างเปิดอยู่" | "window_is_open" | "gfx_is_open" | "is_open" | "窗开" | "開いている" | "창열림" => {
+            "หน้าต่างเปิดอยู่"
+            | "window_is_open"
+            | "gfx_is_open"
+            | "is_open"
+            | "窗开"
+            | "開いている"
+            | "창열림" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let gfx = self.gfx.borrow();
-                    let open = gfx.window.as_ref()
+                    let open = gfx
+                        .window
+                        .as_ref()
                         .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
                         .unwrap_or(false);
                     return Ok(Value::Bool(open));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(true));
-            }
+            },
 
             // ── key_down(name) → bool — is a key held? ──
             "key_down" | "กดค้าง" | "按键" | "キー押す" | "키누름" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
-                    let gfx  = self.gfx.borrow();
-                    let down = gfx.window.as_ref()
+                    let gfx = self.gfx.borrow();
+                    let down = gfx
+                        .window
+                        .as_ref()
                         .and_then(|w| str_to_minifb_key(&name).map(|k| w.is_key_down(k)))
                         .unwrap_or(false);
                     return Ok(Value::Bool(down));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(false));
-            }
+            },
 
             // ── key_pressed(name) → bool — was a key pressed this frame? ──
             "key_pressed" | "กดปุ่ม" | "键按" | "キー押した" | "키눌림" => {
@@ -2107,18 +2591,22 @@ impl Interpreter {
                     let name = self.arg_str(&args, 0, "");
                     let pressed = {
                         let gfx = self.gfx.borrow();
-                        gfx.window.as_ref()
-                            .and_then(|w| str_to_minifb_key(&name)
-                                .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No)))
+                        gfx.window
+                            .as_ref()
+                            .and_then(|w| {
+                                str_to_minifb_key(&name)
+                                    .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No))
+                            })
                             .unwrap_or(false)
                     };
                     // gamepad Start behaves like Enter everywhere
-                    let pressed = pressed || ((name == "enter" || name == "return") && gamepad::start_edge());
+                    let pressed =
+                        pressed || ((name == "enter" || name == "return") && gamepad::start_edge());
                     return Ok(Value::Bool(pressed));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(false));
-            }
+            },
 
             // ── mouse_dx() / mouse_dy() → f64 — delta since last frame ──
             "mouse_dx" | "เมาส์X" | "鼠ΔX" | "マウスΔX" | "마우스ΔX" => {
@@ -2126,33 +2614,39 @@ impl Interpreter {
                 return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             // ── mouse_scroll() → f64 — vertical scroll-wheel delta this frame ──
             #[cfg(not(target_arch = "wasm32"))]
-            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" => {
+            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" =>
+            {
                 let gfx = self.gfx.borrow();
-                let s = gfx.window.as_ref()
+                let s = gfx
+                    .window
+                    .as_ref()
                     .and_then(|w| w.get_scroll_wheel())
-                    .map(|(_, y)| y as f64).unwrap_or(0.0);
+                    .map(|(_, y)| y as f64)
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(s));
-            }
+            },
             "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
 
             // ── Gamepad / joystick input (ling-input "Sensorium" + gilrs) ──
             // pad_poll() → number — advance input one frame; returns # connected pads.
-            "pad_poll" | "手柄轮询" | "パッド更新" | "패드폴링" | "อัปเดตแพด" => {
+            "pad_poll" | "手柄轮询" | "パッド更新" | "패드폴링" | "อัปเดตแพด" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.pad_poll() as f64));
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             // pad_count() → number — connected gamepads.
-            "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" => {
+            "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let inp = self.input.borrow();
@@ -2161,23 +2655,25 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             // pad_connected(i) → bool.
-            "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" => {
+            "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
                     let inp = self.input.borrow();
-                    let c = inp.as_ref().is_some_and(|s| {
-                        s.sensorium.devices.for_player(i as u8).is_some()
-                    });
+                    let c = inp
+                        .as_ref()
+                        .is_some_and(|s| s.sensorium.devices.for_player(i as u8).is_some());
                     return Ok(Value::Bool(c));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(false));
-            }
+            },
             // pad_button(i, name) → bool — is the button held?
-            "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" => {
+            "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -2188,9 +2684,10 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(false));
-            }
+            },
             // pad_pressed(i, name) → bool — pressed this frame?
-            "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" => {
+            "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -2201,65 +2698,80 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(false));
-            }
+            },
             // pad_lx(i)/pad_ly(i)/pad_rx(i)/pad_ry(i) → number — stick axes (−1..=1).
             "pad_lx" | "手柄左X" | "パッド左X" | "패드왼X" | "แพดซ้ายX" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_stick.x as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.left_stick.x as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             "pad_ly" | "手柄左Y" | "パッド左Y" | "패드왼Y" | "แพดซ้ายY" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_stick.y as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.left_stick.y as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             "pad_rx" | "手柄右X" | "パッド右X" | "패드오X" | "แพดขวาX" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_stick.x as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.right_stick.x as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             "pad_ry" | "手柄右Y" | "パッド右Y" | "패드오Y" | "แพดขวาY" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_stick.y as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.right_stick.y as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             // pad_lt(i)/pad_rt(i) → number — analog triggers (0..=1).
-            "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" => {
+            "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.left_trigger as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.left_trigger as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
-            "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" => {
+            },
+            "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
-                    return Ok(Value::Number(self.with_pad(i, 0.0, |p| p.right_trigger as f64)));
+                    return Ok(Value::Number(
+                        self.with_pad(i, 0.0, |p| p.right_trigger as f64),
+                    ));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(0.0));
-            }
+            },
             // pad_rumble(i, lo, hi) → unit — set rumble motor amplitudes (0..=1).
-            "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" => {
+            "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     use ling_input::backend::InputBackend;
@@ -2279,21 +2791,26 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_camera_pos(x, y, z) — move camera to world position ──
-            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" => {
+            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" =>
+            {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
                 {
                     let mut gfx = self.gfx.borrow_mut();
-                    gfx.camera.tx = x; gfx.camera.ty = y; gfx.camera.tz = z;
+                    gfx.camera.tx = x;
+                    gfx.camera.ty = y;
+                    gfx.camera.tz = z;
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if let Some(audio) = &self.audio { audio.set_listener_pos(x, y, z); }
+                if let Some(audio) = &self.audio {
+                    audio.set_listener_pos(x, y, z);
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── move_camera(dx, dy, dz) — translate camera by delta ──
             "move_camera" => {
@@ -2301,19 +2818,23 @@ impl Interpreter {
                 let dy = self.arg_num(&args, 1, 0.0)? as f32;
                 let dz = self.arg_num(&args, 2, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
-                gfx.camera.tx += dx; gfx.camera.ty += dy; gfx.camera.tz += dz;
+                gfx.camera.tx += dx;
+                gfx.camera.ty += dy;
+                gfx.camera.tz += dz;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_zdist(d) — set perspective z-offset (field-of-view taper) ──
-            "set_zdist" | "ตั้งระยะห่าง" | "镜距" | "Z距離設定" | "Z거리설정" => {
+            "set_zdist" | "ตั้งระยะห่าง" | "镜距" | "Z距離設定" | "Z거리설정" =>
+            {
                 let d = self.arg_num(&args, 0, 5.0)? as f32;
                 self.gfx.borrow_mut().camera.zdist = d;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── capture_mouse() — hide cursor and warp to centre each frame ──
-            "capture_mouse" | "จับเมาส์" | "捕鼠" | "マウス捕捉" | "마우스잡기" => {
+            "capture_mouse" | "จับเมาส์" | "捕鼠" | "マウス捕捉" | "마우스잡기" =>
+            {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let mut gfx = self.gfx.borrow_mut();
@@ -2324,7 +2845,7 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── release_mouse() — restore cursor and remove clip region ──
             "release_mouse" => {
@@ -2339,12 +2860,14 @@ impl Interpreter {
                     #[cfg(windows)]
                     unsafe {
                         // Null releases the clip; reuse the RECT-typed declaration above.
-                        extern "system" { fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32; }
+                        extern "system" {
+                            fn ClipCursor(lpRect: *const std::ffi::c_void) -> i32;
+                        }
                         ClipCursor(std::ptr::null());
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // 3-D / 4-D DRAWING — camera, lights, depth-sorted geometry
@@ -2352,31 +2875,35 @@ impl Interpreter {
 
             // ── set_camera(cry, sry, crx, srx) — store precomputed camera trig ──
             // Call once per frame after computing cos/sin of your rotation angles.
-            "set_camera" | "ตั้งกล้อง" | "设镜" | "设置摄像机" | "カメラ設定" | "카메라설정" => {
+            "set_camera" | "ตั้งกล้อง" | "设镜" | "设置摄像机" | "カメラ設定" | "카메라설정" =>
+            {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
                 let srx = self.arg_num(&args, 3, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
-                gfx.camera.cry = cry; gfx.camera.sry = sry;
-                gfx.camera.crx = crx; gfx.camera.srx = srx;
+                gfx.camera.cry = cry;
+                gfx.camera.sry = sry;
+                gfx.camera.crx = crx;
+                gfx.camera.srx = srx;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_projection(cx, cy, focal, zdist) — override projection params ──
             // Automatically set when the window opens; override only if needed.
-            "set_projection" | "ตั้งโปรเจกชัน" | "投影" | "投影設定" | "투영설정" => {
-                let cx    = self.arg_num(&args, 0, 960.0)? as f32;
-                let cy    = self.arg_num(&args, 1, 540.0)? as f32;
+            "set_projection" | "ตั้งโปรเจกชัน" | "投影" | "投影設定" | "투영설정" =>
+            {
+                let cx = self.arg_num(&args, 0, 960.0)? as f32;
+                let cy = self.arg_num(&args, 1, 540.0)? as f32;
                 let focal = self.arg_num(&args, 2, 1080.0)? as f32;
                 let zdist = self.arg_num(&args, 3, 5.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
-                gfx.camera.cx    = cx;
-                gfx.camera.cy    = cy;
+                gfx.camera.cx = cx;
+                gfx.camera.cy = cy;
                 gfx.camera.focal = focal;
                 gfx.camera.zdist = zdist;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── draw_mesh(pos, idx, ox, oy, oz, scale, mode) ──
             //   Native batched triangle mesh. pos = flat [x,y,z,…], idx = flat tri indices.
@@ -2385,93 +2912,148 @@ impl Interpreter {
             //   `cuda` feature is on); the per-triangle loop runs natively (not in the
             //   interpreter) so dense meshes (imported glTF, grids) stay fast.
             "draw_mesh" | "วาดเมช" => {
-                let pos = match args.first() { Some(Value::List(v)) => v, _ => return Ok(Value::Unit) };
-                let idx = match args.get(1)   { Some(Value::List(v)) => v, _ => return Ok(Value::Unit) };
-                let ox = self.arg_num(&args,2,0.0)? as f32;
-                let oy = self.arg_num(&args,3,0.0)? as f32;
-                let oz = self.arg_num(&args,4,0.0)? as f32;
-                let scale = self.arg_num(&args,5,1.0)? as f32;
-                let mode = self.arg_num(&args,6,0.0)? as i64;
+                let pos = match args.first() {
+                    Some(Value::List(v)) => v,
+                    _ => return Ok(Value::Unit),
+                };
+                let idx = match args.get(1) {
+                    Some(Value::List(v)) => v,
+                    _ => return Ok(Value::Unit),
+                };
+                let ox = self.arg_num(&args, 2, 0.0)? as f32;
+                let oy = self.arg_num(&args, 3, 0.0)? as f32;
+                let oz = self.arg_num(&args, 4, 0.0)? as f32;
+                let scale = self.arg_num(&args, 5, 1.0)? as f32;
+                let mode = self.arg_num(&args, 6, 0.0)? as i64;
                 let nv = pos.len() / 3;
-                if nv == 0 { return Ok(Value::Unit); }
-                let mut world = vec![0.0f32; nv*3];
+                if nv == 0 {
+                    return Ok(Value::Unit);
+                }
+                let mut world = vec![0.0f32; nv * 3];
                 for i in 0..nv {
-                    world[i*3]   = ox + self.to_number(&pos[i*3]).unwrap_or(0.0)   as f32 * scale;
-                    world[i*3+1] = oy + self.to_number(&pos[i*3+1]).unwrap_or(0.0) as f32 * scale;
-                    world[i*3+2] = oz + self.to_number(&pos[i*3+2]).unwrap_or(0.0) as f32 * scale;
+                    world[i * 3] = ox + self.to_number(&pos[i * 3]).unwrap_or(0.0) as f32 * scale;
+                    world[i * 3 + 1] =
+                        oy + self.to_number(&pos[i * 3 + 1]).unwrap_or(0.0) as f32 * scale;
+                    world[i * 3 + 2] =
+                        oz + self.to_number(&pos[i * 3 + 2]).unwrap_or(0.0) as f32 * scale;
                 }
                 let mut gfx = self.gfx.borrow_mut();
                 let cp = {
                     let c = &gfx.camera;
-                    ling_gpu::CameraParams { cry:c.cry, sry:c.sry, crx:c.crx, srx:c.srx, cx:c.cx, cy:c.cy, focal:c.focal, zdist:c.zdist, tx:c.tx, ty:c.ty, tz:c.tz }
+                    ling_gpu::CameraParams {
+                        cry: c.cry,
+                        sry: c.sry,
+                        crx: c.crx,
+                        srx: c.srx,
+                        cx: c.cx,
+                        cy: c.cy,
+                        focal: c.focal,
+                        zdist: c.zdist,
+                        tx: c.tx,
+                        ty: c.ty,
+                        tz: c.tz,
+                    }
                 };
                 let near = -gfx.camera.zdist + 0.02;
                 let base = gfx.color;
                 let ambient = gfx.ambient;
-                let mut proj = vec![0.0f32; nv*3];   // (sx, sy, depth) per vertex
+                let mut proj = vec![0.0f32; nv * 3]; // (sx, sy, depth) per vertex
                 ling_gpu::backend().project_points(&world, &cp, &mut proj);
                 let nt = idx.len() / 3;
                 for t in 0..nt {
-                    let ia = self.to_number(&idx[t*3]).unwrap_or(0.0)   as usize;
-                    let ib = self.to_number(&idx[t*3+1]).unwrap_or(0.0) as usize;
-                    let ic = self.to_number(&idx[t*3+2]).unwrap_or(0.0) as usize;
-                    if ia>=nv || ib>=nv || ic>=nv { continue; }
-                    let (da, db, dc) = (proj[ia*3+2], proj[ib*3+2], proj[ic*3+2]);
-                    if (da+db+dc)/3.0 <= near { continue; }   // near-plane cull (centroid)
+                    let ia = self.to_number(&idx[t * 3]).unwrap_or(0.0) as usize;
+                    let ib = self.to_number(&idx[t * 3 + 1]).unwrap_or(0.0) as usize;
+                    let ic = self.to_number(&idx[t * 3 + 2]).unwrap_or(0.0) as usize;
+                    if ia >= nv || ib >= nv || ic >= nv {
+                        continue;
+                    }
+                    let (da, db, dc) = (proj[ia * 3 + 2], proj[ib * 3 + 2], proj[ic * 3 + 2]);
+                    if (da + db + dc) / 3.0 <= near {
+                        continue;
+                    } // near-plane cull (centroid)
                     let col = if mode == 1 {
                         let h = t as f32 * 0.6;
-                        let r = ((h.sin()*0.5+0.5)*150.0+55.0) as u32;
-                        let g = (((h+2.094).sin()*0.5+0.5)*150.0+55.0) as u32;
-                        let b = (((h+4.189).sin()*0.5+0.5)*150.0+55.0) as u32;
-                        (r<<16)|(g<<8)|b
+                        let r = ((h.sin() * 0.5 + 0.5) * 150.0 + 55.0) as u32;
+                        let g = (((h + 2.094).sin() * 0.5 + 0.5) * 150.0 + 55.0) as u32;
+                        let b = (((h + 4.189).sin() * 0.5 + 0.5) * 150.0 + 55.0) as u32;
+                        (r << 16) | (g << 8) | b
                     } else {
-                        let (ax,ay,az)=(world[ia*3],world[ia*3+1],world[ia*3+2]);
-                        let (bx,by,bz)=(world[ib*3],world[ib*3+1],world[ib*3+2]);
-                        let (px,py,pz)=(world[ic*3],world[ic*3+1],world[ic*3+2]);
-                        let (ux,uy,uz)=(bx-ax,by-ay,bz-az);
-                        let (vx,vy,vz)=(px-ax,py-ay,pz-az);
-                        let normal=[uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
-                        let centroid=[(ax+bx+px)/3.0,(ay+by+py)/3.0,(az+bz+pz)/3.0];
-                        crate::gfx::light::compute_lit_color(base, normal, centroid, &gfx.lights, ambient)
+                        let (ax, ay, az) = (world[ia * 3], world[ia * 3 + 1], world[ia * 3 + 2]);
+                        let (bx, by, bz) = (world[ib * 3], world[ib * 3 + 1], world[ib * 3 + 2]);
+                        let (px, py, pz) = (world[ic * 3], world[ic * 3 + 1], world[ic * 3 + 2]);
+                        let (ux, uy, uz) = (bx - ax, by - ay, bz - az);
+                        let (vx, vy, vz) = (px - ax, py - ay, pz - az);
+                        let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+                        let centroid = [
+                            (ax + bx + px) / 3.0,
+                            (ay + by + py) / 3.0,
+                            (az + bz + pz) / 3.0,
+                        ];
+                        crate::gfx::light::compute_lit_color(
+                            base,
+                            normal,
+                            centroid,
+                            &gfx.lights,
+                            ambient,
+                        )
                     };
-                    let depth = (da+db+dc)/3.0;
+                    let depth = (da + db + dc) / 3.0;
                     let col = gfx.fog_apply(col, depth);
-                    gfx.depth_queue.push_triangle(depth, col, proj[ia*3], proj[ia*3+1], proj[ib*3], proj[ib*3+1], proj[ic*3], proj[ic*3+1]);
+                    gfx.depth_queue.push_triangle(
+                        depth,
+                        col,
+                        proj[ia * 3],
+                        proj[ia * 3 + 1],
+                        proj[ib * 3],
+                        proj[ib * 3 + 1],
+                        proj[ic * 3],
+                        proj[ic * 3 + 1],
+                    );
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── add_light(x, y, z, r, g, b, intensity, radius) ──
             // Adds a point light in world space.  r/g/b in [0..1].
             // radius == 0 → no distance falloff.
-            "add_light" | "เพิ่มแสง" | "加灯" | "ライト追加" | "조명추가" => {
-                let x   = self.arg_num(&args, 0, 0.0)? as f32;
-                let y   = self.arg_num(&args, 1, -3.0)? as f32;
-                let z   = self.arg_num(&args, 2, 3.0)? as f32;
-                let mut r   = self.arg_num(&args, 3, 1.0)? as f32;
-                let mut g   = self.arg_num(&args, 4, 1.0)? as f32;
-                let mut b   = self.arg_num(&args, 5, 1.0)? as f32;
+            "add_light" | "เพิ่มแสง" | "加灯" | "ライト追加" | "조명추가" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, -3.0)? as f32;
+                let z = self.arg_num(&args, 2, 3.0)? as f32;
+                let mut r = self.arg_num(&args, 3, 1.0)? as f32;
+                let mut g = self.arg_num(&args, 4, 1.0)? as f32;
+                let mut b = self.arg_num(&args, 5, 1.0)? as f32;
                 // Forgive 0-255 colour values: if any channel is clearly > 1,
                 // treat the triple as 0-255 and normalise. Keeps 0-1 callers exact.
-                if r > 1.5 || g > 1.5 || b > 1.5 { r/=255.0; g/=255.0; b/=255.0; }
+                if r > 1.5 || g > 1.5 || b > 1.5 {
+                    r /= 255.0;
+                    g /= 255.0;
+                    b /= 255.0;
+                }
                 let intensity = self.arg_num(&args, 6, 1.0)? as f32;
-                let radius    = self.arg_num(&args, 7, 0.0)? as f32;
-                self.gfx.borrow_mut().lights.push(Light { x, y, z, r, g, b, intensity, radius });
+                let radius = self.arg_num(&args, 7, 0.0)? as f32;
+                self.gfx
+                    .borrow_mut()
+                    .lights
+                    .push(Light { x, y, z, r, g, b, intensity, radius });
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── clear_lights() — remove all lights ──
-            "clear_lights" | "ล้างแสง" | "清灯" | "ライト消去" | "조명초기화" => {
+            "clear_lights" | "ล้างแสง" | "清灯" | "ライト消去" | "조명초기화" =>
+            {
                 self.gfx.borrow_mut().lights.clear();
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_ambient(v) — ambient light level [0..1] ──
-            "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" => {
+            "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" =>
+            {
                 let v = self.arg_num(&args, 0, 0.15)? as f32;
                 self.gfx.borrow_mut().ambient = v;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── set_fog(r,g,b, start, end) — distance fog toward (r,g,b).
             //    triangles/lines fade from `start`..`end` camera depth. end<=0 = off.
@@ -2480,18 +3062,19 @@ impl Interpreter {
                 let g = self.arg_num(&args, 1, 0.0)?.clamp(0.0, 255.0) as u32;
                 let b = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 255.0) as u32;
                 let start = self.arg_num(&args, 3, 0.0)? as f32;
-                let end   = self.arg_num(&args, 4, 0.0)? as f32;
+                let end = self.arg_num(&args, 4, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 gfx.fog_color = (r << 16) | (g << 8) | b;
                 gfx.fog_start = start;
-                gfx.fog_end   = end;
+                gfx.fog_end = end;
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, cx,cy,cz) ──
             // Computes lighting from world-space normal + active lights (cel shading),
             // projects via the stored camera, and pushes to the depth queue.
-            "วาดสามเหลี่ยม3มิติ" | "draw_triangle_3d" | "triangle3d" => {
+            "วาดสามเหลี่ยม3มิติ" | "draw_triangle_3d" | "triangle3d" =>
+            {
                 let ax = self.arg_num(&args, 0, 0.0)? as f32;
                 let ay = self.arg_num(&args, 1, 0.0)? as f32;
                 let az = self.arg_num(&args, 2, 0.0)? as f32;
@@ -2505,23 +3088,27 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
 
                 // World-space face normal  N = (B−A) × (C−A)
-                let ux = bx-ax; let uy = by-ay; let uz = bz-az;
-                let vx = cx-ax; let vy = cy-ay; let vz = cz-az;
-                let normal = [
-                    uy*vz - uz*vy,
-                    uz*vx - ux*vz,
-                    ux*vy - uy*vx,
-                ];
+                let ux = bx - ax;
+                let uy = by - ay;
+                let uz = bz - az;
+                let vx = cx - ax;
+                let vy = cy - ay;
+                let vz = cz - az;
+                let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
                 // World-space centroid
                 let centroid = [
-                    (ax+bx+cx)/3.0,
-                    (ay+by+cy)/3.0,
-                    (az+bz+cz)/3.0,
+                    (ax + bx + cx) / 3.0,
+                    (ay + by + cy) / 3.0,
+                    (az + bz + cz) / 3.0,
                 ];
 
                 // Cel-shaded colour
                 let lit_color = crate::gfx::light::compute_lit_color(
-                    gfx.color, normal, centroid, &gfx.lights, gfx.ambient,
+                    gfx.color,
+                    normal,
+                    centroid,
+                    &gfx.lights,
+                    gfx.ambient,
                 );
 
                 // ── Near-plane CLIP (Sutherland–Hodgman) ──
@@ -2543,19 +3130,31 @@ impl Interpreter {
                     let b = vw[(ei + 1) % 3];
                     let ain = a.3 > near;
                     let bin = b.3 > near;
-                    if ain { poly.push((a.0, a.1, a.2)); }
+                    if ain {
+                        poly.push((a.0, a.1, a.2));
+                    }
                     if ain != bin {
                         let tt = (near - a.3) / (b.3 - a.3);
-                        poly.push((a.0 + (b.0 - a.0) * tt, a.1 + (b.1 - a.1) * tt, a.2 + (b.2 - a.2) * tt));
+                        poly.push((
+                            a.0 + (b.0 - a.0) * tt,
+                            a.1 + (b.1 - a.1) * tt,
+                            a.2 + (b.2 - a.2) * tt,
+                        ));
                     }
                     ei += 1;
                 }
-                if poly.len() < 3 { return Ok(Value::Unit); }
+                if poly.len() < 3 {
+                    return Ok(Value::Unit);
+                }
                 // Project the clipped polygon, painter-depth = mean, fan-triangulate.
-                let proj: Vec<(f32, f32, f32)> =
-                    poly.iter().map(|p| gfx.camera.project(p.0, p.1, p.2)).collect();
+                let proj: Vec<(f32, f32, f32)> = poly
+                    .iter()
+                    .map(|p| gfx.camera.project(p.0, p.1, p.2))
+                    .collect();
                 let mut dsum = 0.0f32;
-                for p in &proj { dsum += p.2; }
+                for p in &proj {
+                    dsum += p.2;
+                }
                 let depth = dsum / proj.len() as f32;
                 let lit_color = gfx.fog_apply(lit_color, depth);
                 let mut fk = 1;
@@ -2569,12 +3168,13 @@ impl Interpreter {
                     fk += 1;
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── วาดเส้น3มิติ(ax,ay,az, bx,by,bz) ──
             // Projects two world-space points via the stored camera and pushes
             // a line to the depth queue.
-            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" | "画3D线" | "3D線描く" | "3D선그리기" => {
+            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" | "画3D线" | "3D線描く" | "3D선그리기" =>
+            {
                 let ax = self.arg_num(&args, 0, 0.0)? as f32;
                 let ay = self.arg_num(&args, 1, 0.0)? as f32;
                 let az = self.arg_num(&args, 2, 0.0)? as f32;
@@ -2586,8 +3186,12 @@ impl Interpreter {
                 let color = gfx.color;
                 // Near-plane clip in 3-D before perspective divide
                 let near = -gfx.camera.zdist + 0.05;
-                let mut lax = ax; let mut lay = ay; let mut laz = az;
-                let mut lbx = bx; let mut lby = by; let mut lbz = bz;
+                let mut lax = ax;
+                let mut lay = ay;
+                let mut laz = az;
+                let mut lbx = bx;
+                let mut lby = by;
+                let mut lbz = bz;
                 let da_raw = gfx.camera.depth(lax, lay, laz);
                 let db_raw = gfx.camera.depth(lbx, lby, lbz);
                 if da_raw <= near && db_raw <= near {
@@ -2610,7 +3214,7 @@ impl Interpreter {
                 let color = gfx.fog_apply(color, depth);
                 gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
                 return Ok(Value::Unit);
-            }
+            },
 
             // orb_shell(cx,cy,cz, radius, rot_y, rot_x, density, r,g,b)
             //   A single trippy, grayscale, depth-faded vector pattern wound around
@@ -2622,32 +3226,45 @@ impl Interpreter {
             //   the orb; `density` = spirals per winding direction. r,g,b tint it
             //   (pass a gray like 230,230,230 for pure grayscale).
             #[cfg(not(target_arch = "wasm32"))]
-            "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
-                let radius=self.arg_num(&args,3,1.0)? as f32;
-                let ry=self.arg_num(&args,4,0.)? as f32; let rx=self.arg_num(&args,5,0.)? as f32;
-                let density=(self.arg_num(&args,6,10.)? as i32).clamp(1, 48);
-                let tr=(self.arg_num(&args,7,230.)? as f32).clamp(0.,255.);
-                let tg=(self.arg_num(&args,8,230.)? as f32).clamp(0.,255.);
-                let tb=(self.arg_num(&args,9,235.)? as f32).clamp(0.,255.);
+            "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let radius = self.arg_num(&args, 3, 1.0)? as f32;
+                let ry = self.arg_num(&args, 4, 0.)? as f32;
+                let rx = self.arg_num(&args, 5, 0.)? as f32;
+                let density = (self.arg_num(&args, 6, 10.)? as i32).clamp(1, 48);
+                let tr = (self.arg_num(&args, 7, 230.)? as f32).clamp(0., 255.);
+                let tg = (self.arg_num(&args, 8, 230.)? as f32).clamp(0., 255.);
+                let tb = (self.arg_num(&args, 9, 235.)? as f32).clamp(0., 255.);
                 let (cyr, syr) = (ry.cos(), ry.sin());
                 let (cxr, sxr) = (rx.cos(), rx.sin());
                 let tau = std::f32::consts::TAU;
                 let pi = std::f32::consts::PI;
-                let turns = 6.0_f32;            // how many times each spiral wraps pole→pole
-                let nseg  = 96;                 // segments per spiral (smoothness)
-                let inv_r = if radius.abs() > 1e-5 { 1.0 / radius } else { 0.0 };
+                let turns = 6.0_f32; // how many times each spiral wraps pole→pole
+                let nseg = 96; // segments per spiral (smoothness)
+                let inv_r = if radius.abs() > 1e-5 {
+                    1.0 / radius
+                } else {
+                    0.0
+                };
                 // a point along a spiral (param u 0..1, start angle theta0, winding dir),
                 // spun by ry/rx — returns (world point, facing 0..1 where 1 = toward camera)
-                let pt = |u: f32, theta0: f32, dir: f32| -> ([f32;3], f32) {
-                    let phi = pi * u;                       // 0..pi  (north → south)
-                    let th  = dir * turns * tau * u + theta0;
-                    let (mut x, y, mut z) = (phi.sin()*th.cos()*radius, phi.cos()*radius, phi.sin()*th.sin()*radius);
-                    let x1 =  x*cyr + z*syr;                // yaw about Y
-                    let z1 = -x*syr + z*cyr;
-                    x = x1; z = z1;
-                    let y2 = y*cxr - z*sxr;                 // pitch about X
-                    let z2 = y*sxr + z*cxr;
+                let pt = |u: f32, theta0: f32, dir: f32| -> ([f32; 3], f32) {
+                    let phi = pi * u; // 0..pi  (north → south)
+                    let th = dir * turns * tau * u + theta0;
+                    let (mut x, y, mut z) = (
+                        phi.sin() * th.cos() * radius,
+                        phi.cos() * radius,
+                        phi.sin() * th.sin() * radius,
+                    );
+                    let x1 = x * cyr + z * syr; // yaw about Y
+                    let z1 = -x * syr + z * cyr;
+                    x = x1;
+                    z = z1;
+                    let y2 = y * cxr - z * sxr; // pitch about X
+                    let z2 = y * sxr + z * cxr;
                     // facing: camera sits at -zdist looking +z, so smaller z2 = nearer = brighter
                     let facing = (0.5 - 0.5 * z2 * inv_r).clamp(0.0, 1.0);
                     ([cx + x, cy + y2, cz + z2], facing)
@@ -2655,20 +3272,35 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let near = -gfx.camera.zdist + 0.05;
                 // draw one segment (near-clipped) in a grayscale tint scaled by `lum`
-                let seg = |gfx: &mut crate::gfx::GfxState, a: [f32;3], b: [f32;3], lum: f32| {
-                    let (mut lax,mut lay,mut laz)=(a[0],a[1],a[2]);
-                    let (mut lbx,mut lby,mut lbz)=(b[0],b[1],b[2]);
-                    let da=gfx.camera.depth(lax,lay,laz); let db=gfx.camera.depth(lbx,lby,lbz);
-                    if da<=near && db<=near { return; }
-                    if da<=near { let t=(near-da)/(db-da); lax+=t*(lbx-lax); lay+=t*(lby-lay); laz+=t*(lbz-laz); }
-                    else if db<=near { let t=(near-da)/(db-da); lbx=lax+t*(lbx-lax); lby=lay+t*(lby-lay); lbz=laz+t*(lbz-laz); }
-                    let (sax,say,da2)=gfx.camera.project(lax,lay,laz);
-                    let (sbx,sby,db2)=gfx.camera.project(lbx,lby,lbz);
+                let seg = |gfx: &mut crate::gfx::GfxState, a: [f32; 3], b: [f32; 3], lum: f32| {
+                    let (mut lax, mut lay, mut laz) = (a[0], a[1], a[2]);
+                    let (mut lbx, mut lby, mut lbz) = (b[0], b[1], b[2]);
+                    let da = gfx.camera.depth(lax, lay, laz);
+                    let db = gfx.camera.depth(lbx, lby, lbz);
+                    if da <= near && db <= near {
+                        return;
+                    }
+                    if da <= near {
+                        let t = (near - da) / (db - da);
+                        lax += t * (lbx - lax);
+                        lay += t * (lby - lay);
+                        laz += t * (lbz - laz);
+                    } else if db <= near {
+                        let t = (near - da) / (db - da);
+                        lbx = lax + t * (lbx - lax);
+                        lby = lay + t * (lby - lay);
+                        lbz = laz + t * (lbz - laz);
+                    }
+                    let (sax, say, da2) = gfx.camera.project(lax, lay, laz);
+                    let (sbx, sby, db2) = gfx.camera.project(lbx, lby, lbz);
                     // grayscale-alpha: front-facing bright, back faded toward black
                     let l = (0.12 + 0.88 * lum).clamp(0.0, 1.0);
-                    let cr=(tr*l) as u32; let cg=(tg*l) as u32; let cb=(tb*l) as u32;
-                    let color=(cr<<16)|(cg<<8)|cb;
-                    gfx.depth_queue.push_line((da2+db2)*0.5, color, sax,say, sbx,sby);
+                    let cr = (tr * l) as u32;
+                    let cg = (tg * l) as u32;
+                    let cb = (tb * l) as u32;
+                    let color = (cr << 16) | (cg << 8) | cb;
+                    gfx.depth_queue
+                        .push_line((da2 + db2) * 0.5, color, sax, say, sbx, sby);
                 };
                 // two opposite winding directions → a soft guilloché weave (not a cage)
                 for &dir in &[1.0_f32, -1.0_f32] {
@@ -2683,7 +3315,7 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // orb_particles(cx,cy,cz, radius, count, t, r,g,b)
             //   Fills the VOLUME of a sphere with `count` swirling vector points —
@@ -2693,15 +3325,22 @@ impl Interpreter {
             //   far = dim) so the cloud has real volume. Additive, so it layers under
             //   a shell / over a liquid marble.
             #[cfg(not(target_arch = "wasm32"))]
-            "orb_particles" | "球内粒子" | "オーブ粒子" | "오브입자" | "อนุภาคทรงกลม" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
-                let radius=self.arg_num(&args,3,1.0)? as f32;
-                let count=(self.arg_num(&args,4,160.)? as i32).clamp(1, 4000);
-                let t=self.arg_num(&args,5,0.)? as f32;
-                let tr=(self.arg_num(&args,6,255.)? as f32).clamp(0.,255.);
-                let tg=(self.arg_num(&args,7,255.)? as f32).clamp(0.,255.);
-                let tb=(self.arg_num(&args,8,255.)? as f32).clamp(0.,255.);
-                let inv_r = if radius.abs() > 1e-5 { 1.0/radius } else { 0.0 };
+            "orb_particles" | "球内粒子" | "オーブ粒子" | "오브입자" | "อนุภาคทรงกลม" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let radius = self.arg_num(&args, 3, 1.0)? as f32;
+                let count = (self.arg_num(&args, 4, 160.)? as i32).clamp(1, 4000);
+                let t = self.arg_num(&args, 5, 0.)? as f32;
+                let tr = (self.arg_num(&args, 6, 255.)? as f32).clamp(0., 255.);
+                let tg = (self.arg_num(&args, 7, 255.)? as f32).clamp(0., 255.);
+                let tb = (self.arg_num(&args, 8, 255.)? as f32).clamp(0., 255.);
+                let inv_r = if radius.abs() > 1e-5 {
+                    1.0 / radius
+                } else {
+                    0.0
+                };
                 // cheap deterministic hash → [0,1)
                 let h = |mut x: u32| -> f32 {
                     x = x.wrapping_mul(747796405).wrapping_add(2891336453);
@@ -2710,59 +3349,83 @@ impl Interpreter {
                 };
                 let tau = std::f32::consts::TAU;
                 // slow tumble of the whole cloud
-                let (cyr, syr) = ((t*0.5).cos(), (t*0.5).sin());
-                let (cxr, sxr) = ((t*0.23).cos(), (t*0.23).sin());
+                let (cyr, syr) = ((t * 0.5).cos(), (t * 0.5).sin());
+                let (cxr, sxr) = ((t * 0.23).cos(), (t * 0.23).sin());
                 let mut gfx = self.gfx.borrow_mut();
                 let near = -gfx.camera.zdist + 0.05;
                 let (sw, sh) = (gfx.width as i32, gfx.height as i32);
                 for i in 0..count {
                     let i = i as u32;
                     // uniform-in-volume: r = cbrt(u) * radius; direction from two hashes
-                    let u  = h(i.wrapping_mul(3) + 1);
-                    let rr = u.cbrt() * radius * (0.85 + 0.15 * (t*1.3 + i as f32).sin()); // gentle pulse
-                    let th = h(i.wrapping_mul(3) + 2) * tau + t * (0.3 + 0.5 * h(i*7+5)); // per-mote orbit
-                    let ph = (h(i.wrapping_mul(3) + 3) * 2.0 - 1.0).acos();               // uniform cos(phi)
-                    let (mut x, y, mut z) = (rr*ph.sin()*th.cos(), rr*ph.cos(), rr*ph.sin()*th.sin());
+                    let u = h(i.wrapping_mul(3) + 1);
+                    let rr = u.cbrt() * radius * (0.85 + 0.15 * (t * 1.3 + i as f32).sin()); // gentle pulse
+                    let th = h(i.wrapping_mul(3) + 2) * tau + t * (0.3 + 0.5 * h(i * 7 + 5)); // per-mote orbit
+                    let ph = (h(i.wrapping_mul(3) + 3) * 2.0 - 1.0).acos(); // uniform cos(phi)
+                    let (mut x, y, mut z) = (
+                        rr * ph.sin() * th.cos(),
+                        rr * ph.cos(),
+                        rr * ph.sin() * th.sin(),
+                    );
                     // tumble the cloud (yaw then pitch)
-                    let x1 = x*cyr + z*syr; let z1 = -x*syr + z*cyr; x = x1; z = z1;
-                    let y2 = y*cxr - z*sxr; let z2 = y*sxr + z*cxr;
+                    let x1 = x * cyr + z * syr;
+                    let z1 = -x * syr + z * cyr;
+                    x = x1;
+                    z = z1;
+                    let y2 = y * cxr - z * sxr;
+                    let z2 = y * sxr + z * cxr;
                     let (wx, wy, wz) = (cx + x, cy + y2, cz + z2);
-                    if gfx.camera.depth(wx, wy, wz) <= near { continue; }
+                    if gfx.camera.depth(wx, wy, wz) <= near {
+                        continue;
+                    }
                     let (sx, sy, dep) = gfx.camera.project(wx, wy, wz);
-                    let sxi = sx as i32; let syi = sy as i32;
-                    if sxi < 0 || syi < 0 || sxi >= sw || syi >= sh { continue; }
+                    let sxi = sx as i32;
+                    let syi = sy as i32;
+                    if sxi < 0 || syi < 0 || sxi >= sw || syi >= sh {
+                        continue;
+                    }
                     // depth-shade: nearer (smaller z2) = brighter
                     let facing = (0.5 - 0.5 * z2 * inv_r).clamp(0.15, 1.0);
                     let l = facing;
-                    let cr=(tr*l) as u32; let cg=(tg*l) as u32; let cb=(tb*l) as u32;
-                    let color=(cr<<16)|(cg<<8)|cb;
+                    let cr = (tr * l) as u32;
+                    let cg = (tg * l) as u32;
+                    let cb = (tb * l) as u32;
+                    let color = (cr << 16) | (cg << 8) | cb;
                     // a 1–2px dot (bigger when near) as a short segment in the depth queue
                     let len = if facing > 0.7 { 1.0 } else { 0.0 };
                     gfx.depth_queue.push_line(dep, color, sx, sy, sx + len, sy);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // project_3d(x,y,z) -> [screen_x, screen_y, depth]; behind the camera
             // returns a sentinel ([-99999,-99999, depth]) so scripts can skip it.
             // Lets scripts place 2-D overlays (e.g. filled teardrop flames) onto 3-D points.
             "project_3d" | "投影3D" | "3D投影" | "3D투영" | "ฉาย3มิติ" => {
-                let x = self.arg_num(&args,0,0.0)? as f32;
-                let y = self.arg_num(&args,1,0.0)? as f32;
-                let z = self.arg_num(&args,2,0.0)? as f32;
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
                 let gfx = self.gfx.borrow();
                 let near = -gfx.camera.zdist + 0.05;
                 let d = gfx.camera.depth(x, y, z);
                 if d <= near {
-                    return Ok(Value::List(vec![Value::Number(-99999.0), Value::Number(-99999.0), Value::Number(d as f64)]));
+                    return Ok(Value::List(vec![
+                        Value::Number(-99999.0),
+                        Value::Number(-99999.0),
+                        Value::Number(d as f64),
+                    ]));
                 }
                 let (sx, sy, depth) = gfx.camera.project(x, y, z);
-                return Ok(Value::List(vec![Value::Number(sx as f64), Value::Number(sy as f64), Value::Number(depth as f64)]));
-            }
+                return Ok(Value::List(vec![
+                    Value::Number(sx as f64),
+                    Value::Number(sy as f64),
+                    Value::Number(depth as f64),
+                ]));
+            },
             // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
             // honouring the blend mode (additive → translucent glow). Auto-closes.
             #[cfg(not(target_arch = "wasm32"))]
-            "draw_poly" | "填充多边形" | "ポリゴン塗り" | "다각형채우기" | "เติมรูปหลายเหลี่ยม" => {
+            "draw_poly" | "填充多边形" | "ポリゴン塗り" | "다각형채우기" | "เติมรูปหลายเหลี่ยม" =>
+            {
                 let mut pts: Vec<[f32; 2]> = Vec::new();
                 if let Some(Value::List(v)) = args.first() {
                     let mut i = 0;
@@ -2774,13 +3437,23 @@ impl Interpreter {
                     }
                 }
                 if pts.len() >= 3 {
-                    if pts[0] != pts[pts.len() - 1] { let p0 = pts[0]; pts.push(p0); } // close
+                    if pts[0] != pts[pts.len() - 1] {
+                        let p0 = pts[0];
+                        pts.push(p0);
+                    } // close
                     let mut gfx = self.gfx.borrow_mut();
                     let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
-                    crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, add, std::slice::from_ref(&pts));
+                    crate::gfx::raster::fill_contours_aa(
+                        &mut gfx.buffer,
+                        w,
+                        h,
+                        color,
+                        add,
+                        std::slice::from_ref(&pts),
+                    );
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // VECTOR TEXTURE BUILTINS  (src/gfx/vtex.rs)
@@ -2790,216 +3463,615 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // vtex_grid(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cw,ch, fr,hue)
-            "vtex_grid" | "ลายตาราง" | "纹格" | "格子模様" | "격자무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let cols=self.arg_num(&args,9,10.)?as usize; let rows=self.arg_num(&args,10,10.)?as usize;
-                let cw=self.arg_num(&args,11,1.)?as f32;  let ch=self.arg_num(&args,12,1.)?as f32;
-                let fr=self.arg_num(&args,13,0.)?as f32;  let hue=self.arg_num(&args,14,0.)?as f32;
+            "vtex_grid" | "ลายตาราง" | "纹格" | "格子模様" | "격자무늬" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let cols = self.arg_num(&args, 9, 10.)? as usize;
+                let rows = self.arg_num(&args, 10, 10.)? as usize;
+                let cw = self.arg_num(&args, 11, 1.)? as f32;
+                let ch = self.arg_num(&args, 12, 1.)? as f32;
+                let fr = self.arg_num(&args, 13, 0.)? as f32;
+                let hue = self.arg_num(&args, 14, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_grid(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cw,ch, fr,hue);
+                crate::gfx::vtex::draw_grid(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    cols,
+                    rows,
+                    cw,
+                    ch,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_rings(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_rings,n_sides, max_r,twist, fr,hue)
             "vtex_rings" | "ลายวงซ้อน" | "纹环" | "同心円" | "동심원" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nr=self.arg_num(&args,9,6.)?as usize; let ns=self.arg_num(&args,10,6.)?as usize;
-                let mr=self.arg_num(&args,11,3.)?as f32;  let tw=self.arg_num(&args,12,0.)?as f32;
-                let fr=self.arg_num(&args,13,0.)?as f32;  let hue=self.arg_num(&args,14,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nr = self.arg_num(&args, 9, 6.)? as usize;
+                let ns = self.arg_num(&args, 10, 6.)? as usize;
+                let mr = self.arg_num(&args, 11, 3.)? as f32;
+                let tw = self.arg_num(&args, 12, 0.)? as f32;
+                let fr = self.arg_num(&args, 13, 0.)? as f32;
+                let hue = self.arg_num(&args, 14, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_rings(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nr,ns,mr,tw, fr,hue);
+                crate::gfx::vtex::draw_rings(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nr,
+                    ns,
+                    mr,
+                    tw,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_star(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_pts,r_out,r_in, rot_speed, fr,hue)
             "vtex_star" | "ลายดาว" | "纹星" | "星模様" | "별무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let np=self.arg_num(&args,9,6.)?as usize;
-                let ro=self.arg_num(&args,10,2.)?as f32; let ri=self.arg_num(&args,11,1.)?as f32;
-                let rs=self.arg_num(&args,12,0.01)?as f32;
-                let fr=self.arg_num(&args,13,0.)?as f32; let hue=self.arg_num(&args,14,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let np = self.arg_num(&args, 9, 6.)? as usize;
+                let ro = self.arg_num(&args, 10, 2.)? as f32;
+                let ri = self.arg_num(&args, 11, 1.)? as f32;
+                let rs = self.arg_num(&args, 12, 0.01)? as f32;
+                let fr = self.arg_num(&args, 13, 0.)? as f32;
+                let hue = self.arg_num(&args, 14, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_star(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, np,ro,ri,rs, fr,hue);
+                crate::gfx::vtex::draw_star(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    np,
+                    ro,
+                    ri,
+                    rs,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_spiral(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_turns,max_r,steps, fr,hue)
             "vtex_spiral" | "ลายเกลียว" | "纹螺" | "螺旋" | "나선" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nt=self.arg_num(&args,9,3.)?as f32; let mr=self.arg_num(&args,10,3.)?as f32;
-                let st=self.arg_num(&args,11,120.)?as usize;
-                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nt = self.arg_num(&args, 9, 3.)? as f32;
+                let mr = self.arg_num(&args, 10, 3.)? as f32;
+                let st = self.arg_num(&args, 11, 120.)? as usize;
+                let fr = self.arg_num(&args, 12, 0.)? as f32;
+                let hue = self.arg_num(&args, 13, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_spiral(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,mr,st, fr,hue);
+                crate::gfx::vtex::draw_spiral(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nt,
+                    mr,
+                    st,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_flower(cx,cy,cz, ux,uy,uz, vx,vy,vz, radius,n_sides, fr,hue)
             "vtex_flower" | "ลายดอก" | "纹花" | "花模様" | "꽃무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let r=self.arg_num(&args,9,1.)?as f32; let ns=self.arg_num(&args,10,24.)?as usize;
-                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let r = self.arg_num(&args, 9, 1.)? as f32;
+                let ns = self.arg_num(&args, 10, 24.)? as usize;
+                let fr = self.arg_num(&args, 11, 0.)? as f32;
+                let hue = self.arg_num(&args, 12, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_flower(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, r,ns, fr,hue);
+                crate::gfx::vtex::draw_flower(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    r,
+                    ns,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_letter_rain(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_cols,n_vis, col_w,row_h, speed, fr,hue)
-            "vtex_letter_rain" | "ลายอักษรไหล" | "纹字雨" | "文字雨" | "글자비" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nc=self.arg_num(&args,9,16.)?as usize; let nv=self.arg_num(&args,10,14.)?as usize;
-                let cw=self.arg_num(&args,11,0.65)?as f32; let rh=self.arg_num(&args,12,0.60)?as f32;
-                let sp=self.arg_num(&args,13,0.025)?as f32;
-                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+            "vtex_letter_rain" | "ลายอักษรไหล" | "纹字雨" | "文字雨" | "글자비" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nc = self.arg_num(&args, 9, 16.)? as usize;
+                let nv = self.arg_num(&args, 10, 14.)? as usize;
+                let cw = self.arg_num(&args, 11, 0.65)? as f32;
+                let rh = self.arg_num(&args, 12, 0.60)? as f32;
+                let sp = self.arg_num(&args, 13, 0.025)? as f32;
+                let fr = self.arg_num(&args, 14, 0.)? as f32;
+                let hue = self.arg_num(&args, 15, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_letter_rain(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nc,nv,cw,rh,sp, fr,hue);
+                crate::gfx::vtex::draw_letter_rain(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nc,
+                    nv,
+                    cw,
+                    rh,
+                    sp,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_hyperbolic_uv(cx,cy,cz, ux,uy,uz, vx,vy,vz, max_r,n_circles,n_rays, fr,hue)
-            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" | "纹曲面" | "双曲線" | "쌍곡선" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let mr=self.arg_num(&args,9,5.)?as f32;
-                let nc=self.arg_num(&args,10,12.)?as usize; let nr=self.arg_num(&args,11,18.)?as usize;
-                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" | "纹曲面" | "双曲線" | "쌍곡선" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let mr = self.arg_num(&args, 9, 5.)? as f32;
+                let nc = self.arg_num(&args, 10, 12.)? as usize;
+                let nr = self.arg_num(&args, 11, 18.)? as usize;
+                let fr = self.arg_num(&args, 12, 0.)? as f32;
+                let hue = self.arg_num(&args, 13, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_hyperbolic_uv(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, mr,nc,nr, fr,hue);
+                crate::gfx::vtex::draw_hyperbolic_uv(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    mr,
+                    nc,
+                    nr,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_halftone(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell_w,cell_h, density, fr,hue)
             "vtex_halftone" | "ลายจุด" | "纹半调" | "網点模様" | "망점" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let cols=self.arg_num(&args,9,16.)?as usize; let rows=self.arg_num(&args,10,12.)?as usize;
-                let cw=self.arg_num(&args,11,0.5)?as f32; let ch=self.arg_num(&args,12,0.5)?as f32;
-                let dens=self.arg_num(&args,13,0.4)?as f32;
-                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let cols = self.arg_num(&args, 9, 16.)? as usize;
+                let rows = self.arg_num(&args, 10, 12.)? as usize;
+                let cw = self.arg_num(&args, 11, 0.5)? as f32;
+                let ch = self.arg_num(&args, 12, 0.5)? as f32;
+                let dens = self.arg_num(&args, 13, 0.4)? as f32;
+                let fr = self.arg_num(&args, 14, 0.)? as f32;
+                let hue = self.arg_num(&args, 15, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_halftone(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cw,ch,dens, fr,hue);
+                crate::gfx::vtex::draw_halftone(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    cols,
+                    rows,
+                    cw,
+                    ch,
+                    dens,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_tessellated(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell, amplitude,freq, fr,hue)
-            "vtex_tessellated" | "ลายตาข่าย" | "纹镶嵌" | "網目模様" | "격자망" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let cols=self.arg_num(&args,9,14.)?as usize; let rows=self.arg_num(&args,10,10.)?as usize;
-                let cell=self.arg_num(&args,11,0.6)?as f32;
-                let amp=self.arg_num(&args,12,0.25)?as f32; let freq=self.arg_num(&args,13,4.)?as f32;
-                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+            "vtex_tessellated" | "ลายตาข่าย" | "纹镶嵌" | "網目模様" | "격자망" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let cols = self.arg_num(&args, 9, 14.)? as usize;
+                let rows = self.arg_num(&args, 10, 10.)? as usize;
+                let cell = self.arg_num(&args, 11, 0.6)? as f32;
+                let amp = self.arg_num(&args, 12, 0.25)? as f32;
+                let freq = self.arg_num(&args, 13, 4.)? as f32;
+                let fr = self.arg_num(&args, 14, 0.)? as f32;
+                let hue = self.arg_num(&args, 15, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_tessellated(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows,cell,amp,freq, fr,hue);
+                crate::gfx::vtex::draw_tessellated(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    cols,
+                    rows,
+                    cell,
+                    amp,
+                    freq,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_lotus(cx,cy,cz, ux,uy,uz, vx,vy,vz, r_inner,r_outer,n_petals, fr,hue)
-            "vtex_lotus" | "ลายดอกบัว" | "纹莲" | "蓮模様" | "연꽃무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let ri=self.arg_num(&args,9,1.)?as f32; let ro=self.arg_num(&args,10,2.)?as f32;
-                let np=self.arg_num(&args,11,12.)?as usize;
-                let fr=self.arg_num(&args,12,0.)?as f32; let hue=self.arg_num(&args,13,0.)?as f32;
+            "vtex_lotus" | "ลายดอกบัว" | "纹莲" | "蓮模様" | "연꽃무늬" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let ri = self.arg_num(&args, 9, 1.)? as f32;
+                let ro = self.arg_num(&args, 10, 2.)? as f32;
+                let np = self.arg_num(&args, 11, 12.)? as usize;
+                let fr = self.arg_num(&args, 12, 0.)? as f32;
+                let hue = self.arg_num(&args, 13, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_lotus(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, ri,ro,np, fr,hue);
+                crate::gfx::vtex::draw_lotus(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    ri,
+                    ro,
+                    np,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_chakra(cx,cy,cz, ux,uy,uz, vx,vy,vz, r,n_spokes, fr,hue)
             "vtex_chakra" | "ลายจักร" | "纹轮" | "輪模様" | "바퀴무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let r=self.arg_num(&args,9,2.)?as f32; let ns=self.arg_num(&args,10,8.)?as usize;
-                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let r = self.arg_num(&args, 9, 2.)? as f32;
+                let ns = self.arg_num(&args, 10, 8.)? as usize;
+                let fr = self.arg_num(&args, 11, 0.)? as f32;
+                let hue = self.arg_num(&args, 12, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_chakra(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, r,ns, fr,hue);
+                crate::gfx::vtex::draw_chakra(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    r,
+                    ns,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_yantra(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_layers,max_r, fr,hue)
-            "vtex_yantra" | "ลายยันต์" | "纹咒" | "護符模様" | "부적무늬" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nl=self.arg_num(&args,9,4.)?as usize; let mr=self.arg_num(&args,10,3.)?as f32;
-                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+            "vtex_yantra" | "ลายยันต์" | "纹咒" | "護符模様" | "부적무늬" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nl = self.arg_num(&args, 9, 4.)? as usize;
+                let mr = self.arg_num(&args, 10, 3.)? as f32;
+                let fr = self.arg_num(&args, 11, 0.)? as f32;
+                let hue = self.arg_num(&args, 12, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_yantra(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nl,mr, fr,hue);
+                crate::gfx::vtex::draw_yantra(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nl,
+                    mr,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_spiked_cog(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_teeth,r_body,r_spike,r_hub,n_spokes, fr,hue)
-            "vtex_spiked_cog" | "ฟันเฟืองหนาม" | "纹棘轮" | "歯車模様" | "톱니바퀴" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nt=self.arg_num(&args,9,12.)?as usize; let rb=self.arg_num(&args,10,1.)?as f32;
-                let rs=self.arg_num(&args,11,1.3)?as f32; let rh=self.arg_num(&args,12,0.2)?as f32;
-                let ns=self.arg_num(&args,13,6.)?as usize;
-                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+            "vtex_spiked_cog" | "ฟันเฟืองหนาม" | "纹棘轮" | "歯車模様" | "톱니바퀴" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nt = self.arg_num(&args, 9, 12.)? as usize;
+                let rb = self.arg_num(&args, 10, 1.)? as f32;
+                let rs = self.arg_num(&args, 11, 1.3)? as f32;
+                let rh = self.arg_num(&args, 12, 0.2)? as f32;
+                let ns = self.arg_num(&args, 13, 6.)? as usize;
+                let fr = self.arg_num(&args, 14, 0.)? as f32;
+                let hue = self.arg_num(&args, 15, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_spiked_cog(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,rb,rs,rh,ns, fr,hue);
+                crate::gfx::vtex::draw_spiked_cog(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nt,
+                    rb,
+                    rs,
+                    rh,
+                    ns,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_torii(cx,cy,cz, ux,uy,uz, vx,vy,vz, width,height, fr,hue)
-            "vtex_torii" | "ประตูโทริอิ" | "纹鸟居" | "鳥居" | "도리이" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let w=self.arg_num(&args,9,4.)?as f32; let h=self.arg_num(&args,10,5.)?as f32;
-                let fr=self.arg_num(&args,11,0.)?as f32; let hue=self.arg_num(&args,12,0.)?as f32;
+            "vtex_torii" | "ประตูโทริอิ" | "纹鸟居" | "鳥居" | "도리이" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let w = self.arg_num(&args, 9, 4.)? as f32;
+                let h = self.arg_num(&args, 10, 5.)? as f32;
+                let fr = self.arg_num(&args, 11, 0.)? as f32;
+                let hue = self.arg_num(&args, 12, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_torii(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, w,h, fr,hue);
+                crate::gfx::vtex::draw_torii(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    w,
+                    h,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // vtex_pagoda(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_tiers,base_w,tier_h,taper,eave_out, fr,hue)
             "vtex_pagoda" | "เจดีย์" | "纹塔" | "塔" | "탑" => {
-                let cx=self.arg_num(&args,0,0.)?as f32; let cy=self.arg_num(&args,1,0.)?as f32; let cz=self.arg_num(&args,2,0.)?as f32;
-                let ux=self.arg_num(&args,3,1.)?as f32; let uy=self.arg_num(&args,4,0.)?as f32; let uz=self.arg_num(&args,5,0.)?as f32;
-                let vx=self.arg_num(&args,6,0.)?as f32; let vy=self.arg_num(&args,7,0.)?as f32; let vz=self.arg_num(&args,8,1.)?as f32;
-                let nt=self.arg_num(&args,9,5.)?as usize; let bw=self.arg_num(&args,10,2.)?as f32;
-                let th=self.arg_num(&args,11,1.)?as f32; let tp=self.arg_num(&args,12,0.72)?as f32;
-                let eo=self.arg_num(&args,13,0.28)?as f32;
-                let fr=self.arg_num(&args,14,0.)?as f32; let hue=self.arg_num(&args,15,0.)?as f32;
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let ux = self.arg_num(&args, 3, 1.)? as f32;
+                let uy = self.arg_num(&args, 4, 0.)? as f32;
+                let uz = self.arg_num(&args, 5, 0.)? as f32;
+                let vx = self.arg_num(&args, 6, 0.)? as f32;
+                let vy = self.arg_num(&args, 7, 0.)? as f32;
+                let vz = self.arg_num(&args, 8, 1.)? as f32;
+                let nt = self.arg_num(&args, 9, 5.)? as usize;
+                let bw = self.arg_num(&args, 10, 2.)? as f32;
+                let th = self.arg_num(&args, 11, 1.)? as f32;
+                let tp = self.arg_num(&args, 12, 0.72)? as f32;
+                let eo = self.arg_num(&args, 13, 0.28)? as f32;
+                let fr = self.arg_num(&args, 14, 0.)? as f32;
+                let hue = self.arg_num(&args, 15, 0.)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let cam = gfx.camera.clone();
-                crate::gfx::vtex::draw_pagoda(&mut gfx.depth_queue,&cam, cx,cy,cz, ux,uy,uz, vx,vy,vz, nt,bw,th,tp,eo, fr,hue);
+                crate::gfx::vtex::draw_pagoda(
+                    &mut gfx.depth_queue,
+                    &cam,
+                    cx,
+                    cy,
+                    cz,
+                    ux,
+                    uy,
+                    uz,
+                    vx,
+                    vy,
+                    vz,
+                    nt,
+                    bw,
+                    th,
+                    tp,
+                    eo,
+                    fr,
+                    hue,
+                );
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // AUDIO BUILTINS
@@ -3007,24 +4079,35 @@ impl Interpreter {
 
             // audio_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth)
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_tone" | "เสียงโทน" | "音调" | "音調" | "음조" | "空间音" | "空間音" | "공간음" => {
-                let idx  = self.arg_num(&args, 0, 0.0)? as usize;
-                let x    = self.arg_num(&args, 1, 0.0)? as f32;
-                let y    = self.arg_num(&args, 2, 0.0)? as f32;
-                let z    = self.arg_num(&args, 3, 0.0)? as f32;
-                let w    = self.arg_num(&args, 4, 1.0)? as f32;
+            "audio_tone"
+            | "เสียงโทน"
+            | "音调"
+            | "音調"
+            | "음조"
+            | "空间音"
+            | "空間音"
+            | "공간음" => {
+                let idx = self.arg_num(&args, 0, 0.0)? as usize;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
+                let z = self.arg_num(&args, 3, 0.0)? as f32;
+                let w = self.arg_num(&args, 4, 1.0)? as f32;
                 let freq = self.arg_num(&args, 5, 220.0)? as f32;
-                let amp  = self.arg_num(&args, 6, 0.15)? as f32;
-                let lfo_rate  = self.arg_num(&args, 7, 0.5)? as f32;
+                let amp = self.arg_num(&args, 6, 0.15)? as f32;
+                let lfo_rate = self.arg_num(&args, 7, 0.5)? as f32;
                 let lfo_depth = self.arg_num(&args, 8, 0.02)? as f32;
                 if let Some(audio) = &self.audio {
-                    audio.set_tone(idx, ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth });
+                    audio.set_tone(
+                        idx,
+                        ToneParams { x, y, z, w, freq, amp, lfo_rate, lfo_depth },
+                    );
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" => {
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" =>
+            {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
@@ -3033,10 +4116,11 @@ impl Interpreter {
                     audio.set_listener(cry, sry, crx, srx);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" => {
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" =>
+            {
                 let path = match args.first() {
                     Some(Value::Str(s)) => s.clone(),
                     _ => return Ok(Value::Unit),
@@ -3046,16 +4130,21 @@ impl Interpreter {
                     audio.load_bgm(&path, vol);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" | "ระดับเพลงประกอบ" | "背景乐音量" | "BGM音量" | "배경음악음량" => {
+            "audio_bgm_volume"
+            | "ระดับเสียงพื้นหลัง"
+            | "ระดับเพลงประกอบ"
+            | "背景乐音量"
+            | "BGM音量"
+            | "배경음악음량" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 if let Some(audio) = &self.audio {
                     audio.set_bgm_volume(vol);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(not(target_arch = "wasm32"))]
             "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
@@ -3064,55 +4153,69 @@ impl Interpreter {
                     audio.set_master_volume(vol);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // WASM audio builtins — delegate to Web Audio API
             #[cfg(target_arch = "wasm32")]
-            "audio_tone" | "เสียงโทน" | "音调" | "音調" | "음조" | "空间音" | "空間音" | "공간음" => {
-                let idx  = self.arg_num(&args, 0, 0.0)? as usize;
-                let x    = self.arg_num(&args, 1, 0.0)? as f32;
-                let y    = self.arg_num(&args, 2, 0.0)? as f32;
-                let z    = self.arg_num(&args, 3, 0.0)? as f32;
-                let w    = self.arg_num(&args, 4, 1.0)? as f32;
+            "audio_tone"
+            | "เสียงโทน"
+            | "音调"
+            | "音調"
+            | "음조"
+            | "空间音"
+            | "空間音"
+            | "공간음" => {
+                let idx = self.arg_num(&args, 0, 0.0)? as usize;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
+                let z = self.arg_num(&args, 3, 0.0)? as f32;
+                let w = self.arg_num(&args, 4, 1.0)? as f32;
                 let freq = self.arg_num(&args, 5, 220.0)? as f32;
-                let amp  = self.arg_num(&args, 6, 0.15)? as f32;
-                let lfo_rate  = self.arg_num(&args, 7, 0.5)? as f32;
+                let amp = self.arg_num(&args, 6, 0.15)? as f32;
+                let lfo_rate = self.arg_num(&args, 7, 0.5)? as f32;
                 let lfo_depth = self.arg_num(&args, 8, 0.02)? as f32;
                 crate::gfx::audio_web::set_tone(idx, x, y, z, w, freq, amp, lfo_rate, lfo_depth);
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" => {
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" =>
+            {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
                 let crx = self.arg_num(&args, 2, 1.0)? as f32;
                 let srx = self.arg_num(&args, 3, 0.0)? as f32;
                 crate::gfx::audio_web::set_listener(cry, sry, crx, srx);
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" => {
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let vol  = self.arg_num(&args, 1, 0.5)? as f32;
+                let vol = self.arg_num(&args, 1, 0.5)? as f32;
                 crate::gfx::audio_web::load_bgm(&path, vol);
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_bgm_volume" | "ระดับเสียงพื้นหลัง" | "ระดับเพลงประกอบ" | "背景乐音量" | "BGM音量" | "배경음악음량" => {
+            "audio_bgm_volume"
+            | "ระดับเสียงพื้นหลัง"
+            | "ระดับเพลงประกอบ"
+            | "背景乐音量"
+            | "BGM音量"
+            | "배경음악음량" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 crate::gfx::audio_web::set_bgm_volume(vol);
                 return Ok(Value::Unit);
-            }
+            },
 
             #[cfg(target_arch = "wasm32")]
             "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 crate::gfx::audio_web::set_master_volume(vol);
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── รอหน้าต่าง() — block until window closed / Escape ──
             "รอหน้าต่าง" | "wait_window" | "gfx_wait" => {
@@ -3120,22 +4223,27 @@ impl Interpreter {
                 loop {
                     let still_open = {
                         let gfx = self.gfx.borrow();
-                        gfx.window.as_ref()
+                        gfx.window
+                            .as_ref()
                             .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
                             .unwrap_or(false)
                     };
-                    if !still_open { break; }
+                    if !still_open {
+                        break;
+                    }
                     let (buf, w, h) = {
                         let gfx = self.gfx.borrow();
                         (gfx.buffer.clone(), gfx.width, gfx.height)
                     };
                     let mut gfx = self.gfx.borrow_mut();
                     if let Some(win) = gfx.window.as_mut() {
-                        if win.update_with_buffer(&buf, w, h).is_err() { break; }
+                        if win.update_with_buffer(&buf, w, h).is_err() {
+                            break;
+                        }
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── File I/O ──────────────────────────────────────────────────────
             "read_file" | "อ่านไฟล์" => {
@@ -3143,35 +4251,35 @@ impl Interpreter {
                 return std::fs::read_to_string(&path)
                     .map(Value::Str)
                     .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
-            }
+            },
             // ── networking (TCP, 2-peer co-op) ───────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
             "net_host" | "เน็ตโฮสต์" => {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 net::host(port);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_join" | "เน็ตจอย" => {
-                let ip   = self.arg_str(&args, 0, "127.0.0.1");
+                let ip = self.arg_str(&args, 0, "127.0.0.1");
                 let port = self.arg_num(&args, 1, 7777.0)? as u16;
                 net::join(&ip, port);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_send" | "เน็ตส่ง" => {
                 let s = self.arg_str(&args, 0, "");
                 net::send(&s);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_recv" | "เน็ตรับ" => {
                 return Ok(Value::Str(net::recv()));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_status" | "เน็ตสถานะ" => {
                 return Ok(Value::Number(net::status() as f64));
-            }
+            },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
             "net_announce" | "เน็ตประกาศ" => {
@@ -3179,35 +4287,42 @@ impl Interpreter {
                 let info = self.arg_str(&args, 1, "");
                 net::announce(port, &info);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_announce_stop" | "เน็ตหยุดประกาศ" => {
                 net::announce_stop();
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_discover" | "เน็ตค้นหา" => {
                 let port = self.arg_num(&args, 0, 7778.0)? as u16;
                 return Ok(Value::Str(net::discover(port)));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "net_test" | "เน็ตทดสอบ" => {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 return Ok(Value::Str(net::test_bind(port)));
-            }
+            },
             // ── gamepad (gilrs) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_poll" | "จอยโพล" => { gamepad::poll(); return Ok(Value::Unit); }
+            "gamepad_poll" | "จอยโพล" => {
+                gamepad::poll();
+                return Ok(Value::Unit);
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_button" | "จอยปุ่ม" => {
                 let name = self.arg_str(&args, 0, "");
-                return Ok(Value::Number(if gamepad::button(&name) { 1.0 } else { 0.0 }));
-            }
+                return Ok(Value::Number(if gamepad::button(&name) {
+                    1.0
+                } else {
+                    0.0
+                }));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_axis" | "จอยแกน" => {
                 let name = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(gamepad::axis(&name) as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_rumble" | "จอยสั่น" => {
                 let low = self.arg_num(&args, 0, 0.0)? as f32;
@@ -3215,280 +4330,329 @@ impl Interpreter {
                 let ms = self.arg_num(&args, 2, 200.0)? as u32;
                 gamepad::rumble(low, high, ms);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_list" | "จอยรายการ" => { return Ok(Value::Str(gamepad::list())); }
+            "gamepad_list" | "จอยรายการ" => {
+                return Ok(Value::Str(gamepad::list()));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_any" | "จอยใดๆ" => { return Ok(Value::Number(if gamepad::any_button() { 1.0 } else { 0.0 })); }
+            "gamepad_any" | "จอยใดๆ" => {
+                return Ok(Value::Number(if gamepad::any_button() { 1.0 } else { 0.0 }));
+            },
 
             // ── game AI: neural networks ─────────────────────────────────────
             // nn_new(inputs[, seed]) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" => {
+            "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" =>
+            {
                 let n_in = self.arg_num(&args, 0, 1.0)?.max(0.0) as usize;
                 let seed = self.arg_num(&args, 1, 1.0)? as u64;
                 return Ok(Value::Number(ai::nn_new(n_in, seed) as f64));
-            }
+            },
             // nn_dense(handle, units[, activation]) — append a layer
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" => {
-                let id    = self.arg_num(&args, 0, -1.0)? as i64;
+            "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let units = self.arg_num(&args, 1, 1.0)?.max(1.0) as usize;
-                let act   = self.arg_str(&args, 2, "relu");
+                let act = self.arg_str(&args, 2, "relu");
                 ai::nn_dense(id, units, &act);
                 return Ok(Value::Unit);
-            }
+            },
             // nn_forward(handle, [inputs]) → [outputs]
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
+            "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" =>
+            {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let input = self.arg_list_f32(&args, 1);
                 let out = ai::nn_forward(id, &input);
-                return Ok(Value::List(out.into_iter().map(|v| Value::Number(v as f64)).collect()));
-            }
+                return Ok(Value::List(
+                    out.into_iter().map(|v| Value::Number(v as f64)).collect(),
+                ));
+            },
             // nn_train(handle, [inputs], [targets][, lr]) → loss
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย" => {
-                let id     = self.arg_num(&args, 0, -1.0)? as i64;
-                let input  = self.arg_list_f32(&args, 1);
+            "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let input = self.arg_list_f32(&args, 1);
                 let target = self.arg_list_f32(&args, 2);
-                let lr     = self.arg_num(&args, 3, 0.01)? as f32;
+                let lr = self.arg_num(&args, 3, 0.01)? as f32;
                 return Ok(Value::Number(ai::nn_train(id, &input, &target, lr) as f64));
-            }
+            },
             // nn_save(handle, path) → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" => {
-                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+            "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "model.lnn");
                 return Ok(Value::Bool(ai::nn_save(id, &path)));
-            }
+            },
             // nn_load(path) → handle (-1 on failure)
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" => {
+            "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" =>
+            {
                 let path = self.arg_str(&args, 0, "model.lnn");
                 return Ok(Value::Number(ai::nn_load(&path) as f64));
-            }
+            },
 
             // ── game AI: behavior trees ──────────────────────────────────────
             // bt_build(dsl_string) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" => {
+            "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" =>
+            {
                 let spec = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(ai::bt_build(&spec) as f64));
-            }
+            },
             // bt_set(handle, key, value) — set a blackboard fact
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => {
-                let id  = self.arg_num(&args, 0, -1.0)? as i64;
+            "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let key = self.arg_str(&args, 1, "");
                 let val = self.arg_num(&args, 2, 0.0)? as f32;
                 ai::bt_set(id, &key, val);
                 return Ok(Value::Unit);
-            }
+            },
             // bt_tick(handle) → chosen action name ("" if none)
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" => {
+            "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" =>
+            {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 return Ok(Value::Str(ai::bt_tick(id)));
-            }
+            },
             // bt_status(handle) → 0 fail / 1 success / 2 running
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" => {
+            "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" =>
+            {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 return Ok(Value::Number(ai::bt_status(id) as f64));
-            }
+            },
 
             // ── game AI: miniature dialog LLM ────────────────────────────────
             // dialog_new([ctx, embed, hidden, seed]) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา" => {
-                let ctx    = self.arg_num(&args, 0, 3.0)?.max(1.0) as usize;
-                let embed  = self.arg_num(&args, 1, 32.0)?.max(1.0) as usize;
+            "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา" =>
+            {
+                let ctx = self.arg_num(&args, 0, 3.0)?.max(1.0) as usize;
+                let embed = self.arg_num(&args, 1, 32.0)?.max(1.0) as usize;
                 let hidden = self.arg_num(&args, 2, 64.0)?.max(1.0) as usize;
-                let seed   = self.arg_num(&args, 3, 1.0)? as u64;
-                return Ok(Value::Number(ai::dialog_new(ctx, embed, hidden, seed) as f64));
-            }
+                let seed = self.arg_num(&args, 3, 1.0)? as u64;
+                return Ok(Value::Number(
+                    ai::dialog_new(ctx, embed, hidden, seed) as f64
+                ));
+            },
             // dialog_learn(handle, text) — add one utterance to the corpus
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => {
-                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+            "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let text = self.arg_str(&args, 1, "");
                 ai::dialog_learn(id, &text);
                 return Ok(Value::Unit);
-            }
+            },
             // dialog_load(handle, path) → lines added (-1 on error)
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" => {
-                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+            "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "");
                 return Ok(Value::Number(ai::dialog_load(id, &path) as f64));
-            }
+            },
             // dialog_train(handle[, epochs, lr]) → loss
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา" => {
-                let id     = self.arg_num(&args, 0, -1.0)? as i64;
+            "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let epochs = self.arg_num(&args, 1, 20.0)?.max(1.0) as usize;
-                let lr     = self.arg_num(&args, 2, 0.1)? as f32;
+                let lr = self.arg_num(&args, 2, 0.1)? as f32;
                 return Ok(Value::Number(ai::dialog_train(id, epochs, lr) as f64));
-            }
+            },
             // dialog_say(handle, prompt[, max_tokens, temperature]) → reply text
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" => {
-                let id     = self.arg_num(&args, 0, -1.0)? as i64;
+            "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let prompt = self.arg_str(&args, 1, "");
-                let max    = self.arg_num(&args, 2, 24.0)?.max(1.0) as usize;
-                let temp   = self.arg_num(&args, 3, 0.8)? as f32;
+                let max = self.arg_num(&args, 2, 24.0)?.max(1.0) as usize;
+                let temp = self.arg_num(&args, 3, 0.8)? as f32;
                 return Ok(Value::Str(ai::dialog_say(id, &prompt, max, temp)));
-            }
+            },
             // dialog_save(handle, path) → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" => {
-                let id   = self.arg_num(&args, 0, -1.0)? as i64;
+            "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "model.llm");
                 return Ok(Value::Bool(ai::dialog_save(id, &path)));
-            }
+            },
             // dialog_load_model(path) → handle (-1 on failure)
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_load_model" | "对话载模" | "対話モデル読込" | "대화모델불러오기" | "โหลดโมเดลสนทนา" => {
+            "dialog_load_model"
+            | "对话载模"
+            | "対話モデル読込"
+            | "대화모델불러오기"
+            | "โหลดโมเดลสนทนา" => {
                 let path = self.arg_str(&args, 0, "model.llm");
                 return Ok(Value::Number(ai::dialog_load_model(&path) as f64));
-            }
+            },
 
             "write_file" | "เขียนไฟล์" => {
-                let path    = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "");
                 let content = self.arg_str(&args, 1, "");
                 std::fs::write(&path, content.as_bytes())
                     .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
                 return Ok(Value::Unit);
-            }
+            },
             "print_file" | "พิมพ์ไฟล์" => {
                 let content = self.arg_str(&args, 0, "");
                 print!("{content}");
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── CLI arguments ─────────────────────────────────────────────────
             "get_args" | "รับอาร์กิวเมนต์" => {
                 let v: Vec<Value> = std::env::args().map(Value::Str).collect();
                 return Ok(Value::List(v));
-            }
+            },
 
             // ── String utilities ──────────────────────────────────────────────
             "split" | "str_split" | "แยก" => {
-                let s   = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let sep = self.arg_str(&args, 1, "\n");
                 let sep = if sep.is_empty() { "\n".into() } else { sep };
-                let parts: Vec<Value> = s.split(sep.as_str())
-                    .map(|p| Value::Str(p.to_string())).collect();
+                let parts: Vec<Value> = s
+                    .split(sep.as_str())
+                    .map(|p| Value::Str(p.to_string()))
+                    .collect();
                 return Ok(Value::List(parts));
-            }
+            },
             "trim" | "str_trim" | "ตัดช่องว่าง" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.trim().to_string()));
-            }
+            },
             "starts_with" | "str_starts_with" | "เริ่มด้วย" => {
-                let s      = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let prefix = self.arg_str(&args, 1, "");
                 return Ok(Value::Bool(s.starts_with(prefix.as_str())));
-            }
+            },
             "ends_with" | "str_ends_with" | "ลงท้ายด้วย" => {
-                let s      = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let suffix = self.arg_str(&args, 1, "");
                 return Ok(Value::Bool(s.ends_with(suffix.as_str())));
-            }
+            },
             "str_replace" | "แทนสตริง" => {
-                let s    = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let from = self.arg_str(&args, 1, "");
-                let to   = self.arg_str(&args, 2, "");
+                let to = self.arg_str(&args, 2, "");
                 return Ok(Value::Str(s.replace(from.as_str(), to.as_str())));
-            }
+            },
             "str_find" | "หาในสตริง" => {
-                let s      = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let needle = self.arg_str(&args, 1, "");
                 // Return char index (not byte index) for consistency with substr
-                let pos = s.find(needle.as_str())
+                let pos = s
+                    .find(needle.as_str())
                     .map(|byte_i| s[..byte_i].chars().count() as f64)
                     .unwrap_or(-1.0);
                 return Ok(Value::Number(pos));
-            }
+            },
             "substr" | "str_slice" | "ส่วนสตริง" => {
-                let s     = self.arg_str(&args, 0, "");
+                let s = self.arg_str(&args, 0, "");
                 let start = self.arg_num(&args, 1, 0.0)? as usize;
-                let len   = args.get(2)
+                let len = args
+                    .get(2)
                     .map(|v| self.to_number(v).unwrap_or(999999.0) as usize)
                     .unwrap_or_else(|| s.chars().count().saturating_sub(start));
                 let chars: Vec<char> = s.chars().collect();
-                let end   = (start + len).min(chars.len());
+                let end = (start + len).min(chars.len());
                 let slice: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
                 return Ok(Value::Str(slice));
-            }
+            },
             "to_str" | "str" | "num_str" | "แปลงสตริง" => {
                 let v = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Str(v.to_string()));
-            }
+            },
             "str_repeat" | "ทำซ้ำสตริง" => {
                 let s = self.arg_str(&args, 0, "");
                 let n = self.arg_num(&args, 1, 1.0)? as usize;
                 return Ok(Value::Str(s.repeat(n)));
-            }
+            },
             "str_upper" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.to_uppercase()));
-            }
+            },
             "str_lower" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.to_lowercase()));
-            }
+            },
             "str_len" | "len" | "ความยาว" | "长度" | "長さ" | "길이" => {
                 match args.first() {
-                    Some(Value::Str(s))  => return Ok(Value::Number(s.chars().count() as f64)),
+                    Some(Value::Str(s)) => return Ok(Value::Number(s.chars().count() as f64)),
                     Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
                     _ => return Ok(Value::Number(0.0)),
                 }
-            }
+            },
 
             // ── FNV-1a hash (deterministic, normalized 0.0–1.0) ──────────────
             "hash_str" | "แฮช" => {
                 let s = self.arg_str(&args, 0, "");
                 let mut h: u64 = 14695981039346656037_u64;
-                for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(1099511628211); }
+                for b in s.bytes() {
+                    h ^= b as u64;
+                    h = h.wrapping_mul(1099511628211);
+                }
                 return Ok(Value::Number((h & 0xFFFFFF) as f64 / 16777215.0));
-            }
+            },
             "hash_int" | "แฮชจำนวน" => {
                 let s = self.arg_str(&args, 0, "");
                 let n = self.arg_num(&args, 1, 100.0)? as u64;
                 let mut h: u64 = 14695981039346656037_u64;
-                for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(1099511628211); }
+                for b in s.bytes() {
+                    h ^= b as u64;
+                    h = h.wrapping_mul(1099511628211);
+                }
                 return Ok(Value::Number((h % n.max(1)) as f64));
-            }
+            },
 
             // ── List utilities ────────────────────────────────────────────────
-            "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" => {
+            "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" =>
+            {
                 return Ok(Value::List(Vec::new()));
-            }
-            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" => {
+            },
+            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" =>
+            {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
                 let val = args.get(1).cloned().unwrap_or(Value::Unit);
-                if let Value::List(mut v) = lst { v.push(val); return Ok(Value::List(v)); }
+                if let Value::List(mut v) = lst {
+                    v.push(val);
+                    return Ok(Value::List(v));
+                }
                 return Ok(Value::List(vec![val]));
-            }
-            "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" => {
+            },
+            "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" =>
+            {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
-                let i   = self.arg_num(&args, 1, 0.0)? as usize;
+                let i = self.arg_num(&args, 1, 0.0)? as usize;
                 if let Value::List(v) = lst {
                     return Ok(v.get(i).cloned().unwrap_or(Value::Str(String::new())));
                 }
                 return Ok(Value::Str(String::new()));
-            }
-            "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" => {
+            },
+            "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" =>
+            {
                 let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
                 let sep = args.get(1).map(|v| v.to_string()).unwrap_or_default();
                 if let Value::List(v) = lst {
-                    return Ok(Value::Str(v.iter().map(|x| x.to_string())
-                        .collect::<Vec<_>>().join(&sep)));
+                    return Ok(Value::Str(
+                        v.iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<_>>()
+                            .join(&sep),
+                    ));
                 }
                 return Ok(Value::Str(String::new()));
-            }
+            },
             // blob_f32("<deflate+base64>") / blob_i32(...) — decode an embedded,
             // losslessly-compressed numeric blob into a list. Produced by
             // `ling convert`; lets converted assets carry geometry/PCM/etc. compactly.
@@ -3509,13 +4673,13 @@ impl Interpreter {
                             out.push(Value::Number(n));
                         }
                         return Ok(Value::List(out));
-                    }
+                    },
                     Err(e) => {
                         eprintln!("blob decode failed: {e}");
                         return Ok(Value::List(vec![]));
-                    }
+                    },
                 }
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // SVG EXPORT  (svg_begin / svg_rect / svg_circle / svg_line /
@@ -3523,100 +4687,108 @@ impl Interpreter {
             // Chinese aliases: 开始SVG 结束SVG SVG矩形 SVG圆形 SVG线段 SVG折线 SVG文本 HSL颜色
             // Thai aliases:    เริ่มSVG จบSVG SVGสี่เหลี่ยม SVGวงกลม SVGเส้น SVGเส้นหัก SVGข้อความ สีHSL
             // ══════════════════════════════════════════════════════════════════
-
             "svg_begin" | "开始SVG" | "เริ่มSVG" => {
-                let path   = self.arg_str(&args, 0, "output.svg");
-                let width  = self.arg_num(&args, 1, 800.0)?;
+                let path = self.arg_str(&args, 0, "output.svg");
+                let width = self.arg_num(&args, 1, 800.0)?;
                 let height = self.arg_num(&args, 2, 600.0)?;
                 *self.svg.borrow_mut() = Some(SvgWriter::new(path, width, height));
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_rect" | "SVG矩形" | "SVGสี่เหลี่ยม" => {
-                let x    = self.arg_num(&args, 0, 0.0)?;
-                let y    = self.arg_num(&args, 1, 0.0)?;
-                let w    = self.arg_num(&args, 2, 10.0)?;
-                let h    = self.arg_num(&args, 3, 10.0)?;
+                let x = self.arg_num(&args, 0, 0.0)?;
+                let y = self.arg_num(&args, 1, 0.0)?;
+                let w = self.arg_num(&args, 2, 10.0)?;
+                let h = self.arg_num(&args, 3, 10.0)?;
                 let fill = self.arg_str(&args, 4, "#ffffff");
                 if let Some(svg) = self.svg.borrow_mut().as_mut() {
                     svg.elements.push(format!(
                         "<rect x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" \
-                         height=\"{h:.1}\" fill=\"{fill}\"/>"));
+                         height=\"{h:.1}\" fill=\"{fill}\"/>"
+                    ));
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_circle" | "SVG圆形" | "SVGวงกลม" => {
-                let cx   = self.arg_num(&args, 0, 0.0)?;
-                let cy   = self.arg_num(&args, 1, 0.0)?;
-                let r    = self.arg_num(&args, 2, 5.0)?;
+                let cx = self.arg_num(&args, 0, 0.0)?;
+                let cy = self.arg_num(&args, 1, 0.0)?;
+                let r = self.arg_num(&args, 2, 5.0)?;
                 let fill = self.arg_str(&args, 3, "#ffffff");
                 if let Some(svg) = self.svg.borrow_mut().as_mut() {
                     svg.elements.push(format!(
-                        "<circle cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"{r:.1}\" fill=\"{fill}\"/>"));
+                        "<circle cx=\"{cx:.1}\" cy=\"{cy:.1}\" r=\"{r:.1}\" fill=\"{fill}\"/>"
+                    ));
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_line" | "SVG线段" | "SVGเส้น" => {
-                let x1     = self.arg_num(&args, 0, 0.0)?;
-                let y1     = self.arg_num(&args, 1, 0.0)?;
-                let x2     = self.arg_num(&args, 2, 0.0)?;
-                let y2     = self.arg_num(&args, 3, 0.0)?;
+                let x1 = self.arg_num(&args, 0, 0.0)?;
+                let y1 = self.arg_num(&args, 1, 0.0)?;
+                let x2 = self.arg_num(&args, 2, 0.0)?;
+                let y2 = self.arg_num(&args, 3, 0.0)?;
                 let stroke = self.arg_str(&args, 4, "#ffffff");
-                let sw     = self.arg_num(&args, 5, 1.0)?;
+                let sw = self.arg_num(&args, 5, 1.0)?;
                 if let Some(svg) = self.svg.borrow_mut().as_mut() {
                     svg.elements.push(format!(
                         "<line x1=\"{x1:.1}\" y1=\"{y1:.1}\" x2=\"{x2:.1}\" y2=\"{y2:.1}\" \
-                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"));
+                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"
+                    ));
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_polyline" | "SVG折线" | "SVGเส้นหัก" => {
-                let pts    = self.arg_str(&args, 0, "");
+                let pts = self.arg_str(&args, 0, "");
                 let stroke = self.arg_str(&args, 1, "#ffffff");
-                let sw     = self.arg_num(&args, 2, 1.0)?;
+                let sw = self.arg_num(&args, 2, 1.0)?;
                 if let Some(svg) = self.svg.borrow_mut().as_mut() {
                     svg.elements.push(format!(
                         "<polyline points=\"{pts}\" fill=\"none\" \
-                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"));
+                         stroke=\"{stroke}\" stroke-width=\"{sw:.1}\"/>"
+                    ));
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_text" | "SVG文本" | "SVGข้อความ" => {
-                let x    = self.arg_num(&args, 0, 0.0)?;
-                let y    = self.arg_num(&args, 1, 0.0)?;
+                let x = self.arg_num(&args, 0, 0.0)?;
+                let y = self.arg_num(&args, 1, 0.0)?;
                 let text = self.arg_str(&args, 2, "");
                 let fill = self.arg_str(&args, 3, "#ffffff");
                 let size = self.arg_num(&args, 4, 12.0)?;
                 if let Some(svg) = self.svg.borrow_mut().as_mut() {
-                    let safe = text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                    let safe = text
+                        .replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;");
                     svg.elements.push(format!(
                         "<text x=\"{x:.1}\" y=\"{y:.1}\" fill=\"{fill}\" \
-                         font-family=\"monospace\" font-size=\"{size:.0}\">{safe}</text>"));
+                         font-family=\"monospace\" font-size=\"{size:.0}\">{safe}</text>"
+                    ));
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             "svg_end" | "结束SVG" | "จบSVG" => {
                 {
                     let borrow = self.svg.borrow();
                     if let Some(svg) = borrow.as_ref() {
-                        svg.save().map_err(|e| EvalErr::from(format!("svg_end: {e}")))?;
+                        svg.save()
+                            .map_err(|e| EvalErr::from(format!("svg_end: {e}")))?;
                     }
                 }
                 *self.svg.borrow_mut() = None;
                 return Ok(Value::Unit);
-            }
+            },
 
             "hsl_color" | "HSL颜色" | "สีHSL" => {
                 let h = self.arg_num(&args, 0, 0.0)?;
                 let s = self.arg_num(&args, 1, 70.0)?;
                 let l = self.arg_num(&args, 2, 50.0)?;
                 return Ok(Value::Str(hsl_to_hex(h, s, l)));
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // FFT / AUDIO ANALYSIS BUILTINS  (native only)
@@ -3624,65 +4796,94 @@ impl Interpreter {
 
             // fft_push(samples_list) — feed raw audio samples and run FFT
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" => {
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" =>
+            {
                 if let Some(Value::List(v)) = args.first() {
-                    let samples: Vec<f32> = v.iter()
-                        .filter_map(|x| if let Value::Number(n) = x { Some(*n as f32) } else { None })
+                    let samples: Vec<f32> = v
+                        .iter()
+                        .filter_map(|x| {
+                            if let Value::Number(n) = x {
+                                Some(*n as f32)
+                            } else {
+                                None
+                            }
+                        })
                         .collect();
                     self.fft.borrow_mut().push_samples(&samples);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // fft_bands(n) → list of n log-spaced magnitude bands (0..1)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" => {
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" =>
+            {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 let bands = self.fft.borrow().freq_bands(n);
                 *self.fft_bands_cache.borrow_mut() = bands.clone();
-                return Ok(Value::List(bands.into_iter().map(|v| Value::Number(v as f64)).collect()));
-            }
+                return Ok(Value::List(
+                    bands.into_iter().map(|v| Value::Number(v as f64)).collect(),
+                ));
+            },
 
             // fft_beat() → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" => {
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" =>
+            {
                 return Ok(Value::Bool(self.fft.borrow().is_beat()));
-            }
+            },
 
             // fft_beat_ratio() → f64  (1.0 = at threshold, >1 = strong beat)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" => {
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" =>
+            {
                 return Ok(Value::Number(self.fft.borrow().beat_ratio() as f64));
-            }
+            },
 
             // fft_rms() → f64
             #[cfg(not(target_arch = "wasm32"))]
             "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => {
                 return Ok(Value::Number(self.fft.borrow().rms() as f64));
-            }
+            },
 
             // fft_dominant_freq() → f64  in Hz
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" => {
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" =>
+            {
                 return Ok(Value::Number(self.fft.borrow().dominant_freq() as f64));
-            }
+            },
 
             // ── wasm32 stubs: fft builtins are no-ops on web ───────────────
             #[cfg(target_arch = "wasm32")]
-            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" => { return Ok(Value::Unit); }
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" =>
+            {
+                return Ok(Value::Unit);
+            },
             #[cfg(target_arch = "wasm32")]
-            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" => {
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" =>
+            {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 return Ok(Value::List(vec![Value::Number(0.0); n]));
-            }
+            },
             #[cfg(target_arch = "wasm32")]
-            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" => { return Ok(Value::Bool(false)); }
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" =>
+            {
+                return Ok(Value::Bool(false));
+            },
             #[cfg(target_arch = "wasm32")]
-            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" => { return Ok(Value::Number(1.0)); }
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" =>
+            {
+                return Ok(Value::Number(1.0));
+            },
             #[cfg(target_arch = "wasm32")]
-            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => { return Ok(Value::Number(0.0)); }
+            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => {
+                return Ok(Value::Number(0.0));
+            },
             #[cfg(target_arch = "wasm32")]
-            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" => { return Ok(Value::Number(0.0)); }
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" =>
+            {
+                return Ok(Value::Number(0.0));
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // PROCEDURAL TEXTURE BLIT BUILTINS  (screen-space)
@@ -3692,256 +4893,372 @@ impl Interpreter {
 
             // tex_checkerboard(x, y, w, h, tiles, r1,g1,b1, r2,g2,b2)
             "tex_checkerboard" | "ลายตารางหมากรุก" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let tiles = self.arg_num(&args, 4, 8.0)? as u32;
-                let (r1,g1,b1) = (self.arg_num(&args,5,255.)? as u32, self.arg_num(&args,6,255.)? as u32, self.arg_num(&args,7,255.)? as u32);
-                let (r2,g2,b2) = (self.arg_num(&args,8,0.)? as u32,   self.arg_num(&args,9,0.)? as u32,   self.arg_num(&args,10,0.)? as u32);
-                let c1 = (r1<<16)|(g1<<8)|b1; let c2 = (r2<<16)|(g2<<8)|b2;
+                let (r1, g1, b1) = (
+                    self.arg_num(&args, 5, 255.)? as u32,
+                    self.arg_num(&args, 6, 255.)? as u32,
+                    self.arg_num(&args, 7, 255.)? as u32,
+                );
+                let (r2, g2, b2) = (
+                    self.arg_num(&args, 8, 0.)? as u32,
+                    self.arg_num(&args, 9, 0.)? as u32,
+                    self.arg_num(&args, 10, 0.)? as u32,
+                );
+                let c1 = (r1 << 16) | (g1 << 8) | b1;
+                let c2 = (r2 << 16) | (g2 << 8) | b2;
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let cx = col as u32 * tiles / tw as u32;
-                    let cy = row as u32 * tiles / th as u32;
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = if (cx+cy)%2==0 { c1 } else { c2 }; }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let cx = col as u32 * tiles / tw as u32;
+                        let cy = row as u32 * tiles / th as u32;
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = if (cx + cy) % 2 == 0 { c1 } else { c2 };
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_gradient(x, y, w, h, angle_deg, r1,g1,b1, r2,g2,b2)
             "tex_gradient" | "ลายไล่สี" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let angle = self.arg_num(&args, 4, 0.0)? as f32;
-                let (r1,g1,b1) = (self.arg_num(&args,5,0.)? as f32/255., self.arg_num(&args,6,0.)? as f32/255., self.arg_num(&args,7,0.)? as f32/255.);
-                let (r2,g2,b2) = (self.arg_num(&args,8,255.)? as f32/255., self.arg_num(&args,9,255.)? as f32/255., self.arg_num(&args,10,255.)? as f32/255.);
+                let (r1, g1, b1) = (
+                    self.arg_num(&args, 5, 0.)? as f32 / 255.,
+                    self.arg_num(&args, 6, 0.)? as f32 / 255.,
+                    self.arg_num(&args, 7, 0.)? as f32 / 255.,
+                );
+                let (r2, g2, b2) = (
+                    self.arg_num(&args, 8, 255.)? as f32 / 255.,
+                    self.arg_num(&args, 9, 255.)? as f32 / 255.,
+                    self.arg_num(&args, 10, 255.)? as f32 / 255.,
+                );
                 let (ca, sa) = (angle.to_radians().cos(), angle.to_radians().sin());
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let nx = col as f32/tw as f32 - 0.5; let ny = row as f32/th as f32 - 0.5;
-                    let t = ((nx*ca + ny*sa + 0.707)/1.414).clamp(0.,1.);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r1+(r2-r1)*t, g1+(g2-g1)*t, b1+(b2-b1)*t); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let nx = col as f32 / tw as f32 - 0.5;
+                        let ny = row as f32 / th as f32 - 0.5;
+                        let t = ((nx * ca + ny * sa + 0.707) / 1.414).clamp(0., 1.);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] =
+                                tex_rgb(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_noise(x, y, w, h, scale, octaves, seed, palette)
             "tex_noise" | "ลายนอยส์" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let scale   = self.arg_num(&args, 4, 4.0)? as f32;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let scale = self.arg_num(&args, 4, 4.0)? as f32;
                 let octaves = self.arg_num(&args, 5, 4.0)? as u32;
-                let seed    = self.arg_num(&args, 6, 0.0)? as u32;
+                let seed = self.arg_num(&args, 6, 0.0)? as u32;
                 let palette = self.arg_str(&args, 7, "rainbow");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let v = tex_fbm(col as f32*scale/tw as f32, row as f32*scale/th as f32, octaves, seed);
-                    let [r,g,b] = tex_palette(&palette, v);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r, g, b); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let v = tex_fbm(
+                            col as f32 * scale / tw as f32,
+                            row as f32 * scale / th as f32,
+                            octaves,
+                            seed,
+                        );
+                        let [r, g, b] = tex_palette(&palette, v);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(r, g, b);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_freq_map(x, y, w, h, time, speed, palette)
             // Uses bands written by the last fft_bands() call.
             "tex_freq_map" | "ลายความถี่" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let time    = self.arg_num(&args, 4, 0.0)? as f32;
-                let speed   = self.arg_num(&args, 5, 0.3)? as f32;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let time = self.arg_num(&args, 4, 0.0)? as f32;
+                let speed = self.arg_num(&args, 5, 0.3)? as f32;
                 let palette = self.arg_str(&args, 6, "rainbow");
                 let bands: Vec<f32> = {
                     let c = self.fft_bands_cache.borrow();
-                    if c.is_empty() { vec![0.0; 32] } else { c.clone() }
+                    if c.is_empty() {
+                        vec![0.0; 32]
+                    } else {
+                        c.clone()
+                    }
                 };
                 let n = bands.len().max(1);
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let band_idx = (col * n / tw.max(1)).min(n-1);
-                    let mag = bands[band_idx].clamp(0.,1.);
-                    let fill_y = (mag * th as f32) as usize;
-                    if row >= th.saturating_sub(fill_y) {
-                        let t = (col as f32/tw as f32 + time*speed) % 1.0;
-                        let [r,g,b] = tex_palette(&palette, t);
-                        let bright = mag * (1.0 - row as f32/th as f32 * 0.5);
-                        let (dx, dy) = (tx+col, ty+row);
-                        if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(r*bright, g*bright, b*bright); }
+                for row in 0..th {
+                    for col in 0..tw {
+                        let band_idx = (col * n / tw.max(1)).min(n - 1);
+                        let mag = bands[band_idx].clamp(0., 1.);
+                        let fill_y = (mag * th as f32) as usize;
+                        if row >= th.saturating_sub(fill_y) {
+                            let t = (col as f32 / tw as f32 + time * speed) % 1.0;
+                            let [r, g, b] = tex_palette(&palette, t);
+                            let bright = mag * (1.0 - row as f32 / th as f32 * 0.5);
+                            let (dx, dy) = (tx + col, ty + row);
+                            if dx < bw && dy < bh {
+                                gfx.buffer[dy * bw + dx] =
+                                    tex_rgb(r * bright, g * bright, b * bright);
+                            }
+                        }
                     }
-                }}
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_spiral(x, y, w, h, freq, bands, time, palette)
             "tex_spiral" | "ลายเกลียวหมุน" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let freq    = self.arg_num(&args, 4, 5.0)? as f32;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let freq = self.arg_num(&args, 4, 5.0)? as f32;
                 let n_bands = self.arg_num(&args, 5, 8.0)? as f32;
-                let time    = self.arg_num(&args, 6, 0.0)? as f32;
+                let time = self.arg_num(&args, 6, 0.0)? as f32;
                 let palette = self.arg_str(&args, 7, "rainbow");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let nx = col as f32/tw as f32 - 0.5; let ny = row as f32/th as f32 - 0.5;
-                    let r  = (nx*nx + ny*ny).sqrt();
-                    let theta = ny.atan2(nx);
-                    let t = ((r*freq - theta/std::f32::consts::TAU + time*0.5) * n_bands % 1.0).abs();
-                    let [cr,cg,cb] = tex_palette(&palette, t);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let nx = col as f32 / tw as f32 - 0.5;
+                        let ny = row as f32 / th as f32 - 0.5;
+                        let r = (nx * nx + ny * ny).sqrt();
+                        let theta = ny.atan2(nx);
+                        let t = ((r * freq - theta / std::f32::consts::TAU + time * 0.5) * n_bands
+                            % 1.0)
+                            .abs();
+                        let [cr, cg, cb] = tex_palette(&palette, t);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_ripple(x, y, w, h, freq, cx, cy, time, palette)
             "tex_ripple" | "ลายระลอก" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let freq    = self.arg_num(&args, 4, 10.0)? as f32;
-                let rcx     = self.arg_num(&args, 5, 0.5)? as f32;
-                let rcy     = self.arg_num(&args, 6, 0.5)? as f32;
-                let time    = self.arg_num(&args, 7, 0.0)? as f32;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let freq = self.arg_num(&args, 4, 10.0)? as f32;
+                let rcx = self.arg_num(&args, 5, 0.5)? as f32;
+                let rcy = self.arg_num(&args, 6, 0.5)? as f32;
+                let time = self.arg_num(&args, 7, 0.0)? as f32;
                 let palette = self.arg_str(&args, 8, "ocean");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let nx = col as f32/tw as f32 - rcx; let ny = row as f32/th as f32 - rcy;
-                    let r = (nx*nx + ny*ny).sqrt();
-                    let t = ((r*freq - time) % 1.0).abs();
-                    let [cr,cg,cb] = tex_palette(&palette, t);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let nx = col as f32 / tw as f32 - rcx;
+                        let ny = row as f32 / th as f32 - rcy;
+                        let r = (nx * nx + ny * ny).sqrt();
+                        let t = ((r * freq - time) % 1.0).abs();
+                        let [cr, cg, cb] = tex_palette(&palette, t);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_mandelbrot(x, y, w, h, zoom, cx, cy, max_iter, palette)
             "tex_mandelbrot" | "ลายแมนเดลบรอต" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let zoom     = self.arg_num(&args, 4, 1.0)?;
-                let mcx      = self.arg_num(&args, 5, -0.5)?;
-                let mcy      = self.arg_num(&args, 6, 0.0)?;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let zoom = self.arg_num(&args, 4, 1.0)?;
+                let mcx = self.arg_num(&args, 5, -0.5)?;
+                let mcy = self.arg_num(&args, 6, 0.0)?;
                 let max_iter = self.arg_num(&args, 7, 64.0)? as u32;
-                let palette  = self.arg_str(&args, 8, "psychedelic");
+                let palette = self.arg_str(&args, 8, "psychedelic");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let zx0 = (col as f64/tw as f64 - 0.5)/zoom + mcx;
-                    let zy0 = (row as f64/th as f64 - 0.5)/zoom + mcy;
-                    let mut x = 0.0f64; let mut y = 0.0f64; let mut i = 0u32;
-                    while i < max_iter && x*x+y*y < 4.0 { let t=x*x-y*y+zx0; y=2.0*x*y+zy0; x=t; i+=1; }
-                    let t = if i==max_iter { 0.0f32 } else {
-                        (i as f32 - (x as f32*x as f32+y as f32*y as f32).ln().ln()/2.0f32.ln()) / max_iter as f32
-                    };
-                    let [cr,cg,cb] = tex_palette(&palette, t.clamp(0.,1.));
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let zx0 = (col as f64 / tw as f64 - 0.5) / zoom + mcx;
+                        let zy0 = (row as f64 / th as f64 - 0.5) / zoom + mcy;
+                        let mut x = 0.0f64;
+                        let mut y = 0.0f64;
+                        let mut i = 0u32;
+                        while i < max_iter && x * x + y * y < 4.0 {
+                            let t = x * x - y * y + zx0;
+                            y = 2.0 * x * y + zy0;
+                            x = t;
+                            i += 1;
+                        }
+                        let t = if i == max_iter {
+                            0.0f32
+                        } else {
+                            (i as f32
+                                - (x as f32 * x as f32 + y as f32 * y as f32).ln().ln()
+                                    / 2.0f32.ln())
+                                / max_iter as f32
+                        };
+                        let [cr, cg, cb] = tex_palette(&palette, t.clamp(0., 1.));
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_julia(x, y, w, h, c_re, c_im, max_iter, palette)
             "tex_julia" | "ลายจูเลีย" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let c_re     = self.arg_num(&args, 4, -0.7)?;
-                let c_im     = self.arg_num(&args, 5, 0.27)?;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let c_re = self.arg_num(&args, 4, -0.7)?;
+                let c_im = self.arg_num(&args, 5, 0.27)?;
                 let max_iter = self.arg_num(&args, 6, 64.0)? as u32;
-                let palette  = self.arg_str(&args, 7, "neon");
+                let palette = self.arg_str(&args, 7, "neon");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let mut zx = (col as f64/tw as f64 - 0.5)*3.5;
-                    let mut zy = (row as f64/th as f64 - 0.5)*3.5;
-                    let mut i = 0u32;
-                    while i < max_iter && zx*zx+zy*zy < 4.0 { let t=zx*zx-zy*zy+c_re; zy=2.0*zx*zy+c_im; zx=t; i+=1; }
-                    let t = i as f32 / max_iter as f32;
-                    let [cr,cg,cb] = tex_palette(&palette, t);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let mut zx = (col as f64 / tw as f64 - 0.5) * 3.5;
+                        let mut zy = (row as f64 / th as f64 - 0.5) * 3.5;
+                        let mut i = 0u32;
+                        while i < max_iter && zx * zx + zy * zy < 4.0 {
+                            let t = zx * zx - zy * zy + c_re;
+                            zy = 2.0 * zx * zy + c_im;
+                            zx = t;
+                            i += 1;
+                        }
+                        let t = i as f32 / max_iter as f32;
+                        let [cr, cg, cb] = tex_palette(&palette, t);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_voronoi(x, y, w, h, cells, seed, palette)
             "tex_voronoi" | "ลายโวโรนอย" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
-                let cells   = self.arg_num(&args, 4, 16.0)? as u32;
-                let seed    = self.arg_num(&args, 5, 42.0)? as u32;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
+                let cells = self.arg_num(&args, 4, 16.0)? as u32;
+                let seed = self.arg_num(&args, 5, 42.0)? as u32;
                 let palette = self.arg_str(&args, 6, "rainbow");
-                let pts: Vec<[f32;2]> = (0..cells).map(|i| [tex_hash(i as i32,0,seed), tex_hash(i as i32,1,seed+999)]).collect();
+                let pts: Vec<[f32; 2]> = (0..cells)
+                    .map(|i| {
+                        [
+                            tex_hash(i as i32, 0, seed),
+                            tex_hash(i as i32, 1, seed + 999),
+                        ]
+                    })
+                    .collect();
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let (fx, fy) = (col as f32/tw as f32, row as f32/th as f32);
-                    let (min_d, nearest) = pts.iter().enumerate().fold((f32::MAX,0usize), |(d,idx),(i,&[cx,cy])| {
-                        let dd = (fx-cx).powi(2)+(fy-cy).powi(2);
-                        if dd < d { (dd,i) } else { (d,idx) }
-                    });
-                    let t = (nearest as f32/cells as f32 + min_d*4.0) % 1.0;
-                    let [cr,cg,cb] = tex_palette(&palette, t);
-                    let (dx, dy) = (tx+col, ty+row);
-                    if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
-                }}
+                for row in 0..th {
+                    for col in 0..tw {
+                        let (fx, fy) = (col as f32 / tw as f32, row as f32 / th as f32);
+                        let (min_d, nearest) = pts.iter().enumerate().fold(
+                            (f32::MAX, 0usize),
+                            |(d, idx), (i, &[cx, cy])| {
+                                let dd = (fx - cx).powi(2) + (fy - cy).powi(2);
+                                if dd < d {
+                                    (dd, i)
+                                } else {
+                                    (d, idx)
+                                }
+                            },
+                        );
+                        let t = (nearest as f32 / cells as f32 + min_d * 4.0) % 1.0;
+                        let [cr, cg, cb] = tex_palette(&palette, t);
+                        let (dx, dy) = (tx + col, ty + row);
+                        if dx < bw && dy < bh {
+                            gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                        }
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // tex_halftone(x, y, w, h, dot_size, time, palette)
             "tex_halftone" | "ลายฮาล์ฟโทน" => {
-                let (tx,ty,tw,th) = self.tex_rect(&args)?;
+                let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let dot_size = self.arg_num(&args, 4, 0.05)? as f32;
-                let time     = self.arg_num(&args, 5, 0.0)? as f32;
-                let palette  = self.arg_str(&args, 6, "rainbow");
+                let time = self.arg_num(&args, 5, 0.0)? as f32;
+                let palette = self.arg_str(&args, 6, "rainbow");
                 let mut gfx = self.gfx.borrow_mut();
                 let (bw, bh) = (gfx.width, gfx.height);
-                for row in 0..th { for col in 0..tw {
-                    let (fx, fy) = (col as f32/tw as f32, row as f32/th as f32);
-                    let gx = (fx/dot_size).floor(); let gy = (fy/dot_size).floor();
-                    let lx = (fx/dot_size - gx - 0.5)*2.0; let ly = (fy/dot_size - gy - 0.5)*2.0;
-                    let r = (lx*lx + ly*ly).sqrt();
-                    let t = (gx/(1.0/dot_size) + time*0.1) % 1.0;
-                    let a = if r < 0.7 { ((0.7-r)/0.7).clamp(0.,1.) } else { 0.0 };
-                    if a > 0.0 {
-                        let [cr,cg,cb] = tex_palette(&palette, t);
-                        let (dx, dy) = (tx+col, ty+row);
-                        if dx < bw && dy < bh { gfx.buffer[dy*bw+dx] = tex_rgb(cr, cg, cb); }
+                for row in 0..th {
+                    for col in 0..tw {
+                        let (fx, fy) = (col as f32 / tw as f32, row as f32 / th as f32);
+                        let gx = (fx / dot_size).floor();
+                        let gy = (fy / dot_size).floor();
+                        let lx = (fx / dot_size - gx - 0.5) * 2.0;
+                        let ly = (fy / dot_size - gy - 0.5) * 2.0;
+                        let r = (lx * lx + ly * ly).sqrt();
+                        let t = (gx / (1.0 / dot_size) + time * 0.1) % 1.0;
+                        let a = if r < 0.7 {
+                            ((0.7 - r) / 0.7).clamp(0., 1.)
+                        } else {
+                            0.0
+                        };
+                        if a > 0.0 {
+                            let [cr, cg, cb] = tex_palette(&palette, t);
+                            let (dx, dy) = (tx + col, ty + row);
+                            if dx < bw && dy < bh {
+                                gfx.buffer[dy * bw + dx] = tex_rgb(cr, cg, cb);
+                            }
+                        }
                     }
-                }}
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // RENDER / LIGHTING MODES  (holographic cel shading)
             // ══════════════════════════════════════════════════════════════════
             // set_shade_mode(m) — 0 flat · 1 cel · 2 holo (default)
-            "set_shade_mode" | "设置着色" | "シェード設定" | "셰이드모드" | "ตั้งการแรเงา" => {
+            "set_shade_mode" | "设置着色" | "シェード設定" | "셰이드모드" | "ตั้งการแรเงา" =>
+            {
                 let m = self.arg_num(&args, 0, 2.0)? as u8;
                 self.gfx.borrow_mut().shade_mode = m;
                 return Ok(Value::Unit);
-            }
+            },
             // set_cel_bands(n) — number of posterisation bands (>=2)
-            "set_cel_bands" | "设置色阶" | "セル段数" | "셀밴드" | "ตั้งระดับสี" => {
+            "set_cel_bands" | "设置色阶" | "セル段数" | "셀밴드" | "ตั้งระดับสี" =>
+            {
                 let n = (self.arg_num(&args, 0, 4.0)? as u32).max(2);
                 self.gfx.borrow_mut().shade.bands = n;
                 return Ok(Value::Unit);
-            }
+            },
             // set_shadow_color(r,g,b) — coloured-shadow tint, 0-255
-            "set_shadow_color" | "设置阴影色" | "影の色" | "그림자색" | "ตั้งสีเงา" => {
-                let r=self.arg_num(&args,0,26.)? as f32/255.0;
-                let g=self.arg_num(&args,1,33.)? as f32/255.0;
-                let b=self.arg_num(&args,2,77.)? as f32/255.0;
-                self.gfx.borrow_mut().shade.shadow = [r,g,b];
+            "set_shadow_color" | "设置阴影色" | "影の色" | "그림자색" | "ตั้งสีเงา" =>
+            {
+                let r = self.arg_num(&args, 0, 26.)? as f32 / 255.0;
+                let g = self.arg_num(&args, 1, 33.)? as f32 / 255.0;
+                let b = self.arg_num(&args, 2, 77.)? as f32 / 255.0;
+                self.gfx.borrow_mut().shade.shadow = [r, g, b];
                 return Ok(Value::Unit);
-            }
+            },
             // set_rim(strength, r,g,b) — holographic fresnel edge glow
             // ══════════════════════════════════════════════════════════════════
             // CRYPTOGRAPHY (ling-crypto) — geo suite, hybrid PQ KEM, holographic
             // Bytes cross the language boundary as lowercase hex strings.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" => {
+            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" =>
+            {
                 let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(s.as_bytes()))));
-            }
+                return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(
+                    s.as_bytes(),
+                ))));
+            },
             // 3-D torus-knot fingerprint of any text/key → flat [x,y,z, x,y,z, …]
             #[cfg(not(target_arch = "wasm32"))]
             "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
@@ -3954,43 +5271,70 @@ impl Interpreter {
                     out.push(Value::Number(p[2] as f64));
                 }
                 return Ok(Value::List(out));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" => {
+            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
+            {
                 let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(ling_crypto::geo::KnotShape::from_bytes(s.as_bytes()).label()));
-            }
+                return Ok(Value::Str(
+                    ling_crypto::geo::KnotShape::from_bytes(s.as_bytes()).label(),
+                ));
+            },
             // KEM keypair (hybrid X25519+ML-KEM-768) → integer handle
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_keygen" | "hybrid_keygen" | "สร้างกุญแจปม" | "生成密钥" | "鍵生成" | "키생성" => {
+            "knot_keygen" | "hybrid_keygen" | "สร้างกุญแจปม" | "生成密钥" | "鍵生成" | "키생성" =>
+            {
                 self.crypto_ids.push(ling_crypto::KnotIdentity::generate());
                 return Ok(Value::Number((self.crypto_ids.len() - 1) as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_public" | "hybrid_public" | "กุญแจสาธารณะปม" | "公钥" | "公開鍵" | "공개키" => {
+            "knot_public" | "hybrid_public" | "กุญแจสาธารณะปม" | "公钥" | "公開鍵" | "공개키" =>
+            {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
-                let pk = self.crypto_ids.get(h).map(|id| hex_encode(id.public_key())).unwrap_or_default();
+                let pk = self
+                    .crypto_ids
+                    .get(h)
+                    .map(|id| hex_encode(id.public_key()))
+                    .unwrap_or_default();
                 return Ok(Value::Str(pk));
-            }
+            },
             // encapsulate(pubkey_hex) → [ciphertext_hex, shared_secret_hex]
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_encapsulate" | "hybrid_encapsulate" | "ห่อกุญแจปม" | "封装密钥" | "カプセル化" | "캡슐화" => {
+            "knot_encapsulate"
+            | "hybrid_encapsulate"
+            | "ห่อกุญแจปม"
+            | "封装密钥"
+            | "カプセル化"
+            | "캡슐화" => {
                 let pk = hex_decode(&self.arg_str(&args, 0, ""));
                 match ling_crypto::geo::knot_encapsulate(&pk) {
-                    Ok((ct, ss)) => return Ok(Value::List(vec![Value::Str(hex_encode(&ct)), Value::Str(hex_encode(&ss))])),
+                    Ok((ct, ss)) => {
+                        return Ok(Value::List(vec![
+                            Value::Str(hex_encode(&ct)),
+                            Value::Str(hex_encode(&ss)),
+                        ]))
+                    },
                     Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
-            }
+            },
             // decapsulate(handle, ciphertext_hex) → shared_secret_hex
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_decapsulate" | "hybrid_decapsulate" | "แกะกุญแจปม" | "解封装密钥" | "カプセル解除" | "캡슐해제" => {
+            "knot_decapsulate"
+            | "hybrid_decapsulate"
+            | "แกะกุญแจปม"
+            | "解封装密钥"
+            | "カプセル解除"
+            | "캡슐해제" => {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
                 let ct = hex_decode(&self.arg_str(&args, 1, ""));
-                let ss = self.crypto_ids.get(h)
+                let ss = self
+                    .crypto_ids
+                    .get(h)
                     .and_then(|id| id.decapsulate(&ct).ok())
-                    .map(|s| hex_encode(&s)).unwrap_or_default();
+                    .map(|s| hex_encode(&s))
+                    .unwrap_or_default();
                 return Ok(Value::Str(ss));
-            }
+            },
             // Authenticated encryption (XChaCha20-Poly1305) — seal(key_hex, text) → ct_hex
             #[cfg(not(target_arch = "wasm32"))]
             "crypto_seal" | "ผนึก" | "封印" | "封印する" | "봉인" => {
@@ -4000,30 +5344,42 @@ impl Interpreter {
                     Ok(ct) => return Ok(Value::Str(hex_encode(&ct))),
                     Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "crypto_open" | "เปิดผนึก" | "解封" | "封印解除" | "봉인해제" => {
+            "crypto_open" | "เปิดผนึก" | "解封" | "封印解除" | "봉인해제" =>
+            {
                 let key = hex_to_32(&self.arg_str(&args, 0, ""));
                 let ct = hex_decode(&self.arg_str(&args, 1, ""));
                 match ling_crypto::geo::holo_open(key, &ct) {
                     Ok(pt) => return Ok(Value::Str(String::from_utf8_lossy(&pt).into_owned())),
                     Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
-            }
+            },
             // Holographic all-or-nothing transform — 4-D fragment coords [a,b,c,d, …]
             #[cfg(not(target_arch = "wasm32"))]
-            "holo_points" | "จุดโฮโลแกรม" | "全息点" | "ホログラム点" | "홀로그램점" => {
+            "holo_points" | "จุดโฮโลแกรม" | "全息点" | "ホログラム点" | "홀로그램점" =>
+            {
                 let s = self.arg_str(&args, 0, "");
                 let frags = ling_crypto::geo::scatter(s.as_bytes());
                 let mut out = Vec::with_capacity(frags.len() * 4);
-                for f in &frags { for c in f.coord { out.push(Value::Number(c as f64)); } }
+                for f in &frags {
+                    for c in f.coord {
+                        out.push(Value::Number(c as f64));
+                    }
+                }
                 return Ok(Value::List(out));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "holo_fragment_count" | "จำนวนชิ้นโฮโลแกรม" | "全息碎片数" | "ホログラム断片数" | "홀로그램조각수" => {
+            "holo_fragment_count"
+            | "จำนวนชิ้นโฮโลแกรม"
+            | "全息碎片数"
+            | "ホログラム断片数"
+            | "홀로그램조각수" => {
                 let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Number(ling_crypto::geo::scatter(s.as_bytes()).len() as f64));
-            }
+                return Ok(Value::Number(
+                    ling_crypto::geo::scatter(s.as_bytes()).len() as f64
+                ));
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // ling-ui — animation easings + holographic vector widgets + text I/O
@@ -4031,8 +5387,10 @@ impl Interpreter {
             "ease" => {
                 let name = self.arg_str(&args, 0, "ease");
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
-                return Ok(Value::Number(ling_ui::Easing::from_name(&name).apply(t) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_ui::Easing::from_name(&name).apply(t) as f64
+                ));
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // Anima — unified animation drivers (ling-animation). Organic 灵 +
@@ -4043,153 +5401,226 @@ impl Interpreter {
                 let b = self.arg_num(&args, 1, 0.0)?;
                 let t = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 1.0);
                 return Ok(Value::Number(a + (b - a) * t));
-            }
-            "tween_ease" | "缓动补间" | "緩和補間" | "이징트윈" | "แทรกนุ่ม" => {
+            },
+            "tween_ease" | "缓动补间" | "緩和補間" | "이징트윈" | "แทรกนุ่ม" =>
+            {
                 let a = self.arg_num(&args, 0, 0.0)? as f32;
                 let b = self.arg_num(&args, 1, 0.0)? as f32;
                 let t = self.arg_num(&args, 2, 0.0)? as f32;
                 let kind = self.arg_str(&args, 3, "linear");
                 let e = ling_animation::EaseFunction::from_name(&kind);
-                return Ok(Value::Number(ling_animation::ease::tween_ease(&a, &b, t, e) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::ease::tween_ease(&a, &b, t, e) as f64,
+                ));
+            },
             // ── Organic 灵 ──
             "breathe" | "呼吸" | "호흡" | "หายใจ" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let rate = self.arg_num(&args, 1, 1.0)? as f32;
                 let depth = self.arg_num(&args, 2, 0.1)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::breathe(t, rate, depth) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::breathe(t, rate, depth) as f64,
+                ));
+            },
             "wobble" | "摆动" | "揺れ" | "흔들림" | "โยก" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let freq = self.arg_num(&args, 1, 1.0)? as f32;
                 let amp = self.arg_num(&args, 2, 1.0)? as f32;
                 let phase = self.arg_num(&args, 3, 0.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::wobble(t, freq, amp, phase) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::wobble(t, freq, amp, phase) as f64,
+                ));
+            },
             "gait_phase" | "步相" | "歩相" | "걸음위상" | "เฟสก้าว" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::gait_phase(t, speed) as f64));
-            }
-            "gait_swing" | "步摆" | "歩振り" | "걸음흔들" | "ก้าวแกว่ง" => {
+                return Ok(Value::Number(
+                    ling_animation::scalar::gait_phase(t, speed) as f64
+                ));
+            },
+            "gait_swing" | "步摆" | "歩振り" | "걸음흔들" | "ก้าวแกว่ง" =>
+            {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
                 let stride = self.arg_num(&args, 2, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::gait_swing(t, speed, stride) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::gait_swing(t, speed, stride) as f64,
+                ));
+            },
             "gait_lift" | "抬脚" | "足上げ" | "발들기" | "ยกเท้า" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
                 let height = self.arg_num(&args, 2, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::gait_lift(t, speed, height) as f64));
-            }
-            "spring_to" | "弹向" | "バネ寄せ" | "스프링이동" | "สปริงไป" => {
+                return Ok(Value::Number(
+                    ling_animation::scalar::gait_lift(t, speed, height) as f64,
+                ));
+            },
+            "spring_to" | "弹向" | "バネ寄せ" | "스프링이동" | "สปริงไป" =>
+            {
                 let pos = self.arg_num(&args, 0, 0.0)? as f32;
                 let vel = self.arg_num(&args, 1, 0.0)? as f32;
                 let target = self.arg_num(&args, 2, 0.0)? as f32;
                 let stiffness = self.arg_num(&args, 3, 120.0)? as f32;
                 let damping = self.arg_num(&args, 4, 14.0)? as f32;
                 let dt = self.arg_num(&args, 5, 1.0 / 60.0)? as f32;
-                let (np, nv) = ling_animation::scalar::spring_step(pos, vel, target, stiffness, damping, dt);
-                return Ok(Value::List(vec![Value::Number(np as f64), Value::Number(nv as f64)]));
-            }
+                let (np, nv) =
+                    ling_animation::scalar::spring_step(pos, vel, target, stiffness, damping, dt);
+                return Ok(Value::List(vec![
+                    Value::Number(np as f64),
+                    Value::Number(nv as f64),
+                ]));
+            },
             "ik2" | "反解" | "逆運動" | "역운동" | "ไอเค2" => {
                 let l1 = self.arg_num(&args, 0, 1.0)? as f32;
                 let l2 = self.arg_num(&args, 1, 1.0)? as f32;
                 let tx = self.arg_num(&args, 2, 0.0)? as f32;
                 let ty = self.arg_num(&args, 3, 0.0)? as f32;
                 let (sh, el) = ling_animation::scalar::two_bone_ik(l1, l2, tx, ty);
-                return Ok(Value::List(vec![Value::Number(sh as f64), Value::Number(el as f64)]));
-            }
+                return Ok(Value::List(vec![
+                    Value::Number(sh as f64),
+                    Value::Number(el as f64),
+                ]));
+            },
             // ── Mechanical 机 ──
-            "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" => {
+            "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" =>
+            {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let ti = self.arg_num(&args, 1, 1.0)? as f32;
                 let to = self.arg_num(&args, 2, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::gear(angle, ti, to) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::gear(angle, ti, to) as f64
+                ));
+            },
             "gear_train" | "齿轮组" | "歯車列" | "기어열" | "ชุดเฟือง" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let teeth: Vec<f32> = match args.get(1) {
-                    Some(Value::List(items)) => items.iter()
-                        .filter_map(|v| if let Value::Number(n) = v { Some(*n as f32) } else { None }).collect(),
+                    Some(Value::List(items)) => items
+                        .iter()
+                        .filter_map(|v| {
+                            if let Value::Number(n) = v {
+                                Some(*n as f32)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
                     _ => Vec::new(),
                 };
                 let out = ling_animation::mechanism::gear_train(angle, &teeth);
-                return Ok(Value::List(out.into_iter().map(|a| Value::Number(a as f64)).collect()));
-            }
-            "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" => {
+                return Ok(Value::List(
+                    out.into_iter().map(|a| Value::Number(a as f64)).collect(),
+                ));
+            },
+            "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" =>
+            {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let lift = self.arg_num(&args, 1, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::cam_lift(angle, lift) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::cam_lift(angle, lift) as f64
+                ));
+            },
             "piston" | "活塞" | "ピストン" | "피스톤" | "ลูกสูบ" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let crank = self.arg_num(&args, 1, 1.0)? as f32;
                 let rod = self.arg_num(&args, 2, 2.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::piston(angle, crank, rod) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::piston(angle, crank, rod) as f64,
+                ));
+            },
             "rack" | "齿条" | "ラック" | "랙" | "แร็ค" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let radius = self.arg_num(&args, 1, 1.0)? as f32;
-                return Ok(Value::Number(ling_animation::scalar::rack(angle, radius) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_animation::scalar::rack(angle, radius) as f64
+                ));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_x" => {
                 let gfx = self.gfx.borrow();
-                let v = gfx.window.as_ref().and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).map(|p| p.0 as f64).unwrap_or(0.0);
+                let v = gfx
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+                    .map(|p| p.0 as f64)
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(v));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_y" => {
                 let gfx = self.gfx.borrow();
-                let v = gfx.window.as_ref().and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).map(|p| p.1 as f64).unwrap_or(0.0);
+                let v = gfx
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+                    .map(|p| p.1 as f64)
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(v));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down" => {
                 let gfx = self.gfx.borrow();
-                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
+                let d = gfx
+                    .window
+                    .as_ref()
+                    .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
+                    .unwrap_or(false);
                 return Ok(Value::Bool(d));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_right" | "เมาส์ขวา" => {
                 let gfx = self.gfx.borrow();
-                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Right)).unwrap_or(false);
+                let d = gfx
+                    .window
+                    .as_ref()
+                    .map(|w| w.get_mouse_down(minifb::MouseButton::Right))
+                    .unwrap_or(false);
                 return Ok(Value::Bool(d));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_middle" | "เมาส์กลาง" => {
                 let gfx = self.gfx.borrow();
-                let d = gfx.window.as_ref().map(|w| w.get_mouse_down(minifb::MouseButton::Middle)).unwrap_or(false);
+                let d = gfx
+                    .window
+                    .as_ref()
+                    .map(|w| w.get_mouse_down(minifb::MouseButton::Middle))
+                    .unwrap_or(false);
                 return Ok(Value::Bool(d));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" => {
-                let x = self.arg_num(&args,0,0.0)? as f32;
-                let y = self.arg_num(&args,1,0.0)? as f32;
-                let w = self.arg_num(&args,2,0.0)? as f32;
-                let h = self.arg_num(&args,3,0.0)? as f32;
+            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let w = self.arg_num(&args, 2, 0.0)? as f32;
+                let h = self.arg_num(&args, 3, 0.0)? as f32;
                 let gfx = self.gfx.borrow();
-                let (mx,my) = gfx.window.as_ref().and_then(|win| win.get_mouse_pos(minifb::MouseMode::Clamp)).unwrap_or((0.0,0.0));
-                return Ok(Value::Bool(ling_ui::holo::hit_rect(mx,my,x,y,w,h)));
-            }
+                let (mx, my) = gfx
+                    .window
+                    .as_ref()
+                    .and_then(|win| win.get_mouse_pos(minifb::MouseMode::Clamp))
+                    .unwrap_or((0.0, 0.0));
+                return Ok(Value::Bool(ling_ui::holo::hit_rect(mx, my, x, y, w, h)));
+            },
             // ui_text(x, y, scale, "string") — holographic vector text
-            "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" => {
-                let x = self.arg_num(&args,0,0.0)? as f32;
-                let y = self.arg_num(&args,1,0.0)? as f32;
-                let scale = self.arg_num(&args,2,16.0)? as f32;
-                let s = self.arg_str(&args,3,"");
-                let segs = ling_ui::holo::text_lines(&s, x, y, scale*0.62, scale, scale*0.24);
+            "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let scale = self.arg_num(&args, 2, 16.0)? as f32;
+                let s = self.arg_str(&args, 3, "");
+                let segs = ling_ui::holo::text_lines(&s, x, y, scale * 0.62, scale, scale * 0.24);
                 let mut gfx = self.gfx.borrow_mut();
-                let (w,h,color) = (gfx.width, gfx.height, gfx.color);
-                for sg in segs { draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]); }
+                let (w, h, color) = (gfx.width, gfx.height, gfx.color);
+                for sg in segs {
+                    draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             // font_load("path.ttf") — load a vector font (outlines cached lazily as
             // cache/fonts/<stem>/<codepoint>.ling). Returns a handle, or -1 on failure.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" => {
+            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" =>
+            {
                 let path = self.arg_str(&args, 0, "");
                 // Optional 2nd arg: variable-font weight (e.g. 600 for a solid, bold UI).
                 let weight = match self.arg_num(&args, 1, 0.0)? {
@@ -4201,7 +5632,10 @@ impl Interpreter {
                 if loaded.is_err() {
                     if let Some(dir) = &self.source_dir {
                         let joined = dir.join(&path);
-                        loaded = ling_graphics::VectorFont::from_path_weight(&joined.to_string_lossy(), weight);
+                        loaded = ling_graphics::VectorFont::from_path_weight(
+                            &joined.to_string_lossy(),
+                            weight,
+                        );
                     }
                 }
                 match loaded {
@@ -4209,65 +5643,90 @@ impl Interpreter {
                         let id = self.fonts.len();
                         self.fonts.push(f);
                         return Ok(Value::Number(id as f64));
-                    }
+                    },
                     Err(e) => {
                         eprintln!("font_load failed ({path}): {e}");
                         return Ok(Value::Number(-1.0));
-                    }
+                    },
                 }
-            }
+            },
             // font_text(handle, x, y, px, "string") — anti-aliased *stroked* vector outline
             // in the current set_color / set_blend. (x,y) is the text box top-left.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" => {
+            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" =>
+            {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
-                let x  = self.arg_num(&args, 1, 0.0)? as f32;
-                let y  = self.arg_num(&args, 2, 0.0)? as f32;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
                 let px = self.arg_num(&args, 3, 16.0)? as f32;
-                let s  = self.arg_str(&args, 4, "");
+                let s = self.arg_str(&args, 4, "");
                 if id >= 0 && (id as usize) < self.fonts.len() && px > 0.0 {
                     let strokes = self.font_layout_2d(id as usize, x, y, px, &s);
                     let mut gfx = self.gfx.borrow_mut();
                     let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
                     for pl in &strokes {
                         for seg in pl.windows(2) {
-                            crate::gfx::raster::draw_line_aa(&mut gfx.buffer, w, h, color, add,
-                                seg[0][0], seg[0][1], seg[1][0], seg[1][1]);
+                            crate::gfx::raster::draw_line_aa(
+                                &mut gfx.buffer,
+                                w,
+                                h,
+                                color,
+                                add,
+                                seg[0][0],
+                                seg[0][1],
+                                seg[1][0],
+                                seg[1][1],
+                            );
                         }
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
             // font_text_fill(handle, x, y, px, "string") — anti-aliased *filled* vector glyphs.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" => {
+            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
+            {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
-                let x  = self.arg_num(&args, 1, 0.0)? as f32;
-                let y  = self.arg_num(&args, 2, 0.0)? as f32;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
                 let px = self.arg_num(&args, 3, 16.0)? as f32;
-                let s  = self.arg_str(&args, 4, "");
+                let s = self.arg_str(&args, 4, "");
                 if id >= 0 && (id as usize) < self.fonts.len() && px > 0.0 {
                     // fill each glyph independently so interior holes (winding) stay correct
                     let glyphs = self.font_layout_2d_glyphs(id as usize, x, y, px, &s);
                     let mut gfx = self.gfx.borrow_mut();
                     let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
                     for contours in &glyphs {
-                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, add, contours);
+                        crate::gfx::raster::fill_contours_aa(
+                            &mut gfx.buffer,
+                            w,
+                            h,
+                            color,
+                            add,
+                            contours,
+                        );
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
             // font_text_3d(handle, cx,cy,cz, ux,uy,uz, vx,vy,vz, size, "string")
             // — stroked vector text on a 3D plane: u = advance dir, v = up dir, size = world/em.
             //   Flows through the depth-sorted line pipeline, so it rotates with the camera (and 4D).
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" => {
+            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" =>
+            {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
-                let cx=self.arg_num(&args,1,0.0)? as f32; let cy=self.arg_num(&args,2,0.0)? as f32; let cz=self.arg_num(&args,3,0.0)? as f32;
-                let ux=self.arg_num(&args,4,1.0)? as f32; let uy=self.arg_num(&args,5,0.0)? as f32; let uz=self.arg_num(&args,6,0.0)? as f32;
-                let vx=self.arg_num(&args,7,0.0)? as f32; let vy=self.arg_num(&args,8,1.0)? as f32; let vz=self.arg_num(&args,9,0.0)? as f32;
-                let size=self.arg_num(&args,10,1.0)? as f32;
-                let s = self.arg_str(&args,11,"");
+                let cx = self.arg_num(&args, 1, 0.0)? as f32;
+                let cy = self.arg_num(&args, 2, 0.0)? as f32;
+                let cz = self.arg_num(&args, 3, 0.0)? as f32;
+                let ux = self.arg_num(&args, 4, 1.0)? as f32;
+                let uy = self.arg_num(&args, 5, 0.0)? as f32;
+                let uz = self.arg_num(&args, 6, 0.0)? as f32;
+                let vx = self.arg_num(&args, 7, 0.0)? as f32;
+                let vy = self.arg_num(&args, 8, 1.0)? as f32;
+                let vz = self.arg_num(&args, 9, 0.0)? as f32;
+                let size = self.arg_num(&args, 10, 1.0)? as f32;
+                let s = self.arg_str(&args, 11, "");
                 if id >= 0 && (id as usize) < self.fonts.len() && size > 0.0 {
                     // Build world-space polylines: world = C + (pen+ex)*size*U + ey*size*V
                     let font = &mut self.fonts[id as usize];
@@ -4281,12 +5740,15 @@ impl Interpreter {
                                 let map = |p: [f32; 2]| {
                                     let a = pen + p[0];
                                     let b = p[1] - asc; // shift so the top of the cap sits near C
-                                    [cx + a*size*ux + b*size*vx,
-                                     cy + a*size*uy + b*size*vy,
-                                     cz + a*size*uz + b*size*vz]
+                                    [
+                                        cx + a * size * ux + b * size * vx,
+                                        cy + a * size * uy + b * size * vy,
+                                        cz + a * size * uz + b * size * vz,
+                                    ]
                                 };
-                                let p0 = map(seg[0]); let p1 = map(seg[1]);
-                                lines.push([p0[0],p0[1],p0[2], p1[0],p1[1],p1[2]]);
+                                let p0 = map(seg[0]);
+                                let p1 = map(seg[1]);
+                                lines.push([p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]]);
                             }
                         }
                         pen += go.advance;
@@ -4299,13 +5761,19 @@ impl Interpreter {
                         let (mut bx, mut by, mut bz) = (l[3], l[4], l[5]);
                         let da = gfx.camera.depth(ax, ay, az);
                         let db = gfx.camera.depth(bx, by, bz);
-                        if da <= near && db <= near { continue; }
+                        if da <= near && db <= near {
+                            continue;
+                        }
                         if da <= near {
                             let t = (near - da) / (db - da);
-                            ax += t*(bx-ax); ay += t*(by-ay); az += t*(bz-az);
+                            ax += t * (bx - ax);
+                            ay += t * (by - ay);
+                            az += t * (bz - az);
                         } else if db <= near {
                             let t = (near - da) / (db - da);
-                            bx = ax + t*(bx-ax); by = ay + t*(by-ay); bz = az + t*(bz-az);
+                            bx = ax + t * (bx - ax);
+                            by = ay + t * (by - ay);
+                            bz = az + t * (bz - az);
                         }
                         let (sax, say, da2) = gfx.camera.project(ax, ay, az);
                         let (sbx, sby, db2) = gfx.camera.project(bx, by, bz);
@@ -4314,40 +5782,50 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
             // font_width(handle, px, "string") — pixel width of a string in a loaded font.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" => {
+            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" =>
+            {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let px = self.arg_num(&args, 1, 16.0)? as f32;
-                let s  = self.arg_str(&args, 2, "");
+                let s = self.arg_str(&args, 2, "");
                 if id >= 0 && (id as usize) < self.fonts.len() {
                     return Ok(Value::Number(self.fonts[id as usize].measure(&s, px) as f64));
                 }
                 return Ok(Value::Number(0.0));
-            }
+            },
             // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
             "ui_frame" | "边框" | "フレーム枠" | "프레임틀" | "กรอบ" => {
-                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
-                let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
-                let l=self.arg_num(&args,4,14.0)? as f32;
-                let segs = ling_ui::holo::corner_brackets(x,y,w0,h0,l);
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let w0 = self.arg_num(&args, 2, 0.0)? as f32;
+                let h0 = self.arg_num(&args, 3, 0.0)? as f32;
+                let l = self.arg_num(&args, 4, 14.0)? as f32;
+                let segs = ling_ui::holo::corner_brackets(x, y, w0, h0, l);
                 let mut gfx = self.gfx.borrow_mut();
-                let (w,h,color)=(gfx.width,gfx.height,gfx.color);
-                for sg in segs { draw_line(&mut gfx.buffer, w,h,color, sg[0],sg[1],sg[2],sg[3]); }
+                let (w, h, color) = (gfx.width, gfx.height, gfx.color);
+                for sg in segs {
+                    draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             // ui_bevel(x,y,w,h, bevel) — beveled holographic panel outline
-            "ui_bevel" | "斜角框" | "ベベル枠" | "베벨틀" | "กรอบเฉียง" => {
-                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
-                let w0=self.arg_num(&args,2,0.0)? as f32; let h0=self.arg_num(&args,3,0.0)? as f32;
-                let bv=self.arg_num(&args,4,10.0)? as f32;
-                let segs = ling_ui::holo::beveled_rect(x,y,w0,h0,bv);
+            "ui_bevel" | "斜角框" | "ベベル枠" | "베벨틀" | "กรอบเฉียง" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let w0 = self.arg_num(&args, 2, 0.0)? as f32;
+                let h0 = self.arg_num(&args, 3, 0.0)? as f32;
+                let bv = self.arg_num(&args, 4, 10.0)? as f32;
+                let segs = ling_ui::holo::beveled_rect(x, y, w0, h0, bv);
                 let mut gfx = self.gfx.borrow_mut();
-                let (w,h,color)=(gfx.width,gfx.height,gfx.color);
-                for sg in segs { draw_line(&mut gfx.buffer, w,h,color, sg[0],sg[1],sg[2],sg[3]); }
+                let (w, h, color) = (gfx.width, gfx.height, gfx.color);
+                for sg in segs {
+                    draw_line(&mut gfx.buffer, w, h, color, sg[0], sg[1], sg[2], sg[3]);
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // VECTOR UI TOOLKIT  (crates/ling-ui/src/widgets.rs)
@@ -4355,366 +5833,611 @@ impl Interpreter {
             // r,g,b override; interactive ones read the mouse and return state.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_theme" | "界面主题" | "UIテーマ" | "인터페이스테마" | "ธีมส่วนติดต่อ" => {
+            "ui_theme" | "界面主题" | "UIテーマ" | "인터페이스테마" | "ธีมส่วนติดต่อ" =>
+            {
                 let cur = self.ui_theme;
-                let primary = self.color_at(&args, 0,  cur.primary);
-                let accent  = self.color_at(&args, 3,  cur.accent);
-                let track   = self.color_at(&args, 6,  cur.track);
-                let warn    = self.color_at(&args, 9,  cur.warn);
-                let text    = self.color_at(&args, 12, cur.text);
-                let bg      = self.color_at(&args, 15, cur.bg);
+                let primary = self.color_at(&args, 0, cur.primary);
+                let accent = self.color_at(&args, 3, cur.accent);
+                let track = self.color_at(&args, 6, cur.track);
+                let warn = self.color_at(&args, 9, cur.warn);
+                let text = self.color_at(&args, 12, cur.text);
+                let bg = self.color_at(&args, 15, cur.bg);
                 self.ui_theme = UiTheme { primary, accent, track, warn, text, bg };
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── HUD ──────────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
             "ui_radar" | "雷达" | "レーダー" | "레이더" | "เรดาร์" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,60.)? as f32; let sweep=self.arg_num(&args,3,0.)? as f32;
-                let th=self.ui_theme;
-                let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::radar(cx,cy,r,sweep, prim, th.accent, th.track));
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 60.)? as f32;
+                let sweep = self.arg_num(&args, 3, 0.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::radar(
+                    cx, cy, r, sweep, prim, th.accent, th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_compass" | "罗盘" | "コンパス" | "나침반" | "เข็มทิศ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,300.)? as f32; let h0=self.arg_num(&args,3,24.)? as f32;
-                let head=self.arg_num(&args,4,0.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::compass(x,y,w0,h0,head, prim, th.track));
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 300.)? as f32;
+                let h0 = self.arg_num(&args, 3, 24.)? as f32;
+                let head = self.arg_num(&args, 4, 0.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::compass(
+                    x, y, w0, h0, head, prim, th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_reticle" | "准星" | "照準" | "조준선" | "เป้าเล็ง" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,30.)? as f32; let spread=self.arg_num(&args,3,0.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::reticle(cx,cy,r,spread, prim));
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 30.)? as f32;
+                let spread = self.arg_num(&args, 3, 0.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::reticle(cx, cy, r, spread, prim));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_target" | "锁定框" | "ターゲット" | "표적" | "กรอบเป้า" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,80.)? as f32; let h0=self.arg_num(&args,3,80.)? as f32;
-                let lock=self.arg_num(&args,4,0.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::target(x,y,w0,h0,lock, prim, th.accent));
+            "ui_target" | "锁定框" | "ターゲット" | "표적" | "กรอบเป้า" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 80.)? as f32;
+                let h0 = self.arg_num(&args, 3, 80.)? as f32;
+                let lock = self.arg_num(&args, 4, 0.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::target(
+                    x, y, w0, h0, lock, prim, th.accent,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_panel" | "面板" | "パネル" | "패널" | "แผง" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
-                let bv=self.arg_num(&args,4,12.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::panel(x,y,w0,h0,bv, prim, th.bg));
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 200.)? as f32;
+                let h0 = self.arg_num(&args, 3, 120.)? as f32;
+                let bv = self.arg_num(&args, 4, 12.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::panel(x, y, w0, h0, bv, prim, th.bg));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_scanlines" | "扫描线" | "走査線" | "스캔라인" | "เส้นสแกน" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
-                let dens=self.arg_num(&args,4,24.)? as usize;
-                let th=self.ui_theme; let line=self.color_at(&args,5,th.track);
-                self.draw_ui(&ling_ui::widgets::scanlines(x,y,w0,h0,dens, line));
+            "ui_scanlines" | "扫描线" | "走査線" | "스캔라인" | "เส้นสแกน" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 200.)? as f32;
+                let h0 = self.arg_num(&args, 3, 120.)? as f32;
+                let dens = self.arg_num(&args, 4, 24.)? as usize;
+                let th = self.ui_theme;
+                let line = self.color_at(&args, 5, th.track);
+                self.draw_ui(&ling_ui::widgets::scanlines(x, y, w0, h0, dens, line));
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Meters ───────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
             "ui_bar" | "进度条" | "バー" | "막대" | "แถบ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
-                let val=self.arg_num(&args,4,0.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::bar(x,y,w0,h0, val/max.max(1e-6), fill, th.track));
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 160.)? as f32;
+                let h0 = self.arg_num(&args, 3, 16.)? as f32;
+                let val = self.arg_num(&args, 4, 0.)? as f32;
+                let max = self.arg_num(&args, 5, 1.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::bar(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    val / max.max(1e-6),
+                    fill,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_segbar" | "分段条" | "分割バー" | "분할막대" | "แถบแบ่ง" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
-                let val=self.arg_num(&args,4,0.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
-                let segs=self.arg_num(&args,6,10.)? as usize;
-                let th=self.ui_theme; let fill=self.color_at(&args,7,th.primary);
-                self.draw_ui(&ling_ui::widgets::segbar(x,y,w0,h0, val/max.max(1e-6), segs, fill, th.track));
+            "ui_segbar" | "分段条" | "分割バー" | "분할막대" | "แถบแบ่ง" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 160.)? as f32;
+                let h0 = self.arg_num(&args, 3, 16.)? as f32;
+                let val = self.arg_num(&args, 4, 0.)? as f32;
+                let max = self.arg_num(&args, 5, 1.)? as f32;
+                let segs = self.arg_num(&args, 6, 10.)? as usize;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 7, th.primary);
+                self.draw_ui(&ling_ui::widgets::segbar(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    val / max.max(1e-6),
+                    segs,
+                    fill,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_gauge" | "仪表" | "ゲージ" | "게이지" | "มาตรวัด" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,50.)? as f32;
-                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
-                let th=self.ui_theme; let needle=self.color_at(&args,5,th.warn);
-                self.draw_ui(&ling_ui::widgets::gauge(cx,cy,r, val/max.max(1e-6), needle, th.accent, th.track));
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 50.)? as f32;
+                let val = self.arg_num(&args, 3, 0.)? as f32;
+                let max = self.arg_num(&args, 4, 1.)? as f32;
+                let th = self.ui_theme;
+                let needle = self.color_at(&args, 5, th.warn);
+                self.draw_ui(&ling_ui::widgets::gauge(
+                    cx,
+                    cy,
+                    r,
+                    val / max.max(1e-6),
+                    needle,
+                    th.accent,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_ring" | "环表" | "リングメーター" | "링미터" | "วงแหวนวัด" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,40.)? as f32;
-                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::ring(cx,cy,r, val/max.max(1e-6), fill, th.track));
+            "ui_ring" | "环表" | "リングメーター" | "링미터" | "วงแหวนวัด" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 40.)? as f32;
+                let val = self.arg_num(&args, 3, 0.)? as f32;
+                let max = self.arg_num(&args, 4, 1.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::ring(
+                    cx,
+                    cy,
+                    r,
+                    val / max.max(1e-6),
+                    fill,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_vu" | "音量条" | "VUメーター" | "음량막대" | "มาตรเสียง" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,60.)? as f32;
-                let levels=self.arg_list_f32(&args,4);
-                let th=self.ui_theme; let fill=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::vu(x,y,w0,h0, &levels, fill, th.warn));
+            "ui_vu" | "音量条" | "VUメーター" | "음량막대" | "มาตรเสียง" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 160.)? as f32;
+                let h0 = self.arg_num(&args, 3, 60.)? as f32;
+                let levels = self.arg_list_f32(&args, 4);
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::vu(x, y, w0, h0, &levels, fill, th.warn));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_spark" | "迷你图" | "スパークライン" | "스파크라인" | "กราฟจิ๋ว" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,160.)? as f32; let h0=self.arg_num(&args,3,40.)? as f32;
-                let vals=self.arg_list_f32(&args,4);
-                let th=self.ui_theme; let line=self.color_at(&args,5,th.accent);
-                self.draw_ui(&ling_ui::widgets::spark(x,y,w0,h0, &vals, line));
+            "ui_spark" | "迷你图" | "スパークライン" | "스파크라인" | "กราฟจิ๋ว" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 160.)? as f32;
+                let h0 = self.arg_num(&args, 3, 40.)? as f32;
+                let vals = self.arg_list_f32(&args, 4);
+                let th = self.ui_theme;
+                let line = self.color_at(&args, 5, th.accent);
+                self.draw_ui(&ling_ui::widgets::spark(x, y, w0, h0, &vals, line));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_battery" | "电池" | "バッテリー" | "배터리" | "แบตเตอรี่" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,50.)? as f32; let h0=self.arg_num(&args,3,22.)? as f32;
-                let val=self.arg_num(&args,4,1.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,6,th.accent);
-                self.draw_ui(&ling_ui::widgets::battery(x,y,w0,h0, val/max.max(1e-6), fill, th.track, th.warn));
+            "ui_battery" | "电池" | "バッテリー" | "배터리" | "แบตเตอรี่" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 50.)? as f32;
+                let h0 = self.arg_num(&args, 3, 22.)? as f32;
+                let val = self.arg_num(&args, 4, 1.)? as f32;
+                let max = self.arg_num(&args, 5, 1.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 6, th.accent);
+                self.draw_ui(&ling_ui::widgets::battery(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    val / max.max(1e-6),
+                    fill,
+                    th.track,
+                    th.warn,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Interface controls (interactive → return state) ──────────────
             #[cfg(not(target_arch = "wasm32"))]
             "ui_button" | "按钮" | "ボタン" | "버튼" | "ปุ่ม" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,40.)? as f32;
-                let (mx,my,down)=self.mouse_now();
-                let hover=ling_ui::holo::hit_rect(mx,my,x,y,w0,h0);
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 120.)? as f32;
+                let h0 = self.arg_num(&args, 3, 40.)? as f32;
+                let (mx, my, down) = self.mouse_now();
+                let hover = ling_ui::holo::hit_rect(mx, my, x, y, w0, h0);
                 let clicked = hover && down && !self.mouse_was_down;
-                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::button(x,y,w0,h0, hover, down&&hover, prim, th.bg));
-                return Ok(Value::Number(if clicked {1.0} else {0.0}));
-            }
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::button(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    hover,
+                    down && hover,
+                    prim,
+                    th.bg,
+                ));
+                return Ok(Value::Number(if clicked { 1.0 } else { 0.0 }));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_toggle" | "开关" | "トグル" | "토글" | "สวิตช์" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,52.)? as f32; let h0=self.arg_num(&args,3,24.)? as f32;
-                let mut state=self.arg_num(&args,4,0.)? > 0.5;
-                let (mx,my,down)=self.mouse_now();
-                let hover=ling_ui::holo::hit_rect(mx,my,x,y,w0,h0);
-                if hover && down && !self.mouse_was_down { state = !state; }
-                let th=self.ui_theme; let on=self.color_at(&args,5,th.accent);
-                self.draw_ui(&ling_ui::widgets::toggle(x,y,w0,h0, state, on, th.track));
-                return Ok(Value::Number(if state {1.0} else {0.0}));
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            "ui_slider" | "滑块" | "スライダー" | "슬라이더" | "แถบเลื่อน" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,160.)? as f32;
-                let mut val=self.arg_num(&args,3,0.)? as f32;
-                let mn=self.arg_num(&args,4,0.)? as f32; let mx_=self.arg_num(&args,5,1.)? as f32;
-                let (mx,my,down)=self.mouse_now();
-                let hover=ling_ui::holo::hit_rect(mx,my,x-8.0,y-10.0,w0+16.0,20.0);
-                if hover && down {
-                    let frac=((mx-x)/w0).max(0.0).min(1.0);
-                    val = mn + (mx_-mn)*frac;
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 52.)? as f32;
+                let h0 = self.arg_num(&args, 3, 24.)? as f32;
+                let mut state = self.arg_num(&args, 4, 0.)? > 0.5;
+                let (mx, my, down) = self.mouse_now();
+                let hover = ling_ui::holo::hit_rect(mx, my, x, y, w0, h0);
+                if hover && down && !self.mouse_was_down {
+                    state = !state;
                 }
-                let frac=((val-mn)/(mx_-mn).abs().max(1e-6)).max(0.0).min(1.0);
-                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::slider(x,y,w0, frac, hover, fill, th.track));
-                return Ok(Value::Number(val as f64));
-            }
+                let th = self.ui_theme;
+                let on = self.color_at(&args, 5, th.accent);
+                self.draw_ui(&ling_ui::widgets::toggle(x, y, w0, h0, state, on, th.track));
+                return Ok(Value::Number(if state { 1.0 } else { 0.0 }));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_checkbox" | "复选框" | "チェックボックス" | "체크박스" | "ช่องเลือก" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let s=self.arg_num(&args,2,20.)? as f32;
-                let mut checked=self.arg_num(&args,3,0.)? > 0.5;
-                let (mx,my,down)=self.mouse_now();
-                let hover=ling_ui::holo::hit_rect(mx,my,x,y,s,s);
-                if hover && down && !self.mouse_was_down { checked = !checked; }
-                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::checkbox(x,y,s, checked, hover, prim, th.track));
-                return Ok(Value::Number(if checked {1.0} else {0.0}));
-            }
+            "ui_slider" | "滑块" | "スライダー" | "슬라이더" | "แถบเลื่อน" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 160.)? as f32;
+                let mut val = self.arg_num(&args, 3, 0.)? as f32;
+                let mn = self.arg_num(&args, 4, 0.)? as f32;
+                let mx_ = self.arg_num(&args, 5, 1.)? as f32;
+                let (mx, my, down) = self.mouse_now();
+                let hover = ling_ui::holo::hit_rect(mx, my, x - 8.0, y - 10.0, w0 + 16.0, 20.0);
+                if hover && down {
+                    let frac = ((mx - x) / w0).max(0.0).min(1.0);
+                    val = mn + (mx_ - mn) * frac;
+                }
+                let frac = ((val - mn) / (mx_ - mn).abs().max(1e-6)).max(0.0).min(1.0);
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::slider(
+                    x, y, w0, frac, hover, fill, th.track,
+                ));
+                return Ok(Value::Number(val as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ui_checkbox" | "复选框" | "チェックボックス" | "체크박스" | "ช่องเลือก" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let s = self.arg_num(&args, 2, 20.)? as f32;
+                let mut checked = self.arg_num(&args, 3, 0.)? > 0.5;
+                let (mx, my, down) = self.mouse_now();
+                let hover = ling_ui::holo::hit_rect(mx, my, x, y, s, s);
+                if hover && down && !self.mouse_was_down {
+                    checked = !checked;
+                }
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::checkbox(
+                    x, y, s, checked, hover, prim, th.track,
+                ));
+                return Ok(Value::Number(if checked { 1.0 } else { 0.0 }));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_tabs" | "标签页" | "タブ" | "탭" | "แท็บ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,240.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
-                let count=self.arg_num(&args,4,3.)? as usize;
-                let mut active=self.arg_num(&args,5,0.)? as i32;
-                let (mx,my,down)=self.mouse_now();
-                let mut hover=-1;
-                if my>=y && my<=y+h0 && mx>=x && mx<=x+w0 && count>0 {
-                    hover = (((mx-x)/(w0/count as f32)) as i32).max(0).min(count as i32-1);
-                    if down && !self.mouse_was_down { active = hover; }
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 240.)? as f32;
+                let h0 = self.arg_num(&args, 3, 28.)? as f32;
+                let count = self.arg_num(&args, 4, 3.)? as usize;
+                let mut active = self.arg_num(&args, 5, 0.)? as i32;
+                let (mx, my, down) = self.mouse_now();
+                let mut hover = -1;
+                if my >= y && my <= y + h0 && mx >= x && mx <= x + w0 && count > 0 {
+                    hover = (((mx - x) / (w0 / count as f32)) as i32)
+                        .max(0)
+                        .min(count as i32 - 1);
+                    if down && !self.mouse_was_down {
+                        active = hover;
+                    }
                 }
-                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::tabs(x,y,w0,h0, count, active as usize, hover, prim, th.track));
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::tabs(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    count,
+                    active as usize,
+                    hover,
+                    prim,
+                    th.track,
+                ));
                 return Ok(Value::Number(active as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_progress" | "进度" | "プログレス" | "진행바" | "ความคืบหน้า" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,12.)? as f32;
-                let frac=self.arg_num(&args,4,0.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,5,th.accent);
-                self.draw_ui(&ling_ui::widgets::progress(x,y,w0,h0, frac, fill, th.track));
+            "ui_progress" | "进度" | "プログレス" | "진행바" | "ความคืบหน้า" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 200.)? as f32;
+                let h0 = self.arg_num(&args, 3, 12.)? as f32;
+                let frac = self.arg_num(&args, 4, 0.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 5, th.accent);
+                self.draw_ui(&ling_ui::widgets::progress(
+                    x, y, w0, h0, frac, fill, th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_tooltip" | "提示框" | "ツールチップ" | "툴팁" | "คำแนะนำ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::tooltip(x,y,w0,h0, prim, th.bg));
+            "ui_tooltip" | "提示框" | "ツールチップ" | "툴팁" | "คำแนะนำ" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 120.)? as f32;
+                let h0 = self.arg_num(&args, 3, 28.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::tooltip(x, y, w0, h0, prim, th.bg));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_stepper" | "步进器" | "ステッパー" | "스테퍼" | "ตัวปรับค่า" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,120.)? as f32; let h0=self.arg_num(&args,3,28.)? as f32;
-                let mut val=self.arg_num(&args,4,0.)? as f32; let step=self.arg_num(&args,5,1.)? as f32;
-                let (mx,my,down)=self.mouse_now();
-                let hm=ling_ui::holo::hit_rect(mx,my,x,y,h0,h0);
-                let hp=ling_ui::holo::hit_rect(mx,my,x+w0-h0,y,h0,h0);
-                if down && !self.mouse_was_down { if hm { val -= step; } if hp { val += step; } }
-                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::stepper(x,y,w0,h0, hm, hp, prim, th.track));
+            "ui_stepper" | "步进器" | "ステッパー" | "스테퍼" | "ตัวปรับค่า" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 120.)? as f32;
+                let h0 = self.arg_num(&args, 3, 28.)? as f32;
+                let mut val = self.arg_num(&args, 4, 0.)? as f32;
+                let step = self.arg_num(&args, 5, 1.)? as f32;
+                let (mx, my, down) = self.mouse_now();
+                let hm = ling_ui::holo::hit_rect(mx, my, x, y, h0, h0);
+                let hp = ling_ui::holo::hit_rect(mx, my, x + w0 - h0, y, h0, h0);
+                if down && !self.mouse_was_down {
+                    if hm {
+                        val -= step;
+                    }
+                    if hp {
+                        val += step;
+                    }
+                }
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::stepper(
+                    x, y, w0, h0, hm, hp, prim, th.track,
+                ));
                 return Ok(Value::Number(val as f64));
-            }
+            },
 
             // ── Game UI ──────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_healthbar" | "血条" | "体力バー" | "체력바" | "แถบพลังชีวิต" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,180.)? as f32; let h0=self.arg_num(&args,3,16.)? as f32;
-                let val=self.arg_num(&args,4,1.)? as f32; let max=self.arg_num(&args,5,1.)? as f32;
-                let pulse=self.arg_num(&args,6,0.)? as f32;
-                let th=self.ui_theme; let full=self.color_at(&args,7,th.accent);
-                self.draw_ui(&ling_ui::widgets::healthbar(x,y,w0,h0, val/max.max(1e-6), pulse, full, th.warn, th.track));
+            "ui_healthbar" | "血条" | "体力バー" | "체력바" | "แถบพลังชีวิต" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 180.)? as f32;
+                let h0 = self.arg_num(&args, 3, 16.)? as f32;
+                let val = self.arg_num(&args, 4, 1.)? as f32;
+                let max = self.arg_num(&args, 5, 1.)? as f32;
+                let pulse = self.arg_num(&args, 6, 0.)? as f32;
+                let th = self.ui_theme;
+                let full = self.color_at(&args, 7, th.accent);
+                self.draw_ui(&ling_ui::widgets::healthbar(
+                    x,
+                    y,
+                    w0,
+                    h0,
+                    val / max.max(1e-6),
+                    pulse,
+                    full,
+                    th.warn,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_cooldown" | "冷却" | "クールダウン" | "쿨다운" | "คูลดาวน์" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,28.)? as f32; let frac=self.arg_num(&args,3,0.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::cooldown(cx,cy,r, frac, fill, th.track));
+            "ui_cooldown" | "冷却" | "クールダウン" | "쿨다운" | "คูลดาวน์" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 28.)? as f32;
+                let frac = self.arg_num(&args, 3, 0.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::cooldown(cx, cy, r, frac, fill, th.track));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_counter" | "计数器" | "カウンター" | "카운터" | "ตัวนับ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let dw=self.arg_num(&args,2,14.)? as f32; let dh=self.arg_num(&args,3,24.)? as f32;
-                let val=self.arg_num(&args,4,0.)? as i64; let digits=self.arg_num(&args,5,4.)? as usize;
-                let th=self.ui_theme; let on=self.color_at(&args,6,th.primary);
-                let off=ling_ui::widgets::shade(th.track,0.5);
-                self.draw_ui(&ling_ui::widgets::counter(x,y,dw,dh, val, digits, on, off));
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let dw = self.arg_num(&args, 2, 14.)? as f32;
+                let dh = self.arg_num(&args, 3, 24.)? as f32;
+                let val = self.arg_num(&args, 4, 0.)? as i64;
+                let digits = self.arg_num(&args, 5, 4.)? as usize;
+                let th = self.ui_theme;
+                let on = self.color_at(&args, 6, th.primary);
+                let off = ling_ui::widgets::shade(th.track, 0.5);
+                self.draw_ui(&ling_ui::widgets::counter(
+                    x, y, dw, dh, val, digits, on, off,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_minimap" | "小地图" | "ミニマップ" | "미니맵" | "แผนที่ย่อ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,140.)? as f32; let h0=self.arg_num(&args,3,140.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,4,th.primary);
-                self.draw_ui(&ling_ui::widgets::minimap(x,y,w0,h0, prim, th.bg));
+            "ui_minimap" | "小地图" | "ミニマップ" | "미니맵" | "แผนที่ย่อ" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 140.)? as f32;
+                let h0 = self.arg_num(&args, 3, 140.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 4, th.primary);
+                self.draw_ui(&ling_ui::widgets::minimap(x, y, w0, h0, prim, th.bg));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_dpad" | "方向键" | "方向パッド" | "방향패드" | "ปุ่มทิศทาง" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,50.)? as f32;
-                let (mx,my,down)=self.mouse_now();
-                let mut dir=0;
+            "ui_dpad" | "方向键" | "方向パッド" | "방향패드" | "ปุ่มทิศทาง" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 50.)? as f32;
+                let (mx, my, down) = self.mouse_now();
+                let mut dir = 0;
                 if down {
-                    let (dx,dy)=(mx-cx, my-cy);
-                    if dx*dx+dy*dy <= r*r {
-                        if dx.abs() > dy.abs() { dir = if dx>0.0 {2} else {4}; }
-                        else { dir = if dy>0.0 {3} else {1}; }
+                    let (dx, dy) = (mx - cx, my - cy);
+                    if dx * dx + dy * dy <= r * r {
+                        if dx.abs() > dy.abs() {
+                            dir = if dx > 0.0 { 2 } else { 4 };
+                        } else {
+                            dir = if dy > 0.0 { 3 } else { 1 };
+                        }
                     }
                 }
-                let th=self.ui_theme; let prim=self.color_at(&args,3,th.primary);
-                self.draw_ui(&ling_ui::widgets::dpad(cx,cy,r, dir, prim, th.track));
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 3, th.primary);
+                self.draw_ui(&ling_ui::widgets::dpad(cx, cy, r, dir, prim, th.track));
                 return Ok(Value::Number(dir as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_slotgrid" | "物品格" | "スロットグリッド" | "슬롯격자" | "ช่องไอเทม" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let cols=self.arg_num(&args,2,4.)? as usize; let rows=self.arg_num(&args,3,1.)? as usize;
-                let cell=self.arg_num(&args,4,36.)? as f32; let sel=self.arg_num(&args,5,-1.)? as i32;
-                let th=self.ui_theme; let prim=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::slotgrid(x,y,cols,rows,cell, sel, prim, th.track));
+            "ui_slotgrid" | "物品格" | "スロットグリッド" | "슬롯격자" | "ช่องไอเทม" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let cols = self.arg_num(&args, 2, 4.)? as usize;
+                let rows = self.arg_num(&args, 3, 1.)? as usize;
+                let cell = self.arg_num(&args, 4, 36.)? as f32;
+                let sel = self.arg_num(&args, 5, -1.)? as i32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::slotgrid(
+                    x, y, cols, rows, cell, sel, prim, th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_vignette" | "暗角" | "ビネット" | "비네트" | "ขอบมืด" => {
-                let intensity=self.arg_num(&args,0,0.5)? as f32;
-                let (w,h)={ let g=self.gfx.borrow(); (g.width as f32, g.height as f32) };
-                let th=self.ui_theme; let col=self.color_at(&args,1,th.warn);
-                self.draw_ui(&ling_ui::widgets::vignette(w,h, intensity, col));
+                let intensity = self.arg_num(&args, 0, 0.5)? as f32;
+                let (w, h) = {
+                    let g = self.gfx.borrow();
+                    (g.width as f32, g.height as f32)
+                };
+                let th = self.ui_theme;
+                let col = self.color_at(&args, 1, th.warn);
+                self.draw_ui(&ling_ui::widgets::vignette(w, h, intensity, col));
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Faux-3D in 2D space ──────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_gauge3d" | "立体仪表" | "立体ゲージ" | "입체게이지" | "มาตรวัด3มิติ" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,50.)? as f32;
-                let val=self.arg_num(&args,3,0.)? as f32; let max=self.arg_num(&args,4,1.)? as f32;
-                let spin=self.arg_num(&args,5,0.)? as f32;
-                let th=self.ui_theme; let fill=self.color_at(&args,6,th.primary);
-                self.draw_ui(&ling_ui::widgets::gauge3d(cx,cy,r, val/max.max(1e-6), spin, fill, th.track));
+            "ui_gauge3d" | "立体仪表" | "立体ゲージ" | "입체게이지" | "มาตรวัด3มิติ" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 50.)? as f32;
+                let val = self.arg_num(&args, 3, 0.)? as f32;
+                let max = self.arg_num(&args, 4, 1.)? as f32;
+                let spin = self.arg_num(&args, 5, 0.)? as f32;
+                let th = self.ui_theme;
+                let fill = self.color_at(&args, 6, th.primary);
+                self.draw_ui(&ling_ui::widgets::gauge3d(
+                    cx,
+                    cy,
+                    r,
+                    val / max.max(1e-6),
+                    spin,
+                    fill,
+                    th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_panel3d" | "立体面板" | "立体パネル" | "입체패널" | "แผง3มิติ" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let w0=self.arg_num(&args,2,200.)? as f32; let h0=self.arg_num(&args,3,120.)? as f32;
-                let depth=self.arg_num(&args,4,14.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::panel3d(x,y,w0,h0,depth, prim, th.bg));
+            "ui_panel3d" | "立体面板" | "立体パネル" | "입체패널" | "แผง3มิติ" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let w0 = self.arg_num(&args, 2, 200.)? as f32;
+                let h0 = self.arg_num(&args, 3, 120.)? as f32;
+                let depth = self.arg_num(&args, 4, 14.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::panel3d(x, y, w0, h0, depth, prim, th.bg));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_radar3d" | "立体雷达" | "立体レーダー" | "입체레이더" | "เรดาร์3มิติ" => {
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32;
-                let r=self.arg_num(&args,2,60.)? as f32; let tilt=self.arg_num(&args,3,0.9)? as f32;
-                let sweep=self.arg_num(&args,4,0.)? as f32;
-                let th=self.ui_theme; let prim=self.color_at(&args,5,th.primary);
-                self.draw_ui(&ling_ui::widgets::radar3d(cx,cy,r,tilt,sweep, prim, th.track));
+            "ui_radar3d" | "立体雷达" | "立体レーダー" | "입체레이더" | "เรดาร์3มิติ" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let r = self.arg_num(&args, 2, 60.)? as f32;
+                let tilt = self.arg_num(&args, 3, 0.9)? as f32;
+                let sweep = self.arg_num(&args, 4, 0.)? as f32;
+                let th = self.ui_theme;
+                let prim = self.color_at(&args, 5, th.primary);
+                self.draw_ui(&ling_ui::widgets::radar3d(
+                    cx, cy, r, tilt, sweep, prim, th.track,
+                ));
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── Interface sounds ─────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ" => {
-                let freq=self.arg_num(&args,0,660.)? as f32;
-                let dur=self.arg_num(&args,1,0.08)? as f32;
-                let wave=Wave::from_name(&self.arg_str(&args,2,"sine"));
-                let amp=self.arg_num(&args,3,0.25)? as f32;
-                if let Some(audio)=&self.audio { audio.blip(freq, amp, dur, wave); }
+            "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ" =>
+            {
+                let freq = self.arg_num(&args, 0, 660.)? as f32;
+                let dur = self.arg_num(&args, 1, 0.08)? as f32;
+                let wave = Wave::from_name(&self.arg_str(&args, 2, "sine"));
+                let amp = self.arg_num(&args, 3, 0.25)? as f32;
+                if let Some(audio) = &self.audio {
+                    audio.blip(freq, amp, dur, wave);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม" => {
-                let name=self.arg_str(&args,0,"click");
-                if let Some(audio)=&self.audio {
+            "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม" =>
+            {
+                let name = self.arg_str(&args, 0, "click");
+                if let Some(audio) = &self.audio {
                     match name.as_str() {
-                        "hover"   => audio.blip(880.0, 0.10, 0.04, Wave::Sine),
-                        "confirm" => { audio.blip(660.0, 0.22, 0.07, Wave::Square); audio.blip(990.0, 0.18, 0.10, Wave::Square); }
-                        "error"   => { audio.blip(180.0, 0.30, 0.16, Wave::Saw); audio.blip(140.0, 0.30, 0.18, Wave::Saw); }
-                        "toggle"  => audio.blip(520.0, 0.22, 0.05, Wave::Triangle),
-                        "tick"    => audio.blip(1500.0, 0.12, 0.02, Wave::Square),
-                        _         => audio.blip(720.0, 0.26, 0.05, Wave::Square), // "click"
+                        "hover" => audio.blip(880.0, 0.10, 0.04, Wave::Sine),
+                        "confirm" => {
+                            audio.blip(660.0, 0.22, 0.07, Wave::Square);
+                            audio.blip(990.0, 0.18, 0.10, Wave::Square);
+                        },
+                        "error" => {
+                            audio.blip(180.0, 0.30, 0.16, Wave::Saw);
+                            audio.blip(140.0, 0.30, 0.18, Wave::Saw);
+                        },
+                        "toggle" => audio.blip(520.0, 0.22, 0.05, Wave::Triangle),
+                        "tick" => audio.blip(1500.0, 0.12, 0.02, Wave::Square),
+                        _ => audio.blip(720.0, 0.26, 0.05, Wave::Square), // "click"
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // MUSIC TOOLKIT  (crates/ling-music) — decode · analysis · GM synth ·
@@ -4724,213 +6447,360 @@ impl Interpreter {
 
             // music_load(path) -> track handle (decodes WAV/FLAC/OGG/MP3/AAC)
             #[cfg(not(target_arch = "wasm32"))]
-            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" => {
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
                 match ling_music::load(&resolved) {
-                    Ok(t) => { let id = self.tracks.len(); self.tracks.push(t); return Ok(Value::Number(id as f64)); }
-                    Err(e) => { eprintln!("music_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                    Ok(t) => {
+                        let id = self.tracks.len();
+                        self.tracks.push(t);
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("music_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
                 }
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let d = self.tracks.get(id as usize).map(|t| t.duration).unwrap_or(0.0);
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let d = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| t.duration)
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(d as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let b = self.tracks.get(id as usize).map(|t| ling_music::analysis::bpm(&t.mono, t.rate)).unwrap_or(0.0);
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let b = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::bpm(&t.mono, t.rate))
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(b as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let k = self.tracks.get(id as usize).map(|t| ling_music::analysis::key_name(&t.mono, t.rate)).unwrap_or_default();
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let k = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::key_name(&t.mono, t.rate))
+                    .unwrap_or_default();
                 return Ok(Value::Str(k));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let v = self.tracks.get(id as usize).map(|t| ling_music::analysis::onsets(&t.mono, t.rate)).unwrap_or_default();
-                return Ok(Value::List(v.into_iter().map(|x| Value::Number(x as f64)).collect()));
-            }
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let v = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::onsets(&t.mono, t.rate))
+                    .unwrap_or_default();
+                return Ok(Value::List(
+                    v.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                ));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let beats = self.tracks.get(id as usize).map(|t| {
-                    let b = ling_music::analysis::bpm(&t.mono, t.rate);
-                    ling_music::analysis::beat_grid(&t.mono, t.rate, b)
-                }).unwrap_or_default();
-                return Ok(Value::List(beats.into_iter().map(|x| Value::Number(x as f64)).collect()));
-            }
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let beats = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| {
+                        let b = ling_music::analysis::bpm(&t.mono, t.rate);
+                        ling_music::analysis::beat_grid(&t.mono, t.rate, b)
+                    })
+                    .unwrap_or_default();
+                return Ok(Value::List(
+                    beats.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                ));
+            },
 
             // ── playback ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
                 if self.ensure_music() {
-                    let track = self.tracks.get(id as usize).map(|t| (t.stereo.clone(), t.rate));
-                    if let (Some((st, rate)), Some(m)) = (track, &self.music) { m.set_track(st, rate); m.play(); }
-                    else if let Some(m) = &self.music { m.play(); }
+                    let track = self
+                        .tracks
+                        .get(id as usize)
+                        .map(|t| (t.stereo.clone(), t.rate));
+                    if let (Some((st, rate)), Some(m)) = (track, &self.music) {
+                        m.set_track(st, rate);
+                        m.play();
+                    } else if let Some(m) = &self.music {
+                        m.play();
+                    }
                 }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว" => {
-                if let Some(m) = &self.music { m.pause(); } return Ok(Value::Unit);
-            }
+            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว" =>
+            {
+                if let Some(m) = &self.music {
+                    m.pause();
+                }
+                return Ok(Value::Unit);
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" => {
-                if let Some(m) = &self.music { m.stop(); } return Ok(Value::Unit);
-            }
+            "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" =>
+            {
+                if let Some(m) = &self.music {
+                    m.stop();
+                }
+                return Ok(Value::Unit);
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" => {
-                let sec = self.arg_num(&args,0,0.0)? as f32;
-                if let Some(m) = &self.music { m.seek(sec); } return Ok(Value::Unit);
-            }
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" =>
+            {
+                let sec = self.arg_num(&args, 0, 0.0)? as f32;
+                if let Some(m) = &self.music {
+                    m.seek(sec);
+                }
+                return Ok(Value::Unit);
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" => {
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" =>
+            {
                 let p = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
                 return Ok(Value::Number(p as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" => {
-                let v = self.arg_num(&args,0,0.8)? as f32;
-                if self.ensure_music() { if let Some(m) = &self.music { m.set_volume(v); } }
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" =>
+            {
+                let v = self.arg_num(&args, 0, 0.8)? as f32;
+                if self.ensure_music() {
+                    if let Some(m) = &self.music {
+                        m.set_volume(v);
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── synthesis (GM-capable, patches from .ling files) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี" => {
+            "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
-                if !self.ensure_music() { return Ok(Value::Number(-1.0)); }
-                match ling_music::patch::from_path(&resolved) {
-                    Ok(p) => { let id = self.music.as_ref().unwrap().add_patch(p); return Ok(Value::Number(id as f64)); }
-                    Err(e) => { eprintln!("music_patch failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
+                if !self.ensure_music() {
+                    return Ok(Value::Number(-1.0));
                 }
-            }
+                match ling_music::patch::from_path(&resolved) {
+                    Ok(p) => {
+                        let id = self.music.as_ref().unwrap().add_patch(p);
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("music_patch failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
+                }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต" => {
-                let inst = self.arg_num(&args,0,0.0)? as usize;
+            "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต" =>
+            {
+                let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
-                let dur  = self.arg_num(&args,2,0.5)? as f32;
-                let vel  = self.arg_num(&args,3,0.9)? as f32;
-                if self.ensure_music() { if let Some(m) = &self.music { m.note(inst, midi, vel, dur); } }
+                let dur = self.arg_num(&args, 2, 0.5)? as f32;
+                let vel = self.arg_num(&args, 3, 0.9)? as f32;
+                if self.ensure_music() {
+                    if let Some(m) = &self.music {
+                        m.note(inst, midi, vel, dur);
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม" => {
-                let inst = self.arg_num(&args,0,0.0)? as usize;
+            "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม" =>
+            {
+                let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
-                let vel  = self.arg_num(&args,2,0.9)? as f32;
-                if self.ensure_music() { if let Some(m) = &self.music { m.note_on(inst, midi, vel); } }
+                let vel = self.arg_num(&args, 2, 0.9)? as f32;
+                if self.ensure_music() {
+                    if let Some(m) = &self.music {
+                        m.note_on(inst, midi, vel);
+                    }
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" => {
-                let inst = self.arg_num(&args,0,0.0)? as usize;
+            "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" =>
+            {
+                let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
-                if let Some(m) = &self.music { m.note_off(inst, midi); }
+                if let Some(m) = &self.music {
+                    m.note_off(inst, midi);
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── rhythm-game judging ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" => {
-                let delta_ms = self.arg_num(&args,0,9999.0)? as f32;
-                return Ok(Value::Number(ling_music::Grade::judge(delta_ms).index() as f64));
-            }
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" =>
+            {
+                let delta_ms = self.arg_num(&args, 0, 9999.0)? as f32;
+                return Ok(Value::Number(
+                    ling_music::Grade::judge(delta_ms).index() as f64
+                ));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
-                let idx = self.arg_num(&args,0,4.0)? as i32;
-                return Ok(Value::Str(ling_music::Grade::from_index(idx).name().to_string()));
-            }
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" =>
+            {
+                let idx = self.arg_num(&args, 0, 4.0)? as i32;
+                return Ok(Value::Str(
+                    ling_music::Grade::from_index(idx).name().to_string(),
+                ));
+            },
 
             // ── karaoke ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" => {
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
                 match std::fs::read_to_string(&resolved) {
-                    Ok(text) => { let id = self.lyrics.len(); self.lyrics.push(ling_music::Lyrics::parse(&text)); return Ok(Value::Number(id as f64)); }
-                    Err(e) => { eprintln!("music_lrc failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                    Ok(text) => {
+                        let id = self.lyrics.len();
+                        self.lyrics.push(ling_music::Lyrics::parse(&text));
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("music_lrc failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
                 }
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let t  = self.arg_num(&args,1,0.0)? as f32;
-                let line = self.lyrics.get(id as usize).map(|l| l.line_at(t).to_string()).unwrap_or_default();
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let t = self.arg_num(&args, 1, 0.0)? as f32;
+                let line = self
+                    .lyrics
+                    .get(id as usize)
+                    .map(|l| l.line_at(t).to_string())
+                    .unwrap_or_default();
                 return Ok(Value::Str(line));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์" => {
+            "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์" =>
+            {
                 let hz = if let Some(mic) = self.mic.as_ref() {
                     let s = mic.latest_samples();
                     let rate = mic.sample_rate();
                     ling_music::pitch::detect(&s, rate).unwrap_or(0.0)
-                } else { 0.0 };
+                } else {
+                    0.0
+                };
                 return Ok(Value::Number(hz as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" => {
-                let hz = self.arg_num(&args,0,0.0)? as f32;
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" =>
+            {
+                let hz = self.arg_num(&args, 0, 0.0)? as f32;
                 return Ok(Value::Str(ling_music::note::hz_to_name(hz)));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" => {
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" =>
+            {
                 let midi = self.pitch_arg(&args, 0, 69);
-                return Ok(Value::Number(ling_music::note::midi_to_hz(midi as f32) as f64));
-            }
+                return Ok(Value::Number(
+                    ling_music::note::midi_to_hz(midi as f32) as f64
+                ));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" => {
-                let hz = self.arg_num(&args,0,0.0)? as f32;
-                let target = self.arg_num(&args,1,0.0)? as f32;
-                return Ok(Value::Number(ling_music::karaoke::pitch_score(hz, target) as f64));
-            }
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" =>
+            {
+                let hz = self.arg_num(&args, 0, 0.0)? as f32;
+                let target = self.arg_num(&args, 1, 0.0)? as f32;
+                return Ok(Value::Number(
+                    ling_music::karaoke::pitch_score(hz, target) as f64
+                ));
+            },
 
             // ── MIDI (inaudible note source: drive coins, cues, etc.) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
                 match ling_music::midi::load(&resolved) {
-                    Ok(m) => { let id = self.midis.len(); self.midis.push(m); return Ok(Value::Number(id as f64)); }
-                    Err(e) => { eprintln!("music_midi_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                    Ok(m) => {
+                        let id = self.midis.len();
+                        self.midis.push(m);
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("music_midi_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
                 }
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let n = self.midis.get(id as usize).map(|m| m.notes.len()).unwrap_or(0);
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let n = self
+                    .midis
+                    .get(id as usize)
+                    .map(|m| m.notes.len())
+                    .unwrap_or(0);
                 return Ok(Value::Number(n as f64));
-            }
+            },
             // music_midi_notes(id) -> flat [time, midi, time, midi, …]
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
                 if let Some(m) = self.midis.get(id as usize) {
-                    for n in &m.notes { out.push(Value::Number(n.time as f64)); out.push(Value::Number(n.midi as f64)); }
+                    for n in &m.notes {
+                        out.push(Value::Number(n.time as f64));
+                        out.push(Value::Number(n.midi as f64));
+                    }
                 }
                 return Ok(Value::List(out));
-            }
+            },
             // music_midi_bars(id) -> flat [time, midi, dur, …] (for karaoke note bars)
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
                 if let Some(m) = self.midis.get(id as usize) {
                     for n in &m.notes {
@@ -4940,13 +6810,14 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::List(out));
-            }
+            },
 
             // music_fft(track_id, nbands) -> spectrum at the current playback position
             #[cfg(not(target_arch = "wasm32"))]
-            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
-                let id = self.arg_num(&args,0,0.0)? as i64;
-                let nbands = self.arg_num(&args,1,16.0)? as usize;
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let nbands = self.arg_num(&args, 1, 16.0)? as usize;
                 let pos = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
                 if let Some(t) = self.tracks.get(id as usize) {
                     let idx = (pos * t.rate as f32) as usize;
@@ -4956,68 +6827,109 @@ impl Interpreter {
                     }
                 }
                 let bands = self.fft.borrow().freq_bands(nbands);
-                return Ok(Value::List(bands.into_iter().map(|x| Value::Number(x as f64)).collect()));
-            }
+                return Ok(Value::List(
+                    bands.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                ));
+            },
 
             // ── spatial (2D/3D/4D) one-shot SFX ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" => {
-                let x=self.arg_num(&args,0,0.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32; let z=self.arg_num(&args,2,0.0)? as f32;
-                let w=self.arg_num(&args,3,1.0)? as f32; let freq=self.arg_num(&args,4,440.0)? as f32;
-                let amp=self.arg_num(&args,5,0.3)? as f32; let dur=self.arg_num(&args,6,0.15)? as f32;
-                let wave=Wave::from_name(&self.arg_str(&args,7,"sine"));
-                if let Some(a)=&self.audio { a.sfx(x,y,z,w,freq,amp,dur,wave); }
+            "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                let w = self.arg_num(&args, 3, 1.0)? as f32;
+                let freq = self.arg_num(&args, 4, 440.0)? as f32;
+                let amp = self.arg_num(&args, 5, 0.3)? as f32;
+                let dur = self.arg_num(&args, 6, 0.15)? as f32;
+                let wave = Wave::from_name(&self.arg_str(&args, 7, "sine"));
+                if let Some(a) = &self.audio {
+                    a.sfx(x, y, z, w, freq, amp, dur, wave);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             // ── sample load / positional play / loop / stop ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" => {
+            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
                 match ling_music::load(&resolved) {
                     Ok(t) => {
-                        if let Some(a)=&self.audio { return Ok(Value::Number(a.add_sample(t.mono, t.rate) as f64)); }
+                        if let Some(a) = &self.audio {
+                            return Ok(Value::Number(a.add_sample(t.mono, t.rate) as f64));
+                        }
                         return Ok(Value::Number(-1.0));
-                    }
-                    Err(e) => { eprintln!("audio_sample_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                    },
+                    Err(e) => {
+                        eprintln!("audio_sample_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
                 }
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" => {
-                let id=self.arg_num(&args,0,0.0)? as usize;
-                let x=self.arg_num(&args,1,0.0)? as f32; let y=self.arg_num(&args,2,0.0)? as f32; let z=self.arg_num(&args,3,0.0)? as f32;
-                let w=self.arg_num(&args,4,1.0)? as f32; let vol=self.arg_num(&args,5,1.0)? as f32;
-                let looping=self.arg_num(&args,6,0.0)? > 0.5;
-                let v = self.audio.as_ref().map(|a| a.play_sample(id,x,y,z,w,vol,looping)).unwrap_or(0);
+            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as usize;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
+                let z = self.arg_num(&args, 3, 0.0)? as f32;
+                let w = self.arg_num(&args, 4, 1.0)? as f32;
+                let vol = self.arg_num(&args, 5, 1.0)? as f32;
+                let looping = self.arg_num(&args, 6, 0.0)? > 0.5;
+                let v = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.play_sample(id, x, y, z, w, vol, looping))
+                    .unwrap_or(0);
                 return Ok(Value::Number(v as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" => {
-                let v=self.arg_num(&args,0,0.0)? as u32;
-                if let Some(a)=&self.audio { a.stop_sample(v); }
+            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" =>
+            {
+                let v = self.arg_num(&args, 0, 0.0)? as u32;
+                if let Some(a) = &self.audio {
+                    a.stop_sample(v);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             // ── master FX: delay / reverb / low-pass (underwater) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน" => {
-                let time=self.arg_num(&args,0,0.3)? as f32; let fb=self.arg_num(&args,1,0.3)? as f32; let mix=self.arg_num(&args,2,0.3)? as f32;
-                if let Some(a)=&self.audio { a.fx_delay(time,fb,mix); }
+            "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน" =>
+            {
+                let time = self.arg_num(&args, 0, 0.3)? as f32;
+                let fb = self.arg_num(&args, 1, 0.3)? as f32;
+                let mix = self.arg_num(&args, 2, 0.3)? as f32;
+                if let Some(a) = &self.audio {
+                    a.fx_delay(time, fb, mix);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง" => {
-                let mix=self.arg_num(&args,0,0.3)? as f32;
-                if let Some(a)=&self.audio { a.fx_reverb(mix); }
+            "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง" =>
+            {
+                let mix = self.arg_num(&args, 0, 0.3)? as f32;
+                if let Some(a) = &self.audio {
+                    a.fx_reverb(mix);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" => {
-                let cutoff=self.arg_num(&args,0,1.0)? as f32;
-                if let Some(a)=&self.audio { a.fx_lowpass(cutoff); }
+            "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" =>
+            {
+                let cutoff = self.arg_num(&args, 0, 1.0)? as f32;
+                if let Some(a) = &self.audio {
+                    a.fx_lowpass(cutoff);
+                }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // PHYSICS BUILTINS  (crates/ling-physics) — soft bodies, rigid+angular,
@@ -5026,180 +6938,314 @@ impl Interpreter {
 
             // ── soft bodies (deformable bouncy balls) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_ball" | "软球" | "ソフトボール" | "소프트볼" | "ลูกบอลนุ่ม" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32; let z=self.arg_num(&args,2,0.)? as f32;
-                let r=self.arg_num(&args,3,1.0)? as f32;
-                let b = ling_physics::soft::SoftBody::sphere(ling_physics::Vec3::new(x,y,z), r, 8, 12, 1.0);
-                let id = self.soft_bodies.len(); self.soft_bodies.push(b);
+            "soft_ball" | "软球" | "ソフトボール" | "소프트볼" | "ลูกบอลนุ่ม" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let z = self.arg_num(&args, 2, 0.)? as f32;
+                let r = self.arg_num(&args, 3, 1.0)? as f32;
+                let b = ling_physics::soft::SoftBody::sphere(
+                    ling_physics::Vec3::new(x, y, z),
+                    r,
+                    8,
+                    12,
+                    1.0,
+                );
+                let id = self.soft_bodies.len();
+                self.soft_bodies.push(b);
                 return Ok(Value::Number(id as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_step" | "软体步进" | "ソフト更新" | "소프트스텝" | "ก้าวนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize; let dt=self.arg_num(&args,1,0.016)? as f32;
-                let gy=self.arg_num(&args,2,15.0)? as f32;
-                if let Some(b)=self.soft_bodies.get_mut(id) { b.integrate(dt, ling_physics::Vec3::new(0.0,gy,0.0), 4); }
+            "soft_step" | "软体步进" | "ソフト更新" | "소프트스텝" | "ก้าวนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let dt = self.arg_num(&args, 1, 0.016)? as f32;
+                let gy = self.arg_num(&args, 2, 15.0)? as f32;
+                if let Some(b) = self.soft_bodies.get_mut(id) {
+                    b.integrate(dt, ling_physics::Vec3::new(0.0, gy, 0.0), 4);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_bounce" | "软体落地" | "ソフト着地" | "소프트바운스" | "เด้งนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize; let fy=self.arg_num(&args,1,0.)? as f32; let rest=self.arg_num(&args,2,0.5)? as f32;
-                if let Some(b)=self.soft_bodies.get_mut(id) { b.floor_collision(fy, rest); }
+            "soft_bounce" | "软体落地" | "ソフト着地" | "소프트바운스" | "เด้งนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let fy = self.arg_num(&args, 1, 0.)? as f32;
+                let rest = self.arg_num(&args, 2, 0.5)? as f32;
+                if let Some(b) = self.soft_bodies.get_mut(id) {
+                    b.floor_collision(fy, rest);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_contain" | "软体边界" | "ソフト箱" | "소프트경계" | "กล่องนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let nx=self.arg_num(&args,1,-5.)? as f32; let ny=self.arg_num(&args,2,-5.)? as f32; let nz=self.arg_num(&args,3,-5.)? as f32;
-                let mx=self.arg_num(&args,4,5.)? as f32; let my=self.arg_num(&args,5,5.)? as f32; let mz=self.arg_num(&args,6,5.)? as f32;
-                let rest=self.arg_num(&args,7,0.6)? as f32;
-                if let Some(b)=self.soft_bodies.get_mut(id) { b.contain(ling_physics::Vec3::new(nx,ny,nz), ling_physics::Vec3::new(mx,my,mz), rest); }
+            "soft_contain" | "软体边界" | "ソフト箱" | "소프트경계" | "กล่องนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let nx = self.arg_num(&args, 1, -5.)? as f32;
+                let ny = self.arg_num(&args, 2, -5.)? as f32;
+                let nz = self.arg_num(&args, 3, -5.)? as f32;
+                let mx = self.arg_num(&args, 4, 5.)? as f32;
+                let my = self.arg_num(&args, 5, 5.)? as f32;
+                let mz = self.arg_num(&args, 6, 5.)? as f32;
+                let rest = self.arg_num(&args, 7, 0.6)? as f32;
+                if let Some(b) = self.soft_bodies.get_mut(id) {
+                    b.contain(
+                        ling_physics::Vec3::new(nx, ny, nz),
+                        ling_physics::Vec3::new(mx, my, mz),
+                        rest,
+                    );
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_kick" | "软体踢" | "ソフト衝撃" | "소프트킥" | "เตะนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let dx=self.arg_num(&args,1,0.)? as f32; let dy=self.arg_num(&args,2,0.)? as f32; let dz=self.arg_num(&args,3,0.)? as f32;
-                let s=self.arg_num(&args,4,0.1)? as f32;
-                if let Some(b)=self.soft_bodies.get_mut(id) { b.kick(ling_physics::Vec3::new(dx,dy,dz), s); }
+            "soft_kick" | "软体踢" | "ソフト衝撃" | "소프트킥" | "เตะนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let dx = self.arg_num(&args, 1, 0.)? as f32;
+                let dy = self.arg_num(&args, 2, 0.)? as f32;
+                let dz = self.arg_num(&args, 3, 0.)? as f32;
+                let s = self.arg_num(&args, 4, 0.1)? as f32;
+                if let Some(b) = self.soft_bodies.get_mut(id) {
+                    b.kick(ling_physics::Vec3::new(dx, dy, dz), s);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             // soft_spin(id, ax, ay, az, rate) — add angular velocity about the axis
             // through the centroid (rate = rad/step; ≈ surface_speed / radius to roll)
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_spin" | "软体自旋" | "ソフト回転" | "소프트회전" | "หมุนนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let ax=self.arg_num(&args,1,0.)? as f32; let ay=self.arg_num(&args,2,0.)? as f32; let az=self.arg_num(&args,3,0.)? as f32;
-                let rate=self.arg_num(&args,4,0.1)? as f32;
-                if let Some(b)=self.soft_bodies.get_mut(id) { b.spin(ling_physics::Vec3::new(ax,ay,az), rate); }
+            "soft_spin" | "软体自旋" | "ソフト回転" | "소프트회전" | "หมุนนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let ax = self.arg_num(&args, 1, 0.)? as f32;
+                let ay = self.arg_num(&args, 2, 0.)? as f32;
+                let az = self.arg_num(&args, 3, 0.)? as f32;
+                let rate = self.arg_num(&args, 4, 0.1)? as f32;
+                if let Some(b) = self.soft_bodies.get_mut(id) {
+                    b.spin(ling_physics::Vec3::new(ax, ay, az), rate);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_deform" | "形变量" | "変形量" | "변형량" | "ความบิดเบี้ยว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let d=self.soft_bodies.get(id).map(|b| b.deformation()).unwrap_or(0.0);
+            "soft_deform" | "形变量" | "変形量" | "변형량" | "ความบิดเบี้ยว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let d = self
+                    .soft_bodies
+                    .get(id)
+                    .map(|b| b.deformation())
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(d as f64));
-            }
+            },
             // soft_angular_speed(id) -> magnitude of the body's angular velocity
             // (how fast it is tumbling/rolling), derived from its node velocities.
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_angular_speed" | "软体角速" | "ソフト角速度" | "소프트각속도" | "ความเร็วเชิงมุมนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let w=self.soft_bodies.get(id).map(|b| b.angular_speed()).unwrap_or(0.0);
+            "soft_angular_speed"
+            | "软体角速"
+            | "ソフト角速度"
+            | "소프트각속도"
+            | "ความเร็วเชิงมุมนุ่ม" => {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let w = self
+                    .soft_bodies
+                    .get(id)
+                    .map(|b| b.angular_speed())
+                    .unwrap_or(0.0);
                 return Ok(Value::Number(w as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let c=self.soft_bodies.get(id).map(|b| b.centroid()).unwrap_or(ling_physics::Vec3::ZERO);
-                return Ok(Value::List(vec![Value::Number(c.x as f64),Value::Number(c.y as f64),Value::Number(c.z as f64)]));
-            }
+            "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let c = self
+                    .soft_bodies
+                    .get(id)
+                    .map(|b| b.centroid())
+                    .unwrap_or(ling_physics::Vec3::ZERO);
+                return Ok(Value::List(vec![
+                    Value::Number(c.x as f64),
+                    Value::Number(c.y as f64),
+                    Value::Number(c.z as f64),
+                ]));
+            },
             // soft_nodes(id) -> flat [x,y,z, x,y,z, …] for rendering the deformed mesh
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_nodes" | "软体节点" | "ソフト節点" | "소프트노드" | "จุดนุ่ม" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let mut out=Vec::new();
-                if let Some(b)=self.soft_bodies.get(id) {
-                    for n in &b.nodes { out.push(Value::Number(n.pos.x as f64)); out.push(Value::Number(n.pos.y as f64)); out.push(Value::Number(n.pos.z as f64)); }
+            "soft_nodes" | "软体节点" | "ソフト節点" | "소프트노드" | "จุดนุ่ม" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let mut out = Vec::new();
+                if let Some(b) = self.soft_bodies.get(id) {
+                    for n in &b.nodes {
+                        out.push(Value::Number(n.pos.x as f64));
+                        out.push(Value::Number(n.pos.y as f64));
+                        out.push(Value::Number(n.pos.z as f64));
+                    }
                 }
                 return Ok(Value::List(out));
-            }
+            },
 
             // ── rigid bodies with angular dynamics ──
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_add" | "刚体添加" | "剛体追加" | "강체추가" | "เพิ่มวัตถุแข็ง" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32; let z=self.arg_num(&args,2,0.)? as f32;
-                let mass=self.arg_num(&args,3,1.0)? as f32;
-                let mut b = ling_physics::rigid::RigidBody::new(ling_physics::Vec3::new(x,y,z), mass);
+            "rb_add" | "刚体添加" | "剛体追加" | "강체추가" | "เพิ่มวัตถุแข็ง" =>
+            {
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let z = self.arg_num(&args, 2, 0.)? as f32;
+                let mass = self.arg_num(&args, 3, 1.0)? as f32;
+                let mut b =
+                    ling_physics::rigid::RigidBody::new(ling_physics::Vec3::new(x, y, z), mass);
                 b.restitution = 0.6;
                 return Ok(Value::Number(self.rigid_world.add(b) as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "rb_torque" | "扭矩" | "トルク" | "토크" | "แรงบิด" => {
-                let i=self.arg_num(&args,0,0.)? as usize;
-                let tx=self.arg_num(&args,1,0.)? as f32; let ty=self.arg_num(&args,2,0.)? as f32; let tz=self.arg_num(&args,3,0.)? as f32;
-                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_torque(ling_physics::Vec3::new(tx,ty,tz)); }
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let tx = self.arg_num(&args, 1, 0.)? as f32;
+                let ty = self.arg_num(&args, 2, 0.)? as f32;
+                let tz = self.arg_num(&args, 3, 0.)? as f32;
+                if let Some(b) = self.rigid_world.bodies.get_mut(i) {
+                    b.apply_torque(ling_physics::Vec3::new(tx, ty, tz));
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "rb_spin" | "自旋" | "スピン" | "스핀" | "หมุน" => {
-                let i=self.arg_num(&args,0,0.)? as usize;
-                let wx=self.arg_num(&args,1,0.)? as f32; let wy=self.arg_num(&args,2,0.)? as f32; let wz=self.arg_num(&args,3,0.)? as f32;
-                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_spin(ling_physics::Vec3::new(wx,wy,wz)); }
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let wx = self.arg_num(&args, 1, 0.)? as f32;
+                let wy = self.arg_num(&args, 2, 0.)? as f32;
+                let wz = self.arg_num(&args, 3, 0.)? as f32;
+                if let Some(b) = self.rigid_world.bodies.get_mut(i) {
+                    b.apply_spin(ling_physics::Vec3::new(wx, wy, wz));
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_impulse" | "刚体冲量" | "剛体インパルス" | "강체충격" | "แรงดลแข็ง" => {
-                let i=self.arg_num(&args,0,0.)? as usize;
-                let ix=self.arg_num(&args,1,0.)? as f32; let iy=self.arg_num(&args,2,0.)? as f32; let iz=self.arg_num(&args,3,0.)? as f32;
-                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.apply_impulse(ling_physics::Vec3::new(ix,iy,iz)); }
+            "rb_impulse" | "刚体冲量" | "剛体インパルス" | "강체충격" | "แรงดลแข็ง" =>
+            {
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let ix = self.arg_num(&args, 1, 0.)? as f32;
+                let iy = self.arg_num(&args, 2, 0.)? as f32;
+                let iz = self.arg_num(&args, 3, 0.)? as f32;
+                if let Some(b) = self.rigid_world.bodies.get_mut(i) {
+                    b.apply_impulse(ling_physics::Vec3::new(ix, iy, iz));
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_floor" | "刚体落地" | "剛体着地" | "강체바닥" | "พื้นแข็ง" => {
-                let i=self.arg_num(&args,0,0.)? as usize; let fy=self.arg_num(&args,1,0.)? as f32;
-                let rest=self.arg_num(&args,2,0.6)? as f32; let fric=self.arg_num(&args,3,0.6)? as f32;
-                if let Some(b)=self.rigid_world.bodies.get_mut(i) { b.bounce_floor(fy, rest, fric); }
+            "rb_floor" | "刚体落地" | "剛体着地" | "강체바닥" | "พื้นแข็ง" =>
+            {
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let fy = self.arg_num(&args, 1, 0.)? as f32;
+                let rest = self.arg_num(&args, 2, 0.6)? as f32;
+                let fric = self.arg_num(&args, 3, 0.6)? as f32;
+                if let Some(b) = self.rigid_world.bodies.get_mut(i) {
+                    b.bounce_floor(fy, rest, fric);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_gravity" | "刚体重力" | "剛体重力" | "강체중력" | "แรงโน้มถ่วงแข็ง" => {
-                let gx=self.arg_num(&args,0,0.)? as f32; let gy=self.arg_num(&args,1,9.81)? as f32; let gz=self.arg_num(&args,2,0.)? as f32;
-                self.rigid_world.gravity = ling_physics::Vec3::new(gx,gy,gz);
+            "rb_gravity" | "刚体重力" | "剛体重力" | "강체중력" | "แรงโน้มถ่วงแข็ง" =>
+            {
+                let gx = self.arg_num(&args, 0, 0.)? as f32;
+                let gy = self.arg_num(&args, 1, 9.81)? as f32;
+                let gz = self.arg_num(&args, 2, 0.)? as f32;
+                self.rigid_world.gravity = ling_physics::Vec3::new(gx, gy, gz);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_step" | "刚体步进" | "剛体更新" | "강체스텝" | "ก้าวแข็ง" => {
-                let dt=self.arg_num(&args,0,0.016)? as f32;
+            "rb_step" | "刚体步进" | "剛体更新" | "강체스텝" | "ก้าวแข็ง" =>
+            {
+                let dt = self.arg_num(&args, 0, 0.016)? as f32;
                 self.rigid_world.step(dt);
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_pos" | "刚体位置" | "剛体位置" | "강체위치" | "ตำแหน่งแข็ง" => {
-                let i=self.arg_num(&args,0,0.)? as usize;
-                let p=self.rigid_world.bodies.get(i).map(|b| b.pos).unwrap_or(ling_physics::Vec3::ZERO);
-                return Ok(Value::List(vec![Value::Number(p.x as f64),Value::Number(p.y as f64),Value::Number(p.z as f64)]));
-            }
+            "rb_pos" | "刚体位置" | "剛体位置" | "강체위치" | "ตำแหน่งแข็ง" =>
+            {
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let p = self
+                    .rigid_world
+                    .bodies
+                    .get(i)
+                    .map(|b| b.pos)
+                    .unwrap_or(ling_physics::Vec3::ZERO);
+                return Ok(Value::List(vec![
+                    Value::Number(p.x as f64),
+                    Value::Number(p.y as f64),
+                    Value::Number(p.z as f64),
+                ]));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" => {
-                let i=self.arg_num(&args,0,0.)? as usize;
-                let q=self.rigid_world.bodies.get(i).map(|b| b.orientation).unwrap_or(ling_physics::Quat::IDENTITY);
-                return Ok(Value::List(vec![Value::Number(q.x as f64),Value::Number(q.y as f64),Value::Number(q.z as f64),Value::Number(q.w as f64)]));
-            }
+            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" =>
+            {
+                let i = self.arg_num(&args, 0, 0.)? as usize;
+                let q = self
+                    .rigid_world
+                    .bodies
+                    .get(i)
+                    .map(|b| b.orientation)
+                    .unwrap_or(ling_physics::Quat::IDENTITY);
+                return Ok(Value::List(vec![
+                    Value::Number(q.x as f64),
+                    Value::Number(q.y as f64),
+                    Value::Number(q.z as f64),
+                    Value::Number(q.w as f64),
+                ]));
+            },
 
             // ── native-res mesh (.lmesh): load once, draw fast (unlit, per-tri colour) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" => {
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" =>
+            {
                 let path = self.arg_str(&args, 0, "");
-                let resolved = if std::path::Path::new(&path).exists() { path.clone() }
-                    else if let Some(d) = &self.source_dir { d.join(&path).to_string_lossy().into_owned() }
-                    else { path.clone() };
+                let resolved = if std::path::Path::new(&path).exists() {
+                    path.clone()
+                } else if let Some(d) = &self.source_dir {
+                    d.join(&path).to_string_lossy().into_owned()
+                } else {
+                    path.clone()
+                };
                 let bytes = match std::fs::read(&resolved) {
                     Ok(b) => b,
-                    Err(e) => { eprintln!("mesh_load failed ({path}): {e}"); return Ok(Value::Number(-1.0)); }
+                    Err(e) => {
+                        eprintln!("mesh_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
                 };
-                if bytes.len() < 16 || &bytes[0..4] != b"LMSH" { eprintln!("mesh_load: bad header ({path})"); return Ok(Value::Number(-1.0)); }
-                let rd4 = |o: usize| -> [u8;4] { [bytes[o],bytes[o+1],bytes[o+2],bytes[o+3]] };
+                if bytes.len() < 16 || &bytes[0..4] != b"LMSH" {
+                    eprintln!("mesh_load: bad header ({path})");
+                    return Ok(Value::Number(-1.0));
+                }
+                let rd4 =
+                    |o: usize| -> [u8; 4] { [bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]] };
                 let height = f32::from_le_bytes(rd4(8));
                 let ntri = u32::from_le_bytes(rd4(12)) as usize;
-                let need = 16usize.saturating_add(ntri.saturating_mul(9*4 + 3));
-                if bytes.len() < need { eprintln!("mesh_load: truncated ({path})"); return Ok(Value::Number(-1.0)); }
-                let mut pos = Vec::with_capacity(ntri*3);
+                let need = 16usize.saturating_add(ntri.saturating_mul(9 * 4 + 3));
+                if bytes.len() < need {
+                    eprintln!("mesh_load: truncated ({path})");
+                    return Ok(Value::Number(-1.0));
+                }
+                let mut pos = Vec::with_capacity(ntri * 3);
                 let mut col = Vec::with_capacity(ntri);
                 let mut off = 16usize;
                 for _ in 0..ntri {
                     for _k in 0..3 {
-                        let x = f32::from_le_bytes(rd4(off)); let y = f32::from_le_bytes(rd4(off+4)); let z = f32::from_le_bytes(rd4(off+8));
-                        off += 12; pos.push([x,y,z]);
+                        let x = f32::from_le_bytes(rd4(off));
+                        let y = f32::from_le_bytes(rd4(off + 4));
+                        let z = f32::from_le_bytes(rd4(off + 8));
+                        off += 12;
+                        pos.push([x, y, z]);
                     }
-                    col.push([bytes[off],bytes[off+1],bytes[off+2]]); off += 3;
+                    col.push([bytes[off], bytes[off + 1], bytes[off + 2]]);
+                    off += 3;
                 }
                 eprintln!("mesh_load: {} ({} tris, h={:.2})", path, ntri, height);
                 let id = self.meshes.len();
-                self.meshes.push(crate::gfx::shapes::ColorMesh{ pos, col, height });
+                self.meshes
+                    .push(crate::gfx::shapes::ColorMesh { pos, col, height });
                 return Ok(Value::Number(id as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_draw" | "วาดเมชสี" => {        // ('วาดเมช' is taken by draw_mesh — use a distinct Thai alias)
+            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" => {        // ('วาดเมช' is taken by draw_mesh — use a distinct Thai alias)
                 let id = self.arg_num(&args,0,0.)? as usize;
                 let cx=self.arg_num(&args,1,0.)? as f32; let cy=self.arg_num(&args,2,0.)? as f32; let cz=self.arg_num(&args,3,0.)? as f32;
                 let sc=self.arg_num(&args,4,1.)? as f32; let yaw=self.arg_num(&args,5,0.)? as f32;
@@ -5212,174 +7258,345 @@ impl Interpreter {
                     gfx.draw_color_mesh(m, cx,cy,cz, sc, yaw, sway, arm, lean, leg, tuck);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ── liquid sim (water + oil, immiscible) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
-                let w=self.arg_num(&args,0,64.)? as usize; let h=self.arg_num(&args,1,64.)? as usize;
-                let id=self.liquids.len(); self.liquids.push(ling_physics::liquid::LiquidGrid::new(w,h));
+            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" =>
+            {
+                let w = self.arg_num(&args, 0, 64.)? as usize;
+                let h = self.arg_num(&args, 1, 64.)? as usize;
+                let id = self.liquids.len();
+                self.liquids
+                    .push(ling_physics::liquid::LiquidGrid::new(w, h));
                 return Ok(Value::Number(id as f64));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let wr=self.arg_num(&args,1,40.)? as f32; let wg=self.arg_num(&args,2,110.)? as f32; let wb=self.arg_num(&args,3,235.)? as f32;
-                let or_=self.arg_num(&args,4,240.)? as f32; let og=self.arg_num(&args,5,175.)? as f32; let ob=self.arg_num(&args,6,45.)? as f32;
-                if let Some(g)=self.liquids.get_mut(id) { g.set_colors(wr,wg,wb,or_,og,ob); }
-                return Ok(Value::Unit);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let x=self.arg_num(&args,1,0.)? as f32; let y=self.arg_num(&args,2,0.)? as f32;
-                let kind=self.arg_num(&args,3,0.)? as i32; let amt=self.arg_num(&args,4,1.0)? as f32; let rad=self.arg_num(&args,5,4.0)? as f32;
-                if let Some(g)=self.liquids.get_mut(id) { g.splat(x,y,kind,amt,rad); }
-                return Ok(Value::Unit);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let gx=self.arg_num(&args,1,0.)? as f32; let gy=self.arg_num(&args,2,60.)? as f32;
-                if let Some(g)=self.liquids.get_mut(id) { g.set_gravity(gx,gy); }
-                return Ok(Value::Unit);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize; let dt=self.arg_num(&args,1,0.016)? as f32;
-                if let Some(g)=self.liquids.get_mut(id) { g.step(dt); }
-                return Ok(Value::Unit);
-            }
-            // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let on=self.arg_num(&args,1,1.0)? > 0.5;
-                if let Some(g)=self.liquids.get_mut(id) { g.rainbow = on; }
-                return Ok(Value::Unit);
-            }
-            // liquid_mix(id) -> 0 (oil/water separated) .. 1 (fully intermixed)
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let m=self.liquids.get(id).map(|g| g.mix_amount()).unwrap_or(0.0);
-                return Ok(Value::Number(m as f64));
-            }
-            // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
-            #[cfg(not(target_arch = "wasm32"))]
-            "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let sx=self.arg_num(&args,1,0.)? as i32; let sy=self.arg_num(&args,2,0.)? as i32;
-                let scale=(self.arg_num(&args,3,4.)? as i32).max(1);
-                if id < self.liquids.len() {
-                    let (gw,gh)={ let g=&self.liquids[id]; (g.w,g.h) };
-                    let mut gfx=self.gfx.borrow_mut(); let (w,h)=(gfx.width as i32, gfx.height as i32);
-                    let g=&self.liquids[id];
-                    for cy in 0..gh { for cx in 0..gw {
-                        let col=g.sample_rgb(cx,cy);
-                        let bx=sx + cx as i32*scale; let by=sy + cy as i32*scale;
-                        for dy in 0..scale { for dx in 0..scale {
-                            let px=bx+dx; let py=by+dy;
-                            if px>=0 && py>=0 && px<w && py<h { gfx.buffer[(py*w+px) as usize]=col; }
-                        }}
-                    }}
+            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let wr = self.arg_num(&args, 1, 40.)? as f32;
+                let wg = self.arg_num(&args, 2, 110.)? as f32;
+                let wb = self.arg_num(&args, 3, 235.)? as f32;
+                let or_ = self.arg_num(&args, 4, 240.)? as f32;
+                let og = self.arg_num(&args, 5, 175.)? as f32;
+                let ob = self.arg_num(&args, 6, 45.)? as f32;
+                if let Some(g) = self.liquids.get_mut(id) {
+                    g.set_colors(wr, wg, wb, or_, og, ob);
                 }
                 return Ok(Value::Unit);
-            }
-            // liquid_draw_surface(id, kind, cx,cy,cz, radius, height)
-            //   kind: 0 plane · 1 sphere · 2 cylinder · 3 cone · 4 dome
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
-                let id=self.arg_num(&args,0,0.)? as usize;
-                let kind=self.arg_num(&args,1,1.)? as i32;
-                let cx=self.arg_num(&args,2,0.)? as f32; let cy=self.arg_num(&args,3,0.)? as f32; let cz=self.arg_num(&args,4,0.)? as f32;
-                let radius=self.arg_num(&args,5,2.0)? as f32; let height=self.arg_num(&args,6,3.0)? as f32;
+            "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let x = self.arg_num(&args, 1, 0.)? as f32;
+                let y = self.arg_num(&args, 2, 0.)? as f32;
+                let kind = self.arg_num(&args, 3, 0.)? as i32;
+                let amt = self.arg_num(&args, 4, 1.0)? as f32;
+                let rad = self.arg_num(&args, 5, 4.0)? as f32;
+                if let Some(g) = self.liquids.get_mut(id) {
+                    g.splat(x, y, kind, amt, rad);
+                }
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let gx = self.arg_num(&args, 1, 0.)? as f32;
+                let gy = self.arg_num(&args, 2, 60.)? as f32;
+                if let Some(g) = self.liquids.get_mut(id) {
+                    g.set_gravity(gx, gy);
+                }
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let dt = self.arg_num(&args, 1, 0.016)? as f32;
+                if let Some(g) = self.liquids.get_mut(id) {
+                    g.step(dt);
+                }
+                return Ok(Value::Unit);
+            },
+            // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let on = self.arg_num(&args, 1, 1.0)? > 0.5;
+                if let Some(g) = self.liquids.get_mut(id) {
+                    g.rainbow = on;
+                }
+                return Ok(Value::Unit);
+            },
+            // liquid_mix(id) -> 0 (oil/water separated) .. 1 (fully intermixed)
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let m = self.liquids.get(id).map(|g| g.mix_amount()).unwrap_or(0.0);
+                return Ok(Value::Number(m as f64));
+            },
+            // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let sx = self.arg_num(&args, 1, 0.)? as i32;
+                let sy = self.arg_num(&args, 2, 0.)? as i32;
+                let scale = (self.arg_num(&args, 3, 4.)? as i32).max(1);
                 if id < self.liquids.len() {
-                    let (gw,gh)={ let g=&self.liquids[id]; (g.w,g.h) };
-                    let mut gfx=self.gfx.borrow_mut();
-                    let (w,h,add)=(gfx.width, gfx.height, gfx.blend==1);
-                    let cam=gfx.camera.clone();
-                    let near = -cam.zdist + 0.05;
-                    let g=&self.liquids[id];
-                    let tau=std::f32::consts::TAU; let pi=std::f32::consts::PI;
-                    // surface point for a (u,v) in [0,1] on the chosen primitive
-                    let sp = |u:f32, v:f32| -> [f32;3] {
-                        if kind==0 { [cx+(u-0.5)*2.0*radius, cy, cz+(v-0.5)*2.0*radius] }
-                        else if kind==2 { let th=u*tau; [cx+th.cos()*radius, cy+(v-0.5)*height, cz+th.sin()*radius] }
-                        else if kind==3 { let th=u*tau; let rr=radius*(1.0-v); [cx+th.cos()*rr, cy+(v-0.5)*height, cz+th.sin()*rr] }
-                        else if kind==4 { let th=u*tau; let ph=v*pi*0.5; [cx+ph.sin()*th.cos()*radius, cy-ph.cos()*radius, cz+ph.sin()*th.sin()*radius] }
-                        else { let th=u*tau; let ph=v*pi; [cx+ph.sin()*th.cos()*radius, cy+ph.cos()*radius, cz+ph.sin()*th.sin()*radius] }
+                    let (gw, gh) = {
+                        let g = &self.liquids[id];
+                        (g.w, g.h)
                     };
-                    let nrm = |u:f32, v:f32| -> [f32;3] {
-                        if kind==0 { [0.0,-1.0,0.0] }
-                        else if kind==2 { let th=u*tau; [th.cos(),0.0,th.sin()] }
-                        else if kind==3 { let th=u*tau; let s=(radius/height.max(0.01)).atan(); [th.cos()*s.cos(), s.sin(), th.sin()*s.cos()] }
-                        else if kind==4 { let th=u*tau; let ph=v*pi*0.5; [ph.sin()*th.cos(),-ph.cos(),ph.sin()*th.sin()] }
-                        else { let th=u*tau; let ph=v*pi; [ph.sin()*th.cos(),ph.cos(),ph.sin()*th.sin()] }
-                    };
-                    let gwf=gw as f32; let ghf=gh as f32;
-                    let mut cyc=0usize;
-                    while cyc<gh {
-                        let mut cxc=0usize;
-                        while cxc<gw {
-                            // cull by the cell centre's outward normal
-                            let uc=(cxc as f32+0.5)/gwf; let vc=(cyc as f32+0.5)/ghf;
-                            let c=sp(uc,vc); let n=nrm(uc,vc);
-                            let dc=cam.depth(c[0],c[1],c[2]);
-                            if dc>near {
-                                let cull = kind!=0 && cam.depth(c[0]+n[0]*0.06,c[1]+n[1]*0.06,c[2]+n[2]*0.06) > dc;
-                                if !cull {
-                                    // project the 4 cell corners → a filled AA vector quad
-                                    let u0=cxc as f32/gwf; let u1=(cxc+1) as f32/gwf;
-                                    let v0=cyc as f32/ghf; let v1=(cyc+1) as f32/ghf;
-                                    let q=[sp(u0,v0),sp(u1,v0),sp(u1,v1),sp(u0,v1)];
-                                    let mut poly: Vec<[f32;2]> = Vec::with_capacity(5);
-                                    let mut ok=true;
-                                    for p in &q { if cam.depth(p[0],p[1],p[2])<=near { ok=false; break; } let (sx,sy,_)=cam.project(p[0],p[1],p[2]); poly.push([sx,sy]); }
-                                    if ok { let p0=poly[0]; poly.push(p0);
-                                        let col=g.sample_rgb(cxc,cyc);
-                                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, col, add, std::slice::from_ref(&poly));
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (w, h) = (gfx.width as i32, gfx.height as i32);
+                    let g = &self.liquids[id];
+                    for cy in 0..gh {
+                        for cx in 0..gw {
+                            let col = g.sample_rgb(cx, cy);
+                            let bx = sx + cx as i32 * scale;
+                            let by = sy + cy as i32 * scale;
+                            for dy in 0..scale {
+                                for dx in 0..scale {
+                                    let px = bx + dx;
+                                    let py = by + dy;
+                                    if px >= 0 && py >= 0 && px < w && py < h {
+                                        gfx.buffer[(py * w + px) as usize] = col;
                                     }
                                 }
                             }
-                            cxc+=1;
                         }
-                        cyc+=1;
                     }
                 }
                 return Ok(Value::Unit);
-            }
+            },
+            // liquid_draw_surface(id, kind, cx,cy,cz, radius, height)
+            //   kind: 0 plane · 1 sphere · 2 cylinder · 3 cone · 4 dome
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" =>
+            {
+                let id = self.arg_num(&args, 0, 0.)? as usize;
+                let kind = self.arg_num(&args, 1, 1.)? as i32;
+                let cx = self.arg_num(&args, 2, 0.)? as f32;
+                let cy = self.arg_num(&args, 3, 0.)? as f32;
+                let cz = self.arg_num(&args, 4, 0.)? as f32;
+                let radius = self.arg_num(&args, 5, 2.0)? as f32;
+                let height = self.arg_num(&args, 6, 3.0)? as f32;
+                if id < self.liquids.len() {
+                    let (gw, gh) = {
+                        let g = &self.liquids[id];
+                        (g.w, g.h)
+                    };
+                    let mut gfx = self.gfx.borrow_mut();
+                    let (w, h, add) = (gfx.width, gfx.height, gfx.blend == 1);
+                    let cam = gfx.camera.clone();
+                    let near = -cam.zdist + 0.05;
+                    let g = &self.liquids[id];
+                    let tau = std::f32::consts::TAU;
+                    let pi = std::f32::consts::PI;
+                    // surface point for a (u,v) in [0,1] on the chosen primitive
+                    let sp = |u: f32, v: f32| -> [f32; 3] {
+                        if kind == 0 {
+                            [
+                                cx + (u - 0.5) * 2.0 * radius,
+                                cy,
+                                cz + (v - 0.5) * 2.0 * radius,
+                            ]
+                        } else if kind == 2 {
+                            let th = u * tau;
+                            [
+                                cx + th.cos() * radius,
+                                cy + (v - 0.5) * height,
+                                cz + th.sin() * radius,
+                            ]
+                        } else if kind == 3 {
+                            let th = u * tau;
+                            let rr = radius * (1.0 - v);
+                            [
+                                cx + th.cos() * rr,
+                                cy + (v - 0.5) * height,
+                                cz + th.sin() * rr,
+                            ]
+                        } else if kind == 4 {
+                            let th = u * tau;
+                            let ph = v * pi * 0.5;
+                            [
+                                cx + ph.sin() * th.cos() * radius,
+                                cy - ph.cos() * radius,
+                                cz + ph.sin() * th.sin() * radius,
+                            ]
+                        } else {
+                            let th = u * tau;
+                            let ph = v * pi;
+                            [
+                                cx + ph.sin() * th.cos() * radius,
+                                cy + ph.cos() * radius,
+                                cz + ph.sin() * th.sin() * radius,
+                            ]
+                        }
+                    };
+                    let nrm = |u: f32, v: f32| -> [f32; 3] {
+                        if kind == 0 {
+                            [0.0, -1.0, 0.0]
+                        } else if kind == 2 {
+                            let th = u * tau;
+                            [th.cos(), 0.0, th.sin()]
+                        } else if kind == 3 {
+                            let th = u * tau;
+                            let s = (radius / height.max(0.01)).atan();
+                            [th.cos() * s.cos(), s.sin(), th.sin() * s.cos()]
+                        } else if kind == 4 {
+                            let th = u * tau;
+                            let ph = v * pi * 0.5;
+                            [ph.sin() * th.cos(), -ph.cos(), ph.sin() * th.sin()]
+                        } else {
+                            let th = u * tau;
+                            let ph = v * pi;
+                            [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()]
+                        }
+                    };
+                    let gwf = gw as f32;
+                    let ghf = gh as f32;
+                    let mut cyc = 0usize;
+                    while cyc < gh {
+                        let mut cxc = 0usize;
+                        while cxc < gw {
+                            // cull by the cell centre's outward normal
+                            let uc = (cxc as f32 + 0.5) / gwf;
+                            let vc = (cyc as f32 + 0.5) / ghf;
+                            let c = sp(uc, vc);
+                            let n = nrm(uc, vc);
+                            let dc = cam.depth(c[0], c[1], c[2]);
+                            if dc > near {
+                                let cull = kind != 0
+                                    && cam.depth(
+                                        c[0] + n[0] * 0.06,
+                                        c[1] + n[1] * 0.06,
+                                        c[2] + n[2] * 0.06,
+                                    ) > dc;
+                                if !cull {
+                                    // project the 4 cell corners → a filled AA vector quad
+                                    let u0 = cxc as f32 / gwf;
+                                    let u1 = (cxc + 1) as f32 / gwf;
+                                    let v0 = cyc as f32 / ghf;
+                                    let v1 = (cyc + 1) as f32 / ghf;
+                                    let q = [sp(u0, v0), sp(u1, v0), sp(u1, v1), sp(u0, v1)];
+                                    let mut poly: Vec<[f32; 2]> = Vec::with_capacity(5);
+                                    let mut ok = true;
+                                    for p in &q {
+                                        if cam.depth(p[0], p[1], p[2]) <= near {
+                                            ok = false;
+                                            break;
+                                        }
+                                        let (sx, sy, _) = cam.project(p[0], p[1], p[2]);
+                                        poly.push([sx, sy]);
+                                    }
+                                    if ok {
+                                        let p0 = poly[0];
+                                        poly.push(p0);
+                                        let col = g.sample_rgb(cxc, cyc);
+                                        crate::gfx::raster::fill_contours_aa(
+                                            &mut gfx.buffer,
+                                            w,
+                                            h,
+                                            col,
+                                            add,
+                                            std::slice::from_ref(&poly),
+                                        );
+                                    }
+                                }
+                            }
+                            cxc += 1;
+                        }
+                        cyc += 1;
+                    }
+                }
+                return Ok(Value::Unit);
+            },
             // sparkle(x, y, w, h, count [, t]) — scatter twinkling vector star-sparkles
             // in a rect (snowglobe effect) in the current colour + blend mode.
             #[cfg(not(target_arch = "wasm32"))]
             "sparkle" | "闪光" | "きらめき" | "반짝임" | "ประกาย" => {
-                let x=self.arg_num(&args,0,0.)? as f32; let y=self.arg_num(&args,1,0.)? as f32;
-                let ww=self.arg_num(&args,2,200.)? as f32; let hh=self.arg_num(&args,3,200.)? as f32;
-                let count=self.arg_num(&args,4,40.)? as i32;
-                let t=self.arg_num(&args,5,0.)? as f32;
-                let mut gfx=self.gfx.borrow_mut();
-                let (w,h,add,color)=(gfx.width, gfx.height, gfx.blend==1, gfx.color);
-                let (cr,cg,cb)=((color>>16&0xFF) as f32,(color>>8&0xFF) as f32,(color&0xFF) as f32);
-                let mut n=0i32;
-                while n<count {
-                    let hsh=(n as u32).wrapping_mul(2654435761).wrapping_add(0x9E3779B9);
-                    let u=((hsh>>8)&1023) as f32/1023.0;
-                    let v=((hsh>>18)&1023) as f32/1023.0;
-                    let phase=(hsh&255) as f32/255.0;
-                    let tw=(t*3.0 + phase*6.2831 + n as f32).sin()*0.5+0.5;
-                    let sz=1.5+tw*5.0;
-                    let px=x+u*ww; let py=y+v*hh;
-                    let b=tw*tw; // sharp twinkle
-                    let col=(((cr*b)as u32)<<16)|(((cg*b)as u32)<<8)|((cb*b)as u32);
-                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-sz,py, px+sz,py);
-                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px,py-sz, px,py+sz);
-                    let d=sz*0.55;
-                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-d,py-d, px+d,py+d);
-                    crate::gfx::raster::draw_line_aa(&mut gfx.buffer,w,h,col,add, px-d,py+d, px+d,py-d);
-                    n+=1;
+                let x = self.arg_num(&args, 0, 0.)? as f32;
+                let y = self.arg_num(&args, 1, 0.)? as f32;
+                let ww = self.arg_num(&args, 2, 200.)? as f32;
+                let hh = self.arg_num(&args, 3, 200.)? as f32;
+                let count = self.arg_num(&args, 4, 40.)? as i32;
+                let t = self.arg_num(&args, 5, 0.)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                let (w, h, add, color) = (gfx.width, gfx.height, gfx.blend == 1, gfx.color);
+                let (cr, cg, cb) = (
+                    (color >> 16 & 0xFF) as f32,
+                    (color >> 8 & 0xFF) as f32,
+                    (color & 0xFF) as f32,
+                );
+                let mut n = 0i32;
+                while n < count {
+                    let hsh = (n as u32).wrapping_mul(2654435761).wrapping_add(0x9E3779B9);
+                    let u = ((hsh >> 8) & 1023) as f32 / 1023.0;
+                    let v = ((hsh >> 18) & 1023) as f32 / 1023.0;
+                    let phase = (hsh & 255) as f32 / 255.0;
+                    let tw = (t * 3.0 + phase * 6.2831 + n as f32).sin() * 0.5 + 0.5;
+                    let sz = 1.5 + tw * 5.0;
+                    let px = x + u * ww;
+                    let py = y + v * hh;
+                    let b = tw * tw; // sharp twinkle
+                    let col =
+                        (((cr * b) as u32) << 16) | (((cg * b) as u32) << 8) | ((cb * b) as u32);
+                    crate::gfx::raster::draw_line_aa(
+                        &mut gfx.buffer,
+                        w,
+                        h,
+                        col,
+                        add,
+                        px - sz,
+                        py,
+                        px + sz,
+                        py,
+                    );
+                    crate::gfx::raster::draw_line_aa(
+                        &mut gfx.buffer,
+                        w,
+                        h,
+                        col,
+                        add,
+                        px,
+                        py - sz,
+                        px,
+                        py + sz,
+                    );
+                    let d = sz * 0.55;
+                    crate::gfx::raster::draw_line_aa(
+                        &mut gfx.buffer,
+                        w,
+                        h,
+                        col,
+                        add,
+                        px - d,
+                        py - d,
+                        px + d,
+                        py + d,
+                    );
+                    crate::gfx::raster::draw_line_aa(
+                        &mut gfx.buffer,
+                        w,
+                        h,
+                        col,
+                        add,
+                        px - d,
+                        py + d,
+                        px + d,
+                        py - d,
+                    );
+                    n += 1;
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // DIALOG BUILTINS  (crates/ling-game/src/dialog.rs) — cinematic,
@@ -5387,104 +7604,163 @@ impl Interpreter {
             // {i}item{/}, \n newline, || page break.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_show" | "对话显示" | "会話表示" | "대화표시" | "แสดงบทสนทนา" => {
+            "dialog_show" | "对话显示" | "会話表示" | "대화표시" | "แสดงบทสนทนา" =>
+            {
                 let text = self.arg_str(&args, 0, "");
                 let cps = self.arg_num(&args, 1, 32.0)? as f32;
                 self.dialog = Some(ling_game::dialog::Dialog::new(&text, cps));
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_step" | "对话步进" | "会話更新" | "대화스텝" | "ก้าวบทสนทนา" => {
+            "dialog_step" | "对话步进" | "会話更新" | "대화스텝" | "ก้าวบทสนทนา" =>
+            {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
-                if let Some(d) = self.dialog.as_mut() { d.update(dt); }
+                if let Some(d) = self.dialog.as_mut() {
+                    d.update(dt);
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_advance" | "对话推进" | "会話送り" | "대화진행" | "เลื่อนบทสนทนา" => {
-                if let Some(d) = self.dialog.as_mut() { d.advance(); }
+            "dialog_advance" | "对话推进" | "会話送り" | "대화진행" | "เลื่อนบทสนทนา" =>
+            {
+                if let Some(d) = self.dialog.as_mut() {
+                    d.advance();
+                }
                 return Ok(Value::Unit);
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_active" | "对话激活" | "会話中" | "대화중" | "บทสนทนาทำงาน" => {
-                let a = self.dialog.as_ref().map(|d| !d.is_closed()).unwrap_or(false);
+            "dialog_active" | "对话激活" | "会話中" | "대화중" | "บทสนทนาทำงาน" =>
+            {
+                let a = self
+                    .dialog
+                    .as_ref()
+                    .map(|d| !d.is_closed())
+                    .unwrap_or(false);
                 return Ok(Value::Bool(a));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" => {
+            "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" =>
+            {
                 use ling_game::dialog::Dialog;
-                
-                let a = self.dialog.as_ref().map(|d: &Dialog | !d.is_closed() && d.is_typing()).unwrap_or(false);
-                return Ok(Value::Bool(a))
-            }
+
+                let a = self
+                    .dialog
+                    .as_ref()
+                    .map(|d: &Dialog| !d.is_closed() && d.is_typing())
+                    .unwrap_or(false);
+                return Ok(Value::Bool(a));
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" => {
+            "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" =>
+            {
                 self.dialog = None;
                 return Ok(Value::Unit);
-            }
+            },
             // dialog_color(role, r, g, b) — role: 0 text · 1 name · 2 place · 3 item
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_color" | "对话颜色" | "会話色" | "대화색" | "สีบทสนทนา" => {
-                let role = (self.arg_num(&args,0,0.0)? as usize).min(3);
-                let r = self.arg_num(&args,1,255.0)? as u32 & 0xFF;
-                let g = self.arg_num(&args,2,255.0)? as u32 & 0xFF;
-                let b = self.arg_num(&args,3,255.0)? as u32 & 0xFF;
-                self.dialog_colors[role] = (r<<16)|(g<<8)|b;
+            "dialog_color" | "对话颜色" | "会話色" | "대화색" | "สีบทสนทนา" =>
+            {
+                let role = (self.arg_num(&args, 0, 0.0)? as usize).min(3);
+                let r = self.arg_num(&args, 1, 255.0)? as u32 & 0xFF;
+                let g = self.arg_num(&args, 2, 255.0)? as u32 & 0xFF;
+                let b = self.arg_num(&args, 3, 255.0)? as u32 & 0xFF;
+                self.dialog_colors[role] = (r << 16) | (g << 8) | b;
                 return Ok(Value::Unit);
-            }
+            },
             // dialog_draw(x, y, w, h [, font_handle]) — draw the box + typed text
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_draw" | "对话绘制" | "会話描画" | "대화그리기" | "วาดบทสนทนา" => {
-                let x=self.arg_num(&args,0,40.0)? as f32; let y=self.arg_num(&args,1,0.0)? as f32;
-                let ww=self.arg_num(&args,2,720.0)? as f32; let hh=self.arg_num(&args,3,150.0)? as f32;
-                let font = self.arg_num(&args,4,-1.0)? as i64;
+            "dialog_draw" | "对话绘制" | "会話描画" | "대화그리기" | "วาดบทสนทนา" =>
+            {
+                let x = self.arg_num(&args, 0, 40.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let ww = self.arg_num(&args, 2, 720.0)? as f32;
+                let hh = self.arg_num(&args, 3, 150.0)? as f32;
+                let font = self.arg_num(&args, 4, -1.0)? as i64;
                 let t = self.start_time.elapsed().as_secs_f32();
                 self.render_dialog(x, y, ww, hh, font, t);
                 return Ok(Value::Unit);
-            }
+            },
 
             // text_poll() — fold newly-typed keys into the input buffer, return it
             #[cfg(not(target_arch = "wasm32"))]
             "text_poll" => {
-                let keys = { let gfx = self.gfx.borrow(); gfx.window.as_ref().map(|w| w.get_keys_pressed(minifb::KeyRepeat::No)).unwrap_or_default() };
+                let keys = {
+                    let gfx = self.gfx.borrow();
+                    gfx.window
+                        .as_ref()
+                        .map(|w| w.get_keys_pressed(minifb::KeyRepeat::No))
+                        .unwrap_or_default()
+                };
                 for k in keys {
-                    if k == minifb::Key::Backspace { self.text_buffer.pop(); }
-                    else if let Some(c) = key_char(k) { self.text_buffer.push(c); }
+                    if k == minifb::Key::Backspace {
+                        self.text_buffer.pop();
+                    } else if let Some(c) = key_char(k) {
+                        self.text_buffer.push(c);
+                    }
                 }
                 return Ok(Value::Str(self.text_buffer.clone()));
-            }
-            "text_get"   => return Ok(Value::Str(self.text_buffer.clone())),
-            "text_set"   => { self.text_buffer = self.arg_str(&args,0,""); return Ok(Value::Unit); }
-            "text_clear" => { self.text_buffer.clear(); return Ok(Value::Unit); }
+            },
+            "text_get" => return Ok(Value::Str(self.text_buffer.clone())),
+            "text_set" => {
+                self.text_buffer = self.arg_str(&args, 0, "");
+                return Ok(Value::Unit);
+            },
+            "text_clear" => {
+                self.text_buffer.clear();
+                return Ok(Value::Unit);
+            },
             // record_frame() — append the current framebuffer as a PPM, return frame #
             #[cfg(not(target_arch = "wasm32"))]
             "record_frame" => {
                 let n = self.record_n;
-                let (buf, w, h) = { let gfx = self.gfx.borrow(); (gfx.buffer.clone(), gfx.width, gfx.height) };
+                let (buf, w, h) = {
+                    let gfx = self.gfx.borrow();
+                    (gfx.buffer.clone(), gfx.width, gfx.height)
+                };
                 let _ = std::fs::create_dir_all("recordings");
-                let mut out = Vec::with_capacity(w*h*3 + 32);
+                let mut out = Vec::with_capacity(w * h * 3 + 32);
                 out.extend_from_slice(format!("P6\n{w} {h}\n255\n").as_bytes());
-                for px in &buf { let p = *px; out.push((p>>16) as u8); out.push((p>>8) as u8); out.push(p as u8); }
+                for px in &buf {
+                    let p = *px;
+                    out.push((p >> 16) as u8);
+                    out.push((p >> 8) as u8);
+                    out.push(p as u8);
+                }
                 let _ = std::fs::write(format!("recordings/frame_{n:05}.ppm"), out);
                 self.record_n += 1;
                 return Ok(Value::Number(n as f64));
-            }
+            },
             "record_count" => return Ok(Value::Number(self.record_n as f64)),
             // ── screenshot(mode) → PNG in ./screenshots/ with timestamp + mode + size ──
             #[cfg(not(target_arch = "wasm32"))]
             "screenshot" | "บันทึกภาพ" => {
                 let mode = self.arg_str(&args, 0, "game");
-                let (buf, w, h) = { let gfx = self.gfx.borrow(); (gfx.buffer.clone(), gfx.width, gfx.height) };
+                let (buf, w, h) = {
+                    let gfx = self.gfx.borrow();
+                    (gfx.buffer.clone(), gfx.width, gfx.height)
+                };
                 let _ = std::fs::create_dir_all("screenshots");
-                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                let safe: String = mode.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let safe: String = mode
+                    .chars()
+                    .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                    .collect();
                 let path = format!("screenshots/ss_{ts}_{safe}_{w}x{h}.png");
                 let mut rgb = Vec::with_capacity(w * h * 3);
-                for px in &buf { let p = *px; rgb.push((p >> 16) as u8); rgb.push((p >> 8) as u8); rgb.push(p as u8); }
+                for px in &buf {
+                    let p = *px;
+                    rgb.push((p >> 16) as u8);
+                    rgb.push((p >> 8) as u8);
+                    rgb.push(p as u8);
+                }
                 if let Some(img) = image::RgbImage::from_raw(w as u32, h as u32, rgb) {
                     let _ = img.save(&path);
                 }
                 return Ok(Value::Str(path));
-            }
+            },
             // ── microphone → crypto donut ──
             // mic_capture() — append the latest mic samples to the record buffer
             // (call each frame while recording). Returns the buffer length.
@@ -5500,16 +7776,21 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Number(self.mic_buffer.len() as f64));
-            }
+            },
             // mic_seed() — SHA3-256 hex of the recorded audio, usable as a donut seed
             #[cfg(not(target_arch = "wasm32"))]
             "mic_seed" => {
                 let mut bytes = Vec::with_capacity(self.mic_buffer.len() * 4);
-                for f in &self.mic_buffer { bytes.extend_from_slice(&f.to_le_bytes()); }
+                for f in &self.mic_buffer {
+                    bytes.extend_from_slice(&f.to_le_bytes());
+                }
                 return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(&bytes))));
-            }
+            },
             #[cfg(not(target_arch = "wasm32"))]
-            "mic_clear" => { self.mic_buffer.clear(); return Ok(Value::Number(0.0)); }
+            "mic_clear" => {
+                self.mic_buffer.clear();
+                return Ok(Value::Number(0.0));
+            },
             // flush the 3-D depth queue onto the framebuffer WITHOUT presenting,
             // so 2-D UI drawn afterwards overlays the 3-D scene.
             #[cfg(not(target_arch = "wasm32"))]
@@ -5528,27 +7809,30 @@ impl Interpreter {
                     gfx.depth_queue.set_state(bm, ba);   // keep active blend/alpha across the mid-frame flush
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
             // Viscous full-screen distortion (warp/pucker/bloat, edge-wrapped). Call
             // after the 3-D flush and before the UI so only the world layer warps.
             #[cfg(not(target_arch = "wasm32"))]
-            "screen_distort" | "บิดจอ" | "屏幕扭曲" | "画面歪み" | "화면왜곡" => {
+            "screen_distort" | "บิดจอ" | "屏幕扭曲" | "画面歪み" | "화면왜곡" =>
+            {
                 let amount = self.arg_num(&args, 0, 8.0)? as f32;
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
                 self.gfx.borrow_mut().distort(amount, t);
                 return Ok(Value::Unit);
-            }
+            },
 
-            "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" => {
-                let s=self.arg_num(&args,0,0.6)? as f32;
-                let r=self.arg_num(&args,1,115.)? as f32/255.0;
-                let g=self.arg_num(&args,2,217.)? as f32/255.0;
-                let b=self.arg_num(&args,3,255.)? as f32/255.0;
-                let mut gfx=self.gfx.borrow_mut();
-                gfx.shade.rim = s; gfx.shade.rim_color = [r,g,b];
+            "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" =>
+            {
+                let s = self.arg_num(&args, 0, 0.6)? as f32;
+                let r = self.arg_num(&args, 1, 115.)? as f32 / 255.0;
+                let g = self.arg_num(&args, 2, 217.)? as f32 / 255.0;
+                let b = self.arg_num(&args, 3, 255.)? as f32 / 255.0;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.shade.rim = s;
+                gfx.shade.rim_color = [r, g, b];
                 return Ok(Value::Unit);
-            }
+            },
 
             // ══════════════════════════════════════════════════════════════════
             // 3-D PRIMITIVES  (src/gfx/shapes.rs)  — "Inkscape for 3-D"
@@ -5560,19 +7844,33 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
             n if crate::gfx::shapes::canon(n).is_some() => {
                 let kind = crate::gfx::shapes::canon(n).unwrap();
-                let cx=self.arg_num(&args,0,0.)? as f32; let cy=self.arg_num(&args,1,0.)? as f32; let cz=self.arg_num(&args,2,0.)? as f32;
-                let sx=self.arg_num(&args,3,1.)? as f32; let sy=self.arg_num(&args,4,1.)? as f32; let sz=self.arg_num(&args,5,1.)? as f32;
-                let rx=self.arg_num(&args,6,0.)? as f32; let ry=self.arg_num(&args,7,0.)? as f32; let rz=self.arg_num(&args,8,0.)? as f32;
-                let mode=self.arg_num(&args,9,0.)? as i32;
-                let e0=self.arg_num(&args,10,0.)? as f32; let e1=self.arg_num(&args,11,0.)? as f32; let e2=self.arg_num(&args,12,0.)? as f32;
-                if let Some(mesh)=crate::gfx::shapes::build(kind,[cx,cy,cz,sx,sy,sz,rx,ry,rz],e0,e1,e2){
-                    let mut gfx=self.gfx.borrow_mut();
-                    gfx.emit_mesh(&mesh,mode);
+                let cx = self.arg_num(&args, 0, 0.)? as f32;
+                let cy = self.arg_num(&args, 1, 0.)? as f32;
+                let cz = self.arg_num(&args, 2, 0.)? as f32;
+                let sx = self.arg_num(&args, 3, 1.)? as f32;
+                let sy = self.arg_num(&args, 4, 1.)? as f32;
+                let sz = self.arg_num(&args, 5, 1.)? as f32;
+                let rx = self.arg_num(&args, 6, 0.)? as f32;
+                let ry = self.arg_num(&args, 7, 0.)? as f32;
+                let rz = self.arg_num(&args, 8, 0.)? as f32;
+                let mode = self.arg_num(&args, 9, 0.)? as i32;
+                let e0 = self.arg_num(&args, 10, 0.)? as f32;
+                let e1 = self.arg_num(&args, 11, 0.)? as f32;
+                let e2 = self.arg_num(&args, 12, 0.)? as f32;
+                if let Some(mesh) = crate::gfx::shapes::build(
+                    kind,
+                    [cx, cy, cz, sx, sy, sz, rx, ry, rz],
+                    e0,
+                    e1,
+                    e2,
+                ) {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.emit_mesh(&mesh, mode);
                 }
                 return Ok(Value::Unit);
-            }
+            },
 
-            _ => {}
+            _ => {},
         }
 
         // User-defined function
@@ -5596,7 +7894,10 @@ impl Interpreter {
         if let Some(field_names) = self.structs.get(name).cloned() {
             if args.len() != field_names.len() {
                 return Err(EvalErr::from(format!(
-                    "{name} expects {} field(s), got {}", field_names.len(), args.len())));
+                    "{name} expects {} field(s), got {}",
+                    field_names.len(),
+                    args.len()
+                )));
             }
             let fields = field_names.into_iter().zip(args).collect();
             return Ok(Value::Struct { name: name.to_string(), fields });
@@ -5606,7 +7907,9 @@ impl Interpreter {
         if let Some((enum_name, arity)) = self.enum_variants.get(name).cloned() {
             if args.len() != arity {
                 return Err(EvalErr::from(format!(
-                    "{name} expects {arity} value(s), got {}", args.len())));
+                    "{name} expects {arity} value(s), got {}",
+                    args.len()
+                )));
             }
             let variant = name.rsplit("::").next().unwrap_or(name).to_string();
             return Ok(Value::Variant { enum_name, variant, payload: args });
@@ -5626,7 +7929,7 @@ impl Interpreter {
                     Err(EvalErr::Return(v)) => Ok(v),
                     Err(e) => Err(e),
                 }
-            }
+            },
             other => Err(EvalErr::from(format!("cannot call {:?}", other))),
         }
     }
@@ -5634,32 +7937,42 @@ impl Interpreter {
     fn call_method(&self, recv: Value, method: &str, args: Vec<Value>) -> EvalResult {
         match (&recv, method) {
             (Value::Str(s), "is_empty" | "是空") => Ok(Value::Bool(s.is_empty())),
-            (Value::Str(s), "len" | "长")        => Ok(Value::Number(s.len() as f64)),
+            (Value::Str(s), "len" | "长") => Ok(Value::Number(s.len() as f64)),
             (Value::Str(s), "to_string" | "转文") => Ok(Value::Str(s.clone())),
             (Value::Str(s), "contains" | "包含") => {
                 if let Some(Value::Str(sub)) = args.first() {
                     Ok(Value::Bool(s.contains(sub.as_str())))
-                } else { Ok(Value::Bool(false)) }
-            }
+                } else {
+                    Ok(Value::Bool(false))
+                }
+            },
             (Value::Str(s), "push_str" | "推_文") => {
                 let mut s2 = s.clone();
-                if let Some(Value::Str(a)) = args.first() { s2.push_str(a); }
+                if let Some(Value::Str(a)) = args.first() {
+                    s2.push_str(a);
+                }
                 Ok(Value::Str(s2))
-            }
+            },
             (Value::List(v), "len" | "长") => Ok(Value::Number(v.len() as f64)),
             (Value::List(v), "push" | "推") => {
                 let mut v2 = v.clone();
-                if let Some(a) = args.first() { v2.push(a.clone()); }
+                if let Some(a) = args.first() {
+                    v2.push(a.clone());
+                }
                 Ok(Value::List(v2))
-            }
+            },
             // `form` field access: `point.x` (no-arg method == field read).
-            (Value::Struct { fields, .. }, _) if args.is_empty() => {
-                fields.iter().find(|(k, _)| k == method).map(|(_, v)| v.clone())
-                    .ok_or_else(|| EvalErr::from(format!("no field '{method}' on {recv}")))
-            }
+            (Value::Struct { fields, .. }, _) if args.is_empty() => fields
+                .iter()
+                .find(|(k, _)| k == method)
+                .map(|(_, v)| v.clone())
+                .ok_or_else(|| EvalErr::from(format!("no field '{method}' on {recv}"))),
             // Enum introspection: `.tag` → variant name, `.is(Name)` not needed for now.
-            (Value::Variant { variant, .. }, "tag" | "标签" | "タグ" | "태그" | "ป้าย") if args.is_empty() =>
-                Ok(Value::Str(variant.clone())),
+            (Value::Variant { variant, .. }, "tag" | "标签" | "タグ" | "태그" | "ป้าย")
+                if args.is_empty() =>
+            {
+                Ok(Value::Str(variant.clone()))
+            },
             (Value::Ok(inner), _) | (Value::Err(inner), _) => Ok(*inner.clone()),
             _ => Err(EvalErr::from(format!("no method '{method}' on {recv}"))),
         }
@@ -5677,46 +7990,52 @@ impl Interpreter {
                 let mut e = Env::new();
                 e.insert(name.clone(), val.clone());
                 Some(e)
-            }
+            },
             (Pattern::Constructor(ctor, inner_pat), _) => {
                 let (matches, inner_val) = match (ctor.as_str(), val) {
-                    ("ok"  | "好", Value::Ok(v))  => (true, Some(v.as_ref().clone())),
+                    ("ok" | "好", Value::Ok(v)) => (true, Some(v.as_ref().clone())),
                     ("bad" | "坏", Value::Err(v)) => (true, Some(v.as_ref().clone())),
-                    ("ok"  | "好", v) if !matches!(v, Value::Err(_)) => (true, Some(v.clone())),
+                    ("ok" | "好", v) if !matches!(v, Value::Err(_)) => (true, Some(v.clone())),
                     _ => (false, None),
                 };
-                if !matches { return None; }
+                if !matches {
+                    return None;
+                }
                 match (inner_pat, inner_val) {
                     (Some(p), Some(v)) => self.match_pattern(p, &v),
-                    (None, _)          => Some(Env::new()),
-                    (Some(p), None)    => self.match_pattern(p, &Value::Unit),
+                    (None, _) => Some(Env::new()),
+                    (Some(p), None) => self.match_pattern(p, &Value::Unit),
                 }
-            }
+            },
             // User enum variant pattern: `Circle(r)`, `Pair(a, b)`, nullary `Origin()`.
             (Pattern::Variant(vname, sub_pats), Value::Variant { variant, payload, .. }) => {
-                if vname != variant || sub_pats.len() != payload.len() { return None; }
+                if vname != variant || sub_pats.len() != payload.len() {
+                    return None;
+                }
                 let mut bindings = Env::new();
                 for (p, v) in sub_pats.iter().zip(payload.iter()) {
                     bindings.extend(self.match_pattern(p, v)?);
                 }
                 Some(bindings)
-            }
+            },
             // A zero-payload variant pattern also matches the bare result-style `ok`/`bad`
             // values so `Ok()`-style patterns keep working uniformly.
             (Pattern::Variant(vname, sub), Value::Ok(v)) if (vname == "ok" || vname == "好") => {
                 match sub.as_slice() {
-                    []  => Some(Env::new()),
+                    [] => Some(Env::new()),
                     [p] => self.match_pattern(p, v),
-                    _   => None,
+                    _ => None,
                 }
-            }
-            (Pattern::Variant(vname, sub), Value::Err(v)) if (vname == "bad" || vname == "坏" || vname == "err") => {
+            },
+            (Pattern::Variant(vname, sub), Value::Err(v))
+                if (vname == "bad" || vname == "坏" || vname == "err") =>
+            {
                 match sub.as_slice() {
-                    []  => Some(Env::new()),
+                    [] => Some(Env::new()),
                     [p] => self.match_pattern(p, v),
-                    _   => None,
+                    _ => None,
                 }
-            }
+            },
             _ => None,
         }
     }
@@ -5725,24 +8044,24 @@ impl Interpreter {
 
     fn value_to_iter(&self, val: Value) -> Result<Vec<Value>, EvalErr> {
         match val {
-            Value::List(v)   => Ok(v),
-            Value::Str(s)    => Ok(s.chars().map(|c| Value::Str(c.to_string())).collect()),
+            Value::List(v) => Ok(v),
+            Value::Str(s) => Ok(s.chars().map(|c| Value::Str(c.to_string())).collect()),
             Value::Number(n) => Ok((0..n as i64).map(|i| Value::Number(i as f64)).collect()),
             other => Err(EvalErr::from(format!("cannot iterate over {:?}", other))),
         }
     }
 
-    fn is_truthy(&self, val: &Value) -> bool {
+    pub(crate) fn is_truthy(&self, val: &Value) -> bool {
         match val {
-            Value::Bool(b)     => *b,
-            Value::Unit        => false,
-            Value::Number(n)   => *n != 0.0,
-            Value::Str(s)      => !s.is_empty(),
-            Value::List(v)     => !v.is_empty(),
-            Value::Ok(_)       => true,
-            Value::Err(_)      => false,
+            Value::Bool(b) => *b,
+            Value::Unit => false,
+            Value::Number(n) => *n != 0.0,
+            Value::Str(s) => !s.is_empty(),
+            Value::List(v) => !v.is_empty(),
+            Value::Ok(_) => true,
+            Value::Err(_) => false,
             Value::Fn(_, _, _) => true,
-            Value::Struct { .. }  => true,
+            Value::Struct { .. } => true,
             Value::Variant { .. } => true,
         }
     }
@@ -5750,7 +8069,9 @@ impl Interpreter {
     fn to_number(&self, val: &Value) -> Result<f64, EvalErr> {
         match val {
             Value::Number(n) => Ok(*n),
-            Value::Str(s)    => s.parse().map_err(|_| EvalErr::from(format!("cannot convert '{s}' to number"))),
+            Value::Str(s) => s
+                .parse()
+                .map_err(|_| EvalErr::from(format!("cannot convert '{s}' to number"))),
             other => Err(EvalErr::from(format!("expected number, got {:?}", other))),
         }
     }
@@ -5759,22 +8080,27 @@ impl Interpreter {
     fn arg_num(&self, args: &[Value], n: usize, default: f64) -> Result<f64, EvalErr> {
         match args.get(n) {
             Some(v) => self.to_number(v),
-            None    => Ok(default),
+            None => Ok(default),
         }
     }
 
     fn arg_str(&self, args: &[Value], n: usize, default: &str) -> String {
-        args.get(n).map(|v| v.to_string()).unwrap_or_else(|| default.to_string())
+        args.get(n)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| default.to_string())
     }
 
     /// Read a list-of-numbers argument as `Vec<f32>` (empty if absent/not a list).
     #[allow(dead_code)]
     fn arg_list_f32(&self, args: &[Value], n: usize) -> Vec<f32> {
         match args.get(n) {
-            Some(Value::List(v)) => v.iter().filter_map(|x| match x {
-                Value::Number(n) => Some(*n as f32),
-                _ => None,
-            }).collect(),
+            Some(Value::List(v)) => v
+                .iter()
+                .filter_map(|x| match x {
+                    Value::Number(n) => Some(*n as f32),
+                    _ => None,
+                })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -5784,10 +8110,13 @@ impl Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     fn color_at(&self, args: &[Value], i: usize, default: u32) -> u32 {
         match (args.get(i), args.get(i + 1), args.get(i + 2)) {
-            (Some(a), Some(b), Some(c)) => match (self.to_number(a), self.to_number(b), self.to_number(c)) {
-                (Ok(r), Ok(g), Ok(bl)) =>
-                    ((r as u32 & 0xFF) << 16) | ((g as u32 & 0xFF) << 8) | (bl as u32 & 0xFF),
-                _ => default,
+            (Some(a), Some(b), Some(c)) => {
+                match (self.to_number(a), self.to_number(b), self.to_number(c)) {
+                    (Ok(r), Ok(g), Ok(bl)) => {
+                        ((r as u32 & 0xFF) << 16) | ((g as u32 & 0xFF) << 8) | (bl as u32 & 0xFF)
+                    },
+                    _ => default,
+                }
             },
             _ => default,
         }
@@ -5807,10 +8136,16 @@ impl Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     fn mouse_now(&self) -> (f32, f32, bool) {
         let gfx = self.gfx.borrow();
-        let (mx, my) = gfx.window.as_ref()
-            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp)).unwrap_or((0.0, 0.0));
-        let down = gfx.window.as_ref()
-            .map(|w| w.get_mouse_down(minifb::MouseButton::Left)).unwrap_or(false);
+        let (mx, my) = gfx
+            .window
+            .as_ref()
+            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+            .unwrap_or((0.0, 0.0));
+        let down = gfx
+            .window
+            .as_ref()
+            .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
+            .unwrap_or(false);
         (mx, my, down)
     }
 
@@ -5822,11 +8157,28 @@ impl Interpreter {
         let mut gfx = self.gfx.borrow_mut();
         let (w, h, add) = (gfx.width, gfx.height, gfx.blend == 1);
         for (c, poly) in &d.fills {
-            crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, *c, add, std::slice::from_ref(poly));
+            crate::gfx::raster::fill_contours_aa(
+                &mut gfx.buffer,
+                w,
+                h,
+                *c,
+                add,
+                std::slice::from_ref(poly),
+            );
         }
         for (c, pl) in &d.strokes {
             for s in pl.windows(2) {
-                crate::gfx::raster::draw_line_aa(&mut gfx.buffer, w, h, *c, add, s[0][0], s[0][1], s[1][0], s[1][1]);
+                crate::gfx::raster::draw_line_aa(
+                    &mut gfx.buffer,
+                    w,
+                    h,
+                    *c,
+                    add,
+                    s[0][0],
+                    s[0][1],
+                    s[1][0],
+                    s[1][1],
+                );
             }
         }
     }
@@ -5840,32 +8192,34 @@ impl Interpreter {
         Ok((tx, ty, tw.max(1), th.max(1)))
     }
 
-    fn apply_binop(&self, op: &BinOp, l: Value, r: Value) -> EvalResult {
+    pub(crate) fn apply_binop(&self, op: &BinOp, l: Value, r: Value) -> EvalResult {
         match op {
             BinOp::Add => match (l, r) {
                 (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
-                (Value::Str(a), Value::Str(b))       => Ok(Value::Str(a + &b)),
-                (Value::Str(a), b)                   => Ok(Value::Str(a + &b.to_string())),
-                (a, Value::Str(b))                   => Ok(Value::Str(a.to_string() + &b)),
+                (Value::Str(a), Value::Str(b)) => Ok(Value::Str(a + &b)),
+                (Value::Str(a), b) => Ok(Value::Str(a + &b.to_string())),
+                (a, Value::Str(b)) => Ok(Value::Str(a.to_string() + &b)),
                 (a, b) => Err(EvalErr::from(format!("cannot add {:?} and {:?}", a, b))),
             },
             BinOp::Sub => Ok(Value::Number(self.to_number(&l)? - self.to_number(&r)?)),
             BinOp::Mul => Ok(Value::Number(self.to_number(&l)? * self.to_number(&r)?)),
             BinOp::Div => Ok(Value::Number(self.to_number(&l)? / self.to_number(&r)?)),
             BinOp::Rem => Ok(Value::Number(self.to_number(&l)? % self.to_number(&r)?)),
-            BinOp::Eq  => Ok(Value::Bool(values_equal(&l, &r))),
-            BinOp::Ne  => Ok(Value::Bool(!values_equal(&l, &r))),
-            BinOp::Lt  => Ok(Value::Bool(self.to_number(&l)? < self.to_number(&r)?)),
-            BinOp::Gt  => Ok(Value::Bool(self.to_number(&l)? > self.to_number(&r)?)),
-            BinOp::Le  => Ok(Value::Bool(self.to_number(&l)? <= self.to_number(&r)?)),
-            BinOp::Ge  => Ok(Value::Bool(self.to_number(&l)? >= self.to_number(&r)?)),
+            BinOp::Eq => Ok(Value::Bool(values_equal(&l, &r))),
+            BinOp::Ne => Ok(Value::Bool(!values_equal(&l, &r))),
+            BinOp::Lt => Ok(Value::Bool(self.to_number(&l)? < self.to_number(&r)?)),
+            BinOp::Gt => Ok(Value::Bool(self.to_number(&l)? > self.to_number(&r)?)),
+            BinOp::Le => Ok(Value::Bool(self.to_number(&l)? <= self.to_number(&r)?)),
+            BinOp::Ge => Ok(Value::Bool(self.to_number(&l)? >= self.to_number(&r)?)),
             BinOp::And => Ok(Value::Bool(self.is_truthy(&l) && self.is_truthy(&r))),
-            BinOp::Or  => Ok(Value::Bool(self.is_truthy(&l) || self.is_truthy(&r))),
+            BinOp::Or => Ok(Value::Bool(self.is_truthy(&l) || self.is_truthy(&r))),
         }
     }
 
     fn builtin_format(&self, args: &[Value]) -> Result<String, EvalErr> {
-        if args.is_empty() { return Ok(String::new()); }
+        if args.is_empty() {
+            return Ok(String::new());
+        }
         let fmt = match &args[0] {
             Value::Str(s) => s.clone(),
             other => return Ok(other.to_string()),
@@ -5885,14 +8239,16 @@ impl Interpreter {
                 } else {
                     let mut spec = String::new();
                     for ch in chars.by_ref() {
-                        if ch == '}' { break; }
+                        if ch == '}' {
+                            break;
+                        }
                         spec.push(ch);
                     }
                     if arg_idx < args.len() {
                         if spec.starts_with(":.") {
                             if let Value::Number(n) = &args[arg_idx] {
-                                let prec: usize = spec[2..].trim_end_matches('f')
-                                    .parse().unwrap_or(2);
+                                let prec: usize =
+                                    spec[2..].trim_end_matches('f').parse().unwrap_or(2);
                                 result.push_str(&format!("{:.prec$}", n));
                                 arg_idx += 1;
                                 continue;
@@ -5955,48 +8311,73 @@ fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
         "numpad-" | "kp-" => Key::NumPadMinus,
         "numpad*" | "kp*" => Key::NumPadAsterisk,
         "numpad/" | "kp/" => Key::NumPadSlash,
-        "left"   => Key::Left,
-        "right"  => Key::Right,
-        "up"     => Key::Up,
-        "down"   => Key::Down,
-        "space"  => Key::Space,
-        "enter"  => Key::Enter,
+        "left" => Key::Left,
+        "right" => Key::Right,
+        "up" => Key::Up,
+        "down" => Key::Down,
+        "space" => Key::Space,
+        "enter" => Key::Enter,
         "escape" => Key::Escape,
         "pageup" => Key::PageUp,
         "pagedown" => Key::PageDown,
-        "lshift" | "leftshift"  => Key::LeftShift,
+        "lshift" | "leftshift" => Key::LeftShift,
         "rshift" | "rightshift" => Key::RightShift,
-        "lctrl"  | "leftctrl"   => Key::LeftCtrl,
-        "rctrl"  | "rightctrl"  => Key::RightCtrl,
-        "lalt"   | "leftalt"    => Key::LeftAlt,
-        "ralt"   | "rightalt"   => Key::RightAlt,
-        "tab"    => Key::Tab,
+        "lctrl" | "leftctrl" => Key::LeftCtrl,
+        "rctrl" | "rightctrl" => Key::RightCtrl,
+        "lalt" | "leftalt" => Key::LeftAlt,
+        "ralt" | "rightalt" => Key::RightAlt,
+        "tab" => Key::Tab,
         "backspace" => Key::Backspace,
         "delete" => Key::Delete,
         "insert" => Key::Insert,
-        "home"   => Key::Home,
-        "end"    => Key::End,
-        "a" => Key::A, "b" => Key::B, "c" => Key::C, "d" => Key::D,
-        "e" => Key::E, "f" => Key::F, "g" => Key::G, "h" => Key::H,
-        "i" => Key::I, "j" => Key::J, "k" => Key::K, "l" => Key::L,
-        "m" => Key::M, "n" => Key::N, "o" => Key::O, "p" => Key::P,
-        "q" => Key::Q, "r" => Key::R, "s" => Key::S, "t" => Key::T,
-        "u" => Key::U, "v" => Key::V, "w" => Key::W, "x" => Key::X,
-        "y" => Key::Y, "z" => Key::Z,
-        "0" => Key::Key0, "1" => Key::Key1, "2" => Key::Key2,
-        "3" => Key::Key3, "4" => Key::Key4, "5" => Key::Key5,
-        "6" => Key::Key6, "7" => Key::Key7, "8" => Key::Key8,
+        "home" => Key::Home,
+        "end" => Key::End,
+        "a" => Key::A,
+        "b" => Key::B,
+        "c" => Key::C,
+        "d" => Key::D,
+        "e" => Key::E,
+        "f" => Key::F,
+        "g" => Key::G,
+        "h" => Key::H,
+        "i" => Key::I,
+        "j" => Key::J,
+        "k" => Key::K,
+        "l" => Key::L,
+        "m" => Key::M,
+        "n" => Key::N,
+        "o" => Key::O,
+        "p" => Key::P,
+        "q" => Key::Q,
+        "r" => Key::R,
+        "s" => Key::S,
+        "t" => Key::T,
+        "u" => Key::U,
+        "v" => Key::V,
+        "w" => Key::W,
+        "x" => Key::X,
+        "y" => Key::Y,
+        "z" => Key::Z,
+        "0" => Key::Key0,
+        "1" => Key::Key1,
+        "2" => Key::Key2,
+        "3" => Key::Key3,
+        "4" => Key::Key4,
+        "5" => Key::Key5,
+        "6" => Key::Key6,
+        "7" => Key::Key7,
+        "8" => Key::Key8,
         "9" => Key::Key9,
         _ => return None,
     })
 }
 
-fn values_equal(a: &Value, b: &Value) -> bool {
+pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Number(x), Value::Number(y)) => (x - y).abs() < 1e-12,
-        (Value::Str(x), Value::Str(y))       => x == y,
-        (Value::Bool(x), Value::Bool(y))     => x == y,
-        (Value::Unit, Value::Unit)            => true,
+        (Value::Str(x), Value::Str(y)) => x == y,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Unit, Value::Unit) => true,
         _ => false,
     }
 }
@@ -6034,12 +8415,18 @@ fn make_borderless_fullscreen(hwnd: isize, screen_w: i32, screen_h: i32) {
     unsafe {
         extern "system" {
             fn SetWindowLongPtrW(hwnd: isize, index: i32, new: isize) -> isize;
-            fn SetWindowPos(hwnd: isize, insert_after: isize,
-                            x: i32, y: i32, cx: i32, cy: i32,
-                            flags: u32) -> i32;
+            fn SetWindowPos(
+                hwnd: isize,
+                insert_after: isize,
+                x: i32,
+                y: i32,
+                cx: i32,
+                cy: i32,
+                flags: u32,
+            ) -> i32;
             fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
         }
-        const GWL_STYLE:   i32 = -16;
+        const GWL_STYLE: i32 = -16;
         const GWL_EXSTYLE: i32 = -20;
         // WS_POPUP (0x80000000) | WS_VISIBLE (0x10000000) — a bare top-level
         // window with no caption, border, or system menu.

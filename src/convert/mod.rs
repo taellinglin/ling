@@ -24,7 +24,7 @@ pub fn run(args: &[String]) -> i32 {
         _ => {
             eprintln!("Usage: ling convert <file.(gltf|glb|wav|ogg|flac|mid|svg|blend)> [-o out.ling] [--no-compression]");
             return 1;
-        }
+        },
     };
     let compress = !args.iter().any(|a| a == "--no-compression");
     let out = flag_value(args, "-o")
@@ -35,15 +35,21 @@ pub fn run(args: &[String]) -> i32 {
         Ok(bytes) => {
             eprintln!(
                 "[convert] {} → {}  ({} KB, {})",
-                input, out, bytes / 1024,
-                if compress { "deflate+base64 lossless" } else { "uncompressed" }
+                input,
+                out,
+                bytes / 1024,
+                if compress {
+                    "deflate+base64 lossless"
+                } else {
+                    "uncompressed"
+                }
             );
             0
-        }
+        },
         Err(e) => {
             eprintln!("[convert] error: {e}");
             1
-        }
+        },
     }
 }
 
@@ -53,7 +59,9 @@ fn default_out(input: &str) -> String {
 }
 
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1).cloned())
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1).cloned())
 }
 
 /// Dispatch on extension. Returns the number of bytes written.
@@ -99,7 +107,9 @@ fn b64(bytes: &[u8]) -> String {
 fn emit_f32(name: &str, data: &[f32], compress: bool) -> String {
     if compress && data.len() > 8 {
         let mut bytes = Vec::with_capacity(data.len() * 4);
-        for v in data { bytes.extend_from_slice(&v.to_le_bytes()); }
+        for v in data {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
         format!("bind {name} = blob_f32(\"{}\")\n", b64(&deflate(&bytes)))
     } else {
         let body: Vec<String> = data.iter().map(|v| fmt_f32(*v)).collect();
@@ -110,7 +120,9 @@ fn emit_f32(name: &str, data: &[f32], compress: bool) -> String {
 fn emit_i32(name: &str, data: &[u32], compress: bool) -> String {
     if compress && data.len() > 8 {
         let mut bytes = Vec::with_capacity(data.len() * 4);
-        for v in data { bytes.extend_from_slice(&(*v as i32).to_le_bytes()); }
+        for v in data {
+            bytes.extend_from_slice(&(*v as i32).to_le_bytes());
+        }
         format!("bind {name} = blob_i32(\"{}\")\n", b64(&deflate(&bytes)))
     } else {
         let body: Vec<String> = data.iter().map(|v| v.to_string()).collect();
@@ -119,12 +131,26 @@ fn emit_i32(name: &str, data: &[u32], compress: bool) -> String {
 }
 
 fn fmt_f32(v: f32) -> String {
-    if v == v.trunc() && v.abs() < 1e7 { format!("{:.1}", v) } else { format!("{}", v) }
+    if v == v.trunc() && v.abs() < 1e7 {
+        format!("{:.1}", v)
+    } else {
+        format!("{}", v)
+    }
 }
 
 fn sanitize(s: &str) -> String {
-    let mut out: String = s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-    if out.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) { out.insert(0, '_'); }
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    if out
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(true)
+    {
+        out.insert(0, '_');
+    }
     out
 }
 
@@ -160,7 +186,11 @@ fn conv_gltf(input: &str, name: &str, compress: bool) -> Result<String, String> 
     // per-mesh: positions (3/vert), normals (3/vert), uvs (2/vert), indices, + a draw fn
     let mut draw_calls = Vec::new();
     for (mi, mesh) in model.meshes.iter().enumerate() {
-        let raw_name = if mesh.name.is_empty() { format!("mesh{mi}") } else { mesh.name.clone() };
+        let raw_name = if mesh.name.is_empty() {
+            format!("mesh{mi}")
+        } else {
+            mesh.name.clone()
+        };
         let mname = sanitize(&raw_name);
         let mut pos = Vec::with_capacity(mesh.verts.len() * 3);
         let mut nrm = Vec::with_capacity(mesh.verts.len() * 3);
@@ -170,12 +200,21 @@ fn conv_gltf(input: &str, name: &str, compress: bool) -> Result<String, String> 
             nrm.extend_from_slice(&[v.normal.x, v.normal.y, v.normal.z]);
             uv.extend_from_slice(&[v.uv.x, v.uv.y]);
         }
-        s.push_str(&format!("# mesh \"{}\" — {} verts, {} tris, material={:?}\n",
-            mesh.name, mesh.verts.len(), mesh.indices.len() / 3, mesh.mat_idx));
+        s.push_str(&format!(
+            "# mesh \"{}\" — {} verts, {} tris, material={:?}\n",
+            mesh.name,
+            mesh.verts.len(),
+            mesh.indices.len() / 3,
+            mesh.mat_idx
+        ));
         s.push_str(&emit_f32(&format!("{name}_{mname}_pos"), &pos, compress));
         s.push_str(&emit_f32(&format!("{name}_{mname}_nrm"), &nrm, compress));
         s.push_str(&emit_f32(&format!("{name}_{mname}_uv"), &uv, compress));
-        s.push_str(&emit_i32(&format!("{name}_{mname}_idx"), &mesh.indices, compress));
+        s.push_str(&emit_i32(
+            &format!("{name}_{mname}_idx"),
+            &mesh.indices,
+            compress,
+        ));
         // wireframe draw: each triangle's 3 edges via draw_line_3d
         s.push_str(&format!(
             "\nฟังก์ชัน draw_{name}_{mname}(ox, oy, oz, scale) {{\n\
@@ -197,7 +236,9 @@ fn conv_gltf(input: &str, name: &str, compress: bool) -> Result<String, String> 
 
     // a convenience that draws the whole model
     s.push_str(&format!("ฟังก์ชัน draw_{name}(ox, oy, oz, scale) {{\n"));
-    for c in &draw_calls { s.push_str(&format!("    {c}\n")); }
+    for c in &draw_calls {
+        s.push_str(&format!("    {c}\n"));
+    }
     s.push_str("}\n\n");
     s.push_str(&format!(
         "# Example:\n# ใช้ \"{name}.ling\"\n# … inside your loop: draw_{name}(0,0,0, 1.0)  flush_3d()\n"
@@ -213,7 +254,10 @@ fn conv_audio(input: &str, name: &str, compress: bool) -> Result<String, String>
     let mut s = header("audio (PCM samples)", input);
     s.push_str(&format!(
         "# rate={} Hz, channels={}, duration={:.3}s, mono samples={}\n",
-        a.rate, a.channels, a.duration, a.mono.len()
+        a.rate,
+        a.channels,
+        a.duration,
+        a.mono.len()
     ));
     s.push_str(&format!("bind {name}_rate = {}.0\n", a.rate));
     s.push_str(&format!("bind {name}_dur = {}\n", fmt_f32(a.duration)));
@@ -237,13 +281,20 @@ fn conv_audio(_: &str, _: &str, _: bool) -> Result<String, String> {
 fn conv_midi(input: &str, name: &str, compress: bool) -> Result<String, String> {
     let song = ling_music::midi::load(input)?;
     let mut s = header("MIDI song (note events)", input);
-    s.push_str(&format!("# {} notes, duration {:.3}s\n", song.notes.len(), song.duration));
+    s.push_str(&format!(
+        "# {} notes, duration {:.3}s\n",
+        song.notes.len(),
+        song.duration
+    ));
     s.push_str(&format!("bind {name}_dur = {}\n", fmt_f32(song.duration)));
     // flat note list: [time, dur, midi, vel, channel] per note
     let mut flat = Vec::with_capacity(song.notes.len() * 5);
     for n in &song.notes {
-        flat.push(n.time); flat.push(n.dur);
-        flat.push(n.midi as f32); flat.push(n.vel as f32); flat.push(n.channel as f32);
+        flat.push(n.time);
+        flat.push(n.dur);
+        flat.push(n.midi as f32);
+        flat.push(n.vel as f32);
+        flat.push(n.channel as f32);
     }
     s.push_str(&emit_f32(&format!("{name}_notes"), &flat, compress));
     s.push_str(&format!(
@@ -270,22 +321,34 @@ fn conv_svg(input: &str, name: &str, compress: bool) -> Result<String, String> {
     // primitives → polylines
     for r in elements(&xml, "line") {
         if let (Some(x1), Some(y1), Some(x2), Some(y2)) =
-            (num(&r, "x1"), num(&r, "y1"), num(&r, "x2"), num(&r, "y2")) {
+            (num(&r, "x1"), num(&r, "y1"), num(&r, "x2"), num(&r, "y2"))
+        {
             polylines.push(vec![[x1, y1], [x2, y2]]);
         }
     }
     for r in elements(&xml, "rect") {
-        if let (Some(x), Some(y), Some(w), Some(h)) =
-            (num(&r, "x"), num(&r, "y"), num(&r, "width"), num(&r, "height")) {
+        if let (Some(x), Some(y), Some(w), Some(h)) = (
+            num(&r, "x"),
+            num(&r, "y"),
+            num(&r, "width"),
+            num(&r, "height"),
+        ) {
             polylines.push(vec![[x, y], [x + w, y], [x + w, y + h], [x, y + h], [x, y]]);
         }
     }
-    for r in elements(&xml, "polyline").into_iter().chain(elements(&xml, "polygon")) {
+    for r in elements(&xml, "polyline")
+        .into_iter()
+        .chain(elements(&xml, "polygon"))
+    {
         if let Some(pts) = attr(&r, "points") {
-            let nums: Vec<f32> = pts.split(|c: char| c == ',' || c.is_whitespace())
-                .filter_map(|t| t.trim().parse().ok()).collect();
+            let nums: Vec<f32> = pts
+                .split(|c: char| c == ',' || c.is_whitespace())
+                .filter_map(|t| t.trim().parse().ok())
+                .collect();
             let pl: Vec<[f32; 2]> = nums.chunks_exact(2).map(|c| [c[0], c[1]]).collect();
-            if pl.len() >= 2 { polylines.push(pl); }
+            if pl.len() >= 2 {
+                polylines.push(pl);
+            }
         }
     }
     if polylines.is_empty() {
@@ -296,10 +359,17 @@ fn conv_svg(input: &str, name: &str, compress: bool) -> Result<String, String> {
     let mut lens: Vec<u32> = Vec::new();
     for pl in &polylines {
         lens.push(pl.len() as u32);
-        for p in pl { coords.push(p[0]); coords.push(p[1]); }
+        for p in pl {
+            coords.push(p[0]);
+            coords.push(p[1]);
+        }
     }
     let mut s = header("SVG vector art (polylines)", input);
-    s.push_str(&format!("# {} polylines, {} points\n", polylines.len(), coords.len() / 2));
+    s.push_str(&format!(
+        "# {} polylines, {} points\n",
+        polylines.len(),
+        coords.len() / 2
+    ));
     s.push_str(&emit_f32(&format!("{name}_xy"), &coords, compress));
     s.push_str(&emit_i32(&format!("{name}_lens"), &lens, compress));
     s.push_str(&format!(
@@ -341,14 +411,16 @@ fn conv_blend(input: &str, output: &str, compress: bool) -> Result<String, Strin
                 return Err("Blender ran but produced no glTF export".into());
             }
             let name = sanitize(
-                &Path::new(input).file_stem().map(|s| s.to_string_lossy().into_owned())
+                &Path::new(input)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| "asset".into()),
             );
             let s = conv_gltf(&tmp_s, &name, compress)?;
             let _ = std::fs::remove_file(&tmp);
             let _ = output;
             Ok(s)
-        }
+        },
         None => Err(
             ".blend needs Blender on PATH (set $BLENDER or install it). \
              Or export the model to .glb/.gltf in Blender and run `ling convert model.glb`."
@@ -359,10 +431,17 @@ fn conv_blend(input: &str, output: &str, compress: bool) -> Result<String, Strin
 
 fn which_blender() -> Option<String> {
     if let Ok(b) = std::env::var("BLENDER") {
-        if !b.is_empty() { return Some(b); }
+        if !b.is_empty() {
+            return Some(b);
+        }
     }
     for cand in ["blender", "blender.exe"] {
-        if std::process::Command::new(cand).arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+        if std::process::Command::new(cand)
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             return Some(cand.to_string());
         }
     }
@@ -373,7 +452,10 @@ fn which_blender() -> Option<String> {
 
 /// Collect the value of `attr` from every `<tag …>` element.
 fn attr_values(xml: &str, tag: &str, attr_name: &str) -> Vec<String> {
-    elements(xml, tag).iter().filter_map(|e| attr(e, attr_name)).collect()
+    elements(xml, tag)
+        .iter()
+        .filter_map(|e| attr(e, attr_name))
+        .collect()
 }
 
 /// Return the raw attribute-region string of each `<tag …>` occurrence.
@@ -386,7 +468,9 @@ fn elements(xml: &str, tag: &str) -> Vec<String> {
         if let Some(end) = xml[start..].find('>') {
             out.push(xml[start..start + end].to_string());
             i = start + end;
-        } else { break; }
+        } else {
+            break;
+        }
     }
     out
 }
@@ -399,7 +483,12 @@ fn attr(el: &str, key: &str) -> Option<String> {
 }
 
 fn num(el: &str, key: &str) -> Option<f32> {
-    attr(el, key).and_then(|v| v.trim().trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.' && c != '-').parse().ok())
+    attr(el, key).and_then(|v| {
+        v.trim()
+            .trim_end_matches(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+            .parse()
+            .ok()
+    })
 }
 
 /// Minimal SVG path → polylines. Handles M/L/H/V/Z (abs+rel) and flattens
@@ -413,68 +502,129 @@ fn svg_path_to_polylines(d: &str) -> Vec<Vec<[f32; 2]>> {
     let mut i = 0;
     let mut cmd = ' ';
     while i < toks.len() {
-        if let Tok::Cmd(c) = toks[i] { cmd = c; i += 1; }
+        if let Tok::Cmd(c) = toks[i] {
+            cmd = c;
+            i += 1;
+        }
         let rel = cmd.is_ascii_lowercase();
         let uc = cmd.to_ascii_uppercase();
         let next = |i: &mut usize| -> f32 {
-            while *i < toks.len() { if let Tok::Num(n) = toks[*i] { *i += 1; return n; } else { break; } }
+            while *i < toks.len() {
+                if let Tok::Num(n) = toks[*i] {
+                    *i += 1;
+                    return n;
+                } else {
+                    break;
+                }
+            }
             0.0
         };
         match uc {
             'M' => {
-                if !cur.is_empty() { polys.push(std::mem::take(&mut cur)); }
+                if !cur.is_empty() {
+                    polys.push(std::mem::take(&mut cur));
+                }
                 let (nx, ny) = (next(&mut i), next(&mut i));
-                x = if rel { x + nx } else { nx }; y = if rel { y + ny } else { ny };
-                start_x = x; start_y = y; cur.push([x, y]); cmd = if rel { 'l' } else { 'L' };
-            }
-            'L' => { let (nx, ny) = (next(&mut i), next(&mut i));
-                x = if rel { x + nx } else { nx }; y = if rel { y + ny } else { ny }; cur.push([x, y]); }
-            'H' => { let nx = next(&mut i); x = if rel { x + nx } else { nx }; cur.push([x, y]); }
-            'V' => { let ny = next(&mut i); y = if rel { y + ny } else { ny }; cur.push([x, y]); }
+                x = if rel { x + nx } else { nx };
+                y = if rel { y + ny } else { ny };
+                start_x = x;
+                start_y = y;
+                cur.push([x, y]);
+                cmd = if rel { 'l' } else { 'L' };
+            },
+            'L' => {
+                let (nx, ny) = (next(&mut i), next(&mut i));
+                x = if rel { x + nx } else { nx };
+                y = if rel { y + ny } else { ny };
+                cur.push([x, y]);
+            },
+            'H' => {
+                let nx = next(&mut i);
+                x = if rel { x + nx } else { nx };
+                cur.push([x, y]);
+            },
+            'V' => {
+                let ny = next(&mut i);
+                y = if rel { y + ny } else { ny };
+                cur.push([x, y]);
+            },
             'C' => {
                 let (x1, y1) = (next(&mut i), next(&mut i));
                 let (x2, y2) = (next(&mut i), next(&mut i));
                 let (ex, ey) = (next(&mut i), next(&mut i));
                 let (p0, p1, p2, p3);
-                if rel { p1 = [x + x1, y + y1]; p2 = [x + x2, y + y2]; p3 = [x + ex, y + ey]; }
-                else   { p1 = [x1, y1]; p2 = [x2, y2]; p3 = [ex, ey]; }
+                if rel {
+                    p1 = [x + x1, y + y1];
+                    p2 = [x + x2, y + y2];
+                    p3 = [x + ex, y + ey];
+                } else {
+                    p1 = [x1, y1];
+                    p2 = [x2, y2];
+                    p3 = [ex, ey];
+                }
                 p0 = [x, y];
                 flatten_cubic(p0, p1, p2, p3, &mut cur);
-                x = p3[0]; y = p3[1];
-            }
+                x = p3[0];
+                y = p3[1];
+            },
             'Q' => {
                 let (x1, y1) = (next(&mut i), next(&mut i));
                 let (ex, ey) = (next(&mut i), next(&mut i));
                 let (p0, p1, p2);
-                if rel { p1 = [x + x1, y + y1]; p2 = [x + ex, y + ey]; }
-                else   { p1 = [x1, y1]; p2 = [ex, ey]; }
+                if rel {
+                    p1 = [x + x1, y + y1];
+                    p2 = [x + ex, y + ey];
+                } else {
+                    p1 = [x1, y1];
+                    p2 = [ex, ey];
+                }
                 p0 = [x, y];
                 flatten_quad(p0, p1, p2, &mut cur);
-                x = p2[0]; y = p2[1];
-            }
-            'Z' => { cur.push([start_x, start_y]); x = start_x; y = start_y;
-                if !cur.is_empty() { polys.push(std::mem::take(&mut cur)); } }
-            _ => { i += 1; }
+                x = p2[0];
+                y = p2[1];
+            },
+            'Z' => {
+                cur.push([start_x, start_y]);
+                x = start_x;
+                y = start_y;
+                if !cur.is_empty() {
+                    polys.push(std::mem::take(&mut cur));
+                }
+            },
+            _ => {
+                i += 1;
+            },
         }
     }
-    if cur.len() >= 2 { polys.push(cur); }
+    if cur.len() >= 2 {
+        polys.push(cur);
+    }
     polys
 }
 
 #[derive(Clone, Copy)]
-enum Tok { Cmd(char), Num(f32) }
+enum Tok {
+    Cmd(char),
+    Num(f32),
+}
 
 fn tokenize_path(d: &str) -> Vec<Tok> {
     let mut out = Vec::new();
     let mut numbuf = String::new();
     let flush = |b: &mut String, o: &mut Vec<Tok>| {
-        if !b.is_empty() { if let Ok(n) = b.parse::<f32>() { o.push(Tok::Num(n)); } b.clear(); }
+        if !b.is_empty() {
+            if let Ok(n) = b.parse::<f32>() {
+                o.push(Tok::Num(n));
+            }
+            b.clear();
+        }
     };
     for c in d.chars() {
         if c.is_ascii_alphabetic() {
             flush(&mut numbuf, &mut out);
             out.push(Tok::Cmd(c));
-        } else if c == '-' && !numbuf.is_empty() && !numbuf.ends_with('e') && !numbuf.ends_with('E') {
+        } else if c == '-' && !numbuf.is_empty() && !numbuf.ends_with('e') && !numbuf.ends_with('E')
+        {
             flush(&mut numbuf, &mut out);
             numbuf.push(c);
         } else if c == ',' || c.is_whitespace() {
@@ -490,10 +640,17 @@ fn tokenize_path(d: &str) -> Vec<Tok> {
 fn flatten_cubic(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], out: &mut Vec<[f32; 2]>) {
     let steps = 16;
     for s in 1..=steps {
-        let t = s as f32 / steps as f32; let u = 1.0 - t;
+        let t = s as f32 / steps as f32;
+        let u = 1.0 - t;
         let b = [
-            u*u*u*p0[0] + 3.0*u*u*t*p1[0] + 3.0*u*t*t*p2[0] + t*t*t*p3[0],
-            u*u*u*p0[1] + 3.0*u*u*t*p1[1] + 3.0*u*t*t*p2[1] + t*t*t*p3[1],
+            u * u * u * p0[0]
+                + 3.0 * u * u * t * p1[0]
+                + 3.0 * u * t * t * p2[0]
+                + t * t * t * p3[0],
+            u * u * u * p0[1]
+                + 3.0 * u * u * t * p1[1]
+                + 3.0 * u * t * t * p2[1]
+                + t * t * t * p3[1],
         ];
         out.push(b);
     }
@@ -502,7 +659,11 @@ fn flatten_cubic(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], out: &m
 fn flatten_quad(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], out: &mut Vec<[f32; 2]>) {
     let steps = 12;
     for s in 1..=steps {
-        let t = s as f32 / steps as f32; let u = 1.0 - t;
-        out.push([u*u*p0[0] + 2.0*u*t*p1[0] + t*t*p2[0], u*u*p0[1] + 2.0*u*t*p1[1] + t*t*p2[1]]);
+        let t = s as f32 / steps as f32;
+        let u = 1.0 - t;
+        out.push([
+            u * u * p0[0] + 2.0 * u * t * p1[0] + t * t * p2[0],
+            u * u * p0[1] + 2.0 * u * t * p1[1] + t * t * p2[1],
+        ]);
     }
 }
