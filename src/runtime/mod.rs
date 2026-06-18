@@ -1509,7 +1509,10 @@ impl Interpreter {
             // ── Step 5: Additive Blend Mode ──
             "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" => {
                 let mode = self.arg_num(&args, 0, 0.0)? as u8;
-                self.gfx.borrow_mut().blend = mode;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.blend = mode;
+                let a = gfx.alpha;
+                gfx.depth_queue.set_state(mode, a);   // 3-D queue captures blend for subsequent pushes
                 return Ok(Value::Unit);
             }
 
@@ -1541,7 +1544,10 @@ impl Interpreter {
             // set_alpha(a) — pen opacity 0..1 for the alpha-blended fills below.
             "set_alpha" | "ตั้งความโปร่งใส" | "设透明" | "アルファ設定" | "투명도설정" => {
                 let a = self.arg_num(&args, 0, 1.0)? as f32;
-                self.gfx.borrow_mut().alpha = a.clamp(0.0, 1.0);
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.alpha = a.clamp(0.0, 1.0);
+                let (m, al) = (gfx.blend, gfx.alpha);
+                gfx.depth_queue.set_state(m, al);     // 3-D queue captures alpha for subsequent pushes
                 return Ok(Value::Unit);
             }
 
@@ -1849,10 +1855,14 @@ impl Interpreter {
                             let w = gfx.width;
                             let h = gfx.height;
                             let dt = gfx.depth_test;
+                            let (bm, ba) = (gfx.blend, gfx.alpha);
                             let queue = std::mem::take(&mut gfx.depth_queue);
-                            let g = &mut *gfx;
-                            let z = if dt { Some(&mut g.depth_buf) } else { None };
-                            queue.flush(&mut g.buffer, z, w, h);
+                            {
+                                let g = &mut *gfx;
+                                let z = if dt { Some(&mut g.depth_buf) } else { None };
+                                queue.flush(&mut g.buffer, z, w, h);
+                            }
+                            gfx.depth_queue.set_state(bm, ba);
                         }
                         let buf = gfx.buffer.clone();
                         let w   = gfx.width;
@@ -5508,10 +5518,14 @@ impl Interpreter {
                 if !gfx.depth_queue.is_empty() {
                     let w = gfx.width; let h = gfx.height;
                     let dt = gfx.depth_test;
+                    let (bm, ba) = (gfx.blend, gfx.alpha);
                     let queue = std::mem::take(&mut gfx.depth_queue);
-                    let g = &mut *gfx;
-                    let z = if dt { Some(&mut g.depth_buf) } else { None };
-                    queue.flush(&mut g.buffer, z, w, h);
+                    {
+                        let g = &mut *gfx;
+                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        queue.flush(&mut g.buffer, z, w, h);
+                    }
+                    gfx.depth_queue.set_state(bm, ba);   // keep active blend/alpha across the mid-frame flush
                 }
                 return Ok(Value::Unit);
             }

@@ -110,7 +110,7 @@ static BUILTINS_SHAPES: &[Entry] = &[
     (&["cylinder","圆柱","円柱","원기둥","ทรงกระบอก"],             ["cylinder","圆柱","円柱","원기둥","ทรงกระบอก"]),
     (&["cone","圆锥","円錐","원뿔","กรวย"],                        ["cone","圆锥","円錐","원뿔","กรวย"]),
     (&["capsule","胶囊","カプセル","캡슐","แคปซูล"],               ["capsule","胶囊","カプセル","캡슐","แคปซูล"]),
-    (&["torus","ring","圆环","トーラス","토러스","ทอรัส"],         ["torus","圆环","トーラス","토러스","ทอรัส"]),
+    (&["torus","圆环","トーラス","토러스","ทอรัส"],                ["torus","圆环","トーラス","토러스","ทอรัส"]),
     (&["pyramid","金字塔","ピラミッド","피라미드","พีระมิด"],       ["pyramid","金字塔","ピラミッド","피라미드","พีระมิด"]),
     (&["prism","棱柱","角柱","각기둥","ปริซึม"],                   ["prism","棱柱","角柱","각기둥","ปริซึม"]),
     (&["frustum","棱台","錐台","원뿔대","กรวยตัด"],                ["frustum","棱台","錐台","원뿔대","กรวยตัด"]),
@@ -124,7 +124,7 @@ static BUILTINS_SHAPES: &[Entry] = &[
     (&["spring","弹簧","ばね","스프링","สปริง"],                  ["spring","弹簧","ばね","스프링","สปริง"]),
     (&["arch","拱门","アーチ","아치","ซุ้มโค้ง"],                 ["arch","拱门","アーチ","아치","ซุ้มโค้ง"]),
     (&["stairs","楼梯","階段","계단","บันได"],                    ["stairs","楼梯","階段","계단","บันได"]),
-    (&["star_prism","star","星柱","별기둥","แท่งดาว"],            ["star_prism","星柱","星柱","별기둥","แท่งดาว"]),
+    (&["star_prism","星柱","별기둥","แท่งดาว"],                  ["star_prism","星柱","星柱","별기둥","แท่งดาว"]),
     (&["capsule_chain","chain","胶囊链","カプセル鎖","캡슐체인","โซ่แคปซูล"], ["capsule_chain","胶囊链","カプセル鎖","캡슐체인","โซ่แคปซูล"]),
     (&["mobius","莫比乌斯","メビウス","뫼비우스","เมอบีอุส"],      ["mobius","莫比乌斯","メビウス","뫼비우스","เมอบีอุส"]),
 ];
@@ -346,7 +346,7 @@ static BUILTINS_GAME: &[Entry] = &[
     (&["animation","动画","アニメーション","애니메이션","แอนิเมชัน"],              ["animation","动画","アニメーション","애니메이션","แอนิเมชัน"]),
     (&["particle","粒子","パーティクル","파티클","อนุภาค"],                        ["particle","粒子","パーティクル","파티클","อนุภาค"]),
     (&["sound","声音","サウンド","소리","เสียง"],                                   ["sound","声音","サウンド","소리","เสียง"]),
-    (&["music","音乐","ミュージック","음악","เพลง"],                                ["music","音乐","ミュージック","음악","เพลง"]),
+    (&["music","音乐","ミュージック","음악","เพลง"],                                ["music","音乐","音楽","음악","เพลง"]),
     (&["input","输入","インプット","입력","อินพุต"],                                ["input","输入","インプット","입력","อินพุต"]),
     // Canonical forms below match the runtime aliases in src/runtime/mod.rs
     // (key_down → 按键/キー押す/키누름/กดค้าง, key_pressed → 键按/キー押した/키눌림/กดปุ่ม)
@@ -656,7 +656,7 @@ static VOCABULARY: &[Entry] = &[
     (&["soul","灵魂","ソウル","영혼","วิญญาณ"],                                   ["soul","灵魂","ソウル","영혼","วิญญาณ"]),
     (&["dream","梦","夢","꿈","ความฝัน"],                                         ["dream","梦","夢","꿈","ความฝัน"]),
     (&["story","故事","ストーリー","이야기","เรื่องราว"],                          ["story","故事","ストーリー","이야기","เรื่องราว"]),
-    (&["chapter","章","チャプター","챕터","บท"],                                  ["chapter","章","チャプター","챕터","บท"]),
+    (&["chapter","章","チャプター","챕터","บท"],                                  ["chapter","章","章","장","บท"]),
 
     // ── Spatial / visual ─────────────────────────────────────────────────────
     (&["chakra","脉轮","チャクラ","차크라","จักร"],                               ["chakra","脉轮","チャクラ","차크라","จักร"]),
@@ -695,7 +695,7 @@ static VOCABULARY: &[Entry] = &[
     (&["background","背景","背景","배경","พื้นหลัง"],                              ["background","背景","背景","배경","พื้นหลัง"]),
     (&["foreground","前景","前景","전경","พื้นหน้า"],                               ["foreground","前景","前景","전경","พื้นหน้า"]),
     (&["ui","界面","UI","인터페이스","ส่วนติดต่อ","interface"],                    ["ui","界面","UI","인터페이스","ส่วนติดต่อ"]),
-    (&["dialog","对话","ダイアログ","다이얼로그","ไดอะล็อก","dialogue"],            ["dialog","对话","ダイアログ","다이얼로그","ไดอะล็อก"]),
+    (&["dialog","对话","ダイアログ","다이얼로그","ไดอะล็อก"],                       ["dialog","对话","ダイアログ","다이얼로그","ไดอะล็อก"]),
     (&["effect","效果","エフェクト","효과","เอฟเฟกต์","effects","特效"],            ["effect","效果","エフェクต","효과","เอฟเฟกต์"]),
     (&["system","系统","システム","시스템","ระบบ","systems"],                       ["system","系统","システム","시스템","ระบบ"]),
     (&["controller","控制器","コントローラー","컨트롤러","ตัวควบคุม"],               ["controller","控制器","コントローラー","컨트롤러","ตัวควบคุม"]),
@@ -968,3 +968,128 @@ fn collect_paths(root: &Path, files: &mut Vec<PathBuf>, dirs: &mut Vec<PathBuf>)
     Ok(())
 }
 
+
+// ─── Vocabulary / normalizer tests ────────────────────────────────────────────
+//
+// English and Thai are the reference languages (known-good). These tests assert
+// that Chinese, Japanese and Korean have full parity — no missing vocabulary —
+// and that normalize_content round-trips every canonical token in every table.
+#[cfg(test)]
+mod vocab_tests {
+    use super::*;
+
+    /// Every translation table, by name, for exhaustive iteration.
+    fn all_tables() -> Vec<(&'static str, &'static [Entry])> {
+        vec![
+            ("KEYWORDS", KEYWORDS), ("VTEX", BUILTINS_VTEX), ("SHAPES", BUILTINS_SHAPES),
+            ("OTHER", BUILTINS_OTHER), ("GFX", BUILTINS_GFX), ("AUDIO", BUILTINS_AUDIO),
+            ("MATH", BUILTINS_MATH), ("CRYPTO", BUILTINS_CRYPTO), ("GEO_CRYPTO", BUILTINS_GEO_CRYPTO),
+            ("PHASE1", BUILTINS_PHASE1), ("PHYSICS", BUILTINS_PHYSICS), ("PHYSICS_FN", BUILTINS_PHYSICS_FN),
+            ("DIALOG", BUILTINS_DIALOG), ("AI", BUILTINS_AI), ("ANIM", BUILTINS_ANIM),
+            ("GAME", BUILTINS_GAME), ("INPUT", BUILTINS_INPUT), ("UI", BUILTINS_UI),
+            ("MUSIC", BUILTINS_MUSIC), ("VOCABULARY", VOCABULARY),
+        ]
+    }
+
+    const LANGS: [(usize, &str); 5] = [(0, "en"), (1, "zh"), (2, "ja"), (3, "ko"), (4, "th")];
+
+    /// 1. Every form is present and clean (non-empty, no stray whitespace).
+    #[test]
+    fn forms_are_complete() {
+        let mut bad = Vec::new();
+        for (tname, table) in all_tables() {
+            for (_aliases, forms) in table {
+                for (i, code) in LANGS {
+                    let f = forms[i];
+                    if f.is_empty() || f.trim() != f {
+                        bad.push(format!("{tname}: `{}` has bad {code} form {:?}", forms[0], f));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "incomplete forms:\n{}", bad.join("\n"));
+    }
+
+    /// 2. The English canonical (forms[0]) must be one of its own aliases, so
+    ///    `normalize` can recognise English source as input.
+    #[test]
+    fn english_canonical_is_an_alias() {
+        let mut bad = Vec::new();
+        for (tname, table) in all_tables() {
+            for (aliases, forms) in table {
+                if !aliases.contains(&forms[0]) {
+                    bad.push(format!("{tname}: `{}` not in its own alias list", forms[0]));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "english canonical missing from aliases:\n{}", bad.join("\n"));
+    }
+
+    /// English homonyms: one English word, two genuinely different concepts. The
+    /// normalizer can't disambiguate these from the word alone, so one wins.
+    /// Documented + accepted here; everything else must be unambiguous.
+    const HOMONYMS: &[&str] = &["sign", "spawn"];
+
+    /// 3. The same English canonical may appear in more than one table only when
+    ///    the forms are IDENTICAL (benign redundancy). If a word maps to two
+    ///    DIFFERENT translations it is ambiguous — fail unless it is a documented
+    ///    homonym.
+    #[test]
+    fn no_ambiguous_duplicate_canonicals() {
+        use std::collections::HashMap;
+        let mut seen: HashMap<&str, [&str; 5]> = HashMap::new();
+        let mut bad = Vec::new();
+        for (tname, table) in all_tables() {
+            for (_a, forms) in table {
+                if HOMONYMS.contains(&forms[0]) { continue; }
+                if let Some(prev) = seen.insert(forms[0], *forms) {
+                    if prev != *forms {
+                        bad.push(format!("{tname}: `{}` ambiguous — {:?} vs {:?}", forms[0], prev, forms));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "ambiguous duplicate canonicals:\n{}", bad.join("\n"));
+    }
+
+    /// 4. MISSING-VOCAB GUARD: wherever Thai translated a concept (th != en),
+    ///    Chinese, Japanese and Korean must translate it too (form != en).
+    ///    English + Thai are the reference pair the project trusts.
+    #[test]
+    fn no_missing_zh_ja_ko_where_thai_translates() {
+        let mut gaps = Vec::new();
+        for (tname, table) in all_tables() {
+            for (_a, forms) in table {
+                let en = forms[0];
+                let th = forms[4];
+                if th == en { continue; } // concept not translated (proper noun) — skip
+                for (i, code) in [(1, "zh"), (2, "ja"), (3, "ko")] {
+                    if forms[i] == en {
+                        gaps.push(format!("{tname}: `{en}` missing {code} (th=`{th}`)"));
+                    }
+                }
+            }
+        }
+        assert!(gaps.is_empty(), "{} missing translations:\n{}", gaps.len(), gaps.join("\n"));
+    }
+
+    /// 5. Round-trip: normalising the English canonical to a language yields that
+    ///    language's form, for every table entry. Focus on zh + ko (+ ja).
+    #[test]
+    fn english_normalizes_to_each_language() {
+        let mut bad = Vec::new();
+        for (tname, table) in all_tables() {
+            for (_a, forms) in table {
+                if HOMONYMS.contains(&forms[0]) { continue; } // winner is by-design one sense
+                for (i, lang) in [(1, Lang::Zh), (2, Lang::Ja), (3, Lang::Ko), (4, Lang::Th)] {
+                    let got = normalize_content(forms[0], lang);
+                    if got != forms[i] {
+                        bad.push(format!("{tname}: {:?} -> {} gave `{got}`, want `{}`",
+                                         forms[0], lang.name(), forms[i]));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{} round-trip mismatches:\n{}", bad.len(), bad.join("\n"));
+    }
+}

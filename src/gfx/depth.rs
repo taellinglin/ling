@@ -7,6 +7,11 @@
 //
 // Painter's algorithm is exact for convex non-intersecting geometry and
 // produces plausible results for the Sierpiński fractal + tesseract wireframe.
+//
+// Each call also captures the current blend `mode` (0 normal · 1 add · 2 mul ·
+// 3 screen · 4 subtract · 5 overlay) and pen `alpha` so translucent 3-D FX
+// (sword slashes, ring trails, liquid orbs) composite over the scene instead of
+// painting opaque black where they fade out.
 
 // `raster` is wasm-safe (pure CPU); the software-framebuffer flush runs on web too.
 use crate::gfx::raster;
@@ -18,6 +23,10 @@ pub struct DrawCall {
     pub depth: f32,
     /// Pre-lit 0x00RRGGBB colour.
     pub color: u32,
+    /// Blend mode (0 normal · 1 add · 2 multiply · 3 screen · 4 subtract · 5 overlay).
+    pub mode: u8,
+    /// Pen opacity 0..1 (coverage for the composite).
+    pub alpha: f32,
     pub kind:  DrawKind,
 }
 
@@ -30,19 +39,34 @@ pub enum DrawKind {
 }
 
 /// Deferred depth-sorted draw queue.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct DepthQueue {
     calls: Vec<DrawCall>,
+    /// Current blend mode applied to subsequent pushes (mirrors `gfx.blend`).
+    cur_mode: u8,
+    /// Current pen alpha applied to subsequent pushes (mirrors `gfx.alpha`).
+    cur_alpha: f32,
+}
+
+impl Default for DepthQueue {
+    fn default() -> Self { Self { calls: Vec::new(), cur_mode: 0, cur_alpha: 1.0 } }
 }
 
 impl DepthQueue {
+    /// Mirror the live pen blend mode + alpha so the next pushes capture them.
+    /// Call after `std::mem::take` so an active blend survives a mid-frame flush.
+    pub fn set_state(&mut self, mode: u8, alpha: f32) {
+        self.cur_mode = mode;
+        self.cur_alpha = alpha.clamp(0.0, 1.0);
+    }
+
     /// Queue a filled triangle (flat per-vertex depth = the sort key).
     pub fn push_triangle(
         &mut self, depth: f32, color: u32,
         x0:f32, y0:f32, x1:f32, y1:f32, x2:f32, y2:f32,
     ) {
         self.calls.push(DrawCall {
-            depth, color,
+            depth, color, mode: self.cur_mode, alpha: self.cur_alpha,
             kind: DrawKind::Triangle { x0,y0,z0:depth, x1,y1,z1:depth, x2,y2,z2:depth },
         });
     }
@@ -56,7 +80,7 @@ impl DepthQueue {
     ) {
         let depth = (z0 + z1 + z2) / 3.0;
         self.calls.push(DrawCall {
-            depth, color,
+            depth, color, mode: self.cur_mode, alpha: self.cur_alpha,
             kind: DrawKind::Triangle { x0,y0,z0, x1,y1,z1, x2,y2,z2 },
         });
     }
@@ -68,7 +92,7 @@ impl DepthQueue {
         x0:f32, y0:f32, c0:u32, x1:f32, y1:f32, c1:u32, x2:f32, y2:f32, c2:u32, bands:u32,
     ) {
         self.calls.push(DrawCall {
-            depth, color: c0,
+            depth, color: c0, mode: self.cur_mode, alpha: self.cur_alpha,
             kind: DrawKind::TriangleG { x0,y0,z0:depth,c0, x1,y1,z1:depth,c1, x2,y2,z2:depth,c2, bands },
         });
     }
@@ -82,7 +106,7 @@ impl DepthQueue {
     ) {
         let depth = (z0 + z1 + z2) / 3.0;
         self.calls.push(DrawCall {
-            depth, color: c0,
+            depth, color: c0, mode: self.cur_mode, alpha: self.cur_alpha,
             kind: DrawKind::TriangleG { x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, bands },
         });
     }
@@ -93,7 +117,7 @@ impl DepthQueue {
         x0:f32, y0:f32, x1:f32, y1:f32,
     ) {
         self.calls.push(DrawCall {
-            depth, color,
+            depth, color, mode: self.cur_mode, alpha: self.cur_alpha,
             kind: DrawKind::Line { x0,y0,z0:depth, x1,y1,z1:depth },
         });
     }
@@ -104,6 +128,11 @@ impl DepthQueue {
     /// nearer) is used so interpenetrating triangles resolve correctly — a true
     /// z-buffer on top of the painter's sort. When `None`, pure painter's
     /// algorithm (the default/legacy path).
+    ///
+    /// Opaque calls (mode 0, alpha ≈ 1) take the fast direct-write path; calls
+    /// with a blend mode or alpha < 1 composite via `composite_pixel`. In the
+    /// z-buffer path, translucent calls test depth but do not write it, so they
+    /// layer over the opaque scene (back-to-front sort handles their ordering).
     ///
     /// Consumes `self` — call site does `mem::take` to avoid borrow conflict.
     pub fn flush(mut self, buf: &mut Vec<u32>, zbuf: Option<&mut Vec<f32>>, width: usize, height: usize) {
@@ -118,27 +147,41 @@ impl DepthQueue {
                 if z.len() != width * height { z.clear(); z.resize(width * height, f32::INFINITY); }
                 else { for v in z.iter_mut() { *v = f32::INFINITY; } }
                 for call in &self.calls {
+                    let blended = call.mode != 0 || call.alpha < 0.999;
                     match call.kind {
-                        DrawKind::Triangle { x0,y0,z0, x1,y1,z1, x2,y2,z2 } =>
-                            raster::fill_triangle_z(buf, z, width, height, call.color,
-                                                    x0,y0,z0, x1,y1,z1, x2,y2,z2),
+                        DrawKind::Triangle { x0,y0,z0, x1,y1,z1, x2,y2,z2 } => {
+                            if blended {
+                                raster::fill_triangle_z_blend(buf, z, width, height, call.color, call.mode, call.alpha,
+                                                              x0,y0,z0, x1,y1,z1, x2,y2,z2);
+                            } else {
+                                raster::fill_triangle_z(buf, z, width, height, call.color,
+                                                        x0,y0,z0, x1,y1,z1, x2,y2,z2);
+                            }
+                        }
                         DrawKind::TriangleG { x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, bands } =>
                             raster::fill_triangle_gouraud_z(buf, z, width, height,
                                                     x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, bands),
-                        DrawKind::Line { x0,y0, x1,y1, .. } =>
-                            raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1),
+                        DrawKind::Line { x0,y0, x1,y1, .. } => {
+                            if blended { raster::draw_line_blend(buf, width, height, call.color, call.mode, call.alpha, x0, y0, x1, y1); }
+                            else       { raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1); }
+                        }
                     }
                 }
             }
             None => {
                 for call in &self.calls {
+                    let blended = call.mode != 0 || call.alpha < 0.999;
                     match call.kind {
-                        DrawKind::Triangle { x0,y0, x1,y1, x2,y2, .. } =>
-                            raster::fill_triangle(buf, width, height, call.color, x0, y0, x1, y1, x2, y2),
+                        DrawKind::Triangle { x0,y0, x1,y1, x2,y2, .. } => {
+                            if blended { raster::fill_triangle_blend(buf, width, height, call.color, call.mode, call.alpha, x0,y0, x1,y1, x2,y2); }
+                            else       { raster::fill_triangle(buf, width, height, call.color, x0, y0, x1, y1, x2, y2); }
+                        }
                         DrawKind::TriangleG { x0,y0,c0, x1,y1,c1, x2,y2,c2, bands, .. } =>
                             raster::fill_triangle_gouraud(buf, width, height, x0,y0,c0, x1,y1,c1, x2,y2,c2, bands),
-                        DrawKind::Line { x0,y0, x1,y1, .. } =>
-                            raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1),
+                        DrawKind::Line { x0,y0, x1,y1, .. } => {
+                            if blended { raster::draw_line_blend(buf, width, height, call.color, call.mode, call.alpha, x0, y0, x1, y1); }
+                            else       { raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1); }
+                        }
                     }
                 }
             }

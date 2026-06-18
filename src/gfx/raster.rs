@@ -246,6 +246,112 @@ pub fn fill_triangle_z(
     }
 }
 
+/// Solid triangle composited with blend `mode` + `alpha` (no depth test).
+/// Used for translucent 3-D FX (slashes, ring trails, orbs) in the painter's
+/// path so they glow/fade instead of painting opaque black.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_triangle_blend(
+    buf: &mut [u32], width: usize, height: usize, color: u32, mode: u8, alpha: f32,
+    x0:f32,y0:f32, x1:f32,y1:f32, x2:f32,y2:f32,
+) {
+    if width == 0 || height == 0 { return; }
+    if !x0.is_finite()||!y0.is_finite()||!x1.is_finite()||!y1.is_finite()||!x2.is_finite()||!y2.is_finite() { return; }
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha <= 0.0 { return; }
+    let fast_add = mode == 1;                                    // integer saturating-add fast path
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha) } else { color };
+
+    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
+    let max_x = x0.max(x1).max(x2).min(width  as f32 - 1.0) as i32;
+    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
+    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
+    if min_x > max_x || min_y > max_y { return; }
+
+    let de0 = -(y1 - y0);
+    let de1 = -(y2 - y1);
+    let de2 = -(y0 - y2);
+
+    for py in min_y..=max_y {
+        let fy  = py as f32 + 0.5;
+        let fx0 = min_x as f32 + 0.5;
+        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
+        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
+        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        let mut in_span = false;
+        for px in min_x..=max_x {
+            let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0)
+                      || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
+            if inside {
+                if fast_add {
+                    let idx = py as usize * width + px as usize;
+                    buf[idx] = add_sat(buf[idx], src);
+                } else {
+                    composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
+                }
+                in_span = true;
+            } else if in_span { break; }
+            e0 += de0; e1 += de1; e2 += de2;
+        }
+    }
+}
+
+/// Depth-tested translucent triangle: composites with blend `mode` + `alpha`
+/// where it passes the z-buffer, but does NOT write depth (so the opaque scene
+/// still occludes it and other translucent layers behind it remain visible).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_triangle_z_blend(
+    buf: &mut [u32], zbuf: &[f32], width: usize, height: usize, color: u32, mode: u8, alpha: f32,
+    x0:f32,y0:f32,z0:f32, x1:f32,y1:f32,z1:f32, x2:f32,y2:f32,z2:f32,
+) {
+    if width == 0 || height == 0 { return; }
+    if !x0.is_finite()||!y0.is_finite()||!x1.is_finite()||!y1.is_finite()||!x2.is_finite()||!y2.is_finite() { return; }
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha <= 0.0 { return; }
+    let fast_add = mode == 1;                                    // integer saturating-add fast path
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha) } else { color };
+
+    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
+    let max_x = x0.max(x1).max(x2).min(width  as f32 - 1.0) as i32;
+    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
+    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
+    if min_x > max_x || min_y > max_y { return; }
+
+    let de0 = -(y1 - y0);
+    let de1 = -(y2 - y1);
+    let de2 = -(y0 - y2);
+
+    for py in min_y..=max_y {
+        let fy  = py as f32 + 0.5;
+        let fx0 = min_x as f32 + 0.5;
+        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
+        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
+        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        let mut in_span = false;
+        let row = py as usize * width;
+        for px in min_x..=max_x {
+            let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0)
+                      || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
+            if inside {
+                let tot = e0 + e1 + e2;
+                if tot.abs() > 1e-6 {
+                    let w2 = e0 / tot; let w0 = e1 / tot; let w1 = e2 / tot;
+                    let z = z0*w0 + z1*w1 + z2*w2;
+                    if z < zbuf[row + px as usize] {
+                        if fast_add {
+                            let idx = row + px as usize;
+                            buf[idx] = add_sat(buf[idx], src);
+                        } else {
+                            composite_pixel(buf, width, height, px, py, color, alpha, mode, false);
+                        }
+                    }
+                }
+                in_span = true;
+            } else if in_span { break; }
+            e0 += de0; e1 += de1; e2 += de2;
+        }
+    }
+}
+
 /// Depth-tested Gouraud + posterised triangle (z-buffer + smooth cel).
 #[allow(clippy::too_many_arguments)]
 pub fn fill_triangle_gouraud_z(
@@ -414,6 +520,65 @@ pub fn draw_line(
     loop {
         if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
             buf[y as usize * width + x as usize] = color;
+        }
+        if x == x2 && y == y2 { break; }
+        let e2 = 2 * err;
+        if e2 >= dy { err += dy; x += sx; }
+        if e2 <= dx { err += dx; y += sy; }
+    }
+}
+
+/// Fast saturating per-channel additive of `src` over `dst` (sRGB bytes).
+#[inline]
+pub fn add_sat(dst: u32, src: u32) -> u32 {
+    let r = (((dst >> 16) & 0xFF) + ((src >> 16) & 0xFF)).min(255);
+    let g = (((dst >> 8)  & 0xFF) + ((src >> 8)  & 0xFF)).min(255);
+    let b = (( dst        & 0xFF) + ( src        & 0xFF)).min(255);
+    (r << 16) | (g << 8) | b
+}
+
+/// Pre-scale an sRGB colour by `a` (for the additive fast path).
+#[inline]
+fn scale_rgb(color: u32, a: f32) -> u32 {
+    let r = (((color >> 16) & 0xFF) as f32 * a) as u32;
+    let g = (((color >> 8)  & 0xFF) as f32 * a) as u32;
+    let b = (( color        & 0xFF) as f32 * a) as u32;
+    (r << 16) | (g << 8) | b
+}
+
+/// Blended Bresenham line (no AA — fast, matches the old `draw_line` speed).
+/// Additive (mode 1) uses an integer saturating add; other modes/alpha fall
+/// back to `composite_pixel`. Used for translucent 3-D FX lines (ring trails).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_line_blend(
+    buf: &mut [u32], width: usize, height: usize, color: u32, mode: u8, alpha: f32,
+    x0: f32, y0: f32, x1: f32, y1: f32,
+) {
+    if width == 0 || height == 0 { return; }
+    if !x0.is_finite() || !y0.is_finite() || !x1.is_finite() || !y1.is_finite() { return; }
+    let xmax = (width  - 1) as f32;
+    let ymax = (height - 1) as f32;
+    let (mut ax, mut ay, mut bx, mut by) = (x0, y0, x1, y1);
+    if !cs_clip(&mut ax, &mut ay, &mut bx, &mut by, xmax, ymax) { return; }
+    let fast_add = mode == 1;
+    let src = if fast_add && alpha < 0.999 { scale_rgb(color, alpha.clamp(0.0, 1.0)) } else { color };
+    let mut x  = ax as i32;
+    let mut y  = ay as i32;
+    let x2     = bx as i32;
+    let y2     = by as i32;
+    let dx     = (x2 - x).abs();
+    let dy     = -((y2 - y).abs());
+    let sx: i32 = if x < x2 { 1 } else { -1 };
+    let sy: i32 = if y < y2 { 1 } else { -1 };
+    let mut err = dx + dy;
+    loop {
+        if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
+            if fast_add {
+                let idx = y as usize * width + x as usize;
+                buf[idx] = add_sat(buf[idx], src);
+            } else {
+                composite_pixel(buf, width, height, x, y, color, alpha, mode, false);
+            }
         }
         if x == x2 && y == y2 { break; }
         let e2 = 2 * err;

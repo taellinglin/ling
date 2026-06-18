@@ -12,7 +12,7 @@ Reserved words and their spelling in each language.
 | `if` | `若` | `もし` | `만약` | `ถ้า` | Conditional branch. |
 | `else` | `否` | `他` | `아니면` | `มิฉะนั้น` | Alternative branch. |
 | `while` | `循` | `間` | `동안` | `ขณะที่` | Loop while a condition holds. |
-| `for` | `历` | `繰` | `반복` | `สำหรับ` | Iterate over a range or collection. |
+| `for` | `历` | `繰` | `위해` | `สำหรับ` | Iterate over a range or collection. |
 | `in` | `于` | `の中` | `안에` | `ใน` | Iteration source: `for x in 0..10`. |
 | `match` | `配` | `一致` | `매치` | `ตรงกับ` | Pattern match. |
 | `return` | `归` | `戻る` | `반환` | `คืนค่า` | Return a value from a function. |
