@@ -4,6 +4,13 @@ mod ai;
 #[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
 pub(crate) mod jit_abi;
+
+/// Initialize the AOT/JIT runtime. Must be called before any AOT-compiled code.
+/// Creates a new interpreter instance for runtime function dispatch.
+pub fn init_aot_runtime() {
+    let interp = Interpreter::new();
+    jit_abi::init(interp);
+}
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
 use crate::gfx::{GfxState, Light};
@@ -1213,25 +1220,8 @@ impl Interpreter {
     }
 
     fn find_entry(&self) -> Option<Expr> {
-        // Try all known entry-point names in multiple human languages
-        for key in &[
-            "start",
-            "main",
-            "启",
-            "เริ่ม", // Thai
-            "시작",
-            "начать",
-            "начало",
-            "inicio",
-            "comenzar",
-            "début",
-            "commencer",
-            "anfang",
-            "starten",
-            "início",
-            "शुरू",
-            "ابدأ",
-        ] {
+        // Known entry-point names across supported human languages.
+        for key in crate::entry::ENTRY_NAMES {
             if let Some(e) = self.globals.get(*key) {
                 return Some(e.clone());
             }
@@ -1455,6 +1445,20 @@ impl Interpreter {
     }
 
     pub(crate) fn call_named(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
+        // A user-defined function shadows any builtin of the same name, matching
+        // the JIT/AOT backends (which always resolve a defined function first).
+        if let Some(def) = self.functions.get(name).cloned() {
+            let mut call_env = self.global_seed.clone();
+            let _ = env; // call-site locals are intentionally NOT visible to fns
+            for (param, arg) in def.params.iter().zip(args) {
+                call_env.insert(param.clone(), arg);
+            }
+            return match self.framed(name, |me| me.exec_block(&def.body, &mut call_env)) {
+                Ok(v) => Ok(v.unwrap_or(Value::Unit)),
+                Err(EvalErr::Return(v)) => Ok(v),
+                Err(e) => Err(e),
+            };
+        }
         match name {
             // ── Print ──
             "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести"
@@ -7871,23 +7875,6 @@ impl Interpreter {
             },
 
             _ => {},
-        }
-
-        // User-defined function
-        if let Some(def) = self.functions.get(name).cloned() {
-            // Clone the pre-evaluated global seed (built once in run_program) and
-            // add the params. Globals are immutable after load, so re-evaluating
-            // them on every call was pure waste — this is the hot-path fix.
-            let mut call_env = self.global_seed.clone();
-            let _ = env; // call-site locals are intentionally NOT visible to fns
-            for (param, arg) in def.params.iter().zip(args) {
-                call_env.insert(param.clone(), arg);
-            }
-            return match self.framed(name, |me| me.exec_block(&def.body, &mut call_env)) {
-                Ok(v) => Ok(v.unwrap_or(Value::Unit)),
-                Err(EvalErr::Return(v)) => Ok(v),
-                Err(e) => Err(e),
-            };
         }
 
         // `form` struct constructor: positional `Name(v0, v1, ...)`.

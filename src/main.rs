@@ -24,23 +24,24 @@ fn main() {
         Some("run") => {
             // `--wasm` builds the file to a WebAssembly bundle, serves it
             // locally, and opens it in the browser to play.
-            // `--jit` uses the Cranelift JIT backend instead of the tree-walker.
+            // The Cranelift JIT is the default backend; `--interp` opts into the
+            // tree-walker (kept as the semantic reference / fallback).
             let wasm = args.iter().any(|a| a == "--wasm" || a == "--web");
-            let use_jit = args.iter().any(|a| a == "--jit");
+            let use_interp = args.iter().any(|a| a == "--interp");
             let file = args[2..]
                 .iter()
                 .map(|s| s.as_str())
                 .find(|a| a.ends_with(".ling"))
                 .unwrap_or_else(|| {
-                    eprintln!("Usage: ling run [--wasm|--jit] <file.ling>");
+                    eprintln!("Usage: ling run [--wasm|--interp] <file.ling>");
                     std::process::exit(1);
                 });
             if wasm {
                 run_wasm(file);
-            } else if use_jit {
-                run_file_jit(file);
-            } else {
+            } else if use_interp {
                 run_file(file);
+            } else {
+                run_file_jit(file);
             }
         },
 
@@ -60,15 +61,16 @@ fn main() {
             let platforms = collect_platforms(&args);
             let icon = flag_value(&args, "--icon").map(PathBuf::from);
             let pack = args.iter().any(|a| a == "--pack");
-            run_build(target, &out, &platforms, icon, pack);
+            let aot = args.iter().any(|a| a == "--aot");
+            run_build(target, &out, &platforms, icon, pack, aot);
         },
-        Some(file) if file.ends_with(".ling") => run_file(file),
+        Some(file) if file.ends_with(".ling") => run_file_jit(file),
         _ => {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
-            println!("  ling run <file.ling>");
+            println!("  ling run <file.ling>                run using the Cranelift JIT backend (default)");
+            println!("  ling run --interp <file.ling>       run using the tree-walking interpreter");
             println!("  ling run --wasm <file.ling>         build to WebAssembly, serve, open in browser");
-            println!("  ling run --jit <file.ling>          run using Cranelift JIT backend");
             println!("  ling visualize <file.ling>          emit SVG AST to stdout");
             println!("  ling build <file.ling|dir> [opts]   compile to distributable");
             println!("    --out <dir>                       output folder (default: dist)");
@@ -76,6 +78,9 @@ fn main() {
             println!("    --icon <file.svg|png|ico>         app icon (overrides manifest icon)");
             println!(
                 "    --pack                            embed [includes] resources into the exe"
+            );
+            println!(
+                "    --aot                             compile to native code via AOT"
             );
             println!("  ling ast [path] [--technical|--artwork|--ling|--all]");
             println!(
@@ -129,12 +134,47 @@ fn run_file_jit(path: &str) {
         eprintln!("[detected language: {}]", lang);
     }
 
+    // A program with no entry point is a library; let the interpreter run it so
+    // it emits the same "no entry point" diagnostic the user expects.
+    let has_entry = ling::parser::parse(&source)
+        .map(|p| ling::entry::entry_name(&p.items).is_some())
+        .unwrap_or(true);
+    if !has_entry {
+        let src_dir = resolved.parent().map(|p| p.to_path_buf());
+        if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     use ling::CompilerConfig;
     let config = CompilerConfig::default();
     let compiler = ling::LingCompiler::new(config);
     if let Err(e) = compiler.compile_and_run_jit(path) {
-        eprintln!("JIT error: {:?}", e);
-        std::process::exit(1);
+        use ling::core::LingError;
+        match e {
+            // Invalid program — render the same diagnostic the interpreter does.
+            LingError::Parse(m) => {
+                let out_lang = ling::diag::OutputLang::from_env();
+                eprintln!("{}", ling::diag::render_parse(&m, &source, Some(path), out_lang));
+                std::process::exit(1);
+            },
+            // The JIT executed and failed mid-run; output may already be on screen.
+            LingError::Mir(m) => {
+                eprintln!("{m}");
+                std::process::exit(1);
+            },
+            // The JIT could not compile this program (an unsupported construct).
+            // Nothing ran yet, so fall back to the full-language tree-walker.
+            _ => {
+                let src_dir = resolved.parent().map(|p| p.to_path_buf());
+                if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            },
+        }
     }
 }
 
@@ -649,6 +689,7 @@ fn run_build(
     platforms: &[String],
     icon_override: Option<PathBuf>,
     pack: bool,
+    aot: bool,
 ) {
     let project = discover_project(target);
     println!(
@@ -665,10 +706,10 @@ fn run_build(
     for platform in platforms {
         match platform.as_str() {
             "web" => build_web(&project, out),
-            "win" | "windows" => build_native(&project, out, NativePlatform::Windows, icon, pack),
-            "lin" | "linux" => build_native(&project, out, NativePlatform::Linux, icon, pack),
+            "win" | "windows" => build_native(&project, out, NativePlatform::Windows, icon, pack, aot),
+            "lin" | "linux" => build_native(&project, out, NativePlatform::Linux, icon, pack, aot),
             "mac" | "macos" | "darwin" => {
-                build_native(&project, out, NativePlatform::Mac, icon, pack)
+                build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
             },
             other => {
                 eprintln!("unknown platform '{}' — use web|win|lin|mac|all", other);
@@ -898,12 +939,14 @@ fn build_native(
     platform: NativePlatform,
     icon: Option<&Path>,
     pack: bool,
+    aot: bool,
 ) {
     let triple = platform.triple();
     println!(
-        "  [{}] building {} ({triple})…",
+        "  [{}] building {} ({triple}){}…",
         platform.dir_name(),
-        platform.dir_name()
+        platform.dir_name(),
+        if aot { " [AOT]" } else { "" }
     );
 
     let ling_root = find_ling_root().unwrap_or_else(|| {
@@ -922,7 +965,9 @@ fn build_native(
     });
 
     // Copy all .ling files from source_dir (recurse one level for ling-fu 灵源/)
-    copy_ling_sources(&project.source_dir, build_dir);
+    if !aot {
+        copy_ling_sources(&project.source_dir, build_dir);
+    }
 
     // ── 2. Write generated Cargo.toml + src/main.rs ──────────────────────────
     let entry_filename = project
@@ -942,27 +987,49 @@ fn build_native(
     let resources = expand_includes(project);
     let do_pack = pack && !resources.is_empty();
 
-    std::fs::write(
-        build_dir.join("src/main.rs"),
-        gen_main_rs(&entry_filename, do_pack),
-    )
-    .expect("write src/main.rs");
+    if aot {
+        // ── AOT path: compile to native .o, link via Rust stub ──────────────
+        println!("    AOT-compiling {}…", entry_filename);
 
-    // ── 2a. Pack resources into the executable (when --pack) ─────────────────
+        let mir = ling::mir::compile_path(&project.entry, ling::core::OptimizationLevel::O3)
+            .unwrap_or_else(|e| {
+                eprintln!("    MIR compilation failed: {e}");
+                std::process::exit(1);
+            });
+
+        let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
+        let mut backend = ling_codegen::CraneliftBackend::new();
+        let obj_path = build_dir.join("entry.o");
+        use ling_codegen::CodegenBackend;
+        backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
+            eprintln!("    AOT codegen failed: {e}");
+            std::process::exit(1);
+        });
+
+        println!("    AOT object written to {}", obj_path.display());
+
+        std::fs::write(build_dir.join("src/main.rs"), gen_aot_main_rs(do_pack))
+            .expect("write src/main.rs");
+        std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
+    } else {
+        // ── Standard path: embed interpreter ────────────────────────────────
+        std::fs::write(
+            build_dir.join("src/main.rs"),
+            gen_main_rs(&entry_filename, do_pack),
+        )
+        .expect("write src/main.rs");
+        std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
+    }
+
+    // Pack resources into the executable (both backends self-extract them).
     if do_pack {
         write_packed_resources(build_dir, &resources);
-        println!(
-            "  packing {} resource(s) into the executable",
-            resources.len()
-        );
+        println!("  packing {} resource(s) into the executable", resources.len());
     } else if pack {
         println!("  --pack: no [includes] resources to pack");
     }
 
-    // ── 2b. Build script + app icon ──────────────────────────────────────────
-    // The generated build.rs embeds app.ico on Windows; we rasterize the icon
-    // source (manifest / --icon / default logo) into app.ico beside it.
-    std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
+    // App icon (Windows): rendered to app.ico, embedded by the generated build.rs.
     if matches!(platform, NativePlatform::Windows) {
         match resolve_icon(icon, project, &ling_root) {
             Some(src) => {
@@ -1062,7 +1129,8 @@ fn gen_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     // On Windows canonicalize gives UNC paths; forward-slashes work fine in TOML paths.
     let root_str = ling_root.display().to_string().replace('\\', "/");
     format!(
-        r#"[package]
+        r#"[workspace]
+[package]
 name = "{name}"
 version = "{version}"
 edition = "2021"
@@ -1159,6 +1227,60 @@ fn main() {{
 }}
 "#
     )
+}
+
+/// Generate `src/main.rs` for AOT builds: initializes runtime, calls compiled code.
+fn gen_aot_main_rs(packed: bool) -> String {
+    let res_mod = if packed { "mod resources;\n" } else { "" };
+    let unpack = if packed {
+        "    ling::unpack_resources(env!(\"CARGO_PKG_NAME\"), resources::RESOURCES);\n"
+    } else {
+        ""
+    };
+    format!(
+        r#"// Built by ling build --aot — no console window on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+{res_mod}
+fn main() {{
+    ling::runtime::init_aot_runtime();
+{unpack}
+    extern "C" {{
+        fn __main__() -> u64;
+    }}
+
+    unsafe {{
+        __main__();
+    }}
+}}
+"#
+    )
+}
+
+/// Generate `build.rs` for AOT builds: links the compiled object directly into
+/// the binary (no archiver needed) and embeds the app icon on Windows.
+fn gen_aot_build_rs() -> String {
+    r#"// Generated by `ling build --aot`. Links the AOT-compiled object file.
+use std::path::Path;
+
+fn main() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let obj = Path::new(&manifest_dir).join("entry.o");
+    println!("cargo:rustc-link-arg={}", obj.display());
+    println!("cargo:rerun-if-changed=entry.o");
+
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && Path::new("app.ico").exists()
+    {
+        println!("cargo:rerun-if-changed=app.ico");
+        let mut res = winresource::WindowsResource::new();
+        res.set_icon("app.ico");
+        if let Err(e) = res.compile() {
+            println!("cargo:warning=icon embed skipped ({e})");
+        }
+    }
+}
+"#
+    .to_string()
 }
 
 // ── [includes] resource handling ───────────────────────────────────────────────

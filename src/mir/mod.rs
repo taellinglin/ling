@@ -4,6 +4,9 @@ use ling_ast::Span;
 use ling_mir::ir::*;
 use ling_mir::optimizer::{OptLevel, Optimizer};
 use std::collections::HashMap;
+use std::path::Path;
+
+mod modules;
 
 /// Parse source, lower to MIR, run optimizer, return optimized MIR.
 pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingResult<MirProgram> {
@@ -16,22 +19,24 @@ pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingR
     //     e
     // })?;
 
-    let mut mir = lower_program(&ast);
-    // Debug: dump MIR
-    for func in &mir.functions {
-        eprintln!("MIR function: {} (args={})", func.name, func.arg_count);
-        for (bi, bb) in func.basic_blocks.iter().enumerate() {
-            eprintln!(
-                "  bb{}: {} stmts, terminator={:?}",
-                bi,
-                bb.statements.len(),
-                bb.terminator.as_ref().map(|t| &t.kind)
-            );
-            for (si, stmt) in bb.statements.iter().enumerate() {
-                eprintln!("    stmt{}: {:?}", si, stmt.kind);
-            }
-        }
-    }
+    let mir = lower_program(&ast);
+    Ok(optimize(mir, opt_level))
+}
+
+/// Like [`compile_and_optimize`], but resolves `use` imports and `mod` blocks
+/// relative to the entry file's directory before lowering. This is the
+/// multi-file entry point for the AOT/JIT backends.
+pub fn compile_path(entry: &Path, opt_level: OptimizationLevel) -> LingResult<MirProgram> {
+    let source = std::fs::read_to_string(entry)
+        .map_err(|e| LingError::Io(format!("error reading '{}': {e}", entry.display())))?;
+    let ast = parser::parse(&source).map_err(LingError::Parse)?;
+    let entry_dir = entry.parent().unwrap_or(Path::new("."));
+    let flat = modules::flatten(&ast, entry_dir)?;
+    let mir = lower_program(&flat);
+    Ok(optimize(mir, opt_level))
+}
+
+fn optimize(mut mir: MirProgram, opt_level: OptimizationLevel) -> MirProgram {
     if !matches!(opt_level, OptimizationLevel::None) {
         let mir_opt = match opt_level {
             OptimizationLevel::None => OptLevel::None,
@@ -41,7 +46,7 @@ pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingR
         };
         Optimizer::new(mir_opt).run(&mut mir.functions);
     }
-    Ok(mir)
+    mir
 }
 
 // ─── AST → MIR lowering ──────────────────────────────────────────────────────
@@ -50,25 +55,25 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     let mut functions = Vec::new();
     for item in &prog.items {
         if let parser::ast::Item::Fn(fndef) = item {
-            functions.push(lower_function(fndef));
+            let (func, closures) = lower_function(fndef);
+            functions.push(func);
+            functions.extend(closures);
         }
     }
-    // closures are collected through LowerCtx during main body lowering
 
-    // Lower top-level binds as the main function body
+    // Lower the entry binding as the main function body. When an entry exists
+    // (a known entry name or a `do { }` bind), only it becomes `__main__`; any
+    // other top-level binds are module globals the MIR backend does not model.
+    // With no entry, every top-level bind is treated as the script body.
     let mut main_stmts: Vec<parser::ast::Stmt> = Vec::new();
-    let has_main_bind = prog.items.iter().any(|item| {
-        if let parser::ast::Item::Bind(name, _) = item {
-            name == "start" || name == "เริ่ม" || name == "__main__"
-        } else {
-            false
-        }
-    });
-
+    let entry = crate::entry::entry_name(&prog.items);
     for item in &prog.items {
         if let parser::ast::Item::Bind(name, body) = item {
-            if !has_main_bind || name == "start" || name == "เริ่ม" || name == "__main__"
-            {
+            let is_main = match &entry {
+                Some(e) => name == e || name == "__main__",
+                None => true,
+            };
+            if is_main {
                 main_stmts.push(parser::ast::Stmt::Bind(name.clone(), body.clone()));
             }
         }
@@ -77,9 +82,8 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     if !main_stmts.is_empty() {
         let mut main = MirFunction::new("__main__", 0);
         let mut lctx = LowerCtx::new(&mut main, 0);
-        for stmt in &main_stmts {
-            lower_stmt(stmt, &mut lctx);
-        }
+        let last = lower_stmts(&main_stmts, &mut lctx);
+        lctx.finish(last);
         let closure_fns = std::mem::take(&mut lctx.closures);
         functions.push(main);
         functions.extend(closure_fns);
@@ -94,7 +98,7 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     MirProgram { functions }
 }
 
-fn lower_function(fndef: &parser::ast::FnDef) -> MirFunction {
+fn lower_function(fndef: &parser::ast::FnDef) -> (MirFunction, Vec<MirFunction>) {
     let arg_count = fndef.params.len();
     let param_names = fndef.params.clone();
     let mut func = MirFunction::new(&fndef.name, arg_count);
@@ -103,13 +107,13 @@ fn lower_function(fndef: &parser::ast::FnDef) -> MirFunction {
     let mut lctx = LowerCtx::new(&mut func, arg_count);
 
     for (i, pname) in fndef.params.iter().enumerate() {
-        let local = Local(i + 1);
-        lctx.locals.insert(pname.clone(), local);
+        lctx.declare_in_scope(pname, Local(i + 1));
     }
 
-    lower_stmts(&fndef.body, &mut lctx);
-    lctx.emit_result_to(Local(0));
-    func
+    let last = lower_stmts(&fndef.body, &mut lctx);
+    lctx.finish(last);
+    let closures = std::mem::take(&mut lctx.closures);
+    (func, closures)
 }
 
 #[derive(Clone)]
@@ -122,7 +126,16 @@ struct LowerCtx<'a> {
     func: &'a mut MirFunction,
     locals: HashMap<String, Local>,
     next_local: usize,
-    last_expr_local: Option<Local>,
+    /// Block currently being filled. All `emit`/`set_term` target this block,
+    /// and control-flow lowering advances it so constructs compose cleanly.
+    current: BasicBlockId,
+    /// Names bound in each active lexical scope (innermost last). Re-binding a
+    /// name in the same scope mutates it; binding a name owned by an outer scope
+    /// shadows it. Only `for` loops open a fresh scope (matching the tree-walker,
+    /// where `while`/`if` bodies share the surrounding scope).
+    scope_names: Vec<std::collections::HashSet<String>>,
+    /// Per-scope undo log of bindings shadowed on entry, restored on scope exit.
+    shadowed: Vec<Vec<(String, Option<Local>)>>,
     closures: Vec<MirFunction>,
     closure_vars: HashMap<String, ClosureInfo>,
 }
@@ -130,14 +143,59 @@ struct LowerCtx<'a> {
 impl<'a> LowerCtx<'a> {
     fn new(func: &'a mut MirFunction, arg_count: usize) -> Self {
         let next = (arg_count + 1) as usize;
+        // bb0 already exists; clear its terminator — lowering fills it in.
+        func.basic_blocks[0].terminator = None;
         Self {
             func,
             locals: HashMap::new(),
             next_local: next,
-            last_expr_local: None,
+            current: BasicBlockId(0),
+            scope_names: vec![std::collections::HashSet::new()],
+            shadowed: vec![Vec::new()],
             closures: Vec::new(),
             closure_vars: HashMap::new(),
         }
+    }
+
+    /// Register a name already mapped to `local` as owned by the current scope
+    /// (used for parameters and loop counters).
+    fn declare_in_scope(&mut self, name: &str, local: Local) {
+        self.locals.insert(name.to_string(), local);
+        self.scope_names.last_mut().unwrap().insert(name.to_string());
+    }
+
+    /// Resolve the local a `bind name = …` should target. Re-binding within the
+    /// same scope reuses the local (mutation); otherwise a fresh local shadows the
+    /// outer one until the scope exits.
+    fn bind_local(&mut self, name: &str) -> Local {
+        if self.scope_names.last().unwrap().contains(name) {
+            return self.locals[name];
+        }
+        let prev = self.locals.get(name).copied();
+        let l = self.alloc_local(Some(name.to_string()), true);
+        self.locals.insert(name.to_string(), l);
+        self.scope_names.last_mut().unwrap().insert(name.to_string());
+        self.shadowed.last_mut().unwrap().push((name.to_string(), prev));
+        l
+    }
+
+    fn enter_scope(&mut self) {
+        self.scope_names.push(std::collections::HashSet::new());
+        self.shadowed.push(Vec::new());
+    }
+
+    fn exit_scope(&mut self) {
+        for (name, prev) in self.shadowed.pop().unwrap().into_iter().rev() {
+            match prev {
+                Some(l) => {
+                    self.locals.insert(name, l);
+                }
+                None => {
+                    self.locals.remove(&name);
+                }
+            }
+        }
+        self.scope_names.pop();
     }
 
     fn alloc_local(&mut self, name: Option<String>, is_mut: bool) -> Local {
@@ -153,44 +211,56 @@ impl<'a> LowerCtx<'a> {
         l
     }
 
+    /// Append a fresh, empty (unterminated) block and return its id.
+    fn new_block(&mut self) -> BasicBlockId {
+        let id = BasicBlockId(self.func.basic_blocks.len());
+        self.func.basic_blocks.push(BasicBlock { statements: Vec::new(), terminator: None });
+        id
+    }
+
+    fn switch(&mut self, bb: BasicBlockId) {
+        self.current = bb;
+    }
+
     fn emit(&mut self, kind: StatementKind) {
-        let bb = &mut self.func.basic_blocks[0];
-        bb.statements.push(Statement { kind, span: Span::DUMMY });
-    }
-
-    fn emit_result_to(&mut self, target: Local) {
-        if let Some(last) = self.last_expr_local {
-            self.emit(StatementKind::Assign(
-                target,
-                Rvalue::Use(Operand::Copy(last)),
-            ));
-        } else if self.last_stmt_returned() {
-            self.emit(StatementKind::Assign(
-                target,
-                Rvalue::Use(Operand::Copy(Local(0))),
-            ));
-        }
-    }
-
-    fn last_stmt_returned(&self) -> bool {
-        self.func.basic_blocks[0]
-            .terminator
-            .as_ref()
-            .is_some_and(|t| matches!(t.kind, TerminatorKind::Return))
+        self.func.basic_blocks[self.current.0]
+            .statements
+            .push(Statement { kind, span: Span::DUMMY });
     }
 
     fn set_term(&mut self, kind: TerminatorKind) {
-        self.func.basic_blocks[0].terminator = Some(Terminator { kind, span: Span::DUMMY });
+        self.func.basic_blocks[self.current.0].terminator =
+            Some(Terminator { kind, span: Span::DUMMY });
+    }
+
+    fn term_is_set(&self) -> bool {
+        self.func.basic_blocks[self.current.0].terminator.is_some()
+    }
+
+    /// Close the function: store the trailing value into the return slot (Local 0)
+    /// and return, unless the current block already ended (e.g. an explicit return).
+    fn finish(&mut self, last: Option<Operand>) {
+        if self.term_is_set() {
+            return;
+        }
+        if let Some(v) = last {
+            self.emit(StatementKind::Assign(Local(0), Rvalue::Use(v)));
+        }
+        self.set_term(TerminatorKind::Return);
     }
 }
 
-fn lower_stmts(stmts: &[parser::ast::Stmt], ctx: &mut LowerCtx) {
+/// Lower a statement sequence, returning the value of the trailing expression
+/// statement (used when a block is in expression position).
+fn lower_stmts(stmts: &[parser::ast::Stmt], ctx: &mut LowerCtx) -> Option<Operand> {
+    let mut last = None;
     for stmt in stmts {
-        lower_stmt(stmt, ctx);
+        last = lower_stmt(stmt, ctx);
     }
+    last
 }
 
-fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) {
+fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) -> Option<Operand> {
     match stmt {
         parser::ast::Stmt::Bind(name, expr) => {
             // Detect closure binding with captures
@@ -206,7 +276,7 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) {
                     closure_func.param_names = params.clone();
                     let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args);
                     for (i, pname) in params.iter().enumerate() {
-                        closure_ctx.locals.insert(pname.clone(), Local(i + 1));
+                        closure_ctx.declare_in_scope(pname, Local(i + 1));
                     }
                     for (ci, fv) in free_vars.iter().enumerate() {
                         closure_ctx
@@ -215,6 +285,7 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) {
                     }
                     let body_val = lower_expr(body.as_ref(), &mut closure_ctx);
                     closure_ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(body_val)));
+                    closure_ctx.set_term(TerminatorKind::Return);
                     ctx.closures.push(closure_func);
 
                     ctx.closure_vars.insert(
@@ -225,34 +296,32 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) {
                         },
                     );
 
-                    let local = ctx.alloc_local(Some(name.clone()), true);
-                    ctx.locals.insert(name.clone(), local);
+                    let local = ctx.bind_local(name);
                     ctx.emit(StatementKind::Assign(
                         local,
                         Rvalue::Use(Operand::Constant(Constant::Function(closure_name))),
                     ));
-                    return;
+                    return None;
                 }
             }
             let val = lower_expr(expr, ctx);
-            let local = ctx.alloc_local(Some(name.clone()), true);
-            ctx.locals.insert(name.clone(), local);
+            // Re-binding within the same scope mutates the same local (so loop
+            // bodies feed accumulators across the back-edge); binding a name owned
+            // by an outer scope shadows it for the duration of this scope.
+            let local = ctx.bind_local(name);
             ctx.emit(StatementKind::Assign(local, Rvalue::Use(val)));
+            None
         },
-        parser::ast::Stmt::Expr(expr) => {
-            let val = lower_expr(expr, ctx);
-            if let Operand::Copy(local) = &val {
-                ctx.last_expr_local = Some(*local);
-            } else {
-                let tmp = ctx.alloc_local(None, false);
-                ctx.last_expr_local = Some(tmp);
-                ctx.emit(StatementKind::Assign(tmp, Rvalue::Use(val)));
-            }
-        },
+        parser::ast::Stmt::Expr(expr) => Some(lower_expr(expr, ctx)),
         parser::ast::Stmt::Return(expr) => {
             let val = lower_expr(expr, ctx);
             ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(val)));
             ctx.set_term(TerminatorKind::Return);
+            // Anything after a return is dead; continue in a fresh block so later
+            // lowering has a valid cursor.
+            let dead = ctx.new_block();
+            ctx.switch(dead);
+            None
         },
     }
 }
@@ -302,15 +371,16 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 let mut closure_ctx = LowerCtx::new(&mut closure_func, arg_count + capture_count);
                 for (i, pname) in params.iter().enumerate() {
                     let local = Local(i + 1);
-                    closure_ctx.locals.insert(pname.clone(), local);
+                    closure_ctx.declare_in_scope(pname, local);
                 }
                 // Map captures to extra params
                 for (ci, fv) in free_vars.iter().enumerate() {
                     let param_local = Local(arg_count + 1 + ci);
-                    closure_ctx.locals.insert(fv.clone(), param_local);
+                    closure_ctx.declare_in_scope(fv, param_local);
                 }
                 let body_val = lower_expr(body, &mut closure_ctx);
                 closure_ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(body_val)));
+                    closure_ctx.set_term(TerminatorKind::Return);
                 ctx.closures.push(closure_func);
 
                 let mut mir_args = Vec::new();
@@ -376,311 +446,42 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             }
         },
         parser::ast::Expr::If { cond, then, elseifs, else_body } => {
-            let result = ctx.alloc_local(None, false);
-            let cond_op = lower_expr(cond, ctx);
-
-            let then_block = BasicBlockId(ctx.func.basic_blocks.len());
-            eprintln!("MIR DEBUG: if-expr: then_block={:?}", then_block);
-            ctx.func.basic_blocks.push(BasicBlock {
-                statements: Vec::new(),
-                terminator: Some(Terminator {
-                    kind: TerminatorKind::Goto {
-                        target: BasicBlockId(
-                            ctx.func.basic_blocks.len()
-                                + (if elseifs.is_empty() && else_body.is_none() {
-                                    2
-                                } else {
-                                    4
-                                }),
-                        ),
-                    },
-                    span: Span::DUMMY,
-                }),
-            });
-
-            if elseifs.is_empty() {
-                let else_block = BasicBlockId(ctx.func.basic_blocks.len());
-                ctx.func.basic_blocks.push(BasicBlock {
-                    statements: Vec::new(),
-                    terminator: Some(Terminator {
-                        kind: TerminatorKind::Goto {
-                            target: BasicBlockId(ctx.func.basic_blocks.len() + 1),
-                        },
-                        span: Span::DUMMY,
-                    }),
-                });
-
-                let merge_block = BasicBlockId(ctx.func.basic_blocks.len());
-                ctx.func.basic_blocks.push(BasicBlock {
-                    statements: vec![Statement {
-                        kind: StatementKind::Assign(Local(0), Rvalue::Use(Operand::Copy(result))),
-                        span: Span::DUMMY,
-                    }],
-                    terminator: Some(Terminator {
-                        kind: TerminatorKind::Return,
-                        span: Span::DUMMY,
-                    }),
-                });
-
-                // Save the current bb0 statements
-                let current_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-
-                // Set the SwitchInt terminator on bb0
-                ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                    kind: TerminatorKind::SwitchInt {
-                        discr: cond_op.clone(),
-                        targets: vec![(1, then_block)],
-                        otherwise: else_block,
-                    },
-                    span: Span::DUMMY,
-                });
-
-                // Lower then-body into a temporary ctx then move to then_block
-                ctx.func.basic_blocks[0].statements = Vec::new();
-                lower_stmts(then, ctx);
-                ctx.emit_result_to(result);
-                ctx.func.basic_blocks[then_block.0].statements =
-                    std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                ctx.func.basic_blocks[then_block.0].terminator = Some(Terminator {
-                    kind: TerminatorKind::Goto { target: merge_block },
-                    span: Span::DUMMY,
-                });
-
-                if let Some(else_stmts) = else_body {
-                    ctx.func.basic_blocks[0].statements = Vec::new();
-                    lower_stmts(else_stmts, ctx);
-                    ctx.emit_result_to(result);
-                    ctx.func.basic_blocks[else_block.0].statements =
-                        std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                    ctx.func.basic_blocks[else_block.0].terminator = Some(Terminator {
-                        kind: TerminatorKind::Goto { target: merge_block },
-                        span: Span::DUMMY,
-                    });
-                }
-
-                // Restore bb0: statements from before the if
-                ctx.func.basic_blocks[0].statements = current_stmts;
-                // Re-set the SwitchInt terminator (may have been overwritten by return inside branches)
-                ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                    kind: TerminatorKind::SwitchInt {
-                        discr: cond_op.clone(),
-                        targets: vec![(1, then_block)],
-                        otherwise: else_block,
-                    },
-                    span: Span::DUMMY,
-                });
-            } else {
-                // Chain else-if: build nested if-else for each elif
-                let mut all_elif_blocks = Vec::new();
-                let mut all_elif_targets = Vec::new();
-
-                for (elif_cond, elif_body) in elseifs {
-                    let elif_block = BasicBlockId(ctx.func.basic_blocks.len());
-                    let elif_merge = BasicBlockId(ctx.func.basic_blocks.len() + 1);
-                    ctx.func.basic_blocks.push(BasicBlock {
-                        statements: Vec::new(),
-                        terminator: Some(Terminator {
-                            kind: TerminatorKind::Goto {
-                                target: BasicBlockId(ctx.func.basic_blocks.len() + 1),
-                            },
-                            span: Span::DUMMY,
-                        }),
-                    });
-                    ctx.func.basic_blocks.push(BasicBlock {
-                        statements: Vec::new(),
-                        terminator: Some(Terminator {
-                            kind: TerminatorKind::Return,
-                            span: Span::DUMMY,
-                        }),
-                    });
-                    all_elif_blocks.push((
-                        elif_block,
-                        elif_merge,
-                        elif_cond.clone(),
-                        elif_body.clone(),
-                    ));
-                    all_elif_targets.push(elif_block);
-                }
-
-                let final_else_block = BasicBlockId(ctx.func.basic_blocks.len());
-                ctx.func.basic_blocks.push(BasicBlock {
-                    statements: Vec::new(),
-                    terminator: Some(Terminator {
-                        kind: TerminatorKind::Goto {
-                            target: BasicBlockId(ctx.func.basic_blocks.len() + 1),
-                        },
-                        span: Span::DUMMY,
-                    }),
-                });
-
-                let merge_block = BasicBlockId(ctx.func.basic_blocks.len());
-                ctx.func.basic_blocks.push(BasicBlock {
-                    statements: vec![Statement {
-                        kind: StatementKind::Assign(Local(0), Rvalue::Use(Operand::Copy(result))),
-                        span: Span::DUMMY,
-                    }],
-                    terminator: Some(Terminator {
-                        kind: TerminatorKind::Return,
-                        span: Span::DUMMY,
-                    }),
-                });
-
-                let current_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-
-                // bb0: switch on first condition
-                ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                    kind: TerminatorKind::SwitchInt {
-                        discr: cond_op,
-                        targets: vec![(1, then_block)],
-                        otherwise: all_elif_targets[0],
-                    },
-                    span: Span::DUMMY,
-                });
-
-                // Lower then body
-                ctx.func.basic_blocks[0].statements = Vec::new();
-                lower_stmts(then, ctx);
-                ctx.emit_result_to(result);
-                ctx.func.basic_blocks[then_block.0].statements =
-                    std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                ctx.func.basic_blocks[then_block.0].terminator = Some(Terminator {
-                    kind: TerminatorKind::Goto { target: merge_block },
-                    span: Span::DUMMY,
-                });
-
-                // Lower each elif
-                for (idx, (elif_block, elif_merge, elif_cond, elif_body)) in
-                    all_elif_blocks.iter().enumerate()
-                {
-                    let elif_cond_op = lower_expr(elif_cond, ctx);
-                    let cond_local = ctx.alloc_local(None, false);
-                    ctx.emit(StatementKind::Assign(cond_local, Rvalue::Use(elif_cond_op)));
-
-                    let next_target = if idx + 1 < all_elif_blocks.len() {
-                        all_elif_targets[idx + 1]
-                    } else {
-                        final_else_block
-                    };
-
-                    ctx.func.basic_blocks[elif_block.0].terminator = Some(Terminator {
-                        kind: TerminatorKind::SwitchInt {
-                            discr: Operand::Copy(cond_local),
-                            targets: vec![(1, *elif_merge)],
-                            otherwise: next_target,
-                        },
-                        span: Span::DUMMY,
-                    });
-
-                    ctx.func.basic_blocks[0].statements = Vec::new();
-                    lower_stmts(elif_body, ctx);
-                    ctx.emit_result_to(result);
-                    ctx.func.basic_blocks[elif_merge.0].statements =
-                        std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                    ctx.func.basic_blocks[elif_merge.0].terminator = Some(Terminator {
-                        kind: TerminatorKind::Goto { target: merge_block },
-                        span: Span::DUMMY,
-                    });
-                }
-
-                // Lower final else body
-                if let Some(else_stmts) = else_body {
-                    ctx.func.basic_blocks[0].statements = Vec::new();
-                    lower_stmts(else_stmts, ctx);
-                    ctx.emit_result_to(result);
-                    ctx.func.basic_blocks[final_else_block.0].statements =
-                        std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                    ctx.func.basic_blocks[final_else_block.0].terminator = Some(Terminator {
-                        kind: TerminatorKind::Goto { target: merge_block },
-                        span: Span::DUMMY,
-                    });
-                } else {
-                    ctx.func.basic_blocks[final_else_block.0].statements = Vec::new();
-                    ctx.func.basic_blocks[final_else_block.0].terminator = Some(Terminator {
-                        kind: TerminatorKind::Goto { target: merge_block },
-                        span: Span::DUMMY,
-                    });
-                }
-
-                ctx.func.basic_blocks[0].statements = current_stmts;
-            }
-
+            let result = ctx.alloc_local(None, true);
+            let merge = ctx.new_block();
+            lower_if_chain(cond, then, elseifs, else_body, result, merge, ctx);
+            ctx.switch(merge);
             Operand::Copy(result)
         },
         parser::ast::Expr::While { cond, body } => {
-            let header_block = BasicBlockId(ctx.func.basic_blocks.len());
-            ctx.func.basic_blocks.push(BasicBlock {
-                statements: Vec::new(),
-                terminator: Some(Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }),
-            });
+            let header = ctx.new_block();
+            let body_block = ctx.new_block();
+            let exit = ctx.new_block();
+            ctx.set_term(TerminatorKind::Goto { target: header });
 
-            let body_block = BasicBlockId(ctx.func.basic_blocks.len());
-            ctx.func.basic_blocks.push(BasicBlock {
-                statements: Vec::new(),
-                terminator: Some(Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }),
-            });
-
-            let exit_block = BasicBlockId(ctx.func.basic_blocks.len());
-            ctx.func.basic_blocks.push(BasicBlock {
-                statements: Vec::new(),
-                terminator: Some(Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }),
-            });
-
-            let prev_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-            ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                kind: TerminatorKind::Goto { target: header_block },
-                span: Span::DUMMY,
-            });
-
+            // Header re-evaluates the condition on every iteration (including after
+            // the back-edge), so re-bound loop variables are observed each time.
+            ctx.switch(header);
             let cond_op = lower_expr(cond, ctx);
-            ctx.func.basic_blocks[header_block.0].statements =
-                std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-            let header_test = ctx.alloc_local(None, false);
-            ctx.func.basic_blocks[header_block.0]
-                .statements
-                .push(Statement {
-                    kind: StatementKind::Assign(header_test, Rvalue::Use(cond_op)),
-                    span: Span::DUMMY,
-                });
-            ctx.func.basic_blocks[header_block.0].terminator = Some(Terminator {
-                kind: TerminatorKind::SwitchInt {
-                    discr: Operand::Copy(header_test),
-                    targets: vec![(1, body_block)],
-                    otherwise: exit_block,
-                },
-                span: Span::DUMMY,
+            let test = ctx.alloc_local(None, false);
+            ctx.emit(StatementKind::Assign(test, Rvalue::Use(cond_op)));
+            ctx.set_term(TerminatorKind::SwitchInt {
+                discr: Operand::Copy(test),
+                targets: vec![(1, body_block)],
+                otherwise: exit,
             });
 
-            ctx.func.basic_blocks[0].statements = Vec::new();
+            ctx.switch(body_block);
             lower_stmts(body, ctx);
-            ctx.func.basic_blocks[body_block.0].statements =
-                std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-            ctx.func.basic_blocks[body_block.0].terminator = Some(Terminator {
-                kind: TerminatorKind::Goto { target: header_block },
-                span: Span::DUMMY,
-            });
+            if !ctx.term_is_set() {
+                ctx.set_term(TerminatorKind::Goto { target: header });
+            }
 
-            ctx.func.basic_blocks[0].statements = prev_stmts;
-            ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                kind: TerminatorKind::Goto { target: exit_block },
-                span: Span::DUMMY,
-            });
-
-            let result = ctx.alloc_local(None, false);
-            ctx.emit(StatementKind::Assign(
-                result,
-                Rvalue::Use(Operand::Constant(Constant::None)),
-            ));
-            Operand::Copy(result)
+            ctx.switch(exit);
+            Operand::Constant(Constant::None)
         },
-        parser::ast::Expr::For { var: _, iter, body } => {
-            lower_expr(iter, ctx);
-            lower_stmts(body, ctx);
-            let result = ctx.alloc_local(None, false);
-            ctx.emit(StatementKind::Assign(
-                result,
-                Rvalue::Use(Operand::Constant(Constant::None)),
-            ));
-            Operand::Copy(result)
+        parser::ast::Expr::For { var, iter, body } => {
+            lower_for(var, iter, body, ctx);
+            Operand::Constant(Constant::None)
         },
         parser::ast::Expr::Array(elems) => {
             let mut ops = Vec::new();
@@ -702,24 +503,12 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             Operand::Copy(local)
         },
         parser::ast::Expr::Do(stmts) => {
-            lower_stmts(stmts, ctx);
-            ctx.emit_result_to(Local(0));
-            Operand::Copy(Local(0))
+            lower_stmts(stmts, ctx).unwrap_or(Operand::Constant(Constant::None))
         },
-        parser::ast::Expr::Ref(inner) => {
-            let op = lower_expr(inner, ctx);
-            let l = match &op {
-                Operand::Copy(l) | Operand::Move(l) => *l,
-                _ => {
-                    let t = ctx.alloc_local(None, false);
-                    ctx.emit(StatementKind::Assign(t, Rvalue::Use(op)));
-                    t
-                },
-            };
-            let ref_local = ctx.alloc_local(None, false);
-            ctx.emit(StatementKind::Assign(ref_local, Rvalue::Ref(l)));
-            Operand::Copy(ref_local)
-        },
+        // `&x` is value-identity in Ling (the tree-walker evaluates the inner
+        // expression and returns it unchanged); values are NaN-boxed and passed
+        // by value, so the reference lowers to the inner operand directly.
+        parser::ast::Expr::Ref(inner) => lower_expr(inner, ctx),
         parser::ast::Expr::MethodCall { receiver, method, args } => {
             let recv = lower_expr(receiver, ctx);
             let mut mir_args = vec![recv];
@@ -753,121 +542,74 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             let scrut_local = ctx.alloc_local(None, false);
             ctx.emit(StatementKind::Assign(scrut_local, Rvalue::Use(scrut_op)));
 
-            let merge_block = BasicBlockId(ctx.func.basic_blocks.len());
-            ctx.func.basic_blocks.push(BasicBlock {
-                statements: Vec::new(),
-                terminator: Some(Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }),
-            });
-            let result = ctx.alloc_local(None, false);
+            let result = ctx.alloc_local(None, true);
+            ctx.emit(StatementKind::Assign(
+                result,
+                Rvalue::Use(Operand::Constant(Constant::None)),
+            ));
+            let merge = ctx.new_block();
 
-            let mut arm_blocks = Vec::new();
+            let mut matched_all = false;
             for arm in arms {
-                let body_block = BasicBlockId(ctx.func.basic_blocks.len());
-                arm_blocks.push((arm, body_block, false));
-            }
-
-            // Emit each arm: check pattern, branch to body, fallthrough
-            let current_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-            let entry_term = ctx.func.basic_blocks[0].terminator.take();
-
-            for (idx, (arm, body_block, _)) in arm_blocks.iter().enumerate() {
                 match &arm.pattern {
                     parser::ast::Pattern::Wildcard => {
-                        // Wildcard arm: always matches, store scrutinee if ident binding
-                        ctx.func.basic_blocks[0].statements = Vec::new();
-                        let arm_result = lower_expr(&arm.body, ctx);
-                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(arm_result)));
-                        ctx.set_term(TerminatorKind::Goto { target: *body_block });
-                        // body_block serves as goto-to-merge
-                        let saved = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                        let saved_term = ctx.func.basic_blocks[0].terminator.take();
-                        ctx.func.basic_blocks[body_block.0].statements = saved;
-                        ctx.func.basic_blocks[body_block.0].terminator = saved_term;
-                        ctx.func.basic_blocks[body_block.0].terminator = Some(Terminator {
-                            kind: TerminatorKind::Goto { target: merge_block },
-                            span: Span::DUMMY,
-                        });
+                        let v = lower_expr(&arm.body, ctx);
+                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(v)));
+                        ctx.set_term(TerminatorKind::Goto { target: merge });
+                        matched_all = true;
+                        break;
                     },
                     parser::ast::Pattern::Ident(name) => {
-                        // Bind scrutinee to variable name, execute body
-                        let bound_local = ctx.alloc_local(Some(name.clone()), true);
-                        ctx.locals.insert(name.clone(), bound_local);
-                        let prev_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
+                        let bound = ctx.bind_local(name);
                         ctx.emit(StatementKind::Assign(
-                            bound_local,
+                            bound,
                             Rvalue::Use(Operand::Copy(scrut_local)),
                         ));
-                        let arm_result = lower_expr(&arm.body, ctx);
-                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(arm_result)));
-                        ctx.set_term(TerminatorKind::Goto { target: *body_block });
-                        let saved = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                        let saved_term = ctx.func.basic_blocks[0].terminator.take();
-                        ctx.func.basic_blocks[body_block.0].statements = saved;
-                        ctx.func.basic_blocks[body_block.0].terminator = saved_term;
-                        ctx.func.basic_blocks[body_block.0].terminator = Some(Terminator {
-                            kind: TerminatorKind::Goto { target: merge_block },
-                            span: Span::DUMMY,
-                        });
-                        ctx.func.basic_blocks[0].statements = prev_stmts;
+                        let v = lower_expr(&arm.body, ctx);
+                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(v)));
+                        ctx.set_term(TerminatorKind::Goto { target: merge });
+                        matched_all = true;
+                        break;
                     },
                     parser::ast::Pattern::Str(_)
                     | parser::ast::Pattern::Number(_)
                     | parser::ast::Pattern::Bool(_) => {
-                        // Literal pattern: compare scrutinee to literal, branch on match
                         let lit_op = pattern_to_operand(&arm.pattern);
-                        let cmp_local = ctx.alloc_local(None, false);
+                        let cmp = ctx.alloc_local(None, false);
                         ctx.emit(StatementKind::Assign(
-                            cmp_local,
+                            cmp,
                             Rvalue::BinaryOp(
                                 ling_ast::ast::BinOp::Eq,
                                 Operand::Copy(scrut_local),
                                 lit_op,
                             ),
                         ));
-
-                        let fallthrough = if idx + 1 < arm_blocks.len() {
-                            arm_blocks[idx + 1].1
-                        } else {
-                            merge_block
-                        };
-
-                        let prev_stmts = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                        ctx.func.basic_blocks[0].terminator = Some(Terminator {
-                            kind: TerminatorKind::SwitchInt {
-                                discr: Operand::Copy(cmp_local),
-                                targets: vec![(1, *body_block)],
-                                otherwise: fallthrough,
-                            },
-                            span: Span::DUMMY,
+                        let arm_bb = ctx.new_block();
+                        let next = ctx.new_block();
+                        ctx.set_term(TerminatorKind::SwitchInt {
+                            discr: Operand::Copy(cmp),
+                            targets: vec![(1, arm_bb)],
+                            otherwise: next,
                         });
-                        ctx.func.basic_blocks[0].statements = prev_stmts;
-
-                        // Body block
-                        let arm_result = lower_expr(&arm.body, ctx);
-                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(arm_result)));
-                        ctx.set_term(TerminatorKind::Goto { target: merge_block });
-                        let saved = std::mem::take(&mut ctx.func.basic_blocks[0].statements);
-                        let saved_term = ctx.func.basic_blocks[0].terminator.take();
-                        ctx.func.basic_blocks[body_block.0].statements = saved;
-                        ctx.func.basic_blocks[body_block.0].terminator = saved_term;
+                        ctx.switch(arm_bb);
+                        let v = lower_expr(&arm.body, ctx);
+                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(v)));
+                        if !ctx.term_is_set() {
+                            ctx.set_term(TerminatorKind::Goto { target: merge });
+                        }
+                        ctx.switch(next);
                     },
                     parser::ast::Pattern::Constructor(_, _)
                     | parser::ast::Pattern::Variant(_, _) => {
-                        // Constructor / variant patterns: skip in MIR for now, fall through
-                        // (the tree-walking interpreter handles them directly).
-                        let fallthrough = if idx + 1 < arm_blocks.len() {
-                            arm_blocks[idx + 1].1
-                        } else {
-                            merge_block
-                        };
-                        ctx.set_term(TerminatorKind::Goto { target: fallthrough });
+                        // Constructor / variant patterns are handled by the tree-walker;
+                        // in MIR they fall through to the next arm.
                     },
                 }
             }
-
-            ctx.func.basic_blocks[0].statements = current_stmts;
-            ctx.func.basic_blocks[0].terminator = entry_term;
-
+            if !matched_all && !ctx.term_is_set() {
+                ctx.set_term(TerminatorKind::Goto { target: merge });
+            }
+            ctx.switch(merge);
             Operand::Copy(result)
         },
 
@@ -883,20 +625,174 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args);
             for (i, pname) in params.iter().enumerate() {
                 let local = Local(i + 1);
-                closure_ctx.locals.insert(pname.clone(), local);
+                closure_ctx.declare_in_scope(pname, local);
             }
             for (ci, fv) in free_vars.iter().enumerate() {
                 let param_local = Local(arg_count + 1 + ci);
-                closure_ctx.locals.insert(fv.clone(), param_local);
+                closure_ctx.declare_in_scope(fv, param_local);
             }
             let body_val = lower_expr(body, &mut closure_ctx);
             closure_ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(body_val)));
+                    closure_ctx.set_term(TerminatorKind::Return);
             ctx.closures.push(closure_func);
             Operand::Constant(Constant::Function(closure_name))
         },
 
         parser::ast::Expr::Await(_) => Operand::Constant(Constant::None),
     }
+}
+
+/// One-bit float constant used for loop counters (`0.0` / `1.0`).
+fn f64_const(v: f64) -> Operand {
+    Operand::Constant(Constant::F64(v.to_bits()))
+}
+
+/// Lower an `if`/`else if`/`else` chain. Each branch writes its trailing value to
+/// `result` and jumps to `merge`. The condition tree is built recursively so any
+/// number of `else if` arms compose without bespoke index arithmetic.
+fn lower_if_chain(
+    cond: &parser::ast::Expr,
+    then: &[parser::ast::Stmt],
+    elseifs: &[(parser::ast::Expr, Vec<parser::ast::Stmt>)],
+    else_body: &Option<Vec<parser::ast::Stmt>>,
+    result: Local,
+    merge: BasicBlockId,
+    ctx: &mut LowerCtx,
+) {
+    let cond_op = lower_expr(cond, ctx);
+    let then_bb = ctx.new_block();
+    let else_bb = ctx.new_block();
+    ctx.set_term(TerminatorKind::SwitchInt {
+        discr: cond_op,
+        targets: vec![(1, then_bb)],
+        otherwise: else_bb,
+    });
+
+    ctx.switch(then_bb);
+    let then_val = lower_stmts(then, ctx).unwrap_or(Operand::Constant(Constant::None));
+    if !ctx.term_is_set() {
+        ctx.emit(StatementKind::Assign(result, Rvalue::Use(then_val)));
+        ctx.set_term(TerminatorKind::Goto { target: merge });
+    }
+
+    ctx.switch(else_bb);
+    if let Some(((next_cond, next_then), rest)) = elseifs.split_first() {
+        lower_if_chain(next_cond, next_then, rest, else_body, result, merge, ctx);
+    } else {
+        let else_val = match else_body {
+            Some(stmts) => lower_stmts(stmts, ctx).unwrap_or(Operand::Constant(Constant::None)),
+            None => Operand::Constant(Constant::None),
+        };
+        if !ctx.term_is_set() {
+            ctx.emit(StatementKind::Assign(result, Rvalue::Use(else_val)));
+            ctx.set_term(TerminatorKind::Goto { target: merge });
+        }
+    }
+}
+
+/// Lower a `for var in iter { body }` loop. Integer ranges (`lo..hi`) iterate a
+/// counter directly; any other iterable is treated as a list and indexed via the
+/// list runtime so the same lowering serves both.
+fn lower_for(
+    var: &str,
+    iter: &parser::ast::Expr,
+    body: &[parser::ast::Stmt],
+    ctx: &mut LowerCtx,
+) {
+    use ling_ast::ast::BinOp as B;
+    if let parser::ast::Expr::Range(lo, hi) = iter {
+        let lo_op = lower_expr(lo, ctx);
+        let hi_op = lower_expr(hi, ctx);
+        // The loop body runs in a fresh scope: the counter lives here, and
+        // re-binding an outer name shadows it rather than mutating it.
+        ctx.enter_scope();
+        let counter = ctx.alloc_local(Some(var.to_string()), true);
+        ctx.declare_in_scope(var, counter);
+        ctx.emit(StatementKind::Assign(counter, Rvalue::Use(lo_op)));
+        let limit = ctx.alloc_local(None, false);
+        ctx.emit(StatementKind::Assign(limit, Rvalue::Use(hi_op)));
+
+        let header = ctx.new_block();
+        let body_bb = ctx.new_block();
+        let exit = ctx.new_block();
+        ctx.set_term(TerminatorKind::Goto { target: header });
+
+        ctx.switch(header);
+        let test = ctx.alloc_local(None, false);
+        ctx.emit(StatementKind::Assign(
+            test,
+            Rvalue::BinaryOp(B::Lt, Operand::Copy(counter), Operand::Copy(limit)),
+        ));
+        ctx.set_term(TerminatorKind::SwitchInt {
+            discr: Operand::Copy(test),
+            targets: vec![(1, body_bb)],
+            otherwise: exit,
+        });
+
+        ctx.switch(body_bb);
+        lower_stmts(body, ctx);
+        if !ctx.term_is_set() {
+            ctx.emit(StatementKind::Assign(
+                counter,
+                Rvalue::BinaryOp(B::Add, Operand::Copy(counter), f64_const(1.0)),
+            ));
+            ctx.set_term(TerminatorKind::Goto { target: header });
+        }
+        ctx.switch(exit);
+        ctx.exit_scope();
+        return;
+    }
+
+    // General iterable: index into it as a list.
+    let list_op = lower_expr(iter, ctx);
+    let list = ctx.alloc_local(None, false);
+    ctx.emit(StatementKind::Assign(list, Rvalue::Use(list_op)));
+    let len = ctx.alloc_local(None, false);
+    ctx.emit(StatementKind::Assign(
+        len,
+        Rvalue::Call {
+            func: Operand::Constant(Constant::Function("len".to_string())),
+            args: vec![Operand::Copy(list)],
+        },
+    ));
+    ctx.enter_scope();
+    let idx = ctx.alloc_local(None, true);
+    ctx.emit(StatementKind::Assign(idx, Rvalue::Use(f64_const(0.0))));
+    let item = ctx.alloc_local(Some(var.to_string()), true);
+    ctx.declare_in_scope(var, item);
+
+    let header = ctx.new_block();
+    let body_bb = ctx.new_block();
+    let exit = ctx.new_block();
+    ctx.set_term(TerminatorKind::Goto { target: header });
+
+    ctx.switch(header);
+    let test = ctx.alloc_local(None, false);
+    ctx.emit(StatementKind::Assign(
+        test,
+        Rvalue::BinaryOp(B::Lt, Operand::Copy(idx), Operand::Copy(len)),
+    ));
+    ctx.set_term(TerminatorKind::SwitchInt {
+        discr: Operand::Copy(test),
+        targets: vec![(1, body_bb)],
+        otherwise: exit,
+    });
+
+    ctx.switch(body_bb);
+    ctx.emit(StatementKind::Assign(
+        item,
+        Rvalue::GetIndex(Operand::Copy(list), Operand::Copy(idx)),
+    ));
+    lower_stmts(body, ctx);
+    if !ctx.term_is_set() {
+        ctx.emit(StatementKind::Assign(
+            idx,
+            Rvalue::BinaryOp(B::Add, Operand::Copy(idx), f64_const(1.0)),
+        ));
+        ctx.set_term(TerminatorKind::Goto { target: header });
+    }
+    ctx.switch(exit);
+    ctx.exit_scope();
 }
 
 fn method_name_from_expr(expr: &parser::ast::Expr) -> String {
