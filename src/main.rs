@@ -1136,6 +1136,9 @@ fn copy_ling_sources(src: &Path, dst: &Path) {
 fn gen_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     // On Windows canonicalize gives UNC paths; forward-slashes work fine in TOML paths.
     let root_str = ling_root.display().to_string().replace('\\', "/");
+    // Fat LTO needs a single codegen unit; thin parallelises across many.
+    let fat = std::env::var("LING_BUILD_LTO").map(|v| v == "fat").unwrap_or(false);
+    let (lto, cgu) = if fat { ("fat", 1) } else { ("thin", 16) };
     format!(
         r#"[workspace]
 [package]
@@ -1155,10 +1158,15 @@ ling-lang = {{ path = "{root_str}" }}
 winresource = "0.1"
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+# Thin LTO keeps cross-crate inlining but links in parallel with a fraction of
+# fat LTO's peak memory, so the whole ling-lang graph builds without OOMing on
+# normal-RAM machines. Set LING_BUILD_LTO=fat to force fat LTO when you have the
+# headroom and want the last few percent of runtime speed.
+lto = "{lto}"
+codegen-units = {cgu}
 opt-level = 3
 panic = "abort"
+strip = true
 "#
     )
 }
