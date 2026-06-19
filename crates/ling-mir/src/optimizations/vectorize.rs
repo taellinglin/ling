@@ -132,8 +132,7 @@ impl LoopVectorizer {
             None => return false,
         };
 
-        let vec_limit_local = Local(func.locals.len());
-        func.locals.push(LocalDecl {
+        let vec_limit_local = func.push_local(LocalDecl {
             ty: MirType::Int,
             name: Some("vec_limit".into()),
             span: Span::DUMMY,
@@ -410,14 +409,12 @@ impl LoopVectorizer {
     }
 
     fn alloc_vector_local(&self, func: &mut MirFunction, _original: Local, _width: usize) -> Local {
-        let id = Local(func.locals.len());
-        func.locals.push(LocalDecl {
+        func.push_local(LocalDecl {
             ty: MirType::Any,
             name: None,
             span: Span::DUMMY,
             is_mut: true,
             is_owning: true,
-        });
-        id
+        })
     }
 }

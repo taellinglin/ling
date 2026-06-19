@@ -74,8 +74,22 @@ impl Inliner {
         callee: &MirFunction,
         args: &[Operand],
     ) {
-        let local_offset = caller.locals.len();
+        let local_offset = caller.next_local();
 
+        // The callee's flat local space — return slot, parameters, then its own
+        // temporaries — is remapped contiguously onto fresh caller indices
+        // starting at `local_offset`. Reserve declarations for every slot so the
+        // return slot and parameters (which the callee does not store in
+        // `locals`) get backing entries in the caller.
+        for _ in 0..=callee.arg_count {
+            caller.locals.push(LocalDecl {
+                ty: MirType::Any,
+                name: None,
+                span: ling_ast::Span::DUMMY,
+                is_mut: true,
+                is_owning: true,
+            });
+        }
         for decl in &callee.locals {
             caller.locals.push(decl.clone());
         }
@@ -118,9 +132,10 @@ impl Inliner {
             });
         }
 
-        for j in (callee.arg_count + 1)..callee.locals.len() {
+        let callee_slots = callee.arg_count + 1 + callee.locals.len();
+        for i in (callee.arg_count + 1)..callee_slots {
             init_stmts.push(Statement {
-                kind: StatementKind::StorageLive(Local(local_offset + j)),
+                kind: StatementKind::StorageLive(Local(local_offset + i)),
                 span: call_stmt.span,
             });
         }

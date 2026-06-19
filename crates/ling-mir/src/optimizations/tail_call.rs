@@ -54,12 +54,10 @@ impl Transform for TailCallOpt {
             }
 
             let span = stmts[stmts.len() - 1].span;
-            let bb = &mut func.basic_blocks[bb_idx];
+            func.basic_blocks[bb_idx].statements.pop();
+            func.basic_blocks[bb_idx].statements.pop();
 
-            bb.statements.pop();
-            bb.statements.pop();
-
-            let base_tmp = func.locals.len();
+            let base_tmp = func.next_local();
             for _ in 0..arg_count {
                 func.locals.push(LocalDecl {
                     ty: MirType::Any,
@@ -70,6 +68,7 @@ impl Transform for TailCallOpt {
                 });
             }
 
+            let bb = &mut func.basic_blocks[bb_idx];
             for (j, arg) in args.iter().enumerate() {
                 bb.statements.push(Statement {
                     kind: StatementKind::Assign(Local(base_tmp + j), Rvalue::Use(arg.clone())),

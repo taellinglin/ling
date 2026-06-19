@@ -43,7 +43,7 @@ impl Transform for ScalarizeStructs {
                 continue;
             }
 
-            let base = func.locals.len();
+            let base = func.next_local();
             let mut sorted_fields: Vec<(&String, &(usize, MirType))> = field_map.iter().collect();
             sorted_fields.sort_by_key(|&(_, &(idx, _))| idx);
 
@@ -164,7 +164,9 @@ fn can_scalarize(func: &MirFunction, aliases: &HashSet<Local>, origin: Local) ->
 
 fn infer_type(func: &MirFunction, op: &Operand) -> MirType {
     match op {
-        Operand::Copy(l) | Operand::Move(l) => func.locals[l.0].ty.clone(),
+        Operand::Copy(l) | Operand::Move(l) => {
+            func.local_decl(*l).map_or(MirType::Any, |d| d.ty.clone())
+        },
         Operand::Constant(Constant::F64(_)) => MirType::Float,
         Operand::Constant(Constant::I64(_)) => MirType::Int,
         Operand::Constant(Constant::Bool(_)) => MirType::Bool,
