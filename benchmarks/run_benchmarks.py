@@ -54,7 +54,7 @@ def lang_table():
 
     t = {}
     if ling:
-        t["Ling"] = {"run": [ling, "run", os.path.join(HERE, "bench.ling")]}
+        t["Ling"] = {"run": [ling, "run", "--jit", os.path.join(HERE, "bench.ling")]}
     if py:
         t["Python"] = {"run": [py, os.path.join(HERE, "bench.py")]}
     if rustc:

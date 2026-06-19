@@ -75,3 +75,8 @@ assets/music/*.flac
 # mdbook build output + ling example build dirs
 docs/book/
 **/.ling-build/
+
+# Compiled cross-language benchmark binaries
+benchmarks/bin/
+# Python bytecode cache
+__pycache__/

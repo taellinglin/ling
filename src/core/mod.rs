@@ -59,15 +59,7 @@ impl LingCompiler {
 
     /// Compile and run using the Cranelift JIT backend.
     pub fn compile_and_run_jit<P: AsRef<Path>>(&self, input: P) -> LingResult<()> {
-        let source =
-            std::fs::read_to_string(input.as_ref()).map_err(|e| LingError::Io(e.to_string()))?;
-        let mir = mir::compile_and_optimize(&source, self.config.optimization)?;
-        println!(
-            "JIT compiling {} functions, optimized at {:?}",
-            mir.functions.len(),
-            self.config.optimization
-        );
-
+        let mir = mir::compile_path(input.as_ref(), self.config.optimization)?;
         let mir_prog = ling_codegen::MirProgram::new(mir, input.as_ref().to_string_lossy());
 
         use crate::runtime::jit_abi::{
@@ -148,16 +140,14 @@ impl LingCompiler {
         // Initialize JIT runtime with interpreter for fallback operations
         crate::runtime::jit_abi::init(Interpreter::new());
 
-        // Compile all functions
+        // Compile all functions. A failure here is pre-execution (Codegen),
+        // so callers may safely fall back to the interpreter.
         jit.compile(&mir_prog)
             .map_err(|e| LingError::Codegen(e.to_string()))?;
 
-        // Execute main
-        let result = jit
-            .run_main()
-            .map_err(|e| LingError::Codegen(e.to_string()))?;
-
-        println!("JIT execution completed, result: {:?}", result);
+        // Execute main. A failure here happens mid-run (Mir): output may already
+        // have been emitted, so callers must not retry on another backend.
+        jit.run_main().map_err(|e| LingError::Mir(e.to_string()))?;
         Ok(())
     }
 

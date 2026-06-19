@@ -12,6 +12,7 @@ pub mod codegen;
 pub mod convert;
 pub mod core;
 pub mod diag;
+pub mod entry;
 pub mod gfx;
 pub mod lexer;
 pub mod lexicon;
