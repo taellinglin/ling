@@ -107,16 +107,16 @@ impl<'a> BorrowChecker<'a> {
         }
 
         let num_blocks = self.func.basic_blocks.len();
-        let num_locals = self.func.locals.len();
+        // Flat local space: return slot, parameters, then temporaries. The
+        // return slot and parameters have no entry in `func.locals`.
+        let num_slots = self.func.next_local();
 
         let mut entry_states: Vec<Option<FlowState>> = vec![None; num_blocks];
 
-        let mut init_state = FlowState::new(num_locals);
+        let mut init_state = FlowState::new(num_slots);
         let _ = init_state.set(Local(0), LocalState::Initialized);
         for i in 1..=self.func.arg_count {
-            if i < num_locals {
-                let _ = init_state.set(Local(i), LocalState::Initialized);
-            }
+            let _ = init_state.set(Local(i), LocalState::Initialized);
         }
         entry_states[0] = Some(init_state);
 
@@ -305,8 +305,7 @@ impl<'a> BorrowChecker<'a> {
                         name
                     ));
                 }
-                if local.0 < self.func.locals.len() {
-                    let decl = &self.func.locals[local.0];
+                if let Some(decl) = self.func.local_decl(*local) {
                     if !decl.is_mut {
                         let name = self.local_name(*local);
                         self.errors.push(format!(
@@ -359,8 +358,7 @@ impl<'a> BorrowChecker<'a> {
                 LocalState::Dead => {
                     let is_unnamed = self
                         .func
-                        .locals
-                        .get(local.0)
+                        .local_decl(*local)
                         .map_or(true, |d| d.name.is_none());
                     if is_unnamed {
                         return;
@@ -376,8 +374,10 @@ impl<'a> BorrowChecker<'a> {
                 },
                 LocalState::Initialized => {
                     if let Operand::Move(local) = op {
-                        if local.0 < self.func.locals.len()
-                            && self.func.locals[local.0].ty.is_move_type()
+                        if self
+                            .func
+                            .local_decl(*local)
+                            .is_some_and(|d| d.ty.is_move_type())
                         {
                             if let Err(msg) = state.set(*local, LocalState::Moved) {
                                 let name = self.local_name(*local);
@@ -415,8 +415,7 @@ impl<'a> BorrowChecker<'a> {
 
     fn local_name(&self, local: Local) -> String {
         self.func
-            .locals
-            .get(local.0)
+            .local_decl(local)
             .and_then(|decl| decl.name.as_ref())
             .cloned()
             .unwrap_or_else(|| format!("_{}", local.0))
