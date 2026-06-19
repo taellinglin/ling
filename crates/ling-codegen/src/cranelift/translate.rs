@@ -62,7 +62,7 @@ pub(crate) fn build_function_body(
                         builder.seal_block(blocks[target.0]);
                         sealed[target.0] = true;
                     }
-                }
+                },
                 TerminatorKind::SwitchInt { targets, otherwise, .. } => {
                     for (_, t) in targets {
                         filled_pred[t.0] += 1;
@@ -76,8 +76,8 @@ pub(crate) fn build_function_body(
                         builder.seal_block(blocks[otherwise.0]);
                         sealed[otherwise.0] = true;
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -96,10 +96,12 @@ pub(crate) fn count_predecessors(func: &MirFunction) -> Vec<u32> {
             match &term.kind {
                 TerminatorKind::Goto { target } => pred_count[target.0] += 1,
                 TerminatorKind::SwitchInt { targets, otherwise, .. } => {
-                    for (_, t) in targets { pred_count[t.0] += 1; }
+                    for (_, t) in targets {
+                        pred_count[t.0] += 1;
+                    }
                     pred_count[otherwise.0] += 1;
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -116,20 +118,36 @@ pub(crate) fn max_local_index(func: &MirFunction) -> usize {
                 collect_local_from_rvalue(rval, &mut max);
             }
             if let StatementKind::SetAttr(obj, _, val) = &stmt.kind {
-                if let Operand::Copy(l) | Operand::Move(l) = obj { max = max.max(l.0); }
-                if let Operand::Copy(l) | Operand::Move(l) = val { max = max.max(l.0); }
+                if let Operand::Copy(l) | Operand::Move(l) = obj {
+                    max = max.max(l.0);
+                }
+                if let Operand::Copy(l) | Operand::Move(l) = val {
+                    max = max.max(l.0);
+                }
             }
             if let StatementKind::SetIndex(obj, idx, val) = &stmt.kind {
-                if let Operand::Copy(l) | Operand::Move(l) = obj { max = max.max(l.0); }
-                if let Operand::Copy(l) | Operand::Move(l) = idx { max = max.max(l.0); }
-                if let Operand::Copy(l) | Operand::Move(l) = val { max = max.max(l.0); }
+                if let Operand::Copy(l) | Operand::Move(l) = obj {
+                    max = max.max(l.0);
+                }
+                if let Operand::Copy(l) | Operand::Move(l) = idx {
+                    max = max.max(l.0);
+                }
+                if let Operand::Copy(l) | Operand::Move(l) = val {
+                    max = max.max(l.0);
+                }
             }
-            if let StatementKind::StorageLive(l) | StatementKind::StorageDead(l) | StatementKind::Drop(l) = &stmt.kind {
+            if let StatementKind::StorageLive(l)
+            | StatementKind::StorageDead(l)
+            | StatementKind::Drop(l) = &stmt.kind
+            {
                 max = max.max(l.0);
             }
         }
         if let Some(term) = &bb.terminator {
-            if let TerminatorKind::SwitchInt { discr: Operand::Copy(l) | Operand::Move(l), .. } = &term.kind {
+            if let TerminatorKind::SwitchInt {
+                discr: Operand::Copy(l) | Operand::Move(l), ..
+            } = &term.kind
+            {
                 max = max.max(l.0);
             }
         }
@@ -142,29 +160,41 @@ pub(crate) fn max_local_index(func: &MirFunction) -> usize {
 pub(crate) fn collect_local_from_rvalue(rval: &Rvalue, max: &mut usize) {
     match rval {
         Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => {
-            if let Operand::Copy(l) | Operand::Move(l) = op { *max = (*max).max(l.0); }
-        }
+            if let Operand::Copy(l) | Operand::Move(l) = op {
+                *max = (*max).max(l.0);
+            }
+        },
         Rvalue::BinaryOp(_, lhs, rhs) => {
-            if let Operand::Copy(l) | Operand::Move(l) = lhs { *max = (*max).max(l.0); }
-            if let Operand::Copy(l) | Operand::Move(l) = rhs { *max = (*max).max(l.0); }
-        }
+            if let Operand::Copy(l) | Operand::Move(l) = lhs {
+                *max = (*max).max(l.0);
+            }
+            if let Operand::Copy(l) | Operand::Move(l) = rhs {
+                *max = (*max).max(l.0);
+            }
+        },
         Rvalue::Call { args, .. } => {
             for arg in args {
-                if let Operand::Copy(l) | Operand::Move(l) = arg { *max = (*max).max(l.0); }
+                if let Operand::Copy(l) | Operand::Move(l) = arg {
+                    *max = (*max).max(l.0);
+                }
             }
-        }
+        },
         Rvalue::Aggregate(_, ops) => {
             for op in ops {
-                if let Operand::Copy(l) | Operand::Move(l) = op { *max = (*max).max(l.0); }
+                if let Operand::Copy(l) | Operand::Move(l) = op {
+                    *max = (*max).max(l.0);
+                }
             }
-        }
+        },
         Rvalue::GetAttr(op, _) | Rvalue::GetIndex(op, _) => {
-            if let Operand::Copy(l) | Operand::Move(l) = op { *max = (*max).max(l.0); }
-        }
+            if let Operand::Copy(l) | Operand::Move(l) = op {
+                *max = (*max).max(l.0);
+            }
+        },
         Rvalue::Ref(l) | Rvalue::MutRef(l) => {
             *max = (*max).max(l.0);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -189,23 +219,28 @@ pub(crate) fn translate_stmt(stmt: &Statement, builder: &mut FunctionBuilder, ct
     }
 }
 
-pub(crate) fn translate_rvalue(rvalue: &Rvalue, builder: &mut FunctionBuilder, ctx: &TransCtx) -> Value {
+pub(crate) fn translate_rvalue(
+    rvalue: &Rvalue,
+    builder: &mut FunctionBuilder,
+    ctx: &TransCtx,
+) -> Value {
     match rvalue {
         Rvalue::Use(op) => translate_op(op, builder, ctx),
         Rvalue::BinaryOp(op, lhs, rhs) => {
             let tys = OperandTypes {
-                both_num: ctx.nt.operand_is_num(ctx.fname, lhs) && ctx.nt.operand_is_num(ctx.fname, rhs),
+                both_num: ctx.nt.operand_is_num(ctx.fname, lhs)
+                    && ctx.nt.operand_is_num(ctx.fname, rhs),
                 l_bool: ctx.nt.operand_is_bool(ctx.fname, lhs),
                 r_bool: ctx.nt.operand_is_bool(ctx.fname, rhs),
             };
             let lv = translate_op(lhs, builder, ctx);
             let rv = translate_op(rhs, builder, ctx);
             translate_binop(op, builder, lv, rv, tys, ctx.runtime_refs)
-        }
+        },
         Rvalue::UnaryOp(op, operand) => {
             let v = translate_op(operand, builder, ctx);
             translate_unop(op, builder, v, ctx.runtime_refs)
-        }
+        },
         Rvalue::Call { func: callee, args } => {
             let callee_name = match callee {
                 Operand::Constant(Constant::Function(n)) => n.clone(),
@@ -219,9 +254,15 @@ pub(crate) fn translate_rvalue(rvalue: &Rvalue, builder: &mut FunctionBuilder, c
                 let inst = builder.ins().call(fr, &cal_args);
                 builder.inst_results(inst)[0]
             } else {
-                emit_builtin_call(callee_name, cal_args, builder, ctx.builtin_gvs, ctx.runtime_refs)
+                emit_builtin_call(
+                    callee_name,
+                    cal_args,
+                    builder,
+                    ctx.builtin_gvs,
+                    ctx.runtime_refs,
+                )
             }
-        }
+        },
         Rvalue::Aggregate(_, ops) => {
             let mut list = emit_runtime_call0(builder, "__ling_list_new", ctx.runtime_refs);
             for op in ops {
@@ -229,12 +270,18 @@ pub(crate) fn translate_rvalue(rvalue: &Rvalue, builder: &mut FunctionBuilder, c
                 list = emit_runtime_call2(builder, "__ling_list_push", list, v, ctx.runtime_refs);
             }
             list
-        }
+        },
         Rvalue::GetIndex(obj, idx) => {
             let obj_val = translate_op(obj, builder, ctx);
             let idx_val = translate_op(idx, builder, ctx);
-            emit_runtime_call2(builder, "__ling_list_get", obj_val, idx_val, ctx.runtime_refs)
-        }
+            emit_runtime_call2(
+                builder,
+                "__ling_list_get",
+                obj_val,
+                idx_val,
+                ctx.runtime_refs,
+            )
+        },
         _ => int_zero(builder),
     }
 }
@@ -247,11 +294,16 @@ pub(crate) fn translate_op(op: &Operand, builder: &mut FunctionBuilder, ctx: &Tr
             Constant::I64(v) => {
                 let bits = (*v as f64).to_bits();
                 builder.ins().iconst(types::I64, bits as i64)
-            }
-            Constant::F64(v) => {
-                builder.ins().iconst(types::I64, *v as i64)
-            }
-            Constant::Bool(b) => builder.ins().iconst(types::I64, if *b { runtime::TAG_TRUE as i64 } else { runtime::TAG_FALSE as i64 }),
+            },
+            Constant::F64(v) => builder.ins().iconst(types::I64, *v as i64),
+            Constant::Bool(b) => builder.ins().iconst(
+                types::I64,
+                if *b {
+                    runtime::TAG_TRUE as i64
+                } else {
+                    runtime::TAG_FALSE as i64
+                },
+            ),
             Constant::Str(s) => {
                 if let Some(&gv) = string_gvs.get(s.as_str()) {
                     let ptr = builder.ins().symbol_value(types::I64, gv);
@@ -262,10 +314,10 @@ pub(crate) fn translate_op(op: &Operand, builder: &mut FunctionBuilder, ctx: &Tr
                 } else {
                     int_zero(builder)
                 }
-            }
+            },
             Constant::Function(_) | Constant::GlobalData(_) | Constant::None => {
                 builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64)
-            }
+            },
         },
     }
 }
@@ -302,33 +354,105 @@ pub(crate) fn translate_binop(
                     let prod = b.ins().fmul(trunc, v);
                     b.ins().fsub(a, prod)
                 })
-            }
+            },
             BinOp::Eq => return raw_f64_cmp(builder, lv, rv, FloatCC::Equal),
             BinOp::Ne => return raw_f64_cmp(builder, lv, rv, FloatCC::NotEqual),
             BinOp::Lt => return raw_f64_cmp(builder, lv, rv, FloatCC::LessThan),
             BinOp::Le => return raw_f64_cmp(builder, lv, rv, FloatCC::LessThanOrEqual),
             BinOp::Gt => return raw_f64_cmp(builder, lv, rv, FloatCC::GreaterThan),
             BinOp::Ge => return raw_f64_cmp(builder, lv, rv, FloatCC::GreaterThanOrEqual),
-            _ => {}
+            _ => {},
         }
     }
     match op {
-        BinOp::Add => emit_f64_or_runtime(builder, lv, rv, "__ling_add", |b, a, v| b.ins().fadd(a, v), runtime_refs),
-        BinOp::Sub => emit_f64_or_runtime(builder, lv, rv, "__ling_sub", |b, a, v| b.ins().fsub(a, v), runtime_refs),
-        BinOp::Mul => emit_f64_or_runtime(builder, lv, rv, "__ling_mul", |b, a, v| b.ins().fmul(a, v), runtime_refs),
-        BinOp::Div => emit_f64_or_runtime(builder, lv, rv, "__ling_div", |b, a, v| b.ins().fdiv(a, v), runtime_refs),
-        BinOp::Rem => emit_f64_or_runtime(builder, lv, rv, "__ling_rem", |b, a, v| {
-            let div = b.ins().fdiv(a, v);
-            let trunc = b.ins().trunc(div);
-            let prod = b.ins().fmul(trunc, v);
-            b.ins().fsub(a, prod)
-        }, runtime_refs),
-        BinOp::Eq => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_eq", FloatCC::Equal, runtime_refs),
-        BinOp::Ne => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_ne", FloatCC::NotEqual, runtime_refs),
-        BinOp::Lt => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_lt", FloatCC::LessThan, runtime_refs),
-        BinOp::Le => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_le", FloatCC::LessThanOrEqual, runtime_refs),
-        BinOp::Gt => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_gt", FloatCC::GreaterThan, runtime_refs),
-        BinOp::Ge => emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_ge", FloatCC::GreaterThanOrEqual, runtime_refs),
+        BinOp::Add => emit_f64_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_add",
+            |b, a, v| b.ins().fadd(a, v),
+            runtime_refs,
+        ),
+        BinOp::Sub => emit_f64_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_sub",
+            |b, a, v| b.ins().fsub(a, v),
+            runtime_refs,
+        ),
+        BinOp::Mul => emit_f64_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_mul",
+            |b, a, v| b.ins().fmul(a, v),
+            runtime_refs,
+        ),
+        BinOp::Div => emit_f64_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_div",
+            |b, a, v| b.ins().fdiv(a, v),
+            runtime_refs,
+        ),
+        BinOp::Rem => emit_f64_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_rem",
+            |b, a, v| {
+                let div = b.ins().fdiv(a, v);
+                let trunc = b.ins().trunc(div);
+                let prod = b.ins().fmul(trunc, v);
+                b.ins().fsub(a, prod)
+            },
+            runtime_refs,
+        ),
+        BinOp::Eq => {
+            emit_f64_cmp_or_runtime(builder, lv, rv, "__ling_eq", FloatCC::Equal, runtime_refs)
+        },
+        BinOp::Ne => emit_f64_cmp_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_ne",
+            FloatCC::NotEqual,
+            runtime_refs,
+        ),
+        BinOp::Lt => emit_f64_cmp_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_lt",
+            FloatCC::LessThan,
+            runtime_refs,
+        ),
+        BinOp::Le => emit_f64_cmp_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_le",
+            FloatCC::LessThanOrEqual,
+            runtime_refs,
+        ),
+        BinOp::Gt => emit_f64_cmp_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_gt",
+            FloatCC::GreaterThan,
+            runtime_refs,
+        ),
+        BinOp::Ge => emit_f64_cmp_or_runtime(
+            builder,
+            lv,
+            rv,
+            "__ling_ge",
+            FloatCC::GreaterThanOrEqual,
+            runtime_refs,
+        ),
         BinOp::And => emit_short_circuit_and(builder, lv, rv, l_bool, r_bool, runtime_refs),
         BinOp::Or => emit_short_circuit_or(builder, lv, rv, l_bool, r_bool, runtime_refs),
         _ => emit_runtime_call2(builder, "__ling_add", lv, rv, runtime_refs),
@@ -366,9 +490,14 @@ pub(crate) fn translate_unop(
 ) -> Value {
     match op {
         UnOp::Ref | UnOp::Deref => v,
-        UnOp::Neg => emit_f64_or_runtime(builder, v, v, "__ling_neg", |b, a, _| {
-            b.ins().fneg(a)
-        }, runtime_refs),
+        UnOp::Neg => emit_f64_or_runtime(
+            builder,
+            v,
+            v,
+            "__ling_neg",
+            |b, a, _| b.ins().fneg(a),
+            runtime_refs,
+        ),
         UnOp::Not => {
             let is_num = emit_is_number(builder, v);
             let block_num = builder.create_block();
@@ -398,7 +527,7 @@ pub(crate) fn translate_unop(
             builder.switch_to_block(block_merge);
             builder.seal_block(block_merge);
             builder.use_var(res_var)
-        }
+        },
     }
 }
 
@@ -497,7 +626,9 @@ pub(crate) fn truthy_of(
     runtime_refs: &HashMap<String, FuncRef>,
 ) -> Value {
     if is_bool {
-        builder.ins().icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
+        builder
+            .ins()
+            .icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
     } else {
         emit_is_truthy(builder, val, runtime_refs)
     }
@@ -517,7 +648,9 @@ pub(crate) fn emit_short_circuit_and(
     let block_merge = builder.create_block();
     let res_var = builder.declare_var(types::I64);
 
-    builder.ins().brif(l_is_truthy, block_true, &[], block_false, &[]);
+    builder
+        .ins()
+        .brif(l_is_truthy, block_true, &[], block_false, &[]);
 
     builder.switch_to_block(block_false);
     let f = builder.ins().iconst(types::I64, runtime::TAG_FALSE as i64);
@@ -553,7 +686,9 @@ pub(crate) fn emit_short_circuit_or(
     let block_merge = builder.create_block();
     let res_var = builder.declare_var(types::I64);
 
-    builder.ins().brif(l_is_truthy, block_true, &[], block_false, &[]);
+    builder
+        .ins()
+        .brif(l_is_truthy, block_true, &[], block_false, &[]);
 
     builder.switch_to_block(block_true);
     let t = builder.ins().iconst(types::I64, runtime::TAG_TRUE as i64);
@@ -606,9 +741,15 @@ pub(crate) fn emit_is_truthy(
     builder.seal_block(block_num);
 
     builder.switch_to_block(block_tag);
-    let is_true = builder.ins().icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64);
-    let is_false = builder.ins().icmp_imm(IntCC::Equal, val, runtime::TAG_FALSE as i64);
-    let is_unit = builder.ins().icmp_imm(IntCC::Equal, val, runtime::TAG_UNIT as i64);
+    let is_true = builder
+        .ins()
+        .icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64);
+    let is_false = builder
+        .ins()
+        .icmp_imm(IntCC::Equal, val, runtime::TAG_FALSE as i64);
+    let is_unit = builder
+        .ins()
+        .icmp_imm(IntCC::Equal, val, runtime::TAG_UNIT as i64);
     // Truthy = is_true || (!is_false && !is_unit)
     let is_false_or_unit = builder.ins().bor(is_false, is_unit);
     let one_i64 = int_one(builder);
@@ -630,7 +771,9 @@ pub(crate) fn emit_runtime_call0(
     name: &str,
     runtime_refs: &HashMap<String, FuncRef>,
 ) -> Value {
-    let fr = *runtime_refs.get(name).unwrap_or_else(|| panic!("runtime fn not found: {}", name));
+    let fr = *runtime_refs
+        .get(name)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", name));
     let inst = builder.ins().call(fr, &[]);
     builder.inst_results(inst)[0]
 }
@@ -641,7 +784,9 @@ pub(crate) fn emit_runtime_call1(
     a: Value,
     runtime_refs: &HashMap<String, FuncRef>,
 ) -> Value {
-    let fr = *runtime_refs.get(name).unwrap_or_else(|| panic!("runtime fn not found: {}", name));
+    let fr = *runtime_refs
+        .get(name)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", name));
     let inst = builder.ins().call(fr, &[a]);
     builder.inst_results(inst)[0]
 }
@@ -653,7 +798,9 @@ pub(crate) fn emit_runtime_call2(
     b: Value,
     runtime_refs: &HashMap<String, FuncRef>,
 ) -> Value {
-    let fr = *runtime_refs.get(name).unwrap_or_else(|| panic!("runtime fn not found: {}", name));
+    let fr = *runtime_refs
+        .get(name)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", name));
     let inst = builder.ins().call(fr, &[a, b]);
     builder.inst_results(inst)[0]
 }
@@ -667,7 +814,9 @@ pub(crate) fn emit_runtime_call4(
     d: Value,
     runtime_refs: &HashMap<String, FuncRef>,
 ) -> Value {
-    let fr = *runtime_refs.get(name).unwrap_or_else(|| panic!("runtime fn not found: {}", name));
+    let fr = *runtime_refs
+        .get(name)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", name));
     let inst = builder.ins().call(fr, &[a, b, c, d]);
     builder.inst_results(inst)[0]
 }
@@ -683,13 +832,18 @@ pub(crate) fn emit_builtin_call(
     match name.as_str() {
         "print" | "println" | "พิมพ์" | "印" | "打印" | "印刷" => {
             if !args.is_empty() {
-                for arg in &args[..args.len()-1] {
+                for arg in &args[..args.len() - 1] {
                     emit_runtime_call1(builder, "__ling_print_val", *arg, runtime_refs);
                 }
-                emit_runtime_call1(builder, "__ling_print_val", args[args.len()-1], runtime_refs);
+                emit_runtime_call1(
+                    builder,
+                    "__ling_print_val",
+                    args[args.len() - 1],
+                    runtime_refs,
+                );
             }
             return emit_runtime_call0(builder, "__ling_print_newline", runtime_refs);
-        }
+        },
         "sin" => return unbox_f64_or_call(builder, args, "__ling_sin", runtime_refs),
         "cos" => return unbox_f64_or_call(builder, args, "__ling_cos", runtime_refs),
         "sqrt" => return unbox_f64_or_call(builder, args, "__ling_sqrt", runtime_refs),
@@ -697,14 +851,18 @@ pub(crate) fn emit_builtin_call(
         "floor" => return unbox_f64_or_call(builder, args, "__ling_floor", runtime_refs),
         "ceil" => return unbox_f64_or_call(builder, args, "__ling_ceil", runtime_refs),
         "round" => return unbox_f64_or_call(builder, args, "__ling_round", runtime_refs),
-        "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" => {
+        "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
+        {
             return emit_runtime_call0(builder, "__ling_time_now", runtime_refs);
-        }
+        },
         "len" | "str_len" | "ความยาว" | "长度" | "長さ" | "길이" => {
-            if !args.is_empty() { return emit_runtime_call1(builder, "__ling_str_len", args[0], runtime_refs); }
-            else { return builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64); }
-        }
-        _ => {}
+            if !args.is_empty() {
+                return emit_runtime_call1(builder, "__ling_str_len", args[0], runtime_refs);
+            } else {
+                return builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+            }
+        },
+        _ => {},
     }
     // Fallback: dispatch through __ling_builtin for any builtin not handled above
     if let Some(&name_gv) = builtin_gvs.get(&name) {
@@ -713,7 +871,11 @@ pub(crate) fn emit_builtin_call(
         let num_args = args.len();
         // Always allocate a stack slot (even for 0 args) so args_ptr is valid
         let slot_size = std::cmp::max(num_args * 8, 8) as u32;
-        let args_slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, slot_size, 8));
+        let args_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            slot_size,
+            8,
+        ));
         let args_ptr = builder.ins().stack_addr(types::I64, args_slot, 0);
         for (i, arg) in args.iter().enumerate() {
             let off = builder.ins().iconst(types::I64, (i * 8) as i64);
@@ -721,7 +883,15 @@ pub(crate) fn emit_builtin_call(
             builder.ins().store(MemFlags::new(), *arg, elem_ptr, 0);
         }
         let args_len = builder.ins().iconst(types::I64, num_args as i64);
-        emit_runtime_call4(builder, "__ling_builtin", name_ptr, name_len, args_ptr, args_len, runtime_refs)
+        emit_runtime_call4(
+            builder,
+            "__ling_builtin",
+            name_ptr,
+            name_len,
+            args_ptr,
+            args_len,
+            runtime_refs,
+        )
     } else {
         builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64)
     }
@@ -747,7 +917,9 @@ pub(crate) fn unbox_f64_or_call(
 
     builder.switch_to_block(block_fast);
     let f = i64_as_f64(builder, val);
-    let fr = *runtime_refs.get(runtime_fn).unwrap_or_else(|| panic!("runtime fn not found: {}", runtime_fn));
+    let fr = *runtime_refs
+        .get(runtime_fn)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", runtime_fn));
     let inst = builder.ins().call(fr, &[f]);
     let f_result = builder.inst_results(inst)[0];
     let if64 = f64_as_i64(builder, f_result);
@@ -772,35 +944,55 @@ pub(crate) fn translate_terminator(
     ctx: &TransCtx,
 ) {
     match &term.kind {
-        TerminatorKind::Goto { target } => { builder.ins().jump(blocks[target.0], &[]); }
+        TerminatorKind::Goto { target } => {
+            builder.ins().jump(blocks[target.0], &[]);
+        },
         TerminatorKind::SwitchInt { discr, targets, otherwise } => {
             let val = translate_op(discr, builder, ctx);
             // A strict-bool discriminant (the common loop/if condition) only needs a
             // direct compare against TAG_TRUE, skipping the general truthiness path.
             let is_truthy = if ctx.nt.operand_is_bool(ctx.fname, discr) {
-                builder.ins().icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
+                builder
+                    .ins()
+                    .icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
             } else {
                 emit_is_truthy(builder, val, ctx.runtime_refs)
             };
             let mut true_target = otherwise.0;
             let mut false_target = otherwise.0;
             for (const_val, target_block) in targets {
-                if *const_val == 1 { true_target = target_block.0; }
-                else if *const_val == 0 { false_target = target_block.0; }
+                if *const_val == 1 {
+                    true_target = target_block.0;
+                } else if *const_val == 0 {
+                    false_target = target_block.0;
+                }
             }
             if true_target != otherwise.0 && false_target != otherwise.0 {
-                builder.ins().brif(is_truthy, blocks[true_target], &[], blocks[false_target], &[]);
+                builder.ins().brif(
+                    is_truthy,
+                    blocks[true_target],
+                    &[],
+                    blocks[false_target],
+                    &[],
+                );
             } else if true_target != otherwise.0 {
-                builder.ins().brif(is_truthy, blocks[true_target], &[], blocks[otherwise.0], &[]);
+                builder.ins().brif(
+                    is_truthy,
+                    blocks[true_target],
+                    &[],
+                    blocks[otherwise.0],
+                    &[],
+                );
             } else {
                 builder.ins().jump(blocks[otherwise.0], &[]);
             }
-        }
+        },
         TerminatorKind::Return => {
             let ret = builder.use_var(ctx.vars[&Local(0)]);
             builder.ins().return_(&[ret]);
-        }
-        TerminatorKind::Unreachable => { builder.ins().trap(TrapCode::INTEGER_OVERFLOW); }
+        },
+        TerminatorKind::Unreachable => {
+            builder.ins().trap(TrapCode::INTEGER_OVERFLOW);
+        },
     }
 }
-

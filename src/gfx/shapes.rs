@@ -1078,7 +1078,20 @@ impl GfxState {
     /// upper body (∝ |y|) and `arm` swings the arms fore/aft in antiphase with an
     /// elbow-compound bend. Verts are flipped models (feet y≈0, head y≈-height).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw_color_mesh(&mut self, m: &ColorMesh, cx:f32, cy:f32, cz:f32, sc:f32, yaw:f32, sway:f32, arm:f32, lean:f32, leg:f32, tuck:f32) {
+    pub fn draw_color_mesh(
+        &mut self,
+        m: &ColorMesh,
+        cx: f32,
+        cy: f32,
+        cz: f32,
+        sc: f32,
+        yaw: f32,
+        sway: f32,
+        arm: f32,
+        lean: f32,
+        leg: f32,
+        tuck: f32,
+    ) {
         let near = -self.camera.zdist + 0.05;
         let cs = yaw.cos();
         let sn = yaw.sin();
@@ -1101,19 +1114,26 @@ impl GfxState {
                 let side = if p[0] >= 0.0 { 1.0 } else { -1.0 };
                 // forward bend (running): upper body pitches forward (+z) above the waist,
                 // arms pulled back/tucked relative to the leaning torso.
-                let bw = (((p[1].abs() / h) - 0.40) / 0.60).clamp(0.0, 1.0);        // 0 below waist → 1 head
+                let bw = (((p[1].abs() / h) - 0.40) / 0.60).clamp(0.0, 1.0); // 0 below waist → 1 head
                 let zlean = lean * bw * bw * h - lean * aw * 0.6 * h;
                 // legs (lower body, not arms): swing fore/aft antiphase L/R; the forward
                 // foot lifts (knee bend). `tuck` raises both knees toward the chest (jump).
-                let lw = (((0.45*h - p[1].abs()) / (0.45*h)).clamp(0.0, 1.0)) * (1.0 - aw);
-                let fw = (((0.16*h - p[1].abs()) / (0.16*h)).clamp(0.0, 1.0)) * (1.0 - aw);
+                let lw = (((0.45 * h - p[1].abs()) / (0.45 * h)).clamp(0.0, 1.0)) * (1.0 - aw);
+                let fw = (((0.16 * h - p[1].abs()) / (0.16 * h)).clamp(0.0, 1.0)) * (1.0 - aw);
                 let legswing = leg * side * lw;
                 let mut ylift = 0.0f32;
-                if legswing > 0.0 { ylift -= legswing * fw * 0.45 * h; }            // forward foot lifts (up = -Y)
-                ylift -= tuck * lw * 0.22 * h;                                      // jump tuck: knees up
+                if legswing > 0.0 {
+                    ylift -= legswing * fw * 0.45 * h;
+                } // forward foot lifts (up = -Y)
+                ylift -= tuck * lw * 0.22 * h; // jump tuck: knees up
                 let xs = p[0] + sway * p[1].abs();
-                let zs = p[2] + arm * side * (aw + ew * 0.7) + zlean + legswing + tuck * lw * 0.16 * h;
-                wv[k] = [cx + (xs*cs + zs*sn)*sc, cy + (p[1] + ylift)*sc, cz + (zs*cs - xs*sn)*sc];
+                let zs =
+                    p[2] + arm * side * (aw + ew * 0.7) + zlean + legswing + tuck * lw * 0.16 * h;
+                wv[k] = [
+                    cx + (xs * cs + zs * sn) * sc,
+                    cy + (p[1] + ylift) * sc,
+                    cz + (zs * cs - xs * sn) * sc,
+                ];
                 k += 1;
             }
             let a = wv[0];
@@ -1194,9 +1214,17 @@ impl GfxState {
             for x in 0..w {
                 // branchless small-shift wrap (displacements are a few px → one add wraps)
                 let mut sxi = x as i32 + rdx[y] + cdx[x];
-                if sxi < 0 { sxi += wi; } else if sxi >= wi { sxi -= wi; }
+                if sxi < 0 {
+                    sxi += wi;
+                } else if sxi >= wi {
+                    sxi -= wi;
+                }
                 let mut syi = y as i32 + cdy[x] + ry;
-                if syi < 0 { syi += hi; } else if syi >= hi { syi -= hi; }
+                if syi < 0 {
+                    syi += hi;
+                } else if syi >= hi {
+                    syi -= hi;
+                }
                 self.buffer[row + x] = src[syi as usize * w + sxi as usize];
             }
         }
@@ -1272,19 +1300,35 @@ impl GfxState {
                         &sp,
                     );
                     // Near-plane clip (keeps large straddling tiles instead of dropping them).
-                    let poly = near_clip_poly(&[(a,la,da),(b,lb,db),(c,lc,dc)], near);
-                    if poly.len() < 3 { continue; }
-                    let proj: Vec<(f32,f32,f32,u32)> = poly.iter().map(|(p,col)| {
-                        let (sx,sy,pz)=self.camera.project(p[0],p[1],p[2]);
-                        (sx,sy,pz, ling_graphics::shading::pack(*col))
-                    }).collect();
-                    let mut k=1;
-                    while k+1 < proj.len() {
+                    let poly = near_clip_poly(&[(a, la, da), (b, lb, db), (c, lc, dc)], near);
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let proj: Vec<(f32, f32, f32, u32)> = poly
+                        .iter()
+                        .map(|(p, col)| {
+                            let (sx, sy, pz) = self.camera.project(p[0], p[1], p[2]);
+                            (sx, sy, pz, ling_graphics::shading::pack(*col))
+                        })
+                        .collect();
+                    let mut k = 1;
+                    while k + 1 < proj.len() {
                         self.depth_queue.push_triangle_g_zv(
-                            proj[0].0,proj[0].1,proj[0].2,proj[0].3,
-                            proj[k].0,proj[k].1,proj[k].2,proj[k].3,
-                            proj[k+1].0,proj[k+1].1,proj[k+1].2,proj[k+1].3, bands);
-                        k+=1;
+                            proj[0].0,
+                            proj[0].1,
+                            proj[0].2,
+                            proj[0].3,
+                            proj[k].0,
+                            proj[k].1,
+                            proj[k].2,
+                            proj[k].3,
+                            proj[k + 1].0,
+                            proj[k + 1].1,
+                            proj[k + 1].2,
+                            proj[k + 1].3,
+                            bands,
+                        );
+                        k += 1;
                     }
                 }
             } else {
@@ -1293,25 +1337,58 @@ impl GfxState {
                     let a = m.verts[t[0] as usize];
                     let b = m.verts[t[1] as usize];
                     let c = m.verts[t[2] as usize];
-                    let ux=b[0]-a[0]; let uy=b[1]-a[1]; let uz=b[2]-a[2];
-                    let vx=c[0]-a[0]; let vy=c[1]-a[1]; let vz=c[2]-a[2];
-                    let normal = [uy*vz-uz*vy, uz*vx-ux*vz, ux*vy-uy*vx];
-                    let centroid = [(a[0]+b[0]+c[0])/3.0,(a[1]+b[1]+c[1])/3.0,(a[2]+b[2]+c[2])/3.0];
-                    let lit = crate::gfx::light::compute_lit_color(self.color, normal, centroid, &self.lights, self.ambient);
-                    let da=self.camera.depth(a[0],a[1],a[2]);
-                    let db=self.camera.depth(b[0],b[1],b[2]);
-                    let dc=self.camera.depth(c[0],c[1],c[2]);
-                    if da<=near && db<=near && dc<=near { continue; } // all behind → drop
-                    // Near-plane clip (flat colour, so vertex colour is irrelevant here).
-                    let poly = near_clip_poly(&[(a,[0.0;3],da),(b,[0.0;3],db),(c,[0.0;3],dc)], near);
-                    if poly.len() < 3 { continue; }
-                    let proj: Vec<(f32,f32,f32)> = poly.iter()
-                        .map(|(p,_)| self.camera.project(p[0],p[1],p[2])).collect();
-                    let mut k=1;
-                    while k+1 < proj.len() {
-                        self.depth_queue.push_triangle_zv(lit,
-                            proj[0].0,proj[0].1,proj[0].2, proj[k].0,proj[k].1,proj[k].2, proj[k+1].0,proj[k+1].1,proj[k+1].2);
-                        k+=1;
+                    let ux = b[0] - a[0];
+                    let uy = b[1] - a[1];
+                    let uz = b[2] - a[2];
+                    let vx = c[0] - a[0];
+                    let vy = c[1] - a[1];
+                    let vz = c[2] - a[2];
+                    let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+                    let centroid = [
+                        (a[0] + b[0] + c[0]) / 3.0,
+                        (a[1] + b[1] + c[1]) / 3.0,
+                        (a[2] + b[2] + c[2]) / 3.0,
+                    ];
+                    let lit = crate::gfx::light::compute_lit_color(
+                        self.color,
+                        normal,
+                        centroid,
+                        &self.lights,
+                        self.ambient,
+                    );
+                    let da = self.camera.depth(a[0], a[1], a[2]);
+                    let db = self.camera.depth(b[0], b[1], b[2]);
+                    let dc = self.camera.depth(c[0], c[1], c[2]);
+                    if da <= near && db <= near && dc <= near {
+                        continue;
+                    } // all behind → drop
+                      // Near-plane clip (flat colour, so vertex colour is irrelevant here).
+                    let poly = near_clip_poly(
+                        &[(a, [0.0; 3], da), (b, [0.0; 3], db), (c, [0.0; 3], dc)],
+                        near,
+                    );
+                    if poly.len() < 3 {
+                        continue;
+                    }
+                    let proj: Vec<(f32, f32, f32)> = poly
+                        .iter()
+                        .map(|(p, _)| self.camera.project(p[0], p[1], p[2]))
+                        .collect();
+                    let mut k = 1;
+                    while k + 1 < proj.len() {
+                        self.depth_queue.push_triangle_zv(
+                            lit,
+                            proj[0].0,
+                            proj[0].1,
+                            proj[0].2,
+                            proj[k].0,
+                            proj[k].1,
+                            proj[k].2,
+                            proj[k + 1].0,
+                            proj[k + 1].1,
+                            proj[k + 1].2,
+                        );
+                        k += 1;
                     }
                 }
             }

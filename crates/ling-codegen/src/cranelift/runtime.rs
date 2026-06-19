@@ -52,7 +52,9 @@ pub fn register_builtin_dispatch(f: BuiltinDispatch) {
 /// Call a builtin by name from JIT'd code.
 #[inline]
 pub unsafe fn call_builtin(name: &str, args: &[u64]) -> u64 {
-    let dispatch = BUILTIN_DISPATCH.get().expect("BUILTIN_DISPATCH not registered");
+    let dispatch = BUILTIN_DISPATCH
+        .get()
+        .expect("BUILTIN_DISPATCH not registered");
     dispatch(name.as_ptr(), name.len(), args.as_ptr(), args.len())
 }
 
@@ -80,7 +82,11 @@ pub fn is_tagged(val: u64) -> bool {
 
 #[inline]
 pub fn encode_bool(val: bool) -> u64 {
-    if val { TAG_TRUE } else { TAG_FALSE }
+    if val {
+        TAG_TRUE
+    } else {
+        TAG_FALSE
+    }
 }
 
 #[inline]
@@ -127,7 +133,6 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     ("__ling_alloc", b"ling_alloc\0"),
     ("__ling_free", b"ling_free\0"),
     ("__ling_panic", b"ling_panic\0"),
-
     // Arithmetic
     ("__ling_add", b"ling_add\0"),
     ("__ling_sub", b"ling_sub\0"),
@@ -135,7 +140,6 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     ("__ling_div", b"ling_div\0"),
     ("__ling_rem", b"ling_rem\0"),
     ("__ling_neg", b"ling_neg\0"),
-
     // Comparison
     ("__ling_eq", b"ling_eq\0"),
     ("__ling_ne", b"ling_ne\0"),
@@ -143,37 +147,30 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     ("__ling_le", b"ling_le\0"),
     ("__ling_gt", b"ling_gt\0"),
     ("__ling_ge", b"ling_ge\0"),
-
     // Logics
     ("__ling_and", b"ling_and\0"),
     ("__ling_or", b"ling_or\0"),
     ("__ling_not", b"ling_not\0"),
-
     // Builtin dispatch (all builtins go through this)
     ("__ling_builtin", b"ling_builtin\0"),
-
     // String operations
     ("__ling_str_new", b"ling_str_new\0"),
     ("__ling_str_len", b"ling_str_len\0"),
     ("__ling_str_concat", b"ling_str_concat\0"),
     ("__ling_str_eq", b"ling_str_eq\0"),
-
     // List operations
     ("__ling_list_new", b"ling_list_new\0"),
     ("__ling_list_push", b"ling_list_push\0"),
     ("__ling_list_get", b"ling_list_get\0"),
     ("__ling_list_len", b"ling_list_len\0"),
-
     // Struct operations
     ("__ling_struct_new", b"ling_struct_new\0"),
     ("__ling_struct_get", b"ling_struct_get\0"),
-
     // Print / output
     ("__ling_print", b"ling_print\0"),
     ("__ling_print_val", b"ling_print_val\0"),
     ("__ling_print_newline", b"ling_print_newline\0"),
     ("__ling_time_now", b"ling_time_now\0"),
-
     // Numeric helpers (for JIT-inlined operations)
     ("__ling_f64_add", b"ling_f64_add\0"),
     ("__ling_f64_sub", b"ling_f64_sub\0"),
@@ -193,7 +190,6 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     ("__ling_floor", b"ling_floor\0"),
     ("__ling_ceil", b"ling_ceil\0"),
     ("__ling_round", b"ling_round\0"),
-
     // Bool helpers
     ("__ling_bool_to_u64", b"ling_bool_to_u64\0"),
 ];
@@ -257,12 +253,22 @@ extern "C" {
     pub fn ling_list_get(list: u64, idx: u64) -> u64;
     pub fn ling_list_len(list: u64) -> u64;
 
-    pub fn ling_struct_new(name_ptr: *const u8, name_len: usize, args_ptr: *const u64, args_len: usize) -> u64;
+    pub fn ling_struct_new(
+        name_ptr: *const u8,
+        name_len: usize,
+        args_ptr: *const u64,
+        args_len: usize,
+    ) -> u64;
     pub fn ling_struct_get(val: u64, field_ptr: *const u8, field_len: usize) -> u64;
 
     pub fn ling_print(cstr: *const u8);
     pub fn ling_print_val(val: u64);
 
     /// Generic builtin dispatcher – calls builtin by name.
-    pub fn ling_builtin(name_ptr: *const u8, name_len: usize, args_ptr: *const u64, args_len: usize) -> u64;
+    pub fn ling_builtin(
+        name_ptr: *const u8,
+        name_len: usize,
+        args_ptr: *const u64,
+        args_len: usize,
+    ) -> u64;
 }

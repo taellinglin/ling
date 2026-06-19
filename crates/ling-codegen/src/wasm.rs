@@ -18,7 +18,9 @@ impl WasmBackend {
 }
 
 impl Default for WasmBackend {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CodegenBackend for WasmBackend {

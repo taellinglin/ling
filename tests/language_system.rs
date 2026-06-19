@@ -94,35 +94,60 @@ fn hello_world_thai() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn for_loop_english()  { assert_runs("for-en", r#"bind start = do { for i in 0..3 { print(i) } }"#); }
+fn for_loop_english() {
+    assert_runs(
+        "for-en",
+        r#"bind start = do { for i in 0..3 { print(i) } }"#,
+    );
+}
 #[test]
-fn for_loop_chinese()  { assert_runs("for-zh", r#"令 启动 = 执 { 历 i 于 0..3 { 印(i) } }"#); }
+fn for_loop_chinese() {
+    assert_runs("for-zh", r#"令 启动 = 执 { 历 i 于 0..3 { 印(i) } }"#);
+}
 #[test]
-fn for_loop_japanese() { assert_runs("for-ja", r#"束縛 開始 = 実行 { 繰 i の中 0..3 { 印刷(i) } }"#); }
+fn for_loop_japanese() {
+    assert_runs(
+        "for-ja",
+        r#"束縛 開始 = 実行 { 繰 i の中 0..3 { 印刷(i) } }"#,
+    );
+}
 #[test]
-fn for_loop_korean()   { assert_runs("for-ko", r#"바인드 시작 = 실행 { 위해 i 안에 0..3 { 출력(i) } }"#); }
+fn for_loop_korean() {
+    assert_runs(
+        "for-ko",
+        r#"바인드 시작 = 실행 { 위해 i 안에 0..3 { 출력(i) } }"#,
+    );
+}
 #[test]
-fn for_loop_thai()     { assert_runs("for-th", r#"ผูก เริ่ม = ทำ { สำหรับ i ใน 0..3 { พิมพ์(i) } }"#); }
+fn for_loop_thai() {
+    assert_runs("for-th", r#"ผูก เริ่ม = ทำ { สำหรับ i ใน 0..3 { พิมพ์(i) } }"#);
+}
 
 /// Recursive `fn` + if/else implicit-return — the canonical fib, in Korean.
 #[test]
 fn fib_recursive_korean() {
-    assert_runs("fib-ko", r#"
+    assert_runs(
+        "fib-ko",
+        r#"
         함수 피보나치(n: 숫자) -> 숫자 {
             만약 n <= 1 { n } 아니면 { 피보나치(n - 1) + 피보나치(n - 2) }
         }
         바인드 시작 = 실행 { 위해 i 안에 0..8 { 출력(피보나치(i)) } }
-    "#);
+    "#,
+    );
 }
 
 #[test]
 fn fib_recursive_chinese() {
-    assert_runs("fib-zh", r#"
+    assert_runs(
+        "fib-zh",
+        r#"
         函 fib(n: 数字) -> 数字 {
             若 n <= 1 { n } 否则 { fib(n - 1) + fib(n - 2) }
         }
         令 启动 = 执 { 历 i 于 0..8 { 印(fib(i)) } }
-    "#);
+    "#,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

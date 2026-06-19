@@ -161,7 +161,10 @@ impl<'a> LowerCtx<'a> {
     /// (used for parameters and loop counters).
     fn declare_in_scope(&mut self, name: &str, local: Local) {
         self.locals.insert(name.to_string(), local);
-        self.scope_names.last_mut().unwrap().insert(name.to_string());
+        self.scope_names
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string());
     }
 
     /// Resolve the local a `bind name = …` should target. Re-binding within the
@@ -174,8 +177,14 @@ impl<'a> LowerCtx<'a> {
         let prev = self.locals.get(name).copied();
         let l = self.alloc_local(Some(name.to_string()), true);
         self.locals.insert(name.to_string(), l);
-        self.scope_names.last_mut().unwrap().insert(name.to_string());
-        self.shadowed.last_mut().unwrap().push((name.to_string(), prev));
+        self.scope_names
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string());
+        self.shadowed
+            .last_mut()
+            .unwrap()
+            .push((name.to_string(), prev));
         l
     }
 
@@ -189,10 +198,10 @@ impl<'a> LowerCtx<'a> {
             match prev {
                 Some(l) => {
                     self.locals.insert(name, l);
-                }
+                },
                 None => {
                     self.locals.remove(&name);
-                }
+                },
             }
         }
         self.scope_names.pop();
@@ -214,7 +223,9 @@ impl<'a> LowerCtx<'a> {
     /// Append a fresh, empty (unterminated) block and return its id.
     fn new_block(&mut self) -> BasicBlockId {
         let id = BasicBlockId(self.func.basic_blocks.len());
-        self.func.basic_blocks.push(BasicBlock { statements: Vec::new(), terminator: None });
+        self.func
+            .basic_blocks
+            .push(BasicBlock { statements: Vec::new(), terminator: None });
         id
     }
 
@@ -380,7 +391,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 }
                 let body_val = lower_expr(body, &mut closure_ctx);
                 closure_ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(body_val)));
-                    closure_ctx.set_term(TerminatorKind::Return);
+                closure_ctx.set_term(TerminatorKind::Return);
                 ctx.closures.push(closure_func);
 
                 let mut mir_args = Vec::new();
@@ -633,7 +644,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             }
             let body_val = lower_expr(body, &mut closure_ctx);
             closure_ctx.emit(StatementKind::Assign(Local(0), Rvalue::Use(body_val)));
-                    closure_ctx.set_term(TerminatorKind::Return);
+            closure_ctx.set_term(TerminatorKind::Return);
             ctx.closures.push(closure_func);
             Operand::Constant(Constant::Function(closure_name))
         },
@@ -693,12 +704,7 @@ fn lower_if_chain(
 /// Lower a `for var in iter { body }` loop. Integer ranges (`lo..hi`) iterate a
 /// counter directly; any other iterable is treated as a list and indexed via the
 /// list runtime so the same lowering serves both.
-fn lower_for(
-    var: &str,
-    iter: &parser::ast::Expr,
-    body: &[parser::ast::Stmt],
-    ctx: &mut LowerCtx,
-) {
+fn lower_for(var: &str, iter: &parser::ast::Expr, body: &[parser::ast::Stmt], ctx: &mut LowerCtx) {
     use ling_ast::ast::BinOp as B;
     if let parser::ast::Expr::Range(lo, hi) = iter {
         let lo_op = lower_expr(lo, ctx);

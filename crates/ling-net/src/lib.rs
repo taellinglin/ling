@@ -12,12 +12,6 @@ pub mod types;
 #[cfg(feature = "http")]
 pub mod http;
 
-#[cfg(feature = "websocket")]
-pub mod ws;
-
-#[cfg(feature = "quic")]
-pub mod quic;
-
 pub use error::NetError;
 pub use types::{HttpMethod, Request, Response};
 

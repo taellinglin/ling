@@ -74,13 +74,25 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_list_push", &[types::I64, types::I64], types::I64),
         ("ling_list_get", &[types::I64, types::I64], types::I64),
         ("ling_list_len", &[types::I64], types::I64),
-        ("ling_struct_new", &[types::I64, types::I64, types::I64, types::I64], types::I64),
-        ("ling_struct_get", &[types::I64, types::I64, types::I64], types::I64),
+        (
+            "ling_struct_new",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        (
+            "ling_struct_get",
+            &[types::I64, types::I64, types::I64],
+            types::I64,
+        ),
         ("ling_print", &[types::I64], types::I64),
         ("ling_print_val", &[types::I64], types::I64),
         ("ling_print_newline", &[], types::I64),
         ("ling_time_now", &[], types::I64),
-        ("ling_builtin", &[types::I64, types::I64, types::I64, types::I64], types::I64),
+        (
+            "ling_builtin",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
     ];
 
     for &(name, params, ret) in runtime_fns {
@@ -89,7 +101,9 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             sig.params.push(AbiParam::new(pt));
         }
         sig.returns.push(AbiParam::new(ret));
-        let id = module.declare_function(name, Linkage::Import, &sig).unwrap();
+        let id = module
+            .declare_function(name, Linkage::Import, &sig)
+            .unwrap();
         decls.insert(name.to_string(), RuntimeDecl { id });
     }
 
@@ -128,7 +142,9 @@ fn visit_operand_strings(
     if let Operand::Constant(Constant::Str(s)) = op {
         if !string_ids.contains_key(s) {
             let name = format!("__str_{}", string_ids.len());
-            let data_id = module.declare_data(&name, Linkage::Local, true, false).unwrap();
+            let data_id = module
+                .declare_data(&name, Linkage::Local, true, false)
+                .unwrap();
             let mut desc = DataDescription::new();
             desc.define(s.as_bytes().to_vec().into_boxed_slice());
             desc.set_align(1);
@@ -146,7 +162,9 @@ fn visit_rvalue_builtin_names(
     if let Rvalue::Call { func: Operand::Constant(Constant::Function(n)), .. } = rval {
         if !builtin_ids.contains_key(n) {
             let name = format!("__builtin_{}", builtin_ids.len());
-            let data_id = module.declare_data(&name, Linkage::Local, true, false).unwrap();
+            let data_id = module
+                .declare_data(&name, Linkage::Local, true, false)
+                .unwrap();
             let mut desc = DataDescription::new();
             let mut bytes = n.as_bytes().to_vec();
             bytes.push(0);
@@ -168,14 +186,18 @@ fn visit_rvalue_strings(
         Rvalue::BinaryOp(_, lhs, rhs) => {
             visit_operand_strings(lhs, module, string_ids);
             visit_operand_strings(rhs, module, string_ids);
-        }
+        },
         Rvalue::Call { args, .. } => {
-            for arg in args { visit_operand_strings(arg, module, string_ids); }
-        }
+            for arg in args {
+                visit_operand_strings(arg, module, string_ids);
+            }
+        },
         Rvalue::Aggregate(_, ops) => {
-            for op in ops { visit_operand_strings(op, module, string_ids); }
-        }
-        _ => {}
+            for op in ops {
+                visit_operand_strings(op, module, string_ids);
+            }
+        },
+        _ => {},
     }
 }
 
@@ -237,7 +259,9 @@ impl CodegenBackend for CraneliftBackend {
                 sig.params.push(AbiParam::new(types::I64));
             }
             sig.returns.push(AbiParam::new(types::I64));
-            let id = module.declare_function(&func.name, Linkage::Export, &sig).unwrap();
+            let id = module
+                .declare_function(&func.name, Linkage::Export, &sig)
+                .unwrap();
             func_ids.insert(func.name.clone(), id);
         }
 
@@ -254,7 +278,11 @@ impl CodegenBackend for CraneliftBackend {
             ctx.func.signature = sig;
 
             let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.builder_ctx);
-            let blocks: Vec<Block> = func.basic_blocks.iter().map(|_| builder.create_block()).collect();
+            let blocks: Vec<Block> = func
+                .basic_blocks
+                .iter()
+                .map(|_| builder.create_block())
+                .collect();
 
             let max_local = max_local_index(func);
             let mut vars: HashMap<Local, Variable> = HashMap::new();

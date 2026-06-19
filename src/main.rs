@@ -69,7 +69,9 @@ fn main() {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
             println!("  ling run <file.ling>                run using the Cranelift JIT backend (default)");
-            println!("  ling run --interp <file.ling>       run using the tree-walking interpreter");
+            println!(
+                "  ling run --interp <file.ling>       run using the tree-walking interpreter"
+            );
             println!("  ling run --wasm <file.ling>         build to WebAssembly, serve, open in browser");
             println!("  ling visualize <file.ling>          emit SVG AST to stdout");
             println!("  ling build <file.ling|dir> [opts]   compile to distributable");
@@ -79,9 +81,7 @@ fn main() {
             println!(
                 "    --pack                            embed [includes] resources into the exe"
             );
-            println!(
-                "    --aot                             compile to native code via AOT"
-            );
+            println!("    --aot                             compile to native code via AOT");
             println!("  ling ast [path] [--technical|--artwork|--ling|--all]");
             println!(
                 "                                      project-wide AST → SVG in ./AST/ (300 dpi)"
@@ -157,7 +157,10 @@ fn run_file_jit(path: &str) {
             // Invalid program — render the same diagnostic the interpreter does.
             LingError::Parse(m) => {
                 let out_lang = ling::diag::OutputLang::from_env();
-                eprintln!("{}", ling::diag::render_parse(&m, &source, Some(path), out_lang));
+                eprintln!(
+                    "{}",
+                    ling::diag::render_parse(&m, &source, Some(path), out_lang)
+                );
                 std::process::exit(1);
             },
             // The JIT executed and failed mid-run; output may already be on screen.
@@ -706,7 +709,9 @@ fn run_build(
     for platform in platforms {
         match platform.as_str() {
             "web" => build_web(&project, out),
-            "win" | "windows" => build_native(&project, out, NativePlatform::Windows, icon, pack, aot),
+            "win" | "windows" => {
+                build_native(&project, out, NativePlatform::Windows, icon, pack, aot)
+            },
             "lin" | "linux" => build_native(&project, out, NativePlatform::Linux, icon, pack, aot),
             "mac" | "macos" | "darwin" => {
                 build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
@@ -1024,7 +1029,10 @@ fn build_native(
     // Pack resources into the executable (both backends self-extract them).
     if do_pack {
         write_packed_resources(build_dir, &resources);
-        println!("  packing {} resource(s) into the executable", resources.len());
+        println!(
+            "  packing {} resource(s) into the executable",
+            resources.len()
+        );
     } else if pack {
         println!("  --pack: no [includes] resources to pack");
     }

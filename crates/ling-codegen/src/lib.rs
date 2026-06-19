@@ -5,9 +5,6 @@ pub mod wasm;
 
 pub mod cranelift;
 
-#[cfg(feature = "llvm")]
-pub mod llvm;
-
 pub struct MirProgram {
     pub mir: ling_mir::MirProgram,
     pub name: String,
@@ -23,8 +20,8 @@ pub trait CodegenBackend {
     fn emit(&mut self, mir: &MirProgram, out: &std::path::Path) -> anyhow::Result<()>;
 }
 
-pub use bytecode::{BytecodeBackend, Vm, VmProgram, compile_mir_program};
-pub use wasm::WasmBackend;
-pub use cranelift::jit::JitBackend;
+pub use bytecode::{compile_mir_program, BytecodeBackend, Vm, VmProgram};
 pub use cranelift::aot::CraneliftBackend;
+pub use cranelift::jit::JitBackend;
 pub use cranelift::runtime;
+pub use wasm::WasmBackend;
