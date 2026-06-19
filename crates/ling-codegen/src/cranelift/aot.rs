@@ -10,13 +10,35 @@ use cranelift_module::DataId;
 use cranelift_module::{DataDescription, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use ling_mir::ir::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
 
 // ─── AOT Backend ───────────────────────────────────────────────────────────
 
 pub struct CraneliftBackend {
     module: Option<ObjectModule>,
     builder_ctx: FunctionBuilderContext,
+    progress: bool,
+}
+
+/// Render a single-line tqdm-style progress bar to stderr (overwriting in place
+/// with `\r`). Colors follow the Ling palette: teal fill on a grey track.
+fn render_progress(done: usize, total: usize, label: &str) {
+    use std::io::Write as _;
+    const WIDTH: usize = 28;
+    let frac = if total == 0 { 1.0 } else { done as f64 / total as f64 };
+    let filled = ((frac * WIDTH as f64).round() as usize).min(WIDTH);
+    let bar_full = "█".repeat(filled);
+    let bar_empty = "░".repeat(WIDTH - filled);
+    let pct = (frac * 100.0) as u32;
+    // truncate the label so the line never wraps the terminal
+    let label: String = label.chars().take(24).collect();
+    let mut err = std::io::stderr();
+    let _ = write!(
+        err,
+        "\r    compiling \x1b[38;5;37m{bar_full}\x1b[38;5;240m{bar_empty}\x1b[0m {pct:>3}% [{done}/{total}] {label:<24}",
+    );
+    let _ = err.flush();
 }
 
 // ─── Runtime Function Declarations ─────────────────────────────────────────
@@ -211,6 +233,70 @@ fn visit_term_strings(
     }
 }
 
+// ─── Per-function symbol references ──────────────────────────────────────────
+
+/// The data/function symbols a single function actually references: the string
+/// constants it materializes and the callee/builtin names it invokes.
+///
+/// Declaring every global string, builtin, and user function into *every*
+/// function is O(functions × symbols) in both time and per-function IR size,
+/// which exhausts memory on large programs. The translator only ever looks up
+/// the symbols a function references, so we declare only those.
+#[derive(Default)]
+struct FuncRefs {
+    strings: HashSet<String>,
+    /// Direct callee names — either user functions (resolved to `FuncId`) or
+    /// builtin names (resolved to a name-string `DataId`).
+    names: HashSet<String>,
+}
+
+fn collect_func_refs(func: &MirFunction) -> FuncRefs {
+    let mut refs = FuncRefs::default();
+    for bb in &func.basic_blocks {
+        for stmt in &bb.statements {
+            if let StatementKind::Assign(_, rval) = &stmt.kind {
+                collect_rvalue_refs(rval, &mut refs);
+            }
+        }
+        if let Some(term) = &bb.terminator {
+            if let TerminatorKind::SwitchInt { discr, .. } = &term.kind {
+                collect_operand_str(discr, &mut refs);
+            }
+        }
+    }
+    refs
+}
+
+fn collect_operand_str(op: &Operand, refs: &mut FuncRefs) {
+    if let Operand::Constant(Constant::Str(s)) = op {
+        refs.strings.insert(s.clone());
+    }
+}
+
+fn collect_rvalue_refs(rval: &Rvalue, refs: &mut FuncRefs) {
+    match rval {
+        Rvalue::Use(op) | Rvalue::UnaryOp(_, op) => collect_operand_str(op, refs),
+        Rvalue::BinaryOp(_, lhs, rhs) => {
+            collect_operand_str(lhs, refs);
+            collect_operand_str(rhs, refs);
+        },
+        Rvalue::Call { func, args } => {
+            if let Operand::Constant(Constant::Function(n)) = func {
+                refs.names.insert(n.clone());
+            }
+            for arg in args {
+                collect_operand_str(arg, refs);
+            }
+        },
+        Rvalue::Aggregate(_, ops) => {
+            for op in ops {
+                collect_operand_str(op, refs);
+            }
+        },
+        _ => {},
+    }
+}
+
 // ─── Main AOT compilation ───────────────────────────────────────────────────
 
 impl CraneliftBackend {
@@ -235,7 +321,15 @@ impl CraneliftBackend {
         Self {
             module: Some(module),
             builder_ctx: FunctionBuilderContext::new(),
+            progress: false,
         }
+    }
+
+    /// Enable a tqdm-style progress bar over the per-function codegen loop.
+    /// Off by default so library/test use stays silent.
+    pub fn with_progress(mut self, on: bool) -> Self {
+        self.progress = on;
+        self
     }
 }
 
@@ -266,7 +360,20 @@ impl CodegenBackend for CraneliftBackend {
         }
 
         // Phase 3: translate each function body
-        for func in &program.mir.functions {
+        let total = program.mir.functions.len();
+        // Throttle redraws so huge programs don't spend real time on the bar.
+        let step = (total / 100).max(1);
+        // Only draw the live bar on a real terminal; piped/CI logs stay clean.
+        let show_progress = self.progress && total > 1 && std::io::stderr().is_terminal();
+        for (idx, func) in program.mir.functions.iter().enumerate() {
+            if show_progress && (idx % step == 0 || idx + 1 == total) {
+                let label = if func.name == "__main__" {
+                    "main"
+                } else {
+                    func.name.as_str()
+                };
+                render_progress(idx + 1, total, label);
+            }
             let &fid = func_ids.get(&func.name).unwrap();
 
             let mut ctx = module.make_context();
@@ -290,18 +397,19 @@ impl CodegenBackend for CraneliftBackend {
                 vars.insert(Local(i), builder.declare_var(types::I64));
             }
 
+            // Declare only the symbols this function actually references. The
+            // global `string_ids`/`builtin_ids`/`func_ids` maps cover the whole
+            // program; declaring all of them into every function is O(functions ×
+            // symbols) and runs the compiler out of memory on large projects.
+            let refs = collect_func_refs(func);
+
             // Build string GlobalValue map for this function
             let mut string_gvs: HashMap<String, GlobalValue> = HashMap::new();
-            for (s, &data_id) in &string_ids {
-                let gv = module.declare_data_in_func(data_id, builder.func);
-                string_gvs.insert(s.clone(), gv);
-            }
-
-            // Build builtin name GlobalValue map for this function
-            let mut builtin_gvs: HashMap<String, GlobalValue> = HashMap::new();
-            for (s, &data_id) in &builtin_ids {
-                let gv = module.declare_data_in_func(data_id, builder.func);
-                builtin_gvs.insert(s.clone(), gv);
+            for s in &refs.strings {
+                if let Some(&data_id) = string_ids.get(s) {
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    string_gvs.insert(s.clone(), gv);
+                }
             }
 
             // Build runtime FuncRef map for this function. The shared translator
@@ -313,12 +421,20 @@ impl CodegenBackend for CraneliftBackend {
                 runtime_refs.insert(format!("__{name}"), fr);
             }
 
-            // FuncRefs are function-local, so user-function references must be
-            // declared into this builder (not shared across functions).
+            // FuncRefs are function-local, so callee references must be declared
+            // into this builder (not shared across functions). A referenced name is
+            // either a user function (declared as a FuncRef) or a builtin (declared
+            // as a name-string GlobalValue for the `__ling_builtin` dispatch path).
             let mut func_refs: HashMap<String, FuncRef> = HashMap::new();
-            for (name, &id) in &func_ids {
-                let fr = module.declare_func_in_func(id, builder.func);
-                func_refs.insert(name.clone(), fr);
+            let mut builtin_gvs: HashMap<String, GlobalValue> = HashMap::new();
+            for name in &refs.names {
+                if let Some(&id) = func_ids.get(name) {
+                    let fr = module.declare_func_in_func(id, builder.func);
+                    func_refs.insert(name.clone(), fr);
+                } else if let Some(&data_id) = builtin_ids.get(name) {
+                    let gv = module.declare_data_in_func(data_id, builder.func);
+                    builtin_gvs.insert(name.clone(), gv);
+                }
             }
 
             let tctx = TransCtx {
@@ -334,6 +450,9 @@ impl CodegenBackend for CraneliftBackend {
             builder.finalize();
             module.define_function(fid, &mut ctx).unwrap();
         }
+        if show_progress {
+            eprintln!();
+        }
 
         // Phase 4: finalize and emit .o file
         let obj = self.module.take().unwrap().finish();
@@ -346,5 +465,88 @@ impl CodegenBackend for CraneliftBackend {
 impl Default for CraneliftBackend {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CodegenBackend;
+    use ling_ast::Span;
+
+    fn decl() -> LocalDecl {
+        LocalDecl {
+            ty: MirType::Any,
+            name: None,
+            span: Span::DUMMY,
+            is_mut: false,
+            is_owning: false,
+        }
+    }
+    fn stmt(kind: StatementKind) -> Statement {
+        Statement { kind, span: Span::DUMMY }
+    }
+    fn ret() -> Terminator {
+        Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }
+    }
+
+    /// A program that uses a string constant, a builtin call, and a call to
+    /// another user function must still compile when each function only declares
+    /// the symbols it actually references (the O(functions × symbols) fix). The
+    /// `helper` function references none of `__main__`'s symbols, so a regression
+    /// that under-declares would surface here as a missing-symbol panic or an
+    /// empty object.
+    #[test]
+    fn emit_declares_only_referenced_symbols() {
+        // helper(x) = x
+        let mut helper = MirFunction::new("helper", 1);
+        helper.basic_blocks = vec![BasicBlock {
+            statements: vec![stmt(StatementKind::Assign(
+                Local(0),
+                Rvalue::Use(Operand::Copy(Local(1))),
+            ))],
+            terminator: Some(ret()),
+        }];
+
+        // __main__: s = "hi"; print(s); r = helper(5); return r
+        let mut main = MirFunction::new("__main__", 0);
+        main.locals = vec![decl(), decl(), decl()]; // Local(1), Local(2), Local(3)
+        main.basic_blocks = vec![BasicBlock {
+            statements: vec![
+                stmt(StatementKind::Assign(
+                    Local(1),
+                    Rvalue::Use(Operand::Constant(Constant::Str("hi".into()))),
+                )),
+                stmt(StatementKind::Assign(
+                    Local(2),
+                    Rvalue::Call {
+                        func: Operand::Constant(Constant::Function("print".into())),
+                        args: vec![Operand::Copy(Local(1))],
+                    },
+                )),
+                stmt(StatementKind::Assign(
+                    Local(3),
+                    Rvalue::Call {
+                        func: Operand::Constant(Constant::Function("helper".into())),
+                        args: vec![Operand::Constant(Constant::I64(5))],
+                    },
+                )),
+                stmt(StatementKind::Assign(
+                    Local(0),
+                    Rvalue::Use(Operand::Copy(Local(3))),
+                )),
+            ],
+            terminator: Some(ret()),
+        }];
+
+        let program = ling_mir::MirProgram { functions: vec![helper, main] };
+        let wrapped = crate::MirProgram::new(program, "test.ling");
+
+        let mut backend = CraneliftBackend::new();
+        let out = std::env::temp_dir().join(format!("ling_aot_test_{}.o", std::process::id()));
+        backend.emit(&wrapped, &out).expect("emit should succeed");
+        let bytes = std::fs::read(&out).expect("object file should exist");
+        assert!(!bytes.is_empty(), "emitted object must be non-empty");
+        let _ = std::fs::remove_file(&out);
     }
 }

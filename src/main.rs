@@ -1003,7 +1003,8 @@ fn build_native(
             });
 
         let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
-        let mut backend = ling_codegen::CraneliftBackend::new();
+        println!("    compiling {} functions to native code…", mir_prog.mir.functions.len());
+        let mut backend = ling_codegen::CraneliftBackend::new().with_progress(true);
         let obj_path = build_dir.join("entry.o");
         use ling_codegen::CodegenBackend;
         backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {

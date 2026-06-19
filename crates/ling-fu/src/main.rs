@@ -1020,19 +1020,24 @@ fn cmd_build(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         let dirs = dir_names(&slang);
         let root = manifest.parent().unwrap_or(std::path::Path::new("."));
 
-        // Find .ling source files and check them (parse-only pre-flight)
+        // Resolve the entry file (same candidate order as `cmd_run`) so the
+        // native build targets the real entry regardless of project layout.
         let src_dir = root.join(dirs.src);
-        if src_dir.exists() {
-            let entry = src_dir.join(dirs.entry);
-            if entry.exists() {
-                say(
-                    lang,
-                    &format!("Entry: {}", entry.display()),
-                    &format!("灵源: {}", entry.display()),
-                    &format!("霊源: {}", entry.display()),
-                    &format!("령원: {}", entry.display()),
-                );
-            }
+        let entry_candidates = [
+            src_dir.join(dirs.entry),
+            root.join(dirs.entry),
+            src_dir.join("main.ling"),
+            root.join("main.ling"),
+        ];
+        let entry = entry_candidates.into_iter().find(|p| p.exists());
+        if let Some(e) = &entry {
+            say(
+                lang,
+                &format!("Entry: {}", e.display()),
+                &format!("灵源: {}", e.display()),
+                &format!("霊源: {}", e.display()),
+                &format!("령원: {}", e.display()),
+            );
         }
 
         // If a Cargo.toml is present alongside, use cargo build too
@@ -1044,13 +1049,12 @@ fn cmd_build(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
                 anyhow::bail!("build failed");
             }
         } else {
-            say(
-                lang,
-                "✓ Ling source located — no Cargo.toml, skipping native build.",
-                "✓ 灵源就绪 — 无 Cargo.toml，跳过本地编译。",
-                "✓ 霊源確認 — Cargo.toml なし、ネイティブビルドをスキップ。",
-                "✓ 령원 확인 — Cargo.toml 없음, 네이티브 빌드 건너뜀.",
-            );
+            // Native .ling project: AOT-compile to a native executable by default
+            // (pass --no-aot to embed the interpreter instead). Pass the resolved
+            // entry file — `ling build <file>` flattens imports from there, while
+            // `ling build <dir>` only understands a root `main.ling`.
+            let target = entry.as_deref().unwrap_or(root);
+            run_aot_build(target, args, lang)?;
         }
     } else {
         // Fall back to cargo build in current directory
@@ -1060,6 +1064,73 @@ fn cmd_build(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         if !status.success() {
             anyhow::bail!("build failed");
         }
+    }
+    Ok(())
+}
+
+/// The current host's `ling build` platform token.
+fn native_platform_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "win"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "lin"
+    }
+}
+
+/// Build a native `.ling` project by delegating to the `ling` binary's AOT
+/// compiler (`ling build <root> --aot`). AOT is the default; pass `--no-aot` to
+/// fall back to the interpreter-embedding build. Extra flags (`--out`, `--icon`,
+/// `--pack`, `--platform`) pass straight through; with no `--platform` we default
+/// to a native-only build (no web bundle), matching `lingfu build`'s old scope.
+fn run_aot_build(
+    target: &std::path::Path,
+    args: &[String],
+    lang: &InvocationLanguage,
+) -> anyhow::Result<()> {
+    let aot = !args.iter().any(|a| a == "--no-aot");
+    say(
+        lang,
+        if aot {
+            "→ AOT-compiling to a native executable…"
+        } else {
+            "→ building native executable (interpreter-embedded)…"
+        },
+        if aot {
+            "→ 正在 AOT 编译为本地可执行文件…"
+        } else {
+            "→ 正在构建本地可执行文件（内嵌解释器）…"
+        },
+        if aot {
+            "→ ネイティブ実行ファイルへ AOT コンパイル中…"
+        } else {
+            "→ ネイティブ実行ファイルを構築中（インタプリタ埋め込み）…"
+        },
+        if aot {
+            "→ 네이티브 실행 파일로 AOT 컴파일 중…"
+        } else {
+            "→ 네이티브 실행 파일 빌드 중(인터프리터 내장)…"
+        },
+    );
+
+    let ling_bin = find_ling_binary();
+    let mut cmd = std::process::Command::new(&ling_bin);
+    cmd.arg("build").arg(target);
+    if aot {
+        cmd.arg("--aot");
+    }
+    if !args.iter().any(|a| a == "--platform") {
+        cmd.arg("--platform").arg(native_platform_name());
+    }
+    // Forward every build flag except our own --no-aot opt-out.
+    for a in args.iter().filter(|a| a.as_str() != "--no-aot") {
+        cmd.arg(a);
+    }
+
+    let status = cmd.status().map_err(|e| anyhow::anyhow!("ling: {e}"))?;
+    if !status.success() {
+        anyhow::bail!("build failed");
     }
     Ok(())
 }
