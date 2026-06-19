@@ -10,18 +10,18 @@
 
 // `raster` is a pure-CPU software rasteriser (operates on `Vec<u32>`); it is
 // wasm-safe and powers the software framebuffer on both native and web.
-pub mod raster;
-pub mod color;
 pub mod camera;
-pub mod light;
+pub mod color;
 pub mod depth;
-pub mod vtex;
+pub mod light;
+pub mod raster;
 pub mod shapes;
+pub mod vtex;
 // WebGL2 backend — wasm-only (depends on web_sys / js_sys / WebGL).
 #[cfg(target_arch = "wasm32")]
-pub mod webgl;
-#[cfg(target_arch = "wasm32")]
 pub mod audio_web;
+#[cfg(target_arch = "wasm32")]
+pub mod webgl;
 
 pub use camera::Camera3D;
 pub use depth::DepthQueue;
@@ -35,15 +35,15 @@ pub use light::Light;
 #[derive(Clone, Copy)]
 pub struct ShadowParams {
     /// Radius (px) when the caster sits on the surface (height 0).
-    pub base:  f32,
+    pub base: f32,
     /// Extra radius per unit of height — the shadow grows as the caster rises.
-    pub grow:  f32,
+    pub grow: f32,
     /// Opacity at height 0 (0..1) — darkest/sharpest when touching the surface.
     pub alpha: f32,
     /// Opacity lost per unit of height — the shadow fades as the caster rises.
-    pub fade:  f32,
+    pub fade: f32,
     /// Edge softness 0..1 at height 0 — feathering also widens with height.
-    pub soft:  f32,
+    pub soft: f32,
 }
 
 impl Default for ShadowParams {
@@ -126,18 +126,18 @@ impl GfxState {
             last_mx: f32::NAN,
             last_my: f32::NAN,
             mouse_captured: false,
-            shade_mode:     2, // holographic cel by default
-            shade:          ling_graphics::shading::ShadeParams::default(),
-            blend:          0, // normal (overwrite) by default
-            alpha:          1.0,
-            shadow:         ShadowParams::default(),
-            linear_blend:   false,
-            grad_oklab:     true,
-            depth_test:     false,
-            depth_buf:      Vec::new(),
-            fog_color:   0x0000_0000,
-            fog_start:   0.0,
-            fog_end:     0.0, // fog off by default
+            shade_mode: 2, // holographic cel by default
+            shade: ling_graphics::shading::ShadeParams::default(),
+            blend: 0, // normal (overwrite) by default
+            alpha: 1.0,
+            shadow: ShadowParams::default(),
+            linear_blend: false,
+            grad_oklab: true,
+            depth_test: false,
+            depth_buf: Vec::new(),
+            fog_color: 0x0000_0000,
+            fog_start: 0.0,
+            fog_end: 0.0, // fog off by default
         }
     }
 
@@ -193,19 +193,19 @@ pub struct GfxState {
     /// `present()` uploads this to the canvas, so 2-D builtins render identically.
     pub buffer: Vec<u32>,
     /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
-    pub blend:       u8,
+    pub blend: u8,
     /// Pen opacity [0..1] for the alpha-blended fills (mirrors native).
-    pub alpha:       f32,
+    pub alpha: f32,
     /// Tunable height→size/opacity mapping for `cast_shadow`.
-    pub shadow:      ShadowParams,
+    pub shadow: ShadowParams,
     /// Gamma-correct (linear-light) compositing — mirrors native.
     pub linear_blend: bool,
     /// Perceptual OkLab gradient interpolation — mirrors native.
-    pub grad_oklab:  bool,
+    pub grad_oklab: bool,
     /// Per-pixel depth test (z-buffer) for the deferred queue — mirrors native.
-    pub depth_test:  bool,
+    pub depth_test: bool,
     /// Z-buffer (camera-space depth per pixel).
-    pub depth_buf:   Vec<f32>,
+    pub depth_buf: Vec<f32>,
     /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
     /// to `fog_end`. `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -231,17 +231,17 @@ impl GfxState {
             shade: ling_graphics::shading::ShadeParams::default(),
             // Sized to width*height so the CPU-raster builtins (vtex / ui_*) can
             // write safely; `present()` uploads it to the canvas.
-            buffer:      vec![0u32; 800 * 600],
-            blend:       0,
-            alpha:       1.0,
-            shadow:      ShadowParams::default(),
+            buffer: vec![0u32; 800 * 600],
+            blend: 0,
+            alpha: 1.0,
+            shadow: ShadowParams::default(),
             linear_blend: false,
-            grad_oklab:  true,
-            depth_test:  false,
-            depth_buf:   Vec::new(),
-            fog_color:   0x0000_0000,
-            fog_start:   0.0,
-            fog_end:     0.0,
+            grad_oklab: true,
+            depth_test: false,
+            depth_buf: Vec::new(),
+            fog_color: 0x0000_0000,
+            fog_start: 0.0,
+            fog_end: 0.0,
         }
     }
 

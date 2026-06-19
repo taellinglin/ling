@@ -69,14 +69,14 @@ impl Value {
                 } else {
                     format!("{}", n)
                 }
-            }
+            },
             Value::Bool(b) => b.to_string(),
             Value::Str(s) => s.clone(),
             Value::None => "()".to_string(),
             Value::List(l) => {
                 let items: Vec<String> = l.iter().map(|v| v.display()).collect();
                 format!("[{}]", items.join(", "))
-            }
+            },
         }
     }
 }
@@ -89,7 +89,7 @@ fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::None, Value::None) => true,
         (Value::List(a), Value::List(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| values_equal(x, y))
-        }
+        },
         _ => false,
     }
 }
@@ -104,8 +104,12 @@ fn num_cmp<F: Fn(f64, f64) -> bool>(a: &Value, b: &Value, cmp: F) -> bool {
 fn resolve_builtin(name: &str) -> Result<(&'static str, usize), String> {
     match name {
         "print" | "println" | "พิมพ์" | "印" | "打印" | "印刷" => Ok(("print", 1)),
-        "format" | "รูปแบบ" | "格式" | "フォーマット" | "서식" => Ok(("format", 0)),
-        "len" | "str_len" | "ความยาว" | "长度" | "長さ" | "길이" => Ok(("len", 1)),
+        "format" | "รูปแบบ" | "格式" | "フォーマット" | "서식" => {
+            Ok(("format", 0))
+        },
+        "len" | "str_len" | "ความยาว" | "长度" | "長さ" | "길이" => {
+            Ok(("len", 1))
+        },
         "to_str" | "str" | "แปลงสตริง" => Ok(("to_str", 1)),
         "sin" => Ok(("sin", 1)),
         "cos" => Ok(("cos", 1)),
@@ -124,11 +128,25 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    fn w(&mut self, b: u8) { self.code.push(b); }
-    fn w2(&mut self, v: u16) { self.code.extend_from_slice(&v.to_le_bytes()); }
-    fn w8(&mut self, v: i64) { self.code.extend_from_slice(&v.to_le_bytes()); }
-    fn add_float(&mut self, v: f64) -> u16 { let i = self.floats.len(); self.floats.push(v); i as u16 }
-    fn add_str(&mut self, s: &str) -> u16 { let i = self.strings.len(); self.strings.push(s.to_string()); i as u16 }
+    fn w(&mut self, b: u8) {
+        self.code.push(b);
+    }
+    fn w2(&mut self, v: u16) {
+        self.code.extend_from_slice(&v.to_le_bytes());
+    }
+    fn w8(&mut self, v: i64) {
+        self.code.extend_from_slice(&v.to_le_bytes());
+    }
+    fn add_float(&mut self, v: f64) -> u16 {
+        let i = self.floats.len();
+        self.floats.push(v);
+        i as u16
+    }
+    fn add_str(&mut self, s: &str) -> u16 {
+        let i = self.strings.len();
+        self.strings.push(s.to_string());
+        i as u16
+    }
 }
 
 // ─── Compiled program ────────────────────────────────────────────────────────
@@ -200,7 +218,9 @@ fn compile_fn(mir_fn: &MirFunction, fn_names: &[String]) -> Chunk {
     for i in 0..mir_fn.arg_count {
         let local = Local(i + 1);
         ctx.local_map.entry(local).or_insert_with(|| {
-            let s = ctx.local_next; ctx.local_next += 1; s
+            let s = ctx.local_next;
+            ctx.local_next += 1;
+            s
         });
     }
 
@@ -208,7 +228,9 @@ fn compile_fn(mir_fn: &MirFunction, fn_names: &[String]) -> Chunk {
     for li in 0..mir_fn.locals.len() {
         let local = Local(mir_fn.arg_count + 1 + li);
         ctx.local_map.entry(local).or_insert_with(|| {
-            let s = ctx.local_next; ctx.local_next += 1; s
+            let s = ctx.local_next;
+            ctx.local_next += 1;
+            s
         });
     }
 
@@ -238,12 +260,14 @@ fn compile_stmt(stmt: &Statement, fn_names: &[String], ctx: &mut Ctx) {
         StatementKind::Assign(local, rvalue) => {
             compile_rval(rvalue, fn_names, ctx);
             let slot = *ctx.local_map.entry(*local).or_insert_with(|| {
-                let s = ctx.local_next; ctx.local_next += 1; s
+                let s = ctx.local_next;
+                ctx.local_next += 1;
+                s
             });
             ctx.chunk.w(OP_STORELOCAL);
             ctx.chunk.w2(slot);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -254,20 +278,30 @@ fn compile_rval(rv: &Rvalue, fn_names: &[String], ctx: &mut Ctx) {
             compile_op(l, fn_names, ctx);
             compile_op(r, fn_names, ctx);
             ctx.chunk.w(match op {
-                BinOp::Add => OP_ADD, BinOp::Sub => OP_SUB,
-                BinOp::Mul => OP_MUL, BinOp::Div => OP_DIV,
-                BinOp::Rem => OP_REM, BinOp::Eq => OP_EQ,
-                BinOp::Ne => OP_NE, BinOp::Lt => OP_LT,
-                BinOp::Le => OP_LE, BinOp::Gt => OP_GT,
-                BinOp::Ge => OP_GE, BinOp::And => OP_AND,
+                BinOp::Add => OP_ADD,
+                BinOp::Sub => OP_SUB,
+                BinOp::Mul => OP_MUL,
+                BinOp::Div => OP_DIV,
+                BinOp::Rem => OP_REM,
+                BinOp::Eq => OP_EQ,
+                BinOp::Ne => OP_NE,
+                BinOp::Lt => OP_LT,
+                BinOp::Le => OP_LE,
+                BinOp::Gt => OP_GT,
+                BinOp::Ge => OP_GE,
+                BinOp::And => OP_AND,
                 BinOp::Or => OP_OR,
                 _ => OP_NOP, // unsupported ops become nop
             });
-        }
+        },
         Rvalue::UnaryOp(op, o) => {
             compile_op(o, fn_names, ctx);
-            ctx.chunk.w(match op { UnOp::Not => OP_NOT, UnOp::Neg => OP_NEG, _ => OP_NOP });
-        }
+            ctx.chunk.w(match op {
+                UnOp::Not => OP_NOT,
+                UnOp::Neg => OP_NEG,
+                _ => OP_NOP,
+            });
+        },
         Rvalue::Call { func, args } => {
             for arg in args {
                 compile_op(arg, fn_names, ctx);
@@ -283,29 +317,31 @@ fn compile_rval(rv: &Rvalue, fn_names: &[String], ctx: &mut Ctx) {
                         ctx.chunk.w2(sidx);
                         ctx.chunk.w2(args.len() as u16);
                     }
-                }
+                },
                 _ => {
                     compile_op(func, fn_names, ctx);
                     let sidx = ctx.chunk.add_str("__indirect");
                     ctx.chunk.w(OP_CALLBUILTIN);
                     ctx.chunk.w2(sidx);
                     ctx.chunk.w2(args.len() as u16);
-                }
+                },
             }
-        }
+        },
         Rvalue::Aggregate(_kind, ops) => {
             for op in ops {
                 compile_op(op, fn_names, ctx);
             }
             ctx.chunk.w(OP_MAKELIST);
             ctx.chunk.w2(ops.len() as u16);
-        }
+        },
         Rvalue::GetIndex(obj, idx) => {
             compile_op(obj, fn_names, ctx);
             compile_op(idx, fn_names, ctx);
             ctx.chunk.w(OP_GETINDEX);
-        }
-        _ => { ctx.chunk.w(OP_PUSHNONE); }
+        },
+        _ => {
+            ctx.chunk.w(OP_PUSHNONE);
+        },
     }
 }
 
@@ -315,27 +351,29 @@ fn compile_op(op: &Operand, _fn_names: &[String], ctx: &mut Ctx) {
             let slot = ctx.local_map.get(l).copied().unwrap_or(0);
             ctx.chunk.w(OP_LOADLOCAL);
             ctx.chunk.w2(slot);
-        }
+        },
         Operand::Constant(c) => match c {
             Constant::I64(v) => {
                 ctx.chunk.w(OP_PUSHI64);
                 ctx.chunk.w8(*v);
-            }
+            },
             Constant::F64(bits) => {
                 let idx = ctx.chunk.add_float(f64::from_bits(*bits));
                 ctx.chunk.w(OP_PUSHF64);
                 ctx.chunk.w2(idx);
-            }
+            },
             Constant::Str(s) => {
                 let idx = ctx.chunk.add_str(s);
                 ctx.chunk.w(OP_PUSHSTR);
                 ctx.chunk.w2(idx);
-            }
+            },
             Constant::Bool(b) => {
                 ctx.chunk.w(OP_PUSHBOOL);
                 ctx.chunk.w(if *b { 1 } else { 0 });
-            }
-            _ => { ctx.chunk.w(OP_PUSHNONE); }
+            },
+            _ => {
+                ctx.chunk.w(OP_PUSHNONE);
+            },
         },
     }
 }
@@ -346,13 +384,13 @@ fn compile_term(term: &Terminator, fn_names: &[String], ctx: &mut Ctx) {
             ctx.chunk.w(OP_LOADLOCAL);
             ctx.chunk.w2(0);
             ctx.chunk.w(OP_RET);
-        }
+        },
         TerminatorKind::Goto { target } => {
             ctx.chunk.w(OP_JUMP);
             let pos = ctx.chunk.code.len();
             ctx.chunk.w2(0);
             ctx.patches.push((pos, target.0));
-        }
+        },
         TerminatorKind::SwitchInt { discr, targets, otherwise } => {
             compile_op(discr, fn_names, ctx);
             if let Some((val, target)) = targets.first() {
@@ -368,8 +406,10 @@ fn compile_term(term: &Terminator, fn_names: &[String], ctx: &mut Ctx) {
             let pos = ctx.chunk.code.len();
             ctx.chunk.w2(0);
             ctx.patches.push((pos, otherwise.0));
-        }
-        TerminatorKind::Unreachable => { ctx.chunk.w(OP_HALT); }
+        },
+        TerminatorKind::Unreachable => {
+            ctx.chunk.w(OP_HALT);
+        },
     }
 }
 
@@ -424,7 +464,8 @@ impl Vm {
         for _ in 0..lc {
             self.stack.push(Value::None);
         }
-        self.call_stack.push(Frame { fn_index: main_idx, ip: 0, base: 0, local_count: lc });
+        self.call_stack
+            .push(Frame { fn_index: main_idx, ip: 0, base: 0, local_count: lc });
         self.exec()
     }
 
@@ -442,7 +483,11 @@ impl Vm {
                 let p = self.program.as_ref().unwrap();
                 let chunk = &p.functions[fn_index].chunk;
                 // Clone small headers to avoid holding borrow across mutable ops
-                (chunk.code.clone(), chunk.floats.clone(), chunk.strings.clone())
+                (
+                    chunk.code.clone(),
+                    chunk.floats.clone(),
+                    chunk.strings.clone(),
+                )
             };
             let code_len = code.len();
 
@@ -459,37 +504,39 @@ impl Vm {
                     let v = read_i64(&code, ip);
                     ip += 8;
                     self.stack.push(Value::Number(v as f64));
-                }
+                },
                 OP_PUSHF64 => {
                     let idx = read_u16(&code, ip) as usize;
                     ip += 2;
                     self.stack.push(Value::Number(floats[idx]));
-                }
+                },
                 OP_PUSHSTR => {
                     let idx = read_u16(&code, ip) as usize;
                     ip += 2;
                     self.stack.push(Value::Str(strings[idx].clone()));
-                }
+                },
                 OP_PUSHBOOL => {
                     let b = read_u8(&code, ip) != 0;
                     ip += 1;
                     self.stack.push(Value::Bool(b));
-                }
+                },
                 OP_PUSHNONE => self.stack.push(Value::None),
-                OP_POP => { self.stack.pop(); }
+                OP_POP => {
+                    self.stack.pop();
+                },
                 OP_LOADLOCAL => {
                     let idx = read_u16(&code, ip) as usize;
                     ip += 2;
                     let base = self.call_stack.last().unwrap().base;
                     self.stack.push(self.stack[base + idx].clone());
-                }
+                },
                 OP_STORELOCAL => {
                     let idx = read_u16(&code, ip) as usize;
                     ip += 2;
                     let val = self.stack.pop().unwrap();
                     let base = self.call_stack.last().unwrap().base;
                     self.stack[base + idx] = val;
-                }
+                },
                 OP_ADD | OP_SUB | OP_MUL | OP_DIV | OP_REM => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
@@ -504,7 +551,7 @@ impl Vm {
                         _ => return Err("type error in arithmetic".into()),
                     };
                     self.stack.push(r);
-                }
+                },
                 OP_EQ | OP_NE | OP_LT | OP_LE | OP_GT | OP_GE => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
@@ -518,47 +565,61 @@ impl Vm {
                         _ => false,
                     };
                     self.stack.push(Value::Bool(r));
-                }
+                },
                 OP_AND => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
                     self.stack.push(Value::Bool(a.is_truthy() && b.is_truthy()));
-                }
+                },
                 OP_OR => {
                     let b = self.stack.pop().unwrap();
                     let a = self.stack.pop().unwrap();
                     self.stack.push(Value::Bool(a.is_truthy() || b.is_truthy()));
-                }
+                },
                 OP_NOT => {
                     let v = self.stack.pop().unwrap();
                     self.stack.push(Value::Bool(!v.is_truthy()));
-                }
+                },
                 OP_NEG => {
                     let v = self.stack.pop().unwrap();
-                    if let Value::Number(n) = v { self.stack.push(Value::Number(-n)); }
-                    else { return Err("type error: negate non-number".into()); }
-                }
+                    if let Value::Number(n) = v {
+                        self.stack.push(Value::Number(-n));
+                    } else {
+                        return Err("type error: negate non-number".into());
+                    }
+                },
                 OP_CALL => {
                     let idx = read_u16(&code, ip) as usize;
                     ip += 2;
                     let (ac, lc) = {
                         let p = self.program.as_ref().unwrap();
-                        (p.functions[idx].arg_count as usize, p.functions[idx].chunk.local_count as usize)
+                        (
+                            p.functions[idx].arg_count as usize,
+                            p.functions[idx].chunk.local_count as usize,
+                        )
                     };
                     let extra = lc.saturating_sub(ac);
-                    for _ in 0..extra { self.stack.push(Value::None); }
+                    for _ in 0..extra {
+                        self.stack.push(Value::None);
+                    }
                     let new_base = self.stack.len() - lc;
-                    self.call_stack.push(Frame { fn_index: idx, ip: 0, base: new_base, local_count: lc });
-                }
+                    self.call_stack.push(Frame {
+                        fn_index: idx,
+                        ip: 0,
+                        base: new_base,
+                        local_count: lc,
+                    });
+                },
                 OP_CALLBUILTIN => {
                     let si = read_u16(&code, ip) as usize;
                     ip += 2;
                     let count = read_u16(&code, ip) as usize;
                     ip += 2;
                     let name = strings[si].clone();
-                    let (canon, _) = resolve_builtin(&name).map_err(|e| format!("{} in {}", e, name))?;
+                    let (canon, _) =
+                        resolve_builtin(&name).map_err(|e| format!("{} in {}", e, name))?;
                     self.call_builtin(canon, count)?;
-                }
+                },
                 OP_RET => {
                     let val = self.stack.pop().unwrap_or(Value::None);
                     let _frame = self.call_stack.pop().unwrap();
@@ -569,35 +630,43 @@ impl Vm {
                         self.stack.push(val);
                         return Ok(());
                     }
-                }
+                },
                 OP_JUMP => {
                     ip = read_u16(&code, ip) as usize;
-                }
+                },
                 OP_JUMPIFFALSE => {
                     let offset = read_u16(&code, ip) as usize;
                     ip += 2;
                     let cond = self.stack.pop().unwrap();
-                    if !cond.is_truthy() { ip = offset; }
-                }
+                    if !cond.is_truthy() {
+                        ip = offset;
+                    }
+                },
                 OP_MAKELIST => {
                     let count = read_u16(&code, ip) as usize;
                     ip += 2;
                     let mut items = Vec::with_capacity(count);
-                    for _ in 0..count { items.push(self.stack.pop().unwrap()); }
+                    for _ in 0..count {
+                        items.push(self.stack.pop().unwrap());
+                    }
                     items.reverse();
                     self.stack.push(Value::List(items));
-                }
+                },
                 OP_GETINDEX => {
                     let idx_v = self.stack.pop().unwrap();
                     let obj = self.stack.pop().unwrap();
                     match (&obj, &idx_v) {
                         (Value::List(list), Value::Number(n)) => {
                             let i = *n as usize;
-                            self.stack.push(if i < list.len() { list[i].clone() } else { Value::None });
-                        }
+                            self.stack.push(if i < list.len() {
+                                list[i].clone()
+                            } else {
+                                Value::None
+                            });
+                        },
                         _ => self.stack.push(Value::None),
                     }
-                }
+                },
                 OP_HALT => return Ok(()),
                 _ => return Err(format!("unknown opcode {} at ip {}", op, ip - 1)),
             }
@@ -613,7 +682,7 @@ impl Vm {
                     println!("{}", val.display());
                 }
                 self.stack.push(Value::None);
-            }
+            },
             "format" => {
                 let mut parts: Vec<String> = Vec::with_capacity(arg_count);
                 for _ in 0..arg_count {
@@ -632,7 +701,7 @@ impl Vm {
                     result = result.replacen("{}", &part, 1);
                 }
                 self.stack.push(Value::Str(result));
-            }
+            },
             "len" => {
                 let val = self.stack.pop().unwrap_or(Value::None);
                 let n = match &val {
@@ -641,11 +710,11 @@ impl Vm {
                     _ => 0.0,
                 };
                 self.stack.push(Value::Number(n));
-            }
+            },
             "to_str" => {
                 let val = self.stack.pop().unwrap_or(Value::None);
                 self.stack.push(Value::Str(val.display()));
-            }
+            },
             "sin" => {
                 let val = self.stack.pop().unwrap_or(Value::None);
                 if let Value::Number(n) = val {
@@ -653,7 +722,7 @@ impl Vm {
                 } else {
                     self.stack.push(Value::Number(0.0));
                 }
-            }
+            },
             "cos" => {
                 let val = self.stack.pop().unwrap_or(Value::None);
                 if let Value::Number(n) = val {
@@ -661,7 +730,7 @@ impl Vm {
                 } else {
                     self.stack.push(Value::Number(0.0));
                 }
-            }
+            },
             _ => return Err(format!("unimplemented builtin: {}", name)),
         }
         Ok(())

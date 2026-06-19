@@ -15,19 +15,31 @@
 #[inline]
 pub fn srgb_to_lin(c: u8) -> f32 {
     let s = c as f32 / 255.0;
-    if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 #[inline]
 pub fn lin_to_srgb(l: f32) -> f32 {
     let l = l.clamp(0.0, 1.0);
-    let s = if l <= 0.003_130_8 { l * 12.92 } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+    let s = if l <= 0.003_130_8 {
+        l * 12.92
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
     (s * 255.0 + 0.5).clamp(0.0, 255.0)
 }
 
 #[inline]
 pub fn unpack(c: u32) -> (u8, u8, u8) {
-    (((c >> 16) & 0xFF) as u8, ((c >> 8) & 0xFF) as u8, (c & 0xFF) as u8)
+    (
+        ((c >> 16) & 0xFF) as u8,
+        ((c >> 8) & 0xFF) as u8,
+        (c & 0xFF) as u8,
+    )
 }
 
 #[inline]
@@ -39,7 +51,14 @@ pub fn pack(r: u32, g: u32, b: u32) -> u32 {
 
 /// Blend operator selected by `set_blend`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BlendMode { Normal, Add, Multiply, Screen, Subtract, Overlay }
+pub enum BlendMode {
+    Normal,
+    Add,
+    Multiply,
+    Screen,
+    Subtract,
+    Overlay,
+}
 
 impl BlendMode {
     pub fn from_u8(v: u8) -> Self {
@@ -60,8 +79,14 @@ fn blend_channel(mode: BlendMode, s: f32, d: f32) -> f32 {
     match mode {
         BlendMode::Normal | BlendMode::Add | BlendMode::Subtract => s,
         BlendMode::Multiply => s * d,
-        BlendMode::Screen   => 1.0 - (1.0 - s) * (1.0 - d),
-        BlendMode::Overlay  => if d < 0.5 { 2.0 * s * d } else { 1.0 - 2.0 * (1.0 - s) * (1.0 - d) },
+        BlendMode::Screen => 1.0 - (1.0 - s) * (1.0 - d),
+        BlendMode::Overlay => {
+            if d < 0.5 {
+                2.0 * s * d
+            } else {
+                1.0 - 2.0 * (1.0 - s) * (1.0 - d)
+            }
+        },
     }
 }
 
@@ -72,7 +97,9 @@ fn blend_channel(mode: BlendMode, s: f32, d: f32) -> f32 {
 #[inline]
 pub fn composite(dst: u32, src: u32, a: f32, mode: BlendMode, linear: bool) -> u32 {
     let a = a.clamp(0.0, 1.0);
-    if a <= 0.0 { return dst; }
+    if a <= 0.0 {
+        return dst;
+    }
     let (sr, sg, sb) = unpack(src);
     let (dr, dg, db) = unpack(dst);
 
@@ -81,15 +108,19 @@ pub fn composite(dst: u32, src: u32, a: f32, mode: BlendMode, linear: bool) -> u
         let d = [srgb_to_lin(dr), srgb_to_lin(dg), srgb_to_lin(db)];
         let out = |i: usize| -> f32 {
             match mode {
-                BlendMode::Add      => (d[i] + s[i] * a).min(1.0),
+                BlendMode::Add => (d[i] + s[i] * a).min(1.0),
                 BlendMode::Subtract => (d[i] - s[i] * a).max(0.0),
                 _ => {
                     let blended = blend_channel(mode, s[i], d[i]);
                     blended * a + d[i] * (1.0 - a) // premultiplied `over`
-                }
+                },
             }
         };
-        return pack(lin_to_srgb(out(0)) as u32, lin_to_srgb(out(1)) as u32, lin_to_srgb(out(2)) as u32);
+        return pack(
+            lin_to_srgb(out(0)) as u32,
+            lin_to_srgb(out(1)) as u32,
+            lin_to_srgb(out(2)) as u32,
+        );
     }
 
     // Legacy sRGB-space compositing (matches the original blend_pixel maths).
@@ -97,14 +128,14 @@ pub fn composite(dst: u32, src: u32, a: f32, mode: BlendMode, linear: bool) -> u
     let d = [dr as f32, dg as f32, db as f32];
     let out = |i: usize| -> f32 {
         match mode {
-            BlendMode::Add      => (d[i] + s[i] * a).min(255.0),
+            BlendMode::Add => (d[i] + s[i] * a).min(255.0),
             BlendMode::Subtract => (d[i] - s[i] * a).max(0.0),
             _ => {
                 let sc = s[i] / 255.0;
                 let dc = d[i] / 255.0;
                 let blended = blend_channel(mode, sc, dc) * 255.0;
                 blended * a + d[i] * (1.0 - a)
-            }
+            },
         }
     };
     pack(out(0) as u32, out(1) as u32, out(2) as u32)
@@ -154,26 +185,37 @@ pub fn mix_oklab(c0: u32, c1: u32, t: f32) -> u32 {
     let aa = a.1 + (b.1 - a.1) * t;
     let bb = a.2 + (b.2 - a.2) * t;
     let (lr, lg, lb) = oklab_to_lin_rgb(l, aa, bb);
-    pack(lin_to_srgb(lr) as u32, lin_to_srgb(lg) as u32, lin_to_srgb(lb) as u32)
+    pack(
+        lin_to_srgb(lr) as u32,
+        lin_to_srgb(lg) as u32,
+        lin_to_srgb(lb) as u32,
+    )
 }
 
 /// Barycentric blend of three sRGB colours through OkLab (smooth gradient tris).
 #[inline]
 pub fn bary_oklab(c0: u32, c1: u32, c2: u32, w0: f32, w1: f32, w2: f32) -> u32 {
     let a = {
-        let (r, g, b) = unpack(c0); lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
+        let (r, g, b) = unpack(c0);
+        lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
     };
     let b_ = {
-        let (r, g, b) = unpack(c1); lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
+        let (r, g, b) = unpack(c1);
+        lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
     };
     let c = {
-        let (r, g, b) = unpack(c2); lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
+        let (r, g, b) = unpack(c2);
+        lin_rgb_to_oklab(srgb_to_lin(r), srgb_to_lin(g), srgb_to_lin(b))
     };
     let l = a.0 * w0 + b_.0 * w1 + c.0 * w2;
     let aa = a.1 * w0 + b_.1 * w1 + c.1 * w2;
     let bb = a.2 * w0 + b_.2 * w1 + c.2 * w2;
     let (lr, lg, lb) = oklab_to_lin_rgb(l, aa, bb);
-    pack(lin_to_srgb(lr) as u32, lin_to_srgb(lg) as u32, lin_to_srgb(lb) as u32)
+    pack(
+        lin_to_srgb(lr) as u32,
+        lin_to_srgb(lg) as u32,
+        lin_to_srgb(lb) as u32,
+    )
 }
 
 #[cfg(test)]
@@ -196,18 +238,25 @@ mod tests {
         // it is a neutral grey strictly between the endpoints.
         let m = mix_oklab(0x000000, 0xFFFFFF, 0.5);
         let (r, g, b) = unpack(m);
-        assert_eq!(r, g); assert_eq!(g, b);
+        assert_eq!(r, g);
+        assert_eq!(g, b);
         assert!(r > 30 && r < 230, "midpoint grey = {r}");
     }
 
     #[test]
     fn composite_over_opaque_replaces() {
-        assert_eq!(composite(0x000000, 0xFF8040, 1.0, BlendMode::Normal, false), 0xFF8040);
+        assert_eq!(
+            composite(0x000000, 0xFF8040, 1.0, BlendMode::Normal, false),
+            0xFF8040
+        );
     }
 
     #[test]
     fn composite_zero_alpha_keeps_dst() {
-        assert_eq!(composite(0x123456, 0xFFFFFF, 0.0, BlendMode::Normal, true), 0x123456);
+        assert_eq!(
+            composite(0x123456, 0xFFFFFF, 0.0, BlendMode::Normal, true),
+            0x123456
+        );
     }
 
     #[test]

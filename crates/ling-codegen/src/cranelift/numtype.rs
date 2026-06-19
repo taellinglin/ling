@@ -46,7 +46,7 @@ impl NumberTypes {
         match op {
             Operand::Copy(l) | Operand::Move(l) => {
                 self.bools.get(func).is_some_and(|s| s.contains(&l.0))
-            }
+            },
             Operand::Constant(Constant::Bool(_)) => true,
             _ => false,
         }
@@ -104,11 +104,11 @@ pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
                                     address_taken.insert(n.clone());
                                 }
                             }
-                        }
+                        },
                         Rvalue::Use(Operand::Constant(Constant::Function(n))) => {
                             address_taken.insert(n.clone());
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
             }
@@ -127,7 +127,7 @@ pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
         match op {
             Operand::Copy(l) | Operand::Move(l) => {
                 state.get(func).is_some_and(|s| s.contains(&l.0))
-            }
+            },
             Operand::Constant(c) => matches!(c, Constant::I64(_) | Constant::F64(_)),
         }
     };
@@ -226,7 +226,7 @@ pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
                     Rvalue::Use(Operand::Constant(Constant::Bool(_))) => true,
                     Rvalue::Use(Operand::Copy(l)) | Rvalue::Use(Operand::Move(l)) => {
                         set.contains(&l.0)
-                    }
+                    },
                     _ => false,
                 });
                 if is_bool {
@@ -253,7 +253,7 @@ fn rvalue_is_num(
         match op {
             Operand::Copy(l) | Operand::Move(l) => {
                 state.get(&func.name).is_some_and(|s| s.contains(&l.0))
-            }
+            },
             Operand::Constant(c) => matches!(c, Constant::I64(_) | Constant::F64(_)),
         }
     };
@@ -273,7 +273,7 @@ fn rvalue_is_num(
                 }
             }
             false
-        }
+        },
         _ => false,
     }
 }

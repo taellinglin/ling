@@ -76,13 +76,25 @@ fn declare_runtime_functions(module: &mut JITModule) -> HashMap<String, (FuncId,
         ("__ling_list_push", &[types::I64, types::I64], types::I64),
         ("__ling_list_get", &[types::I64, types::I64], types::I64),
         ("__ling_list_len", &[types::I64], types::I64),
-        ("__ling_struct_new", &[types::I64, types::I64, types::I64, types::I64], types::I64),
-        ("__ling_struct_get", &[types::I64, types::I64, types::I64], types::I64),
+        (
+            "__ling_struct_new",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        (
+            "__ling_struct_get",
+            &[types::I64, types::I64, types::I64],
+            types::I64,
+        ),
         ("__ling_print", &[types::I64], types::I64),
         ("__ling_print_val", &[types::I64], types::I64),
         ("__ling_print_newline", &[], types::I64),
         ("__ling_time_now", &[], types::I64),
-        ("__ling_builtin", &[types::I64, types::I64, types::I64, types::I64], types::I64),
+        (
+            "__ling_builtin",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
     ];
     for &(name, params, ret) in runtime_names {
         let mut sig = module.make_signature();
@@ -90,7 +102,9 @@ fn declare_runtime_functions(module: &mut JITModule) -> HashMap<String, (FuncId,
             sig.params.push(AbiParam::new(pt));
         }
         sig.returns.push(AbiParam::new(ret));
-        let id = module.declare_function(name, Linkage::Import, &sig).unwrap();
+        let id = module
+            .declare_function(name, Linkage::Import, &sig)
+            .unwrap();
         sigs.insert(name.to_string(), (id, sig));
     }
     sigs
@@ -101,7 +115,10 @@ fn declare_runtime_functions(module: &mut JITModule) -> HashMap<String, (FuncId,
 fn collect_strings(
     functions: &[MirFunction],
     module: &mut JITModule,
-) -> (HashMap<String, cranelift_module::DataId>, HashMap<String, cranelift_module::DataId>) {
+) -> (
+    HashMap<String, cranelift_module::DataId>,
+    HashMap<String, cranelift_module::DataId>,
+) {
     let mut string_ids: HashMap<String, cranelift_module::DataId> = HashMap::new();
     let mut builtin_ids: HashMap<String, cranelift_module::DataId> = HashMap::new();
     for func in functions {
@@ -128,7 +145,9 @@ fn visit_operand_strings(
     if let Operand::Constant(Constant::Str(s)) = op {
         if !string_ids.contains_key(s) {
             let name = format!("__str_{}", string_ids.len());
-            let data_id = module.declare_data(&name, Linkage::Local, true, false).unwrap();
+            let data_id = module
+                .declare_data(&name, Linkage::Local, true, false)
+                .unwrap();
             let mut desc = DataDescription::new();
             desc.define(s.as_bytes().to_vec().into_boxed_slice());
             desc.set_align(1);
@@ -146,7 +165,9 @@ fn visit_rvalue_builtin_names(
     if let Rvalue::Call { func: Operand::Constant(Constant::Function(n)), .. } = rval {
         if !builtin_ids.contains_key(n) {
             let name = format!("__builtin_{}", builtin_ids.len());
-            let data_id = module.declare_data(&name, Linkage::Local, true, false).unwrap();
+            let data_id = module
+                .declare_data(&name, Linkage::Local, true, false)
+                .unwrap();
             let mut desc = DataDescription::new();
             let mut bytes = n.as_bytes().to_vec();
             bytes.push(0);
@@ -168,14 +189,18 @@ fn visit_rvalue_strings(
         Rvalue::BinaryOp(_, lhs, rhs) => {
             visit_operand_strings(lhs, module, string_ids);
             visit_operand_strings(rhs, module, string_ids);
-        }
+        },
         Rvalue::Call { args, .. } => {
-            for arg in args { visit_operand_strings(arg, module, string_ids); }
-        }
+            for arg in args {
+                visit_operand_strings(arg, module, string_ids);
+            }
+        },
         Rvalue::Aggregate(_, ops) => {
-            for op in ops { visit_operand_strings(op, module, string_ids); }
-        }
-        _ => {}
+            for op in ops {
+                visit_operand_strings(op, module, string_ids);
+            }
+        },
+        _ => {},
     }
 }
 
@@ -202,9 +227,8 @@ impl JitBackend {
         flag_builder.set("enable_alias_analysis", "true").unwrap();
         flag_builder.set("enable_verifier", "false").unwrap();
 
-        let isa_builder = cranelift_native::builder().unwrap_or_else(|msg| {
-            panic!("host architecture not supported: {msg}")
-        });
+        let isa_builder = cranelift_native::builder()
+            .unwrap_or_else(|msg| panic!("host architecture not supported: {msg}"));
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .unwrap_or_else(|msg| panic!("host architecture not supported: {msg}"));
@@ -240,7 +264,10 @@ impl JitBackend {
                 sig.params.push(AbiParam::new(types::I64));
             }
             sig.returns.push(AbiParam::new(types::I64));
-            let id = self.module.declare_function(&func.name, Linkage::Export, &sig).unwrap();
+            let id = self
+                .module
+                .declare_function(&func.name, Linkage::Export, &sig)
+                .unwrap();
             self.func_ids.insert(func.name.clone(), id);
         }
 
@@ -269,7 +296,11 @@ impl JitBackend {
         ctx.func.signature = sig;
 
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut self.builder_ctx);
-        let blocks: Vec<Block> = func.basic_blocks.iter().map(|_| builder.create_block()).collect();
+        let blocks: Vec<Block> = func
+            .basic_blocks
+            .iter()
+            .map(|_| builder.create_block())
+            .collect();
         let max_local = max_local_index(func);
         let mut vars: HashMap<Local, Variable> = HashMap::new();
         for i in 0..=max_local {
@@ -318,29 +349,57 @@ impl JitBackend {
     }
 
     pub fn run_main(&mut self) -> Result<u64> {
-        let main_name = self.compiled_names.iter()
-            .find(|n| n.as_str() == "__main__" || n.as_str() == "main" || n.as_str() == "start" || n.as_str() == "เริ่ม")
+        let main_name = self
+            .compiled_names
+            .iter()
+            .find(|n| {
+                n.as_str() == "__main__"
+                    || n.as_str() == "main"
+                    || n.as_str() == "start"
+                    || n.as_str() == "เริ่ม"
+            })
             .cloned()
             .unwrap_or_else(|| self.compiled_names.first().cloned().unwrap_or_default());
-        if main_name.is_empty() { return Ok(runtime::TAG_UNIT); }
+        if main_name.is_empty() {
+            return Ok(runtime::TAG_UNIT);
+        }
         match self.get_function(&main_name) {
             Some(ptr) => {
                 let func: unsafe extern "C" fn() -> u64 = unsafe { std::mem::transmute(ptr) };
                 Ok(unsafe { func() })
-            }
+            },
             None => Ok(runtime::TAG_UNIT),
         }
     }
 
     pub fn run_function(&mut self, name: &str, args: &[u64]) -> Result<u64> {
-        let fn_ptr = match self.get_function(name) { Some(p) => p, None => return Ok(runtime::TAG_UNIT) };
+        let fn_ptr = match self.get_function(name) {
+            Some(p) => p,
+            None => return Ok(runtime::TAG_UNIT),
+        };
         unsafe {
             match args.len() {
-                0 => { let f: unsafe extern "C" fn() -> u64 = std::mem::transmute(fn_ptr); Ok(f()) }
-                1 => { let f: unsafe extern "C" fn(u64) -> u64 = std::mem::transmute(fn_ptr); Ok(f(args[0])) }
-                2 => { let f: unsafe extern "C" fn(u64, u64) -> u64 = std::mem::transmute(fn_ptr); Ok(f(args[0], args[1])) }
-                3 => { let f: unsafe extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr); Ok(f(args[0], args[1], args[2])) }
-                n => { let f: unsafe extern "C" fn(*const u64, usize) -> u64 = std::mem::transmute(fn_ptr); Ok(f(args.as_ptr(), n)) }
+                0 => {
+                    let f: unsafe extern "C" fn() -> u64 = std::mem::transmute(fn_ptr);
+                    Ok(f())
+                },
+                1 => {
+                    let f: unsafe extern "C" fn(u64) -> u64 = std::mem::transmute(fn_ptr);
+                    Ok(f(args[0]))
+                },
+                2 => {
+                    let f: unsafe extern "C" fn(u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                    Ok(f(args[0], args[1]))
+                },
+                3 => {
+                    let f: unsafe extern "C" fn(u64, u64, u64) -> u64 = std::mem::transmute(fn_ptr);
+                    Ok(f(args[0], args[1], args[2]))
+                },
+                n => {
+                    let f: unsafe extern "C" fn(*const u64, usize) -> u64 =
+                        std::mem::transmute(fn_ptr);
+                    Ok(f(args.as_ptr(), n))
+                },
             }
         }
     }
