@@ -86,7 +86,7 @@ impl Licm {
                 let bb = &func.basic_blocks[bb_id.0];
                 for (i, stmt) in bb.statements.iter().enumerate() {
                     if let StatementKind::Assign(local, rval) = &stmt.kind {
-                        if func.locals[local.0].name.is_none()
+                        if func.local_decl(*local).is_some_and(|d| d.name.is_none())
                             && assign_counts.get(local) == Some(&1)
                             && !invariant_locals.contains(local)
                             && self.is_invariant(rval, &defined_in_loop, &invariant_locals)
@@ -229,5 +229,109 @@ impl Licm {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ling_ast::ast::BinOp;
+
+    fn temp(name: Option<&str>) -> LocalDecl {
+        LocalDecl {
+            ty: MirType::Any,
+            name: name.map(str::to_string),
+            span: Span::DUMMY,
+            is_mut: true,
+            is_owning: true,
+        }
+    }
+
+    fn stmt(kind: StatementKind) -> Statement {
+        Statement { kind, span: Span::DUMMY }
+    }
+
+    fn goto(target: usize) -> Terminator {
+        Terminator {
+            kind: TerminatorKind::Goto { target: BasicBlockId(target) },
+            span: Span::DUMMY,
+        }
+    }
+
+    // A one-argument function whose loop body assigns the highest-indexed
+    // temporary. The pre-fix code indexed `func.locals[local.0]` directly,
+    // which panicked once a flat `Local` index reached `locals.len()`.
+    #[test]
+    fn hoists_invariant_without_indexing_past_locals() {
+        let mut func = MirFunction::new("f", 1);
+        // Flat space: Local(0)=return, Local(1)=param, Local(2..=4)=temps below.
+        func.locals.push(temp(Some("acc"))); // Local(2)
+        func.locals.push(temp(None)); // Local(3): loop-invariant temp
+        func.locals.push(temp(None)); // Local(4): loop-variant accumulator
+
+        func.basic_blocks = vec![
+            // bb0: external pre-header, branches into the loop header.
+            BasicBlock { statements: Vec::new(), terminator: Some(goto(1)) },
+            // bb1: loop header.
+            BasicBlock {
+                statements: Vec::new(),
+                terminator: Some(Terminator {
+                    kind: TerminatorKind::SwitchInt {
+                        discr: Operand::Copy(Local(2)),
+                        targets: vec![(1, BasicBlockId(2))],
+                        otherwise: BasicBlockId(3),
+                    },
+                    span: Span::DUMMY,
+                }),
+            },
+            // bb2: loop body — invariant `param * param`, then a variant update.
+            BasicBlock {
+                statements: vec![
+                    stmt(StatementKind::Assign(
+                        Local(3),
+                        Rvalue::BinaryOp(
+                            BinOp::Mul,
+                            Operand::Copy(Local(1)),
+                            Operand::Copy(Local(1)),
+                        ),
+                    )),
+                    stmt(StatementKind::Assign(
+                        Local(4),
+                        Rvalue::BinaryOp(
+                            BinOp::Add,
+                            Operand::Copy(Local(4)),
+                            Operand::Move(Local(3)),
+                        ),
+                    )),
+                ],
+                terminator: Some(goto(1)),
+            },
+            // bb3: exit.
+            BasicBlock {
+                statements: vec![stmt(StatementKind::Assign(
+                    Local(0),
+                    Rvalue::Use(Operand::Copy(Local(4))),
+                ))],
+                terminator: Some(Terminator { kind: TerminatorKind::Return, span: Span::DUMMY }),
+            },
+        ];
+
+        assert!(Licm.run(&mut func), "expected the invariant to be hoisted");
+
+        let is_invariant_mul = |s: &Statement| {
+            matches!(
+                &s.kind,
+                StatementKind::Assign(Local(3), Rvalue::BinaryOp(BinOp::Mul, ..))
+            )
+        };
+        let body_has_mul = func.basic_blocks[2].statements.iter().any(is_invariant_mul);
+        assert!(!body_has_mul, "invariant must leave the loop body");
+        let total_mul: usize = func
+            .basic_blocks
+            .iter()
+            .flat_map(|bb| &bb.statements)
+            .filter(|s| is_invariant_mul(s))
+            .count();
+        assert_eq!(total_mul, 1, "invariant must be hoisted exactly once");
     }
 }

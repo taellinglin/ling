@@ -276,6 +276,31 @@ impl MirFunction {
             param_names: Vec::new(),
         }
     }
+
+    /// Flat `Local` index that the next freshly allocated temporary will take.
+    ///
+    /// The index space is `Local(0)` for the return slot, `Local(1..=arg_count)`
+    /// for parameters, and `Local(arg_count + 1 + k)` for the temporary stored at
+    /// `locals[k]`. Parameters and the return slot have no entry in `locals`.
+    pub fn next_local(&self) -> usize {
+        self.arg_count + 1 + self.locals.len()
+    }
+
+    /// Allocate a fresh temporary, append its declaration, and return its `Local`.
+    pub fn push_local(&mut self, decl: LocalDecl) -> Local {
+        let id = Local(self.next_local());
+        self.locals.push(decl);
+        id
+    }
+
+    /// Declaration backing `local`, or `None` for the return slot and parameters
+    /// (which are not represented in `locals`).
+    pub fn local_decl(&self, local: Local) -> Option<&LocalDecl> {
+        local
+            .0
+            .checked_sub(self.arg_count + 1)
+            .and_then(|k| self.locals.get(k))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
