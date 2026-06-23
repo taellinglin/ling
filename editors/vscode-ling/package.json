@@ -4,8 +4,21 @@
   "description": "Syntax highlighting for the Ling (灵言) polyglot programming language.",
   "version": "0.1.0",
   "publisher": "ling-lang",
-  "license": "SEE LICENSE IN ../../LICENSE",
+  "license": "SEE LICENSE IN LICENSE",
   "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#10203f",
+    "theme": "dark"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/taellinglin/ling.git",
+    "directory": "editors/vscode-ling"
+  },
+  "bugs": {
+    "url": "https://github.com/taellinglin/ling/issues"
+  },
+  "homepage": "https://github.com/taellinglin/ling#readme",
   "engines": {
     "vscode": "^1.75.0"
   },

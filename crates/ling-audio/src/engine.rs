@@ -251,6 +251,155 @@ struct SampleVoice {
     active: bool,
 }
 
+/// YIN-YANG morph voice — one voice that spans the acoustic↔digital continuum.
+/// "Light" core = a Karplus-Strong physical model (excited string/air/membrane →
+/// organic plucked/bowed/blown/struck tones). "Dark" core = an FM operator pair
+/// through a bit/sample-rate crusher (digital grit). The `morph` dial (0=light ..
+/// 1=dark) crossfades the two AND tilts the shaping — more FM index, deeper crush
+/// and more tanh drive toward dark. Material presets pick excitation + damping so
+/// a single voice covers a wide palette. Self-contained DSP; existing voices are
+/// untouched (fully backwards compatible).
+#[allow(dead_code)] // `w` reserved for 4D spatial weighting (not yet read)
+struct MorphVoice {
+    freq: f32,
+    ks: Vec<f32>, // Karplus-Strong delay line (the resonator)
+    ks_len: usize,
+    ks_idx: usize,
+    ks_damp: f32, // brightness: high-freq retained per round-trip
+    ks_fb: f32,   // string feedback (ring length)
+    ks_lp: f32,   // 1-pole damping state
+    excite: u8,   // 0 pluck · 1 bow · 2 blow · 3 strike
+    seed: u32,
+    car: f32, // FM carrier phase
+    md: f32,  // FM modulator phase
+    ratio: f32,
+    index: f32,
+    hold: f32,      // crusher sample-hold
+    crush_acc: f32, // sample-rate-reduction accumulator
+    morph: f32,
+    amp: f32,
+    dur: f32,
+    age: f32,
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32,
+}
+impl MorphVoice {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        sr: f32,
+        freq: f32,
+        amp: f32,
+        dur: f32,
+        material: u8,
+        morph: f32,
+        x: f32,
+        y: f32,
+        z: f32,
+        w: f32,
+    ) -> Self {
+        let freq = freq.clamp(20.0, sr * 0.45);
+        let ks_len = ((sr / freq).round() as usize).clamp(2, 4096);
+        // material → (excite, damp, feedback, fm ratio, fm index)
+        let (excite, ks_damp, ks_fb, ratio, index) = match material {
+            0 => (1u8, 0.55, 0.992, 2.0, 0.5),    // Bowed Silk (sustained string)
+            1 => (0u8, 0.80, 0.990, 3.0, 0.9),    // Plucked Bamboo (bright pluck)
+            2 => (2u8, 0.48, 0.991, 1.0, 0.4),    // Blown Jade (air column)
+            _ => (3u8, 0.90, 0.997, 1.414, 1.3),  // Struck Bronze (long inharmonic metal)
+        };
+        let mut s = freq.to_bits().wrapping_mul(2654435761).wrapping_add(1);
+        let mut ks = vec![0.0f32; ks_len];
+        if excite == 0 || excite == 3 {
+            // pluck/strike: prefill the line with a noise burst so it rings
+            for v in ks.iter_mut() {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                *v = ((s >> 9) as f32 / 4_194_304.0) - 1.0;
+            }
+        }
+        Self {
+            freq,
+            ks,
+            ks_len,
+            ks_idx: 0,
+            ks_damp,
+            ks_fb,
+            ks_lp: 0.0,
+            excite,
+            seed: s | 1,
+            car: 0.0,
+            md: 0.0,
+            ratio,
+            index,
+            hold: 0.0,
+            crush_acc: 0.0,
+            morph: morph.clamp(0.0, 1.0),
+            amp,
+            dur: dur.max(0.02),
+            age: 0.0,
+            x,
+            y,
+            z,
+            w,
+        }
+    }
+    #[inline]
+    fn noise(&mut self) -> f32 {
+        self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+        ((self.seed >> 9) as f32 / 4_194_304.0) - 1.0
+    }
+    #[inline]
+    fn next(&mut self, dt: f32) -> f32 {
+        let atk = 0.006;
+        let env = if self.age < atk {
+            self.age / atk
+        } else {
+            (-(self.age - atk) / (self.dur * 0.5 + 1e-4)).exp()
+        };
+        // ── excitation into the resonator ──
+        let n = self.noise();
+        let exc = match self.excite {
+            1 => n * 0.5 * env,                                  // bow: sustained noise
+            2 => n * 0.32 * env,                                 // blow: breath
+            3 => if self.age < 0.0015 { n * 1.5 } else { 0.0 },  // strike: impulse (+prefill)
+            _ => if self.age < 0.004 { n * 0.4 } else { 0.0 },   // pluck: brief top-up (+prefill)
+        };
+        // ── organic core: Karplus-Strong ──
+        let cur = self.ks[self.ks_idx];
+        let nxt = self.ks[(self.ks_idx + 1) % self.ks_len];
+        let avg = (cur + nxt) * 0.5;
+        self.ks_lp += (avg - self.ks_lp) * self.ks_damp;
+        self.ks[self.ks_idx] = self.ks_lp * self.ks_fb + exc;
+        self.ks_idx = (self.ks_idx + 1) % self.ks_len;
+        let organic = cur;
+        // ── digital core: FM operator pair ──
+        let idx = self.index * (0.3 + self.morph * 1.8);
+        let modv = (self.md * TAU).sin();
+        let fm = ((self.car + modv * idx) * TAU).sin();
+        self.car = (self.car + self.freq * dt).fract();
+        self.md = (self.md + self.freq * self.ratio * dt).fract();
+        // ── bit + sample-rate crush (deeper toward dark) ──
+        let step = 1.0 + self.morph * 10.0;
+        self.crush_acc += 1.0;
+        if self.crush_acc >= step {
+            self.crush_acc -= step;
+            let bits = 11.0 - self.morph * 8.0;
+            let q = 2f32.powf(bits);
+            self.hold = (fm * q).round() / q;
+        }
+        let digital = self.hold;
+        // ── morph crossfade + dark drive ──
+        let m = self.morph;
+        let mut out = organic * (1.0 - m) + digital * m;
+        out = (out * (1.0 + m * 3.5)).tanh();
+        self.age += dt;
+        out * self.amp * env
+    }
+    fn done(&self) -> bool {
+        self.age >= self.dur
+    }
+}
+
 /// Stereo feedback delay on the master bus.
 struct Delay {
     bl: Vec<f32>,
@@ -399,6 +548,7 @@ struct AudioState {
     tones: Vec<Option<Tone>>,
     blips: Vec<Blip>,
     sfx: Vec<SfxVoice>,
+    morph_voices: Vec<MorphVoice>, // YIN-YANG morph synth voices
     samples: Vec<(std::sync::Arc<Vec<f32>>, u32)>, // (mono buffer, src rate)
     sample_voices: Vec<SampleVoice>,
     next_voice_id: u32,
@@ -427,6 +577,7 @@ impl AudioState {
             tones: (0..16).map(|_| None).collect(),
             blips: Vec::new(),
             sfx: Vec::new(),
+            morph_voices: Vec::new(),
             samples: Vec::new(),
             sample_voices: Vec::new(),
             next_voice_id: 1,
@@ -539,6 +690,17 @@ impl AudioState {
                 r += s * rg;
             }
             self.sfx.retain(|v| !v.done());
+        }
+
+        // ── YIN-YANG morph synth voices (physical-model ↔ FM/crush) ──────────
+        if !self.morph_voices.is_empty() {
+            for v in &mut self.morph_voices {
+                let (lg, rg) = spatial_gains(cry, sry, crx, srx, lx, ly, lz, room_w, v.x, v.y, v.z);
+                let s = v.next(dt);
+                l += s * lg;
+                r += s * rg;
+            }
+            self.morph_voices.retain(|v| !v.done());
         }
 
         // ── Positional sample voices (one-shot or looping) ───────────────────
@@ -703,6 +865,32 @@ impl AudioEngine {
                 w_phase: 0.0,
                 seed: freq.to_bits().wrapping_mul(2654435761).wrapping_add(1),
             });
+        }
+    }
+
+    /// Fire a YIN-YANG morph synth note. `material`: 0 bowed-string · 1 plucked ·
+    /// 2 blown · 3 struck-metal. `morph` 0=light/acoustic .. 1=dark/digital
+    /// (FM + bit/sample crush + drive). Up to 32 morph voices; oldest dropped.
+    #[allow(clippy::too_many_arguments)]
+    pub fn morph_note(
+        &self,
+        x: f32,
+        y: f32,
+        z: f32,
+        w: f32,
+        freq: f32,
+        amp: f32,
+        dur: f32,
+        material: u8,
+        morph: f32,
+    ) {
+        if let Ok(mut s) = self.state.lock() {
+            if s.morph_voices.len() >= 32 {
+                s.morph_voices.remove(0);
+            }
+            let sr = s.sample_rate as f32;
+            s.morph_voices
+                .push(MorphVoice::new(sr, freq, amp, dur, material, morph, x, y, z, w));
         }
     }
 
@@ -1066,5 +1254,198 @@ mod tests {
             let (l, r) = st.next_sample();
             assert!(l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0);
         }
+    }
+
+    // ── Wave channel synthesis ────────────────────────────────────────────────
+    #[test]
+    fn wave_from_name_maps_and_samples_stay_bounded() {
+        assert!(matches!(Wave::from_name("square"), Wave::Square));
+        assert!(matches!(Wave::from_name("SAW"), Wave::Saw)); // case-insensitive
+        assert!(matches!(Wave::from_name("triangle"), Wave::Triangle));
+        assert!(matches!(Wave::from_name("noise"), Wave::Noise));
+        assert!(matches!(Wave::from_name("whatever"), Wave::Sine)); // default
+        for wave in [Wave::Sine, Wave::Square, Wave::Saw, Wave::Triangle, Wave::Noise] {
+            for i in 0..256 {
+                let v = wave.sample(i as f32 / 256.0);
+                assert!(v.is_finite() && v.abs() <= 1.0, "{wave:?} out of range: {v}");
+            }
+        }
+    }
+
+    // ── Mixer combines independent channels (tone + sfx + sample) ─────────────
+    #[test]
+    fn channels_mix_together() {
+        let mut st = AudioState::new(44100);
+        st.tones[0] = Some(Tone::new(ToneParams { freq: 330.0, amp: 0.4, ..Default::default() }));
+        st.sfx.push(SfxVoice {
+            x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 660.0, amp: 0.4,
+            wave: Wave::Square, dur: 0.5, age: 0.0, phase: 0.0, w_phase: 0.0, seed: 7,
+        });
+        st.samples.push((std::sync::Arc::new(vec![0.3f32; 256]), 44100));
+        st.sample_voices.push(SampleVoice {
+            id: 1, sample: 0, pos: 0.0, x: 0.0, y: 0.0, z: 0.0, w: 1.0,
+            vol: 0.6, looping: true, active: true,
+        });
+        let mut energy = 0.0f64;
+        for _ in 0..2000 {
+            let (l, r) = st.next_sample();
+            assert!(l.is_finite() && r.is_finite());
+            energy += (l * l + r * r) as f64;
+        }
+        assert!(energy > 1.0, "all three channels should contribute audible energy");
+    }
+
+    // ── Many simultaneous loud channels must never exceed digital full-scale ──
+    #[test]
+    fn many_loud_channels_stay_within_headroom() {
+        let mut st = AudioState::new(44100);
+        st.master_volume = 1.0;
+        for i in 0..st.tones.len() {
+            st.tones[i] = Some(Tone::new(ToneParams {
+                freq: 110.0 + i as f32 * 25.0, amp: 1.0, ..Default::default()
+            }));
+        }
+        for i in 0..60 {
+            st.sfx.push(SfxVoice {
+                x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 200.0 + i as f32 * 30.0, amp: 1.0,
+                wave: Wave::Saw, dur: 1.0, age: 0.0, phase: 0.0, w_phase: 0.0, seed: i + 1,
+            });
+        }
+        for _ in 0..44100 {
+            let (l, r) = st.next_sample();
+            assert!(
+                l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0,
+                "soft-clip must keep the mix bus within [-1, 1]: ({l}, {r})"
+            );
+        }
+    }
+
+    // ── Positional channels pan correctly (identity listener: world -x = left) ─
+    #[test]
+    fn positional_channel_pans_left_then_right() {
+        let energy = |x: f32| -> (f64, f64) {
+            let mut st = AudioState::new(44100);
+            // Dry signal so panning isn't smeared by the master FX bus.
+            st.delay.mix = 0.0;
+            st.reverb.mix = 0.0;
+            st.lowpass.target = 1.0;
+            st.lowpass.cutoff = 1.0;
+            st.tones[0] = Some(Tone::new(ToneParams { x, freq: 440.0, amp: 0.6, ..Default::default() }));
+            let (mut el, mut er) = (0.0f64, 0.0f64);
+            for _ in 0..4000 {
+                let (l, r) = st.next_sample();
+                el += (l * l) as f64;
+                er += (r * r) as f64;
+            }
+            (el, er)
+        };
+        let (ll, lr) = energy(-8.0); // hard left
+        assert!(ll > lr * 1.5, "left-positioned source should favour L ({ll} vs {lr})");
+        let (rl, rr) = energy(8.0); // hard right
+        assert!(rr > rl * 1.5, "right-positioned source should favour R ({rl} vs {rr})");
+    }
+
+    // ── THREADS: the cpal callback thread and the game thread share AudioState
+    // through Arc<Mutex<>>. A producer (game: set_tone/sfx) and a consumer
+    // (audio callback: next_sample) hammering it concurrently must not panic,
+    // deadlock, or emit garbage. ───────────────────────────────────────────────
+    #[test]
+    fn audio_thread_shared_state_stays_safe_under_contention() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let state = Arc::new(Mutex::new(AudioState::new(44100)));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        // Producer: mimics the game thread re-setting tones + firing sfx each frame.
+        let producer = {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut n: u32 = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(mut s) = state.lock() {
+                        let slot = (n as usize) % s.tones.len();
+                        s.tones[slot] = Some(Tone::new(ToneParams {
+                            freq: 200.0 + (n % 800) as f32, amp: 0.5, ..Default::default()
+                        }));
+                        if s.sfx.len() >= 64 { s.sfx.remove(0); } // same cap the engine enforces
+                        s.sfx.push(SfxVoice {
+                            x: ((n % 17) as f32) - 8.0, y: 0.0, z: 0.0, w: 1.0,
+                            freq: 440.0, amp: 0.4, wave: Wave::Triangle,
+                            dur: 0.05, age: 0.0, phase: 0.0, w_phase: 0.0, seed: n.max(1),
+                        });
+                    }
+                    n = n.wrapping_add(1);
+                    std::thread::yield_now();
+                }
+            })
+        };
+
+        // Consumer: mimics the cpal callback pulling sample blocks under the lock.
+        let consumer = {
+            let state = Arc::clone(&state);
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                let mut produced = 0u64;
+                let mut bad = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(mut s) = state.lock() {
+                        for _ in 0..256 {
+                            let (l, r) = s.next_sample();
+                            if !(l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0) {
+                                bad += 1;
+                            }
+                            produced += 1;
+                        }
+                    }
+                    std::thread::yield_now();
+                }
+                (produced, bad)
+            })
+        };
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        stop.store(true, Ordering::Relaxed);
+
+        producer.join().expect("producer thread must not panic");
+        let (produced, bad) = consumer.join().expect("consumer thread must not panic");
+        assert!(produced > 0, "consumer should have mixed some samples");
+        assert_eq!(bad, 0, "every concurrently-mixed sample must be finite and in range");
+    }
+
+    // ── YIN-YANG morph voice: every material makes sound, stays bounded ───────
+    #[test]
+    fn morph_voice_each_material_is_audible_and_bounded() {
+        for material in 0u8..4 {
+            let mut v = MorphVoice::new(44100.0, 220.0, 0.7, 0.4, material, 0.5, 0.0, 0.0, 0.0, 1.0);
+            let dt = 1.0 / 44100.0;
+            let mut peak = 0.0f32;
+            let mut steps = 0;
+            while !v.done() && steps < 44100 {
+                let s = v.next(dt);
+                assert!(s.is_finite() && s.abs() <= 1.0, "material {material} out of range: {s}");
+                peak = peak.max(s.abs());
+                steps += 1;
+            }
+            assert!(peak > 0.01, "material {material} should produce sound (peak {peak})");
+        }
+    }
+
+    // ── The morph dial actually changes the timbre (light ≠ dark) ─────────────
+    #[test]
+    fn morph_light_and_dark_differ() {
+        let render = |morph: f32| -> f64 {
+            let mut v = MorphVoice::new(44100.0, 330.0, 0.7, 0.3, 1, morph, 0.0, 0.0, 0.0, 1.0);
+            let dt = 1.0 / 44100.0;
+            let mut acc = 0.0f64;
+            for _ in 0..6000 {
+                let s = v.next(dt);
+                acc += (s.abs()) as f64; // crude spectral-energy proxy
+            }
+            acc
+        };
+        let light = render(0.0);
+        let dark = render(1.0);
+        // Dark adds FM sidebands + crush + tanh drive → a materially different signal.
+        assert!((light - dark).abs() / (light + dark + 1e-6) > 0.05, "light {light} vs dark {dark} should differ");
     }
 }

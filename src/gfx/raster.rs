@@ -1261,6 +1261,98 @@ fn add_span(cov: &mut [f32], x0: i32, xa: f32, xb: f32, weight: f32) {
     }
 }
 
+/// Depth-of-field post pass (uses the z-buffer). Blurs the framebuffer by up to
+/// `rad` px wherever the camera-space depth departs from `focus` by more than
+/// `range` — sharp at the focal plane, progressively soft toward near/far.
+/// Background pixels (no geometry, depth = +∞) are treated as fully far → max
+/// blur. Implementation: one separable box blur (sliding window, O(1)/px per
+/// pass) at the max radius, then a per-pixel mix by circle-of-confusion — cheap
+/// enough for a full-frame pass and the canonical z-buffer showcase effect.
+pub fn depth_of_field(
+    buf: &mut [u32],
+    zbuf: &[f32],
+    width: usize,
+    height: usize,
+    focus: f32,
+    range: f32,
+    rad: usize,
+) {
+    let n = width * height;
+    if width == 0 || height == 0 || rad == 0 || zbuf.len() != n || buf.len() != n {
+        return;
+    }
+    let range = range.max(1e-3);
+    let inv_win = 1.0 / (2 * rad + 1) as f32;
+    let r_i = rad as i32;
+    let wi = width as i32;
+    let hi = height as i32;
+
+    // Unpack channels to f32 planes.
+    let mut rc = vec![0f32; n];
+    let mut gc = vec![0f32; n];
+    let mut bc = vec![0f32; n];
+    for i in 0..n {
+        let p = buf[i];
+        rc[i] = ((p >> 16) & 0xFF) as f32;
+        gc[i] = ((p >> 8) & 0xFF) as f32;
+        bc[i] = (p & 0xFF) as f32;
+    }
+
+    // Separable box blur with edge clamping (prime O(rad)/line, slide O(1)/px).
+    let blur = |src: &[f32]| -> Vec<f32> {
+        let mut tmp = vec![0f32; n];
+        for y in 0..height {
+            let row = y * width;
+            let mut acc = 0.0f32;
+            let mut k = -r_i;
+            while k <= r_i {
+                acc += src[row + k.clamp(0, wi - 1) as usize];
+                k += 1;
+            }
+            for x in 0..width {
+                tmp[row + x] = acc * inv_win;
+                let lo = (x as i32 - r_i).clamp(0, wi - 1) as usize;
+                let hi2 = (x as i32 + r_i + 1).clamp(0, wi - 1) as usize;
+                acc += src[row + hi2] - src[row + lo];
+            }
+        }
+        let mut out = vec![0f32; n];
+        for x in 0..width {
+            let mut acc = 0.0f32;
+            let mut k = -r_i;
+            while k <= r_i {
+                acc += tmp[k.clamp(0, hi - 1) as usize * width + x];
+                k += 1;
+            }
+            for y in 0..height {
+                out[y * width + x] = acc * inv_win;
+                let lo = (y as i32 - r_i).clamp(0, hi - 1) as usize;
+                let hi2 = (y as i32 + r_i + 1).clamp(0, hi - 1) as usize;
+                acc += tmp[hi2 * width + x] - tmp[lo * width + x];
+            }
+        }
+        out
+    };
+
+    let rb = blur(&rc);
+    let gb = blur(&gc);
+    let bb = blur(&bc);
+
+    for i in 0..n {
+        let z = zbuf[i];
+        let coc = if z.is_finite() {
+            ((z - focus).abs() / range).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let s = 1.0 - coc;
+        let r = (rc[i] * s + rb[i] * coc).round().clamp(0.0, 255.0) as u32;
+        let g = (gc[i] * s + gb[i] * coc).round().clamp(0.0, 255.0) as u32;
+        let b = (bc[i] * s + bb[i] * coc).round().clamp(0.0, 255.0) as u32;
+        buf[i] = (r << 16) | (g << 8) | b;
+    }
+}
+
 #[cfg(test)]
 mod fill_tests {
     use super::*;

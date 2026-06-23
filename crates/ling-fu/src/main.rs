@@ -1006,6 +1006,30 @@ fn cmd_init(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
 
 // ─── cmd_build ───────────────────────────────────────────────────────────────
 
+/// First value following `flag` in `args` (e.g. `--path ./app` → `./app`).
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
+}
+
+/// Copy of `args` with `flag` and the value after it removed, so wrapper-only
+/// flags (like `--path`) are never forwarded to `cargo` / `ling`.
+fn strip_flag(args: &[String], flag: &str) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut skip_value = false;
+    for a in args {
+        if skip_value {
+            skip_value = false;
+            continue;
+        }
+        if a == flag {
+            skip_value = true; // also drop the value that follows
+            continue;
+        }
+        out.push(a.clone());
+    }
+    out
+}
+
 fn cmd_build(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     say(
         lang,
@@ -1015,55 +1039,72 @@ fn cmd_build(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         "영경 건설 중...",
     );
 
-    if let Some(manifest) = find_manifest() {
+    // `--path <dir>` pins the project root explicitly. Otherwise we walk up for a
+    // manifest, and finally fall back to the current directory so a bare folder of
+    // `.ling` files still builds. The flag is consumed here, never forwarded.
+    let path_override = flag_value(args, "--path").map(std::path::PathBuf::from);
+    let forwarded = strip_flag(args, "--path");
+
+    // Resolve the project root and its scaffolding language (used for entry-file
+    // candidates). An explicit --path looks for a manifest inside that folder; a
+    // bare folder with none just builds as an English-layout .ling project.
+    let (root, slang) = if let Some(p) = path_override {
+        let slang = MANIFEST_NAMES
+            .iter()
+            .map(|n| p.join(n))
+            .find(|m| m.exists())
+            .as_deref()
+            .map(lang_from_manifest)
+            .unwrap_or(ScaffoldLang::English);
+        (p, slang)
+    } else if let Some(manifest) = find_manifest() {
         let slang = lang_from_manifest(&manifest);
-        let dirs = dir_names(&slang);
-        let root = manifest.parent().unwrap_or(std::path::Path::new("."));
-
-        // Resolve the entry file (same candidate order as `cmd_run`) so the
-        // native build targets the real entry regardless of project layout.
-        let src_dir = root.join(dirs.src);
-        let entry_candidates = [
-            src_dir.join(dirs.entry),
-            root.join(dirs.entry),
-            src_dir.join("main.ling"),
-            root.join("main.ling"),
-        ];
-        let entry = entry_candidates.into_iter().find(|p| p.exists());
-        if let Some(e) = &entry {
-            say(
-                lang,
-                &format!("Entry: {}", e.display()),
-                &format!("灵源: {}", e.display()),
-                &format!("霊源: {}", e.display()),
-                &format!("령원: {}", e.display()),
-            );
-        }
-
-        // If a Cargo.toml is present alongside, use cargo build too
-        if root.join("Cargo.toml").exists() {
-            let mut cmd = std::process::Command::new("cargo");
-            cmd.arg("build").args(args).current_dir(root);
-            let status = cmd.status().map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-            if !status.success() {
-                anyhow::bail!("build failed");
-            }
-        } else {
-            // Native .ling project: AOT-compile to a native executable by default
-            // (pass --no-aot to embed the interpreter instead). Pass the resolved
-            // entry file — `ling build <file>` flattens imports from there, while
-            // `ling build <dir>` only understands a root `main.ling`.
-            let target = entry.as_deref().unwrap_or(root);
-            run_aot_build(target, args, lang)?;
-        }
+        let root = manifest
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        (root, slang)
     } else {
-        // Fall back to cargo build in current directory
+        (std::path::PathBuf::from("."), ScaffoldLang::English)
+    };
+
+    // Resolve the entry file (same candidate order as `cmd_run`) so the native
+    // build targets the real entry regardless of project layout.
+    let dirs = dir_names(&slang);
+    let src_dir = root.join(dirs.src);
+    let entry_candidates = [
+        src_dir.join(dirs.entry),
+        root.join(dirs.entry),
+        src_dir.join("main.ling"),
+        root.join("main.ling"),
+        root.join("start.ling"),
+    ];
+    let entry = entry_candidates.into_iter().find(|p| p.exists());
+    if let Some(e) = &entry {
+        say(
+            lang,
+            &format!("Entry: {}", e.display()),
+            &format!("灵源: {}", e.display()),
+            &format!("霊源: {}", e.display()),
+            &format!("령원: {}", e.display()),
+        );
+    }
+
+    if root.join("Cargo.toml").exists() {
+        // A Cargo project sits alongside the .ling sources — defer to cargo.
         let mut cmd = std::process::Command::new("cargo");
-        cmd.arg("build").args(args);
+        cmd.arg("build").args(&forwarded).current_dir(&root);
         let status = cmd.status().map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
         if !status.success() {
             anyhow::bail!("build failed");
         }
+    } else {
+        // Pure .ling project (no Cargo.toml): AOT-compile to a native executable
+        // by default (pass --no-aot to embed the interpreter). Target the resolved
+        // entry file — `ling build <file>` flattens imports from there — otherwise
+        // hand `ling build` the directory and let it auto-detect the entry.
+        let target = entry.as_deref().unwrap_or(root.as_path());
+        run_aot_build(target, &forwarded, lang)?;
     }
     Ok(())
 }

@@ -235,6 +235,7 @@ impl DepthQueue {
         mut self,
         buf: &mut Vec<u32>,
         zbuf: Option<&mut Vec<f32>>,
+        reset_z: bool,
         width: usize,
         height: usize,
     ) {
@@ -247,11 +248,13 @@ impl DepthQueue {
         });
         match zbuf {
             Some(z) => {
-                // Reset the depth buffer to "infinitely far" for this frame.
+                // Clear to "infinitely far" only at a frame boundary (after a
+                // screen clear); otherwise accumulate so the z-buffer spans all
+                // of a frame's flushes. Always (re)size on dimension change.
                 if z.len() != width * height {
                     z.clear();
                     z.resize(width * height, f32::INFINITY);
-                } else {
+                } else if reset_z {
                     for v in z.iter_mut() {
                         *v = f32::INFINITY;
                     }

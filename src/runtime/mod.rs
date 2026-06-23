@@ -1453,7 +1453,25 @@ impl Interpreter {
         Err(EvalErr::from(format!("undefined: '{name}'")))
     }
 
+    /// Profiling wrapper around the real dispatch. Zero overhead unless
+    /// `LING_PROFILE` is set (one thread-local bool check per call). When on,
+    /// it tallies per-name call count + inclusive time and, on each frame
+    /// boundary (`present`), prints a sorted top-down report every
+    /// `LING_PROFILE_EVERY` frames (default 240). Both the JIT (`ling_builtin` →
+    /// here) and the tree-walker route through this, so it sees every builtin —
+    /// in JIT mode user fns are native, so it's a clean builtin/render/physics
+    /// profile with no nesting double-count.
     pub(crate) fn call_named(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
+        if !ling_profile_enabled() {
+            return self.call_named_inner(name, args, env);
+        }
+        let t0 = std::time::Instant::now();
+        let r = self.call_named_inner(name, args, env);
+        ling_profile_record(name, t0.elapsed().as_nanos());
+        r
+    }
+
+    fn call_named_inner(&mut self, name: &str, args: Vec<Value>, env: &Env) -> EvalResult {
         // A user-defined function shadows any builtin of the same name, matching
         // the JIT/AOT backends (which always resolve a defined function first).
         if let Some(def) = self.functions.get(name).cloned() {
@@ -1824,6 +1842,18 @@ impl Interpreter {
                 return Ok(Value::Number(self.start_time.elapsed().as_secs_f64()));
             },
 
+            // Wall-clock seconds since the Unix epoch (real date/time). Lets a
+            // program defer deterministic-yet-evolving generation to the actual
+            // datetime — same clock → same world, advancing as real time passes.
+            "epoch_now" | "เวลาโลก" | "datetime" | "现在时刻" | "現在時刻" | "현재시각" =>
+            {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                return Ok(Value::Number(secs));
+            },
+
             "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" => {
                 return Ok(Value::Number(self.frame_num as f64));
             },
@@ -1998,6 +2028,43 @@ impl Interpreter {
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().depth_test = on;
+                return Ok(Value::Unit);
+            },
+
+            // clear_depth() / ล้างความลึก — force the z-buffer to clear on the next
+            // flush. `เติม` already does this; call explicitly to start a fresh
+            // depth pass mid-frame (e.g. a separate overlay scene).
+            "clear_depth" | "ล้างความลึก" | "清深度" | "深度クリア" | "깊이지우기" =>
+            {
+                self.gfx.borrow_mut().zbuf_needs_clear = true;
+                return Ok(Value::Unit);
+            },
+
+            // depth_blur(focus, range, radius) / เบลอความลึก — depth-of-field post
+            // pass over the framebuffer using the z-buffer: sharp at camera-space
+            // depth `focus`, blurred up to `radius` px as depth departs by `range`.
+            // Background (no geometry) blurs fully. Call AFTER `flush_3d` (so the
+            // z-buffer is populated) and BEFORE `present`. Needs `set_depth_test(1)`.
+            "depth_blur" | "เบลอความลึก" | "dof" | "depth_of_field" | "景深" =>
+            {
+                let focus = self.arg_num(&args, 0, 30.0)? as f32;
+                let range = self.arg_num(&args, 1, 60.0)? as f32;
+                let radius = self.arg_num(&args, 2, 3.0)?.max(0.0) as usize;
+                let mut gfx = self.gfx.borrow_mut();
+                let w = gfx.width;
+                let h = gfx.height;
+                if gfx.depth_buf.len() == w * h {
+                    let g = &mut *gfx;
+                    crate::gfx::raster::depth_of_field(
+                        &mut g.buffer,
+                        &g.depth_buf,
+                        w,
+                        h,
+                        focus,
+                        range,
+                        radius,
+                    );
+                }
                 return Ok(Value::Unit);
             },
 
@@ -2286,7 +2353,9 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let c = (r << 16) | (g << 8) | b;
-                    self.gfx.borrow_mut().buffer.fill(c);
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.buffer.fill(c);
+                    gfx.zbuf_needs_clear = true; // clear color ⇒ clear depth next flush
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -2298,6 +2367,7 @@ impl Interpreter {
                     // it at present(), so clear the buffer too (mirrors native).
                     let c = (r << 16) | (g << 8) | b;
                     gfx.buffer.fill(c);
+                    gfx.zbuf_needs_clear = true;
                 }
                 return Ok(Value::Unit);
             },
@@ -2417,14 +2487,16 @@ impl Interpreter {
                             let w = gfx.width;
                             let h = gfx.height;
                             let dt = gfx.depth_test;
+                            let reset_z = gfx.zbuf_needs_clear;
                             let (bm, ba) = (gfx.blend, gfx.alpha);
                             let queue = std::mem::take(&mut gfx.depth_queue);
                             {
                                 let g = &mut *gfx;
                                 let z = if dt { Some(&mut g.depth_buf) } else { None };
-                                queue.flush(&mut g.buffer, z, w, h);
+                                queue.flush(&mut g.buffer, z, reset_z, w, h);
                             }
                             gfx.depth_queue.set_state(bm, ba);
+                            gfx.zbuf_needs_clear = false;
                         }
                         let buf = gfx.buffer.clone();
                         let w = gfx.width;
@@ -2537,10 +2609,14 @@ impl Interpreter {
                     }
                     if !gfx.depth_queue.is_empty() {
                         let dt = gfx.depth_test;
+                        let reset_z = gfx.zbuf_needs_clear;
                         let queue = std::mem::take(&mut gfx.depth_queue);
-                        let g = &mut *gfx;
-                        let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        queue.flush(&mut g.buffer, z, w, h);
+                        {
+                            let g = &mut *gfx;
+                            let z = if dt { Some(&mut g.depth_buf) } else { None };
+                            queue.flush(&mut g.buffer, z, reset_z, w, h);
+                        }
+                        gfx.zbuf_needs_clear = false;
                     }
                     crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                 }
@@ -3150,15 +3226,20 @@ impl Interpreter {
                     };
                     let depth = (da + db + dc) / 3.0;
                     let col = gfx.fog_apply(col, depth);
-                    gfx.depth_queue.push_triangle(
-                        depth,
+                    // True per-vertex depth so the z-buffer resolves mesh
+                    // self-occlusion (when depth_test is off, the flush ignores
+                    // z and uses the screen x/y exactly as before).
+                    gfx.depth_queue.push_triangle_zv(
                         col,
                         proj[ia * 3],
                         proj[ia * 3 + 1],
+                        da,
                         proj[ib * 3],
                         proj[ib * 3 + 1],
+                        db,
                         proj[ic * 3],
                         proj[ic * 3 + 1],
+                        dc,
                     );
                 }
                 return Ok(Value::Unit);
@@ -7006,6 +7087,26 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
+            // ── YIN-YANG morph synth note: physical-model(light) ↔ FM/crush(dark) ──
+            // โน้ตมอร์ฟ(x,y,z,w, freq, amp, dur, material, morph)
+            //   material: 0 bowed-string · 1 plucked · 2 blown · 3 struck-metal
+            //   morph:    0.0 light/acoustic .. 1.0 dark/digital
+            "morph_note" | "โน้ตมอร์ฟ" | "变形音" | "モーフ音" | "모프음" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                let w = self.arg_num(&args, 3, 1.0)? as f32;
+                let freq = self.arg_num(&args, 4, 220.0)? as f32;
+                let amp = self.arg_num(&args, 5, 0.3)? as f32;
+                let dur = self.arg_num(&args, 6, 0.6)? as f32;
+                let material = self.arg_num(&args, 7, 0.0)?.clamp(0.0, 3.0) as u8;
+                let morph = self.arg_num(&args, 8, 0.0)? as f32;
+                if let Some(a) = &self.audio {
+                    a.morph_note(x, y, z, w, freq, amp, dur, material, morph);
+                }
+                return Ok(Value::Unit);
+            },
             // ── sample load / positional play / loop / stop ──
             #[cfg(not(target_arch = "wasm32"))]
             "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" =>
@@ -7964,13 +8065,15 @@ impl Interpreter {
                     let w = gfx.width;
                     let h = gfx.height;
                     let dt = gfx.depth_test;
+                    let reset_z = gfx.zbuf_needs_clear;
                     let (bm, ba) = (gfx.blend, gfx.alpha);
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
                         let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        queue.flush(&mut g.buffer, z, w, h);
+                        queue.flush(&mut g.buffer, z, reset_z, w, h);
                     }
+                    gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba); // keep active blend/alpha across the mid-frame flush
                 }
                 return Ok(Value::Unit);
@@ -8633,4 +8736,113 @@ fn native_screen_size() -> (f64, f64) {
     // On Linux/macOS we don't have an easy dependency-free call; return a
     // sensible default. Callers can always pass explicit dimensions.
     (1920.0, 1080.0)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Builtin call profiler  (env-gated, near-zero cost when off)
+//
+//   LING_PROFILE=1            enable per-builtin call-count + inclusive-time tally
+//   LING_PROFILE_EVERY=N      print the report every N frames (default 240)
+//
+// Every builtin call funnels through `Interp::call_named` (JIT via `ling_builtin`,
+// tree-walker directly), so this captures the full render/physics/audio builtin
+// hot-path. Report is sorted by total time and prints calls, calls/frame,
+// total_ms and ms/frame — the top-down "what's making so many calls" view.
+// ════════════════════════════════════════════════════════════════════════════
+struct LingProfileState {
+    enabled: bool,
+    every: u64,
+    frames: u64,
+    calls: std::collections::HashMap<String, (u64, u128)>, // name -> (count, nanos)
+}
+
+thread_local! {
+    static LING_PROFILE: std::cell::RefCell<LingProfileState> = std::cell::RefCell::new({
+        let enabled = std::env::var("LING_PROFILE").map(|v| v != "0" && !v.is_empty()).unwrap_or(false);
+        let every = std::env::var("LING_PROFILE_EVERY").ok()
+            .and_then(|v| v.parse::<u64>().ok()).filter(|&n| n > 0).unwrap_or(240);
+        if enabled {
+            eprintln!("[ling-profile] ON — report every {every} frames (set LING_PROFILE_EVERY to change)");
+        }
+        LingProfileState { enabled, every, frames: 0, calls: std::collections::HashMap::new() }
+    });
+}
+
+#[inline]
+fn ling_profile_enabled() -> bool {
+    LING_PROFILE.with(|p| p.borrow().enabled)
+}
+
+fn ling_profile_record(name: &str, nanos: u128) {
+    // Frame boundary = a present() call.
+    let is_frame = matches!(
+        name,
+        "present" | "แสดงผล" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시"
+    );
+    LING_PROFILE.with(|p| {
+        let mut p = p.borrow_mut();
+        let e = p.calls.entry(name.to_string()).or_insert((0, 0));
+        e.0 += 1;
+        e.1 += nanos;
+        if is_frame {
+            p.frames += 1;
+            if p.frames % p.every == 0 {
+                ling_profile_print(&p);
+            }
+        }
+    });
+}
+
+fn ling_profile_print(p: &LingProfileState) {
+    let mut rows: Vec<(&String, u64, u128)> =
+        p.calls.iter().map(|(n, (c, ns))| (n, *c, *ns)).collect();
+    rows.sort_by(|a, b| b.2.cmp(&a.2)); // by total time desc
+    let total_ns: u128 = p.calls.values().map(|(_, ns)| *ns).sum();
+    let total_calls: u64 = p.calls.values().map(|(c, _)| *c).sum();
+    let fr = p.frames.max(1) as f64;
+    eprintln!(
+        "\n┌─ LING PROFILE ── frames={} ─ builtin calls by total inclusive time ─────────────",
+        p.frames
+    );
+    eprintln!(
+        "│ {:<24} {:>9} {:>9} {:>10} {:>9} {:>6}",
+        "builtin", "calls", "calls/fr", "total_ms", "ms/frame", "%time"
+    );
+    eprintln!("├──────────────────────────────────────────────────────────────────────────────");
+    for (name, count, ns) in rows.iter().take(30) {
+        let ms = *ns as f64 / 1e6;
+        let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+        eprintln!(
+            "│ {:<24} {:>9} {:>9.1} {:>10.1} {:>9.3} {:>5.1}%",
+            truncate_name(name),
+            count,
+            *count as f64 / fr,
+            ms,
+            ms / fr,
+            pct
+        );
+    }
+    eprintln!("├──────────────────────────────────────────────────────────────────────────────");
+    eprintln!(
+        "│ TOTAL {} builtin calls, {:.1} ms over {} frames  →  {:.0} calls/frame, {:.2} ms/frame in builtins",
+        total_calls,
+        total_ns as f64 / 1e6,
+        p.frames,
+        total_calls as f64 / fr,
+        total_ns as f64 / 1e6 / fr
+    );
+    eprintln!("└──────────────────────────────────────────────────────────────────────────────");
+}
+
+/// Trim a builtin name to fit the report column (counts chars, good enough for
+/// the mixed-script names).
+fn truncate_name(s: &str) -> String {
+    let max = 24;
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut t: String = s.chars().take(max - 1).collect();
+        t.push('…');
+        t
+    }
 }

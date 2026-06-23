@@ -99,8 +99,13 @@ pub struct GfxState {
     /// pure painter's sort. Set by `set_depth_test`; default false.
     pub depth_test: bool,
     /// Z-buffer (camera-space depth per pixel); sized to width*height when
-    /// depth testing is on and reset each `present`.
+    /// depth testing is on. Reset to +∞ on the next flush after a screen clear
+    /// (`เติม`) so it persists across a frame's multiple flushes (like
+    /// `glClear(DEPTH)`), then accumulates correct occlusion across all layers.
     pub depth_buf: Vec<f32>,
+    /// True ⇒ the next depth flush clears the z-buffer first (set by `เติม` /
+    /// `clear_depth`). Lets the z-buffer span a frame's many `flush_3d` calls.
+    pub zbuf_needs_clear: bool,
     /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
     /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -135,6 +140,7 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            zbuf_needs_clear: true,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0, // fog off by default
@@ -206,6 +212,8 @@ pub struct GfxState {
     pub depth_test: bool,
     /// Z-buffer (camera-space depth per pixel).
     pub depth_buf: Vec<f32>,
+    /// Mirrors native: next depth flush clears the z-buffer first.
+    pub zbuf_needs_clear: bool,
     /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
     /// to `fog_end`. `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -239,6 +247,7 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            zbuf_needs_clear: true,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
