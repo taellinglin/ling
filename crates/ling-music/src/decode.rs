@@ -23,11 +23,22 @@ pub fn load(path: &str) -> Result<DecodedAudio, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
-    let mut hint = Hint::new();
-    if let Some(ext) = std::path::Path::new(path)
+    let ext = std::path::Path::new(path)
         .extension()
-        .and_then(|e| e.to_str())
-    {
+        .and_then(|e| e.to_str());
+    decode_stream(mss, ext)
+}
+
+/// Decode fully from an in-memory byte buffer.
+pub fn from_bytes(data: &[u8]) -> Result<DecodedAudio, String> {
+    let cursor = std::io::Cursor::new(data.to_vec());
+    let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+    decode_stream(mss, None)
+}
+
+fn decode_stream(mss: MediaSourceStream, ext: Option<&str>) -> Result<DecodedAudio, String> {
+    let mut hint = Hint::new();
+    if let Some(ext) = ext {
         hint.with_extension(ext);
     }
 

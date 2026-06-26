@@ -71,10 +71,40 @@ fn wasm_sleep_ms(ms: i32) {
         if js_sys::Atomics::wait_with_timeout(&i32a, 0, 0, ms as f64).is_ok() {
             return;
         }
-        }
+    }
 
     let end = js_sys::Date::now() + ms as f64;
     while js_sys::Date::now() < end {}
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_fetch_sync(path: &str, response_type: &str, return_expr: &str) -> Result<wasm_bindgen::JsValue, String> {
+    let quoted = js_sys::JSON::stringify(&wasm_bindgen::JsValue::from_str(path))
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_else(|| "\"\"".to_string());
+
+    let script = format!(
+        "(function(){{\n  var xhr = new XMLHttpRequest();\n  xhr.open('GET', {quoted}, false);\n  xhr.responseType = '{response_type}';\n  xhr.send(null);\n  if ((xhr.status|0) !== 200 && (xhr.status|0) !== 0) {{ throw new Error('HTTP ' + xhr.status + ' for ' + {quoted}); }}\n  return {return_expr};\n}})()"
+    );
+
+    js_sys::eval(&script)
+        .map_err(|e| e.as_string().unwrap_or_else(|| format!("JS eval failed: {:?}", e)))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_fetch_bytes(path: &str) -> Result<Vec<u8>, String> {
+    let value = wasm_fetch_sync(path, "arraybuffer", "new Uint8Array(xhr.response || new ArrayBuffer(0))")?;
+    let arr = js_sys::Uint8Array::new(&value);
+    let mut out = vec![0u8; arr.length() as usize];
+    arr.copy_to(&mut out);
+    Ok(out)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_fetch_text(path: &str) -> Result<String, String> {
+    let value = wasm_fetch_sync(path, "text", "String(xhr.responseText || '')")?;
+    Ok(value.as_string().unwrap_or_default())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -178,6 +208,65 @@ impl std::fmt::Display for Value {
             },
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
+    Some(match name {
+        // interface blips (native-only today)
+        "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ"
+        | "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม"
+        | "audio_stop_sfx" | "停止音效" | "効果音停止" | "효과음정지" | "หยุดเอฟเฟกต์ทั้งหมด" => {
+            Value::Unit
+        },
+
+        // music loading / analysis / playback / midi (native-only today)
+        "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง"
+        | "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี"
+        | "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง"
+        | "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
+            Value::Number(-1.0)
+        },
+
+        "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง"
+        | "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที"
+        | "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง"
+        | "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์"
+        | "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต"
+        | "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง"
+        | "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ"
+        | "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
+            Value::Number(0.0)
+        },
+
+        "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง"
+        | "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน"
+        | "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต"
+        | "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
+            Value::Str(String::new())
+        },
+
+        "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง"
+        | "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ"
+        | "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี"
+        | "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี"
+        | "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
+            Value::List(Vec::new())
+        },
+
+        "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง"
+        | "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว"
+        | "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง"
+        | "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง"
+        | "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง"
+        | "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต"
+        | "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม"
+        | "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" => {
+            Value::Unit
+        },
+
+        _ => return None,
+    })
 }
 
 // ─── Control flow ────────────────────────────────────────────────────────────
@@ -785,13 +874,10 @@ pub struct Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     music_init: bool,
     /// Decoded tracks (for analysis + playback), by `music_load` handle.
-    #[cfg(not(target_arch = "wasm32"))]
     tracks: Vec<ling_music::DecodedAudio>,
     /// Parsed `.lrc` lyrics, by `music_lrc` handle.
-    #[cfg(not(target_arch = "wasm32"))]
     lyrics: Vec<ling_music::Lyrics>,
     /// Parsed MIDI songs, by `music_midi_load` handle.
-    #[cfg(not(target_arch = "wasm32"))]
     midis: Vec<ling_music::MidiSong>,
     /// Soft bodies (deformable balls), by `soft_ball` handle.
     soft_bodies: Vec<ling_physics::soft::SoftBody>,
@@ -868,11 +954,8 @@ impl Interpreter {
             music: None,
             #[cfg(not(target_arch = "wasm32"))]
             music_init: false,
-            #[cfg(not(target_arch = "wasm32"))]
             tracks: Vec::new(),
-            #[cfg(not(target_arch = "wasm32"))]
             lyrics: Vec::new(),
-            #[cfg(not(target_arch = "wasm32"))]
             midis: Vec::new(),
             soft_bodies: Vec::new(),
             rigid_world: ling_physics::rigid::PhysicsWorld::new(),
@@ -1112,6 +1195,213 @@ impl Interpreter {
                 false
             },
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn wasm_resolve_source_path(&self, path: &str) -> String {
+        let p = path.trim();
+        if p.is_empty() {
+            return String::new();
+        }
+        if p.contains("://") || p.starts_with('/') || p.starts_with("./") || p.starts_with("../") {
+            return p.to_string();
+        }
+        if let Some(d) = &self.source_dir {
+            let base = d.to_string_lossy().replace('\\', "/");
+            if !base.is_empty() {
+                return format!(
+                    "{}/{}",
+                    base.trim_end_matches('/'),
+                    p.trim_start_matches("./")
+                );
+            }
+        }
+        p.to_string()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn wasm_music_builtin(&mut self, name: &str, args: &[Value]) -> Result<Option<Value>, EvalErr> {
+        match name {
+            // music_load(path) -> track handle (decode from fetched bytes)
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" => {
+                let path = self.arg_str(args, 0, "");
+                let resolved = self.wasm_resolve_source_path(&path);
+                match wasm_fetch_bytes(&resolved)
+                    .and_then(|bytes| ling_music::from_bytes(&bytes).map_err(|e| e.to_string()))
+                {
+                    Ok(t) => {
+                        let id = self.tracks.len();
+                        self.tracks.push(t);
+                        return Ok(Some(Value::Number(id as f64)));
+                    },
+                    Err(e) => {
+                        eprintln!("music_load failed ({path}): {e}");
+                        return Ok(Some(Value::Number(-1.0)));
+                    },
+                }
+            },
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let d = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| t.duration)
+                    .unwrap_or(0.0);
+                return Ok(Some(Value::Number(d as f64)));
+            },
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let b = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::bpm(&t.mono, t.rate))
+                    .unwrap_or(0.0);
+                return Ok(Some(Value::Number(b as f64)));
+            },
+            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let k = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::key_name(&t.mono, t.rate))
+                    .unwrap_or_default();
+                return Ok(Some(Value::Str(k)));
+            },
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let v = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| ling_music::analysis::onsets(&t.mono, t.rate))
+                    .unwrap_or_default();
+                return Ok(Some(Value::List(
+                    v.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                )));
+            },
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let beats = self
+                    .tracks
+                    .get(id as usize)
+                    .map(|t| {
+                        let b = ling_music::analysis::bpm(&t.mono, t.rate);
+                        ling_music::analysis::beat_grid(&t.mono, t.rate, b)
+                    })
+                    .unwrap_or_default();
+                return Ok(Some(Value::List(
+                    beats.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                )));
+            },
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" => {
+                let path = self.arg_str(args, 0, "");
+                let resolved = self.wasm_resolve_source_path(&path);
+                match wasm_fetch_text(&resolved) {
+                    Ok(text) => {
+                        let id = self.lyrics.len();
+                        self.lyrics.push(ling_music::Lyrics::parse(&text));
+                        return Ok(Some(Value::Number(id as f64)));
+                    },
+                    Err(e) => {
+                        eprintln!("music_lrc failed ({path}): {e}");
+                        return Ok(Some(Value::Number(-1.0)));
+                    },
+                }
+            },
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let t = self.arg_num(args, 1, 0.0)? as f32;
+                let line = self
+                    .lyrics
+                    .get(id as usize)
+                    .map(|l| l.line_at(t).to_string())
+                    .unwrap_or_default();
+                return Ok(Some(Value::Str(line)));
+            },
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
+                let path = self.arg_str(args, 0, "");
+                let resolved = self.wasm_resolve_source_path(&path);
+                match wasm_fetch_bytes(&resolved)
+                    .and_then(|bytes| ling_music::midi::from_bytes(&bytes).map_err(|e| e.to_string()))
+                {
+                    Ok(m) => {
+                        let id = self.midis.len();
+                        self.midis.push(m);
+                        return Ok(Some(Value::Number(id as f64)));
+                    },
+                    Err(e) => {
+                        eprintln!("music_midi_load failed ({path}): {e}");
+                        return Ok(Some(Value::Number(-1.0)));
+                    },
+                }
+            },
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let n = self
+                    .midis
+                    .get(id as usize)
+                    .map(|m| m.notes.len())
+                    .unwrap_or(0);
+                return Ok(Some(Value::Number(n as f64)));
+            },
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let mut out = Vec::new();
+                if let Some(m) = self.midis.get(id as usize) {
+                    for n in &m.notes {
+                        out.push(Value::Number(n.time as f64));
+                        out.push(Value::Number(n.midi as f64));
+                    }
+                }
+                return Ok(Some(Value::List(out)));
+            },
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" => {
+                let id = self.arg_num(args, 0, 0.0)? as i64;
+                let mut out = Vec::new();
+                if let Some(m) = self.midis.get(id as usize) {
+                    for n in &m.notes {
+                        out.push(Value::Number(n.time as f64));
+                        out.push(Value::Number(n.midi as f64));
+                        out.push(Value::Number(n.dur as f64));
+                    }
+                }
+                return Ok(Some(Value::List(out)));
+            },
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" => {
+                let delta_ms = self.arg_num(args, 0, 9999.0)? as f32;
+                return Ok(Some(Value::Number(
+                    ling_music::Grade::judge(delta_ms).index() as f64,
+                )));
+            },
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
+                let idx = self.arg_num(args, 0, 4.0)? as i32;
+                return Ok(Some(Value::Str(
+                    ling_music::Grade::from_index(idx).name().to_string(),
+                )));
+            },
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" => {
+                let hz = self.arg_num(args, 0, 0.0)? as f32;
+                return Ok(Some(Value::Str(ling_music::note::hz_to_name(hz))));
+            },
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" => {
+                let midi = match args.get(0) {
+                    Some(Value::Str(s)) => ling_music::note::parse_pitch(s).unwrap_or(69),
+                    Some(Value::Number(n)) => *n as i32,
+                    _ => 69,
+                };
+                return Ok(Some(Value::Number(
+                    ling_music::note::midi_to_hz(midi as f32) as f64,
+                )));
+            },
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" => {
+                let hz = self.arg_num(args, 0, 0.0)? as f32;
+                let target = self.arg_num(args, 1, 0.0)? as f32;
+                return Ok(Some(Value::Number(
+                    ling_music::karaoke::pitch_score(hz, target) as f64,
+                )));
+            },
+            _ => {},
+        }
+        Ok(None)
     }
 
     /// Lay out `text` for font `id` at size `px`, returning every glyph contour as
@@ -1610,6 +1900,12 @@ impl Interpreter {
                 Err(e) => Err(e),
             };
         }
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some(v) = self.wasm_music_builtin(name, &args)? {
+            return Ok(v);
+        }
+
         match name {
             // ── Print ──
             "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести"
@@ -4645,10 +4941,15 @@ impl Interpreter {
 
             // ── File I/O ──────────────────────────────────────────────────────
             "read_file" | "อ่านไฟล์" => {
-                let path = self.arg_str(&args, 0, "");
-                return std::fs::read_to_string(&path)
-                    .map(Value::Str)
-                    .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Str(String::new()));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let path = self.arg_str(&args, 0, "");
+                    return std::fs::read_to_string(&path)
+                        .map(Value::Str)
+                        .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
+                }
             },
             // ── networking (TCP, 2-peer co-op) ───────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
@@ -4736,6 +5037,22 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_any" | "จอยใดๆ" => {
                 return Ok(Value::Number(if gamepad::any_button() { 1.0 } else { 0.0 }));
+            },
+            // wasm32: gamepad not available — return safe no-op values
+            #[cfg(target_arch = "wasm32")]
+            "gamepad_poll" | "จอยโพล"
+            | "gamepad_rumble" | "จอยสั่น" => {
+                return Ok(Value::Unit);
+            },
+            #[cfg(target_arch = "wasm32")]
+            "gamepad_button" | "จอยปุ่ม"
+            | "gamepad_axis" | "จอยแกน"
+            | "gamepad_any" | "จอยใดๆ" => {
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "gamepad_list" | "จอยรายการ" => {
+                return Ok(Value::Str(String::new()));
             },
 
             // ── game AI: neural networks ─────────────────────────────────────
@@ -4896,11 +5213,16 @@ impl Interpreter {
             },
 
             "write_file" | "เขียนไฟล์" => {
-                let path = self.arg_str(&args, 0, "");
-                let content = self.arg_str(&args, 1, "");
-                std::fs::write(&path, content.as_bytes())
-                    .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
+                #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Unit);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let path = self.arg_str(&args, 0, "");
+                    let content = self.arg_str(&args, 1, "");
+                    std::fs::write(&path, content.as_bytes())
+                        .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
+                    return Ok(Value::Unit);
+                }
             },
             "print_file" | "พิมพ์ไฟล์" => {
                 let content = self.arg_str(&args, 0, "");
@@ -8483,6 +8805,11 @@ impl Interpreter {
             }
             let variant = name.rsplit("::").next().unwrap_or(name).to_string();
             return Ok(Value::Variant { enum_name, variant, payload: args });
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        if let Some(v) = wasm_unsupported_builtin(name) {
+            return Ok(v);
         }
 
         Err(EvalErr::from(format!("unknown function '{name}'")))

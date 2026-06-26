@@ -17,7 +17,7 @@ pub mod pitch;
 pub mod rhythm;
 pub mod synth;
 
-pub use decode::{load, DecodedAudio};
+pub use decode::{from_bytes, load, DecodedAudio};
 pub use engine::MusicEngine;
 pub use karaoke::{pitch_score, LyricLine, Lyrics};
 pub use midi::{MidiNote, MidiSong};

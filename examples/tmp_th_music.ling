@@ -1,0 +1,9 @@
+bind start = do {
+    open_window(640, 360)
+    bind m = โหลดเพลง("assets/music/STL.wav")
+    print("music handle = ", m)
+    while window_is_open() {
+        fill(20, 20, 30)
+        present()
+    }
+}
