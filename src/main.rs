@@ -869,11 +869,11 @@ fn mime_for(path: &str) -> &'static str {
 /// Open `url` in the default browser (best-effort, per platform).
 fn open_browser(url: &str) {
     #[cfg(target_os = "windows")]
-    let _ = Command::new("cmd").args(["/C", "start", "", url]).status();
+    let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
     #[cfg(target_os = "macos")]
-    let _ = Command::new("open").arg(url).status();
+    let _ = Command::new("open").arg(url).spawn();
     #[cfg(all(unix, not(target_os = "macos")))]
-    let _ = Command::new("xdg-open").arg(url).status();
+    let _ = Command::new("xdg-open").arg(url).spawn();
 }
 
 // ── Native build ──────────────────────────────────────────────────────────────

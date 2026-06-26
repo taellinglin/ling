@@ -391,5 +391,22 @@ pub fn blit_rgb(buffer: &[u32], width: usize, height: usize) {
 
         // Required so the OffscreenCanvas compositor reads the finished frame.
         ctx.flush();
+
+        // Under Web Workers, the OffscreenCanvas event-loop auto-sync mechanism is blocked
+        // by the synchronous game/render loop. We bypass this by manually transferring 
+        // the frame as an ImageBitmap and posting it to the main thread to render.
+        if let Ok(bitmap) = s.canvas.transfer_to_image_bitmap() {
+            let global = js_sys::global();
+            if let Ok(worker) = global.dyn_into::<web_sys::DedicatedWorkerGlobalScope>() {
+                let array = js_sys::Array::new();
+                array.push(&bitmap);
+                
+                let msg = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("type"), &JsValue::from_str("frame"));
+                let _ = js_sys::Reflect::set(&msg, &JsValue::from_str("bitmap"), &bitmap);
+                
+                let _ = worker.post_message_with_transfer(&msg, &array);
+            }
+        }
     });
 }
