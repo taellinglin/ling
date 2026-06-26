@@ -38,6 +38,12 @@ hmac    = "0.12"
 # Post-quantum (pure Rust, FIPS 203 ML-KEM)
 ml-kem  = { version = "0.3", features = ["getrandom"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Enable browser-compatible entropy source for wasm32-unknown-unknown.
+getrandom = { version = "0.2", features = ["js"] }
+# ml-kem pulls getrandom 0.4 via crypto-common; enable its web backend too.
+getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+
 [lib]
 name = "ling_crypto"
 path = "src/lib.rs"

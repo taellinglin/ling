@@ -1,0 +1,286 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2232" viewBox="0 0 1200 2232">
+<rect width="1200" height="2232" fill="#14233D"/>
+<text x="40.0" y="64.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="30" fill="#E6ECF5" text-anchor="start" font-weight="bold">Ling 2030 — AGC Benchmark</text>
+<text x="40.0" y="90.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#8D99AE" text-anchor="start" font-weight="normal">Audio · Graphics · Cryptography compute suite</text>
+<rect x="40.0" y="118.0" width="1120.0" height="70.0" rx="10" fill="#1C2F4F" opacity="1.0"/>
+<text x="60.0" y="146.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="17" fill="#E8B84A" text-anchor="start" font-weight="bold">Cross-language benchmark with identical AGC algorithms</text>
+<text x="60.0" y="170.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">Lower bars are faster (log-scaled). Ratios are vs fastest per test.</text>
+<text x="40.0" y="210.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="18" fill="#E6ECF5" text-anchor="start" font-weight="bold">Overall — geometric-mean slowdown vs fastest</text>
+<text x="40.0" y="244.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#E84A6F" text-anchor="start" font-weight="bold">Rust</text>
+<rect x="400.0" y="230.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="230.0" width="9.1" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="419.1" y="244.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">1× (fastest)</text>
+<text x="40.0" y="270.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#7FB069" text-anchor="start" font-weight="bold">Go</text>
+<rect x="400.0" y="256.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="256.0" width="49.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="459.0" y="270.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">1.4×</text>
+<text x="40.0" y="296.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#3B6EA5" text-anchor="start" font-weight="bold">C++</text>
+<rect x="400.0" y="282.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="282.0" width="123.7" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="533.7" y="296.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.2×</text>
+<text x="40.0" y="322.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#2A9D8F" text-anchor="start" font-weight="bold">C</text>
+<rect x="400.0" y="308.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="308.0" width="123.9" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="533.9" y="322.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.3×</text>
+<text x="40.0" y="348.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#E8B84A" text-anchor="start" font-weight="bold">Ling</text>
+<rect x="400.0" y="334.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="334.0" width="198.5" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="608.5" y="348.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">3.7×</text>
+<text x="40.0" y="374.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#8D99AE" text-anchor="start" font-weight="bold">Python</text>
+<rect x="400.0" y="360.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>
+<rect x="400.0" y="360.0" width="620.0" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="1030.0" y="374.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">65×</text>
+<text x="40.0" y="404.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="18" fill="#E6ECF5" text-anchor="start" font-weight="bold">Per-benchmark</text>
+<text x="40.0" y="444.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E8B84A" text-anchor="start" font-weight="bold">audio_fm_poly</text>
+<text x="250.0" y="444.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">AUDIO — polyphonic FM synthesis</text>
+<text x="52.0" y="464.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="450.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="450.0" width="207.5" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="617.5" y="464.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">111.2 ms   ·   5.6×</text>
+<text x="52.0" y="490.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="476.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="476.0" width="207.6" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="617.6" y="490.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">111.3 ms   ·   5.6×</text>
+<text x="52.0" y="516.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="502.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="502.0" width="4.0" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="414.0" y="516.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">20.0 ms   ·   1× (fastest)</text>
+<text x="52.0" y="542.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="528.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="528.0" width="64.4" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="474.4" y="542.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">33.2 ms   ·   1.7×</text>
+<text x="52.0" y="568.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="554.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="554.0" width="384.5" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="794.5" y="568.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">495.7 ms   ·   25×</text>
+<text x="52.0" y="594.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="580.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="580.0" width="79.5" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="489.5" y="594.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">37.7 ms   ·   1.9×</text>
+<text x="40.0" y="636.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E8B84A" text-anchor="start" font-weight="bold">audio_iir_bank</text>
+<text x="250.0" y="636.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">AUDIO — IIR filter-bank recurrence</text>
+<text x="52.0" y="656.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="642.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="642.0" width="221.2" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="631.2" y="656.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">15.7 ms   ·   6.3×</text>
+<text x="52.0" y="682.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="668.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="668.0" width="220.7" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="630.7" y="682.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">15.6 ms   ·   6.2×</text>
+<text x="52.0" y="708.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="694.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="694.0" width="9.4" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="419.4" y="708.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.6 ms   ·   1× (fastest)</text>
+<text x="52.0" y="734.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="720.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="720.0" width="4.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="414.0" y="734.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.5 ms   ·   1× (fastest)</text>
+<text x="52.0" y="760.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="746.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="746.0" width="429.5" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="839.5" y="760.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">91.2 ms   ·   36×</text>
+<text x="52.0" y="786.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="772.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="772.0" width="94.2" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="504.2" y="786.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">5.4 ms   ·   2.1×</text>
+<text x="40.0" y="828.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E8B84A" text-anchor="start" font-weight="bold">audio_delay_net</text>
+<text x="250.0" y="828.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">AUDIO — delay-network recurrence</text>
+<text x="52.0" y="848.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="834.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="834.0" width="234.4" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="644.4" y="848.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">15.8 ms   ·   7.0×</text>
+<text x="52.0" y="874.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="860.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="860.0" width="232.7" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="642.7" y="874.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">15.6 ms   ·   6.9×</text>
+<text x="52.0" y="900.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="886.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="886.0" width="4.0" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="414.0" y="900.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.3 ms   ·   1× (fastest)</text>
+<text x="52.0" y="926.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="912.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="912.0" width="15.7" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="425.7" y="926.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.5 ms   ·   1.1×</text>
+<text x="52.0" y="952.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="938.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="938.0" width="409.0" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="819.0" y="952.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">69.3 ms   ·   31×</text>
+<text x="52.0" y="978.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="964.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="964.0" width="54.2" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="464.2" y="978.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">3.5 ms   ·   1.5×</text>
+<text x="40.0" y="1020.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#2A9D8F" text-anchor="start" font-weight="bold">gfx_mandelbrot</text>
+<text x="250.0" y="1020.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">GRAPHICS — complex float iterations</text>
+<text x="52.0" y="1040.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1026.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1026.0" width="11.2" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="421.2" y="1040.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.2 ms   ·   1.1×</text>
+<text x="52.0" y="1066.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="1052.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1052.0" width="12.1" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="422.1" y="1066.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.2 ms   ·   1.1×</text>
+<text x="52.0" y="1092.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="1078.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1078.0" width="14.6" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="424.6" y="1092.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.3 ms   ·   1.1×</text>
+<text x="52.0" y="1118.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="1104.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1104.0" width="4.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="414.0" y="1118.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.1 ms   ·   1× (fastest)</text>
+<text x="52.0" y="1144.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="1130.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1130.0" width="533.3" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="943.3" y="1144.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">180.4 ms   ·   87×</text>
+<text x="52.0" y="1170.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="1156.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1156.0" width="128.8" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="538.8" y="1170.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">5.9 ms   ·   2.9×</text>
+<text x="40.0" y="1212.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#2A9D8F" text-anchor="start" font-weight="bold">gfx_particles</text>
+<text x="250.0" y="1212.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">GRAPHICS — particle integrator</text>
+<text x="52.0" y="1232.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1218.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1218.0" width="12.2" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="422.2" y="1232.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">7.0 ms   ·   1.1×</text>
+<text x="52.0" y="1258.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="1244.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1244.0" width="12.3" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="422.3" y="1258.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">7.0 ms   ·   1.1×</text>
+<text x="52.0" y="1284.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="1270.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1270.0" width="19.5" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="429.5" y="1284.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">7.4 ms   ·   1.1×</text>
+<text x="52.0" y="1310.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="1296.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1296.0" width="4.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="414.0" y="1310.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">6.5 ms   ·   1× (fastest)</text>
+<text x="52.0" y="1336.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="1322.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1322.0" width="466.5" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="876.5" y="1336.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">323.1 ms   ·   50×</text>
+<text x="52.0" y="1362.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="1348.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1348.0" width="139.2" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="549.2" y="1362.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">20.4 ms   ·   3.1×</text>
+<text x="40.0" y="1404.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#2A9D8F" text-anchor="start" font-weight="bold">gfx_triangle_math</text>
+<text x="250.0" y="1404.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">GRAPHICS — edge-function triangle math</text>
+<text x="52.0" y="1424.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1410.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1410.0" width="26.2" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="436.2" y="1424.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">631 µs   ·   1.2×</text>
+<text x="52.0" y="1450.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="1436.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1436.0" width="27.9" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="437.9" y="1450.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">640 µs   ·   1.2×</text>
+<text x="52.0" y="1476.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="1462.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1462.0" width="4.0" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="414.0" y="1476.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">523 µs   ·   1× (fastest)</text>
+<text x="52.0" y="1502.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="1488.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1488.0" width="4.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="414.0" y="1502.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">0 µs   ·   1× (fastest)</text>
+<text x="52.0" y="1528.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="1514.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1514.0" width="602.8" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="1012.8" y="1528.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">82.1 ms   ·   157×</text>
+<text x="52.0" y="1554.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="1540.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1540.0" width="223.2" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="633.2" y="1554.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">3.3 ms   ·   6.4×</text>
+<text x="40.0" y="1596.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E84A6F" text-anchor="start" font-weight="bold">crypto_modexp</text>
+<text x="250.0" y="1596.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">CRYPTO — modular exponentiation</text>
+<text x="52.0" y="1616.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1602.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1602.0" width="94.0" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="504.0" y="1616.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">5.0 ms   ·   2.1×</text>
+<text x="52.0" y="1642.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="1628.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1628.0" width="92.4" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="502.4" y="1642.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">4.9 ms   ·   2.1×</text>
+<text x="52.0" y="1668.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="1654.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1654.0" width="4.0" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="414.0" y="1668.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.3 ms   ·   1× (fastest)</text>
+<text x="52.0" y="1694.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="1680.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1680.0" width="101.1" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="511.1" y="1694.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">5.3 ms   ·   2.3×</text>
+<text x="52.0" y="1720.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="1706.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1706.0" width="620.0" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="1030.0" y="1720.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">423.9 ms   ·   182×</text>
+<text x="52.0" y="1746.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="1732.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1732.0" width="331.7" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="741.7" y="1746.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">37.1 ms   ·   16×</text>
+<text x="40.0" y="1788.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E84A6F" text-anchor="start" font-weight="bold">crypto_feistel</text>
+<text x="250.0" y="1788.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">CRYPTO — Feistel-round arithmetic</text>
+<text x="52.0" y="1808.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1794.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1794.0" width="90.5" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="500.5" y="1808.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">12.9 ms   ·   2.1×</text>
+<text x="52.0" y="1834.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="1820.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1820.0" width="90.3" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="500.3" y="1834.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">12.9 ms   ·   2.1×</text>
+<text x="52.0" y="1860.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="1846.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1846.0" width="4.0" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="414.0" y="1860.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">6.2 ms   ·   1× (fastest)</text>
+<text x="52.0" y="1886.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="1872.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1872.0" width="116.5" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="526.5" y="1886.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">16.1 ms   ·   2.6×</text>
+<text x="52.0" y="1912.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="1898.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1898.0" width="544.6" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="954.6" y="1912.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">597.6 ms   ·   96×</text>
+<text x="52.0" y="1938.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="1924.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1924.0" width="245.3" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="655.3" y="1938.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">47.7 ms   ·   7.7×</text>
+<text x="40.0" y="1980.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E84A6F" text-anchor="start" font-weight="bold">crypto_lcg_stream</text>
+<text x="250.0" y="1980.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">CRYPTO — stream-state mixer</text>
+<text x="52.0" y="2000.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#2A9D8F" text-anchor="start" font-weight="normal">C</text>
+<rect x="400.0" y="1986.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="1986.0" width="4.3" height="16.0" rx="4" fill="#2A9D8F" opacity="1.0"/>
+<text x="414.3" y="2000.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.4 ms   ·   1× (fastest)</text>
+<text x="52.0" y="2026.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#3B6EA5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="400.0" y="2012.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="2012.0" width="4.0" height="16.0" rx="4" fill="#3B6EA5" opacity="1.0"/>
+<text x="414.0" y="2026.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.4 ms   ·   1× (fastest)</text>
+<text x="52.0" y="2052.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E84A6F" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="400.0" y="2038.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="2038.0" width="9.1" height="16.0" rx="4" fill="#E84A6F" opacity="1.0"/>
+<text x="419.1" y="2052.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.5 ms   ·   1× (fastest)</text>
+<text x="52.0" y="2078.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#7FB069" text-anchor="start" font-weight="normal">Go</text>
+<rect x="400.0" y="2064.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="2064.0" width="11.0" height="16.0" rx="4" fill="#7FB069" opacity="1.0"/>
+<text x="421.0" y="2078.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">2.6 ms   ·   1.1×</text>
+<text x="52.0" y="2104.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#8D99AE" text-anchor="start" font-weight="normal">Python</text>
+<rect x="400.0" y="2090.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="2090.0" width="493.7" height="16.0" rx="4" fill="#8D99AE" opacity="1.0"/>
+<text x="903.7" y="2104.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">150.9 ms   ·   63×</text>
+<text x="52.0" y="2130.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E8B84A" text-anchor="start" font-weight="normal">Ling</text>
+<rect x="400.0" y="2116.0" width="620.0" height="16.0" rx="4" fill="#2C4067" opacity="0.3"/>
+<rect x="400.0" y="2116.0" width="144.2" height="16.0" rx="4" fill="#E8B84A" opacity="1.0"/>
+<text x="554.2" y="2130.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">7.9 ms   ·   3.3×</text>
+<rect x="40.0" y="2154.0" width="1120.0" height="1.0" rx="0" fill="#2C4067" opacity="1.0"/>
+<text x="40.0" y="2178.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">machine: Intel64 Family 6 Model 183 Stepping 1, GenuineIntel  ·  Windows-10-10.0.26200-SP0</text>
+<text x="40.0" y="2196.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">min of 3 runs · identical algorithms/inputs across languages · C/C++ -O2 -ffp-contract=off · Rust -O · Go build · CPython 3.10.6</text>
+<text x="40.0" y="2214.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">generated 2026-06-25 12:49 · benchmarks/agc_bench.*</text>
+<rect x="998.0" y="40.0" width="162.0" height="124.0" rx="8" fill="#1C2F4F" opacity="0.9"/>
+<text x="1010.0" y="56.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">legend</text>
+<rect x="1010.0" y="64.0" width="12.0" height="12.0" rx="2" fill="#2A9D8F" opacity="1.0"/>
+<text x="1030.0" y="74.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">C</text>
+<rect x="1010.0" y="82.0" width="12.0" height="12.0" rx="2" fill="#3B6EA5" opacity="1.0"/>
+<text x="1030.0" y="92.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">C++</text>
+<rect x="1010.0" y="100.0" width="12.0" height="12.0" rx="2" fill="#E84A6F" opacity="1.0"/>
+<text x="1030.0" y="110.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">Rust</text>
+<rect x="1010.0" y="118.0" width="12.0" height="12.0" rx="2" fill="#7FB069" opacity="1.0"/>
+<text x="1030.0" y="128.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">Go</text>
+<rect x="1010.0" y="136.0" width="12.0" height="12.0" rx="2" fill="#8D99AE" opacity="1.0"/>
+<text x="1030.0" y="146.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">Python</text>
+<rect x="1010.0" y="154.0" width="12.0" height="12.0" rx="2" fill="#E8B84A" opacity="1.0"/>
+<text x="1030.0" y="164.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#E6ECF5" text-anchor="start" font-weight="normal">Ling</text>
+</svg>

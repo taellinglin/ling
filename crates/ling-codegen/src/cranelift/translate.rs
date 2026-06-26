@@ -210,11 +210,33 @@ pub(crate) struct TransCtx<'a> {
     pub fname: &'a str,
 }
 
+/// The static register representation of a value the translator produces.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Repr {
+    /// NaN-boxed: a raw `f64` bit pattern or a tagged singleton. The default and
+    /// the only representation crossing call/print/return boundaries.
+    Boxed,
+    /// A raw native `i64` integer — only for locals/temps `numtype` proved
+    /// integral, kept unboxed so loops avoid the NaN-box round-trip.
+    Int,
+}
+
 pub(crate) fn translate_stmt(stmt: &Statement, builder: &mut FunctionBuilder, ctx: &TransCtx) {
     if let StatementKind::Assign(local, rvalue) = &stmt.kind {
-        let val = translate_rvalue(rvalue, builder, ctx);
+        let (val, repr) = translate_rvalue(rvalue, builder, ctx);
         if let Some(&var) = ctx.vars.get(local) {
-            builder.def_var(var, val);
+            // Coerce the produced value into the destination local's static
+            // representation. The analysis guarantees an `Int` local only has
+            // integer writers, so (Boxed, dest=Int) is the rare divisor-fallback
+            // case where an integer rides the float path — a truncating round-trip
+            // recovers it exactly.
+            let dest_int = ctx.nt.local_is_int(ctx.fname, local.0);
+            let stored = match (repr, dest_int) {
+                (Repr::Int, false) => int_to_boxed(builder, val),
+                (Repr::Boxed, true) => boxed_to_int(builder, val),
+                _ => val,
+            };
+            builder.def_var(var, stored);
         }
     }
 }
@@ -223,23 +245,23 @@ pub(crate) fn translate_rvalue(
     rvalue: &Rvalue,
     builder: &mut FunctionBuilder,
     ctx: &TransCtx,
-) -> Value {
+) -> (Value, Repr) {
     match rvalue {
-        Rvalue::Use(op) => translate_op(op, builder, ctx),
-        Rvalue::BinaryOp(op, lhs, rhs) => {
-            let tys = OperandTypes {
-                both_num: ctx.nt.operand_is_num(ctx.fname, lhs)
-                    && ctx.nt.operand_is_num(ctx.fname, rhs),
-                l_bool: ctx.nt.operand_is_bool(ctx.fname, lhs),
-                r_bool: ctx.nt.operand_is_bool(ctx.fname, rhs),
-            };
-            let lv = translate_op(lhs, builder, ctx);
-            let rv = translate_op(rhs, builder, ctx);
-            translate_binop(op, builder, lv, rv, tys, ctx.runtime_refs)
+        Rvalue::Use(op) => {
+            if ctx.nt.operand_is_int(ctx.fname, op) {
+                (translate_op_int(op, builder, ctx), Repr::Int)
+            } else {
+                (translate_op(op, builder, ctx), Repr::Boxed)
+            }
+        },
+        Rvalue::BinaryOp(op, lhs, rhs) => translate_binop_rvalue(op, lhs, rhs, builder, ctx),
+        Rvalue::UnaryOp(UnOp::Neg, operand) if ctx.nt.operand_is_int(ctx.fname, operand) => {
+            let v = translate_op_int(operand, builder, ctx);
+            (builder.ins().ineg(v), Repr::Int)
         },
         Rvalue::UnaryOp(op, operand) => {
             let v = translate_op(operand, builder, ctx);
-            translate_unop(op, builder, v, ctx.runtime_refs)
+            (translate_unop(op, builder, v, ctx.runtime_refs), Repr::Boxed)
         },
         Rvalue::Call { func: callee, args } => {
             let callee_name = match callee {
@@ -250,7 +272,7 @@ pub(crate) fn translate_rvalue(
             for arg in args {
                 cal_args.push(translate_op(arg, builder, ctx));
             }
-            if let Some(&fr) = ctx.func_refs.get(&callee_name) {
+            let v = if let Some(&fr) = ctx.func_refs.get(&callee_name) {
                 let inst = builder.ins().call(fr, &cal_args);
                 builder.inst_results(inst)[0]
             } else {
@@ -261,7 +283,8 @@ pub(crate) fn translate_rvalue(
                     ctx.builtin_gvs,
                     ctx.runtime_refs,
                 )
-            }
+            };
+            (v, Repr::Boxed)
         },
         Rvalue::Aggregate(_, ops) => {
             let mut list = emit_runtime_call0(builder, "__ling_list_new", ctx.runtime_refs);
@@ -269,27 +292,105 @@ pub(crate) fn translate_rvalue(
                 let v = translate_op(op, builder, ctx);
                 list = emit_runtime_call2(builder, "__ling_list_push", list, v, ctx.runtime_refs);
             }
-            list
+            (list, Repr::Boxed)
         },
         Rvalue::GetIndex(obj, idx) => {
             let obj_val = translate_op(obj, builder, ctx);
             let idx_val = translate_op(idx, builder, ctx);
-            emit_runtime_call2(
+            let v = emit_runtime_call2(
                 builder,
                 "__ling_list_get",
                 obj_val,
                 idx_val,
                 ctx.runtime_refs,
-            )
+            );
+            (v, Repr::Boxed)
         },
-        _ => int_zero(builder),
+        _ => (int_zero(builder), Repr::Boxed),
     }
 }
 
+/// Lower a binary op, preferring native `i64` arithmetic when both operands are
+/// statically integral (no NaN-box bitcasts, integer compares, strength-reducible
+/// `%`). Falls back to the boxed `f64`/runtime path otherwise.
+fn translate_binop_rvalue(
+    op: &BinOp,
+    lhs: &Operand,
+    rhs: &Operand,
+    builder: &mut FunctionBuilder,
+    ctx: &TransCtx,
+) -> (Value, Repr) {
+    let both_int =
+        ctx.nt.operand_is_int(ctx.fname, lhs) && ctx.nt.operand_is_int(ctx.fname, rhs);
+    if both_int {
+        match op {
+            BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                let a = translate_op_int(lhs, builder, ctx);
+                let b = translate_op_int(rhs, builder, ctx);
+                let r = match op {
+                    BinOp::Add => builder.ins().iadd(a, b),
+                    BinOp::Sub => builder.ins().isub(a, b),
+                    _ => builder.ins().imul(a, b),
+                };
+                return (r, Repr::Int);
+            },
+            // `srem` traps on a zero divisor and on `INT_MIN % -1`, which the f64
+            // path never does. Only take the integer path for a safe constant
+            // divisor; variable divisors fall through to the boxed float remainder.
+            BinOp::Rem => {
+                if let Operand::Constant(Constant::I64(c)) = rhs {
+                    if *c != 0 && *c != -1 {
+                        let a = translate_op_int(lhs, builder, ctx);
+                        let b = builder.ins().iconst(types::I64, *c);
+                        return (builder.ins().srem(a, b), Repr::Int);
+                    }
+                }
+            },
+            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                let a = translate_op_int(lhs, builder, ctx);
+                let b = translate_op_int(rhs, builder, ctx);
+                let cc = match op {
+                    BinOp::Eq => IntCC::Equal,
+                    BinOp::Ne => IntCC::NotEqual,
+                    BinOp::Lt => IntCC::SignedLessThan,
+                    BinOp::Le => IntCC::SignedLessThanOrEqual,
+                    BinOp::Gt => IntCC::SignedGreaterThan,
+                    _ => IntCC::SignedGreaterThanOrEqual,
+                };
+                let cmp = builder.ins().icmp(cc, a, b);
+                let t = builder.ins().iconst(types::I64, runtime::TAG_TRUE as i64);
+                let f = builder.ins().iconst(types::I64, runtime::TAG_FALSE as i64);
+                return (builder.ins().select(cmp, t, f), Repr::Boxed);
+            },
+            _ => {},
+        }
+    }
+    let tys = OperandTypes {
+        both_num: ctx.nt.operand_is_num(ctx.fname, lhs) && ctx.nt.operand_is_num(ctx.fname, rhs),
+        l_bool: ctx.nt.operand_is_bool(ctx.fname, lhs),
+        r_bool: ctx.nt.operand_is_bool(ctx.fname, rhs),
+    };
+    let lv = translate_op(lhs, builder, ctx);
+    let rv = translate_op(rhs, builder, ctx);
+    (
+        translate_binop(op, builder, lv, rv, tys, ctx.runtime_refs),
+        Repr::Boxed,
+    )
+}
+
+/// Evaluate an operand as a NaN-boxed value (the universal representation).
+/// Integer-typed locals are stored raw, so they are boxed back here on demand.
 pub(crate) fn translate_op(op: &Operand, builder: &mut FunctionBuilder, ctx: &TransCtx) -> Value {
     let TransCtx { vars, string_gvs, runtime_refs, .. } = ctx;
     match op {
-        Operand::Copy(l) | Operand::Move(l) => builder.use_var(vars[l]),
+        Operand::Copy(l) | Operand::Move(l) => {
+            let raw = builder.use_var(vars[l]);
+            if ctx.nt.local_is_int(ctx.fname, l.0) {
+                int_to_boxed(builder, raw)
+            } else {
+                raw
+            }
+        },
         Operand::Constant(c) => match c {
             Constant::I64(v) => {
                 let bits = (*v as f64).to_bits();
@@ -318,6 +419,27 @@ pub(crate) fn translate_op(op: &Operand, builder: &mut FunctionBuilder, ctx: &Tr
             Constant::Function(_) | Constant::GlobalData(_) | Constant::None => {
                 builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64)
             },
+        },
+    }
+}
+
+/// Evaluate an operand as a raw native `i64`. Called only on operands the type
+/// analysis proved integral (an `Int` local or an `I64` literal); any other input
+/// is converted defensively so a misclassification degrades to correct-but-slower
+/// rather than to garbage.
+pub(crate) fn translate_op_int(
+    op: &Operand,
+    builder: &mut FunctionBuilder,
+    ctx: &TransCtx,
+) -> Value {
+    match op {
+        Operand::Constant(Constant::I64(v)) => builder.ins().iconst(types::I64, *v),
+        Operand::Copy(l) | Operand::Move(l) if ctx.nt.local_is_int(ctx.fname, l.0) => {
+            builder.use_var(ctx.vars[l])
+        },
+        _ => {
+            let boxed = translate_op(op, builder, ctx);
+            boxed_to_int(builder, boxed)
         },
     }
 }
@@ -537,6 +659,21 @@ pub(crate) fn i64_as_f64(builder: &mut FunctionBuilder, v: Value) -> Value {
 
 pub(crate) fn f64_as_i64(builder: &mut FunctionBuilder, v: Value) -> Value {
     builder.ins().bitcast(types::I64, MemFlags::new(), v)
+}
+
+/// NaN-box a raw integer: widen to `f64`, then reinterpret its bits. Exact for
+/// any value within ±2^53 (Ling numbers are `f64`, so larger integers were never
+/// representable losslessly anyway).
+pub(crate) fn int_to_boxed(builder: &mut FunctionBuilder, v: Value) -> Value {
+    let f = builder.ins().fcvt_from_sint(types::F64, v);
+    f64_as_i64(builder, f)
+}
+
+/// Unbox a NaN-boxed number to a raw integer, truncating toward zero. Saturating
+/// (`fcvt_to_sint_sat`) so a stray non-integer or NaN can never trap.
+pub(crate) fn boxed_to_int(builder: &mut FunctionBuilder, v: Value) -> Value {
+    let f = i64_as_f64(builder, v);
+    builder.ins().fcvt_to_sint_sat(types::I64, f)
 }
 
 pub(crate) fn emit_f64_or_runtime(

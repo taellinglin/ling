@@ -58,6 +58,8 @@ impl Default for ShadowParams {
 pub struct GfxState {
     pub window: Option<minifb::Window>,
     pub buffer: Vec<u32>,
+    /// Reusable scratch for `distort()` — avoids an 8 MB clone+alloc every frame.
+    pub distort_buf: Vec<u32>,
     pub width: usize,
     pub height: usize,
     /// Current pen colour (0x00RRGGBB) set by `สีดินสอ` / `set_color`.
@@ -111,6 +113,9 @@ pub struct GfxState {
     pub fog_color: u32,
     pub fog_start: f32,
     pub fog_end: f32,
+    /// Perf test: force flat *unlit* shading — triangle/mesh draws skip
+    /// `compute_lit_color` and use the raw pen colour. Toggle via `set_flat_shade`.
+    pub flat_shade: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -119,6 +124,7 @@ impl GfxState {
         Self {
             window: None,
             buffer: Vec::new(),
+            distort_buf: Vec::new(),
             width: 0,
             height: 0,
             color: 0x00FF_FFFF,
@@ -144,6 +150,7 @@ impl GfxState {
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0, // fog off by default
+            flat_shade: false,
         }
     }
 
@@ -198,6 +205,8 @@ pub struct GfxState {
     /// Software framebuffer — the same CPU raster path as native. On the web,
     /// `present()` uploads this to the canvas, so 2-D builtins render identically.
     pub buffer: Vec<u32>,
+    /// Reusable scratch for `distort()` — avoids a per-frame clone.
+    pub distort_buf: Vec<u32>,
     /// Blend mode for pixel writes: 0 = normal (overwrite), 1 = additive.
     pub blend: u8,
     /// Pen opacity [0..1] for the alpha-blended fills (mirrors native).
@@ -219,6 +228,8 @@ pub struct GfxState {
     pub fog_color: u32,
     pub fog_start: f32,
     pub fog_end: f32,
+    /// Perf test: force flat *unlit* shading (mirrors native).
+    pub flat_shade: bool,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -240,6 +251,7 @@ impl GfxState {
             // Sized to width*height so the CPU-raster builtins (vtex / ui_*) can
             // write safely; `present()` uploads it to the canvas.
             buffer: vec![0u32; 800 * 600],
+            distort_buf: Vec::new(),
             blend: 0,
             alpha: 1.0,
             shadow: ShadowParams::default(),
@@ -251,6 +263,7 @@ impl GfxState {
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
+            flat_shade: false,
         }
     }
 

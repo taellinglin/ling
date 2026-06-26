@@ -1,0 +1,218 @@
+// Ling AGC benchmark suite (Audio / Graphics / Crypto)
+// Emits: BENCH <name> RESULT <checksum> TIME <seconds>
+
+fn floor_half(n: number) -> number {
+    (n - (n % 2)) / 2
+}
+
+fn modexp(base: number, exp: number, m: number) -> number {
+    bind b = base % m
+    bind e = exp
+    bind out = 1
+    while e > 0 {
+        if e % 2 == 1 {
+            bind out = (out * b) % m
+        }
+        bind b = (b * b) % m
+        bind e = floor_half(e)
+    }
+    out
+}
+
+bind start = do {
+    bind PI = 3.141592653589793
+
+    // Audio 1: poly-FM synth
+    bind t0 = time_now()
+    bind N = 250000
+    bind sr = 48000.0
+    bind sum = 0.0
+    bind j = 0
+    while j < N {
+        bind t = j / sr
+        bind v = 0.0
+        bind vi = 1
+        while vi <= 8 {
+            bind f = 110.0 * vi
+            bind v = v + sin(2.0 * PI * f * t + 0.5 * sin(2.0 * PI * (f * 2.0) * t))
+            bind vi = vi + 1
+        }
+        bind sum = sum + v
+        bind j = j + 1
+    }
+    print("BENCH audio_fm_poly RESULT ", sum, " TIME ", time_now() - t0)
+
+    // Audio 2: IIR filter bank
+    bind t0 = time_now()
+    bind y1 = 0.0
+    bind y2 = 0.0
+    bind y3 = 0.0
+    bind y4 = 0.0
+    bind acc = 0.0
+    bind n = 0
+    while n < 300000 {
+        bind x = sin(0.013 * n) + 0.5 * sin(0.017 * n)
+        bind y1 = 0.995 * y1 + 0.005 * x
+        bind y2 = 0.990 * y2 + 0.010 * y1
+        bind y3 = 0.985 * y3 + 0.015 * y2
+        bind y4 = 0.980 * y4 + 0.020 * y3
+        bind acc = acc + y4
+        bind n = n + 1
+    }
+    print("BENCH audio_iir_bank RESULT ", acc, " TIME ", time_now() - t0)
+
+    // Audio 3: delay-network style recurrence
+    bind t0 = time_now()
+    bind s1 = 0.0
+    bind s2 = 0.0
+    bind s3 = 0.0
+    bind s4 = 0.0
+    bind s5 = 0.0
+    bind s6 = 0.0
+    bind s7 = 0.0
+    bind s8 = 0.0
+    bind a2 = 0.0
+    bind i = 0
+    while i < 300000 {
+        bind x = sin(0.011 * i) + 0.25 * sin(0.029 * i)
+        bind y = x + 0.7 * s8
+        bind s8 = s7
+        bind s7 = s6
+        bind s6 = s5
+        bind s5 = s4
+        bind s4 = s3
+        bind s3 = s2
+        bind s2 = s1
+        bind s1 = y
+        bind a2 = a2 + y
+        bind i = i + 1
+    }
+    print("BENCH audio_delay_net RESULT ", a2, " TIME ", time_now() - t0)
+
+    // Graphics 1: mandelbrot
+    bind t0 = time_now()
+    bind W = 240
+    bind H = 180
+    bind maxiter = 120
+    bind total = 0
+    bind py = 0
+    while py < H {
+        bind px = 0
+        while px < W {
+            bind x0 = (px / W) * 3.5 - 2.5
+            bind y0 = (py / H) * 2.0 - 1.0
+            bind zx = 0.0
+            bind zy = 0.0
+            bind it = 0
+            while zx * zx + zy * zy <= 4.0 && it < maxiter {
+                bind xt = zx * zx - zy * zy + x0
+                bind zy = 2.0 * zx * zy + y0
+                bind zx = xt
+                bind it = it + 1
+            }
+            bind total = total + it
+            bind px = px + 1
+        }
+        bind py = py + 1
+    }
+    print("BENCH gfx_mandelbrot RESULT ", total, " TIME ", time_now() - t0)
+
+    // Graphics 2: particle integrator
+    bind t0 = time_now()
+    bind psum = 0.0
+    bind p = 0
+    while p < 20000 {
+        bind x = (p % 257) * 0.01 - 1.28
+        bind y = (p % 263) * 0.01 - 1.31
+        bind vx = (p % 17) * 0.001
+        bind vy = (p % 19) * 0.001
+        bind s = 0
+        while s < 120 {
+            bind ax = 0.0 - 0.0007 * x + 0.0003 * y
+            bind ay = 0.0 - 0.0007 * y - 0.0003 * x
+            bind vx = (vx + ax) * 0.999
+            bind vy = (vy + ay) * 0.999
+            bind x = x + vx
+            bind y = y + vy
+            bind s = s + 1
+        }
+        bind psum = psum + x + y
+        bind p = p + 1
+    }
+    print("BENCH gfx_particles RESULT ", psum, " TIME ", time_now() - t0)
+
+    // Graphics 3: triangle edge-function math
+    bind t0 = time_now()
+    bind cover = 0
+    bind tri = 0
+    while tri < 200000 {
+        bind x0 = tri % 97
+        bind y0 = tri % 89
+        bind x1 = x0 + 17
+        bind y1 = y0 + 9
+        bind x2 = x0 + 6
+        bind y2 = y0 + 23
+        bind sx = (tri * 13) % 31
+        bind sy = (tri * 7) % 29
+        bind e0 = (sx - x0) * (y1 - y0) - (sy - y0) * (x1 - x0)
+        bind e1 = (sx - x1) * (y2 - y1) - (sy - y1) * (x2 - x1)
+        bind e2 = (sx - x2) * (y0 - y2) - (sy - y2) * (x0 - x2)
+        bind inside = 0
+        if e0 >= 0 {
+            if e1 >= 0 {
+                if e2 >= 0 {
+                    bind inside = 1
+                }
+            }
+        }
+        bind cover = cover + inside
+        bind tri = tri + 1
+    }
+    print("BENCH gfx_triangle_math RESULT ", cover, " TIME ", time_now() - t0)
+
+    // Crypto 1: modular exponentiation
+    bind t0 = time_now()
+    bind cm1 = 0
+    bind m = 1
+    while m <= 200000 {
+        bind base = (m * 17 + 3) % 65521
+        bind r = modexp(base, 65537, 65521)
+        bind cm1 = cm1 + r
+        bind m = m + 1
+    }
+    print("BENCH crypto_modexp RESULT ", cm1, " TIME ", time_now() - t0)
+
+    // Crypto 2: feistel rounds over modular domain
+    bind t0 = time_now()
+    bind cm2 = 0
+    bind b = 1
+    while b <= 300000 {
+        bind l = (b * 73 + 19) % 104729
+        bind r = (b * 91 + 7) % 104729
+        bind rd = 0
+        while rd < 12 {
+            bind f = (r * r + (rd + 1) * 31 + r * 17) % 104729
+            bind nl = r
+            bind nr = (l + f) % 104729
+            bind l = nl
+            bind r = nr
+            bind rd = rd + 1
+        }
+        bind cm2 = cm2 + l + r
+        bind b = b + 1
+    }
+    print("BENCH crypto_feistel RESULT ", cm2, " TIME ", time_now() - t0)
+
+    // Crypto 3: LCG stream mixer
+    bind t0 = time_now()
+    bind state = 1
+    bind cm3 = 0
+    bind q = 0
+    while q < 1000000 {
+        bind state = (state * 48271) % 2147483647
+        bind out = (state + q * 97) % 1000003
+        bind cm3 = cm3 + out
+        bind q = q + 1
+    }
+    print("BENCH crypto_lcg_stream RESULT ", cm3, " TIME ", time_now() - t0)
+}

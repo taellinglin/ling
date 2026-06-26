@@ -24,12 +24,29 @@ use std::collections::{HashMap, HashSet};
 pub struct NumberTypes {
     locals: HashMap<String, HashSet<usize>>,
     bools: HashMap<String, HashSet<usize>>,
+    ints: HashMap<String, HashSet<usize>>,
 }
 
 impl NumberTypes {
     /// Whether `local` in function `func` is statically known to be a number.
     pub fn local_is_num(&self, func: &str, local: usize) -> bool {
         self.locals.get(func).is_some_and(|s| s.contains(&local))
+    }
+
+    /// Whether `local` in function `func` is a *strict integer* — a number that
+    /// only ever holds integral values, so it can live in a raw `i64` register
+    /// instead of a NaN-boxed `f64`. A subset of `local_is_num`.
+    pub fn local_is_int(&self, func: &str, local: usize) -> bool {
+        self.ints.get(func).is_some_and(|s| s.contains(&local))
+    }
+
+    /// Whether `op` evaluates to a strict integer inside function `func`.
+    pub fn operand_is_int(&self, func: &str, op: &Operand) -> bool {
+        match op {
+            Operand::Copy(l) | Operand::Move(l) => self.local_is_int(func, l.0),
+            Operand::Constant(Constant::I64(_)) => true,
+            _ => false,
+        }
     }
 
     /// Whether `op` evaluates to a number inside function `func`.
@@ -238,7 +255,60 @@ pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
         bools.insert(func.name.clone(), set);
     }
 
-    NumberTypes { locals: state, bools }
+    // Integers: a refinement of the numbers. A local is an integer when every
+    // value that flows into it is provably integral — an integer literal, an
+    // integer copy, or `+`/`-`/`*`/`%`/unary-`-` of integers. Float division
+    // (`/`) is never integral. This is intra-procedural and *optimistic* (assume
+    // integer, retract on a non-integer writer) so loop-carried counters such as
+    // `i = i + 1` converge instead of collapsing on their own back-edge.
+    //
+    // Parameters and the return slot stay boxed: the call ABI is unchanged, so
+    // only function-local integers are specialized. That already covers the tight
+    // counter/accumulator loops; cross-call integers are left for a later pass.
+    let mut ints: HashMap<String, HashSet<usize>> = HashMap::new();
+    for func in functions {
+        let total = func.locals.len() + func.arg_count + 1;
+        let mut writers: HashMap<usize, Vec<&Rvalue>> = HashMap::new();
+        for bb in &func.basic_blocks {
+            for stmt in &bb.statements {
+                if let StatementKind::Assign(l, rval) = &stmt.kind {
+                    writers.entry(l.0).or_default().push(rval);
+                }
+            }
+        }
+        // Optimistically assume every body local (not a parameter, not the return
+        // slot 0) is an integer, then retract.
+        let mut set: HashSet<usize> = (func.arg_count + 1..total).collect();
+        let int_op = |set: &HashSet<usize>, op: &Operand| -> bool {
+            match op {
+                Operand::Copy(l) | Operand::Move(l) => set.contains(&l.0),
+                Operand::Constant(Constant::I64(_)) => true,
+                _ => false,
+            }
+        };
+        let mut changed = true;
+        while changed {
+            let before = set.len();
+            let snapshot = set.clone();
+            set.retain(|&idx| match writers.get(&idx) {
+                None => false,
+                Some(rvals) => rvals.iter().all(|r| match r {
+                    Rvalue::Use(op) => int_op(&snapshot, op),
+                    Rvalue::BinaryOp(op, a, b) => {
+                        matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Rem)
+                            && int_op(&snapshot, a)
+                            && int_op(&snapshot, b)
+                    },
+                    Rvalue::UnaryOp(UnOp::Neg, a) => int_op(&snapshot, a),
+                    _ => false,
+                }),
+            });
+            changed = set.len() != before;
+        }
+        ints.insert(func.name.clone(), set);
+    }
+
+    NumberTypes { locals: state, bools, ints }
 }
 
 /// Whether an rvalue produces a number, given the current global estimate.

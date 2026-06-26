@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "title": "Ling AGC Test Suite",
+    "subtitle": "Audio + Graphics + Cryptography workload plan",
+    "version": "1.0",
+    "date": "2026-06-25"
+  },
+  "categories": [
+    {
+      "name": "Audio",
+      "color": "#E8B84A",
+      "tests": [
+        {
+          "id": "AUD-01",
+          "name": "FFT Spectrum Scan",
+          "description": "Run 4,096-point FFT windows with centroid + band energy extraction.",
+          "input": "16,384 windows @ 48 kHz",
+          "metric": "Throughput (windows/s)",
+          "workload": 8
+        },
+        {
+          "id": "AUD-02",
+          "name": "FM Poly-Synth",
+          "description": "Generate FM voices with modulation + mixdown accumulation.",
+          "input": "64 voices x 4,194,304 samples",
+          "metric": "Render time (ms)",
+          "workload": 9
+        },
+        {
+          "id": "AUD-03",
+          "name": "Convolution Reverb",
+          "description": "Partitioned convolution against a long impulse response.",
+          "input": "120 s stereo + 131,072-tap IR",
+          "metric": "Real-time factor",
+          "workload": 7
+        }
+      ]
+    },
+    {
+      "name": "Graphics",
+      "color": "#2A9D8F",
+      "tests": [
+        {
+          "id": "GFX-01",
+          "name": "Triangle Raster Stress",
+          "description": "Software raster of indexed triangles with depth + barycentric shading.",
+          "input": "1,000,000 triangles @ 1920x1080",
+          "metric": "Frame time (ms)",
+          "workload": 10
+        },
+        {
+          "id": "GFX-02",
+          "name": "Mandelbrot Deep Zoom",
+          "description": "Complex escape-time iterations over high-resolution viewport tiles.",
+          "input": "1024x768, maxiter=512",
+          "metric": "Pixels/s",
+          "workload": 8
+        },
+        {
+          "id": "GFX-03",
+          "name": "Particle Integrator",
+          "description": "Update particle positions/velocities with damping + attraction fields.",
+          "input": "2,000,000 particles, 600 steps",
+          "metric": "Updates/s",
+          "workload": 9
+        }
+      ]
+    },
+    {
+      "name": "Cryptography",
+      "color": "#E84A6F",
+      "tests": [
+        {
+          "id": "CRY-01",
+          "name": "SHA3 Bulk Hash",
+          "description": "Hash sequential blocks and finalize per-message digests.",
+          "input": "262,144 messages x 1 KiB",
+          "metric": "MB/s",
+          "workload": 8
+        },
+        {
+          "id": "CRY-02",
+          "name": "X25519 Key Exchange",
+          "description": "Repeated scalar multiplication + shared secret derivation.",
+          "input": "200,000 handshakes",
+          "metric": "Ops/s",
+          "workload": 7
+        },
+        {
+          "id": "CRY-03",
+          "name": "AES-GCM Stream",
+          "description": "Authenticated encryption over contiguous chunks with tag checks.",
+          "input": "512 MiB stream, 16 KiB chunks",
+          "metric": "MB/s",
+          "workload": 9
+        }
+      ]
+    }
+  ]
+}

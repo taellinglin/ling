@@ -17,6 +17,7 @@ cuda = ["ling-gpu/cuda"]
 glam = "0.28"
 gltf = { version = "1.4", optional = true }
 ling-gpu = { path = "../ling-gpu", version = "2030.0.0" }
+rayon = "1.10"
 
 [lib]
 name = "ling_physics"

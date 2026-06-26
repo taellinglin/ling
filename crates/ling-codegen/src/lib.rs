@@ -22,6 +22,7 @@ pub trait CodegenBackend {
 
 pub use bytecode::{compile_mir_program, BytecodeBackend, Vm, VmProgram};
 pub use cranelift::aot::CraneliftBackend;
+#[cfg(not(target_arch = "wasm32"))]
 pub use cranelift::jit::JitBackend;
 pub use cranelift::runtime;
 pub use wasm::WasmBackend;

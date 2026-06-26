@@ -29,6 +29,15 @@ struct AudioState {
 
 thread_local! {
     static AUDIO: RefCell<Option<AudioState>> = RefCell::new(None);
+    // When Web Audio is unavailable (e.g. worker scope without AudioContext),
+    // permanently disable the backend so we don't throw every frame.
+    static AUDIO_DISABLED: RefCell<bool> = RefCell::new(false);
+}
+
+fn has_audio_context_ctor() -> bool {
+    let g = js_sys::global();
+    Reflect::has(&g, &JsValue::from_str("AudioContext")).unwrap_or(false)
+        || Reflect::has(&g, &JsValue::from_str("webkitAudioContext")).unwrap_or(false)
 }
 
 /// Call a named method on a JS object with f64 arguments.
@@ -47,9 +56,16 @@ fn js_call(obj: &JsValue, method: &str, args: &[f64]) {
 
 /// Lazily create the AudioContext and master gain on first use.
 fn ensure_init() -> bool {
+    if AUDIO_DISABLED.with(|d| *d.borrow()) {
+        return false;
+    }
     AUDIO.with(|a| {
         if a.borrow().is_some() {
             return true;
+        }
+        if !has_audio_context_ctor() {
+            AUDIO_DISABLED.with(|d| *d.borrow_mut() = true);
+            return false;
         }
         match AudioContext::new() {
             Ok(ctx) => {
@@ -65,6 +81,7 @@ fn ensure_init() -> bool {
             },
             Err(e) => {
                 web_sys::console::warn_1(&e);
+                AUDIO_DISABLED.with(|d| *d.borrow_mut() = true);
                 false
             },
         }

@@ -376,7 +376,7 @@ pub unsafe extern "C" fn ling_print_newline() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_time_now() -> u64 {
     with_interp(|interp| {
-        let elapsed = interp.start_time.elapsed().as_secs_f64();
+        let elapsed = crate::runtime::now_secs() - interp.start_time_secs;
         encode_value(&Value::Number(elapsed))
     })
 }
@@ -482,19 +482,23 @@ pub unsafe extern "C" fn ling_list_push(list: u64, val: u64) -> u64 {
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_list_get(list: u64, idx: u64) -> u64 {
-    let list_v = decode_value(list);
+    // Borrow the list in place and clone only the requested element. The old code
+    // `decode_value(list)` deep-cloned the WHOLE Vec just to read one item — O(n)
+    // per get, called thousands of times per frame (the big per-frame cost).
     let idx_v = decode_value(idx);
-    match (&list_v, &idx_v) {
-        (Value::List(items), Value::Number(n)) => {
-            let i = *n as usize;
-            if i < items.len() {
-                encode_value(&items[i])
-            } else {
-                TAG_UNIT
+    if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {
+        let ptr = decode_ptr(list);
+        if !ptr.is_null() {
+            let items = unsafe { &*(ptr as *const Vec<Value>) };
+            if let Value::Number(n) = idx_v {
+                let i = n as usize;
+                if i < items.len() {
+                    return encode_value(&items[i]);
+                }
             }
-        },
-        _ => TAG_UNIT,
+        }
     }
+    TAG_UNIT
 }
 
 #[no_mangle]

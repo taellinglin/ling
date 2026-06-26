@@ -839,7 +839,7 @@ fn serve_and_open(root: &Path) {
                 None => ("404 Not Found", b"404 not found".to_vec(), "text/plain"),
             };
             let header = format!(
-                "HTTP/1.1 {status_line}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 {status_line}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCross-Origin-Opener-Policy: same-origin\r\nCross-Origin-Embedder-Policy: require-corp\r\nCross-Origin-Resource-Policy: cross-origin\r\nConnection: close\r\n\r\n",
                 body.len()
             );
             let _ = stream.write_all(header.as_bytes());

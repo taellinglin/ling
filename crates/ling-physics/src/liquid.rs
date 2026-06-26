@@ -8,9 +8,19 @@
 //! `Vec<f32>` with no per-step allocations; `wrap` makes it seamless so it can be
 //! mapped/wrapped around a plane, sphere, cylinder, cone or dome.
 
+use rayon::prelude::*;
+
 /// Fluid kind for `splat`.
 pub const WATER: i32 = 0;
 pub const OIL: i32 = 1;
+
+/// Advance many independent liquid grids one tick, in parallel across instances.
+/// Each grid owns its own buffers and shares no state, so this is embarrassingly
+/// parallel — a scene with many liquid surfaces scales across cores. Falls back
+/// to serial transparently for one (or zero) grids via rayon's work-splitting.
+pub fn step_all(grids: &mut [LiquidGrid], dt: f32) {
+    grids.par_iter_mut().for_each(|g| g.step(dt));
+}
 
 /// HSV → packed 0x00RRGGBB (h,s,v in 0..1).
 fn hsv(h: f32, s: f32, v: f32) -> u32 {
@@ -50,14 +60,39 @@ pub struct LiquidGrid {
     s1: Vec<f32>,
     p: Vec<f32>,
     div: Vec<f32>,
+    // Precomputed neighbour indices per axis (minus/plus). The pressure solve
+    // touches four neighbours per cell across ~18 grid passes per step; doing the
+    // wrap/clamp `%`/branch from a table instead of recomputing it per cell turns
+    // the inner loops into pure array loads. Rebuilt only when `wrap` changes.
+    xm: Vec<usize>,
+    xp: Vec<usize>,
+    ym: Vec<usize>,
+    yp: Vec<usize>,
+    neigh_wrap: bool,
+}
+
+/// Minus/plus neighbour index for each position on an axis of length `n`,
+/// matching the wrap/clamp the solver uses.
+fn build_neighbor_axis(n: usize, wrap: bool) -> (Vec<usize>, Vec<usize>) {
+    let mut minus = vec![0usize; n];
+    let mut plus = vec![0usize; n];
+    for i in 0..n {
+        minus[i] = if wrap { (i + n - 1) % n } else { i.saturating_sub(1) };
+        plus[i] = if wrap { (i + 1) % n } else { (i + 1).min(n - 1) };
+    }
+    (minus, plus)
 }
 
 impl LiquidGrid {
     pub fn new(w: usize, h: usize) -> Self {
-        let n = w.max(2) * h.max(2);
+        let w = w.max(2);
+        let h = h.max(2);
+        let n = w * h;
+        let (xm, xp) = build_neighbor_axis(w, true);
+        let (ym, yp) = build_neighbor_axis(h, true);
         Self {
-            w: w.max(2),
-            h: h.max(2),
+            w,
+            h,
             wrap: true,
             gx: 0.0,
             gy: 60.0,
@@ -73,7 +108,28 @@ impl LiquidGrid {
             s1: vec![0.0; n],
             p: vec![0.0; n],
             div: vec![0.0; n],
+            xm,
+            xp,
+            ym,
+            yp,
+            neigh_wrap: true,
         }
+    }
+
+    /// Rebuild the neighbour-index tables if `wrap` was toggled since they were
+    /// last built (grid dimensions are fixed at construction).
+    #[inline]
+    fn ensure_neighbors(&mut self) {
+        if self.neigh_wrap == self.wrap && self.xm.len() == self.w {
+            return;
+        }
+        let (xm, xp) = build_neighbor_axis(self.w, self.wrap);
+        let (ym, yp) = build_neighbor_axis(self.h, self.wrap);
+        self.xm = xm;
+        self.xp = xp;
+        self.ym = ym;
+        self.yp = yp;
+        self.neigh_wrap = self.wrap;
     }
 
     #[inline]
@@ -152,95 +208,51 @@ impl LiquidGrid {
     }
 
     fn project(&mut self, iters: u32) {
+        self.ensure_neighbors();
         let w = self.w;
         let h = self.h;
         // divergence
         for y in 0..h {
+            let ym = self.ym[y];
+            let yp = self.yp[y];
+            let (row, rowm, rowp) = (y * w, ym * w, yp * w);
             for x in 0..w {
-                let xm = if self.wrap {
-                    (x + w - 1) % w
-                } else {
-                    x.saturating_sub(1)
-                };
-                let xp = if self.wrap {
-                    (x + 1) % w
-                } else {
-                    (x + 1).min(w - 1)
-                };
-                let ym = if self.wrap {
-                    (y + h - 1) % h
-                } else {
-                    y.saturating_sub(1)
-                };
-                let yp = if self.wrap {
-                    (y + 1) % h
-                } else {
-                    (y + 1).min(h - 1)
-                };
-                self.div[y * w + x] = -0.5
-                    * (self.vx[y * w + xp] - self.vx[y * w + xm] + self.vy[yp * w + x]
-                        - self.vy[ym * w + x]);
-                self.p[y * w + x] = 0.0;
+                let xm = self.xm[x];
+                let xp = self.xp[x];
+                self.div[row + x] = -0.5
+                    * (self.vx[row + xp] - self.vx[row + xm] + self.vy[rowp + x]
+                        - self.vy[rowm + x]);
+                self.p[row + x] = 0.0;
             }
         }
         // Jacobi pressure solve
         for _ in 0..iters {
             for y in 0..h {
+                let ym = self.ym[y];
+                let yp = self.yp[y];
+                let (row, rowm, rowp) = (y * w, ym * w, yp * w);
                 for x in 0..w {
-                    let xm = if self.wrap {
-                        (x + w - 1) % w
-                    } else {
-                        x.saturating_sub(1)
-                    };
-                    let xp = if self.wrap {
-                        (x + 1) % w
-                    } else {
-                        (x + 1).min(w - 1)
-                    };
-                    let ym = if self.wrap {
-                        (y + h - 1) % h
-                    } else {
-                        y.saturating_sub(1)
-                    };
-                    let yp = if self.wrap {
-                        (y + 1) % h
-                    } else {
-                        (y + 1).min(h - 1)
-                    };
-                    self.p[y * w + x] = (self.div[y * w + x]
-                        + self.p[y * w + xm]
-                        + self.p[y * w + xp]
-                        + self.p[ym * w + x]
-                        + self.p[yp * w + x])
+                    let xm = self.xm[x];
+                    let xp = self.xp[x];
+                    self.p[row + x] = (self.div[row + x]
+                        + self.p[row + xm]
+                        + self.p[row + xp]
+                        + self.p[rowm + x]
+                        + self.p[rowp + x])
                         * 0.25;
                 }
             }
         }
         // subtract pressure gradient
         for y in 0..h {
+            let ym = self.ym[y];
+            let yp = self.yp[y];
+            let (row, rowm, rowp) = (y * w, ym * w, yp * w);
             for x in 0..w {
-                let xm = if self.wrap {
-                    (x + w - 1) % w
-                } else {
-                    x.saturating_sub(1)
-                };
-                let xp = if self.wrap {
-                    (x + 1) % w
-                } else {
-                    (x + 1).min(w - 1)
-                };
-                let ym = if self.wrap {
-                    (y + h - 1) % h
-                } else {
-                    y.saturating_sub(1)
-                };
-                let yp = if self.wrap {
-                    (y + 1) % h
-                } else {
-                    (y + 1).min(h - 1)
-                };
-                self.vx[y * w + x] -= 0.5 * (self.p[y * w + xp] - self.p[y * w + xm]);
-                self.vy[y * w + x] -= 0.5 * (self.p[yp * w + x] - self.p[ym * w + x]);
+                let xm = self.xm[x];
+                let xp = self.xp[x];
+                self.vx[row + x] -= 0.5 * (self.p[row + xp] - self.p[row + xm]);
+                self.vy[row + x] -= 0.5 * (self.p[rowp + x] - self.p[rowm + x]);
             }
         }
     }
@@ -273,23 +285,26 @@ impl LiquidGrid {
             }
         }
         self.project(8);
-        // advect the two immiscible density fields by the shared velocity
-        let src_w = self.water.clone();
+        // advect the two immiscible density fields by the shared velocity. Reuse
+        // the s0/s1 scratch (free now that velocity advection is done) as the read
+        // source instead of cloning water/oil — that clone was an n-float alloc +
+        // memcpy on every field, every frame.
+        self.s0.copy_from_slice(&self.water);
         for y in 0..self.h {
             for x in 0..self.w {
                 let i = y * self.w + x;
                 let px = x as f32 - self.vx[i] * dt;
                 let py = y as f32 - self.vy[i] * dt;
-                self.water[i] = self.sample(&src_w, px, py);
+                self.water[i] = self.sample(&self.s0, px, py);
             }
         }
-        let src_o = self.oil.clone();
+        self.s1.copy_from_slice(&self.oil);
         for y in 0..self.h {
             for x in 0..self.w {
                 let i = y * self.w + x;
                 let px = x as f32 - self.vx[i] * dt;
                 let py = y as f32 - self.vy[i] * dt;
-                self.oil[i] = self.sample(&src_o, px, py);
+                self.oil[i] = self.sample(&self.s1, px, py);
             }
         }
         // tiny dissipation + clamp; keep totals bounded

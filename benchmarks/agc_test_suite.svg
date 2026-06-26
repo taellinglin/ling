@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1188" viewBox="0 0 1200 1188">
+<rect width="1200" height="1188" fill="#14233D"/>
+<text x="40.0" y="64.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="30" fill="#E6ECF5" text-anchor="start" font-weight="bold">Ling AGC Test Suite</text>
+<text x="40.0" y="90.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#8D99AE" text-anchor="start" font-weight="normal">Audio + Graphics + Cryptography workload plan</text>
+<text x="1160.0" y="64.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="end" font-weight="normal">v1.0</text>
+<text x="1160.0" y="84.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="end" font-weight="normal">2026-06-25</text>
+<rect x="40.0" y="116.0" width="1120.0" height="66.0" rx="10" fill="#1C2F4F" opacity="1.0" stroke="none"/>
+<text x="60.0" y="144.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="17" fill="#E8B84A" text-anchor="start" font-weight="bold">How to use this suite</text>
+<text x="60.0" y="168.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">Run each test with fixed input sizes, report median of N runs, and compare by the listed metric.</text>
+<text x="40.0" y="206.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="22" fill="#E8B84A" text-anchor="start" font-weight="bold">Audio</text>
+<rect x="40.0" y="222.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="246.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">AUD-01  FFT Spectrum Scan</text>
+<text x="56.0" y="266.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Run 4,096-point FFT windows with centroid + band energy extraction.</text>
+<text x="56.0" y="296.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 16,384 windows @ 48 kHz</text>
+<text x="550.0" y="296.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Throughput (windows/s)</text>
+<text x="950.0" y="244.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="252.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="252.0" width="144.0" height="16.0" rx="6" fill="#E8B84A" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="266.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">8/10</text>
+<rect x="40.0" y="316.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="340.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">AUD-02  FM Poly-Synth</text>
+<text x="56.0" y="360.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Generate FM voices with modulation + mixdown accumulation.</text>
+<text x="56.0" y="390.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 64 voices x 4,194,304 samples</text>
+<text x="550.0" y="390.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Render time (ms)</text>
+<text x="950.0" y="338.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="346.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="346.0" width="162.0" height="16.0" rx="6" fill="#E8B84A" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="360.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">9/10</text>
+<rect x="40.0" y="410.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="434.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">AUD-03  Convolution Reverb</text>
+<text x="56.0" y="454.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Partitioned convolution against a long impulse response.</text>
+<text x="56.0" y="484.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 120 s stereo + 131,072-tap IR</text>
+<text x="550.0" y="484.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Real-time factor</text>
+<text x="950.0" y="432.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="440.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="440.0" width="126.0" height="16.0" rx="6" fill="#E8B84A" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="454.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">7/10</text>
+<text x="40.0" y="516.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="22" fill="#2A9D8F" text-anchor="start" font-weight="bold">Graphics</text>
+<rect x="40.0" y="532.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="556.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">GFX-01  Triangle Raster Stress</text>
+<text x="56.0" y="576.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Software raster of indexed triangles with depth + barycentric shading.</text>
+<text x="56.0" y="606.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 1,000,000 triangles @ 1920x1080</text>
+<text x="550.0" y="606.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Frame time (ms)</text>
+<text x="950.0" y="554.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="562.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="562.0" width="180.0" height="16.0" rx="6" fill="#2A9D8F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="576.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">10/10</text>
+<rect x="40.0" y="626.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="650.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">GFX-02  Mandelbrot Deep Zoom</text>
+<text x="56.0" y="670.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Complex escape-time iterations over high-resolution viewport tiles.</text>
+<text x="56.0" y="700.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 1024x768, maxiter=512</text>
+<text x="550.0" y="700.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Pixels/s</text>
+<text x="950.0" y="648.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="656.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="656.0" width="144.0" height="16.0" rx="6" fill="#2A9D8F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="670.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">8/10</text>
+<rect x="40.0" y="720.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="744.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">GFX-03  Particle Integrator</text>
+<text x="56.0" y="764.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Update particle positions/velocities with damping + attraction fields.</text>
+<text x="56.0" y="794.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 2,000,000 particles, 600 steps</text>
+<text x="550.0" y="794.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Updates/s</text>
+<text x="950.0" y="742.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="750.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="750.0" width="162.0" height="16.0" rx="6" fill="#2A9D8F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="764.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">9/10</text>
+<text x="40.0" y="826.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="22" fill="#E84A6F" text-anchor="start" font-weight="bold">Cryptography</text>
+<rect x="40.0" y="842.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="866.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">CRY-01  SHA3 Bulk Hash</text>
+<text x="56.0" y="886.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Hash sequential blocks and finalize per-message digests.</text>
+<text x="56.0" y="916.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 262,144 messages x 1 KiB</text>
+<text x="550.0" y="916.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: MB/s</text>
+<text x="950.0" y="864.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="872.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="872.0" width="144.0" height="16.0" rx="6" fill="#E84A6F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="886.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">8/10</text>
+<rect x="40.0" y="936.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="960.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">CRY-02  X25519 Key Exchange</text>
+<text x="56.0" y="980.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Repeated scalar multiplication + shared secret derivation.</text>
+<text x="56.0" y="1010.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 200,000 handshakes</text>
+<text x="550.0" y="1010.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: Ops/s</text>
+<text x="950.0" y="958.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="966.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="966.0" width="126.0" height="16.0" rx="6" fill="#E84A6F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="980.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">7/10</text>
+<rect x="40.0" y="1030.0" width="1120.0" height="84.0" rx="8" fill="#1C2F4F" opacity="0.98" stroke="none"/>
+<text x="56.0" y="1054.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="16" fill="#E6ECF5" text-anchor="start" font-weight="bold">CRY-03  AES-GCM Stream</text>
+<text x="56.0" y="1074.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="13" fill="#8D99AE" text-anchor="start" font-weight="normal">Authenticated encryption over contiguous chunks with tag checks.</text>
+<text x="56.0" y="1104.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Input: 512 MiB stream, 16 KiB chunks</text>
+<text x="550.0" y="1104.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#B9C5D8" text-anchor="start" font-weight="normal">Metric: MB/s</text>
+<text x="950.0" y="1052.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Workload</text>
+<rect x="950.0" y="1060.0" width="180.0" height="16.0" rx="6" fill="#2C4067" opacity="0.45" stroke="none"/>
+<rect x="950.0" y="1060.0" width="162.0" height="16.0" rx="6" fill="#E84A6F" opacity="1.0" stroke="none"/>
+<text x="1130.0" y="1074.0" font-family="Consolas, 'DejaVu Sans Mono', monospace" font-size="12" fill="#E6ECF5" text-anchor="end" font-weight="normal">9/10</text>
+<rect x="40.0" y="1144.0" width="1120.0" height="1.0" rx="0" fill="#2C4067" opacity="1.0" stroke="none"/>
+<text x="40.0" y="1166.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="12" fill="#8D99AE" text-anchor="start" font-weight="normal">Generated from agc_test_suite.json. Style aligned with the existing benchmark infographic.</text>
+</svg>

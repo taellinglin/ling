@@ -1179,13 +1179,25 @@ impl GfxState {
     /// bloats in shifting regions and **wraps** at all four edges (toroidal sample).
     /// Separable (per-row + per-column displacement) so it stays cheap full-screen.
     /// `amount` = max displacement in pixels; `t` = time (animate the goo).
-    pub fn distort(&mut self, amount: f32, t: f32) {
+    pub fn distort(&mut self, amount: f32, t: f32, step: usize) {
         let w = self.width;
         let h = self.height;
         if w < 2 || h < 2 || amount <= 0.0 {
             return;
         }
-        let src = self.buffer.clone();
+        let step = step.max(1);
+        // Source = the current frame. Instead of cloning the framebuffer (an 8 MB
+        // alloc + memcpy EVERY frame at 1080p), swap a persistent scratch in: now
+        // `src` holds the rendered frame and `self.buffer` is the old scratch —
+        // which the gather below overwrites at every pixel, so its stale contents
+        // don't matter. Net: per-frame distortion drops from (alloc + memcpy +
+        // gather) to just (gather). `src` is returned to the scratch field at the end.
+        if self.distort_buf.len() != w * h {
+            self.distort_buf.clear();
+            self.distort_buf.resize(w * h, 0);
+        }
+        let mut src = std::mem::take(&mut self.distort_buf);
+        std::mem::swap(&mut self.buffer, &mut src);
         let a = amount;
         // per-row horizontal shift + a vertical cross term
         let mut rdx = vec![0i32; h];
@@ -1208,26 +1220,67 @@ impl GfxState {
         }
         let wi = w as i32;
         let hi = h as i32;
-        for y in 0..h {
-            let row = y * w;
-            let ry = rdy[y];
-            for x in 0..w {
-                // branchless small-shift wrap (displacements are a few px → one add wraps)
-                let mut sxi = x as i32 + rdx[y] + cdx[x];
-                if sxi < 0 {
-                    sxi += wi;
-                } else if sxi >= wi {
-                    sxi -= wi;
+        if step == 1 {
+            // full-res per-pixel warp
+            for y in 0..h {
+                let row = y * w;
+                let rdx_y = rdx[y];
+                let ry = rdy[y];
+                for x in 0..w {
+                    // branchless small-shift wrap (displacements are a few px → one add wraps)
+                    let mut sxi = x as i32 + rdx_y + cdx[x];
+                    if sxi < 0 {
+                        sxi += wi;
+                    } else if sxi >= wi {
+                        sxi -= wi;
+                    }
+                    let mut syi = y as i32 + cdy[x] + ry;
+                    if syi < 0 {
+                        syi += hi;
+                    } else if syi >= hi {
+                        syi -= hi;
+                    }
+                    self.buffer[row + x] = src[syi as usize * w + sxi as usize];
                 }
-                let mut syi = y as i32 + cdy[x] + ry;
-                if syi < 0 {
-                    syi += hi;
-                } else if syi >= hi {
-                    syi -= hi;
+            }
+        } else {
+            // downsampled warp: ONE warped source sample per step×step block,
+            // filled across the block. The expensive part of the full-res path is
+            // the W×H scattered gather (memory-bandwidth bound); this does only
+            // (W/step·H/step) gathers + W×H cheap sequential block-fills → ~step²
+            // fewer reads/warp-computes. Trade-off: the image is step×step blocky
+            // (a "performance mode" look, not softer) — gated behind a toggle.
+            let mut by = 0;
+            while by < h {
+                let yend = (by + step).min(h);
+                let mut bx = 0;
+                while bx < w {
+                    let xend = (bx + step).min(w);
+                    let mut sxi = bx as i32 + rdx[by] + cdx[bx];
+                    if sxi < 0 {
+                        sxi += wi;
+                    } else if sxi >= wi {
+                        sxi -= wi;
+                    }
+                    let mut syi = by as i32 + cdy[bx] + rdy[by];
+                    if syi < 0 {
+                        syi += hi;
+                    } else if syi >= hi {
+                        syi -= hi;
+                    }
+                    let pix = src[syi as usize * w + sxi as usize];
+                    for y in by..yend {
+                        let row = y * w;
+                        for x in bx..xend {
+                            self.buffer[row + x] = pix;
+                        }
+                    }
+                    bx += step;
                 }
-                self.buffer[row + x] = src[syi as usize * w + sxi as usize];
+                by += step;
             }
         }
+        self.distort_buf = src; // return the scratch buffer for next frame's reuse
     }
 
     /// Render a world-space mesh through the depth queue.
@@ -1349,13 +1402,17 @@ impl GfxState {
                         (a[1] + b[1] + c[1]) / 3.0,
                         (a[2] + b[2] + c[2]) / 3.0,
                     ];
-                    let lit = crate::gfx::light::compute_lit_color(
-                        self.color,
-                        normal,
-                        centroid,
-                        &self.lights,
-                        self.ambient,
-                    );
+                    let lit = if self.flat_shade {
+                        self.color
+                    } else {
+                        crate::gfx::light::compute_lit_color(
+                            self.color,
+                            normal,
+                            centroid,
+                            &self.lights,
+                            self.ambient,
+                        )
+                    };
                     let da = self.camera.depth(a[0], a[1], a[2]);
                     let db = self.camera.depth(b[0], b[1], b[2]);
                     let dc = self.camera.depth(c[0], c[1], c[2]);

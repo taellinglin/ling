@@ -1,0 +1,5 @@
+bind start = do {
+    open_window(640, 360)
+    fill(200, 20, 20)
+    present()
+}

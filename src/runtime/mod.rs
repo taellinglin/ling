@@ -3,16 +3,84 @@
 mod ai;
 #[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod jit_abi;
 
 /// Initialize the AOT/JIT runtime. Must be called before any AOT-compiled code.
 /// Creates a new interpreter instance for runtime function dispatch.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn init_aot_runtime() {
     let interp = Interpreter::new();
     jit_abi::init(interp);
 }
+
+/// Returns seconds since Unix epoch. On wasm32 uses `js_sys::Date::now()`
+/// (milliseconds / 1000); on native uses `SystemTime`.
+pub fn now_secs() -> f64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::now() / 1000.0
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0)
+    }
+}
+
+// Wasm-only module registry: seeded by JS before `run_program` is called so
+// that `use "path"` statements resolve without a real filesystem.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_MODULES: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Register a module source for wasm32 `use` resolution.
+/// Called from JS via `wasm_bindgen` before `run_program`.
+#[cfg(target_arch = "wasm32")]
+pub fn register_wasm_module(path: &str, source: &str) {
+    WASM_MODULES.with(|m| m.borrow_mut().insert(path.to_string(), source.to_string()));
+}
+
+/// Look up a registered module source on wasm32.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn get_wasm_module(path: &str) -> Option<String> {
+    WASM_MODULES.with(|m| m.borrow().get(path).cloned())
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+fn wasm_sleep_ms(ms: i32) {
+    if ms <= 0 {
+        return;
+    }
+
+    // Keep this in Rust/js_sys so wasm-bindgen doesn't emit `require(...)`
+    // snippets, which break worker/no-modules output.
+    let global = js_sys::global();
+    let has_sab = js_sys::Reflect::has(&global, &wasm_bindgen::JsValue::from_str("SharedArrayBuffer"))
+        .unwrap_or(false);
+    let has_atomics =
+        js_sys::Reflect::has(&global, &wasm_bindgen::JsValue::from_str("Atomics")).unwrap_or(false);
+    if has_sab && has_atomics {
+        let sab = js_sys::SharedArrayBuffer::new(4);
+        let i32a = js_sys::Int32Array::new(&sab);
+        if js_sys::Atomics::wait_with_timeout(&i32a, 0, 0, ms as f64).is_ok() {
+            return;
+        }
+        }
+
+    let end = js_sys::Date::now() + ms as f64;
+    while js_sys::Date::now() < end {}
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 use crate::gfx::{GfxState, Light};
 use crate::parser::ast::*;
 use std::cell::RefCell;
@@ -349,6 +417,7 @@ fn decode_blob(s: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Decode a lowercase/uppercase hex string to bytes (ignores malformed tail).
+#[cfg(not(target_arch = "wasm32"))]
 fn hex_decode(s: &str) -> Vec<u8> {
     let s = s.trim();
     (0..s.len() / 2)
@@ -357,6 +426,7 @@ fn hex_decode(s: &str) -> Vec<u8> {
 }
 
 /// Decode a hex string into a fixed 32-byte key (zero-padded / truncated).
+#[cfg(not(target_arch = "wasm32"))]
 fn hex_to_32(s: &str) -> [u8; 32] {
     let v = hex_decode(s);
     let mut out = [0u8; 32];
@@ -652,6 +722,7 @@ impl Default for UiTheme {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct Interpreter {
     globals: HashMap<String, Expr>,
     /// Globals evaluated ONCE at program start (immutable after load).
@@ -675,10 +746,17 @@ pub struct Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     fft: RefCell<FftAnalyzer>,
     fft_bands_cache: RefCell<Vec<f32>>,
-    /// Real-time clock — initialized at startup
-    start_time: std::time::Instant,
+    /// Real-time clock — seconds since Unix epoch at startup (f64 works on both
+    /// native and wasm32; Instant is not available on wasm32).
+    start_time_secs: f64,
     /// Frame counter — incremented at each present()
     frame_num: u64,
+    /// Target framerate used to pace `present()` on wasm32.
+    #[cfg(target_arch = "wasm32")]
+    wasm_target_fps: f64,
+    /// Next frame deadline (ms since epoch) for wasm frame pacing.
+    #[cfg(target_arch = "wasm32")]
+    wasm_next_present_ms: f64,
     /// Random state for rand() builtin (xorshift)
     rand_state: u64,
     /// Microphone input (Phase 1 audio reactivity)
@@ -767,8 +845,12 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             fft: RefCell::new(FftAnalyzer::new(2048, 44100)),
             fft_bands_cache: RefCell::new(vec![]),
-            start_time: std::time::Instant::now(),
+            start_time_secs: crate::runtime::now_secs(),
             frame_num: 0,
+            #[cfg(target_arch = "wasm32")]
+            wasm_target_fps: 60.0,
+            #[cfg(target_arch = "wasm32")]
+            wasm_next_present_ms: 0.0,
             rand_state: 0x123456789ABCDEF,
             #[cfg(not(target_arch = "wasm32"))]
             mic: None,
@@ -841,6 +923,29 @@ impl Interpreter {
     /// Frames are ordered outermost-first (entry point first, failing call last).
     pub fn take_error_trace(&mut self) -> Vec<String> {
         self.error_trace.take().unwrap_or_default()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn wasm_pace_frame(&mut self) {
+        let fps = self.wasm_target_fps.max(1.0);
+        let frame_ms = 1000.0 / fps;
+        let now = js_sys::Date::now();
+        if self.wasm_next_present_ms <= 0.0 {
+            self.wasm_next_present_ms = now + frame_ms;
+            return;
+        }
+
+        let wait_ms = (self.wasm_next_present_ms - now).floor() as i32;
+        if wait_ms > 0 {
+            wasm_sleep_ms(wait_ms);
+        }
+
+        let after = js_sys::Date::now();
+        if after > self.wasm_next_present_ms + frame_ms * 3.0 {
+            self.wasm_next_present_ms = after + frame_ms;
+        } else {
+            self.wasm_next_present_ms += frame_ms;
+        }
     }
 
     /// Run `body`, recording `name` as a call frame and snapshotting the stack on
@@ -1167,47 +1272,62 @@ impl Interpreter {
         alias: Option<&str>,
         parent_ns: &str,
     ) -> Result<(), String> {
-        // Build candidate file paths (.ling extension variants)
-        let base_dir = self
-            .source_dir
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let raw = std::path::Path::new(path);
-        let candidates: Vec<std::path::PathBuf> = vec![
-            base_dir.join(format!("{}.ling", path)),
-            base_dir.join(format!("{}.灵", path)),
-            base_dir.join(format!("{}.령", path)),
-            base_dir.join(format!("{}.霊", path)),
-            base_dir.join(format!("{}.ลิง", path)),
-            // exact path if already has extension
-            base_dir.join(raw),
-            std::path::PathBuf::from(format!("{}.ling", path)),
-            std::path::PathBuf::from(path),
-        ];
+        // ── Wasm32: no filesystem — use the pre-registered module registry ──
+        #[cfg(target_arch = "wasm32")]
+        let (source, sub_dir) = {
+            // Skip if already loaded (circular import guard)
+            if self.loaded_files.contains(path) {
+                return Ok(());
+            }
+            self.loaded_files.insert(path.to_string());
 
-        let resolved = candidates
-            .into_iter()
-            .find(|p| p.exists())
-            .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
+            let src = crate::runtime::get_wasm_module(path)
+                .or_else(|| crate::runtime::get_wasm_module(&format!("{}.ling", path)))
+                .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
+            (src, None::<std::path::PathBuf>)
+        };
 
-        let canonical = resolved
-            .canonicalize()
-            .unwrap_or_else(|_| resolved.clone())
-            .to_string_lossy()
-            .to_string();
+        // ── Native: resolve against filesystem ──
+        #[cfg(not(target_arch = "wasm32"))]
+        let (source, sub_dir) = {
+            let base_dir = self
+                .source_dir
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let raw = std::path::Path::new(path);
+            let candidates: Vec<std::path::PathBuf> = vec![
+                base_dir.join(format!("{}.ling", path)),
+                base_dir.join(format!("{}.灵", path)),
+                base_dir.join(format!("{}.령", path)),
+                base_dir.join(format!("{}.霊", path)),
+                base_dir.join(format!("{}.ลิง", path)),
+                base_dir.join(raw),
+                std::path::PathBuf::from(format!("{}.ling", path)),
+                std::path::PathBuf::from(path),
+            ];
 
-        // Skip if already loaded (circular import guard)
-        if self.loaded_files.contains(&canonical) {
-            return Ok(());
-        }
-        self.loaded_files.insert(canonical.clone());
+            let resolved = candidates
+                .into_iter()
+                .find(|p| p.exists())
+                .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
 
-        let source = std::fs::read_to_string(&resolved)
-            .map_err(|e| format!("use: failed to read '{path}': {e}"))?;
+            let canonical = resolved
+                .canonicalize()
+                .unwrap_or_else(|_| resolved.clone())
+                .to_string_lossy()
+                .to_string();
 
-        // Save/restore source_dir for nested relative imports
-        let prev_dir = self.source_dir.clone();
-        self.source_dir = resolved.parent().map(|p| p.to_path_buf());
+            // Skip if already loaded (circular import guard)
+            if self.loaded_files.contains(&canonical) {
+                return Ok(());
+            }
+            self.loaded_files.insert(canonical.clone());
+
+            let src = std::fs::read_to_string(&resolved)
+                .map_err(|e| format!("use: failed to read '{path}': {e}"))?;
+            let dir = resolved.parent().map(|p| p.to_path_buf());
+            (src, dir)
+        };
 
         let program = crate::parser::parse(&source)
             .map_err(|e| format!("use: parse error in '{path}': {e}"))?;
@@ -1219,6 +1339,10 @@ impl Interpreter {
             (false, None) => parent_ns.to_string(),
             (true, None) => String::new(),
         };
+
+        // Save/restore source_dir for nested relative imports
+        let prev_dir = self.source_dir.clone();
+        self.source_dir = sub_dir;
 
         for item in &program.items {
             self.register_item(&target_ns, item)?;
@@ -1465,9 +1589,9 @@ impl Interpreter {
         if !ling_profile_enabled() {
             return self.call_named_inner(name, args, env);
         }
-        let t0 = std::time::Instant::now();
+        let t0 = crate::runtime::now_secs();
         let r = self.call_named_inner(name, args, env);
-        ling_profile_record(name, t0.elapsed().as_nanos());
+        ling_profile_record(name, ((crate::runtime::now_secs() - t0) * 1_000_000_000.0) as u128);
         r
     }
 
@@ -1574,6 +1698,9 @@ impl Interpreter {
             | "잠" | "流水::睡眠" | "Flow::sleep" => {
                 if let Some(ms_val) = args.first() {
                     if let Ok(ms) = self.to_number(ms_val) {
+                        #[cfg(target_arch = "wasm32")]
+                        wasm_sleep_ms(ms.max(0.0) as i32);
+                        #[cfg(not(target_arch = "wasm32"))]
                         std::thread::sleep(std::time::Duration::from_millis(ms as u64));
                     }
                 }
@@ -1839,7 +1966,7 @@ impl Interpreter {
             // ── Step 3: Real-Time Clock ──
             "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
             {
-                return Ok(Value::Number(self.start_time.elapsed().as_secs_f64()));
+                return Ok(Value::Number(crate::runtime::now_secs() - self.start_time_secs));
             },
 
             // Wall-clock seconds since the Unix epoch (real date/time). Lets a
@@ -1847,11 +1974,7 @@ impl Interpreter {
             // datetime — same clock → same world, advancing as real time passes.
             "epoch_now" | "เวลาโลก" | "datetime" | "现在时刻" | "現在時刻" | "현재시각" =>
             {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs_f64())
-                    .unwrap_or(0.0);
-                return Ok(Value::Number(secs));
+                return Ok(Value::Number(crate::runtime::now_secs()));
             },
 
             "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" => {
@@ -2028,6 +2151,15 @@ impl Interpreter {
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().depth_test = on;
+                return Ok(Value::Unit);
+            },
+
+            // set_flat_shade(on) / ตั้งแฟลตเชด — perf test: skip all per-triangle/mesh
+            // lighting (compute_lit_color) and draw with the raw pen colour.
+            "set_flat_shade" | "ตั้งแฟลตเชด" | "平面着色" | "フラット着色" | "평면음영" =>
+            {
+                let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
+                self.gfx.borrow_mut().flat_shade = on;
                 return Ok(Value::Unit);
             },
 
@@ -2598,27 +2730,30 @@ impl Interpreter {
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    // Software-render everything (3-D depth queue + 2-D vtex/ui that
-                    // already wrote into the buffer) into the framebuffer, exactly
-                    // like native, then upload that buffer to the canvas in one blit.
-                    let mut gfx = self.gfx.borrow_mut();
-                    let w = gfx.width;
-                    let h = gfx.height;
-                    if gfx.buffer.len() != w * h {
-                        gfx.buffer.resize(w * h, 0);
-                    }
-                    if !gfx.depth_queue.is_empty() {
-                        let dt = gfx.depth_test;
-                        let reset_z = gfx.zbuf_needs_clear;
-                        let queue = std::mem::take(&mut gfx.depth_queue);
-                        {
-                            let g = &mut *gfx;
-                            let z = if dt { Some(&mut g.depth_buf) } else { None };
-                            queue.flush(&mut g.buffer, z, reset_z, w, h);
+                    {
+                        // Software-render everything (3-D depth queue + 2-D vtex/ui that
+                        // already wrote into the buffer) into the framebuffer, exactly
+                        // like native, then upload that buffer to the canvas in one blit.
+                        let mut gfx = self.gfx.borrow_mut();
+                        let w = gfx.width;
+                        let h = gfx.height;
+                        if gfx.buffer.len() != w * h {
+                            gfx.buffer.resize(w * h, 0);
                         }
-                        gfx.zbuf_needs_clear = false;
+                        if !gfx.depth_queue.is_empty() {
+                            let dt = gfx.depth_test;
+                            let reset_z = gfx.zbuf_needs_clear;
+                            let queue = std::mem::take(&mut gfx.depth_queue);
+                            {
+                                let g = &mut *gfx;
+                                let z = if dt { Some(&mut g.depth_buf) } else { None };
+                                queue.flush(&mut g.buffer, z, reset_z, w, h);
+                            }
+                            gfx.zbuf_needs_clear = false;
+                        }
+                        crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                     }
-                    crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
+                    self.wasm_pace_frame();
                 }
                 // Update the click-edge latch for interactive UI widgets.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -2761,13 +2896,18 @@ impl Interpreter {
             | "フレームレート設定"
             | "프레임설정"
             | "ตั้งเฟรมเรต" => {
-                let fps = self.arg_num(&args, 0, 60.0)?.max(1.0) as usize;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    let fps = self.arg_num(&args, 0, 60.0)?.max(1.0) as usize;
                     let mut gfx = self.gfx.borrow_mut();
                     if let Some(win) = gfx.window.as_mut() {
                         win.set_target_fps(fps);
                     }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.wasm_target_fps = self.arg_num(&args, 0, 60.0)?.max(1.0);
+                    self.wasm_next_present_ms = 0.0;
                 }
                 return Ok(Value::Unit);
             },
@@ -2854,6 +2994,11 @@ impl Interpreter {
                     .map(|(_, y)| y as f64)
                     .unwrap_or(0.0);
                 return Ok(Value::Number(s));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" =>
+            {
+                return Ok(Value::Number(0.0));
             },
             "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3216,13 +3361,17 @@ impl Interpreter {
                             (ay + by + py) / 3.0,
                             (az + bz + pz) / 3.0,
                         ];
-                        crate::gfx::light::compute_lit_color(
-                            base,
-                            normal,
-                            centroid,
-                            &gfx.lights,
-                            ambient,
-                        )
+                        if gfx.flat_shade {
+                            base
+                        } else {
+                            crate::gfx::light::compute_lit_color(
+                                base,
+                                normal,
+                                centroid,
+                                &gfx.lights,
+                                ambient,
+                            )
+                        }
                     };
                     let depth = (da + db + dc) / 3.0;
                     let col = gfx.fog_apply(col, depth);
@@ -3334,14 +3483,18 @@ impl Interpreter {
                     (az + bz + cz) / 3.0,
                 ];
 
-                // Cel-shaded colour
-                let lit_color = crate::gfx::light::compute_lit_color(
-                    gfx.color,
-                    normal,
-                    centroid,
-                    &gfx.lights,
-                    gfx.ambient,
-                );
+                // Cel-shaded colour (or raw pen colour under flat-shade test mode)
+                let lit_color = if gfx.flat_shade {
+                    gfx.color
+                } else {
+                    crate::gfx::light::compute_lit_color(
+                        gfx.color,
+                        normal,
+                        centroid,
+                        &gfx.lights,
+                        gfx.ambient,
+                    )
+                };
 
                 // ── Near-plane CLIP (Sutherland–Hodgman) ──
                 // A vertex just in front of the eye divides by ~0 in the perspective
@@ -3355,42 +3508,49 @@ impl Interpreter {
                     (bx, by, bz, gfx.camera.depth(bx, by, bz)),
                     (cx, cy, cz, gfx.camera.depth(cx, cy, cz)),
                 ];
-                let mut poly: Vec<(f32, f32, f32)> = Vec::with_capacity(4);
+                // Stack arrays (no per-triangle heap alloc): near-plane clip of a
+                // triangle yields ≤4 vertices. This handler runs thousands of
+                // times per frame, so avoiding two Vec allocations each call is a
+                // real win across every render mode.
+                let mut poly: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
+                let mut pn = 0usize;
                 let mut ei = 0;
                 while ei < 3 {
                     let a = vw[ei];
                     let b = vw[(ei + 1) % 3];
                     let ain = a.3 > near;
                     let bin = b.3 > near;
-                    if ain {
-                        poly.push((a.0, a.1, a.2));
+                    if ain && pn < 4 {
+                        poly[pn] = (a.0, a.1, a.2);
+                        pn += 1;
                     }
-                    if ain != bin {
+                    if ain != bin && pn < 4 {
                         let tt = (near - a.3) / (b.3 - a.3);
-                        poly.push((
+                        poly[pn] = (
                             a.0 + (b.0 - a.0) * tt,
                             a.1 + (b.1 - a.1) * tt,
                             a.2 + (b.2 - a.2) * tt,
-                        ));
+                        );
+                        pn += 1;
                     }
                     ei += 1;
                 }
-                if poly.len() < 3 {
+                if pn < 3 {
                     return Ok(Value::Unit);
                 }
-                // Project the clipped polygon, painter-depth = mean, fan-triangulate.
-                let proj: Vec<(f32, f32, f32)> = poly
-                    .iter()
-                    .map(|p| gfx.camera.project(p.0, p.1, p.2))
-                    .collect();
+                // Project the clipped polygon (stack), painter-depth = mean, fan-triangulate.
+                let mut proj: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
                 let mut dsum = 0.0f32;
-                for p in &proj {
-                    dsum += p.2;
+                let mut pi = 0;
+                while pi < pn {
+                    proj[pi] = gfx.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
+                    dsum += proj[pi].2;
+                    pi += 1;
                 }
-                let depth = dsum / proj.len() as f32;
+                let depth = dsum / pn as f32;
                 let lit_color = gfx.fog_apply(lit_color, depth);
                 let mut fk = 1;
-                while fk + 1 < proj.len() {
+                while fk + 1 < pn {
                     gfx.depth_queue.push_triangle_zv(
                         lit_color,
                         proj[0].0,
@@ -4870,12 +5030,30 @@ impl Interpreter {
             },
             "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" =>
             {
-                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                // Borrow the list; clone only the element (was cloning the whole list).
                 let i = self.arg_num(&args, 1, 0.0)? as usize;
-                if let Value::List(v) = lst {
+                if let Some(Value::List(v)) = args.first() {
                     return Ok(v.get(i).cloned().unwrap_or(Value::Str(String::new())));
                 }
                 return Ok(Value::Str(String::new()));
+            },
+            // list_set(lst, idx, val) → new list with index replaced. Engine builtin
+            // (O(n) one copy) to replace the O(n²) ling `ตั้งรายการ` that looped
+            // list_push + list_get (each of which copied the whole list).
+            "list_set" | "ตั้งรายการ" | "设元素" | "要素設定" | "요소설정" =>
+            {
+                let idx = self.arg_num(&args, 1, 0.0)? as usize;
+                let mut ai = args.into_iter();
+                let lst = ai.next().unwrap_or(Value::List(vec![]));
+                ai.next(); // skip idx
+                let val = ai.next().unwrap_or(Value::Unit);
+                if let Value::List(mut v) = lst {
+                    if idx < v.len() {
+                        v[idx] = val;
+                    }
+                    return Ok(Value::List(v));
+                }
+                return Ok(Value::List(vec![]));
             },
             "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" =>
             {
@@ -5497,6 +5675,14 @@ impl Interpreter {
                     s.as_bytes(),
                 ))));
             },
+            #[cfg(target_arch = "wasm32")]
+            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" =>
+            {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(
+                    s.as_bytes(),
+                ))));
+            },
             // 3-D torus-knot fingerprint of any text/key → flat [x,y,z, x,y,z, …]
             #[cfg(not(target_arch = "wasm32"))]
             "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
@@ -5510,7 +5696,27 @@ impl Interpreter {
                 }
                 return Ok(Value::List(out));
             },
+            #[cfg(target_arch = "wasm32")]
+            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
+                let s = self.arg_str(&args, 0, "");
+                let shape = ling_crypto::geo::KnotShape::from_bytes(s.as_bytes());
+                let mut out = Vec::with_capacity(shape.points.len() * 3);
+                for p in &shape.points {
+                    out.push(Value::Number(p[0] as f64));
+                    out.push(Value::Number(p[1] as f64));
+                    out.push(Value::Number(p[2] as f64));
+                }
+                return Ok(Value::List(out));
+            },
             #[cfg(not(target_arch = "wasm32"))]
+            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
+            {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(
+                    ling_crypto::geo::KnotShape::from_bytes(s.as_bytes()).label(),
+                ));
+            },
+            #[cfg(target_arch = "wasm32")]
             "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
             {
                 let s = self.arg_str(&args, 0, "");
@@ -5783,6 +5989,10 @@ impl Interpreter {
                     .unwrap_or(0.0);
                 return Ok(Value::Number(v));
             },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_x" => {
+                return Ok(Value::Number(0.0));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_y" => {
                 let gfx = self.gfx.borrow();
@@ -5794,6 +6004,10 @@ impl Interpreter {
                     .unwrap_or(0.0);
                 return Ok(Value::Number(v));
             },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_y" => {
+                return Ok(Value::Number(0.0));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down" => {
                 let gfx = self.gfx.borrow();
@@ -5803,6 +6017,10 @@ impl Interpreter {
                     .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
                     .unwrap_or(false);
                 return Ok(Value::Bool(d));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_down" => {
+                return Ok(Value::Bool(false));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_right" | "เมาส์ขวา" => {
@@ -5814,6 +6032,10 @@ impl Interpreter {
                     .unwrap_or(false);
                 return Ok(Value::Bool(d));
             },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_down_right" | "เมาส์ขวา" => {
+                return Ok(Value::Bool(false));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_middle" | "เมาส์กลาง" => {
                 let gfx = self.gfx.borrow();
@@ -5823,6 +6045,10 @@ impl Interpreter {
                     .map(|w| w.get_mouse_down(minifb::MouseButton::Middle))
                     .unwrap_or(false);
                 return Ok(Value::Bool(d));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_down_middle" | "เมาส์กลาง" => {
+                return Ok(Value::Bool(false));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
@@ -5838,6 +6064,11 @@ impl Interpreter {
                     .and_then(|win| win.get_mouse_pos(minifb::MouseMode::Clamp))
                     .unwrap_or((0.0, 0.0));
                 return Ok(Value::Bool(ling_ui::holo::hit_rect(mx, my, x, y, w, h)));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
+            {
+                return Ok(Value::Bool(false));
             },
             // ui_text(x, y, scale, "string") — holographic vector text
             "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" =>
@@ -5888,6 +6119,13 @@ impl Interpreter {
                     },
                 }
             },
+            #[cfg(target_arch = "wasm32")]
+            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" =>
+            {
+                // Web runtime does not load host TTF/OTF files yet.
+                // Return -1 so scripts can fall back to ui_text.
+                return Ok(Value::Number(-1.0));
+            },
             // font_text(handle, x, y, px, "string") — anti-aliased *stroked* vector outline
             // in the current set_color / set_blend. (x,y) is the text box top-left.
             #[cfg(not(target_arch = "wasm32"))]
@@ -5920,6 +6158,11 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
+            #[cfg(target_arch = "wasm32")]
+            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" =>
+            {
+                return Ok(Value::Unit);
+            },
             // font_text_fill(handle, x, y, px, "string") — anti-aliased *filled* vector glyphs.
             #[cfg(not(target_arch = "wasm32"))]
             "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
@@ -5945,6 +6188,11 @@ impl Interpreter {
                         );
                     }
                 }
+                return Ok(Value::Unit);
+            },
+            #[cfg(target_arch = "wasm32")]
+            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
+            {
                 return Ok(Value::Unit);
             },
             // font_text_3d(handle, cx,cy,cz, ux,uy,uz, vx,vy,vz, size, "string")
@@ -6021,6 +6269,11 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
+            #[cfg(target_arch = "wasm32")]
+            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" =>
+            {
+                return Ok(Value::Unit);
+            },
             // font_width(handle, px, "string") — pixel width of a string in a loaded font.
             #[cfg(not(target_arch = "wasm32"))]
             "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" =>
@@ -6031,6 +6284,11 @@ impl Interpreter {
                 if id >= 0 && (id as usize) < self.fonts.len() {
                     return Ok(Value::Number(self.fonts[id as usize].measure(&s, px) as f64));
                 }
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" =>
+            {
                 return Ok(Value::Number(0.0));
             },
             // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
@@ -7070,6 +7328,15 @@ impl Interpreter {
                 ));
             },
 
+            // ── stop every one-shot SFX/morph/sample voice (scene cleanup) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_stop_sfx" | "停止音效" | "効果音停止" | "효과음정지" | "หยุดเอฟเฟกต์ทั้งหมด" =>
+            {
+                if let Some(a) = &self.audio {
+                    a.stop_all_sfx();
+                }
+                return Ok(Value::Unit);
+            },
             // ── spatial (2D/3D/4D) one-shot SFX ──
             #[cfg(not(target_arch = "wasm32"))]
             "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" =>
@@ -7091,6 +7358,7 @@ impl Interpreter {
             // โน้ตมอร์ฟ(x,y,z,w, freq, amp, dur, material, morph)
             //   material: 0 bowed-string · 1 plucked · 2 blown · 3 struck-metal
             //   morph:    0.0 light/acoustic .. 1.0 dark/digital
+            #[cfg(not(target_arch = "wasm32"))]
             "morph_note" | "โน้ตมอร์ฟ" | "变形音" | "モーフ音" | "모프음" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
@@ -7502,6 +7770,13 @@ impl Interpreter {
                     .push(crate::gfx::shapes::ColorMesh { pos, col, height });
                 return Ok(Value::Number(id as f64));
             },
+            #[cfg(target_arch = "wasm32")]
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" =>
+            {
+                // Native .lmesh loading is file-system based and not wired for wasm yet.
+                // Return an invalid handle so scripts can choose a fallback path.
+                return Ok(Value::Number(-1.0));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" =>
             {
@@ -7522,6 +7797,11 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.draw_color_mesh(m, cx, cy, cz, sc, yaw, sway, arm, lean, leg, tuck);
                 }
+                return Ok(Value::Unit);
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" =>
+            {
                 return Ok(Value::Unit);
             },
 
@@ -7584,6 +7864,18 @@ impl Interpreter {
                 if let Some(g) = self.liquids.get_mut(id) {
                     g.step(dt);
                 }
+                return Ok(Value::Unit);
+            },
+            // liquid_step_all(dt) — advance EVERY liquid grid one tick, in parallel
+            // across instances (rayon). Independent grids share no state, so this is
+            // an embarrassingly-parallel batch: a scene with many liquid surfaces
+            // steps in one call that scales across cores instead of N serial
+            // `liquid_step` calls.
+            #[cfg(not(target_arch = "wasm32"))]
+            "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด" =>
+            {
+                let dt = self.arg_num(&args, 0, 0.016)? as f32;
+                ling_physics::liquid::step_all(&mut self.liquids, dt);
                 return Ok(Value::Unit);
             },
             // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
@@ -7941,7 +8233,7 @@ impl Interpreter {
                 let ww = self.arg_num(&args, 2, 720.0)? as f32;
                 let hh = self.arg_num(&args, 3, 150.0)? as f32;
                 let font = self.arg_num(&args, 4, -1.0)? as i64;
-                let t = self.start_time.elapsed().as_secs_f32();
+                let t = (crate::runtime::now_secs() - self.start_time_secs) as f32;
                 self.render_dialog(x, y, ww, hh, font, t);
                 return Ok(Value::Unit);
             },
@@ -7963,6 +8255,10 @@ impl Interpreter {
                         self.text_buffer.push(c);
                     }
                 }
+                return Ok(Value::Str(self.text_buffer.clone()));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "text_poll" => {
                 return Ok(Value::Str(self.text_buffer.clone()));
             },
             "text_get" => return Ok(Value::Str(self.text_buffer.clone())),
@@ -8078,6 +8374,26 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
+            #[cfg(target_arch = "wasm32")]
+            "flush_3d" | "render_3d" => {
+                let mut gfx = self.gfx.borrow_mut();
+                if !gfx.depth_queue.is_empty() {
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    let dt = gfx.depth_test;
+                    let reset_z = gfx.zbuf_needs_clear;
+                    let (bm, ba) = (gfx.blend, gfx.alpha);
+                    let queue = std::mem::take(&mut gfx.depth_queue);
+                    {
+                        let g = &mut *gfx;
+                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        queue.flush(&mut g.buffer, z, reset_z, w, h);
+                    }
+                    gfx.zbuf_needs_clear = false;
+                    gfx.depth_queue.set_state(bm, ba);
+                }
+                return Ok(Value::Unit);
+            },
 
             // Viscous full-screen distortion (warp/pucker/bloat, edge-wrapped). Call
             // after the 3-D flush and before the UI so only the world layer warps.
@@ -8086,7 +8402,10 @@ impl Interpreter {
             {
                 let amount = self.arg_num(&args, 0, 8.0)? as f32;
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
-                self.gfx.borrow_mut().distort(amount, t);
+                // optional `step` (default 1 = full res): 2 = half-res block warp
+                // (~4× fewer warp computes, slightly softer — suits a liquid look).
+                let step = self.arg_num(&args, 2, 1.0)?.max(1.0) as usize;
+                self.gfx.borrow_mut().distort(amount, t, step);
                 return Ok(Value::Unit);
             },
 

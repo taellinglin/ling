@@ -58,6 +58,7 @@ impl LingCompiler {
     }
 
     /// Compile and run using the Cranelift JIT backend.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn compile_and_run_jit<P: AsRef<Path>>(&self, input: P) -> LingResult<()> {
         let mir = mir::compile_path(input.as_ref(), self.config.optimization)?;
         let mir_prog = ling_codegen::MirProgram::new(mir, input.as_ref().to_string_lossy());

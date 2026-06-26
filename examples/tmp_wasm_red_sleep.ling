@@ -1,0 +1,8 @@
+bind start = do {
+    open_window(640, 360)
+    while window_is_open() {
+        fill(180, 20, 20)
+        present()
+        sleep(1)
+    }
+}

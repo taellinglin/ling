@@ -192,6 +192,18 @@ fn build_webgl(ling_file: &str, out_dir: &str) {
         std::process::exit(1);
     });
 
+    // Collect all transitive `use` dependencies and bundle as modules.json
+    let entry_dir = Path::new(ling_file)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let modules = collect_ling_modules(&source, &entry_dir);
+    let modules_json = serde_json_modules(&modules);
+    std::fs::write(Path::new(out_dir).join("modules.json"), modules_json).unwrap_or_else(|e| {
+        eprintln!("write modules.json: {e}");
+        std::process::exit(1);
+    });
+
     std::fs::write(Path::new(out_dir).join("worker.js"), WORKER_JS).unwrap_or_else(|e| {
         eprintln!("write worker.js: {e}");
         std::process::exit(1);
@@ -214,6 +226,108 @@ fn build_webgl(ling_file: &str, out_dir: &str) {
 
 fn has_wasm_pack() -> bool {
     Command::new("wasm-pack").arg("--version").output().is_ok()
+}
+
+/// Scan a Ling source string for bare `use "path"` items (any keyword variant)
+/// and return the quoted path strings.
+fn scan_use_paths(source: &str) -> Vec<String> {
+    // Use keywords across all supported human languages (mirrors the parser).
+    let use_kws = [
+        "use", "ใช้", "载", "引", "使う", "사용", "використати", "использовать",
+        "استخدم", "用", "להשתמש", "उपयोग",
+    ];
+    let mut paths = Vec::new();
+    for line in source.lines() {
+        let trimmed = line.trim();
+        for kw in &use_kws {
+            if trimmed.starts_with(kw) {
+                let rest = trimmed[kw.len()..].trim_start();
+                if rest.starts_with('"') {
+                    if let Some(end) = rest[1..].find('"') {
+                        paths.push(rest[1..end + 1].to_string());
+                    }
+                }
+                break;
+            }
+        }
+    }
+    paths
+}
+
+/// Recursively collect all `.ling` modules reachable from `source`.
+/// Returns a map of module-path-key → source-string.
+fn collect_ling_modules(
+    source: &str,
+    base_dir: &Path,
+) -> std::collections::HashMap<String, String> {
+    let mut modules: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut queue: Vec<(String, PathBuf)> = Vec::new();
+    for path in scan_use_paths(source) {
+        queue.push((path, base_dir.to_path_buf()));
+    }
+    while let Some((path, dir)) = queue.pop() {
+        if modules.contains_key(&path) {
+            continue;
+        }
+        let extensions = ["ling", "灵", "령", "霊", "ลิง"];
+        let candidates: Vec<PathBuf> = extensions
+            .iter()
+            .map(|ext| dir.join(format!("{path}.{ext}")))
+            .chain(std::iter::once(dir.join(&path)))
+            .collect();
+        let file_path = match candidates.into_iter().find(|p| p.exists()) {
+            Some(p) => p,
+            None => {
+                eprintln!("[lingc] warning: cannot find module '{path}' (skipped)");
+                continue;
+            },
+        };
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[lingc] warning: cannot read module '{path}': {e} (skipped)");
+                continue;
+            },
+        };
+        let sub_dir = file_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| dir.clone());
+        for sub_path in scan_use_paths(&content) {
+            if !modules.contains_key(&sub_path) {
+                queue.push((sub_path, sub_dir.clone()));
+            }
+        }
+        modules.insert(path, content);
+    }
+    modules
+}
+
+/// Serialize a module map to JSON without an external dep.
+fn serde_json_modules(modules: &std::collections::HashMap<String, String>) -> String {
+    let mut out = String::from("{\n");
+    let entries: Vec<_> = modules.iter().collect();
+    for (i, (path, src)) in entries.iter().enumerate() {
+        let comma = if i + 1 < entries.len() { "," } else { "" };
+        out.push_str(&format!("  {}: {}{}\n", json_str(path), json_str(src), comma));
+    }
+    out.push('}');
+    out
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn find_ling_wasm_crate() -> Option<PathBuf> {
@@ -246,18 +360,26 @@ const WORKER_JS: &str = r#"// worker.js — runs the Ling interpreter inside a W
 importScripts('./ling_wasm.js');
 let wasmReady = false;
 let pendingCanvas = null;
-let pendingSource = null;
-wasm_bindgen('./ling_wasm_bg.wasm').then(() => {
+let pendingRun = null;
+wasm_bindgen({ module_or_path: './ling_wasm_bg.wasm' }).then(() => {
     wasmReady = true;
     if (pendingCanvas !== null) {
         wasm_bindgen.init_canvas(pendingCanvas);
         pendingCanvas = null;
     }
-    if (pendingSource !== null) {
-        wasm_bindgen.run_program(pendingSource);
-        pendingSource = null;
+    if (pendingRun !== null) {
+        startRun(pendingRun.source, pendingRun.modules);
+        pendingRun = null;
     }
 });
+function startRun(source, modules) {
+    if (modules && typeof modules === 'object') {
+        for (const [path, src] of Object.entries(modules)) {
+            wasm_bindgen.register_module(path, src);
+        }
+    }
+    wasm_bindgen.run_program(source);
+}
 self.onmessage = function(e) {
     const { type } = e.data;
     if (type === 'init') {
@@ -268,9 +390,9 @@ self.onmessage = function(e) {
         }
     } else if (type === 'run') {
         if (wasmReady) {
-            wasm_bindgen.run_program(e.data.source);
+            startRun(e.data.source, e.data.modules);
         } else {
-            pendingSource = e.data.source;
+            pendingRun = { source: e.data.source, modules: e.data.modules };
         }
     }
 };
@@ -304,7 +426,12 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
       .then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
       .then(source => {
         status.textContent = 'running';
-        worker.postMessage({ type: 'run', source });
+        return fetch('modules.json')
+          .then(r => r.ok ? r.json() : {})
+          .catch(() => ({}))
+          .then(modules => {
+            worker.postMessage({ type: 'run', source, modules });
+          });
       })
       .catch(err => {
         status.textContent = 'error: ' + err.message;

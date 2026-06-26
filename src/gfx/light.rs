@@ -79,6 +79,12 @@ pub fn compute_lit_color(
     let mut acc_g = bg * ambient;
     let mut acc_b = bb * ambient;
 
+    // Ambient-only scene (no point lights): skip the normal-normalise sqrt and
+    // the light loop. Hot for flat ambient geometry (floor tiles, HUD, etc.).
+    if lights.is_empty() {
+        return pack(acc_r.min(255.0), acc_g.min(255.0), acc_b.min(255.0));
+    }
+
     // Normalise the face normal once
     let [nx, ny, nz] = normal;
     let nlen = (nx * nx + ny * ny + nz * nz).sqrt();

@@ -1,0 +1,9 @@
+bind start = do {
+    open_window(640, 360)
+    bind i = 0
+    while i < 100 {
+        fill(180, 20, 20)
+        present()
+        bind i = i + 1
+    }
+}

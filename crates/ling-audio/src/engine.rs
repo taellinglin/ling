@@ -868,6 +868,18 @@ impl AudioEngine {
         }
     }
 
+    /// Stop every one-shot effect immediately — the SFX pool, the YIN-YANG morph
+    /// voices, and sample voices — so an effect tail (slash / monster callout /
+    /// explosion) can't bleed across a scene transition. Continuous tones and
+    /// music are left alone (silence those via `tone(..,amp=0)` / `stop_music`).
+    pub fn stop_all_sfx(&self) {
+        if let Ok(mut s) = self.state.lock() {
+            s.sfx.clear();
+            s.morph_voices.clear();
+            s.sample_voices.clear();
+        }
+    }
+
     /// Fire a YIN-YANG morph synth note. `material`: 0 bowed-string · 1 plucked ·
     /// 2 blown · 3 struck-metal. `morph` 0=light/acoustic .. 1=dark/digital
     /// (FM + bit/sample crush + drive). Up to 32 morph voices; oldest dropped.
@@ -1117,20 +1129,25 @@ fn build_stream(
 /// Fill a `&mut [f32]` buffer (interleaved, `channels` wide).
 fn fill_f32(data: &mut [f32], channels: usize, state: &Arc<Mutex<AudioState>>) {
     let ch = channels.max(1);
-    if let Ok(mut s) = state.try_lock() {
-        for frame in data.chunks_mut(ch) {
-            let (l, r) = s.next_sample();
-            frame[0] = l;
-            if ch > 1 {
-                frame[1] = r;
-            }
-            for extra in frame.iter_mut().skip(2) {
-                *extra = 0.0;
-            }
+    // `lock()`, NOT `try_lock()`: the game thread makes many short audio calls
+    // per frame (4 hum tones + low-pass + SFX + monster callouts…), each briefly
+    // holding this mutex. With `try_lock` the callback dropped to SILENCE on any
+    // contention → choppy/stuttering continuous tones (the "ball whirr" hum).
+    // The lock holders are all microsecond-short, so blocking here is negligible
+    // and gives glitch-free audio. (A lock-free ring buffer would be the textbook
+    // real-time fix; this is the pragmatic one for a game mixer.)
+    let mut s = match state.lock() {
+        Ok(s) => s,
+        Err(p) => p.into_inner(), // poisoned (a panic mid-mix) → keep playing
+    };
+    for frame in data.chunks_mut(ch) {
+        let (l, r) = s.next_sample();
+        frame[0] = l;
+        if ch > 1 {
+            frame[1] = r;
         }
-    } else {
-        for s in data.iter_mut() {
-            *s = 0.0;
+        for extra in frame.iter_mut().skip(2) {
+            *extra = 0.0;
         }
     }
 }
@@ -1138,20 +1155,20 @@ fn fill_f32(data: &mut [f32], channels: usize, state: &Arc<Mutex<AudioState>>) {
 /// Fill a `&mut [i16]` buffer (interleaved, `channels` wide).
 fn fill_i16(data: &mut [i16], channels: usize, state: &Arc<Mutex<AudioState>>) {
     let ch = channels.max(1);
-    if let Ok(mut s) = state.try_lock() {
-        for frame in data.chunks_mut(ch) {
-            let (l, r) = s.next_sample();
-            frame[0] = (l * 32_767.0) as i16;
-            if ch > 1 {
-                frame[1] = (r * 32_767.0) as i16;
-            }
-            for extra in frame.iter_mut().skip(2) {
-                *extra = 0;
-            }
+    // `lock()` not `try_lock()` — see fill_f32: try_lock dropped to silence on
+    // contention with the game thread's per-frame audio calls → choppy tones.
+    let mut s = match state.lock() {
+        Ok(s) => s,
+        Err(p) => p.into_inner(),
+    };
+    for frame in data.chunks_mut(ch) {
+        let (l, r) = s.next_sample();
+        frame[0] = (l * 32_767.0) as i16;
+        if ch > 1 {
+            frame[1] = (r * 32_767.0) as i16;
         }
-    } else {
-        for s in data.iter_mut() {
-            *s = 0;
+        for extra in frame.iter_mut().skip(2) {
+            *extra = 0;
         }
     }
 }
