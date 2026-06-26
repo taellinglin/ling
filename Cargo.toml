@@ -151,6 +151,9 @@ ling-ui = { path = "crates/ling-ui", version = "2030.0.0" }
 web-sys = { version = "0.3", features = [
     # Console
     "console",
+    # Worker and ImageBitmap
+    "DedicatedWorkerGlobalScope",
+    "ImageBitmap",
     # Graphics
     "OffscreenCanvas",
     "WebGl2RenderingContext",

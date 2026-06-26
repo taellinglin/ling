@@ -358,10 +358,23 @@ fn find_ling_wasm_crate() -> Option<PathBuf> {
 
 const WORKER_JS: &str = r#"// worker.js — runs the Ling interpreter inside a Web Worker
 importScripts('./ling_wasm.js');
+
+// Forward console logs and errors to the main thread for debugging
+const _log = console.log;
+console.log = function(...args) {
+    self.postMessage({ type: 'log', text: args.join(' ') });
+    _log.apply(console, args);
+};
+const _error = console.error;
+console.error = function(...args) {
+    self.postMessage({ type: 'error', text: args.join(' ') });
+    _error.apply(console, args);
+};
+
 let wasmReady = false;
 let pendingCanvas = null;
 let pendingRun = null;
-wasm_bindgen({ module_or_path: './ling_wasm_bg.wasm' }).then(() => {
+wasm_bindgen('./ling_wasm_bg.wasm').then(() => {
     wasmReady = true;
     if (pendingCanvas !== null) {
         wasm_bindgen.init_canvas(pendingCanvas);
@@ -371,6 +384,8 @@ wasm_bindgen({ module_or_path: './ling_wasm_bg.wasm' }).then(() => {
         startRun(pendingRun.source, pendingRun.modules);
         pendingRun = null;
     }
+}).catch(err => {
+    console.error('wasm-bindgen init failed:', err);
 });
 function startRun(source, modules) {
     if (modules && typeof modules === 'object') {
@@ -383,10 +398,13 @@ function startRun(source, modules) {
 self.onmessage = function(e) {
     const { type } = e.data;
     if (type === 'init') {
+        const width = e.data.width || 800;
+        const height = e.data.height || 600;
+        const offscreen = new OffscreenCanvas(width, height);
         if (wasmReady) {
-            wasm_bindgen.init_canvas(e.data.canvas);
+            wasm_bindgen.init_canvas(offscreen);
         } else {
-            pendingCanvas = e.data.canvas;
+            pendingCanvas = offscreen;
         }
     } else if (type === 'run') {
         if (wasmReady) {
@@ -408,20 +426,44 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
     #canvas { display: block; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 100vw; max-height: 100vh; width: auto; height: auto; }
-    #status { position: fixed; bottom: 8px; right: 12px; color: #888; font: 12px/1 monospace; }
+    #status { position: fixed; bottom: 8px; right: 12px; color: #888; font: 12px/1 monospace; z-index: 10; }
+    #log-overlay { position: absolute; top: 10px; left: 10px; right: 10px; max-height: 40%; overflow-y: auto; font: 11px/1.4 monospace; color: #0f0; background: rgba(0, 0, 0, 0.6); pointer-events: none; padding: 8px; border-radius: 4px; z-index: 20; }
+    .log-err { color: #f55; }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
   <div id="status">loading…</div>
+  <div id="log-overlay"></div>
   <script>
     const canvas = document.getElementById('canvas');
     const status = document.getElementById('status');
+    const overlay = document.getElementById('log-overlay');
+    
+    function logToOverlay(text, isErr = false) {
+      const line = document.createElement('div');
+      line.textContent = text;
+      if (isErr) line.className = 'log-err';
+      overlay.appendChild(line);
+      overlay.scrollTop = overlay.scrollHeight;
+    }
+    
     canvas.width  = window.innerWidth;
     canvas.height = window.innerHeight;
     const worker = new Worker('worker.js');
-    const offscreen = canvas.transferControlToOffscreen();
-    worker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+    const ctx = canvas.getContext('bitmaprenderer');
+    
+    worker.onmessage = function(e) {
+      if (e.data.type === 'log') {
+        logToOverlay(e.data.text);
+      } else if (e.data.type === 'error') {
+        logToOverlay(e.data.text, true);
+      } else if (e.data.type === 'frame') {
+        ctx.transferFromImageBitmap(e.data.bitmap);
+      }
+    };
+    
+    worker.postMessage({ type: 'init', width: canvas.width, height: canvas.height });
     fetch('program.ling')
       .then(r => { if (!r.ok) throw new Error(r.statusText); return r.text(); })
       .then(source => {
@@ -435,13 +477,16 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
       })
       .catch(err => {
         status.textContent = 'error: ' + err.message;
+        logToOverlay('Fetch error: ' + err.message, true);
         console.error(err);
       });
     worker.onerror = (e) => {
       status.textContent = 'worker error: ' + e.message;
+      logToOverlay('Worker error: ' + e.message, true);
       console.error('worker error', e);
     };
   </script>
 </body>
 </html>
 "#;
+
