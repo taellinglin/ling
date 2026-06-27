@@ -265,7 +265,26 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
             Value::Unit
         },
 
-        _ => return None,
+        // liquid sim — return handle 0 for new, Unit for everything else
+        "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
+            Value::Number(0.0)
+        },
+        "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
+            Value::Number(0.0)
+        },
+        "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว"
+        | "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว"
+        | "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว"
+        | "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว"
+        | "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด"
+        | "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง"
+        | "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว"
+        | "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
+            Value::Unit
+        },
+
+        // catch-all: any other native-only builtin silently no-ops on wasm32
+        _ => Value::Unit,
     })
 }
 
@@ -8396,6 +8415,26 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
+            },
+            // wasm32: liquid sim not available — return safe no-op values
+            #[cfg(target_arch = "wasm32")]
+            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว"
+            | "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว"
+            | "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว"
+            | "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว"
+            | "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด"
+            | "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง"
+            | "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว"
+            | "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
+                return Ok(Value::Unit);
+            },
+            #[cfg(target_arch = "wasm32")]
+            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
+                return Ok(Value::Number(0.0));
             },
             // sparkle(x, y, w, h, count [, t]) — scatter twinkling vector star-sparkles
             // in a rect (snowglobe effect) in the current colour + blend mode.
