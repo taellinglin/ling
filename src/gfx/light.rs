@@ -133,3 +133,167 @@ pub fn compute_lit_color(
 fn pack(r: f32, g: f32, b: f32) -> u32 {
     ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
 }
+
+/// Linearly interpolate between two 0x00RRGGBB colours by factor `t ∈ [0,1]`.
+#[inline]
+pub fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
+    let ar = ((a >> 16) & 0xFF) as f32;
+    let ag = ((a >> 8) & 0xFF) as f32;
+    let ab = (a & 0xFF) as f32;
+    let br = ((b >> 16) & 0xFF) as f32;
+    let bg = ((b >> 8) & 0xFF) as f32;
+    let bb = (b & 0xFF) as f32;
+    pack(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t)
+}
+
+/// Like `compute_lit_color` but uses the raw (non-quantised) diffuse dot product.
+///
+/// Use this for per-vertex colours going into a Gouraud shader — the shader's
+/// per-pixel cel-quantise step (`fill_triangle_gouraud*` with `bands >= 2`)
+/// will snap the smooth gradient to discrete bands after interpolation, giving a
+/// continuous gradient-of-shading-bands instead of a flat cel quantise at each
+/// vertex (which creates colour seams at vertex boundaries).
+pub fn compute_lit_color_linear(
+    base: u32,
+    normal: [f32; 3],
+    centroid: [f32; 3],
+    lights: &[Light],
+    ambient: f32,
+) -> u32 {
+    let br = ((base >> 16) & 0xFF) as f32;
+    let bg = ((base >> 8) & 0xFF) as f32;
+    let bb = (base & 0xFF) as f32;
+
+    let mut acc_r = br * ambient;
+    let mut acc_g = bg * ambient;
+    let mut acc_b = bb * ambient;
+
+    if lights.is_empty() {
+        return pack(acc_r.min(255.0), acc_g.min(255.0), acc_b.min(255.0));
+    }
+
+    let [nx, ny, nz] = normal;
+    let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
+    if nlen < 1e-6 {
+        return pack(acc_r.min(255.0), acc_g.min(255.0), acc_b.min(255.0));
+    }
+    let (nx, ny, nz) = (nx / nlen, ny / nlen, nz / nlen);
+
+    for l in lights {
+        let dx = l.x - centroid[0];
+        let dy = l.y - centroid[1];
+        let dz = l.z - centroid[2];
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
+
+        let atten = if l.radius > 0.0 { (1.0 - dist / l.radius).max(0.0) } else { 1.0 };
+        if atten <= 0.0 {
+            continue;
+        }
+
+        let lx = dx / dist;
+        let ly = dy / dist;
+        let lz = dz / dist;
+
+        // Raw (linear) dot product — no cel-quantise here.
+        let raw = (nx * lx + ny * ly + nz * lz).abs().clamp(0.0, 1.0);
+        let shaded = raw * l.intensity * atten;
+
+        acc_r += br * shaded * l.r;
+        acc_g += bg * shaded * l.g;
+        acc_b += bb * shaded * l.b;
+    }
+
+    pack(acc_r.min(255.0), acc_g.min(255.0), acc_b.min(255.0))
+}
+
+/// Compute lit colours at each of the three triangle vertices independently,
+/// producing a smooth gradient across the face under directional/point lights.
+///
+/// Uses linear (non-cel-quantised) vertex colours so the Gouraud shader can
+/// apply per-pixel cel-banding on the smoothly interpolated result — matching
+/// the toon shading of flat triangles but without colour seams at vertices.
+pub fn compute_lit_color_vertices(
+    base: u32,
+    normal: [f32; 3],
+    va: [f32; 3],
+    vb: [f32; 3],
+    vc: [f32; 3],
+    lights: &[Light],
+    ambient: f32,
+) -> (u32, u32, u32) {
+    let lit = |pos: [f32; 3]| compute_lit_color_linear(base, normal, pos, lights, ambient);
+    (lit(va), lit(vb), lit(vc))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn white() -> u32 {
+        0x00FF_FFFF
+    }
+    fn red() -> u32 {
+        0x00FF_0000
+    }
+
+    #[test]
+    fn lerp_color_endpoints() {
+        // t=0 → a, t=1 → b
+        assert_eq!(lerp_color(red(), white(), 0.0), red());
+        assert_eq!(lerp_color(red(), white(), 1.0), white());
+    }
+
+    #[test]
+    fn lerp_color_midpoint() {
+        // 0xFF0000 and 0x00FF00 midpoint should be ~0x7F7F00
+        let a = 0x00FF_0000u32;
+        let b = 0x0000_FF00u32;
+        let mid = lerp_color(a, b, 0.5);
+        let r = (mid >> 16) & 0xFF;
+        let g = (mid >> 8) & 0xFF;
+        let bl = mid & 0xFF;
+        assert!((r as i32 - 0x7F).abs() <= 1, "r={r:#04x}");
+        assert!((g as i32 - 0x7F).abs() <= 1, "g={g:#04x}");
+        assert_eq!(bl, 0);
+    }
+
+    #[test]
+    fn ambient_only_no_lights() {
+        // With no lights, ambient=1.0 should return the base colour unchanged.
+        let base = 0x0040_8060u32;
+        let result = compute_lit_color(base, [0.0, 1.0, 0.0], [0.0, 0.0, 0.0], &[], 1.0);
+        assert_eq!(result, base);
+    }
+
+    #[test]
+    fn single_point_light_gradient() {
+        // A light positioned near vertex A should make A brighter than C.
+        let base = 0x00FF_FFFF;
+        let normal = [0.0, 0.0, 1.0];
+        let light = Light { x: 0.0, y: 0.0, z: 10.0, r: 1.0, g: 1.0, b: 1.0,
+            intensity: 1.0, radius: 0.0 };
+        let va = [0.0f32, 0.0, 0.0];
+        let vb = [100.0, 0.0, 0.0];
+        let vc = [200.0, 0.0, 0.0];
+        let (ca, _cb, cc) =
+            compute_lit_color_vertices(base, normal, va, vb, vc, &[light], 0.1);
+        // vertex A is closer to the light, so its red channel should be >= C's
+        let ra = (ca >> 16) & 0xFF;
+        let rc = (cc >> 16) & 0xFF;
+        assert!(ra >= rc, "expected A ({ra}) brighter than C ({rc}) under close light");
+    }
+
+    #[test]
+    fn flat_shade_returns_same_color() {
+        // compute_lit_color_vertices with ambient=1.0 and no lights returns
+        // the base colour at every vertex (no gradient possible).
+        let base = 0x00AA_BBCC;
+        let normal = [0.0, 1.0, 0.0];
+        let (a, b, c) =
+            compute_lit_color_vertices(base, normal, [0.0,0.0,0.0], [1.0,0.0,0.0],
+                [2.0,0.0,0.0], &[], 1.0);
+        assert_eq!(a, base);
+        assert_eq!(b, base);
+        assert_eq!(c, base);
+    }
+}

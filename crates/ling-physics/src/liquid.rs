@@ -8,6 +8,7 @@
 //! `Vec<f32>` with no per-step allocations; `wrap` makes it seamless so it can be
 //! mapped/wrapped around a plane, sphere, cylinder, cone or dome.
 
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
 /// Fluid kind for `splat`.
@@ -19,7 +20,14 @@ pub const OIL: i32 = 1;
 /// parallel — a scene with many liquid surfaces scales across cores. Falls back
 /// to serial transparently for one (or zero) grids via rayon's work-splitting.
 pub fn step_all(grids: &mut [LiquidGrid], dt: f32) {
-    grids.par_iter_mut().for_each(|g| g.step(dt));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        grids.par_iter_mut().for_each(|g| g.step(dt));
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        grids.iter_mut().for_each(|g| g.step(dt));
+    }
 }
 
 /// HSV → packed 0x00RRGGBB (h,s,v in 0..1).

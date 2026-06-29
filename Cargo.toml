@@ -176,6 +176,18 @@ web-sys = { version = "0.3", features = [
     "PannerNode",
     "PanningModelType",
     "DistanceModelType",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    # Web Gamepad API
+    "Navigator",
+    "Window",
+    "Gamepad",
+    "GamepadButton",
+    # Touch events
+    "EventTarget",
+    "TouchEvent",
+    "Touch",
+    "TouchList",
 ] }
 
 [build-dependencies]

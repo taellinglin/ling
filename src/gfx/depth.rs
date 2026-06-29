@@ -291,7 +291,7 @@ impl DepthQueue {
                             bands,
                         } => raster::fill_triangle_gouraud_z(
                             buf, z, width, height, x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2,
-                            bands,
+                            bands, call.alpha, call.mode,
                         ),
                         DrawKind::Line { x0, y0, x1, y1, .. } => {
                             if blended {
@@ -326,6 +326,7 @@ impl DepthQueue {
                             x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, ..
                         } => raster::fill_triangle_gouraud(
                             buf, width, height, x0, y0, c0, x1, y1, c1, x2, y2, c2, bands,
+                            call.alpha, call.mode,
                         ),
                         DrawKind::Line { x0, y0, x1, y1, .. } => {
                             if blended {

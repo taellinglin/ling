@@ -241,6 +241,69 @@ pub fn key_name(mono: &[f32], rate: u32) -> String {
     )
 }
 
+/// FFT magnitude bands at a specific playback position.
+///
+/// Computes a single Hann-windowed 1024-point FFT frame from `mono` starting
+/// at `pos_secs`, then bins the magnitudes into `nbands` log-spaced frequency
+/// bands (20 Hz – Nyquist). Values are normalised to [0..1] relative to the
+/// strongest band in this frame.
+pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -> Vec<f32> {
+    if mono.is_empty() || nbands == 0 || rate == 0 {
+        return vec![0.0; nbands];
+    }
+
+    let sample_start = (pos_secs * rate as f32) as usize;
+    let sample_start = sample_start.min(mono.len().saturating_sub(FRAME));
+    let slice = &mono[sample_start..(sample_start + FRAME).min(mono.len())];
+
+    let n = FRAME;
+    let mut planner = FftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(n);
+
+    let window: Vec<f32> = (0..n)
+        .map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos()))
+        .collect();
+
+    let mut buf: Vec<Complex<f32>> = (0..n)
+        .map(|i| Complex { re: slice.get(i).copied().unwrap_or(0.0) * window[i], im: 0.0 })
+        .collect();
+
+    let mut scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
+    fft.process_with_scratch(&mut buf, &mut scratch);
+
+    let bins = n / 2;
+    let nyquist = rate as f32 * 0.5;
+    let min_hz: f32 = 20.0;
+    let max_hz = nyquist.min(20000.0);
+
+    let mut bands = vec![0.0f32; nbands];
+    for b in 0..nbands {
+        let t0 = b as f32 / nbands as f32;
+        let t1 = (b + 1) as f32 / nbands as f32;
+        let hz0 = min_hz * (max_hz / min_hz).powf(t0);
+        let hz1 = min_hz * (max_hz / min_hz).powf(t1);
+        let k0 = ((hz0 * n as f32 / rate as f32).round() as usize).max(1).min(bins - 1);
+        let k1 = ((hz1 * n as f32 / rate as f32).round() as usize)
+            .max(k0 + 1)
+            .min(bins);
+        let count = (k1 - k0) as f32;
+        let energy: f32 = buf[k0..k1]
+            .iter()
+            .map(|c| (c.re * c.re + c.im * c.im).sqrt())
+            .sum::<f32>()
+            / count;
+        bands[b] = energy;
+    }
+
+    let peak = bands.iter().cloned().fold(0.0f32, f32::max);
+    if peak > 0.0 {
+        for v in &mut bands {
+            *v /= peak;
+        }
+    }
+    bands
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

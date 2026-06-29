@@ -69,12 +69,16 @@ pub fn fill_triangle(
     }
 }
 
-/// Gouraud-interpolated triangle with per-pixel luminance posterisation.
+/// Gouraud-interpolated triangle with per-pixel cel-shade posterisation.
 ///
-/// The three vertex colours (0x00RRGGBB) are interpolated with barycentric
-/// weights, then each pixel's colour is banded into `bands` luminance levels
-/// (chroma preserved). Smooth vertex normals + this fill = the holographic cel
-/// look: no faceted edges, but crisp toon bands that follow the surface.
+/// Vertex colours are linearly interpolated with barycentric weights; the
+/// resulting per-pixel luminance is snapped to 3 discrete toon bands (shadow /
+/// mid / lit) matching `cel_quantize` — giving a smooth gradient of bands across
+/// the face rather than a per-vertex flat-shade seam.
+///
+/// `alpha` + `mode`: when `alpha < 1.0` or `mode != 0` the pixel is composited
+/// over the existing buffer instead of directly overwritten.
+/// `bands == 0` skips posterisation (full smooth shading).
 pub fn fill_triangle_gouraud(
     buf: &mut Vec<u32>,
     width: usize,
@@ -89,6 +93,8 @@ pub fn fill_triangle_gouraud(
     y2: f32,
     c2: u32,
     bands: u32,
+    alpha: f32,
+    mode: u8,
 ) {
     if width == 0 || height == 0 {
         return;
@@ -131,7 +137,7 @@ pub fn fill_triangle_gouraud(
     let de0 = -(y1 - y0);
     let de1 = -(y2 - y1);
     let de2 = -(y0 - y2);
-    let bandf = bands.max(2) as f32;
+    let blended = alpha < 0.999 || mode != 0;
 
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
@@ -147,26 +153,38 @@ pub fn fill_triangle_gouraud(
             if inside {
                 let tot = e0 + e1 + e2;
                 if tot.abs() > 1e-6 {
-                    // e0→v2, e1→v0, e2→v1
                     let w2 = e0 / tot;
                     let w0 = e1 / tot;
                     let w1 = e2 / tot;
                     let mut r = r0 * w0 + r1 * w1 + r2 * w2;
                     let mut g = g0 * w0 + g1 * w1 + g2 * w2;
                     let mut b = b0 * w0 + b1 * w1 + b2 * w2;
-                    // per-pixel luminance posterise (chroma preserved)
-                    let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                    if lum > 1.0 {
-                        let q = ((lum / 255.0 * bandf).floor() + 0.5) / bandf * 255.0;
-                        let k = (q / lum).clamp(0.0, 4.0);
-                        r *= k;
-                        g *= k;
-                        b *= k;
+                    // Per-pixel cel-shade: snap interpolated luminance to toon bands.
+                    // Matches cel_quantize() thresholds (shadow 0.08 / mid 0.50 / lit 1.00).
+                    if bands >= 2 {
+                        // Thresholds in 0-255 domain (avoids /255*255 round-trip):
+                        //   shadow < 63.75 → 20.4  (0.25*255, 0.08*255)
+                        //   mid    < 153.0 → 127.5 (0.60*255, 0.50*255)
+                        //   lit    ≥ 153.0 → 255.0
+                        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                        let snapped = if lum < 63.75 { 20.4_f32 }
+                                      else if lum < 153.0 { 127.5_f32 }
+                                      else { 255.0_f32 };
+                        if lum > 0.5 {
+                            let k = (snapped / lum).clamp(0.0, 8.0);
+                            r = (r * k).min(255.0);
+                            g = (g * k).min(255.0);
+                            b = (b * k).min(255.0);
+                        } else {
+                            r = 0.0; g = 0.0; b = 0.0;
+                        }
                     }
-                    let rr = (r.min(255.0)) as u32;
-                    let gg = (g.min(255.0)) as u32;
-                    let bb = (b.min(255.0)) as u32;
-                    buf[row + px as usize] = (rr << 16) | (gg << 8) | bb;
+                    let packed = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                    if blended {
+                        composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+                    } else {
+                        buf[row + px as usize] = packed;
+                    }
                 }
                 in_span = true;
             } else if in_span {
@@ -576,7 +594,8 @@ pub fn fill_triangle_z_blend(
     }
 }
 
-/// Depth-tested Gouraud + posterised triangle (z-buffer + smooth cel).
+/// Depth-tested Gouraud + cel-shade triangle (z-buffer path).
+/// Same cel-shade logic as `fill_triangle_gouraud` with `alpha`/`mode` support.
 #[allow(clippy::too_many_arguments)]
 pub fn fill_triangle_gouraud_z(
     buf: &mut [u32],
@@ -596,6 +615,8 @@ pub fn fill_triangle_gouraud_z(
     z2: f32,
     c2: u32,
     bands: u32,
+    alpha: f32,
+    mode: u8,
 ) {
     if width == 0 || height == 0 {
         return;
@@ -636,7 +657,7 @@ pub fn fill_triangle_gouraud_z(
     let de0 = -(y1 - y0);
     let de1 = -(y2 - y1);
     let de2 = -(y0 - y2);
-    let bandf = bands.max(2) as f32;
+    let blended = alpha < 0.999 || mode != 0;
 
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
@@ -661,18 +682,27 @@ pub fn fill_triangle_gouraud_z(
                         let mut r = r0 * w0 + r1 * w1 + r2 * w2;
                         let mut g = g0 * w0 + g1 * w1 + g2 * w2;
                         let mut b = b0 * w0 + b1 * w1 + b2 * w2;
-                        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                        if lum > 1.0 {
-                            let q = ((lum / 255.0 * bandf).floor() + 0.5) / bandf * 255.0;
-                            let k = (q / lum).clamp(0.0, 4.0);
-                            r *= k;
-                            g *= k;
-                            b *= k;
+                        if bands >= 2 {
+                            let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                            if lum > 0.5 {
+                                let t = (lum / 255.0).clamp(0.0, 1.0);
+                                let snapped = if t < 0.25 { 0.08 } else if t < 0.60 { 0.50 } else { 1.00_f32 };
+                                let k = (snapped * 255.0 / lum).clamp(0.0, 8.0);
+                                r = (r * k).min(255.0);
+                                g = (g * k).min(255.0);
+                                b = (b * k).min(255.0);
+                            } else {
+                                r = 0.0; g = 0.0; b = 0.0;
+                            }
                         }
-                        zbuf[idx] = z;
-                        buf[idx] = ((r.min(255.0) as u32) << 16)
-                            | ((g.min(255.0) as u32) << 8)
-                            | (b.min(255.0) as u32);
+                        let packed = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                        if blended {
+                            // Translucent: test depth but don't write it so layers stack correctly.
+                            composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+                        } else {
+                            zbuf[idx] = z;
+                            buf[idx] = packed;
+                        }
                     }
                 }
                 in_span = true;

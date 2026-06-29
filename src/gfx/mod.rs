@@ -1,23 +1,28 @@
 // src/gfx/mod.rs — unified graphics state + sub-modules.
 //
 // Sub-modules
-//   raster  — pixel-level fill_triangle / draw_line  (native only)
-//   camera  — Camera3D: rotation storage + world→screen projection
-//   light   — Light struct + cel-shading quantiser
-//   depth   — DepthQueue: deferred draw accumulator
-//   vtex    — vector texture primitives
-//   webgl   — WebGL2 backend (wasm32 only)
+//   raster   — pixel-level fill_triangle / draw_line
+//   camera   — Camera3D: rotation + world→screen projection
+//   light    — Light struct + cel-shade quantiser
+//   depth    — DepthQueue: deferred draw accumulator
+//   poly     — EdgeSet (shared-edge dedup) + fan triangulation
+//   material — LingMaterial: principled BSDF + toon quantisation
+//   photon   — PhotonBuf: water-photon HDR accumulation
+//   toon     — Screen-space post-process (outlines, shadow edges, highlights)
+//   vtex     — vector texture primitives
+//   webgl    — WebGL2 backend (wasm32 only)
 
-// `raster` is a pure-CPU software rasteriser (operates on `Vec<u32>`); it is
-// wasm-safe and powers the software framebuffer on both native and web.
 pub mod camera;
 pub mod color;
 pub mod depth;
 pub mod light;
+pub mod material;
+pub mod photon;
+pub mod poly;
 pub mod raster;
 pub mod shapes;
+pub mod toon;
 pub mod vtex;
-// WebGL2 backend — wasm-only (depends on web_sys / js_sys / WebGL).
 #[cfg(target_arch = "wasm32")]
 pub mod audio_web;
 #[cfg(target_arch = "wasm32")]
@@ -26,6 +31,8 @@ pub mod webgl;
 pub use camera::Camera3D;
 pub use depth::DepthQueue;
 pub use light::Light;
+pub use material::LingMaterial;
+pub use toon::ToonConfig;
 
 /// Tunable mapping for `cast_shadow`: how a blob/contact shadow's size and
 /// opacity change with the caster's height above the surface. Defaults give the
@@ -116,6 +123,13 @@ pub struct GfxState {
     /// Perf test: force flat *unlit* shading — triangle/mesh draws skip
     /// `compute_lit_color` and use the raw pen colour. Toggle via `set_flat_shade`.
     pub flat_shade: bool,
+    /// Per-frame shared-edge dedup: `draw_line_3d` skips edges already drawn.
+    pub edge_set: poly::EdgeSet,
+    /// Active material override.  When `Some`, polygon draws use the BSDF
+    /// instead of `compute_lit_color_linear`.  `None` = legacy path.
+    pub material: Option<LingMaterial>,
+    /// Toon post-processing configuration (outlines, shadow softness, highlight).
+    pub toon: ToonConfig,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -137,9 +151,9 @@ impl GfxState {
             last_mx: f32::NAN,
             last_my: f32::NAN,
             mouse_captured: false,
-            shade_mode: 2, // holographic cel by default
+            shade_mode: 2,
             shade: ling_graphics::shading::ShadeParams::default(),
-            blend: 0, // normal (overwrite) by default
+            blend: 0,
             alpha: 1.0,
             shadow: ShadowParams::default(),
             linear_blend: false,
@@ -149,8 +163,11 @@ impl GfxState {
             zbuf_needs_clear: true,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
-            fog_end: 0.0, // fog off by default
+            fog_end: 0.0,
             flat_shade: false,
+            edge_set: poly::EdgeSet::default(),
+            material: None,
+            toon: ToonConfig::default(),
         }
     }
 
@@ -180,6 +197,92 @@ impl GfxState {
         self.camera.cy = self.height as f32 / 2.0;
         self.camera.focal = self.height as f32;
         self.camera.zdist = 5.0;
+    }
+
+    /// Run all enabled toon post-process passes on the pixel buffer.
+    /// Call this after `depth_queue.flush()` and before presenting to screen.
+    pub fn toon_post_process(&mut self) {
+        let w = self.width;
+        let h = self.height;
+        if self.buffer.len() < w * h { return; }
+        toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+    }
+}
+
+// ─── WASM keyboard state (thread-local, accessed from JS via wasm_bindgen) ────
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_KEYS_PRESSED: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+    static WASM_KEYS_DOWN: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Called from JavaScript when a key is pressed down
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_key_down(key: &str) {
+    let key = normalize_key(key);
+    WASM_KEYS_DOWN.with(|keys_down| {
+        let mut down = keys_down.borrow_mut();
+        if !down.contains(&key) {
+            WASM_KEYS_PRESSED.with(|keys_pressed| {
+                keys_pressed.borrow_mut().insert(key.clone());
+            });
+        }
+        down.insert(key);
+    });
+}
+
+/// Called from JavaScript when a key is released
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_key_up(key: &str) {
+    let key = normalize_key(key);
+    WASM_KEYS_DOWN.with(|keys_down| {
+        keys_down.borrow_mut().remove(&key);
+    });
+}
+
+/// Resume the Web Audio AudioContext after a user gesture.
+#[cfg(target_arch = "wasm32")]
+pub fn audio_resume() {
+    audio_web::resume();
+}
+
+/// Clear the per-frame pressed keys (call at start of each frame)
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_clear_frame_keys() {
+    WASM_KEYS_PRESSED.with(|keys| {
+        keys.borrow_mut().clear();
+    });
+}
+
+/// Check if a key was pressed this frame
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_is_key_pressed(key: &str) -> bool {
+    let key = normalize_key(key);
+    WASM_KEYS_PRESSED.with(|keys| {
+        keys.borrow().contains(&key)
+    })
+}
+
+/// Normalize browser key names to match Ling's key naming convention
+#[cfg(target_arch = "wasm32")]
+fn normalize_key(key: &str) -> String {
+    match key {
+        " " => "space".to_string(),
+        "ArrowUp" => "up".to_string(),
+        "ArrowDown" => "down".to_string(),
+        "ArrowLeft" => "left".to_string(),
+        "ArrowRight" => "right".to_string(),
+        "Enter" => "enter".to_string(),
+        "Escape" => "escape".to_string(),
+        "Shift" | "ShiftLeft" | "ShiftRight" => "shift".to_string(),
+        "Control" | "ControlLeft" | "ControlRight" => "ctrl".to_string(),
+        "Alt" | "AltLeft" | "AltRight" => "alt".to_string(),
+        "Tab" => "tab".to_string(),
+        "Backspace" => "backspace".to_string(),
+        _ => key.to_lowercase(),
     }
 }
 
@@ -230,6 +333,16 @@ pub struct GfxState {
     pub fog_end: f32,
     /// Perf test: force flat *unlit* shading (mirrors native).
     pub flat_shade: bool,
+    /// Keyboard state: keys pressed this frame (cleared each frame)
+    pub keys_pressed: std::collections::HashSet<String>,
+    /// Keyboard state: keys currently held down
+    pub keys_down: std::collections::HashSet<String>,
+    /// Per-frame shared-edge dedup (mirrors native).
+    pub edge_set: poly::EdgeSet,
+    /// Active material override (mirrors native).
+    pub material: Option<LingMaterial>,
+    /// Toon post-processing configuration (mirrors native).
+    pub toon: ToonConfig,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -248,8 +361,6 @@ impl GfxState {
             depth_queue: DepthQueue::default(),
             shade_mode: 2,
             shade: ling_graphics::shading::ShadeParams::default(),
-            // Sized to width*height so the CPU-raster builtins (vtex / ui_*) can
-            // write safely; `present()` uploads it to the canvas.
             buffer: vec![0u32; 800 * 600],
             distort_buf: Vec::new(),
             blend: 0,
@@ -264,7 +375,30 @@ impl GfxState {
             fog_start: 0.0,
             fog_end: 0.0,
             flat_shade: false,
+            keys_pressed: std::collections::HashSet::new(),
+            keys_down: std::collections::HashSet::new(),
+            edge_set: poly::EdgeSet::default(),
+            material: None,
+            toon: ToonConfig::default(),
         }
+    }
+
+    /// Clear the keys_pressed set at the start of each frame
+    pub fn clear_frame_keys(&mut self) {
+        self.keys_pressed.clear();
+    }
+
+    /// Register a key press (called from JS)
+    pub fn on_key_down(&mut self, key: String) {
+        if !self.keys_down.contains(&key) {
+            self.keys_pressed.insert(key.clone());
+        }
+        self.keys_down.insert(key);
+    }
+
+    /// Register a key release (called from JS)
+    pub fn on_key_up(&mut self, key: String) {
+        self.keys_down.remove(&key);
     }
 
     /// Blend a colour toward the fog colour by camera-space `depth`
@@ -294,5 +428,13 @@ impl GfxState {
         self.camera.cy = self.height as f32 / 2.0;
         self.camera.focal = self.height as f32;
         self.camera.zdist = 5.0;
+    }
+
+    /// Run all enabled toon post-process passes (mirrors native).
+    pub fn toon_post_process(&mut self) {
+        let w = self.width;
+        let h = self.height;
+        if self.buffer.len() < w * h { return; }
+        toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
     }
 }

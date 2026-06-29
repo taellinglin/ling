@@ -3,6 +3,8 @@
 mod ai;
 #[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
+#[cfg(target_arch = "wasm32")]
+mod input_web;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod jit_abi;
 
@@ -281,6 +283,66 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว"
         | "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
             Value::Unit
+        },
+
+        // ── game AI: neural networks ─────────────────────────────────────────
+        "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย"
+        | "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" => {
+            Value::Number(-1.0)
+        },
+        "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
+            Value::List(Vec::new())
+        },
+        "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย"
+        | "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" => {
+            Value::Number(0.0)
+        },
+        "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" => {
+            Value::Bool(false)
+        },
+
+        // ── game AI: behavior trees ─────────────────────────────────────────
+        "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" => {
+            Value::Number(-1.0)
+        },
+        "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" => {
+            Value::Str(String::new())
+        },
+        "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" => {
+            Value::Number(0.0)
+        },
+        "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => Value::Unit,
+
+        // ── game AI: dialog LLM ─────────────────────────────────────────────
+        "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา"
+        | "dialog_load_model" | "对话载模" | "対話モデル読込" | "대화모델불러오기"
+            | "โหลดโมเดลสนทนา"
+        | "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา"
+        | "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" => {
+            Value::Number(-1.0)
+        },
+        "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" => {
+            Value::Str(String::new())
+        },
+        "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" => {
+            Value::Bool(false)
+        },
+        "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => Value::Unit,
+
+        // ── networking ──────────────────────────────────────────────────────
+        "net_connect" | "联网" | "ネット接続" | "네트연결" | "เชื่อมเน็ต"
+        | "net_listen" | "监听" | "待機" | "리슨" | "รอรับ"
+        | "net_send" | "发送" | "送信" | "전송" | "ส่ง" => Value::Number(-1.0),
+        "net_recv" | "接收" | "受信" | "수신" | "รับ"
+        | "net_status" | "连接状态" | "接続状態" | "연결상태" | "สถานะการเชื่อม" => {
+            Value::Str(String::new())
+        },
+        "net_discover" | "发现" | "探索" | "검색" | "ค้นหาเครือข่าย" => {
+            Value::List(Vec::new())
+        },
+        "net_close" | "断开" | "切断" | "연결종료" | "ตัดเชื่อม"
+        | "net_test" | "测连接" | "接続テスト" | "연결테스트" | "ทดสอบเน็ต" => {
+            Value::Number(0.0)
         },
 
         // catch-all: any other native-only builtin silently no-ops on wasm32
@@ -1418,6 +1480,52 @@ impl Interpreter {
                     ling_music::karaoke::pitch_score(hz, target) as f64,
                 )));
             },
+
+            // ── Playback ──────────────────────────────────────────────────────
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" => {
+                let id = self.arg_num(args, 0, 0.0)? as usize;
+                if let Some(t) = self.tracks.get(id) {
+                    crate::gfx::audio_web::play_music(id, &t.stereo, t.channels, t.rate, 1.0);
+                }
+                return Ok(Some(Value::Unit));
+            },
+            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว"
+            | "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" => {
+                let id = self.arg_num(args, 0, 0.0)? as usize;
+                crate::gfx::audio_web::stop_music(id);
+                return Ok(Some(Value::Unit));
+            },
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" => {
+                // Seek is not straightforward on AudioBufferSourceNode; no-op for now.
+                return Ok(Some(Value::Unit));
+            },
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" => {
+                return Ok(Some(Value::Number(
+                    crate::gfx::audio_web::current_music_position(),
+                )));
+            },
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" => {
+                let vol = self.arg_num(args, 0, 0.8)? as f32;
+                // Apply to the most-recently started slot (slot 0 is typical).
+                crate::gfx::audio_web::set_music_volume(0, vol);
+                return Ok(Some(Value::Unit));
+            },
+
+            // ── FFT bands at current playback position ─────────────────────
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
+                let id = self.arg_num(args, 0, 0.0)? as usize;
+                let nbands = self.arg_num(args, 1, 16.0)? as usize;
+                let pos = crate::gfx::audio_web::current_music_position() as f32;
+                let bands = if let Some(t) = self.tracks.get(id) {
+                    ling_music::analysis::fft_bands_at_pos(&t.mono, t.rate, pos, nbands)
+                } else {
+                    vec![0.0f32; nbands]
+                };
+                return Ok(Some(Value::List(
+                    bands.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                )));
+            },
+
             _ => {},
         }
         Ok(None)
@@ -2803,6 +2911,7 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.buffer.fill(c);
                     gfx.zbuf_needs_clear = true; // clear color ⇒ clear depth next flush
+                    gfx.edge_set.clear();         // reset shared-edge dedup for new frame
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -2810,11 +2919,10 @@ impl Interpreter {
                     gfx.fill_r = r as f32 / 255.0;
                     gfx.fill_g = g as f32 / 255.0;
                     gfx.fill_b = b as f32 / 255.0;
-                    // The web path renders into the software framebuffer and blits
-                    // it at present(), so clear the buffer too (mirrors native).
                     let c = (r << 16) | (g << 8) | b;
                     gfx.buffer.fill(c);
                     gfx.zbuf_needs_clear = true;
+                    gfx.edge_set.clear();
                 }
                 return Ok(Value::Unit);
             },
@@ -2945,6 +3053,7 @@ impl Interpreter {
                             gfx.depth_queue.set_state(bm, ba);
                             gfx.zbuf_needs_clear = false;
                         }
+                        gfx.toon_post_process();
                         let buf = gfx.buffer.clone();
                         let w = gfx.width;
                         let h = gfx.height;
@@ -3066,6 +3175,7 @@ impl Interpreter {
                             }
                             gfx.zbuf_needs_clear = false;
                         }
+                        gfx.toon_post_process();
                         crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                     }
                     self.wasm_pace_frame();
@@ -3287,7 +3397,11 @@ impl Interpreter {
                     return Ok(Value::Bool(pressed));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Bool(false));
+                {
+                    let name = self.arg_str(&args, 0, "");
+                    let pressed = crate::gfx::wasm_is_key_pressed(&name);
+                    return Ok(Value::Bool(pressed));
+                }
             },
 
             // ── mouse_dx() / mouse_dy() → f64 — delta since last frame ──
@@ -3329,7 +3443,7 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.pad_poll() as f64));
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(input_web::poll() as f64));
             },
             // pad_count() → number — connected gamepads.
             "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" =>
@@ -3341,7 +3455,7 @@ impl Interpreter {
                     return Ok(Value::Number(n as f64));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(input_web::count() as f64));
             },
             // pad_connected(i) → bool.
             "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" =>
@@ -3356,7 +3470,10 @@ impl Interpreter {
                     return Ok(Value::Bool(c));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Bool(false));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Bool(input_web::is_connected(i)));
+                }
             },
             // pad_button(i, name) → bool — is the button held?
             "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" =>
@@ -3370,9 +3487,14 @@ impl Interpreter {
                     return Ok(Value::Bool(down));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Bool(false));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let name = self.arg_str(&args, 1, "");
+                    return Ok(Value::Bool(input_web::button_down(i, &name)));
+                }
             },
             // pad_pressed(i, name) → bool — pressed this frame?
+            // On WASM we only have the current snapshot, so treat as button_down.
             "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3384,7 +3506,11 @@ impl Interpreter {
                     return Ok(Value::Bool(p));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Bool(false));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    let name = self.arg_str(&args, 1, "");
+                    return Ok(Value::Bool(input_web::button_down(i, &name)));
+                }
             },
             // pad_lx(i)/pad_ly(i)/pad_rx(i)/pad_ry(i) → number — stick axes (−1..=1).
             "pad_lx" | "手柄左X" | "パッド左X" | "패드왼X" | "แพดซ้ายX" => {
@@ -3396,7 +3522,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::axis_lx(i) as f64));
+                }
             },
             "pad_ly" | "手柄左Y" | "パッド左Y" | "패드왼Y" | "แพดซ้ายY" => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3407,7 +3536,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::axis_ly(i) as f64));
+                }
             },
             "pad_rx" | "手柄右X" | "パッド右X" | "패드오X" | "แพดขวาX" => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3418,7 +3550,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::axis_rx(i) as f64));
+                }
             },
             "pad_ry" | "手柄右Y" | "パッド右Y" | "패드오Y" | "แพดขวาY" => {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -3429,7 +3564,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::axis_ry(i) as f64));
+                }
             },
             // pad_lt(i)/pad_rt(i) → number — analog triggers (0..=1).
             "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" =>
@@ -3442,7 +3580,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::trigger_lt(i) as f64));
+                }
             },
             "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" =>
             {
@@ -3454,7 +3595,10 @@ impl Interpreter {
                     ));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                {
+                    let i = self.arg_num(&args, 0, 0.0)? as usize;
+                    return Ok(Value::Number(input_web::trigger_rt(i) as f64));
+                }
             },
             // pad_rumble(i, lo, hi) → unit — set rumble motor amplitudes (0..=1).
             "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" =>
@@ -3743,6 +3887,100 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // ── set_material(key, value) — configure LingMaterial field ──
+            // Activates the material BSDF for subsequent polygon/triangle draws.
+            // Keys (string): "albedo" "roughness" "metallic" "emission"
+            //   "emission_strength" "specular" "specular_tint" "subsurface"
+            //   "subsurface_color" "clearcoat" "clearcoat_roughness"
+            //   "transmission" "ior" "iridescence" "sheen" "anisotropy"
+            //   "anisotropy_angle" "toon_bands" "shadow_softness"
+            //   "outline_px" "outline_color" "highlight_color"
+            // Value: number (or packed 0xRRGGBB for colour fields)
+            "set_material" | "ตั้งวัสดุ" | "设置材质" | "マテリアル設定" | "재질설정" =>
+            {
+                let key = self.arg_str(&args, 0, "");
+                let val = self.arg_num(&args, 1, 0.0)?;
+                let mut gfx = self.gfx.borrow_mut();
+                let mat = gfx.material.get_or_insert_with(crate::gfx::LingMaterial::default);
+                match key.as_str() {
+                    "albedo"             => mat.albedo             = val as u32,
+                    "roughness"          => mat.roughness          = val as f32,
+                    "metallic"           => mat.metallic           = val as f32,
+                    "emission"           => mat.emission           = val as u32,
+                    "emission_strength"  => mat.emission_strength  = val as f32,
+                    "specular"           => mat.specular           = val as f32,
+                    "specular_tint"      => mat.specular_tint      = val as f32,
+                    "subsurface"         => mat.subsurface         = val as f32,
+                    "subsurface_color"   => mat.subsurface_color   = val as u32,
+                    "clearcoat"          => mat.clearcoat          = val as f32,
+                    "clearcoat_roughness"=> mat.clearcoat_roughness= val as f32,
+                    "transmission"       => mat.transmission       = val as f32,
+                    "ior"                => mat.ior                = val as f32,
+                    "iridescence"        => mat.iridescence        = val as f32,
+                    "sheen"              => mat.sheen              = val as f32,
+                    "anisotropy"         => mat.anisotropy         = val as f32,
+                    "anisotropy_angle"   => mat.anisotropy_angle   = val as f32,
+                    "toon_bands"         => mat.toon_bands         = val as u32,
+                    "shadow_softness"    => mat.shadow_softness    = val as f32,
+                    "outline_px"         => mat.outline_px         = val as f32,
+                    "outline_color"      => mat.outline_color      = val as u32,
+                    "highlight_color"    => mat.highlight_color    = val as u32,
+                    _ => {}
+                }
+                return Ok(Value::Unit);
+            },
+
+            // ── reset_material() — disable material override ──
+            // After this call, draws use the legacy compute_lit_color_linear path.
+            "reset_material" | "รีเซ็ตวัสดุ" | "重置材质" | "マテリアルリセット" | "재질초기화" =>
+            {
+                self.gfx.borrow_mut().material = None;
+                return Ok(Value::Unit);
+            },
+
+            // ── toon_outlines(thickness, color, threshold) ──
+            // Enable vector-smooth ink outlines on depth discontinuities.
+            //   thickness  — ink-line half-width in pixels (0 = off, 1.5 = anime default)
+            //   color      — 0xRRGGBB ink colour (default black = 0)
+            //   threshold  — depth delta that triggers an edge (0.05 recommended)
+            "toon_outlines" | "ตั้งเส้นขอบการ์ตูน" | "卡通轮廓" | "トゥーンアウトライン" | "툰아웃라인" =>
+            {
+                let px    = self.arg_num(&args, 0, 0.0)? as f32;
+                let color = self.arg_num(&args, 1, 0.0)? as u32;
+                let thresh= self.arg_num(&args, 2, 0.05)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.outline_px     = px;
+                gfx.toon.outline_color  = color;
+                gfx.toon.outline_thresh = thresh;
+                return Ok(Value::Unit);
+            },
+
+            // ── shadow_smooth(softness) ──
+            // Soften toon shadow edges. 0 = hard, 0.15 = anime-clean, 0.4 = painterly.
+            "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" =>
+            {
+                let s = self.arg_num(&args, 0, 0.0)? as f32;
+                self.gfx.borrow_mut().toon.shadow_softness = s;
+                return Ok(Value::Unit);
+            },
+
+            // ── toon_highlight(strength, color, thresh) ──
+            // Blend lit-band pixels toward `color` — the anime "shine" effect.
+            //   strength  — blend amount [0..1]
+            //   color     — 0xRRGGBB highlight colour (default white)
+            //   thresh    — minimum luminance fraction to apply [0..1] (default 0.78)
+            "toon_highlight" | "ตั้งไฮไลท์การ์ตูน" | "卡通高光" | "トゥーンハイライト" | "툰하이라이트" =>
+            {
+                let strength = self.arg_num(&args, 0, 0.0)? as f32;
+                let color    = self.arg_num(&args, 1, 0x00FF_FFFFu32 as f64)? as u32;
+                let thresh   = self.arg_num(&args, 2, 0.78)? as f32;
+                let mut gfx  = self.gfx.borrow_mut();
+                gfx.toon.highlight_strength = strength;
+                gfx.toon.highlight_color    = color;
+                gfx.toon.highlight_thresh   = thresh;
+                return Ok(Value::Unit);
+            },
+
             // ── set_ambient(v) — ambient light level [0..1] ──
             "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" =>
             {
@@ -3791,21 +4029,17 @@ impl Interpreter {
                 let vy = cy - ay;
                 let vz = cz - az;
                 let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
-                // World-space centroid
-                let centroid = [
-                    (ax + bx + cx) / 3.0,
-                    (ay + by + cy) / 3.0,
-                    (az + bz + cz) / 3.0,
-                ];
 
-                // Cel-shaded colour (or raw pen colour under flat-shade test mode)
-                let lit_color = if gfx.flat_shade {
-                    gfx.color
+                // Per-vertex lit colours — gradient across face from light positions
+                let (c0, c1, c2) = if gfx.flat_shade {
+                    (gfx.color, gfx.color, gfx.color)
                 } else {
-                    crate::gfx::light::compute_lit_color(
+                    crate::gfx::light::compute_lit_color_vertices(
                         gfx.color,
                         normal,
-                        centroid,
+                        [ax, ay, az],
+                        [bx, by, bz],
+                        [cx, cy, cz],
                         &gfx.lights,
                         gfx.ambient,
                     )
@@ -3818,16 +4052,18 @@ impl Interpreter {
                 // near blow up. Clipping the triangle to the near plane keeps only the
                 // in-front portion (finite projection — no fan, no over-cull).
                 let near = -gfx.camera.zdist + 0.05;
+                // (x, y, z, camera_depth, color)
                 let vw = [
-                    (ax, ay, az, gfx.camera.depth(ax, ay, az)),
-                    (bx, by, bz, gfx.camera.depth(bx, by, bz)),
-                    (cx, cy, cz, gfx.camera.depth(cx, cy, cz)),
+                    (ax, ay, az, gfx.camera.depth(ax, ay, az), c0),
+                    (bx, by, bz, gfx.camera.depth(bx, by, bz), c1),
+                    (cx, cy, cz, gfx.camera.depth(cx, cy, cz), c2),
                 ];
                 // Stack arrays (no per-triangle heap alloc): near-plane clip of a
                 // triangle yields ≤4 vertices. This handler runs thousands of
                 // times per frame, so avoiding two Vec allocations each call is a
                 // real win across every render mode.
-                let mut poly: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
+                // (x, y, z, color)
+                let mut poly: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
                 let mut pn = 0usize;
                 let mut ei = 0;
                 while ei < 3 {
@@ -3836,7 +4072,7 @@ impl Interpreter {
                     let ain = a.3 > near;
                     let bin = b.3 > near;
                     if ain && pn < 4 {
-                        poly[pn] = (a.0, a.1, a.2);
+                        poly[pn] = (a.0, a.1, a.2, a.4);
                         pn += 1;
                     }
                     if ain != bin && pn < 4 {
@@ -3845,6 +4081,7 @@ impl Interpreter {
                             a.0 + (b.0 - a.0) * tt,
                             a.1 + (b.1 - a.1) * tt,
                             a.2 + (b.2 - a.2) * tt,
+                            crate::gfx::light::lerp_color(a.4, b.4, tt),
                         );
                         pn += 1;
                     }
@@ -3853,33 +4090,131 @@ impl Interpreter {
                 if pn < 3 {
                     return Ok(Value::Unit);
                 }
-                // Project the clipped polygon (stack), painter-depth = mean, fan-triangulate.
-                let mut proj: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
-                let mut dsum = 0.0f32;
+                // Project the clipped polygon; apply fog per-vertex; fan-triangulate.
+                // (sx, sy, sz, color)
+                let mut proj: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
                 let mut pi = 0;
                 while pi < pn {
-                    proj[pi] = gfx.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
-                    dsum += proj[pi].2;
+                    let (sx, sy, sz) = gfx.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
+                    let fc = gfx.fog_apply(poly[pi].3, sz);
+                    proj[pi] = (sx, sy, sz, fc);
                     pi += 1;
                 }
-                let depth = dsum / pn as f32;
-                let lit_color = gfx.fog_apply(lit_color, depth);
                 let mut fk = 1;
                 while fk + 1 < pn {
-                    gfx.depth_queue.push_triangle_zv(
-                        lit_color,
-                        proj[0].0,
-                        proj[0].1,
-                        proj[0].2,
-                        proj[fk].0,
-                        proj[fk].1,
-                        proj[fk].2,
-                        proj[fk + 1].0,
-                        proj[fk + 1].1,
-                        proj[fk + 1].2,
+                    gfx.depth_queue.push_triangle_g_zv(
+                        proj[0].0, proj[0].1, proj[0].2, proj[0].3,
+                        proj[fk].0, proj[fk].1, proj[fk].2, proj[fk].3,
+                        proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2, proj[fk + 1].3,
+                        3, // 3 bands matches cel_quantize (shadow/mid/lit)
                     );
                     fk += 1;
                 }
+                return Ok(Value::Unit);
+            },
+
+            // ── draw_quad_3d / draw_pent_3d / draw_hex_3d / draw_polygon_3d ──
+            // Fan-triangulate convex n-gons.  Lighting, near-plane clip, fog, and
+            // Gouraud shading all mirror draw_triangle_3d exactly.
+            "draw_quad_3d" | "quad3d" | "วาดสี่เหลี่ยม3มิติ"
+            | "draw_pent_3d" | "pent3d" | "วาดห้าเหลี่ยม3มิติ"
+            | "draw_hex_3d"  | "hex3d"  | "วาดหกเหลี่ยม3มิติ"
+            | "draw_polygon_3d" | "polygon3d" | "วาดรูปหลายเหลี่ยม3มิติ" =>
+            {
+                // Collect (wx, wy, wz) triples from args or list
+                let mut wxs: [f32; 8] = [0.0; 8];
+                let mut wys: [f32; 8] = [0.0; 8];
+                let mut wzs: [f32; 8] = [0.0; 8];
+                let n_verts;
+
+                if args.len() == 1 {
+                    // draw_polygon_3d([x0,y0,z0, x1,y1,z1, ...])
+                    let list = match &args[0] {
+                        Value::List(l) => l.clone(),
+                        _ => return Err(EvalErr::from("draw_polygon_3d: expected list".to_string())),
+                    };
+                    let coords: Vec<f32> = list.iter()
+                        .map(|v| match v { Value::Number(n) => *n as f32, _ => 0.0 })
+                        .collect();
+                    n_verts = (coords.len() / 3).min(8);
+                    for i in 0..n_verts {
+                        wxs[i] = coords[i * 3];
+                        wys[i] = coords[i * 3 + 1];
+                        wzs[i] = coords[i * 3 + 2];
+                    }
+                } else {
+                    // draw_quad/pent/hex_3d(x0,y0,z0, x1,y1,z1, ...)
+                    n_verts = (args.len() / 3).min(8);
+                    for i in 0..n_verts {
+                        wxs[i] = self.arg_num(&args, i * 3,     0.0)? as f32;
+                        wys[i] = self.arg_num(&args, i * 3 + 1, 0.0)? as f32;
+                        wzs[i] = self.arg_num(&args, i * 3 + 2, 0.0)? as f32;
+                    }
+                }
+                if n_verts < 3 { return Ok(Value::Unit); }
+
+                let mut gfx = self.gfx.borrow_mut();
+
+                // Face normal from first triangle of the fan
+                let normal = crate::gfx::poly::face_normal(
+                    wxs[0], wys[0], wzs[0],
+                    wxs[1], wys[1], wzs[1],
+                    wxs[2], wys[2], wzs[2],
+                );
+
+                // Per-vertex lit colours
+                let mut wcs: [u32; 8] = [0; 8];
+                if gfx.flat_shade {
+                    let c = gfx.color;
+                    for i in 0..n_verts { wcs[i] = c; }
+                } else if let Some(ref mat) = gfx.material.clone() {
+                    let cam = [gfx.camera.cx, gfx.camera.cy, gfx.camera.zdist];
+                    let lights: Vec<_> = gfx.lights.clone();
+                    let ambient = gfx.ambient;
+                    for i in 0..n_verts {
+                        let v = [wxs[i], wys[i], wzs[i]];
+                        let vd = [cam[0]-v[0], cam[1]-v[1], cam[2]-v[2]];
+                        wcs[i] = crate::gfx::material::shade(mat, normal, vd, v, &lights, ambient);
+                    }
+                } else {
+                    let base   = gfx.color;
+                    let lights: Vec<_> = gfx.lights.clone();
+                    let ambient = gfx.ambient;
+                    for i in 0..n_verts {
+                        wcs[i] = crate::gfx::light::compute_lit_color_linear(
+                            base, normal, [wxs[i], wys[i], wzs[i]], &lights, ambient,
+                        );
+                    }
+                }
+
+                // Near-plane clip (Sutherland-Hodgman per vertex)
+                let near = -gfx.camera.zdist + 0.05;
+                let mut clip_in:  [(f32,f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
+                    = [(0.0,0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                for i in 0..n_verts {
+                    let d = gfx.camera.depth(wxs[i], wys[i], wzs[i]);
+                    clip_in[i] = (wxs[i], wys[i], wzs[i], d, wcs[i]);
+                }
+                let mut clip_out: [(f32,f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
+                    = [(0.0,0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                let pn = crate::gfx::poly::clip_near(&clip_in, n_verts, near, &mut clip_out);
+                if pn < 3 { return Ok(Value::Unit); }
+
+                // Project + fog
+                let mut proj: [(f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
+                    = [(0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                for i in 0..pn {
+                    let (sx, sy, sz) = gfx.camera.project(clip_out[i].0, clip_out[i].1, clip_out[i].2);
+                    let fc = gfx.fog_apply(clip_out[i].4, sz);
+                    proj[i] = (sx, sy, sz, fc);
+                }
+
+                // Fan-triangulate and push
+                crate::gfx::poly::fan_emit_proj(&proj, pn, |x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2| {
+                    gfx.depth_queue.push_triangle_g_zv(
+                        x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, 3,
+                    );
+                });
                 return Ok(Value::Unit);
             },
 
@@ -3920,6 +4255,10 @@ impl Interpreter {
                     lbx = lax + t * (lbx - lax);
                     lby = lay + t * (lby - lay);
                     lbz = laz + t * (lbz - laz);
+                }
+                // Shared-edge dedup: skip if this world-space edge was already queued.
+                if !gfx.edge_set.try_insert(lax, lay, laz, lbx, lby, lbz) {
+                    return Ok(Value::Unit);
                 }
                 let (sax, say, da) = gfx.camera.project(lax, lay, laz);
                 let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
@@ -4927,6 +5266,46 @@ impl Interpreter {
             "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 crate::gfx::audio_web::set_master_volume(vol);
+                return Ok(Value::Unit);
+            },
+
+            // ── WASM sample load / play / stop / FX (Web Audio pool) ─────────
+            #[cfg(target_arch = "wasm32")]
+            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" =>
+            {
+                let path = self.arg_str(&args, 0, "");
+                let resolved = self.wasm_resolve_source_path(&path);
+                match wasm_fetch_bytes(&resolved)
+                    .and_then(|bytes| ling_music::from_bytes(&bytes).map_err(|e| e.to_string()))
+                {
+                    Ok(t) => {
+                        let id = crate::gfx::audio_web::add_sample(&t.stereo, t.channels, t.rate);
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("audio_sample_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
+                }
+            },
+            #[cfg(target_arch = "wasm32")]
+            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as usize;
+                let x = self.arg_num(&args, 1, 0.0)? as f32;
+                let y = self.arg_num(&args, 2, 0.0)? as f32;
+                let z = self.arg_num(&args, 3, 0.0)? as f32;
+                // arg 4 is w (4th spatial dim) — ignored for 3-D panner
+                let vol = self.arg_num(&args, 5, 1.0)? as f32;
+                let looping = self.arg_num(&args, 6, 0.0)? > 0.5;
+                crate::gfx::audio_web::play_sample(id, x, y, z, vol, looping);
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง"
+            | "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง"
+            | "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน"
+            | "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" => {
                 return Ok(Value::Unit);
             },
 
@@ -8147,7 +8526,6 @@ impl Interpreter {
             },
 
             // ── liquid sim (water + oil, immiscible) ──
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" =>
             {
                 let w = self.arg_num(&args, 0, 64.)? as usize;
@@ -8157,7 +8535,6 @@ impl Interpreter {
                     .push(ling_physics::liquid::LiquidGrid::new(w, h));
                 return Ok(Value::Number(id as f64));
             },
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8172,7 +8549,6 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8186,7 +8562,6 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8197,7 +8572,6 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8212,7 +8586,6 @@ impl Interpreter {
             // an embarrassingly-parallel batch: a scene with many liquid surfaces
             // steps in one call that scales across cores instead of N serial
             // `liquid_step` calls.
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด" =>
             {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
@@ -8220,7 +8593,6 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8231,7 +8603,6 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             // liquid_mix(id) -> 0 (oil/water separated) .. 1 (fully intermixed)
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -8275,9 +8646,10 @@ impl Interpreter {
             },
             // liquid_draw_surface(id, kind, cx,cy,cz, radius, height)
             //   kind: 0 plane · 1 sphere · 2 cylinder · 3 cone · 4 dome
-            #[cfg(not(target_arch = "wasm32"))]
             "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" =>
             {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let kind = self.arg_num(&args, 1, 1.)? as i32;
                 let cx = self.arg_num(&args, 2, 0.)? as f32;
@@ -8414,27 +8786,13 @@ impl Interpreter {
                         cyc += 1;
                     }
                 }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    // WASM: liquid_draw_surface is a no-op for now (would need WebGL shader)
+                    // The liquid simulation still runs, just not rendered to 3D surfaces
+                }
                 return Ok(Value::Unit);
-            },
-            // wasm32: liquid sim not available — return safe no-op values
-            #[cfg(target_arch = "wasm32")]
-            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
-                return Ok(Value::Number(0.0));
-            },
-            #[cfg(target_arch = "wasm32")]
-            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว"
-            | "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว"
-            | "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว"
-            | "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว"
-            | "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด"
-            | "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง"
-            | "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว"
-            | "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
-                return Ok(Value::Unit);
-            },
-            #[cfg(target_arch = "wasm32")]
-            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
-                return Ok(Value::Number(0.0));
             },
             // sparkle(x, y, w, h, count [, t]) — scatter twinkling vector star-sparkles
             // in a rect (snowglobe effect) in the current colour + blend mode.
