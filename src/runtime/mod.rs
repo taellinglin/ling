@@ -3171,6 +3171,7 @@ impl Interpreter {
                         let w = gfx.width;
                         let h = gfx.height;
                         ling_dump_frame(&gfx.buffer, w, h);
+                        ling_dbg_cam(&gfx.camera, w, h);
                         let g = &mut *gfx;
                         if let Some(win) = g.window.as_mut() {
                             let _b = std::time::Instant::now();
@@ -9951,11 +9952,30 @@ fn monitor_info() -> (i32, i32, i32) {
     }
 }
 
-/// Non-Windows native fallback: resolution from [`native_screen_size`], 60 Hz.
+/// Non-Windows native fallback: resolution from [`native_screen_size`]; refresh
+/// from the active X11/RandR mode (so a 144 Hz panel drives the loop at 144),
+/// falling back to 60 Hz when it can't be detected (Wayland, headless, macOS).
 #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
 fn monitor_info() -> (i32, i32, i32) {
     let (w, h) = native_screen_size();
-    (w as i32, h as i32, 60)
+    (w as i32, h as i32, linux_refresh_hz().unwrap_or(60))
+}
+
+/// Active display refresh rate via `xrandr`. The current mode's rate is the
+/// number flagged with `*` in `xrandr` output (e.g. `1920x1080 144.00*+`).
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn linux_refresh_hz() -> Option<i32> {
+    let out = std::process::Command::new("xrandr").arg("--current").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // Find the token carrying `*` (the active rate) and round it to an integer.
+    text.split_whitespace()
+        .find(|tok| tok.contains('*'))
+        .and_then(|tok| tok.trim_matches(|c: char| !c.is_ascii_digit() && c != '.').parse::<f64>().ok())
+        .map(|hz| hz.round() as i32)
+        .filter(|&hz| hz >= 24 && hz <= 1000)
 }
 
 /// WASM fallback: the canvas is the display surface; assume 60 Hz.
@@ -10090,6 +10110,24 @@ fn ling_dump_frame(buf: &[u32], w: usize, h: usize) {
             out.push(px as u8);
         }
         let _ = std::fs::write(&path, out);
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ling_dbg_cam(cam: &crate::gfx::camera::Camera3D, w: usize, h: usize) {
+    thread_local! {
+        static DBG: std::cell::RefCell<(bool, u64)> =
+            std::cell::RefCell::new((std::env::var_os("LING_DBG_CAM").is_some(), 0));
+    }
+    DBG.with(|d| {
+        let mut d = d.borrow_mut();
+        if !d.0 { return; }
+        d.1 += 1;
+        if d.1 % 60 != 0 { return; }
+        eprintln!(
+            "[cam] cry={:.3} sry={:.3} crx={:.3} srx={:.3} cx={:.1} cy={:.1} focal={:.1} zdist={:.2} t=({:.2},{:.2},{:.2}) screen={}x{}",
+            cam.cry, cam.sry, cam.crx, cam.srx, cam.cx, cam.cy, cam.focal, cam.zdist, cam.tx, cam.ty, cam.tz, w, h
+        );
     });
 }
 

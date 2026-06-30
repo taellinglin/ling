@@ -94,6 +94,15 @@ fn arith_binop(op: &BinOp) -> bool {
 
 /// Compute number-ness for every function in the program.
 pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
+    // Escape hatch: treat every local as fully boxed (no num/int/bool fast path).
+    // Used to bisect whether the numeric type inference is miscompiling a program.
+    if std::env::var_os("LING_JIT_NO_NUMOPT").is_some() {
+        return NumberTypes {
+            locals: HashMap::new(),
+            bools: HashMap::new(),
+            ints: HashMap::new(),
+        };
+    }
     let by_name: HashMap<&str, &MirFunction> =
         functions.iter().map(|f| (f.name.as_str(), f)).collect();
 
