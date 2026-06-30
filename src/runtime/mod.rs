@@ -3170,8 +3170,6 @@ impl Interpreter {
                         ling_phase_add(phase::TOON, _t.elapsed().as_nanos());
                         let w = gfx.width;
                         let h = gfx.height;
-                        ling_dump_frame(&gfx.buffer, w, h);
-                        ling_dbg_cam(&gfx.camera, w, h);
                         let g = &mut *gfx;
                         if let Some(win) = g.window.as_mut() {
                             let _b = std::time::Instant::now();
@@ -10082,52 +10080,6 @@ pub fn ling_phase_add(idx: usize, nanos: u128) {
         if p.0 {
             p.2[idx] += nanos;
         }
-    });
-}
-
-/// Diagnostic: when LING_DUMP_FRAME=<path> is set, write every 60th presented
-/// framebuffer to `<path>` as a binary PPM (P6). Lets headless runs verify what
-/// the software renderer actually produced without an X capture.
-#[cfg(not(target_arch = "wasm32"))]
-fn ling_dump_frame(buf: &[u32], w: usize, h: usize) {
-    use std::io::Write;
-    thread_local! {
-        static DUMP: std::cell::RefCell<(Option<String>, u64)> =
-            std::cell::RefCell::new((std::env::var("LING_DUMP_FRAME").ok(), 0));
-    }
-    DUMP.with(|d| {
-        let mut d = d.borrow_mut();
-        let Some(path) = d.0.clone() else { return };
-        d.1 += 1;
-        if d.1 % 60 != 0 || buf.len() < w * h {
-            return;
-        }
-        let mut out = Vec::with_capacity(w * h * 3 + 32);
-        let _ = write!(out, "P6\n{w} {h}\n255\n");
-        for &px in &buf[..w * h] {
-            out.push((px >> 16) as u8);
-            out.push((px >> 8) as u8);
-            out.push(px as u8);
-        }
-        let _ = std::fs::write(&path, out);
-    });
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn ling_dbg_cam(cam: &crate::gfx::camera::Camera3D, w: usize, h: usize) {
-    thread_local! {
-        static DBG: std::cell::RefCell<(bool, u64)> =
-            std::cell::RefCell::new((std::env::var_os("LING_DBG_CAM").is_some(), 0));
-    }
-    DBG.with(|d| {
-        let mut d = d.borrow_mut();
-        if !d.0 { return; }
-        d.1 += 1;
-        if d.1 % 60 != 0 { return; }
-        eprintln!(
-            "[cam] cry={:.3} sry={:.3} crx={:.3} srx={:.3} cx={:.1} cy={:.1} focal={:.1} zdist={:.2} t=({:.2},{:.2},{:.2}) screen={}x{}",
-            cam.cry, cam.sry, cam.crx, cam.srx, cam.cx, cam.cy, cam.focal, cam.zdist, cam.tx, cam.ty, cam.tz, w, h
-        );
     });
 }
 
