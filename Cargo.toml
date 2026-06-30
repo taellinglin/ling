@@ -112,6 +112,9 @@ path = "src/bin/ling-repl.rs"
 [features]
 # Enable LLVM-backed native codegen (requires LLVM toolchain)
 llvm = []
+# Native GPU rasteriser (wgpu offscreen). Opt-in foundation for GPU drawing;
+# the default build is unaffected. Verified by gfx::wgpu_raster tests.
+gpu = ["dep:wgpu", "dep:pollster"]
 
 [dependencies]
 glam = "0.28"
@@ -141,6 +144,9 @@ ling-ui = { path = "crates/ling-ui", version = "2030.0.0" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
+# Optional native GPU rasteriser backend (feature = "gpu").
+wgpu = { version = "22", optional = true }
+pollster = { version = "0.3", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

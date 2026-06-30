@@ -484,4 +484,58 @@ impl DepthQueue {
         }
         crate::gfx::webgl::flush(fill_r, fill_g, fill_b, width, height);
     }
+
+    /// Consume the queue and rasterise it on the GPU (wgpu) into `buf`.
+    /// Native analogue of `flush_to_webgl`: every call is already in screen
+    /// space, so we expand triangles to a vertex list and let the GPU fill
+    /// them, reading the result back into `buf`. Returns `false` if no GPU is
+    /// available (caller falls back to the CPU `flush`). Lines are not yet
+    /// emitted on this path.
+    #[cfg(feature = "gpu")]
+    pub fn flush_to_wgpu(
+        mut self,
+        buf: &mut Vec<u32>,
+        width: usize,
+        height: usize,
+        clear: [f32; 3],
+    ) -> bool {
+        use crate::gfx::wgpu_raster::Vert;
+        self.calls.sort_unstable_by(|a, b| {
+            b.depth
+                .partial_cmp(&a.depth)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let to_rgb = |c: u32| {
+            [
+                ((c >> 16) & 0xFF) as f32 / 255.0,
+                ((c >> 8) & 0xFF) as f32 / 255.0,
+                (c & 0xFF) as f32 / 255.0,
+            ]
+        };
+        let mut verts: Vec<Vert> = Vec::with_capacity(self.calls.len() * 3);
+        for call in &self.calls {
+            match call.kind {
+                DrawKind::Triangle {
+                    x0, y0, x1, y1, x2, y2, ..
+                } => {
+                    let c = to_rgb(call.color);
+                    verts.push(Vert { pos: [x0, y0], color: c });
+                    verts.push(Vert { pos: [x1, y1], color: c });
+                    verts.push(Vert { pos: [x2, y2], color: c });
+                }
+                DrawKind::TriangleG {
+                    x0, y0, c0, x1, y1, c1, x2, y2, c2, ..
+                } => {
+                    verts.push(Vert { pos: [x0, y0], color: to_rgb(c0) });
+                    verts.push(Vert { pos: [x1, y1], color: to_rgb(c1) });
+                    verts.push(Vert { pos: [x2, y2], color: to_rgb(c2) });
+                }
+                DrawKind::Line { .. } => { /* TODO: emit lines as thin quads on the GPU path */ }
+            }
+        }
+        if buf.len() < width * height {
+            buf.resize(width * height, 0);
+        }
+        crate::gfx::wgpu_raster::raster(&verts, width, height, clear, buf)
+    }
 }

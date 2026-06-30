@@ -1,6 +1,6 @@
 [package]
 name = "ling-gpu"
-version = "2030.0.1"
+version = "2030.0.2"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>"]
 description = "GPU compute backend for Ling (CUDA via cudarc, with a portable CPU fallback)"
@@ -15,6 +15,9 @@ default = []
 cuda = ["dep:cudarc"]
 
 [dependencies]
+# Data-parallel CPU fallback: rayon spreads the N-body / projection loops across
+# every core so the no-GPU path (and small workloads) still saturate the machine.
+rayon = "1.10"
 # Optional: pulled in only with `--features cuda`. `dynamic-loading` means we
 # bind the CUDA driver at runtime, so the crate still *compiles* on machines
 # without a toolkit (detection simply returns None → CPU fallback).

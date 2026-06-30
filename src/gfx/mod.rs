@@ -27,6 +27,8 @@ pub mod vtex;
 pub mod audio_web;
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
+#[cfg(feature = "gpu")]
+pub mod wgpu_raster;
 
 pub use camera::Camera3D;
 pub use depth::DepthQueue;
