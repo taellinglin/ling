@@ -156,30 +156,13 @@ pub fn fill_triangle_gouraud(
                     let w2 = e0 / tot;
                     let w0 = e1 / tot;
                     let w1 = e2 / tot;
-                    let mut r = r0 * w0 + r1 * w1 + r2 * w2;
-                    let mut g = g0 * w0 + g1 * w1 + g2 * w2;
-                    let mut b = b0 * w0 + b1 * w1 + b2 * w2;
-                    // Per-pixel cel-shade: snap interpolated luminance to toon bands.
-                    // Matches cel_quantize() thresholds (shadow 0.08 / mid 0.50 / lit 1.00).
-                    if bands >= 2 {
-                        // Thresholds in 0-255 domain (avoids /255*255 round-trip):
-                        //   shadow < 63.75 → 20.4  (0.25*255, 0.08*255)
-                        //   mid    < 153.0 → 127.5 (0.60*255, 0.50*255)
-                        //   lit    ≥ 153.0 → 255.0
-                        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                        let snapped = if lum < 63.75 { 20.4_f32 }
-                                      else if lum < 153.0 { 127.5_f32 }
-                                      else { 255.0_f32 };
-                        if lum > 0.5 {
-                            let k = (snapped / lum).clamp(0.0, 8.0);
-                            r = (r * k).min(255.0);
-                            g = (g * k).min(255.0);
-                            b = (b * k).min(255.0);
-                        } else {
-                            r = 0.0; g = 0.0; b = 0.0;
-                        }
-                    }
-                    let packed = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                    let r = r0 * w0 + r1 * w1 + r2 * w2;
+                    let g = g0 * w0 + g1 * w1 + g2 * w2;
+                    let b = b0 * w0 + b1 * w1 + b2 * w2;
+                    let _ = bands; // tone ramp is applied as a post-process by ToonConfig
+                    let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
+                        | ((g.clamp(0.0, 255.0) as u32) << 8)
+                        | (b.clamp(0.0, 255.0) as u32);
                     if blended {
                         composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
                     } else {
@@ -679,23 +662,13 @@ pub fn fill_triangle_gouraud_z(
                     let z = z0 * w0 + z1 * w1 + z2 * w2;
                     let idx = row + px as usize;
                     if z < zbuf[idx] {
-                        let mut r = r0 * w0 + r1 * w1 + r2 * w2;
-                        let mut g = g0 * w0 + g1 * w1 + g2 * w2;
-                        let mut b = b0 * w0 + b1 * w1 + b2 * w2;
-                        if bands >= 2 {
-                            let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-                            if lum > 0.5 {
-                                let t = (lum / 255.0).clamp(0.0, 1.0);
-                                let snapped = if t < 0.25 { 0.08 } else if t < 0.60 { 0.50 } else { 1.00_f32 };
-                                let k = (snapped * 255.0 / lum).clamp(0.0, 8.0);
-                                r = (r * k).min(255.0);
-                                g = (g * k).min(255.0);
-                                b = (b * k).min(255.0);
-                            } else {
-                                r = 0.0; g = 0.0; b = 0.0;
-                            }
-                        }
-                        let packed = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                        let r = r0 * w0 + r1 * w1 + r2 * w2;
+                        let g = g0 * w0 + g1 * w1 + g2 * w2;
+                        let b = b0 * w0 + b1 * w1 + b2 * w2;
+                        let _ = bands; // tone ramp applied post-process by ToonConfig
+                        let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
+                            | ((g.clamp(0.0, 255.0) as u32) << 8)
+                            | (b.clamp(0.0, 255.0) as u32);
                         if blended {
                             // Translucent: test depth but don't write it so layers stack correctly.
                             composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);

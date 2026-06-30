@@ -142,28 +142,48 @@ fn ggx_toon(n_dot_h: f32, roughness: f32) -> f32 {
     if t > 0.5 { 1.0 } else { 0.0 }
 }
 
+/// Smooth GGX specular: continuous [0,1], same normalisation as `ggx_toon`
+/// but without the hard snap. Use for smooth (non-toon) shading.
+#[inline]
+fn ggx_smooth(n_dot_h: f32, roughness: f32) -> f32 {
+    let a2 = roughness * roughness * roughness * roughness; // α⁴
+    let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
+    let ggx = a2 / (std::f32::consts::PI * d * d + 1e-6);
+    (ggx * a2 * 3.0).clamp(0.0, 1.0)
+}
+
 /// Toon diffuse — maps n·l to discrete bands with optional smooth cross-fade.
+///
+/// When `softness < 1e-3` the brightness is snapped hard via `cel_quantize`.
+/// When `softness > 0` the same cel brightness levels are used, but transitions
+/// between adjacent bands are smoothed over a `softness`-wide window at each
+/// band boundary. `toon_bands` controls how many equal-width n·l slices are
+/// mapped through `cel_quantize`; for the default 3 bands the levels match the
+/// legacy `cel_quantize` table exactly.
 #[inline]
 pub fn toon_diffuse(n_dot_l: f32, bands: u32, softness: f32) -> f32 {
     let t = n_dot_l.clamp(0.0, 1.0);
     if softness < 1e-3 {
         return cel_quantize(t);
     }
-    // Smooth cross-fade at each band boundary using smoothstep
+    // Smooth cross-fade at each band boundary using smoothstep.
+    // Brightness levels come from cel_quantize so both paths stay consistent.
     let n = bands.max(2) as f32;
     let scaled = t * n;
-    let lo = (scaled.floor() / n).clamp(0.0, 1.0);
-    let hi = ((scaled.floor() + 1.0) / n).clamp(0.0, 1.0);
     let frac = scaled.fract();
-    // Smoothstep only in the soft zone near the upper edge of each band
     let edge_width = softness.clamp(0.0, 0.5);
-    let blend = if frac > 1.0 - edge_width {
+
+    if frac > 1.0 - edge_width {
+        // Near the top edge of a band: blend into the next band's brightness.
+        let lo = cel_quantize((scaled.floor() / n).clamp(0.0, 1.0));
+        let hi = cel_quantize(((scaled.floor() + 1.0) / n).clamp(0.0, 1.0));
         let s = ((frac - (1.0 - edge_width)) / edge_width).clamp(0.0, 1.0);
-        s * s * (3.0 - 2.0 * s) // smoothstep
+        let blend = s * s * (3.0 - 2.0 * s); // smoothstep
+        lo + (hi - lo) * blend
     } else {
-        0.0
-    };
-    lo + (hi - lo) * blend + lo * (1.0 - blend)
+        // Inside the band — return its quantised brightness directly.
+        cel_quantize((scaled.floor() / n).clamp(0.0, 1.0))
+    }
 }
 
 #[inline]
@@ -225,8 +245,13 @@ pub fn shade(
         let h = norm3([ld[0] + v[0], ld[1] + v[1], ld[2] + v[2]]);
         let n_dot_h = dot3(n, h).clamp(0.0, 1.0);
 
-        // ── Diffuse (toon) ────────────────────────────────────────────────────
-        let diff = toon_diffuse(n_dot_l, mat.toon_bands, mat.shadow_softness);
+        // ── Diffuse: toon (toon_bands ≥ 1) or smooth Lambertian (toon_bands 0) ─
+        let smooth_mode = mat.toon_bands == 0;
+        let diff = if smooth_mode {
+            n_dot_l // raw Lambertian — no quantisation
+        } else {
+            toon_diffuse(n_dot_l, mat.toon_bands, mat.shadow_softness)
+        };
 
         // Subsurface: tint the shadow zone toward subsurface_color
         let (eff_r, eff_g, eff_b) = if mat.subsurface > 0.0 {
@@ -241,11 +266,15 @@ pub fn shade(
         let dg = eff_g * diff;
         let db = eff_b * diff;
 
-        // ── Specular (GGX toon hotspot) ───────────────────────────────────────
+        // ── Specular: smooth GGX or binary toon hotspot ───────────────────────
         let f0_dielectric = mat.specular * 0.08; // maps [0,1] → [0,0.08]
         let f0 = f0_dielectric + mat.metallic * (ar - f0_dielectric);
         let fresnel = schlick(n_dot_v, f0.clamp(0.0, 1.0));
-        let spec = ggx_toon(n_dot_h, mat.roughness.max(0.01)) * fresnel;
+        let spec = if smooth_mode {
+            ggx_smooth(n_dot_h, mat.roughness.max(0.01)) * fresnel
+        } else {
+            ggx_toon(n_dot_h, mat.roughness.max(0.01)) * fresnel
+        };
 
         let spec_white = spec * (1.0 - mat.specular_tint);
         let sr = spec_white + spec * ar * mat.specular_tint;

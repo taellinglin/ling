@@ -3955,29 +3955,94 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            // ── shadow_smooth(softness) ──
-            // Soften toon shadow edges. 0 = hard, 0.15 = anime-clean, 0.4 = painterly.
-            "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" =>
+            // ── tone_stop(t, value) ──
+            // Add a stop to the tone ramp.
+            //   t      — input luminance position [0..1]
+            //   value  — output brightness [0..1]
+            // Stops are automatically sorted; call tone_ramp_reset() first to clear.
+            "tone_stop" | "ตั้งจุดโทน" | "色调停止" | "トーンストップ" | "톤스톱" =>
             {
-                let s = self.arg_num(&args, 0, 0.0)? as f32;
-                self.gfx.borrow_mut().toon.shadow_softness = s;
+                let t   = self.arg_num(&args, 0, 0.0)? as f32;
+                let val = self.arg_num(&args, 1, 1.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.ramp.stops.push(crate::gfx::toon::ToneStop {
+                    t:     t.clamp(0.0, 1.0),
+                    value: val.clamp(0.0, 1.0),
+                });
+                gfx.toon.ramp.stops.sort_by(|a, b|
+                    a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
                 return Ok(Value::Unit);
             },
 
-            // ── toon_highlight(strength, color, thresh) ──
-            // Blend lit-band pixels toward `color` — the anime "shine" effect.
-            //   strength  — blend amount [0..1]
-            //   color     — 0xRRGGBB highlight colour (default white)
-            //   thresh    — minimum luminance fraction to apply [0..1] (default 0.78)
+            // ── tone_smooth(enabled) ──
+            // 0 = hard cel snap between stops (default); 1 = smooth gradient lerp.
+            "tone_smooth" | "ตั้งโทนนุ่ม" | "色调平滑" | "トーンスムーズ" | "톤스무스" =>
+            {
+                let v = self.arg_num(&args, 0, 0.0)? as f32;
+                self.gfx.borrow_mut().toon.ramp.smooth = v > 0.5;
+                return Ok(Value::Unit);
+            },
+
+            // ── tone_bezier(y1, y2) ──
+            // Apply a cubic Bézier remap to the input luminance before stop lookup.
+            //   y1, y2 — control-point y-values (identity: y1=0.333 y2=0.667)
+            //   0 args or tone_bezier(0, 0)  → ease-in (shadow-heavy)
+            //   tone_bezier(1, 1)            → ease-out (highlight-heavy)
+            //   tone_bezier(0.1, 0.9)        → S-curve (smooth both ends)
+            //   tone_bezier_off()            → disable (back to linear)
+            "tone_bezier" | "ตั้งโทนเบซิเยร์" | "色调贝塞尔" | "トーンベジェ" | "톤베지어" =>
+            {
+                let y1 = self.arg_num(&args, 0, 1.0/3.0)? as f32;
+                let y2 = self.arg_num(&args, 1, 2.0/3.0)? as f32;
+                self.gfx.borrow_mut().toon.ramp.bezier = Some([y1, y2]);
+                return Ok(Value::Unit);
+            },
+
+            // ── tone_bezier_off() — disable Bézier remap ──
+            "tone_bezier_off" | "ปิดโทนเบซิเยร์" | "关闭色调贝塞尔" | "トーンベジェオフ" | "톤베지어끄기" =>
+            {
+                self.gfx.borrow_mut().toon.ramp.bezier = None;
+                return Ok(Value::Unit);
+            },
+
+            // ── tone_ramp_reset() — restore default 3-band cel ramp ──
+            "tone_ramp_reset" | "รีเซ็ตการไล่โทน" | "重置色调渐变" | "トーンランプリセット" | "톤램프리셋" =>
+            {
+                self.gfx.borrow_mut().toon.ramp = crate::gfx::toon::ToneRamp::default();
+                return Ok(Value::Unit);
+            },
+
+            // ── tone_ramp_clear() — clear all stops (build your own ramp) ──
+            "tone_ramp_clear" | "ล้างการไล่โทน" | "清除色调渐变" | "トーンランプクリア" | "톤램프클리어" =>
+            {
+                self.gfx.borrow_mut().toon.ramp.stops.clear();
+                return Ok(Value::Unit);
+            },
+
+            // ── shadow_smooth(softness) [compat] → tone_smooth + tone_bezier ──
+            // Deprecated: use tone_smooth + tone_bezier instead.
+            "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" =>
+            {
+                let s = self.arg_num(&args, 0, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.ramp.smooth = s > 0.05;
+                if s > 0.05 {
+                    let y1 = (0.333 + s * 0.2).clamp(0.0, 1.0);
+                    let y2 = (0.667 - s * 0.2).clamp(0.0, 1.0);
+                    gfx.toon.ramp.bezier = Some([y1, y2]);
+                } else {
+                    gfx.toon.ramp.bezier = None;
+                }
+                return Ok(Value::Unit);
+            },
+
+            // ── toon_highlight [compat] — no-op, use tone_stop instead ──
             "toon_highlight" | "ตั้งไฮไลท์การ์ตูน" | "卡通高光" | "トゥーンハイライト" | "툰하이라이트" =>
             {
-                let strength = self.arg_num(&args, 0, 0.0)? as f32;
-                let color    = self.arg_num(&args, 1, 0x00FF_FFFFu32 as f64)? as u32;
-                let thresh   = self.arg_num(&args, 2, 0.78)? as f32;
-                let mut gfx  = self.gfx.borrow_mut();
-                gfx.toon.highlight_strength = strength;
-                gfx.toon.highlight_color    = color;
-                gfx.toon.highlight_thresh   = thresh;
+                // Remap as a lit-band brightness boost: adds a stop near the highlight threshold.
+                let _strength = self.arg_num(&args, 0, 0.0)? as f32;
+                let _thresh   = self.arg_num(&args, 2, 0.78)? as f32;
+                // No-op: configure via tone_stop() for precise control.
                 return Ok(Value::Unit);
             },
 

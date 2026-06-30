@@ -108,46 +108,49 @@ impl PhotonBuf {
         let s = strength.clamp(0.0, 1.0);
         // Each of the two horizontal neighbours contributes `k` of their energy.
         // Centre keeps `c` = 1 - 2k so total energy is conserved.
+        // Boundary pixels treat the missing neighbour as 0 (virtual zero outside
+        // the grid) — this keeps the full pass energy-conserving for all pixels.
         let k = s * 0.5;   // 0..0.5
         let c = 1.0 - s;   // 1..0  (never goes negative because k≤0.5)
 
-        // Horizontal sweep
+        // Horizontal sweep — ALL columns including boundaries
         for row in 0..h {
             let base = row * w;
-            for col in 1..(w.saturating_sub(1)) {
+            for col in 0..w {
                 let i = base + col;
-                let l = i - 1;
-                let r = i + 1;
-                // SAFETY: row,col in bounds by construction
+                let l_val_r = if col > 0 { unsafe { *self.r.get_unchecked(i - 1) } } else { 0.0 };
+                let r_val_r = if col + 1 < w { unsafe { *self.r.get_unchecked(i + 1) } } else { 0.0 };
+                let l_val_g = if col > 0 { unsafe { *self.g.get_unchecked(i - 1) } } else { 0.0 };
+                let r_val_g = if col + 1 < w { unsafe { *self.g.get_unchecked(i + 1) } } else { 0.0 };
+                let l_val_b = if col > 0 { unsafe { *self.b.get_unchecked(i - 1) } } else { 0.0 };
+                let r_val_b = if col + 1 < w { unsafe { *self.b.get_unchecked(i + 1) } } else { 0.0 };
                 unsafe {
                     *self.r.get_unchecked_mut(i) =
-                        *self.r.get_unchecked(i) * c
-                        + (*self.r.get_unchecked(l) + *self.r.get_unchecked(r)) * k;
+                        *self.r.get_unchecked(i) * c + (l_val_r + r_val_r) * k;
                     *self.g.get_unchecked_mut(i) =
-                        *self.g.get_unchecked(i) * c
-                        + (*self.g.get_unchecked(l) + *self.g.get_unchecked(r)) * k;
+                        *self.g.get_unchecked(i) * c + (l_val_g + r_val_g) * k;
                     *self.b.get_unchecked_mut(i) =
-                        *self.b.get_unchecked(i) * c
-                        + (*self.b.get_unchecked(l) + *self.b.get_unchecked(r)) * k;
+                        *self.b.get_unchecked(i) * c + (l_val_b + r_val_b) * k;
                 }
             }
         }
-        // Vertical sweep
+        // Vertical sweep — ALL rows including boundaries
         for col in 0..w {
-            for row in 1..(h.saturating_sub(1)) {
+            for row in 0..h {
                 let i = row * w + col;
-                let u = i - w;
-                let d = i + w;
+                let u_val_r = if row > 0 { unsafe { *self.r.get_unchecked(i - w) } } else { 0.0 };
+                let d_val_r = if row + 1 < h { unsafe { *self.r.get_unchecked(i + w) } } else { 0.0 };
+                let u_val_g = if row > 0 { unsafe { *self.g.get_unchecked(i - w) } } else { 0.0 };
+                let d_val_g = if row + 1 < h { unsafe { *self.g.get_unchecked(i + w) } } else { 0.0 };
+                let u_val_b = if row > 0 { unsafe { *self.b.get_unchecked(i - w) } } else { 0.0 };
+                let d_val_b = if row + 1 < h { unsafe { *self.b.get_unchecked(i + w) } } else { 0.0 };
                 unsafe {
                     *self.r.get_unchecked_mut(i) =
-                        *self.r.get_unchecked(i) * c
-                        + (*self.r.get_unchecked(u) + *self.r.get_unchecked(d)) * k;
+                        *self.r.get_unchecked(i) * c + (u_val_r + d_val_r) * k;
                     *self.g.get_unchecked_mut(i) =
-                        *self.g.get_unchecked(i) * c
-                        + (*self.g.get_unchecked(u) + *self.g.get_unchecked(d)) * k;
+                        *self.g.get_unchecked(i) * c + (u_val_g + d_val_g) * k;
                     *self.b.get_unchecked_mut(i) =
-                        *self.b.get_unchecked(i) * c
-                        + (*self.b.get_unchecked(u) + *self.b.get_unchecked(d)) * k;
+                        *self.b.get_unchecked(i) * c + (u_val_b + d_val_b) * k;
                 }
             }
         }
@@ -169,6 +172,9 @@ impl PhotonBuf {
         if bands < 2 {
             // Passthrough: clamp + pack, no quantisation
             for i in 0..n {
+                if self.r[i] <= 0.0 && self.g[i] <= 0.0 && self.b[i] <= 0.0 {
+                    continue; // zero energy → leave buffer black
+                }
                 let r = (self.r[i].clamp(0.0, 1.0) * 255.0) as u32;
                 let g = (self.g[i].clamp(0.0, 1.0) * 255.0) as u32;
                 let b = (self.b[i].clamp(0.0, 1.0) * 255.0) as u32;
@@ -179,6 +185,13 @@ impl PhotonBuf {
         for i in 0..n {
             // SAFETY: i < n ≤ min(r.len(), buf.len())
             unsafe {
+                // Zero-energy pixel → leave buffer as-is (background stays black).
+                if *self.r.get_unchecked(i) <= 0.0
+                    && *self.g.get_unchecked(i) <= 0.0
+                    && *self.b.get_unchecked(i) <= 0.0
+                {
+                    continue;
+                }
                 let r = snap(*self.r.get_unchecked(i), bands);
                 let g = snap(*self.g.get_unchecked(i), bands);
                 let b = snap(*self.b.get_unchecked(i), bands);
