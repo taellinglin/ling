@@ -60,9 +60,37 @@ impl LingCompiler {
     /// Compile and run using the Cranelift JIT backend.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn compile_and_run_jit<P: AsRef<Path>>(&self, input: P) -> LingResult<()> {
-        let mir = mir::compile_path(input.as_ref(), self.config.optimization)?;
+        let flat = mir::flatten_path(input.as_ref())?;
+        let mir = mir::lower_and_optimize(&flat, self.config.optimization);
         let mir_prog = ling_codegen::MirProgram::new(mir, input.as_ref().to_string_lossy());
+        let source_dir = input.as_ref().parent().map(|p| p.to_path_buf());
+        self.run_jit_mir(mir_prog, flat, source_dir)
+    }
 
+    /// Compile and run concatenated `source` (resolving its `use` imports against
+    /// `source_dir`) on the Cranelift JIT backend. The host launcher pastes its
+    /// `.ling` files together and calls this; duplicate definitions are resolved
+    /// in [`mir::flatten_source`].
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn compile_and_run_jit_source(
+        &self,
+        source: &str,
+        source_dir: Option<std::path::PathBuf>,
+    ) -> LingResult<()> {
+        let dir = source_dir.clone().unwrap_or_else(|| Path::new(".").to_path_buf());
+        let flat = mir::flatten_source(source, &dir)?;
+        let mir = mir::lower_and_optimize(&flat, self.config.optimization);
+        let mir_prog = ling_codegen::MirProgram::new(mir, "__main__".to_string());
+        self.run_jit_mir(mir_prog, flat, source_dir)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn run_jit_mir(
+        &self,
+        mir_prog: ling_codegen::MirProgram,
+        fallback_ast: crate::parser::ast::Program,
+        source_dir: Option<std::path::PathBuf>,
+    ) -> LingResult<()> {
         use crate::runtime::jit_abi::{
             ling_abs, ling_add, ling_alloc, ling_and, ling_bool_to_u64, ling_builtin, ling_ceil,
             ling_cos, ling_div, ling_eq, ling_f64_add, ling_f64_div, ling_f64_eq, ling_f64_ge,
@@ -138,8 +166,16 @@ impl LingCompiler {
             reg!(ling_builtin, "builtin");
         });
 
-        // Initialize JIT runtime with interpreter for fallback operations
-        crate::runtime::jit_abi::init(Interpreter::new());
+        // Prime the fallback interpreter with the SAME flattened program: every
+        // function + global is registered (but the entry is not run), so any
+        // cranelift-skipped oversized function still executes, with full access
+        // to globals and its peer functions.
+        let mut fallback = Interpreter::new();
+        fallback.source_dir = source_dir;
+        fallback
+            .register_program(&fallback_ast)
+            .map_err(|e| LingError::Mir(e))?;
+        crate::runtime::jit_abi::init(fallback);
 
         // Compile all functions. A failure here is pre-execution (Codegen),
         // so callers may safely fall back to the interpreter.

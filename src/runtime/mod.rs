@@ -117,6 +117,7 @@ use crate::gfx::{GfxState, Light};
 use crate::parser::ast::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 // `raster` is wasm-safe (pure CPU framebuffer), so `draw_line` is available on
 // web too; `fill_triangle` is only reached from native-gated 3-D fill paths.
 use crate::gfx::raster::draw_line;
@@ -139,7 +140,7 @@ pub enum Value {
     Number(f64),
     Bool(bool),
     Unit,
-    List(Vec<Value>),
+    List(Rc<Vec<Value>>),
     Ok(Box<Value>),
     Err(Box<Value>),
     Fn(Vec<String>, Vec<Stmt>, Env),
@@ -156,7 +157,15 @@ pub enum Value {
     },
 }
 
-type Env = HashMap<String, Value>;
+// Interpreter-hot maps use a fast non-crypto hasher: short Thai identifier keys
+// are hashed on every variable access and builtin dispatch, where SipHash dominates.
+use rustc_hash::FxHashMap;
+type Env = FxHashMap<String, Value>;
+
+#[inline]
+fn new_env() -> Env {
+    FxHashMap::default()
+}
 
 impl std::fmt::Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -898,7 +907,7 @@ pub struct Interpreter {
     /// Globals evaluated ONCE at program start (immutable after load).
     /// call_named clones this instead of re-evaluating every global per call.
     global_seed: Env,
-    functions: HashMap<String, FnDef>,
+    functions: FxHashMap<String, Rc<FnDef>>,
     /// `form` definitions: struct name → ordered field names.
     pub(crate) structs: HashMap<String, Vec<String>>,
     /// `choose` variants: variant name (bare and `Enum::Variant`) → (enum name, arity).
@@ -998,8 +1007,8 @@ impl Interpreter {
             .ok();
         Self {
             globals: HashMap::new(),
-            global_seed: HashMap::new(),
-            functions: HashMap::new(),
+            global_seed: new_env(),
+            functions: FxHashMap::default(),
             structs: HashMap::new(),
             enum_variants: HashMap::new(),
             _modules: HashMap::new(),
@@ -1582,16 +1591,15 @@ impl Interpreter {
         glyphs
     }
 
-    pub fn run_program(&mut self, program: &Program) -> Result<(), String> {
+    /// Register every item (functions, structs, globals) and evaluate the
+    /// non-`do` globals into `global_seed`, WITHOUT running the entry. Used to
+    /// prime the JIT's fallback interpreter so cranelift-skipped (oversized)
+    /// functions can still be interpreted with full access to globals + peers.
+    pub fn register_program(&mut self, program: &Program) -> Result<(), String> {
         for item in &program.items {
             self.register_item("", item)?;
         }
-        let entry = self
-            .find_entry()
-            .ok_or("no entry point — need `bind start = do {...}` or `ผูก เริ่ม = ทำ {...}`")?;
-        // Seed the entry env with non-Do globals so top-level `令` bindings
-        // are visible in the main Do block (same two-pass logic as call_named).
-        let mut env = Env::new();
+        let mut env = new_env();
         let non_do: Vec<_> = self
             .globals
             .iter()
@@ -1600,7 +1608,7 @@ impl Interpreter {
             .collect();
         let mut pending: Vec<(String, Expr)> = Vec::new();
         for (k, expr) in &non_do {
-            let mut tmp = Env::new();
+            let mut tmp = new_env();
             if let Ok(v) = self.eval_expr(expr, &mut tmp) {
                 env.insert(k.clone(), v);
             } else {
@@ -1613,9 +1621,16 @@ impl Interpreter {
                 env.insert(k.clone(), v);
             }
         }
-        // Cache the evaluated globals so every user-function call can clone this
-        // seed instead of re-evaluating all globals (see call_named).
-        self.global_seed = env.clone();
+        self.global_seed = env;
+        Ok(())
+    }
+
+    pub fn run_program(&mut self, program: &Program) -> Result<(), String> {
+        self.register_program(program)?;
+        let entry = self
+            .find_entry()
+            .ok_or("no entry point — need `bind start = do {...}` or `ผูก เริ่ม = ทำ {...}`")?;
+        let mut env = self.global_seed.clone();
         self.framed("start", |me| me.eval_expr(&entry, &mut env))
             .map(|_| ())
             .map_err(|e| match e {
@@ -1641,7 +1656,7 @@ impl Interpreter {
                 } else {
                     format!("{ns}::{}", def.name)
                 };
-                self.functions.insert(key, def.clone());
+                self.functions.insert(key, Rc::new(def.clone()));
             },
             Item::Mod(name, body) => {
                 let child_ns = if ns.is_empty() {
@@ -1795,7 +1810,7 @@ impl Interpreter {
                     .iter()
                     .map(|e| self.eval_expr(e, env))
                     .collect::<Result<_, _>>()?;
-                Ok(Value::List(vs))
+                Ok(Value::List(Rc::new(vs)))
             },
 
             Expr::Ident(name) => self.lookup(name, env),
@@ -1888,9 +1903,9 @@ impl Interpreter {
                 let hi_v = self.eval_expr(hi, env)?;
                 let lo_n = self.to_number(&lo_v)? as i64;
                 let hi_n = self.to_number(&hi_v)? as i64;
-                Ok(Value::List(
+                Ok(Value::List(Rc::new(
                     (lo_n..hi_n).map(|i| Value::Number(i as f64)).collect(),
-                ))
+                )))
             },
 
             Expr::Index(base, idx) => {
@@ -1950,8 +1965,13 @@ impl Interpreter {
         for stmt in stmts {
             match stmt {
                 Stmt::Bind(name, expr) => {
-                    let v = self.eval_expr(expr, env)?;
-                    env.insert(name.clone(), v);
+                    match self.try_inplace_list_update(name, expr, env)? {
+                        Some(v) => env.insert(name.clone(), v),
+                        None => {
+                            let v = self.eval_expr(expr, env)?;
+                            env.insert(name.clone(), v)
+                        },
+                    };
                     last = None;
                 },
                 Stmt::Return(expr) => {
@@ -1966,15 +1986,95 @@ impl Interpreter {
         Ok(last)
     }
 
+    /// Fast path for `bind v = list_push(v, x)` / `bind v = list_set(v, i, x)`:
+    /// the binding aliases the same list being rebuilt, so the env copy keeps the
+    /// `Rc` shared and `make_mut` copies the whole vector every call. Taking the
+    /// value out of env first leaves the `Rc` unique (unless truly aliased
+    /// elsewhere, where copy-on-write still applies), turning O(n) into O(1).
+    /// Returns `None` to fall back to normal evaluation.
+    fn try_inplace_list_update(
+        &mut self,
+        name: &str,
+        expr: &Expr,
+        env: &mut Env,
+    ) -> Result<Option<Value>, EvalErr> {
+        let Expr::Call(callee, args) = expr else { return Ok(None) };
+        let Expr::Ident(fname) = callee.as_ref() else { return Ok(None) };
+        let is_push = matches!(
+            fname.as_str(),
+            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가"
+        );
+        let is_set = matches!(
+            fname.as_str(),
+            "list_set" | "ตั้งรายการ" | "设元素" | "要素設定" | "요소설정"
+        );
+        if !is_push && !is_set {
+            return Ok(None);
+        }
+        // First arg must be the same variable we are binding, and the builtin
+        // must not be shadowed by a user function.
+        match args.first() {
+            Some(Expr::Ident(a0)) if a0 == name => {},
+            _ => return Ok(None),
+        }
+        if self.functions.contains_key(fname.as_str()) {
+            return Ok(None);
+        }
+        if is_push {
+            if args.len() != 2 {
+                return Ok(None);
+            }
+            let val = self.eval_expr(&args[1], env)?;
+            match env.remove(name) {
+                Some(Value::List(mut v)) => {
+                    Rc::make_mut(&mut v).push(val);
+                    Ok(Some(Value::List(v)))
+                },
+                other => {
+                    if let Some(o) = other {
+                        env.insert(name.to_string(), o);
+                    }
+                    Ok(None)
+                },
+            }
+        } else {
+            if args.len() != 3 {
+                return Ok(None);
+            }
+            let idx_v = self.eval_expr(&args[1], env)?;
+            let idx = self.to_number(&idx_v).unwrap_or(0.0) as usize;
+            let val = self.eval_expr(&args[2], env)?;
+            match env.remove(name) {
+                Some(Value::List(mut v)) => {
+                    if idx < v.len() {
+                        Rc::make_mut(&mut v)[idx] = val;
+                    }
+                    Ok(Some(Value::List(v)))
+                },
+                other => {
+                    if let Some(o) = other {
+                        env.insert(name.to_string(), o);
+                    }
+                    Ok(None)
+                },
+            }
+        }
+    }
+
     // ─── Dispatch helpers ─────────────────────────────────────────────────────
 
     fn lookup(&self, name: &str, env: &Env) -> EvalResult {
         if let Some(v) = env.get(name) {
             return Ok(v.clone());
         }
+        // Globals are an immutable load-time snapshot shared by every call frame;
+        // a function reads them here instead of receiving a per-call clone.
+        if let Some(v) = self.global_seed.get(name) {
+            return Ok(v.clone());
+        }
         if self.functions.contains_key(name) {
             let def = &self.functions[name];
-            return Ok(Value::Fn(def.params.clone(), def.body.clone(), Env::new()));
+            return Ok(Value::Fn(def.params.clone(), def.body.clone(), new_env()));
         }
         // Bare nullary enum variant used as a value (e.g. `bind p = Origin`).
         if let Some((enum_name, 0)) = self.enum_variants.get(name).cloned() {
@@ -2016,7 +2116,7 @@ impl Interpreter {
         // A user-defined function shadows any builtin of the same name, matching
         // the JIT/AOT backends (which always resolve a defined function first).
         if let Some(def) = self.functions.get(name).cloned() {
-            let mut call_env = self.global_seed.clone();
+            let mut call_env = FxHashMap::with_capacity_and_hasher(def.params.len(), Default::default());
             let _ = env; // call-site locals are intentionally NOT visible to fns
             for (param, arg) in def.params.iter().zip(args) {
                 call_env.insert(param.clone(), arg);
@@ -2034,6 +2134,16 @@ impl Interpreter {
         }
 
         match name {
+            // Module global read emitted by the MIR backend: resolve against the
+            // evaluated global snapshot (functions see globals read-only).
+            "__ling_global" => {
+                if let Some(Value::Str(g)) = args.first() {
+                    if let Some(v) = self.global_seed.get(g.as_str()) {
+                        return Ok(v.clone());
+                    }
+                }
+                return Ok(Value::Unit);
+            },
             // ── Print ──
             "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести"
             | "imprimir" | "afficher" => {
@@ -2110,9 +2220,9 @@ impl Interpreter {
                 if let Some(Value::List(v)) = args.first() {
                     return Ok(Value::List(v.clone()));
                 }
-                return Ok(Value::List(args));
+                return Ok(Value::List(Rc::new(args)));
             },
-            "向量::有容量" | "Vec::with_capacity" => return Ok(Value::List(Vec::new())),
+            "向量::有容量" | "Vec::with_capacity" => return Ok(Value::List(Rc::new(Vec::new()))),
             // ── Timer stubs ──
             "计时::获取当前小时" | "Timer::hour" => return Ok(Value::Number(14.0)),
             "计时::现在" | "Timer::now" => return Ok(Value::Number(1000.0)),
@@ -2363,11 +2473,11 @@ impl Interpreter {
                 let r = ((r1 + m) * 255.0).round();
                 let g = ((g1 + m) * 255.0).round();
                 let b = ((b1 + m) * 255.0).round();
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(r),
                     Value::Number(g),
                     Value::Number(b),
-                ]));
+                ])));
             },
 
             "lerp_color" | "ไล่สี" | "颜色插值" | "色補間" | "색보간" => {
@@ -2467,8 +2577,8 @@ impl Interpreter {
                         self.fft.borrow_mut().push_samples(&samples);
                     }
                     let bands = self.fft.borrow().freq_bands(n);
-                    let result = bands.iter().map(|&v| Value::Number(v as f64)).collect();
-                    return Ok(Value::List(result));
+                    let result: Vec<Value> = bands.iter().map(|&v| Value::Number(v as f64)).collect();
+                    return Ok(Value::List(Rc::new(result)));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::List(vec![]));
@@ -3035,6 +3145,8 @@ impl Interpreter {
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    ling_fps_tick();
+                    ling_phase_frame();
                     // Flush depth queue and present — release borrow before reading mouse.
                     {
                         let mut gfx = self.gfx.borrow_mut();
@@ -3053,13 +3165,18 @@ impl Interpreter {
                             gfx.depth_queue.set_state(bm, ba);
                             gfx.zbuf_needs_clear = false;
                         }
+                        let _t = std::time::Instant::now();
                         gfx.toon_post_process();
-                        let buf = gfx.buffer.clone();
+                        ling_phase_add(phase::TOON, _t.elapsed().as_nanos());
                         let w = gfx.width;
                         let h = gfx.height;
-                        if let Some(win) = gfx.window.as_mut() {
-                            win.update_with_buffer(&buf, w, h)
+                        ling_dump_frame(&gfx.buffer, w, h);
+                        let g = &mut *gfx;
+                        if let Some(win) = g.window.as_mut() {
+                            let _b = std::time::Instant::now();
+                            win.update_with_buffer(&g.buffer, w, h)
                                 .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                            ling_phase_add(phase::BLIT, _b.elapsed().as_nanos());
                         }
                     }
                     // Read mouse AFTER update_with_buffer so events are processed.
@@ -3247,7 +3364,13 @@ impl Interpreter {
                     .map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
                     // Drive the loop at the monitor's real refresh rate instead of
                     // a hard-coded cap, so a 144 Hz panel runs at 144 fps.
-                    win.set_target_fps(monitor_info().2.max(30) as usize);
+                    // LING_FPS_CAP overrides the target frame rate (0 = uncapped);
+                    // otherwise drive at the monitor's real refresh.
+                    match std::env::var("LING_FPS_CAP").ok().and_then(|v| v.parse::<usize>().ok()) {
+                        Some(0) => win.set_target_fps(100_000),
+                        Some(cap) => win.set_target_fps(cap),
+                        None => win.set_target_fps(monitor_info().2.max(30) as usize),
+                    }
                     // Grab the native handle *before* moving the window into gfx.
                     #[cfg(windows)]
                     let hwnd = win.get_window_handle() as isize;
@@ -3307,11 +3430,11 @@ impl Interpreter {
             "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" =>
             {
                 let (w, h, hz) = monitor_info();
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(w as f64),
                     Value::Number(h as f64),
                     Value::Number(hz as f64),
-                ]));
+                ])));
             },
             // set_fps(n) → cap the render loop at n frames per second
             "set_fps"
@@ -4086,95 +4209,98 @@ impl Interpreter {
 
                 let mut gfx = self.gfx.borrow_mut();
 
-                // World-space face normal  N = (B−A) × (C−A)
-                let ux = bx - ax;
-                let uy = by - ay;
-                let uz = bz - az;
-                let vx = cx - ax;
-                let vy = cy - ay;
-                let vz = cz - az;
-                let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
-
-                // Per-vertex lit colours — gradient across face from light positions
-                let (c0, c1, c2) = if gfx.flat_shade {
-                    (gfx.color, gfx.color, gfx.color)
-                } else {
-                    crate::gfx::light::compute_lit_color_vertices(
-                        gfx.color,
-                        normal,
-                        [ax, ay, az],
-                        [bx, by, bz],
-                        [cx, cy, cz],
-                        &gfx.lights,
-                        gfx.ambient,
-                    )
-                };
-
-                // ── Near-plane CLIP (Sutherland–Hodgman) ──
-                // A vertex just in front of the eye divides by ~0 in the perspective
-                // projection and smears the triangle into a screen-filling fan. The old
-                // "cull if any vertex past near" still let a vertex sitting just inside
-                // near blow up. Clipping the triangle to the near plane keeps only the
-                // in-front portion (finite projection — no fan, no over-cull).
-                let near = -gfx.camera.zdist + 0.05;
-                // (x, y, z, camera_depth, color)
-                let vw = [
-                    (ax, ay, az, gfx.camera.depth(ax, ay, az), c0),
-                    (bx, by, bz, gfx.camera.depth(bx, by, bz), c1),
-                    (cx, cy, cz, gfx.camera.depth(cx, cy, cz), c2),
-                ];
-                // Stack arrays (no per-triangle heap alloc): near-plane clip of a
-                // triangle yields ≤4 vertices. This handler runs thousands of
-                // times per frame, so avoiding two Vec allocations each call is a
-                // real win across every render mode.
-                // (x, y, z, color)
-                let mut poly: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
-                let mut pn = 0usize;
-                let mut ei = 0;
-                while ei < 3 {
-                    let a = vw[ei];
-                    let b = vw[(ei + 1) % 3];
-                    let ain = a.3 > near;
-                    let bin = b.3 > near;
-                    if ain && pn < 4 {
-                        poly[pn] = (a.0, a.1, a.2, a.4);
-                        pn += 1;
-                    }
-                    if ain != bin && pn < 4 {
-                        let tt = (near - a.3) / (b.3 - a.3);
-                        poly[pn] = (
-                            a.0 + (b.0 - a.0) * tt,
-                            a.1 + (b.1 - a.1) * tt,
-                            a.2 + (b.2 - a.2) * tt,
-                            crate::gfx::light::lerp_color(a.4, b.4, tt),
-                        );
-                        pn += 1;
-                    }
-                    ei += 1;
-                }
-                if pn < 3 {
+                // Mesh capture: record raw local coords + pen colour, skip submit.
+                if gfx.mesh_capture.is_some() {
+                    let col = gfx.color;
+                    gfx.mesh_capture
+                        .as_mut()
+                        .unwrap()
+                        .push(([ax, ay, az, bx, by, bz, cx, cy, cz], col));
                     return Ok(Value::Unit);
                 }
-                // Project the clipped polygon; apply fog per-vertex; fan-triangulate.
-                // (sx, sy, sz, color)
-                let mut proj: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
-                let mut pi = 0;
-                while pi < pn {
-                    let (sx, sy, sz) = gfx.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
-                    let fc = gfx.fog_apply(poly[pi].3, sz);
-                    proj[pi] = (sx, sy, sz, fc);
-                    pi += 1;
+
+                gfx.submit_triangle(ax, ay, az, bx, by, bz, cx, cy, cz);
+                return Ok(Value::Unit);
+            },
+
+            // ── เริ่มอบเมช() — begin capturing 3-D triangles into a display list ──
+            "เริ่มอบเมช" | "mesh_bake_begin" =>
+            {
+                self.gfx.borrow_mut().mesh_capture = Some(Vec::new());
+                return Ok(Value::Unit);
+            },
+
+            // ── เมชแคชรับ(key) — keyed display-list cache lookup (-1 = miss) ──
+            "เมชแคชรับ" | "mesh_cache_get" =>
+            {
+                let key = self.arg_num(&args, 0, 0.0)? as i64;
+                let h = self.gfx.borrow().mesh_cache.get(&key).copied();
+                return Ok(Value::Number(h.map(|x| x as f64).unwrap_or(-1.0)));
+            },
+
+            // ── เมชแคชตั้ง(key, handle) — store a baked mesh under key (bounded) ──
+            "เมชแคชตั้ง" | "mesh_cache_put" =>
+            {
+                let key = self.arg_num(&args, 0, 0.0)? as i64;
+                let h = self.arg_num(&args, 1, 0.0)? as usize;
+                let mut gfx = self.gfx.borrow_mut();
+                const CAP: usize = 256;
+                if gfx.mesh_cache.len() >= CAP {
+                    let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
+                    gfx.mesh_cache.clear();
+                    for id in evict {
+                        if id < gfx.meshes.len() {
+                            gfx.meshes[id].clear();
+                            gfx.mesh_free.push(id);
+                        }
+                    }
                 }
-                let mut fk = 1;
-                while fk + 1 < pn {
-                    gfx.depth_queue.push_triangle_g_zv(
-                        proj[0].0, proj[0].1, proj[0].2, proj[0].3,
-                        proj[fk].0, proj[fk].1, proj[fk].2, proj[fk].3,
-                        proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2, proj[fk + 1].3,
-                        3, // 3 bands matches cel_quantize (shadow/mid/lit)
-                    );
-                    fk += 1;
+                gfx.mesh_cache.insert(key, h);
+                return Ok(Value::Unit);
+            },
+
+            // ── เมชแคชล้าง() — drop the keyed cache (e.g. on level change) ──
+            "เมชแคชล้าง" | "mesh_cache_clear" =>
+            {
+                let mut gfx = self.gfx.borrow_mut();
+                let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
+                gfx.mesh_cache.clear();
+                for id in evict {
+                    if id < gfx.meshes.len() {
+                        gfx.meshes[id].clear();
+                        gfx.mesh_free.push(id);
+                    }
                 }
+                return Ok(Value::Unit);
+            },
+
+            // ── จบอบเมช() — bake captured triangles, return mesh handle ──
+            "จบอบเมช" | "mesh_bake_end" =>
+            {
+                let mut gfx = self.gfx.borrow_mut();
+                let tris = gfx.mesh_capture.take().unwrap_or_default();
+                let id = gfx.mesh_register(tris);
+                return Ok(Value::Number(id as f64));
+            },
+
+            // ── วาดอบเมช[สี](id, ox,oy,oz, rx,ry,rz, ux,uy,uz, s) — draw a baked mesh ──
+            //   วาดอบเมช: current pen colour (tinted glyphs)
+            //   วาดอบเมชสี: per-triangle baked colour (multi-colour models)
+            "วาดอบเมช" | "mesh_bake_draw" | "วาดอบเมชสี" | "mesh_bake_draw_col" =>
+            {
+                let baked_col = matches!(name, "วาดอบเมชสี" | "mesh_bake_draw_col");
+                let id = self.arg_num(&args, 0, 0.0)? as usize;
+                let ox = self.arg_num(&args, 1, 0.0)? as f32;
+                let oy = self.arg_num(&args, 2, 0.0)? as f32;
+                let oz = self.arg_num(&args, 3, 0.0)? as f32;
+                let rx = self.arg_num(&args, 4, 1.0)? as f32;
+                let ry = self.arg_num(&args, 5, 0.0)? as f32;
+                let rz = self.arg_num(&args, 6, 0.0)? as f32;
+                let ux = self.arg_num(&args, 7, 0.0)? as f32;
+                let uy = self.arg_num(&args, 8, 1.0)? as f32;
+                let uz = self.arg_num(&args, 9, 0.0)? as f32;
+                let s = self.arg_num(&args, 10, 1.0)? as f32;
+                self.gfx.borrow_mut().mesh_draw(id, ox, oy, oz, rx, ry, rz, ux, uy, uz, s, baked_col);
                 return Ok(Value::Unit);
             },
 
@@ -4525,18 +4651,18 @@ impl Interpreter {
                 let near = -gfx.camera.zdist + 0.05;
                 let d = gfx.camera.depth(x, y, z);
                 if d <= near {
-                    return Ok(Value::List(vec![
+                    return Ok(Value::List(Rc::new(vec![
                         Value::Number(-99999.0),
                         Value::Number(-99999.0),
                         Value::Number(d as f64),
-                    ]));
+                    ])));
                 }
                 let (sx, sy, depth) = gfx.camera.project(x, y, z);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(sx as f64),
                     Value::Number(sy as f64),
                     Value::Number(depth as f64),
-                ]));
+                ])));
             },
             // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
             // honouring the blend mode (additive → translucent glow). Auto-closes.
@@ -5544,9 +5670,9 @@ impl Interpreter {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let input = self.arg_list_f32(&args, 1);
                 let out = ai::nn_forward(id, &input);
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     out.into_iter().map(|v| Value::Number(v as f64)).collect(),
-                ));
+                )));
             },
             // nn_train(handle, [inputs], [targets][, lr]) → loss
             #[cfg(not(target_arch = "wasm32"))]
@@ -5696,7 +5822,7 @@ impl Interpreter {
             // ── CLI arguments ─────────────────────────────────────────────────
             "get_args" | "รับอาร์กิวเมนต์" => {
                 let v: Vec<Value> = std::env::args().map(Value::Str).collect();
-                return Ok(Value::List(v));
+                return Ok(Value::List(Rc::new(v)));
             },
 
             // ── String utilities ──────────────────────────────────────────────
@@ -5708,7 +5834,7 @@ impl Interpreter {
                     .split(sep.as_str())
                     .map(|p| Value::Str(p.to_string()))
                     .collect();
-                return Ok(Value::List(parts));
+                return Ok(Value::List(Rc::new(parts)));
             },
             "trim" | "str_trim" | "ตัดช่องว่าง" => {
                 let s = self.arg_str(&args, 0, "");
@@ -5801,17 +5927,17 @@ impl Interpreter {
             // ── List utilities ────────────────────────────────────────────────
             "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" =>
             {
-                return Ok(Value::List(Vec::new()));
+                return Ok(Value::List(Rc::new(Vec::new())));
             },
             "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" =>
             {
-                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
                 let val = args.get(1).cloned().unwrap_or(Value::Unit);
                 if let Value::List(mut v) = lst {
-                    v.push(val);
+                    Rc::make_mut(&mut v).push(val);
                     return Ok(Value::List(v));
                 }
-                return Ok(Value::List(vec![val]));
+                return Ok(Value::List(Rc::new(vec![val])));
             },
             "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" =>
             {
@@ -5829,20 +5955,20 @@ impl Interpreter {
             {
                 let idx = self.arg_num(&args, 1, 0.0)? as usize;
                 let mut ai = args.into_iter();
-                let lst = ai.next().unwrap_or(Value::List(vec![]));
+                let lst = ai.next().unwrap_or(Value::List(Rc::new(vec![])));
                 ai.next(); // skip idx
                 let val = ai.next().unwrap_or(Value::Unit);
                 if let Value::List(mut v) = lst {
                     if idx < v.len() {
-                        v[idx] = val;
+                        Rc::make_mut(&mut v)[idx] = val;
                     }
                     return Ok(Value::List(v));
                 }
-                return Ok(Value::List(vec![]));
+                return Ok(Value::List(Rc::new(vec![])));
             },
             "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" =>
             {
-                let lst = args.first().cloned().unwrap_or(Value::List(vec![]));
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
                 let sep = args.get(1).map(|v| v.to_string()).unwrap_or_default();
                 if let Value::List(v) = lst {
                     return Ok(Value::Str(
@@ -5873,11 +5999,11 @@ impl Interpreter {
                             };
                             out.push(Value::Number(n));
                         }
-                        return Ok(Value::List(out));
+                        return Ok(Value::List(Rc::new(out)));
                     },
                     Err(e) => {
                         eprintln!("blob decode failed: {e}");
-                        return Ok(Value::List(vec![]));
+                        return Ok(Value::List(Rc::new(vec![])));
                     },
                 }
             },
@@ -6022,9 +6148,9 @@ impl Interpreter {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 let bands = self.fft.borrow().freq_bands(n);
                 *self.fft_bands_cache.borrow_mut() = bands.clone();
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     bands.into_iter().map(|v| Value::Number(v as f64)).collect(),
-                ));
+                )));
             },
 
             // fft_beat() → bool
@@ -6479,7 +6605,7 @@ impl Interpreter {
                     out.push(Value::Number(p[1] as f64));
                     out.push(Value::Number(p[2] as f64));
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Rc::new(out)));
             },
             #[cfg(target_arch = "wasm32")]
             "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
@@ -6538,10 +6664,10 @@ impl Interpreter {
                 let pk = hex_decode(&self.arg_str(&args, 0, ""));
                 match ling_crypto::geo::knot_encapsulate(&pk) {
                     Ok((ct, ss)) => {
-                        return Ok(Value::List(vec![
+                        return Ok(Value::List(Rc::new(vec![
                             Value::Str(hex_encode(&ct)),
                             Value::Str(hex_encode(&ss)),
-                        ]))
+                        ])))
                     },
                     Err(e) => return Ok(Value::Err(Box::new(Value::Str(e.to_string())))),
                 }
@@ -6596,7 +6722,7 @@ impl Interpreter {
                         out.push(Value::Number(c as f64));
                     }
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Rc::new(out)));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "holo_fragment_count"
@@ -6694,10 +6820,10 @@ impl Interpreter {
                 let dt = self.arg_num(&args, 5, 1.0 / 60.0)? as f32;
                 let (np, nv) =
                     ling_animation::scalar::spring_step(pos, vel, target, stiffness, damping, dt);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(np as f64),
                     Value::Number(nv as f64),
-                ]));
+                ])));
             },
             "ik2" | "反解" | "逆運動" | "역운동" | "ไอเค2" => {
                 let l1 = self.arg_num(&args, 0, 1.0)? as f32;
@@ -6705,10 +6831,10 @@ impl Interpreter {
                 let tx = self.arg_num(&args, 2, 0.0)? as f32;
                 let ty = self.arg_num(&args, 3, 0.0)? as f32;
                 let (sh, el) = ling_animation::scalar::two_bone_ik(l1, l2, tx, ty);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(sh as f64),
                     Value::Number(el as f64),
-                ]));
+                ])));
             },
             // ── Mechanical 机 ──
             "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" =>
@@ -6736,9 +6862,9 @@ impl Interpreter {
                     _ => Vec::new(),
                 };
                 let out = ling_animation::mechanism::gear_train(angle, &teeth);
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     out.into_iter().map(|a| Value::Number(a as f64)).collect(),
-                ));
+                )));
             },
             "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" =>
             {
@@ -7791,9 +7917,9 @@ impl Interpreter {
                     .get(id as usize)
                     .map(|t| ling_music::analysis::onsets(&t.mono, t.rate))
                     .unwrap_or_default();
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     v.into_iter().map(|x| Value::Number(x as f64)).collect(),
-                ));
+                )));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
@@ -7807,9 +7933,9 @@ impl Interpreter {
                         ling_music::analysis::beat_grid(&t.mono, t.rate, b)
                     })
                     .unwrap_or_default();
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     beats.into_iter().map(|x| Value::Number(x as f64)).collect(),
-                ));
+                )));
             },
 
             // ── playback ──
@@ -8075,7 +8201,7 @@ impl Interpreter {
                         out.push(Value::Number(n.midi as f64));
                     }
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Rc::new(out)));
             },
             // music_midi_bars(id) -> flat [time, midi, dur, …] (for karaoke note bars)
             #[cfg(not(target_arch = "wasm32"))]
@@ -8090,7 +8216,7 @@ impl Interpreter {
                         out.push(Value::Number(n.dur as f64));
                     }
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Rc::new(out)));
             },
 
             // music_fft(track_id, nbands) -> spectrum at the current playback position
@@ -8108,9 +8234,9 @@ impl Interpreter {
                     }
                 }
                 let bands = self.fft.borrow().freq_bands(nbands);
-                return Ok(Value::List(
+                return Ok(Value::List(Rc::new(
                     bands.into_iter().map(|x| Value::Number(x as f64)).collect(),
-                ));
+                )));
             },
 
             // ── stop every one-shot SFX/morph/sample voice (scene cleanup) ──
@@ -8372,11 +8498,11 @@ impl Interpreter {
                     .get(id)
                     .map(|b| b.centroid())
                     .unwrap_or(ling_physics::Vec3::ZERO);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(c.x as f64),
                     Value::Number(c.y as f64),
                     Value::Number(c.z as f64),
-                ]));
+                ])));
             },
             // soft_nodes(id) -> flat [x,y,z, x,y,z, …] for rendering the deformed mesh
             #[cfg(not(target_arch = "wasm32"))]
@@ -8391,7 +8517,7 @@ impl Interpreter {
                         out.push(Value::Number(n.pos.z as f64));
                     }
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(Rc::new(out)));
             },
 
             // ── rigid bodies with angular dynamics ──
@@ -8479,11 +8605,11 @@ impl Interpreter {
                     .get(i)
                     .map(|b| b.pos)
                     .unwrap_or(ling_physics::Vec3::ZERO);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(p.x as f64),
                     Value::Number(p.y as f64),
                     Value::Number(p.z as f64),
-                ]));
+                ])));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" =>
@@ -8495,12 +8621,12 @@ impl Interpreter {
                     .get(i)
                     .map(|b| b.orientation)
                     .unwrap_or(ling_physics::Quat::IDENTITY);
-                return Ok(Value::List(vec![
+                return Ok(Value::List(Rc::new(vec![
                     Value::Number(q.x as f64),
                     Value::Number(q.y as f64),
                     Value::Number(q.z as f64),
                     Value::Number(q.w as f64),
-                ]));
+                ])));
             },
 
             // ── native-res mesh (.lmesh): load once, draw fast (unlit, per-tri colour) ──
@@ -9189,7 +9315,9 @@ impl Interpreter {
                 // optional `step` (default 1 = full res): 2 = half-res block warp
                 // (~4× fewer warp computes, slightly softer — suits a liquid look).
                 let step = self.arg_num(&args, 2, 1.0)?.max(1.0) as usize;
+                let _d = std::time::Instant::now();
                 self.gfx.borrow_mut().distort(amount, t, step);
+                ling_phase_add(phase::DISTORT, _d.elapsed().as_nanos());
                 return Ok(Value::Unit);
             },
 
@@ -9314,11 +9442,11 @@ impl Interpreter {
             },
             (Value::List(v), "len" | "长") => Ok(Value::Number(v.len() as f64)),
             (Value::List(v), "push" | "推") => {
-                let mut v2 = v.clone();
+                let mut v2: Vec<Value> = (**v).clone();
                 if let Some(a) = args.first() {
                     v2.push(a.clone());
                 }
-                Ok(Value::List(v2))
+                Ok(Value::List(Rc::new(v2)))
             },
             // `form` field access: `point.x` (no-arg method == field read).
             (Value::Struct { fields, .. }, _) if args.is_empty() => fields
@@ -9341,12 +9469,12 @@ impl Interpreter {
 
     fn match_pattern(&self, pat: &Pattern, val: &Value) -> Option<Env> {
         match (pat, val) {
-            (Pattern::Wildcard, _) => Some(Env::new()),
-            (Pattern::Str(s), Value::Str(v)) if s == v => Some(Env::new()),
-            (Pattern::Number(n), Value::Number(v)) if (n - v).abs() < 1e-12 => Some(Env::new()),
-            (Pattern::Bool(b), Value::Bool(v)) if b == v => Some(Env::new()),
+            (Pattern::Wildcard, _) => Some(new_env()),
+            (Pattern::Str(s), Value::Str(v)) if s == v => Some(new_env()),
+            (Pattern::Number(n), Value::Number(v)) if (n - v).abs() < 1e-12 => Some(new_env()),
+            (Pattern::Bool(b), Value::Bool(v)) if b == v => Some(new_env()),
             (Pattern::Ident(name), _) => {
-                let mut e = Env::new();
+                let mut e = new_env();
                 e.insert(name.clone(), val.clone());
                 Some(e)
             },
@@ -9362,7 +9490,7 @@ impl Interpreter {
                 }
                 match (inner_pat, inner_val) {
                     (Some(p), Some(v)) => self.match_pattern(p, &v),
-                    (None, _) => Some(Env::new()),
+                    (None, _) => Some(new_env()),
                     (Some(p), None) => self.match_pattern(p, &Value::Unit),
                 }
             },
@@ -9371,7 +9499,7 @@ impl Interpreter {
                 if vname != variant || sub_pats.len() != payload.len() {
                     return None;
                 }
-                let mut bindings = Env::new();
+                let mut bindings = new_env();
                 for (p, v) in sub_pats.iter().zip(payload.iter()) {
                     bindings.extend(self.match_pattern(p, v)?);
                 }
@@ -9381,7 +9509,7 @@ impl Interpreter {
             // values so `Ok()`-style patterns keep working uniformly.
             (Pattern::Variant(vname, sub), Value::Ok(v)) if (vname == "ok" || vname == "好") => {
                 match sub.as_slice() {
-                    [] => Some(Env::new()),
+                    [] => Some(new_env()),
                     [p] => self.match_pattern(p, v),
                     _ => None,
                 }
@@ -9390,7 +9518,7 @@ impl Interpreter {
                 if (vname == "bad" || vname == "坏" || vname == "err") =>
             {
                 match sub.as_slice() {
-                    [] => Some(Env::new()),
+                    [] => Some(new_env()),
                     [p] => self.match_pattern(p, v),
                     _ => None,
                 }
@@ -9403,7 +9531,7 @@ impl Interpreter {
 
     fn value_to_iter(&self, val: Value) -> Result<Vec<Value>, EvalErr> {
         match val {
-            Value::List(v) => Ok(v),
+            Value::List(v) => Ok(Rc::try_unwrap(v).unwrap_or_else(|rc| (*rc).clone())),
             Value::Str(s) => Ok(s.chars().map(|c| Value::Str(c.to_string())).collect()),
             Value::Number(n) => Ok((0..n as i64).map(|i| Value::Number(i as f64)).collect()),
             other => Err(EvalErr::from(format!("cannot iterate over {:?}", other))),
@@ -9879,6 +10007,109 @@ thread_local! {
 #[inline]
 fn ling_profile_enabled() -> bool {
     LING_PROFILE.with(|p| p.borrow().enabled)
+}
+
+thread_local! {
+    static LING_FPS: std::cell::RefCell<(bool, f64, u32, f64)> = std::cell::RefCell::new(
+        (std::env::var("LING_FPS").map(|v| v != "0" && !v.is_empty()).unwrap_or(false), 0.0, 0, 0.0)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ling_fps_tick() {
+    LING_FPS.with(|s| {
+        let mut s = s.borrow_mut();
+        if !s.0 { return; }
+        let now = crate::runtime::now_secs();
+        if s.1 > 0.0 {
+            s.3 += now - s.1;
+            s.2 += 1;
+            if s.2 >= 120 {
+                let avg = s.3 / s.2 as f64;
+                eprintln!("[fps] {:.1} fps  ({:.2} ms/frame, wall, {} frames)", 1.0 / avg, avg * 1000.0, s.2);
+                s.2 = 0;
+                s.3 = 0.0;
+            }
+        }
+        s.1 = now;
+    });
+}
+
+// Coarse render-pipeline timers (set LING_PHASE=1). Each accumulates wall-time
+// per frame at flush/present granularity, so the cost is negligible. Reports the
+// software-rasteriser breakdown the builtin profiler can't separate (the work is
+// all inside the `present`/`flush_3d` builtins).
+thread_local! {
+    static LING_PHASE: std::cell::RefCell<(bool, u64, [u128; 5])> = std::cell::RefCell::new(
+        (std::env::var_os("LING_PHASE").is_some(), 0, [0; 5])
+    );
+}
+
+/// Phase indices for [`ling_phase_add`].
+pub mod phase {
+    pub const FLUSH: usize = 0;
+    pub const TOON: usize = 1;
+    pub const BLIT: usize = 2;
+    pub const DISTORT: usize = 3;
+    pub const SORT: usize = 4;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[inline]
+pub fn ling_phase_add(idx: usize, nanos: u128) {
+    LING_PHASE.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.0 {
+            p.2[idx] += nanos;
+        }
+    });
+}
+
+/// Diagnostic: when LING_DUMP_FRAME=<path> is set, write every 60th presented
+/// framebuffer to `<path>` as a binary PPM (P6). Lets headless runs verify what
+/// the software renderer actually produced without an X capture.
+#[cfg(not(target_arch = "wasm32"))]
+fn ling_dump_frame(buf: &[u32], w: usize, h: usize) {
+    use std::io::Write;
+    thread_local! {
+        static DUMP: std::cell::RefCell<(Option<String>, u64)> =
+            std::cell::RefCell::new((std::env::var("LING_DUMP_FRAME").ok(), 0));
+    }
+    DUMP.with(|d| {
+        let mut d = d.borrow_mut();
+        let Some(path) = d.0.clone() else { return };
+        d.1 += 1;
+        if d.1 % 60 != 0 || buf.len() < w * h {
+            return;
+        }
+        let mut out = Vec::with_capacity(w * h * 3 + 32);
+        let _ = write!(out, "P6\n{w} {h}\n255\n");
+        for &px in &buf[..w * h] {
+            out.push((px >> 16) as u8);
+            out.push((px >> 8) as u8);
+            out.push(px as u8);
+        }
+        let _ = std::fs::write(&path, out);
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ling_phase_frame() {
+    LING_PHASE.with(|p| {
+        let mut p = p.borrow_mut();
+        if !p.0 { return; }
+        p.1 += 1;
+        if p.1 >= 120 {
+            let f = p.1 as f64;
+            let ms = |i: usize| p.2[i] as f64 / 1e6 / f;
+            eprintln!(
+                "[phase] sort={:.2} flush={:.2} toon={:.2} blit={:.2} distort={:.2} ms/frame",
+                ms(phase::SORT), ms(phase::FLUSH), ms(phase::TOON), ms(phase::BLIT), ms(phase::DISTORT)
+            );
+            p.1 = 0;
+            p.2 = [0; 5];
+        }
+    });
 }
 
 fn ling_profile_record(name: &str, nanos: u128) {

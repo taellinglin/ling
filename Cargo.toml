@@ -124,11 +124,13 @@ ling-game = { path = "crates/ling-game", version = "2030.1" }
 ling-animation = { workspace = true }
 ling-mir = { workspace = true }
 ling-ast = { workspace = true }
+rustc-hash = "2.0"   # fast non-crypto hasher for the interpreter env/dispatch maps
 ling-core = { workspace = true }
 ling-codegen = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
+rayon = { workspace = true }   # parallel software rasteriser (banded flush)
 ling-ai = { path = "crates/ling-ai", version = "2030.0.0" }
 ling-icon = { path = "crates/ling-icon", version = "2030.0.0" }
 ling-audio = { workspace = true }

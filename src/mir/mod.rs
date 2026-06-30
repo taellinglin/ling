@@ -27,13 +27,74 @@ pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingR
 /// relative to the entry file's directory before lowering. This is the
 /// multi-file entry point for the AOT/JIT backends.
 pub fn compile_path(entry: &Path, opt_level: OptimizationLevel) -> LingResult<MirProgram> {
+    let flat = flatten_path(entry)?;
+    let mir = lower_program(&flat);
+    Ok(optimize(mir, opt_level))
+}
+
+/// Resolve `use`/`mod` imports for `entry` and return the flattened AST. Used by
+/// the JIT to prime its fallback interpreter with the same program it compiles.
+pub fn flatten_path(entry: &Path) -> LingResult<parser::ast::Program> {
     let source = std::fs::read_to_string(entry)
         .map_err(|e| LingError::Io(format!("error reading '{}': {e}", entry.display())))?;
     let ast = parser::parse(&source).map_err(LingError::Parse)?;
     let entry_dir = entry.parent().unwrap_or(Path::new("."));
     let flat = modules::flatten(&ast, entry_dir)?;
-    let mir = lower_program(&flat);
-    Ok(optimize(mir, opt_level))
+    Ok(dedup_items(flat))
+}
+
+/// Flatten a concatenated source string against `source_dir`, resolving its
+/// `use` imports and deduplicating definitions. A host that pastes several files
+/// together (e.g. the game launcher) and whose entry also `use`s some of them
+/// would otherwise produce duplicate top-level functions; the JIT requires each
+/// symbol once, so the last definition of each name wins (matching the
+/// tree-walker, which registers into a map).
+pub fn flatten_source(source: &str, source_dir: &Path) -> LingResult<parser::ast::Program> {
+    let ast = parser::parse(source).map_err(LingError::Parse)?;
+    let flat = modules::flatten(&ast, source_dir)?;
+    Ok(dedup_items(flat))
+}
+
+/// Keep the last definition of every top-level `fn`/`bind` name, preserving its
+/// position; drop earlier shadowed copies. Other items pass through untouched.
+fn dedup_items(prog: parser::ast::Program) -> parser::ast::Program {
+    use parser::ast::Item;
+    let mut last: HashMap<(u8, String), usize> = HashMap::new();
+    for (i, item) in prog.items.iter().enumerate() {
+        let key = match item {
+            Item::Fn(def) => Some((0u8, def.name.clone())),
+            Item::Bind(name, _) => Some((1u8, name.clone())),
+            _ => None,
+        };
+        if let Some(k) = key {
+            last.insert(k, i);
+        }
+    }
+    let items = prog
+        .items
+        .into_iter()
+        .enumerate()
+        .filter(|(i, item)| {
+            let key = match item {
+                Item::Fn(def) => Some((0u8, def.name.clone())),
+                Item::Bind(name, _) => Some((1u8, name.clone())),
+                _ => None,
+            };
+            match key {
+                Some(k) => last.get(&k) == Some(i),
+                None => true,
+            }
+        })
+        .map(|(_, item)| item)
+        .collect();
+    parser::ast::Program { items }
+}
+
+/// Lower an already-flattened AST to optimized MIR. Shared by the path- and
+/// source-based JIT entry points so both compile exactly the program their
+/// fallback interpreter is primed with.
+pub fn lower_and_optimize(prog: &parser::ast::Program, opt_level: OptimizationLevel) -> MirProgram {
+    optimize(lower_program(prog), opt_level)
 }
 
 fn optimize(mut mir: MirProgram, opt_level: OptimizationLevel) -> MirProgram {
@@ -52,21 +113,35 @@ fn optimize(mut mir: MirProgram, opt_level: OptimizationLevel) -> MirProgram {
 // ─── AST → MIR lowering ──────────────────────────────────────────────────────
 
 fn lower_program(prog: &parser::ast::Program) -> MirProgram {
+    let entry = crate::entry::entry_name(&prog.items);
+
+    // Module globals: every top-level bind that is not the entry. Functions read
+    // these via `__ling_global` against the runtime's evaluated snapshot.
+    let globals: std::rc::Rc<std::collections::HashSet<String>> = std::rc::Rc::new(
+        prog.items
+            .iter()
+            .filter_map(|item| match item {
+                parser::ast::Item::Bind(name, _) => Some(name.clone()),
+                _ => None,
+            })
+            .filter(|name| entry.as_deref() != Some(name.as_str()))
+            .collect(),
+    );
+
     let mut functions = Vec::new();
     for item in &prog.items {
         if let parser::ast::Item::Fn(fndef) = item {
-            let (func, closures) = lower_function(fndef);
+            let (func, closures) = lower_function(fndef, globals.clone());
             functions.push(func);
             functions.extend(closures);
         }
     }
 
     // Lower the entry binding as the main function body. When an entry exists
-    // (a known entry name or a `do { }` bind), only it becomes `__main__`; any
-    // other top-level binds are module globals the MIR backend does not model.
+    // (a known entry name or a `do { }` bind), only it becomes `__main__`; the
+    // other top-level binds are globals (resolved at runtime, see above).
     // With no entry, every top-level bind is treated as the script body.
     let mut main_stmts: Vec<parser::ast::Stmt> = Vec::new();
-    let entry = crate::entry::entry_name(&prog.items);
     for item in &prog.items {
         if let parser::ast::Item::Bind(name, body) = item {
             let is_main = match &entry {
@@ -81,7 +156,7 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
 
     if !main_stmts.is_empty() {
         let mut main = MirFunction::new("__main__", 0);
-        let mut lctx = LowerCtx::new(&mut main, 0);
+        let mut lctx = LowerCtx::new(&mut main, 0, globals.clone());
         let last = lower_stmts(&main_stmts, &mut lctx);
         lctx.finish(last);
         let closure_fns = std::mem::take(&mut lctx.closures);
@@ -98,13 +173,16 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     MirProgram { functions }
 }
 
-fn lower_function(fndef: &parser::ast::FnDef) -> (MirFunction, Vec<MirFunction>) {
+fn lower_function(
+    fndef: &parser::ast::FnDef,
+    globals: std::rc::Rc<std::collections::HashSet<String>>,
+) -> (MirFunction, Vec<MirFunction>) {
     let arg_count = fndef.params.len();
     let param_names = fndef.params.clone();
     let mut func = MirFunction::new(&fndef.name, arg_count);
     func.param_names = param_names;
 
-    let mut lctx = LowerCtx::new(&mut func, arg_count);
+    let mut lctx = LowerCtx::new(&mut func, arg_count, globals);
 
     for (i, pname) in fndef.params.iter().enumerate() {
         lctx.declare_in_scope(pname, Local(i + 1));
@@ -138,10 +216,18 @@ struct LowerCtx<'a> {
     shadowed: Vec<Vec<(String, Option<Local>)>>,
     closures: Vec<MirFunction>,
     closure_vars: HashMap<String, ClosureInfo>,
+    /// Module-level global names. A read of one of these (when not a local) is
+    /// lowered to a `__ling_global` call resolved against the runtime's evaluated
+    /// global snapshot, matching the tree-walker's read-only global semantics.
+    globals: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 impl<'a> LowerCtx<'a> {
-    fn new(func: &'a mut MirFunction, arg_count: usize) -> Self {
+    fn new(
+        func: &'a mut MirFunction,
+        arg_count: usize,
+        globals: std::rc::Rc<std::collections::HashSet<String>>,
+    ) -> Self {
         let next = (arg_count + 1) as usize;
         // bb0 already exists; clear its terminator — lowering fills it in.
         func.basic_blocks[0].terminator = None;
@@ -154,6 +240,7 @@ impl<'a> LowerCtx<'a> {
             shadowed: vec![Vec::new()],
             closures: Vec::new(),
             closure_vars: HashMap::new(),
+            globals,
         }
     }
 
@@ -285,7 +372,7 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) -> Option<Operand> {
                     let total_args = arg_count + capture_count;
                     let mut closure_func = MirFunction::new(&closure_name, total_args);
                     closure_func.param_names = params.clone();
-                    let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args);
+                    let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
                     for (i, pname) in params.iter().enumerate() {
                         closure_ctx.declare_in_scope(pname, Local(i + 1));
                     }
@@ -354,6 +441,17 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
         parser::ast::Expr::Ident(name) => {
             if let Some(&local) = ctx.locals.get(name) {
                 Operand::Copy(local)
+            } else if ctx.globals.contains(name) {
+                // Module global read → resolve against the runtime snapshot.
+                let local = ctx.alloc_local(None, false);
+                ctx.emit(StatementKind::Assign(
+                    local,
+                    Rvalue::Call {
+                        func: Operand::Constant(Constant::Function("__ling_global".to_string())),
+                        args: vec![Operand::Constant(Constant::Str(name.clone()))],
+                    },
+                ));
+                Operand::Copy(local)
             } else {
                 // Unknown names in expression context: treat as function constant
                 Operand::Constant(Constant::Function(name.clone()))
@@ -379,7 +477,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 let closure_name = format!("__closure_{}", closure_id);
                 let mut closure_func = MirFunction::new(&closure_name, arg_count + capture_count);
                 closure_func.param_names = params.clone();
-                let mut closure_ctx = LowerCtx::new(&mut closure_func, arg_count + capture_count);
+                let mut closure_ctx = LowerCtx::new(&mut closure_func, arg_count + capture_count, ctx.globals.clone());
                 for (i, pname) in params.iter().enumerate() {
                     let local = Local(i + 1);
                     closure_ctx.declare_in_scope(pname, local);
@@ -633,7 +731,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             let total_args = arg_count + capture_count;
             let mut closure_func = MirFunction::new(&closure_name, total_args);
             closure_func.param_names = params.clone();
-            let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args);
+            let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
             for (i, pname) in params.iter().enumerate() {
                 let local = Local(i + 1);
                 closure_ctx.declare_in_scope(pname, local);

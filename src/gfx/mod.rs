@@ -130,6 +130,16 @@ pub struct GfxState {
     pub material: Option<LingMaterial>,
     /// Toon post-processing configuration (outlines, shadow softness, highlight).
     pub toon: ToonConfig,
+    /// Baked local-space triangle meshes (display lists) indexed by handle.
+    /// Each entry is a flat run of `[ax,ay,az, bx,by,bz, cx,cy,cz]` local verts.
+    pub meshes: Vec<Vec<([f32; 9], u32)>>,
+    /// Active mesh capture buffer. While `Some`, `draw_triangle_3d` records raw
+    /// local coords here instead of submitting to the depth queue.
+    pub mesh_capture: Option<Vec<([f32; 9], u32)>>,
+    /// Reclaimable mesh slots (freed on keyed-cache eviction) for `mesh_register`.
+    pub mesh_free: Vec<usize>,
+    /// Keyed display-list cache (e.g. world rooms): key → mesh handle, bounded.
+    pub mesh_cache: std::collections::HashMap<i64, usize>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -168,6 +178,10 @@ impl GfxState {
             edge_set: poly::EdgeSet::default(),
             material: None,
             toon: ToonConfig::default(),
+            meshes: Vec::new(),
+            mesh_capture: None,
+            mesh_free: Vec::new(),
+            mesh_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -343,6 +357,14 @@ pub struct GfxState {
     pub material: Option<LingMaterial>,
     /// Toon post-processing configuration (mirrors native).
     pub toon: ToonConfig,
+    /// Baked local-space triangle meshes (mirrors native).
+    pub meshes: Vec<Vec<([f32; 9], u32)>>,
+    /// Active mesh capture buffer (mirrors native).
+    pub mesh_capture: Option<Vec<([f32; 9], u32)>>,
+    /// Reclaimable mesh slots (mirrors native).
+    pub mesh_free: Vec<usize>,
+    /// Keyed display-list cache (mirrors native).
+    pub mesh_cache: std::collections::HashMap<i64, usize>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -380,6 +402,10 @@ impl GfxState {
             edge_set: poly::EdgeSet::default(),
             material: None,
             toon: ToonConfig::default(),
+            meshes: Vec::new(),
+            mesh_capture: None,
+            mesh_free: Vec::new(),
+            mesh_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -436,5 +462,146 @@ impl GfxState {
         let h = self.height;
         if self.buffer.len() < w * h { return; }
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+    }
+}
+
+// Mesh display lists + the shared world-space triangle pipeline. Field names
+// match on both the native and wasm `GfxState`, so one impl serves both targets.
+impl GfxState {
+    /// Light, near-plane clip, project, and fan-push a world-space triangle to
+    /// the depth queue. Shared by `draw_triangle_3d` and `mesh_draw`.
+    #[inline]
+    pub fn submit_triangle(
+        &mut self,
+        ax: f32, ay: f32, az: f32,
+        bx: f32, by: f32, bz: f32,
+        cx: f32, cy: f32, cz: f32,
+    ) {
+        let ux = bx - ax;
+        let uy = by - ay;
+        let uz = bz - az;
+        let vx = cx - ax;
+        let vy = cy - ay;
+        let vz = cz - az;
+        let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+
+        let (c0, c1, c2) = if self.flat_shade {
+            (self.color, self.color, self.color)
+        } else {
+            crate::gfx::light::compute_lit_color_vertices(
+                self.color,
+                normal,
+                [ax, ay, az],
+                [bx, by, bz],
+                [cx, cy, cz],
+                &self.lights,
+                self.ambient,
+            )
+        };
+
+        let near = -self.camera.zdist + 0.05;
+        let vw = [
+            (ax, ay, az, self.camera.depth(ax, ay, az), c0),
+            (bx, by, bz, self.camera.depth(bx, by, bz), c1),
+            (cx, cy, cz, self.camera.depth(cx, cy, cz), c2),
+        ];
+        let mut poly: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
+        let mut pn = 0usize;
+        let mut ei = 0;
+        while ei < 3 {
+            let a = vw[ei];
+            let b = vw[(ei + 1) % 3];
+            let ain = a.3 > near;
+            let bin = b.3 > near;
+            if ain && pn < 4 {
+                poly[pn] = (a.0, a.1, a.2, a.4);
+                pn += 1;
+            }
+            if ain != bin && pn < 4 {
+                let tt = (near - a.3) / (b.3 - a.3);
+                poly[pn] = (
+                    a.0 + (b.0 - a.0) * tt,
+                    a.1 + (b.1 - a.1) * tt,
+                    a.2 + (b.2 - a.2) * tt,
+                    crate::gfx::light::lerp_color(a.4, b.4, tt),
+                );
+                pn += 1;
+            }
+            ei += 1;
+        }
+        if pn < 3 {
+            return;
+        }
+        let mut proj: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
+        let mut pi = 0;
+        while pi < pn {
+            let (sx, sy, sz) = self.camera.project(poly[pi].0, poly[pi].1, poly[pi].2);
+            let fc = self.fog_apply(poly[pi].3, sz);
+            proj[pi] = (sx, sy, sz, fc);
+            pi += 1;
+        }
+        let mut fk = 1;
+        while fk + 1 < pn {
+            self.depth_queue.push_triangle_g_zv(
+                proj[0].0, proj[0].1, proj[0].2, proj[0].3,
+                proj[fk].0, proj[fk].1, proj[fk].2, proj[fk].3,
+                proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2, proj[fk + 1].3,
+                3,
+            );
+            fk += 1;
+        }
+    }
+
+    /// Bake captured local geometry (per-triangle coords + pen colour) into a
+    /// mesh, returning its handle.
+    pub fn mesh_register(&mut self, tris: Vec<([f32; 9], u32)>) -> usize {
+        if let Some(id) = self.mesh_free.pop() {
+            self.meshes[id] = tris;
+            id
+        } else {
+            let id = self.meshes.len();
+            self.meshes.push(tris);
+            id
+        }
+    }
+
+    /// Draw a baked mesh transformed by origin `o`, right `r`, up `u`, scale `s`.
+    /// Forward axis is `r × u` so 3-D meshes baked at identity reconstruct exactly.
+    /// `use_baked_color` replays each triangle's captured colour (multi-colour
+    /// models); otherwise the current pen colour applies (e.g. tinted glyphs).
+    pub fn mesh_draw(
+        &mut self,
+        id: usize,
+        ox: f32, oy: f32, oz: f32,
+        rx: f32, ry: f32, rz: f32,
+        ux: f32, uy: f32, uz: f32,
+        s: f32,
+        use_baked_color: bool,
+    ) {
+        if id >= self.meshes.len() {
+            return;
+        }
+        let fx = ry * uz - rz * uy;
+        let fy = rz * ux - rx * uz;
+        let fz = rx * uy - ry * ux;
+        let pen = self.color;
+        let mesh = std::mem::take(&mut self.meshes[id]);
+        for (t, col) in &mesh {
+            if use_baked_color {
+                self.color = *col;
+            }
+            let wx0 = ox + s * (t[0] * rx + t[1] * ux + t[2] * fx);
+            let wy0 = oy + s * (t[0] * ry + t[1] * uy + t[2] * fy);
+            let wz0 = oz + s * (t[0] * rz + t[1] * uz + t[2] * fz);
+            let wx1 = ox + s * (t[3] * rx + t[4] * ux + t[5] * fx);
+            let wy1 = oy + s * (t[3] * ry + t[4] * uy + t[5] * fy);
+            let wz1 = oz + s * (t[3] * rz + t[4] * uz + t[5] * fz);
+            let wx2 = ox + s * (t[6] * rx + t[7] * ux + t[8] * fx);
+            let wy2 = oy + s * (t[6] * ry + t[7] * uy + t[8] * fy);
+            let wz2 = oz + s * (t[6] * rz + t[7] * uz + t[8] * fz);
+            self.submit_triangle(wx0, wy0, wz0, wx1, wy1, wz1, wx2, wy2, wz2);
+        }
+        self.color = pen;
+        self.meshes[id] = mesh;
     }
 }

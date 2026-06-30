@@ -8,6 +8,7 @@
 
 use crate::runtime::Interpreter;
 use crate::runtime::Value;
+use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
 // ─── Global Interpreter Access ──────────────────────────────────────────────
@@ -87,10 +88,12 @@ pub fn decode_value(val: u64) -> Value {
             TAG_KIND_LIST => {
                 let ptr = decode_ptr(val);
                 if ptr.is_null() {
-                    Value::List(Vec::new())
+                    Value::List(Rc::new(Vec::new()))
                 } else {
-                    let list = unsafe { &*(ptr as *const Vec<Value>) };
-                    Value::List(list.clone())
+                    // The handle owns a boxed `Rc<Vec<Value>>`; sharing the Rc is a
+                    // refcount bump, not a Vec copy, so decode is O(1).
+                    let rc = unsafe { &*(ptr as *const Rc<Vec<Value>>) };
+                    Value::List(Rc::clone(rc))
                 }
             },
             TAG_KIND_OK => {
@@ -133,7 +136,9 @@ pub fn encode_value(val: &Value) -> u64 {
             TAG_PATTERN | TAG_KIND_STRING | (ptr as u64 & PTR_MASK)
         },
         Value::List(list) => {
-            let ptr = Box::into_raw(Box::new(list.clone())) as *const u8;
+            // The handle owns a boxed `Rc<Vec<Value>>`; cloning the Rc shares the
+            // backing Vec (refcount bump), so encode is O(1) instead of a deep copy.
+            let ptr = Box::into_raw(Box::new(Rc::clone(list))) as *const u8;
             TAG_PATTERN | TAG_KIND_LIST | (ptr as u64 & PTR_MASK)
         },
         Value::Ok(inner) => {
@@ -166,7 +171,7 @@ pub unsafe extern "C" fn ling_builtin(
 
     with_interp(|interp| {
         let args: Vec<Value> = args_slice.iter().map(|&a| decode_value(a)).collect();
-        let env = std::collections::HashMap::new();
+        let env = rustc_hash::FxHashMap::default();
         match interp.call_named(name, args, &env) {
             Ok(val) => encode_value(&val),
             Err(_) => TAG_UNIT,
@@ -467,17 +472,29 @@ pub unsafe extern "C" fn ling_str_eq(a: u64, b: u64) -> u64 {
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_list_new() -> u64 {
-    encode_value(&Value::List(Vec::new()))
+    let ptr = Box::into_raw(Box::new(Rc::new(Vec::<Value>::new()))) as u64;
+    TAG_PATTERN | TAG_KIND_LIST | (ptr & PTR_MASK)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_list_push(list: u64, val: u64) -> u64 {
-    let mut list_v = decode_value(list);
+    // Reuse the input handle's box in place: take ownership of the boxed
+    // `Rc<Vec>`, `make_mut` (no copy when the Rc is unique — the linear
+    // `acc = list_push(acc, x)` accumulator pattern), push, and re-box the same
+    // allocation. O(1) amortised instead of the former O(n) decode+encode copy.
     let item_v = decode_value(val);
-    if let Value::List(ref mut items) = list_v {
-        items.push(item_v);
+    if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {
+        let ptr = decode_ptr(list) as *mut Rc<Vec<Value>>;
+        if !ptr.is_null() {
+            let mut boxed = unsafe { Box::from_raw(ptr) };
+            Rc::make_mut(&mut boxed).push(item_v);
+            let p = Box::into_raw(boxed) as u64;
+            return TAG_PATTERN | TAG_KIND_LIST | (p & PTR_MASK);
+        }
     }
-    encode_value(&list_v)
+    // `list` was not a list handle: start a fresh one holding the pushed item.
+    let ptr = Box::into_raw(Box::new(Rc::new(vec![item_v]))) as u64;
+    TAG_PATTERN | TAG_KIND_LIST | (ptr & PTR_MASK)
 }
 
 #[no_mangle]
@@ -489,7 +506,7 @@ pub unsafe extern "C" fn ling_list_get(list: u64, idx: u64) -> u64 {
     if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {
         let ptr = decode_ptr(list);
         if !ptr.is_null() {
-            let items = unsafe { &*(ptr as *const Vec<Value>) };
+            let items = unsafe { &**(ptr as *const Rc<Vec<Value>>) };
             if let Value::Number(n) = idx_v {
                 let i = n as usize;
                 if i < items.len() {
@@ -498,17 +515,22 @@ pub unsafe extern "C" fn ling_list_get(list: u64, idx: u64) -> u64 {
             }
         }
     }
-    TAG_UNIT
+    // Out-of-range / non-list: empty-string sentinel, matching the interpreter's
+    // `list_get` builtin so JIT and tree-walker agree.
+    encode_value(&Value::Str(String::new()))
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_list_len(list: u64) -> u64 {
-    let list_v = decode_value(list);
-    match &list_v {
-        Value::List(items) => items.len() as f64,
-        _ => 0.0f64,
+    // Borrow the boxed Rc in place; no Vec copy.
+    if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {
+        let ptr = decode_ptr(list);
+        if !ptr.is_null() {
+            let items = unsafe { &**(ptr as *const Rc<Vec<Value>>) };
+            return (items.len() as f64).to_bits();
+        }
     }
-    .to_bits()
+    0.0f64.to_bits()
 }
 
 // Struct operations

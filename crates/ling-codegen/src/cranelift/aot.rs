@@ -347,6 +347,7 @@ impl CodegenBackend for CraneliftBackend {
 
         // Phase 2: declare all user functions as exports
         let mut func_ids: HashMap<String, FuncId> = HashMap::new();
+        let mut func_arities: HashMap<String, usize> = HashMap::new();
         for func in &program.mir.functions {
             let mut sig = module.make_signature();
             for _ in 0..func.arg_count {
@@ -357,6 +358,7 @@ impl CodegenBackend for CraneliftBackend {
                 .declare_function(&func.name, Linkage::Export, &sig)
                 .unwrap();
             func_ids.insert(func.name.clone(), id);
+            func_arities.insert(func.name.clone(), func.arg_count);
         }
 
         // Phase 3: translate each function body
@@ -443,6 +445,7 @@ impl CodegenBackend for CraneliftBackend {
                 builtin_gvs: &builtin_gvs,
                 runtime_refs: &runtime_refs,
                 func_refs: &func_refs,
+                func_arities: &func_arities,
                 nt: &num_types,
                 fname: &func.name,
             };

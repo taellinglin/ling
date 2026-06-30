@@ -130,19 +130,49 @@ pub fn apply_ramp(
     if buf.len() < n || ramp.stops.is_empty() { return; }
     let use_zbuf = zbuf.len() >= n;
 
-    for i in 0..n {
-        if use_zbuf && !zbuf[i].is_finite() { continue; }
-        let p = buf[i];
+    #[inline]
+    fn shade(p: u32, ramp: &ToneRamp) -> u32 {
         let r = ((p >> 16) & 0xFF) as f32;
         let g = ((p >>  8) & 0xFF) as f32;
         let b = ( p        & 0xFF) as f32;
         let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        if lum < 0.001 { continue; }
+        if lum < 0.001 { return p; }
         let new_val = sample_ramp(ramp, lum / 255.0);
         let scale   = (new_val * 255.0 / lum).clamp(0.0, 8.0);
-        buf[i] = (((r * scale).min(255.0) as u32) << 16)
-               | (((g * scale).min(255.0) as u32) <<  8)
-               |  ((b * scale).min(255.0) as u32);
+        (((r * scale).min(255.0) as u32) << 16)
+            | (((g * scale).min(255.0) as u32) <<  8)
+            |  ((b * scale).min(255.0) as u32)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        const ROWS: usize = 32;
+        let band = ROWS * width;
+        if use_zbuf {
+            buf[..n]
+                .par_chunks_mut(band)
+                .zip(zbuf[..n].par_chunks(band))
+                .for_each(|(bb, zz)| {
+                    for (px, z) in bb.iter_mut().zip(zz) {
+                        if z.is_finite() {
+                            *px = shade(*px, ramp);
+                        }
+                    }
+                });
+        } else {
+            buf[..n].par_chunks_mut(band).for_each(|bb| {
+                for px in bb.iter_mut() {
+                    *px = shade(*px, ramp);
+                }
+            });
+        }
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    for i in 0..n {
+        if use_zbuf && !zbuf[i].is_finite() { continue; }
+        buf[i] = shade(buf[i], ramp);
     }
 }
 

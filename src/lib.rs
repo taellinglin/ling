@@ -88,6 +88,35 @@ pub fn run_named(
     }
 }
 
+/// Run concatenated `source` on the Cranelift JIT backend, resolving `use`
+/// imports against `source_dir`. This is the interpreter-free entry point for
+/// embedders (e.g. the game launcher). Cranelift-skipped oversized functions
+/// still execute through the primed fallback interpreter, so behaviour matches
+/// the tree-walker. A program with no entry, a parse error, or a pre-execution
+/// codegen failure falls back to [`run_named`]; a mid-run failure is returned as
+/// a rendered diagnostic without retrying (output may already be on screen).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_jit(
+    source: &str,
+    source_dir: Option<std::path::PathBuf>,
+    file: Option<&str>,
+) -> Result<(), String> {
+    let lang = diag::OutputLang::from_env();
+    let has_entry = parser::parse(source)
+        .map(|p| entry::entry_name(&p.items).is_some())
+        .unwrap_or(true);
+    if !has_entry {
+        return run_named(source, source_dir, file);
+    }
+    let compiler = LingCompiler::new(CompilerConfig::default());
+    match compiler.compile_and_run_jit_source(source, source_dir.clone()) {
+        Ok(()) => Ok(()),
+        Err(core::LingError::Parse(m)) => Err(diag::render_parse(&m, source, file, lang)),
+        Err(core::LingError::Mir(m)) => Err(m),
+        Err(_) => run_named(source, source_dir, file),
+    }
+}
+
 /// Detect the primary human language used for keywords in a Ling source file.
 pub fn detect_language(source: &str) -> &'static str {
     let languages: &[(&[&str], &str)] = &[

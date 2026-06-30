@@ -17,6 +17,7 @@ pub struct JitBackend {
     module: JITModule,
     builder_ctx: FunctionBuilderContext,
     func_ids: HashMap<String, FuncId>,
+    func_arities: HashMap<String, usize>,
     runtime_sigs: HashMap<String, (FuncId, Signature)>,
     string_data_ids: HashMap<String, cranelift_module::DataId>,
     builtin_data_ids: HashMap<String, cranelift_module::DataId>,
@@ -241,6 +242,7 @@ impl JitBackend {
             module,
             builder_ctx: FunctionBuilderContext::new(),
             func_ids: HashMap::new(),
+            func_arities: HashMap::new(),
             runtime_sigs: HashMap::new(),
             string_data_ids: HashMap::new(),
             builtin_data_ids: HashMap::new(),
@@ -258,7 +260,31 @@ impl JitBackend {
         self.string_data_ids = string_ids;
         self.builtin_data_ids = builtin_ids;
 
+        // Functions whose single body exceeds this many MIR statements are left
+        // for the interpreter: cranelift's register allocator is superlinear in
+        // body size, and a handful of huge generated model draws (5k-7k source
+        // lines → 10k-30k stmts) both blow up compile time and inflate the JIT
+        // module past cranelift-jit's 32-bit relocation reach (a hard panic).
+        // Calls to a skipped function fall through to `__ling_builtin` → the
+        // primed fallback interpreter, which has every function registered.
+        // Hand-written code stays well under this; only machine-generated giants
+        // cross it. Override with LING_JIT_MAXSTMTS. The entry always compiles.
+        let max_stmts: usize = std::env::var("LING_JIT_MAXSTMTS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(6000);
+        // The entry (`__main__`) and `main` must always compile — `run_main`
+        // dispatches to them — so they are never treated as oversized.
+        let oversized = |func: &MirFunction| -> bool {
+            func.name != "__main__"
+                && func.name != "main"
+                && func.basic_blocks.iter().map(|b| b.statements.len()).sum::<usize>() > max_stmts
+        };
+
         for func in &program.mir.functions {
+            if oversized(func) {
+                continue;
+            }
             let mut sig = self.module.make_signature();
             for _ in 0..func.arg_count {
                 sig.params.push(AbiParam::new(types::I64));
@@ -269,9 +295,13 @@ impl JitBackend {
                 .declare_function(&func.name, Linkage::Export, &sig)
                 .unwrap();
             self.func_ids.insert(func.name.clone(), id);
+            self.func_arities.insert(func.name.clone(), func.arg_count);
         }
 
         for func in &program.mir.functions {
+            if oversized(func) {
+                continue;
+            }
             self.translate_function(func, &num_types);
         }
 
@@ -329,12 +359,14 @@ impl JitBackend {
             func_refs.insert(name.clone(), fr);
         }
 
+        let func_arities = self.func_arities.clone();
         let tctx = TransCtx {
             vars: &vars,
             string_gvs: &string_gvs,
             builtin_gvs: &builtin_gvs,
             runtime_refs: &runtime_refs,
             func_refs: &func_refs,
+            func_arities: &func_arities,
             nt,
             fname: &func.name,
         };

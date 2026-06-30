@@ -1143,20 +1143,45 @@ impl GfxState {
             let db = self.camera.depth(b[0], b[1], b[2]);
             let dc = self.camera.depth(c[0], c[1], c[2]);
             if !(da <= near && db <= near && dc <= near) {
-                let poly = near_clip_poly(
-                    &[(a, [0.0; 3], da), (b, [0.0; 3], db), (c, [0.0; 3], dc)],
-                    near,
-                );
-                if poly.len() >= 3 {
+                // Near-clip a triangle → ≤4 verts, on the stack (no per-tri alloc).
+                let vin = [(a, da), (b, db), (c, dc)];
+                let mut clip: [[f32; 3]; 4] = [[0.0; 3]; 4];
+                let mut cn = 0usize;
+                let mut i = 0;
+                while i < 3 {
+                    let (pa, pad) = vin[i];
+                    let (pb, pbd) = vin[(i + 1) % 3];
+                    let ain = pad > near;
+                    let bin = pbd > near;
+                    if ain && cn < 4 {
+                        clip[cn] = pa;
+                        cn += 1;
+                    }
+                    if ain != bin && cn < 4 {
+                        let t = (near - pad) / (pbd - pad);
+                        clip[cn] = [
+                            pa[0] + (pb[0] - pa[0]) * t,
+                            pa[1] + (pb[1] - pa[1]) * t,
+                            pa[2] + (pb[2] - pa[2]) * t,
+                        ];
+                        cn += 1;
+                    }
+                    i += 1;
+                }
+                if cn >= 3 {
                     let col = m.col[ti];
                     let packed = ((col[0] as u32) << 16) | ((col[1] as u32) << 8) | (col[2] as u32);
-                    let proj: Vec<(f32, f32, f32)> = poly
-                        .iter()
-                        .map(|(p, _)| self.camera.project(p[0], p[1], p[2]))
-                        .collect();
-                    let depth = proj.iter().map(|v| v.2).sum::<f32>() / proj.len() as f32;
+                    let mut proj: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
+                    let mut depth = 0.0f32;
+                    let mut pi = 0;
+                    while pi < cn {
+                        proj[pi] = self.camera.project(clip[pi][0], clip[pi][1], clip[pi][2]);
+                        depth += proj[pi].2;
+                        pi += 1;
+                    }
+                    depth /= cn as f32;
                     let mut j = 1;
-                    while j + 1 < proj.len() {
+                    while j + 1 < cn {
                         self.depth_queue.push_triangle(
                             depth,
                             packed,
@@ -1221,9 +1246,9 @@ impl GfxState {
         let wi = w as i32;
         let hi = h as i32;
         if step == 1 {
-            // full-res per-pixel warp
-            for y in 0..h {
-                let row = y * w;
+            // full-res per-pixel warp. Each output row is gathered independently
+            // from the shared source frame, so rows parallelise with no contention.
+            let warp_row = |y: usize, out: &mut [u32]| {
                 let rdx_y = rdx[y];
                 let ry = rdy[y];
                 for x in 0..w {
@@ -1240,8 +1265,20 @@ impl GfxState {
                     } else if syi >= hi {
                         syi -= hi;
                     }
-                    self.buffer[row + x] = src[syi as usize * w + sxi as usize];
+                    out[x] = src[syi as usize * w + sxi as usize];
                 }
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                use rayon::prelude::*;
+                self.buffer
+                    .par_chunks_mut(w)
+                    .enumerate()
+                    .for_each(|(y, out)| warp_row(y, out));
+            }
+            #[cfg(target_arch = "wasm32")]
+            for (y, out) in self.buffer.chunks_mut(w).enumerate() {
+                warp_row(y, out);
             }
         } else {
             // downsampled warp: ONE warped source sample per step×step block,

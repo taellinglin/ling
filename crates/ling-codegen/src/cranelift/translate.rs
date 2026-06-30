@@ -206,6 +206,7 @@ pub(crate) struct TransCtx<'a> {
     pub builtin_gvs: &'a HashMap<String, GlobalValue>,
     pub runtime_refs: &'a HashMap<String, FuncRef>,
     pub func_refs: &'a HashMap<String, FuncRef>,
+    pub func_arities: &'a HashMap<String, usize>,
     pub nt: &'a NumberTypes,
     pub fname: &'a str,
 }
@@ -273,6 +274,17 @@ pub(crate) fn translate_rvalue(
                 cal_args.push(translate_op(arg, builder, ctx));
             }
             let v = if let Some(&fr) = ctx.func_refs.get(&callee_name) {
+                // Ling calls are arity-flexible (the tree-walker pads missing
+                // args with unit and ignores extras); the direct cranelift call
+                // needs exactly the callee's parameter count, so reconcile here.
+                if let Some(&arity) = ctx.func_arities.get(&callee_name) {
+                    if cal_args.len() < arity {
+                        let unit = builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+                        cal_args.resize(arity, unit);
+                    } else {
+                        cal_args.truncate(arity);
+                    }
+                }
                 let inst = builder.ins().call(fr, &cal_args);
                 builder.inst_results(inst)[0]
             } else {
@@ -997,6 +1009,22 @@ pub(crate) fn emit_builtin_call(
                 return emit_runtime_call1(builder, "__ling_str_len", args[0], runtime_refs);
             } else {
                 return builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+            }
+        },
+        // List ops dispatch straight to their O(1) ABI symbols, bypassing the
+        // generic `__ling_builtin` → interpreter path (which deep-copies the Vec
+        // on every push/get). Names mirror the interpreter's alias sets.
+        "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" => {
+            return emit_runtime_call0(builder, "__ling_list_new", runtime_refs);
+        },
+        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" => {
+            if args.len() >= 2 {
+                return emit_runtime_call2(builder, "__ling_list_push", args[0], args[1], runtime_refs);
+            }
+        },
+        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" => {
+            if args.len() >= 2 {
+                return emit_runtime_call2(builder, "__ling_list_get", args[0], args[1], runtime_refs);
             }
         },
         _ => {},

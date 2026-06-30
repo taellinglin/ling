@@ -15,6 +15,134 @@
 
 // `raster` is wasm-safe (pure CPU); the software-framebuffer flush runs on web too.
 use crate::gfx::raster;
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
+
+/// Number of horizontal bands to rasterise a flush across. 1 = serial.
+///
+/// Banding pays off only when fill (pixels written) dominates: each band re-runs
+/// per-triangle setup, so a flush of many *tiny* triangles (e.g. text glyphs)
+/// would just multiply that setup. Gate on estimated covered area, not call count.
+#[cfg(not(target_arch = "wasm32"))]
+fn render_bands(width: usize, height: usize, est_pixels: usize) -> usize {
+    let screen = width * height;
+    if width == 0 || height < 256 || est_pixels < screen {
+        return 1;
+    }
+    let by_rows = height / 96; // keep bands ≥ ~96 rows tall
+    let by_fill = est_pixels / screen; // more overdraw → more bands worth it
+    rayon::current_num_threads().min(by_rows).min(by_fill.max(1) + 1).max(1)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn estimate_fill(calls: &[DrawCall]) -> usize {
+    let mut px = 0.0f32;
+    for c in calls {
+        let (a, b) = match c.kind {
+            DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. }
+            | DrawKind::TriangleG { x0, y0, x1, y1, x2, y2, .. } => {
+                let w = x0.max(x1).max(x2) - x0.min(x1).min(x2);
+                let h = y0.max(y1).max(y2) - y0.min(y1).min(y2);
+                (w, h)
+            },
+            DrawKind::Line { .. } => (0.0, 0.0),
+        };
+        px += 0.5 * a * b;
+    }
+    px.max(0.0) as usize
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render_bands(_w: usize, _h: usize, _n: usize) -> usize {
+    1
+}
+
+/// Rasterise one queued call into a band starting `ysh` rows down: every y
+/// coordinate is shifted into band-local space and the band's own slices are
+/// indexed as a standalone `width × bh` framebuffer.
+#[inline]
+fn rasterize_call(
+    call: &DrawCall,
+    buf: &mut [u32],
+    zbuf: Option<&mut [f32]>,
+    width: usize,
+    height: usize,
+    ysh: f32,
+) {
+    let blended = call.mode != 0 || call.alpha < 0.999;
+    match zbuf {
+        Some(z) => match call.kind {
+            DrawKind::Triangle { x0, y0, z0, x1, y1, z1, x2, y2, z2 } => {
+                if blended {
+                    raster::fill_triangle_z_blend(
+                        buf, z, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, z0,
+                        x1, y1 - ysh, z1, x2, y2 - ysh, z2,
+                    );
+                } else {
+                    raster::fill_triangle_z(
+                        buf, z, width, height, call.color, x0, y0 - ysh, z0, x1, y1 - ysh, z1, x2,
+                        y2 - ysh, z2,
+                    );
+                }
+            },
+            DrawKind::TriangleG {
+                x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands,
+            } => raster::fill_triangle_gouraud_z(
+                buf, z, width, height, x0, y0 - ysh, z0, c0, x1, y1 - ysh, z1, c1, x2, y2 - ysh, z2,
+                c2, bands, call.alpha, call.mode,
+            ),
+            DrawKind::Line { x0, y0, x1, y1, .. } => {
+                if blended {
+                    raster::draw_line_blend(
+                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
+                        y1 - ysh,
+                    );
+                } else {
+                    raster::draw_line(buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh);
+                }
+            },
+        },
+        None => match call.kind {
+            DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
+                if blended {
+                    raster::fill_triangle_blend(
+                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
+                        y1 - ysh, x2, y2 - ysh,
+                    );
+                } else {
+                    raster::fill_triangle(
+                        buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh, x2, y2 - ysh,
+                    );
+                }
+            },
+            DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, .. } => {
+                raster::fill_triangle_gouraud(
+                    buf, width, height, x0, y0 - ysh, c0, x1, y1 - ysh, c1, x2, y2 - ysh, c2, bands,
+                    call.alpha, call.mode,
+                )
+            },
+            DrawKind::Line { x0, y0, x1, y1, .. } => {
+                if blended {
+                    raster::draw_line_blend(
+                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
+                        y1 - ysh,
+                    );
+                } else {
+                    raster::draw_line(buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh);
+                }
+            },
+        },
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct FlushTimer(std::time::Instant);
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for FlushTimer {
+    fn drop(&mut self) {
+        crate::runtime::ling_phase_add(crate::runtime::phase::FLUSH, self.0.elapsed().as_nanos());
+    }
+}
 
 /// Tagged draw call stored in the queue.
 #[derive(Debug, Clone)]
@@ -241,108 +369,76 @@ impl DepthQueue {
     ) {
         // Sort largest depth first (furthest → painted first, nearest on top).
         // With a z-buffer the sort still helps transparency + reduces overdraw.
+        #[cfg(not(target_arch = "wasm32"))]
+        let _s = std::time::Instant::now();
         self.calls.sort_unstable_by(|a, b| {
             b.depth
                 .partial_cmp(&a.depth)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::runtime::ling_phase_add(crate::runtime::phase::SORT, _s.elapsed().as_nanos());
+        #[cfg(not(target_arch = "wasm32"))]
+        let _r = std::time::Instant::now();
+        #[cfg(not(target_arch = "wasm32"))]
+        let _guard = FlushTimer(_r);
+        let calls = &self.calls;
+        // Split the framebuffer into horizontal bands rasterised in parallel.
+        // Each band owns a disjoint slice of `buf`/`zbuf`, so a pixel is touched
+        // by exactly one thread; processing the sorted call list inside every
+        // band preserves the painter's per-pixel order. Worth the thread hop only
+        // when there is enough fill to amortise it.
+        #[cfg(not(target_arch = "wasm32"))]
+        let bands = render_bands(width, height, estimate_fill(calls));
+        #[cfg(target_arch = "wasm32")]
+        let bands = render_bands(width, height, 0);
         match zbuf {
             Some(z) => {
-                // Clear to "infinitely far" only at a frame boundary (after a
-                // screen clear); otherwise accumulate so the z-buffer spans all
-                // of a frame's flushes. Always (re)size on dimension change.
                 if z.len() != width * height {
                     z.clear();
                     z.resize(width * height, f32::INFINITY);
                 } else if reset_z {
-                    for v in z.iter_mut() {
-                        *v = f32::INFINITY;
-                    }
+                    z.iter_mut().for_each(|v| *v = f32::INFINITY);
                 }
-                for call in &self.calls {
-                    let blended = call.mode != 0 || call.alpha < 0.999;
-                    match call.kind {
-                        DrawKind::Triangle { x0, y0, z0, x1, y1, z1, x2, y2, z2 } => {
-                            if blended {
-                                raster::fill_triangle_z_blend(
-                                    buf, z, width, height, call.color, call.mode, call.alpha, x0,
-                                    y0, z0, x1, y1, z1, x2, y2, z2,
-                                );
-                            } else {
-                                raster::fill_triangle_z(
-                                    buf, z, width, height, call.color, x0, y0, z0, x1, y1, z1, x2,
-                                    y2, z2,
-                                );
+                #[cfg(not(target_arch = "wasm32"))]
+                if bands > 1 {
+                    let rows = height.div_ceil(bands);
+                    buf.par_chunks_mut(rows * width)
+                        .zip(z.par_chunks_mut(rows * width))
+                        .enumerate()
+                        .for_each(|(b, (bbuf, bz))| {
+                            let ysh = (b * rows) as f32;
+                            let bh = bbuf.len() / width;
+                            for call in calls {
+                                rasterize_call(call, bbuf, Some(bz), width, bh, ysh);
                             }
-                        },
-                        DrawKind::TriangleG {
-                            x0,
-                            y0,
-                            z0,
-                            c0,
-                            x1,
-                            y1,
-                            z1,
-                            c1,
-                            x2,
-                            y2,
-                            z2,
-                            c2,
-                            bands,
-                        } => raster::fill_triangle_gouraud_z(
-                            buf, z, width, height, x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2,
-                            bands, call.alpha, call.mode,
-                        ),
-                        DrawKind::Line { x0, y0, x1, y1, .. } => {
-                            if blended {
-                                raster::draw_line_blend(
-                                    buf, width, height, call.color, call.mode, call.alpha, x0, y0,
-                                    x1, y1,
-                                );
-                            } else {
-                                raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1);
-                            }
-                        },
-                    }
+                        });
+                    return;
+                }
+                let _ = bands;
+                for call in calls {
+                    rasterize_call(call, buf, Some(z), width, height, 0.0);
                 }
             },
             None => {
-                for call in &self.calls {
-                    let blended = call.mode != 0 || call.alpha < 0.999;
-                    match call.kind {
-                        DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
-                            if blended {
-                                raster::fill_triangle_blend(
-                                    buf, width, height, call.color, call.mode, call.alpha, x0, y0,
-                                    x1, y1, x2, y2,
-                                );
-                            } else {
-                                raster::fill_triangle(
-                                    buf, width, height, call.color, x0, y0, x1, y1, x2, y2,
-                                );
-                            }
-                        },
-                        DrawKind::TriangleG {
-                            x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, ..
-                        } => raster::fill_triangle_gouraud(
-                            buf, width, height, x0, y0, c0, x1, y1, c1, x2, y2, c2, bands,
-                            call.alpha, call.mode,
-                        ),
-                        DrawKind::Line { x0, y0, x1, y1, .. } => {
-                            if blended {
-                                raster::draw_line_blend(
-                                    buf, width, height, call.color, call.mode, call.alpha, x0, y0,
-                                    x1, y1,
-                                );
-                            } else {
-                                raster::draw_line(buf, width, height, call.color, x0, y0, x1, y1);
-                            }
-                        },
-                    }
+                #[cfg(not(target_arch = "wasm32"))]
+                if bands > 1 {
+                    let rows = height.div_ceil(bands);
+                    buf.par_chunks_mut(rows * width).enumerate().for_each(|(b, bbuf)| {
+                        let ysh = (b * rows) as f32;
+                        let bh = bbuf.len() / width;
+                        for call in calls {
+                            rasterize_call(call, bbuf, None, width, bh, ysh);
+                        }
+                    });
+                    return;
+                }
+                let _ = bands;
+                for call in calls {
+                    rasterize_call(call, buf, None, width, height, 0.0);
                 }
             },
         }
-        // `self` dropped here — no need to clear explicitly
     }
 
     pub fn is_empty(&self) -> bool {

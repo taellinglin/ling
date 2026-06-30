@@ -5,7 +5,7 @@
 /// For convex triangles we break early once we exit the span — roughly 2× faster
 /// than scanning the full bounding box.
 pub fn fill_triangle(
-    buf: &mut Vec<u32>,
+    buf: &mut [u32],
     width: usize,
     height: usize,
     color: u32,
@@ -80,7 +80,7 @@ pub fn fill_triangle(
 /// over the existing buffer instead of directly overwritten.
 /// `bands == 0` skips posterisation (full smooth shading).
 pub fn fill_triangle_gouraud(
-    buf: &mut Vec<u32>,
+    buf: &mut [u32],
     width: usize,
     height: usize,
     x0: f32,
@@ -831,7 +831,7 @@ pub fn fill_disc_soft(
 /// are clipped to the viewport before rasterisation so Bresenham never iterates
 /// millions of steps.
 pub fn draw_line(
-    buf: &mut Vec<u32>,
+    buf: &mut [u32],
     width: usize,
     height: usize,
     color: u32,
