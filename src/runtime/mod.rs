@@ -5842,6 +5842,108 @@ impl Interpreter {
                 return Ok(Value::List(Rc::new(v)));
             },
 
+            // ── Filesystem: directory walking, stat, content hashing (native) ──
+            // These power headless batch tools (asset pipelines, indexers). Errors
+            // degrade gracefully (empty list / 0 / "") so a walk never aborts on one
+            // unreadable entry.
+            #[cfg(not(target_arch = "wasm32"))]
+            "list_dir" | "รายการไดเรกทอรี" => {
+                let path = self.arg_str(&args, 0, ".");
+                let mut paths: Vec<String> = Vec::new();
+                if let Ok(rd) = std::fs::read_dir(&path) {
+                    for e in rd.flatten() {
+                        paths.push(e.path().to_string_lossy().into_owned());
+                    }
+                }
+                paths.sort();
+                let out: Vec<Value> = paths.into_iter().map(Value::Str).collect();
+                return Ok(Value::List(Rc::new(out)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "is_dir" | "เป็นไดเรกทอรี" => {
+                let path = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(std::path::Path::new(&path).is_dir()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "is_file" | "เป็นไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(std::path::Path::new(&path).is_file()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "path_name" | "ชื่อไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                let name = std::path::Path::new(&path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                return Ok(Value::Str(name));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "path_ext" | "นามสกุลไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                let ext = std::path::Path::new(&path)
+                    .extension()
+                    .map(|s| s.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                return Ok(Value::Str(ext));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_size" | "ขนาดไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                let sz = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                return Ok(Value::Number(sz as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_modified" | "เวลาที่แก้ไข" => {
+                let path = self.arg_str(&args, 0, "");
+                let secs = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                return Ok(Value::Number(secs));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_created" | "เวลาที่สร้าง" => {
+                let path = self.arg_str(&args, 0, "");
+                let secs = std::fs::metadata(&path)
+                    .ok()
+                    .and_then(|m| m.created().or_else(|_| m.modified()).ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0);
+                return Ok(Value::Number(secs));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "make_dir" | "สร้างไดเรกทอรี" => {
+                let path = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(std::fs::create_dir_all(&path).is_ok()));
+            },
+            // BLAKE3 hex of a file's bytes (binary-safe content fingerprint).
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_hash" | "แฮชไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        return Ok(Value::Str(hex_encode(&ling_crypto::Blake3::hash(&bytes))))
+                    },
+                    Err(_) => return Ok(Value::Str(String::new())),
+                }
+            },
+            // BLAKE3 hex of an arbitrary string (deterministic id/colour/role seed).
+            "hash_hex" | "แฮชสตริง" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(hex_encode(&ling_crypto::Blake3::hash(s.as_bytes()))));
+            },
+            // Read an environment variable, falling back to a default.
+            #[cfg(not(target_arch = "wasm32"))]
+            "env_get" | "รับตัวแปรแวดล้อม" => {
+                let name = self.arg_str(&args, 0, "");
+                let dflt = self.arg_str(&args, 1, "");
+                return Ok(Value::Str(std::env::var(&name).unwrap_or(dflt)));
+            },
+
             // ── String utilities ──────────────────────────────────────────────
             "split" | "str_split" | "แยก" => {
                 let s = self.arg_str(&args, 0, "");

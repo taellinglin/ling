@@ -497,6 +497,19 @@ impl GfxState {
 
         let (c0, c1, c2) = if self.flat_shade {
             (self.color, self.color, self.color)
+        } else if let Some(mut m) = self.material.clone() {
+            // Baked-mesh BSDF: keep each triangle's baked colour as the albedo so the
+            // model's own palette survives, but shade it with the active Principled
+            // material + scene lights (used for the companion-orb king/queen models).
+            m.albedo = self.color;
+            let cam_x = self.camera.cx;
+            let cam_y = self.camera.cy;
+            let cam_z = self.camera.zdist;
+            let amb = self.ambient;
+            let s0 = crate::gfx::material::shade(&m, normal, [cam_x - ax, cam_y - ay, cam_z - az], [ax, ay, az], &self.lights, amb);
+            let s1 = crate::gfx::material::shade(&m, normal, [cam_x - bx, cam_y - by, cam_z - bz], [bx, by, bz], &self.lights, amb);
+            let s2 = crate::gfx::material::shade(&m, normal, [cam_x - cx, cam_y - cy, cam_z - cz], [cx, cy, cz], &self.lights, amb);
+            (s0, s1, s2)
         } else {
             crate::gfx::light::compute_lit_color_vertices(
                 self.color,

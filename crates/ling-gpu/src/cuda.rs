@@ -83,11 +83,6 @@ pub struct CudaBackend {
 }
 
 impl CudaBackend {
-    /// Build a backend for the default device (ordinal 0).
-    pub fn new() -> Option<Self> {
-        Self::on_ordinal(0)
-    }
-
     /// Build a backend bound to a specific device ordinal.
     pub fn on_ordinal(ordinal: usize) -> Option<Self> {
         let dev = CudaDevice::new(ordinal).ok()?;

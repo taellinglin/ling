@@ -115,6 +115,10 @@ llvm = []
 # Native GPU rasteriser (wgpu offscreen). Opt-in foundation for GPU drawing;
 # the default build is unaffected. Verified by gfx::wgpu_raster tests.
 gpu = ["dep:wgpu", "dep:pollster"]
+# Enable the CUDA compute backend (ling-gpu): GPU-accelerated N-body and batch
+# vertex projection across every NVIDIA device (multi-GPU). Runtime-detected —
+# falls back to the parallel CPU backend when no CUDA device is present.
+cuda = ["ling-gpu/cuda", "ling-physics/cuda"]
 
 [dependencies]
 glam = "0.28"

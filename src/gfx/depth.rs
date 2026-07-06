@@ -380,9 +380,13 @@ impl DepthQueue {
     ) {
         // Sort largest depth first (furthest → painted first, nearest on top).
         // With a z-buffer the sort still helps transparency + reduces overdraw.
+        // STABLE sort: equal-depth calls keep submission order every frame, so
+        // co-planar / same-depth overlapping primitives (e.g. adjacent boot/title
+        // glyphs at z=0) never swap draw order frame-to-frame — kills the
+        // "lit↔unlit" flicker that an unstable sort produced on ties.
         #[cfg(not(target_arch = "wasm32"))]
         let _s = std::time::Instant::now();
-        self.calls.sort_unstable_by(|a, b| {
+        self.calls.sort_by(|a, b| {
             b.depth
                 .partial_cmp(&a.depth)
                 .unwrap_or(std::cmp::Ordering::Equal)
