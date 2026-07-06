@@ -114,23 +114,23 @@ pub fn sample_ramp(ramp: &ToneRamp, t_in: f32) -> f32 {
 /// and the RGB channels are scaled to achieve the new luminance (hue is
 /// preserved).  Black pixels (lum ≈ 0) are left untouched.
 ///
-/// The ramp is applied uniformly to all non-black pixels regardless of
-/// z-buffer state — lines and text (which never write to the z-buffer) are
-/// shaded consistently with triangles, preventing the flickering and
-/// wireframe-heavy appearance that would otherwise occur when only
-/// z-buffered geometry is tone-mapped.
+/// Pixels tagged [`crate::gfx::UNLIT`] (line/text ink, see `raster.rs`) are
+/// left exact — the tag is stripped instead of shaded, so vector lines and
+/// vector text render as flat, un-quantised colour and never cel-band-snap
+/// or flicker against the lit triangles around them.
 pub fn apply_ramp(
     buf:    &mut Vec<u32>,
-    _zbuf:  &[f32],
     width:  usize,
     height: usize,
     ramp:   &ToneRamp,
 ) {
     let n = width * height;
-    if buf.len() < n || ramp.stops.is_empty() { return; }
+    if buf.len() < n { return; }
 
     #[inline]
     fn shade(p: u32, ramp: &ToneRamp) -> u32 {
+        if p & crate::gfx::UNLIT != 0 { return p & crate::gfx::RGB_MASK; }
+        if ramp.stops.is_empty() { return p; }
         let r = ((p >> 16) & 0xFF) as f32;
         let g = ((p >>  8) & 0xFF) as f32;
         let b = ( p        & 0xFF) as f32;
@@ -143,13 +143,6 @@ pub fn apply_ramp(
             |  ((b * scale).min(255.0) as u32)
     }
 
-    // The z-buffer was previously used to skip background pixels (+inf depth),
-    // but lines and text never write to the z-buffer either, causing them to
-    // be skipped by the tone ramp — creating flickering (inconsistent shading
-    // vs adjacent triangles) and a wireframe-heavy appearance.
-    // Instead always apply the ramp to all non-black pixels; the shade()
-    // function already skips pure black (lum < 0.001), protecting the clear
-    // colour when it's near-black.
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
@@ -220,10 +213,11 @@ pub fn draw_outlines(
                     let ny = y + dy;
                     if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
                         let ni = ny as usize * width + nx as usize;
+                        if buf[ni] & crate::gfx::UNLIT != 0 { continue; }
                         let cov = (t2 - dist2).sqrt() / t.max(1.0);
                         let cov = cov.clamp(0.0, 1.0);
                         if cov >= 0.999 {
-                            buf[ni] = color;
+                            buf[ni] = color | crate::gfx::UNLIT;
                         } else {
                             let dst = buf[ni];
                             let dr = ((dst >> 16) & 0xFF) as f32;
@@ -235,7 +229,7 @@ pub fn draw_outlines(
                             let r = (ir * cov + dr * (1.0 - cov)) as u32;
                             let g = (ig * cov + dg * (1.0 - cov)) as u32;
                             let b = (ib * cov + db * (1.0 - cov)) as u32;
-                            buf[ni] = (r << 16) | (g << 8) | b;
+                            buf[ni] = (r << 16) | (g << 8) | b | crate::gfx::UNLIT;
                         }
                     }
                 }
@@ -277,8 +271,9 @@ impl Default for ToonConfig {
 
 /// Apply all enabled toon passes in the correct order.
 ///
-/// 1. Tone ramp — luminance reshaping / cel-quantisation.
-/// 2. Outlines  — depth-discontinuity ink lines (optional).
+/// 1. Outlines  — depth-discontinuity ink lines (optional), tagged unlit.
+/// 2. Tone ramp — luminance reshaping / cel-quantisation; also the pass that
+///    strips the [`crate::gfx::UNLIT`] tag, so it must run last.
 ///
 /// Call this after `queue.flush()` and before presenting the buffer to screen.
 pub fn apply(
@@ -288,12 +283,12 @@ pub fn apply(
     width:  usize,
     height: usize,
 ) {
-    apply_ramp(buf, zbuf, width, height, &cfg.ramp);
-
     if cfg.outline_px > 0.0 {
         draw_outlines(buf, zbuf, width, height,
             cfg.outline_px, cfg.outline_color, cfg.outline_thresh);
     }
+
+    apply_ramp(buf, width, height, &cfg.ramp);
 }
 
 // ── Unit tests ─────────────────────────────────────────────────────────────
@@ -352,9 +347,8 @@ mod tests {
         let r_in = 255u32; let g_in = 0u32; let b_in = 0u32;
         let _lum_in = 0.299 * r_in as f32; // ≈76.5 (kept for readability)
         for px in buf.iter_mut() { *px = (r_in << 16) | (g_in << 8) | b_in; }
-        let zbuf: Vec<f32> = vec![]; // no zbuf
         let ramp = ToneRamp::default();
-        apply_ramp(&mut buf, &zbuf, width, height, &ramp);
+        apply_ramp(&mut buf, width, height, &ramp);
         let p = buf[5];
         let r = (p >> 16) & 0xFF;
         let g = (p >>  8) & 0xFF;
@@ -369,14 +363,10 @@ mod tests {
 
     #[test]
     fn apply_ramp_background_now_processed() {
-        // Background pixels are now processed by the tone ramp regardless of
-        // zbuf state (z-buffer filter was removed because it also skipped
-        // lines/text that never write to the z-buffer).
         let width = 2; let height = 2;
         let mut buf = vec![0x808080u32; width * height]; // grey bg, lum=128
-        let zbuf = vec![f32::INFINITY; width * height];  // all background
         let ramp = ToneRamp::default();
-        apply_ramp(&mut buf, &zbuf, width, height, &ramp);
+        apply_ramp(&mut buf, width, height, &ramp);
         // Grey (128,128,128) has t≈0.502 → mid band (0.50) → output ≈127
         for px in &buf {
             let r = (*px >> 16) & 0xFF;
@@ -386,6 +376,46 @@ mod tests {
             assert!(g < 0x81, "green should be cel-adjusted, was {g:#04x}");
             assert!(b < 0x81, "blue should be cel-adjusted, was {b:#04x}");
         }
+    }
+
+    #[test]
+    fn apply_ramp_skips_and_strips_unlit() {
+        let width = 2; let height = 2;
+        let mut buf = vec![0x0100FF00u32; width * height]; // unlit green, tagged
+        let ramp = ToneRamp::default();
+        apply_ramp(&mut buf, width, height, &ramp);
+        for px in &buf {
+            assert_eq!(*px, 0x0000FF00, "unlit pixel must be stripped, not shaded");
+        }
+    }
+
+    #[test]
+    fn apply_ramp_strips_when_stops_empty() {
+        let width = 2; let height = 2;
+        let mut buf = vec![0x0100FF00u32; width * height];
+        let ramp = ToneRamp { stops: vec![], smooth: false, bezier: None };
+        apply_ramp(&mut buf, width, height, &ramp);
+        for px in &buf {
+            assert_eq!(*px, 0x0000FF00, "tag must strip even with no ramp stops");
+        }
+    }
+
+    #[test]
+    fn outlines_skip_unlit_and_write_tagged_ink() {
+        let width = 8; let height = 8;
+        let mut buf = vec![0u32; width * height];
+        buf[4 * width + 4] = crate::gfx::UNLIT | 0x00FF00FF; // unlit ink pixel
+        let mut zbuf = vec![1.0f32; width * height];
+        zbuf[4 * width + 4] = 5.0; // sharp discontinuity vs neighbours
+        let cfg = ToonConfig { outline_px: 2.0, outline_thresh: 0.05, outline_color: 0x00FFFFFF, ..ToonConfig::default() };
+        apply(&cfg, &mut buf, &zbuf, width, height);
+        // The unlit source pixel itself must be untouched by outline stamping,
+        // then stripped (not shaded) by the ramp pass.
+        assert_eq!(buf[4 * width + 4], 0x00FF00FF);
+        // Ink stamped on a neighbouring plain-black pixel must survive the ramp
+        // pass exactly (tagged unlit while drawn, stripped not shaded on exit).
+        let ni = 4 * width + 5;
+        assert!(buf[ni] & crate::gfx::RGB_MASK != 0, "outline ink must be visible, not cel-quantised to black");
     }
 
     #[test]

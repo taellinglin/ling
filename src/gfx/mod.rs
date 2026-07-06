@@ -36,6 +36,11 @@ pub use light::Light;
 pub use material::LingMaterial;
 pub use toon::ToonConfig;
 
+/// Framebuffer pixels are 0x00RRGGBB; bit 24 tags unlit line/text ink so the
+/// toon post-process leaves it exact instead of cel-quantising it.
+pub const UNLIT: u32 = 0x0100_0000;
+pub const RGB_MASK: u32 = 0x00FF_FFFF;
+
 /// Tunable mapping for `cast_shadow`: how a blob/contact shadow's size and
 /// opacity change with the caster's height above the surface. Defaults give the
 /// natural look — small/dark/sharp when the caster touches down, growing larger,
@@ -125,6 +130,8 @@ pub struct GfxState {
     /// Perf test: force flat *unlit* shading — triangle/mesh draws skip
     /// `compute_lit_color` and use the raw pen colour. Toggle via `set_flat_shade`.
     pub flat_shade: bool,
+    /// Pace the window to the monitor's refresh rate (`set_vsync`). Default on.
+    pub vsync: bool,
     /// Per-frame shared-edge dedup: `draw_line_3d` skips edges already drawn.
     pub edge_set: poly::EdgeSet,
     /// Active material override.  When `Some`, polygon draws use the BSDF
@@ -177,6 +184,7 @@ impl GfxState {
             fog_start: 0.0,
             fog_end: 0.0,
             flat_shade: false,
+            vsync: true,
             edge_set: poly::EdgeSet::default(),
             material: None,
             toon: ToonConfig::default(),
@@ -548,7 +556,7 @@ impl GfxState {
                 proj[0].0, proj[0].1, proj[0].2, proj[0].3,
                 proj[fk].0, proj[fk].1, proj[fk].2, proj[fk].3,
                 proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2, proj[fk + 1].3,
-                3,
+                3, self.flat_shade,
             );
             fk += 1;
         }

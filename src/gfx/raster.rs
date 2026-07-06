@@ -95,6 +95,7 @@ pub fn fill_triangle_gouraud(
     bands: u32,
     alpha: f32,
     mode: u8,
+    tag_unlit: bool,
 ) {
     if width == 0 || height == 0 {
         return;
@@ -165,8 +166,11 @@ pub fn fill_triangle_gouraud(
                         | (b.clamp(0.0, 255.0) as u32);
                     if blended {
                         composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+                        if tag_unlit {
+                            buf[row + px as usize] |= crate::gfx::UNLIT;
+                        }
                     } else {
-                        buf[row + px as usize] = packed;
+                        buf[row + px as usize] = if tag_unlit { packed | crate::gfx::UNLIT } else { packed };
                     }
                 }
                 in_span = true;
@@ -600,6 +604,7 @@ pub fn fill_triangle_gouraud_z(
     bands: u32,
     alpha: f32,
     mode: u8,
+    tag_unlit: bool,
 ) {
     if width == 0 || height == 0 {
         return;
@@ -672,9 +677,12 @@ pub fn fill_triangle_gouraud_z(
                         if blended {
                             // Translucent: test depth but don't write it so layers stack correctly.
                             composite_pixel(buf, width, height, px, py, packed, alpha, mode, false);
+                            if tag_unlit {
+                                buf[idx] |= crate::gfx::UNLIT;
+                            }
                         } else {
                             zbuf[idx] = z;
-                            buf[idx] = packed;
+                            buf[idx] = if tag_unlit { packed | crate::gfx::UNLIT } else { packed };
                         }
                     }
                 }
@@ -855,6 +863,8 @@ pub fn draw_line(
         return;
     }
 
+    let color = color | crate::gfx::UNLIT;
+
     // Bresenham
     let mut x = ax as i32;
     let mut y = ay as i32;
@@ -949,9 +959,11 @@ pub fn draw_line_blend(
         if x >= 0 && y >= 0 && (x as usize) < width && (y as usize) < height {
             if fast_add {
                 let idx = y as usize * width + x as usize;
-                buf[idx] = add_sat(buf[idx], src);
+                buf[idx] = add_sat(buf[idx], src) | crate::gfx::UNLIT;
             } else {
                 composite_pixel(buf, width, height, x, y, color, alpha, mode, false);
+                let idx = y as usize * width + x as usize;
+                buf[idx] |= crate::gfx::UNLIT;
             }
         }
         if x == x2 && y == y2 {
@@ -1070,7 +1082,7 @@ pub fn blend_pixel(
             sb * cov + db * (1.0 - cov),
         )
     };
-    buf[idx] = ((nr as u32) << 16) | ((ng as u32) << 8) | (nb as u32);
+    buf[idx] = ((nr as u32) << 16) | ((ng as u32) << 8) | (nb as u32) | crate::gfx::UNLIT;
 }
 
 /// Xiaolin-Wu anti-aliased line. `additive` selects the blend mode.
@@ -1486,5 +1498,120 @@ mod fill_tests {
         eprintln!("body=0x{body:06X} hole=0x{hole:06X}");
         assert!(body != 0, "ring body should be filled");
         assert!(hole == 0, "hole should be empty");
+    }
+
+    #[test]
+    fn draw_line_sets_unlit_tag() {
+        let (w, h) = (10usize, 10usize);
+        let mut buf = vec![0u32; w * h];
+        draw_line(&mut buf, w, h, 0x00FF00, 1.0, 5.0, 8.0, 5.0);
+        let p = buf[5 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "line pixel must be tagged unlit");
+        assert_eq!(p & crate::gfx::RGB_MASK, 0x00FF00, "line colour must be exact");
+    }
+
+    #[test]
+    fn draw_line_blend_additive_preserves_tag() {
+        let (w, h) = (10usize, 10usize);
+        let mut buf = vec![0u32; w * h];
+        draw_line_blend(&mut buf, w, h, 0x00FF00, 1, 1.0, 1.0, 5.0, 8.0, 5.0);
+        let p = buf[5 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "additive line pixel must be tagged unlit");
+    }
+
+    #[test]
+    fn draw_line_blend_composite_preserves_tag() {
+        let (w, h) = (10usize, 10usize);
+        let mut buf = vec![0u32; w * h];
+        draw_line_blend(&mut buf, w, h, 0x00FF00, 0, 0.5, 1.0, 5.0, 8.0, 5.0);
+        let p = buf[5 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "composite line pixel must be tagged unlit");
+    }
+
+    #[test]
+    fn fill_contours_aa_tags_covered_pixels() {
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        let sq = vec![vec![
+            [5.0, 5.0], [15.0, 5.0], [15.0, 15.0], [5.0, 15.0], [5.0, 5.0],
+        ]];
+        fill_contours_aa(&mut buf, w, h, 0xFFFFFF, false, &sq);
+        let p = buf[10 * w + 10];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "text/glyph fill must be tagged unlit");
+    }
+
+    #[test]
+    fn fill_triangle_gouraud_tags_when_unlit() {
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut buf, w, h,
+            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
+            3, 1.0, 0, true,
+        );
+        let p = buf[10 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "flat-shaded triangle must tag unlit");
+        assert_eq!(p & crate::gfx::RGB_MASK, 0x00FF00);
+    }
+
+    #[test]
+    fn fill_triangle_gouraud_no_tag_when_lit() {
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut buf, w, h,
+            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
+            3, 1.0, 0, false,
+        );
+        let p = buf[10 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, 0, "lit triangle must not be tagged unlit");
+    }
+
+    #[test]
+    fn fill_triangle_gouraud_blend_mode_preserves_tag() {
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut buf, w, h,
+            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
+            3, 1.0, 1, true,
+        );
+        let p = buf[10 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "additive-blended flat triangle must tag unlit");
+    }
+
+    #[test]
+    fn fill_triangle_gouraud_z_tags_when_unlit() {
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        let mut z = vec![f32::INFINITY; w * h];
+        fill_triangle_gouraud_z(
+            &mut buf, &mut z, w, h,
+            2.0, 2.0, 1.0, 0x00FF00, 18.0, 2.0, 1.0, 0x00FF00, 2.0, 18.0, 1.0, 0x00FF00,
+            3, 1.0, 0, true,
+        );
+        let p = buf[10 * w + 5];
+        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "flat-shaded z-tested triangle must tag unlit");
+    }
+
+    #[test]
+    fn fill_triangle_over_line_clears_tag() {
+        // Painter's-order guarantee: a triangle rasterized after a line must
+        // fully overwrite the line's pixel, including the UNLIT tag.
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        let mut z = vec![f32::INFINITY; w * h];
+        draw_line(&mut buf, w, h, 0x00FF00, 0.0, 10.0, 19.0, 10.0);
+        assert_eq!(buf[10 * w + 10] & crate::gfx::UNLIT, crate::gfx::UNLIT);
+        // A triangle large enough to fully cover the small buffer.
+        fill_triangle_z(
+            &mut buf, &mut z, w, h, 0xFF0000,
+            -100.0, -100.0, 1.0,
+            200.0, -100.0, 1.0,
+            -100.0, 200.0, 1.0,
+        );
+        let p = buf[10 * w + 10];
+        assert_eq!(p & crate::gfx::UNLIT, 0, "triangle overwrite must clear the unlit tag");
+        assert_eq!(p, 0xFF0000, "triangle colour must win");
     }
 }

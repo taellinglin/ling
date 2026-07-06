@@ -1256,6 +1256,23 @@ static BUILTINS_GFX: &[Entry] = &[
             "ตั้งเฟรมเรต",
         ],
     ),
+    (
+        &[
+            "set_vsync",
+            "vsync",
+            "垂直同步",
+            "垂直同期",
+            "수직동기",
+            "ตั้งวีซิงก์",
+        ],
+        [
+            "set_vsync",
+            "垂直同步",
+            "垂直同期",
+            "수직동기",
+            "ตั้งวีซิงก์",
+        ],
+    ),
     // Transparent fills, gradient surfaces & colored shadows
     (
         &[

@@ -2988,8 +2988,7 @@ impl Interpreter {
                         },
                     )
                     .map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
-                    #[allow(deprecated)]
-                    win.limit_update_rate(Some(std::time::Duration::from_millis(8)));
+                    apply_frame_pacing(&mut win, gfx.vsync);
                     gfx.buffer = vec![0u32; w * h];
                     gfx.width = w;
                     gfx.height = h;
@@ -3361,15 +3360,7 @@ impl Interpreter {
                         },
                     )
                     .map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
-                    // Drive the loop at the monitor's real refresh rate instead of
-                    // a hard-coded cap, so a 144 Hz panel runs at 144 fps.
-                    // LING_FPS_CAP overrides the target frame rate (0 = uncapped);
-                    // otherwise drive at the monitor's real refresh.
-                    match std::env::var("LING_FPS_CAP").ok().and_then(|v| v.parse::<usize>().ok()) {
-                        Some(0) => win.set_target_fps(100_000),
-                        Some(cap) => win.set_target_fps(cap),
-                        None => win.set_target_fps(monitor_info().2.max(30) as usize),
-                    }
+                    apply_frame_pacing(&mut win, gfx.vsync);
                     // Grab the native handle *before* moving the window into gfx.
                     #[cfg(windows)]
                     let hwnd = win.get_window_handle() as isize;
@@ -3454,6 +3445,32 @@ impl Interpreter {
                 #[cfg(target_arch = "wasm32")]
                 {
                     self.wasm_target_fps = self.arg_num(&args, 0, 60.0)?.max(1.0);
+                    self.wasm_next_present_ms = 0.0;
+                }
+                return Ok(Value::Unit);
+            },
+
+            // set_vsync(on) → pace the window to the monitor's refresh rate.
+            // Frame-rate pacing (minifb has no swap-interval), not tear-free
+            // vsync; `LING_FPS_CAP` and an explicit `set_fps` call still win.
+            "set_vsync"
+            | "vsync"
+            | "垂直同步"
+            | "垂直同期"
+            | "수직동기"
+            | "ตั้งวีซิงก์" => {
+                let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut gfx = self.gfx.borrow_mut();
+                    gfx.vsync = on;
+                    if let Some(win) = gfx.window.as_mut() {
+                        apply_frame_pacing(win, on);
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    self.wasm_target_fps = if on { monitor_info().2 as f64 } else { 240.0 };
                     self.wasm_next_present_ms = 0.0;
                 }
                 return Ok(Value::Unit);
@@ -4400,9 +4417,10 @@ impl Interpreter {
                 }
 
                 // Fan-triangulate and push
+                let unlit = gfx.flat_shade;
                 crate::gfx::poly::fan_emit_proj(&proj, pn, |x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2| {
                     gfx.depth_queue.push_triangle_g_zv(
-                        x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, 3,
+                        x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, 3, unlit,
                     );
                 });
                 return Ok(Value::Unit);
@@ -4453,21 +4471,6 @@ impl Interpreter {
                 let (sax, say, da) = gfx.camera.project(lax, lay, laz);
                 let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
                 let depth = (da + db) / 2.0;
-                // Apply ambient so lines match the brightness of adjacent
-                // triangles (which are multiplied by ambient in
-                // compute_lit_color_vertices).  Without this, lines are
-                // 1/ambient × brighter than fills → wireframe appearance.
-                let color = if gfx.flat_shade {
-                    color
-                } else {
-                    let a = gfx.ambient;
-                    let cr = ((color >> 16) & 0xFF) as f32;
-                    let cg = ((color >> 8) & 0xFF) as f32;
-                    let cb = (color & 0xFF) as f32;
-                    ((cr * a).min(255.0) as u32) << 16
-                        | ((cg * a).min(255.0) as u32) << 8
-                        | (cb * a).min(255.0) as u32
-                };
                 let color = gfx.fog_apply(color, depth);
                 gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
                 return Ok(Value::Unit);
@@ -7166,18 +7169,6 @@ impl Interpreter {
                     }
                     let mut gfx = self.gfx.borrow_mut();
                     let color = gfx.color;
-                    // Apply ambient so 3-D text lines match triangle fills
-                    let color = if gfx.flat_shade {
-                        color
-                    } else {
-                        let a = gfx.ambient;
-                        let cr = ((color >> 16) & 0xFF) as f32;
-                        let cg = ((color >> 8) & 0xFF) as f32;
-                        let cb = (color & 0xFF) as f32;
-                        ((cr * a).min(255.0) as u32) << 16
-                            | ((cg * a).min(255.0) as u32) << 8
-                            | (cb * a).min(255.0) as u32
-                    };
                     let near = -gfx.camera.zdist + 0.05;
                     for l in &lines {
                         let (mut ax, mut ay, mut az) = (l[0], l[1], l[2]);
@@ -9952,6 +9943,21 @@ fn make_borderless_fullscreen(hwnd: isize, screen_w: i32, screen_h: i32) {
     }
 }
 
+/// Pace `win` to `vsync`'s target rate. `LING_FPS_CAP` (0 = uncapped, else an
+/// explicit fps) always overrides; otherwise vsync-on paces to the monitor's
+/// real refresh rate and vsync-off runs uncapped. minifb has no swap-interval
+/// vsync (it owns no GPU present queue), so this is frame-rate pacing to the
+/// refresh rate, not a tear-free guarantee.
+#[cfg(not(target_arch = "wasm32"))]
+fn apply_frame_pacing(win: &mut minifb::Window, vsync: bool) {
+    match std::env::var("LING_FPS_CAP").ok().and_then(|v| v.parse::<usize>().ok()) {
+        Some(0) => win.set_target_fps(100_000),
+        Some(cap) => win.set_target_fps(cap),
+        None if vsync => win.set_target_fps(monitor_info().2.max(30) as usize),
+        None => win.set_target_fps(100_000),
+    }
+}
+
 /// Primary-monitor resolution and refresh rate as `(width, height, hz)`.
 /// `hz` falls back to 60 when the driver reports an unknown/`default` rate.
 #[cfg(all(not(target_arch = "wasm32"), windows))]
@@ -9986,21 +9992,29 @@ fn monitor_info() -> (i32, i32, i32) {
     (w as i32, h as i32, linux_refresh_hz().unwrap_or(60))
 }
 
-/// Active display refresh rate via `xrandr`. The current mode's rate is the
-/// number flagged with `*` in `xrandr` output (e.g. `1920x1080 144.00*+`).
+/// Active display refresh rate via `xrandr`. Each connected output's active
+/// mode is the token flagged with `*` (e.g. `1920x1080 144.00*+`); we take the
+/// max across all active outputs so a multi-monitor rig drives the loop at
+/// its fastest panel.
 #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
 fn linux_refresh_hz() -> Option<i32> {
     let out = std::process::Command::new("xrandr").arg("--current").output().ok()?;
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    // Find the token carrying `*` (the active rate) and round it to an integer.
+    parse_xrandr_max_hz(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Pure parse used by [`linux_refresh_hz`]: the highest `*`-flagged refresh
+/// rate across all active outputs in `xrandr --current` output.
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn parse_xrandr_max_hz(text: &str) -> Option<i32> {
     text.split_whitespace()
-        .find(|tok| tok.contains('*'))
-        .and_then(|tok| tok.trim_matches(|c: char| !c.is_ascii_digit() && c != '.').parse::<f64>().ok())
+        .filter(|tok| tok.contains('*'))
+        .filter_map(|tok| tok.trim_matches(|c: char| !c.is_ascii_digit() && c != '.').parse::<f64>().ok())
         .map(|hz| hz.round() as i32)
-        .filter(|&hz| hz >= 24 && hz <= 1000)
+        .filter(|&hz| (24..=1000).contains(&hz))
+        .max()
 }
 
 /// WASM fallback: the canvas is the display surface; assume 60 Hz.
@@ -10008,6 +10022,40 @@ fn linux_refresh_hz() -> Option<i32> {
 fn monitor_info() -> (i32, i32, i32) {
     let (w, h) = crate::gfx::webgl::canvas_size();
     (w as i32, h as i32, 60)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(windows)))]
+mod xrandr_tests {
+    use super::parse_xrandr_max_hz;
+
+    #[test]
+    fn picks_highest_active_output() {
+        let text = "\
+eDP-1 connected primary 1920x1080+0+0
+   1920x1080     60.00*+  59.94
+DP-1 connected 2560x1440+1920+0
+   2560x1440    144.00*+  120.00  60.00
+";
+        assert_eq!(parse_xrandr_max_hz(text), Some(144));
+    }
+
+    #[test]
+    fn single_output() {
+        let text = "   1920x1080     75.00*+  60.00\n";
+        assert_eq!(parse_xrandr_max_hz(text), Some(75));
+    }
+
+    #[test]
+    fn no_active_mode_returns_none() {
+        let text = "eDP-1 disconnected\n";
+        assert_eq!(parse_xrandr_max_hz(text), None);
+    }
+
+    #[test]
+    fn out_of_range_hz_filtered() {
+        let text = "   1x1     5000.00*+\n";
+        assert_eq!(parse_xrandr_max_hz(text), None);
+    }
 }
 
 /// Query the primary display resolution on non-Windows platforms.

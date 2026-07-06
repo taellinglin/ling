@@ -1417,6 +1417,7 @@ impl GfxState {
                             proj[k + 1].2,
                             proj[k + 1].3,
                             bands,
+                            false,
                         );
                         k += 1;
                     }

@@ -89,7 +89,7 @@ fn rasterize_call(
                 x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands,
             } => raster::fill_triangle_gouraud_z(
                 buf, z, width, height, x0, y0 - ysh, z0, c0, x1, y1 - ysh, z1, c1, x2, y2 - ysh, z2,
-                c2, bands, call.alpha, call.mode,
+                c2, bands, call.alpha, call.mode, call.unlit,
             ),
             DrawKind::Line { x0, y0, x1, y1, .. } => {
                 if blended {
@@ -118,7 +118,7 @@ fn rasterize_call(
             DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, .. } => {
                 raster::fill_triangle_gouraud(
                     buf, width, height, x0, y0 - ysh, c0, x1, y1 - ysh, c1, x2, y2 - ysh, c2, bands,
-                    call.alpha, call.mode,
+                    call.alpha, call.mode, call.unlit,
                 )
             },
             DrawKind::Line { x0, y0, x1, y1, .. } => {
@@ -155,6 +155,10 @@ pub struct DrawCall {
     pub mode: u8,
     /// Pen opacity 0..1 (coverage for the composite).
     pub alpha: f32,
+    /// Tag written pixels [`crate::gfx::UNLIT`] (flat-shaded Gouraud triangles
+    /// only) so the toon post-process leaves them exact instead of re-shading
+    /// colour that was deliberately drawn unlit.
+    pub unlit: bool,
     pub kind: DrawKind,
 }
 
@@ -238,6 +242,7 @@ impl DepthQueue {
             color,
             mode: self.cur_mode,
             alpha: self.cur_alpha,
+            unlit: false,
             kind: DrawKind::Triangle { x0, y0, z0: depth, x1, y1, z1: depth, x2, y2, z2: depth },
         });
     }
@@ -264,6 +269,7 @@ impl DepthQueue {
             color,
             mode: self.cur_mode,
             alpha: self.cur_alpha,
+            unlit: false,
             kind: DrawKind::Triangle { x0, y0, z0, x1, y1, z1, x2, y2, z2 },
         });
     }
@@ -283,12 +289,14 @@ impl DepthQueue {
         y2: f32,
         c2: u32,
         bands: u32,
+        unlit: bool,
     ) {
         self.calls.push(DrawCall {
             depth,
             color: c0,
             mode: self.cur_mode,
             alpha: self.cur_alpha,
+            unlit,
             kind: DrawKind::TriangleG {
                 x0,
                 y0,
@@ -324,6 +332,7 @@ impl DepthQueue {
         z2: f32,
         c2: u32,
         bands: u32,
+        unlit: bool,
     ) {
         let depth = (z0 + z1 + z2) / 3.0;
         self.calls.push(DrawCall {
@@ -331,6 +340,7 @@ impl DepthQueue {
             color: c0,
             mode: self.cur_mode,
             alpha: self.cur_alpha,
+            unlit,
             kind: DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands },
         });
     }
@@ -342,6 +352,7 @@ impl DepthQueue {
             color,
             mode: self.cur_mode,
             alpha: self.cur_alpha,
+            unlit: false,
             kind: DrawKind::Line { x0, y0, z0: depth, x1, y1, z1: depth },
         });
     }
