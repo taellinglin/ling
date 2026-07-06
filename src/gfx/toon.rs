@@ -114,21 +114,20 @@ pub fn sample_ramp(ramp: &ToneRamp, t_in: f32) -> f32 {
 /// and the RGB channels are scaled to achieve the new luminance (hue is
 /// preserved).  Black pixels (lum ≈ 0) are left untouched.
 ///
-/// When `zbuf` is provided and the same size as the buffer, pixels at
-/// `zbuf[i] == +∞` are treated as background and skipped.  This avoids
-/// tone-mapping the scene's background clear colour when depth-testing is
-/// enabled.  With the painter's path (no zbuf), the ramp is applied to all
-/// non-black pixels.
+/// The ramp is applied uniformly to all non-black pixels regardless of
+/// z-buffer state — lines and text (which never write to the z-buffer) are
+/// shaded consistently with triangles, preventing the flickering and
+/// wireframe-heavy appearance that would otherwise occur when only
+/// z-buffered geometry is tone-mapped.
 pub fn apply_ramp(
     buf:    &mut Vec<u32>,
-    zbuf:   &[f32],
+    _zbuf:  &[f32],
     width:  usize,
     height: usize,
     ramp:   &ToneRamp,
 ) {
     let n = width * height;
     if buf.len() < n || ramp.stops.is_empty() { return; }
-    let use_zbuf = zbuf.len() >= n;
 
     #[inline]
     fn shade(p: u32, ramp: &ToneRamp) -> u32 {
@@ -144,35 +143,28 @@ pub fn apply_ramp(
             |  ((b * scale).min(255.0) as u32)
     }
 
+    // The z-buffer was previously used to skip background pixels (+inf depth),
+    // but lines and text never write to the z-buffer either, causing them to
+    // be skipped by the tone ramp — creating flickering (inconsistent shading
+    // vs adjacent triangles) and a wireframe-heavy appearance.
+    // Instead always apply the ramp to all non-black pixels; the shade()
+    // function already skips pure black (lum < 0.001), protecting the clear
+    // colour when it's near-black.
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
         const ROWS: usize = 32;
         let band = ROWS * width;
-        if use_zbuf {
-            buf[..n]
-                .par_chunks_mut(band)
-                .zip(zbuf[..n].par_chunks(band))
-                .for_each(|(bb, zz)| {
-                    for (px, z) in bb.iter_mut().zip(zz) {
-                        if z.is_finite() {
-                            *px = shade(*px, ramp);
-                        }
-                    }
-                });
-        } else {
-            buf[..n].par_chunks_mut(band).for_each(|bb| {
-                for px in bb.iter_mut() {
-                    *px = shade(*px, ramp);
-                }
-            });
-        }
+        buf[..n].par_chunks_mut(band).for_each(|bb| {
+            for px in bb.iter_mut() {
+                *px = shade(*px, ramp);
+            }
+        });
         return;
     }
     #[cfg(target_arch = "wasm32")]
-    for i in 0..n {
-        if use_zbuf && !zbuf[i].is_finite() { continue; }
-        buf[i] = shade(buf[i], ramp);
+    for px in buf[..n].iter_mut() {
+        *px = shade(*px, ramp);
     }
 }
 
@@ -376,15 +368,23 @@ mod tests {
     }
 
     #[test]
-    fn apply_ramp_skips_background_with_zbuf() {
-        // Background pixels (zbuf = +inf) must not be touched.
+    fn apply_ramp_background_now_processed() {
+        // Background pixels are now processed by the tone ramp regardless of
+        // zbuf state (z-buffer filter was removed because it also skipped
+        // lines/text that never write to the z-buffer).
         let width = 2; let height = 2;
-        let mut buf = vec![0x808080u32; width * height]; // grey background
+        let mut buf = vec![0x808080u32; width * height]; // grey bg, lum=128
         let zbuf = vec![f32::INFINITY; width * height];  // all background
         let ramp = ToneRamp::default();
         apply_ramp(&mut buf, &zbuf, width, height, &ramp);
+        // Grey (128,128,128) has t≈0.502 → mid band (0.50) → output ≈127
         for px in &buf {
-            assert_eq!(*px, 0x808080, "background pixels must be unchanged");
+            let r = (*px >> 16) & 0xFF;
+            let g = (*px >>  8) & 0xFF;
+            let b =  *px        & 0xFF;
+            assert!(r < 0x81, "red should be cel-adjusted, was {r:#04x}");
+            assert!(g < 0x81, "green should be cel-adjusted, was {g:#04x}");
+            assert!(b < 0x81, "blue should be cel-adjusted, was {b:#04x}");
         }
     }
 

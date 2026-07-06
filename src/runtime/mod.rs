@@ -4453,6 +4453,21 @@ impl Interpreter {
                 let (sax, say, da) = gfx.camera.project(lax, lay, laz);
                 let (sbx, sby, db) = gfx.camera.project(lbx, lby, lbz);
                 let depth = (da + db) / 2.0;
+                // Apply ambient so lines match the brightness of adjacent
+                // triangles (which are multiplied by ambient in
+                // compute_lit_color_vertices).  Without this, lines are
+                // 1/ambient × brighter than fills → wireframe appearance.
+                let color = if gfx.flat_shade {
+                    color
+                } else {
+                    let a = gfx.ambient;
+                    let cr = ((color >> 16) & 0xFF) as f32;
+                    let cg = ((color >> 8) & 0xFF) as f32;
+                    let cb = (color & 0xFF) as f32;
+                    ((cr * a).min(255.0) as u32) << 16
+                        | ((cg * a).min(255.0) as u32) << 8
+                        | (cb * a).min(255.0) as u32
+                };
                 let color = gfx.fog_apply(color, depth);
                 gfx.depth_queue.push_line(depth, color, sax, say, sbx, sby);
                 return Ok(Value::Unit);
@@ -7151,6 +7166,18 @@ impl Interpreter {
                     }
                     let mut gfx = self.gfx.borrow_mut();
                     let color = gfx.color;
+                    // Apply ambient so 3-D text lines match triangle fills
+                    let color = if gfx.flat_shade {
+                        color
+                    } else {
+                        let a = gfx.ambient;
+                        let cr = ((color >> 16) & 0xFF) as f32;
+                        let cg = ((color >> 8) & 0xFF) as f32;
+                        let cb = (color & 0xFF) as f32;
+                        ((cr * a).min(255.0) as u32) << 16
+                            | ((cg * a).min(255.0) as u32) << 8
+                            | (cb * a).min(255.0) as u32
+                    };
                     let near = -gfx.camera.zdist + 0.05;
                     for l in &lines {
                         let (mut ax, mut ay, mut az) = (l[0], l[1], l[2]);
