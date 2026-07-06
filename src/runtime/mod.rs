@@ -32,6 +32,30 @@ pub fn now_secs() -> f64 {
     }
 }
 
+/// Global hue-cycle for wireframe line strokes (enabled via `set_line_hue_cycle`).
+/// Stored as f64 bits: the cycle rate (radians/sec) and the epoch-seconds baseline
+/// captured when it was last (re)enabled. A rate of 0 disables the effect.
+static LINE_HUE_RATE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LINE_HUE_START: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Enable/disable the wireframe line hue-cycle. `rate` is in radians/sec (0 = off).
+pub fn set_line_hue_rate(rate: f64) {
+    LINE_HUE_RATE.store(rate.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    LINE_HUE_START.store(now_secs().to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Current hue phase (radians) for line strokes, or `None` when the cycle is off.
+/// Elapsed is computed in f64 (epoch seconds are huge) before the caller casts to
+/// f32, so `sin` keeps precision across a long session.
+pub fn line_hue_phase() -> Option<f64> {
+    let rate = f64::from_bits(LINE_HUE_RATE.load(std::sync::atomic::Ordering::Relaxed));
+    if rate <= 0.0 {
+        return None;
+    }
+    let start = f64::from_bits(LINE_HUE_START.load(std::sync::atomic::Ordering::Relaxed));
+    Some((now_secs() - start) * rate)
+}
+
 // Wasm-only module registry: seeded by JS before `run_program` is called so
 // that `use "path"` statements resolve without a real filesystem.
 #[cfg(target_arch = "wasm32")]
@@ -2595,6 +2619,21 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // set_antialias(on) — smooth wireframe strokes (lines / edges / arcs /
+            // circle outlines) via Xiaolin-Wu coverage. Default OFF = crisp,
+            // opaque, aliased pixels; pass 1 to opt into smooth edges.
+            "set_antialias" | "ตั้งลบรอยหยัก" | "抗锯齿" | "アンチエイリアス" | "안티에일리어싱" =>
+            {
+                let on = self.arg_num(&args, 0, 1.0)? > 0.5;
+                self.gfx.borrow_mut().antialias = on;
+                return Ok(Value::Unit);
+            },
+            // get_antialias() -> bool — current wireframe anti-aliasing state.
+            "get_antialias" | "อ่านลบรอยหยัก" | "读取抗锯齿" | "アンチエイリアス取得" | "안티에일리어싱상태" =>
+            {
+                return Ok(Value::Bool(self.gfx.borrow().antialias));
+            },
+
             // ── Step 6: Circle Primitives ──
             "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" =>
             {
@@ -2604,7 +2643,16 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let (w, h, color, blend) =
                     (gfx.width as i32, gfx.height as i32, gfx.color, gfx.blend);
-                draw_circle_outline(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
+                if gfx.antialias {
+                    let (uw, uh) = (gfx.width, gfx.height);
+                    let segs = ((r.max(1) as u32) * 4).clamp(24, 512);
+                    crate::gfx::raster::draw_arc(
+                        &mut gfx.buffer, uw, uh, color, true, blend == 1,
+                        cx as f32, cy as f32, r as f32, 0.0, std::f32::consts::TAU, segs,
+                    );
+                } else {
+                    draw_circle_outline(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
+                }
                 return Ok(Value::Unit);
             },
 
@@ -2624,6 +2672,48 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // draw_arc(cx, cy, r, a0, a1 [, segments]) — stroke a circular arc in
+            // the pen colour (full circle when a1-a0 = TAU). Honors the antialias
+            // flag; opaque by default (additive when blend = 1).
+            "draw_arc" | "arc" | "วาดส่วนโค้ง" | "画弧" | "円弧描画" | "호그리기" =>
+            {
+                let cx = self.arg_num(&args, 0, 0.0)? as f32;
+                let cy = self.arg_num(&args, 1, 0.0)? as f32;
+                let r = self.arg_num(&args, 2, 10.0)? as f32;
+                let a0 = self.arg_num(&args, 3, 0.0)? as f32;
+                let a1 = self.arg_num(&args, 4, std::f64::consts::TAU)? as f32;
+                let default_segs = ((r.abs() * (a1 - a0).abs()).ceil() as u32).clamp(8, 1024);
+                let segs = self.arg_num(&args, 5, default_segs as f64)? as u32;
+                let mut gfx = self.gfx.borrow_mut();
+                let color = gfx.color;
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let (uw, uh, aa, add) =
+                        (gfx.width, gfx.height, gfx.antialias, gfx.blend == 1);
+                    crate::gfx::raster::draw_arc(
+                        &mut gfx.buffer, uw, uh, color, aa, add, cx, cy, r, a0, a1, segs,
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let segs_f = segs.max(1);
+                    let step = (a1 - a0) / segs_f as f32;
+                    let mut px = cx + r * a0.cos();
+                    let mut py = cy + r * a0.sin();
+                    let mut i = 1u32;
+                    while i <= segs_f {
+                        let a = a0 + step * i as f32;
+                        let nx = cx + r * a.cos();
+                        let ny = cy + r * a.sin();
+                        gfx.depth_queue.push_line(0.0, color, px, py, nx, ny);
+                        px = nx;
+                        py = ny;
+                        i += 1;
+                    }
+                }
+                return Ok(Value::Unit);
+            },
+
             // ── Step 7: Transparent fills, gradient surfaces & colored shadows ──
             // These all write straight into the software framebuffer (gfx.buffer)
             // on both native and web, so no target gating is needed.
@@ -2636,6 +2726,16 @@ impl Interpreter {
                 gfx.alpha = a.clamp(0.0, 1.0);
                 let (m, al) = (gfx.blend, gfx.alpha);
                 gfx.depth_queue.set_state(m, al); // 3-D queue captures alpha for subsequent pushes
+                return Ok(Value::Unit);
+            },
+
+            // set_line_hue_cycle(rate) — rapidly cycle the hue of ALL wireframe line
+            // strokes (draw_line / draw_line_3d). `rate` in radians/sec; 0 = off.
+            // Process-global so a single call covers every stroke, every frame.
+            "set_line_hue_cycle" | "ตั้งวนสีเส้น" =>
+            {
+                let rate = self.arg_num(&args, 0, 0.0)?;
+                crate::runtime::set_line_hue_rate(rate);
                 return Ok(Value::Unit);
             },
 
@@ -3102,7 +3202,15 @@ impl Interpreter {
                 {
                     let w = gfx.width;
                     let h = gfx.height;
-                    draw_line(&mut gfx.buffer, w, h, color, x0, y0, x1, y1);
+                    let aa = gfx.antialias;
+                    let add = gfx.blend == 1;
+                    if aa {
+                        crate::gfx::raster::draw_line_aa(
+                            &mut gfx.buffer, w, h, color, add, x0, y0, x1, y1,
+                        );
+                    } else {
+                        draw_line(&mut gfx.buffer, w, h, color, x0, y0, x1, y1);
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 gfx.depth_queue.push_line(0.0, color, x0, y0, x1, y1);
@@ -3155,11 +3263,12 @@ impl Interpreter {
                             let dt = gfx.depth_test;
                             let reset_z = gfx.zbuf_needs_clear;
                             let (bm, ba) = (gfx.blend, gfx.alpha);
+                            let aa = gfx.antialias;
                             let queue = std::mem::take(&mut gfx.depth_queue);
                             {
                                 let g = &mut *gfx;
                                 let z = if dt { Some(&mut g.depth_buf) } else { None };
-                                queue.flush(&mut g.buffer, z, reset_z, w, h);
+                                queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                             }
                             gfx.depth_queue.set_state(bm, ba);
                             gfx.zbuf_needs_clear = false;
@@ -3282,11 +3391,12 @@ impl Interpreter {
                         if !gfx.depth_queue.is_empty() {
                             let dt = gfx.depth_test;
                             let reset_z = gfx.zbuf_needs_clear;
+                            let aa = gfx.antialias;
                             let queue = std::mem::take(&mut gfx.depth_queue);
                             {
                                 let g = &mut *gfx;
                                 let z = if dt { Some(&mut g.depth_buf) } else { None };
-                                queue.flush(&mut g.buffer, z, reset_z, w, h);
+                                queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                             }
                             gfx.zbuf_needs_clear = false;
                         }
@@ -9392,11 +9502,12 @@ impl Interpreter {
                     let dt = gfx.depth_test;
                     let reset_z = gfx.zbuf_needs_clear;
                     let (bm, ba) = (gfx.blend, gfx.alpha);
+                    let aa = gfx.antialias;
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
                         let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        queue.flush(&mut g.buffer, z, reset_z, w, h);
+                        queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                     }
                     gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba); // keep active blend/alpha across the mid-frame flush

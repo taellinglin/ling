@@ -70,6 +70,8 @@ pub fn is_builtin(name: &str) -> bool {
         "acceleration" => true,
         "acos" => true,
         "add_light" => true,
+        "set_line_hue_cycle" => true,
+        "ตั้งวนสีเส้น" => true,
         "aes_gcm_256" => true,
         "afficher" => true,
         "animation" => true,

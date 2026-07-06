@@ -1147,6 +1147,53 @@ pub fn draw_line_aa(
     }
 }
 
+/// Draw a circular arc (or full circle) as a connected polyline from `a0` to
+/// `a1` radians. `aa` selects Xiaolin-Wu anti-aliasing; otherwise crisp
+/// (aliased) Bresenham. `additive` selects additive blending (glow); otherwise
+/// the stroke is fully opaque. `segments` is the number of line segments.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_arc(
+    buf: &mut [u32],
+    w: usize,
+    h: usize,
+    color: u32,
+    aa: bool,
+    additive: bool,
+    cx: f32,
+    cy: f32,
+    r: f32,
+    a0: f32,
+    a1: f32,
+    segments: u32,
+) {
+    if w == 0 || h == 0 || r <= 0.0 {
+        return;
+    }
+    if !cx.is_finite() || !cy.is_finite() || !r.is_finite() || !a0.is_finite() || !a1.is_finite() {
+        return;
+    }
+    let segs = segments.max(1);
+    let step = (a1 - a0) / segs as f32;
+    let mut px = cx + r * a0.cos();
+    let mut py = cy + r * a0.sin();
+    let mut i = 1u32;
+    while i <= segs {
+        let a = a0 + step * i as f32;
+        let nx = cx + r * a.cos();
+        let ny = cy + r * a.sin();
+        if aa {
+            draw_line_aa(buf, w, h, color, additive, px, py, nx, ny);
+        } else if additive {
+            draw_line_blend(buf, w, h, color, 1, 1.0, px, py, nx, ny);
+        } else {
+            draw_line(buf, w, h, color, px, py, nx, ny);
+        }
+        px = nx;
+        py = ny;
+        i += 1;
+    }
+}
+
 /// Coverage-based scanline fill of closed `polylines` (screen space, y-down)
 /// using the non-zero winding rule, with 4× vertical supersampling and analytic
 /// horizontal span coverage — smooth filled glyph interiors without aliasing.
@@ -1500,6 +1547,7 @@ mod fill_tests {
         assert!(hole == 0, "hole should be empty");
     }
 
+<<<<<<< HEAD
     #[test]
     fn draw_line_sets_unlit_tag() {
         let (w, h) = (10usize, 10usize);
@@ -1613,5 +1661,68 @@ mod fill_tests {
         let p = buf[10 * w + 10];
         assert_eq!(p & crate::gfx::UNLIT, 0, "triangle overwrite must clear the unlit tag");
         assert_eq!(p, 0xFF0000, "triangle colour must win");
+=======
+    // Count (pixels exactly == color, non-zero pixels that are NOT the color).
+    // The second bucket represents partial-coverage / smoothed edge pixels.
+    fn coverage_buckets(buf: &[u32], color: u32) -> (usize, usize) {
+        let color = color & 0x00FF_FFFF;
+        let mut exact = 0;
+        let mut partial = 0;
+        for &p in buf {
+            let p = p & 0x00FF_FFFF;
+            if p == color {
+                exact += 1;
+            } else if p != 0 {
+                partial += 1;
+            }
+        }
+        (exact, partial)
+    }
+
+    #[test]
+    fn aliased_line_is_fully_opaque() {
+        let (w, h) = (64usize, 64usize);
+        let mut buf = vec![0u32; w * h];
+        draw_line(&mut buf, w, h, 0xFFFFFF, 4.0, 4.0, 60.0, 40.0);
+        let (exact, partial) = coverage_buckets(&buf, 0xFFFFFF);
+        eprintln!("aliased line: exact={exact} partial={partial}");
+        assert!(exact > 0, "aliased line must draw pixels");
+        assert_eq!(partial, 0, "aliased line must be fully opaque (no smoothing)");
+    }
+
+    #[test]
+    fn aa_line_has_smoothed_edges() {
+        let (w, h) = (64usize, 64usize);
+        let mut buf = vec![0u32; w * h];
+        // additive=false -> alpha-blended AA over black background
+        draw_line_aa(&mut buf, w, h, 0xFFFFFF, false, 4.0, 4.0, 60.0, 40.0);
+        let (exact, partial) = coverage_buckets(&buf, 0xFFFFFF);
+        eprintln!("aa line: exact={exact} partial={partial}");
+        assert!(exact > 0, "AA line keeps opaque full-coverage core pixels");
+        assert!(partial > 0, "AA line must produce smoothed partial-coverage pixels");
+    }
+
+    #[test]
+    fn arc_aliased_opaque_but_aa_is_smooth() {
+        let (w, h) = (64usize, 64usize);
+        let color = 0xFFFFFFu32;
+        let (cx, cy, r) = (32.0, 32.0, 20.0);
+        let full = std::f32::consts::TAU;
+
+        // Aliased full circle -> opaque, no partial-coverage pixels.
+        let mut a = vec![0u32; w * h];
+        draw_arc(&mut a, w, h, color, false, false, cx, cy, r, 0.0, full, 96);
+        let (ea, pa) = coverage_buckets(&a, color);
+        eprintln!("aliased arc: exact={ea} partial={pa}");
+        assert!(ea > 0, "aliased arc must draw pixels");
+        assert_eq!(pa, 0, "aliased arc must be fully opaque");
+
+        // AA full circle -> produces smoothed partial-coverage pixels.
+        let mut b = vec![0u32; w * h];
+        draw_arc(&mut b, w, h, color, true, false, cx, cy, r, 0.0, full, 96);
+        let (_eb, pb) = coverage_buckets(&b, color);
+        eprintln!("aa arc: partial={pb}");
+        assert!(pb > 0, "AA arc must produce smoothed partial-coverage pixels");
+>>>>>>> 4374cba (Ling Lin)
     }
 }

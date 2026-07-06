@@ -103,6 +103,10 @@ pub struct GfxState {
     /// Pen opacity [0..1] for the alpha-blended fills (gradient surfaces,
     /// shadow blobs). Set by `set_alpha`; 1.0 = fully opaque.
     pub alpha: f32,
+    /// Anti-alias wireframe strokes (lines / edges / arcs / circle outlines).
+    /// Set by `set_antialias`; default false = crisp, opaque, aliased pixels.
+    /// When true, strokes use Xiaolin-Wu coverage blending for smooth edges.
+    pub antialias: bool,
     /// Tunable height→size/opacity mapping for `cast_shadow`.
     pub shadow: ShadowParams,
     /// Gamma-correct compositing: blend alpha/gradients in linear light instead
@@ -174,6 +178,7 @@ impl GfxState {
             shade: ling_graphics::shading::ShadeParams::default(),
             blend: 0,
             alpha: 1.0,
+            antialias: false,
             shadow: ShadowParams::default(),
             linear_blend: false,
             grad_oklab: true,
@@ -338,6 +343,8 @@ pub struct GfxState {
     pub blend: u8,
     /// Pen opacity [0..1] for the alpha-blended fills (mirrors native).
     pub alpha: f32,
+    /// Anti-alias wireframe strokes (mirrors native). Default false = aliased.
+    pub antialias: bool,
     /// Tunable height→size/opacity mapping for `cast_shadow`.
     pub shadow: ShadowParams,
     /// Gamma-correct (linear-light) compositing — mirrors native.
@@ -397,6 +404,7 @@ impl GfxState {
             distort_buf: Vec::new(),
             blend: 0,
             alpha: 1.0,
+            antialias: false,
             shadow: ShadowParams::default(),
             linear_blend: false,
             grad_oklab: true,

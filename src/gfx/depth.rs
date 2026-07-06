@@ -68,6 +68,7 @@ fn rasterize_call(
     width: usize,
     height: usize,
     ysh: f32,
+    aa: bool,
 ) {
     let blended = call.mode != 0 || call.alpha < 0.999;
     match zbuf {
@@ -92,7 +93,11 @@ fn rasterize_call(
                 c2, bands, call.alpha, call.mode, call.unlit,
             ),
             DrawKind::Line { x0, y0, x1, y1, .. } => {
-                if blended {
+                if aa {
+                    raster::draw_line_aa(
+                        buf, width, height, call.color, call.mode == 1, x0, y0 - ysh, x1, y1 - ysh,
+                    );
+                } else if blended {
                     raster::draw_line_blend(
                         buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
                         y1 - ysh,
@@ -122,7 +127,11 @@ fn rasterize_call(
                 )
             },
             DrawKind::Line { x0, y0, x1, y1, .. } => {
-                if blended {
+                if aa {
+                    raster::draw_line_aa(
+                        buf, width, height, call.color, call.mode == 1, x0, y0 - ysh, x1, y1 - ysh,
+                    );
+                } else if blended {
                     raster::draw_line_blend(
                         buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
                         y1 - ysh,
@@ -347,6 +356,20 @@ impl DepthQueue {
 
     /// Queue a line segment (flat per-vertex depth).
     pub fn push_line(&mut self, depth: f32, color: u32, x0: f32, y0: f32, x1: f32, y1: f32) {
+        // Global wireframe hue-cycle: when enabled, override every line stroke's
+        // colour with a rapidly time-cycling rainbow. The screen position adds a
+        // spatial phase so strokes spread across the spectrum instead of flashing
+        // as one flat colour.
+        let color = match crate::runtime::line_hue_phase() {
+            Some(ph) => {
+                let p = (ph + (x0 + y0) as f64 * 0.006) as f32;
+                let r = ((p.sin() * 0.5 + 0.5) * 255.0) as u32;
+                let g = (((p + 2.0944).sin() * 0.5 + 0.5) * 255.0) as u32;
+                let b = (((p + 4.1888).sin() * 0.5 + 0.5) * 255.0) as u32;
+                (r << 16) | (g << 8) | b
+            }
+            None => color,
+        };
         self.calls.push(DrawCall {
             depth,
             color,
@@ -377,6 +400,7 @@ impl DepthQueue {
         reset_z: bool,
         width: usize,
         height: usize,
+        aa: bool,
     ) {
         // Sort largest depth first (furthest → painted first, nearest on top).
         // With a z-buffer the sort still helps transparency + reduces overdraw.
@@ -425,14 +449,14 @@ impl DepthQueue {
                             let ysh = (b * rows) as f32;
                             let bh = bbuf.len() / width;
                             for call in calls {
-                                rasterize_call(call, bbuf, Some(bz), width, bh, ysh);
+                                rasterize_call(call, bbuf, Some(bz), width, bh, ysh, aa);
                             }
                         });
                     return;
                 }
                 let _ = bands;
                 for call in calls {
-                    rasterize_call(call, buf, Some(z), width, height, 0.0);
+                    rasterize_call(call, buf, Some(z), width, height, 0.0, aa);
                 }
             },
             None => {
@@ -443,14 +467,14 @@ impl DepthQueue {
                         let ysh = (b * rows) as f32;
                         let bh = bbuf.len() / width;
                         for call in calls {
-                            rasterize_call(call, bbuf, None, width, bh, ysh);
+                            rasterize_call(call, bbuf, None, width, bh, ysh, aa);
                         }
                     });
                     return;
                 }
                 let _ = bands;
                 for call in calls {
-                    rasterize_call(call, buf, None, width, height, 0.0);
+                    rasterize_call(call, buf, None, width, height, 0.0, aa);
                 }
             },
         }
