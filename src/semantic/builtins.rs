@@ -487,12 +487,9 @@ pub fn is_builtin(name: &str) -> bool {
         | "フレームレート設定"
         | "프레임설정"
         | "ตั้งเฟรมเรต" => true,
-        "set_vsync"
-        | "vsync"
-        | "垂直同步"
-        | "垂直同期"
-        | "수직동기"
-        | "ตั้งวีซิงก์" => true,
+        "set_vsync" | "vsync" | "垂直同步" | "垂直同期" | "수직동기" | "ตั้งวีซิงก์" => {
+            true
+        },
         "record_count" => true,
         "record_frame" => true,
         "screenshot" | "บันทึกภาพ" => true,
@@ -511,6 +508,8 @@ pub fn is_builtin(name: &str) -> bool {
         "set_ambient" => true,
         "set_fog" => true,
         "set_flat_shade" => true,
+        "set_normal_override" => true,
+        "reset_normal_override" => true,
         "set_blend" => true,
         "set_camera" => true,
         "set_camera_pos" => true,

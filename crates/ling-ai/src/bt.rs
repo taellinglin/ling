@@ -58,6 +58,7 @@ impl Cmp {
             _ => return None,
         })
     }
+
     fn test(self, a: f32, b: f32) -> bool {
         match self {
             Cmp::Gt => a > b,
@@ -229,6 +230,7 @@ impl Parser<'_> {
     fn peek(&self) -> Option<&str> {
         self.toks.get(self.pos).map(|s| s.as_str())
     }
+
     fn bump(&mut self) -> Option<&str> {
         let t = self.toks.get(self.pos).map(|s| s.as_str());
         if t.is_some() {
@@ -236,6 +238,7 @@ impl Parser<'_> {
         }
         t
     }
+
     fn push(&mut self, n: Node) -> usize {
         self.nodes.push(n);
         self.nodes.len() - 1

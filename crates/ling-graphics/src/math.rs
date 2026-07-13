@@ -11,8 +11,8 @@ pub struct Vec4H {
 }
 
 impl Vec4H {
-    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0, w: 0.0 };
     pub const ONE: Self = Self { x: 1.0, y: 1.0, z: 1.0, w: 1.0 };
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0, w: 0.0 };
 
     pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
         Self { x, y, z, w }
@@ -55,24 +55,28 @@ impl Vec4H {
 
 impl std::ops::Add for Vec4H {
     type Output = Self;
+
     fn add(self, r: Self) -> Self {
         Self::new(self.x + r.x, self.y + r.y, self.z + r.z, self.w + r.w)
     }
 }
 impl std::ops::Sub for Vec4H {
     type Output = Self;
+
     fn sub(self, r: Self) -> Self {
         Self::new(self.x - r.x, self.y - r.y, self.z - r.z, self.w - r.w)
     }
 }
 impl std::ops::Mul<f32> for Vec4H {
     type Output = Self;
+
     fn mul(self, s: f32) -> Self {
         Self::new(self.x * s, self.y * s, self.z * s, self.w * s)
     }
 }
 impl std::ops::Neg for Vec4H {
     type Output = Self;
+
     fn neg(self) -> Self {
         Self::new(-self.x, -self.y, -self.z, -self.w)
     }
@@ -165,9 +169,11 @@ impl Aabb {
     pub fn center(&self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
+
     pub fn half_extents(&self) -> Vec3 {
         (self.max - self.min) * 0.5
     }
+
     pub fn size(&self) -> Vec3 {
         self.max - self.min
     }

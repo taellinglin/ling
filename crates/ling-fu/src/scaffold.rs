@@ -88,6 +88,7 @@ impl ProjectKind {
     pub fn to_chinese(&self) -> &'static str {
         self.name_in(&ScaffoldLang::Chinese)
     }
+
     pub fn to_english(&self) -> &'static str {
         self.name_in(&ScaffoldLang::English)
     }

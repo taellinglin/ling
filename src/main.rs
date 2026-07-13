@@ -1003,7 +1003,10 @@ fn build_native(
             });
 
         let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
-        println!("    compiling {} functions to native code…", mir_prog.mir.functions.len());
+        println!(
+            "    compiling {} functions to native code…",
+            mir_prog.mir.functions.len()
+        );
         let mut backend = ling_codegen::CraneliftBackend::new().with_progress(true);
         let obj_path = build_dir.join("entry.o");
         use ling_codegen::CodegenBackend;
@@ -1138,7 +1141,9 @@ fn gen_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     // On Windows canonicalize gives UNC paths; forward-slashes work fine in TOML paths.
     let root_str = ling_root.display().to_string().replace('\\', "/");
     // Fat LTO needs a single codegen unit; thin parallelises across many.
-    let fat = std::env::var("LING_BUILD_LTO").map(|v| v == "fat").unwrap_or(false);
+    let fat = std::env::var("LING_BUILD_LTO")
+        .map(|v| v == "fat")
+        .unwrap_or(false);
     let (lto, cgu) = if fat { ("fat", 1) } else { ("thin", 16) };
     format!(
         r#"[workspace]

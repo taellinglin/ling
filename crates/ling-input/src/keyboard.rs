@@ -21,31 +21,40 @@ impl Key {
     // Letters (HID usage ids 0x04..=0x1D).
     pub const A: Self = Self(0x04);
     pub const B: Self = Self(0x05);
+    pub const Backspace: Self = Self(0x2A);
     pub const C: Self = Self(0x06);
     pub const D: Self = Self(0x07);
+    pub const Down: Self = Self(0x51);
     pub const E: Self = Self(0x08);
+    pub const Enter: Self = Self(0x28);
+    pub const Escape: Self = Self(0x29);
     pub const F: Self = Self(0x09);
+    pub const F1: Self = Self(0x3A);
+    pub const F10: Self = Self(0x43);
+    pub const F11: Self = Self(0x44);
+    pub const F12: Self = Self(0x45);
+    pub const F2: Self = Self(0x3B);
+    pub const F3: Self = Self(0x3C);
+    pub const F4: Self = Self(0x3D);
+    pub const F5: Self = Self(0x3E);
+    pub const F6: Self = Self(0x3F);
+    pub const F7: Self = Self(0x40);
+    pub const F8: Self = Self(0x41);
+    pub const F9: Self = Self(0x42);
     pub const G: Self = Self(0x0A);
     pub const H: Self = Self(0x0B);
     pub const I: Self = Self(0x0C);
     pub const J: Self = Self(0x0D);
     pub const K: Self = Self(0x0E);
     pub const L: Self = Self(0x0F);
+    pub const Left: Self = Self(0x50);
+    pub const LeftAlt: Self = Self(0xE2);
+    pub const LeftCtrl: Self = Self(0xE0);
+    pub const LeftMeta: Self = Self(0xE3);
+    pub const LeftShift: Self = Self(0xE1);
     pub const M: Self = Self(0x10);
     pub const N: Self = Self(0x11);
-    pub const O: Self = Self(0x12);
-    pub const P: Self = Self(0x13);
-    pub const Q: Self = Self(0x14);
-    pub const R: Self = Self(0x15);
-    pub const S: Self = Self(0x16);
-    pub const T: Self = Self(0x17);
-    pub const U: Self = Self(0x18);
-    pub const V: Self = Self(0x19);
-    pub const W: Self = Self(0x1A);
-    pub const X: Self = Self(0x1B);
-    pub const Y: Self = Self(0x1C);
-    pub const Z: Self = Self(0x1D);
-
+    pub const Num0: Self = Self(0x27);
     // Number row (0x1E..=0x27).
     pub const Num1: Self = Self(0x1E);
     pub const Num2: Self = Self(0x1F);
@@ -56,40 +65,26 @@ impl Key {
     pub const Num7: Self = Self(0x24);
     pub const Num8: Self = Self(0x25);
     pub const Num9: Self = Self(0x26);
-    pub const Num0: Self = Self(0x27);
-
-    pub const Enter: Self = Self(0x28);
-    pub const Escape: Self = Self(0x29);
-    pub const Backspace: Self = Self(0x2A);
-    pub const Tab: Self = Self(0x2B);
-    pub const Space: Self = Self(0x2C);
-
-    pub const F1: Self = Self(0x3A);
-    pub const F2: Self = Self(0x3B);
-    pub const F3: Self = Self(0x3C);
-    pub const F4: Self = Self(0x3D);
-    pub const F5: Self = Self(0x3E);
-    pub const F6: Self = Self(0x3F);
-    pub const F7: Self = Self(0x40);
-    pub const F8: Self = Self(0x41);
-    pub const F9: Self = Self(0x42);
-    pub const F10: Self = Self(0x43);
-    pub const F11: Self = Self(0x44);
-    pub const F12: Self = Self(0x45);
-
+    pub const O: Self = Self(0x12);
+    pub const P: Self = Self(0x13);
+    pub const Q: Self = Self(0x14);
+    pub const R: Self = Self(0x15);
     pub const Right: Self = Self(0x4F);
-    pub const Left: Self = Self(0x50);
-    pub const Down: Self = Self(0x51);
-    pub const Up: Self = Self(0x52);
-
-    pub const LeftCtrl: Self = Self(0xE0);
-    pub const LeftShift: Self = Self(0xE1);
-    pub const LeftAlt: Self = Self(0xE2);
-    pub const LeftMeta: Self = Self(0xE3);
-    pub const RightCtrl: Self = Self(0xE4);
-    pub const RightShift: Self = Self(0xE5);
     pub const RightAlt: Self = Self(0xE6);
+    pub const RightCtrl: Self = Self(0xE4);
     pub const RightMeta: Self = Self(0xE7);
+    pub const RightShift: Self = Self(0xE5);
+    pub const S: Self = Self(0x16);
+    pub const Space: Self = Self(0x2C);
+    pub const T: Self = Self(0x17);
+    pub const Tab: Self = Self(0x2B);
+    pub const U: Self = Self(0x18);
+    pub const Up: Self = Self(0x52);
+    pub const V: Self = Self(0x19);
+    pub const W: Self = Self(0x1A);
+    pub const X: Self = Self(0x1B);
+    pub const Y: Self = Self(0x1C);
+    pub const Z: Self = Self(0x1D);
 
     #[must_use]
     pub const fn scancode(self) -> u32 {
@@ -151,10 +146,12 @@ impl Keyboard {
     pub fn is_down(&self, key: Key) -> bool {
         self.keys.get(&key).is_some_and(Button::is_down)
     }
+
     #[must_use]
     pub fn just_pressed(&self, key: Key) -> bool {
         self.keys.get(&key).is_some_and(Button::just_pressed)
     }
+
     #[must_use]
     pub fn just_released(&self, key: Key) -> bool {
         self.keys.get(&key).is_some_and(Button::just_released)

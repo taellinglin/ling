@@ -52,9 +52,11 @@ impl Animator {
         self.rigs.push(rig);
         self.rigs.len() - 1
     }
+
     pub fn rig(&self, h: usize) -> Option<&Rig> {
         self.rigs.get(h)
     }
+
     pub fn rig_mut(&mut self, h: usize) -> Option<&mut Rig> {
         self.rigs.get_mut(h)
     }
@@ -64,6 +66,7 @@ impl Animator {
         self.timelines.push(Timeline::new(duration));
         self.timelines.len() - 1
     }
+
     pub fn timeline(&self, h: usize) -> Option<&Timeline> {
         self.timelines.get(h)
     }

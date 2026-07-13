@@ -97,6 +97,7 @@ impl Wave {
             _ => Wave::Sine,
         }
     }
+
     #[inline]
     fn sample(self, phase: f32) -> f32 {
         match self {
@@ -148,6 +149,7 @@ impl Blip {
         self.age += dt;
         s
     }
+
     fn done(&self) -> bool {
         self.age >= self.dur
     }
@@ -231,6 +233,7 @@ impl SfxVoice {
         self.age += dt;
         s
     }
+
     fn done(&self) -> bool {
         self.age >= self.dur
     }
@@ -303,10 +306,10 @@ impl MorphVoice {
         let ks_len = ((sr / freq).round() as usize).clamp(2, 4096);
         // material → (excite, damp, feedback, fm ratio, fm index)
         let (excite, ks_damp, ks_fb, ratio, index) = match material {
-            0 => (1u8, 0.55, 0.992, 2.0, 0.5),    // Bowed Silk (sustained string)
-            1 => (0u8, 0.80, 0.990, 3.0, 0.9),    // Plucked Bamboo (bright pluck)
-            2 => (2u8, 0.48, 0.991, 1.0, 0.4),    // Blown Jade (air column)
-            _ => (3u8, 0.90, 0.997, 1.414, 1.3),  // Struck Bronze (long inharmonic metal)
+            0 => (1u8, 0.55, 0.992, 2.0, 0.5), // Bowed Silk (sustained string)
+            1 => (0u8, 0.80, 0.990, 3.0, 0.9), // Plucked Bamboo (bright pluck)
+            2 => (2u8, 0.48, 0.991, 1.0, 0.4), // Blown Jade (air column)
+            _ => (3u8, 0.90, 0.997, 1.414, 1.3), // Struck Bronze (long inharmonic metal)
         };
         let mut s = freq.to_bits().wrapping_mul(2654435761).wrapping_add(1);
         let mut ks = vec![0.0f32; ks_len];
@@ -343,11 +346,13 @@ impl MorphVoice {
             w,
         }
     }
+
     #[inline]
     fn noise(&mut self) -> f32 {
         self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
         ((self.seed >> 9) as f32 / 4_194_304.0) - 1.0
     }
+
     #[inline]
     fn next(&mut self, dt: f32) -> f32 {
         let atk = 0.006;
@@ -359,10 +364,22 @@ impl MorphVoice {
         // ── excitation into the resonator ──
         let n = self.noise();
         let exc = match self.excite {
-            1 => n * 0.5 * env,                                  // bow: sustained noise
-            2 => n * 0.32 * env,                                 // blow: breath
-            3 => if self.age < 0.0015 { n * 1.5 } else { 0.0 },  // strike: impulse (+prefill)
-            _ => if self.age < 0.004 { n * 0.4 } else { 0.0 },   // pluck: brief top-up (+prefill)
+            1 => n * 0.5 * env,  // bow: sustained noise
+            2 => n * 0.32 * env, // blow: breath
+            3 => {
+                if self.age < 0.0015 {
+                    n * 1.5
+                } else {
+                    0.0
+                }
+            }, // strike: impulse (+prefill)
+            _ => {
+                if self.age < 0.004 {
+                    n * 0.4
+                } else {
+                    0.0
+                }
+            }, // pluck: brief top-up (+prefill)
         };
         // ── organic core: Karplus-Strong ──
         let cur = self.ks[self.ks_idx];
@@ -395,6 +412,7 @@ impl MorphVoice {
         self.age += dt;
         out * self.amp * env
     }
+
     fn done(&self) -> bool {
         self.age >= self.dur
     }
@@ -421,6 +439,7 @@ impl Delay {
             mix: 0.0,
         }
     }
+
     #[inline]
     fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         if self.mix <= 0.0 || self.len == 0 {
@@ -448,6 +467,7 @@ impl Comb {
     fn new(n: usize, fb: f32) -> Self {
         Self { buf: vec![0.0; n.max(1)], idx: 0, fb, store: 0.0, damp: 0.2 }
     }
+
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let y = self.buf[self.idx];
@@ -466,6 +486,7 @@ impl Allpass {
     fn new(n: usize) -> Self {
         Self { buf: vec![0.0; n.max(1)], idx: 0 }
     }
+
     #[inline]
     fn process(&mut self, x: f32) -> f32 {
         let buf = self.buf[self.idx];
@@ -497,6 +518,7 @@ impl Reverb {
             mix: 0.0,
         }
     }
+
     #[inline]
     fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         if self.mix <= 0.0 {
@@ -527,6 +549,7 @@ impl LowPass {
     fn new() -> Self {
         Self { yl: [0.0; 2], yr: [0.0; 2], cutoff: 1.0, target: 1.0 }
     }
+
     #[inline]
     fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
         // glide toward target to avoid zipper noise
@@ -901,8 +924,9 @@ impl AudioEngine {
                 s.morph_voices.remove(0);
             }
             let sr = s.sample_rate as f32;
-            s.morph_voices
-                .push(MorphVoice::new(sr, freq, amp, dur, material, morph, x, y, z, w));
+            s.morph_voices.push(MorphVoice::new(
+                sr, freq, amp, dur, material, morph, x, y, z, w,
+            ));
         }
     }
 
@@ -973,11 +997,13 @@ impl AudioEngine {
             s.delay.mix = mix.clamp(0.0, 1.0);
         }
     }
+
     pub fn fx_reverb(&self, mix: f32) {
         if let Ok(mut s) = self.state.lock() {
             s.reverb.mix = mix.clamp(0.0, 1.0);
         }
     }
+
     /// Master low-pass cutoff ∈ (0,1]; 1.0 ≈ open, lower = muffled/underwater.
     pub fn fx_lowpass(&self, cutoff01: f32) {
         if let Ok(mut s) = self.state.lock() {
@@ -1281,10 +1307,19 @@ mod tests {
         assert!(matches!(Wave::from_name("triangle"), Wave::Triangle));
         assert!(matches!(Wave::from_name("noise"), Wave::Noise));
         assert!(matches!(Wave::from_name("whatever"), Wave::Sine)); // default
-        for wave in [Wave::Sine, Wave::Square, Wave::Saw, Wave::Triangle, Wave::Noise] {
+        for wave in [
+            Wave::Sine,
+            Wave::Square,
+            Wave::Saw,
+            Wave::Triangle,
+            Wave::Noise,
+        ] {
             for i in 0..256 {
                 let v = wave.sample(i as f32 / 256.0);
-                assert!(v.is_finite() && v.abs() <= 1.0, "{wave:?} out of range: {v}");
+                assert!(
+                    v.is_finite() && v.abs() <= 1.0,
+                    "{wave:?} out of range: {v}"
+                );
             }
         }
     }
@@ -1293,15 +1328,38 @@ mod tests {
     #[test]
     fn channels_mix_together() {
         let mut st = AudioState::new(44100);
-        st.tones[0] = Some(Tone::new(ToneParams { freq: 330.0, amp: 0.4, ..Default::default() }));
+        st.tones[0] = Some(Tone::new(ToneParams {
+            freq: 330.0,
+            amp: 0.4,
+            ..Default::default()
+        }));
         st.sfx.push(SfxVoice {
-            x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 660.0, amp: 0.4,
-            wave: Wave::Square, dur: 0.5, age: 0.0, phase: 0.0, w_phase: 0.0, seed: 7,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+            freq: 660.0,
+            amp: 0.4,
+            wave: Wave::Square,
+            dur: 0.5,
+            age: 0.0,
+            phase: 0.0,
+            w_phase: 0.0,
+            seed: 7,
         });
-        st.samples.push((std::sync::Arc::new(vec![0.3f32; 256]), 44100));
+        st.samples
+            .push((std::sync::Arc::new(vec![0.3f32; 256]), 44100));
         st.sample_voices.push(SampleVoice {
-            id: 1, sample: 0, pos: 0.0, x: 0.0, y: 0.0, z: 0.0, w: 1.0,
-            vol: 0.6, looping: true, active: true,
+            id: 1,
+            sample: 0,
+            pos: 0.0,
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 1.0,
+            vol: 0.6,
+            looping: true,
+            active: true,
         });
         let mut energy = 0.0f64;
         for _ in 0..2000 {
@@ -1309,7 +1367,10 @@ mod tests {
             assert!(l.is_finite() && r.is_finite());
             energy += (l * l + r * r) as f64;
         }
-        assert!(energy > 1.0, "all three channels should contribute audible energy");
+        assert!(
+            energy > 1.0,
+            "all three channels should contribute audible energy"
+        );
     }
 
     // ── Many simultaneous loud channels must never exceed digital full-scale ──
@@ -1319,13 +1380,25 @@ mod tests {
         st.master_volume = 1.0;
         for i in 0..st.tones.len() {
             st.tones[i] = Some(Tone::new(ToneParams {
-                freq: 110.0 + i as f32 * 25.0, amp: 1.0, ..Default::default()
+                freq: 110.0 + i as f32 * 25.0,
+                amp: 1.0,
+                ..Default::default()
             }));
         }
         for i in 0..60 {
             st.sfx.push(SfxVoice {
-                x: 0.0, y: 0.0, z: 0.0, w: 1.0, freq: 200.0 + i as f32 * 30.0, amp: 1.0,
-                wave: Wave::Saw, dur: 1.0, age: 0.0, phase: 0.0, w_phase: 0.0, seed: i + 1,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+                freq: 200.0 + i as f32 * 30.0,
+                amp: 1.0,
+                wave: Wave::Saw,
+                dur: 1.0,
+                age: 0.0,
+                phase: 0.0,
+                w_phase: 0.0,
+                seed: i + 1,
             });
         }
         for _ in 0..44100 {
@@ -1347,7 +1420,12 @@ mod tests {
             st.reverb.mix = 0.0;
             st.lowpass.target = 1.0;
             st.lowpass.cutoff = 1.0;
-            st.tones[0] = Some(Tone::new(ToneParams { x, freq: 440.0, amp: 0.6, ..Default::default() }));
+            st.tones[0] = Some(Tone::new(ToneParams {
+                x,
+                freq: 440.0,
+                amp: 0.6,
+                ..Default::default()
+            }));
             let (mut el, mut er) = (0.0f64, 0.0f64);
             for _ in 0..4000 {
                 let (l, r) = st.next_sample();
@@ -1357,9 +1435,15 @@ mod tests {
             (el, er)
         };
         let (ll, lr) = energy(-8.0); // hard left
-        assert!(ll > lr * 1.5, "left-positioned source should favour L ({ll} vs {lr})");
+        assert!(
+            ll > lr * 1.5,
+            "left-positioned source should favour L ({ll} vs {lr})"
+        );
         let (rl, rr) = energy(8.0); // hard right
-        assert!(rr > rl * 1.5, "right-positioned source should favour R ({rl} vs {rr})");
+        assert!(
+            rr > rl * 1.5,
+            "right-positioned source should favour R ({rl} vs {rr})"
+        );
     }
 
     // ── THREADS: the cpal callback thread and the game thread share AudioState
@@ -1382,13 +1466,26 @@ mod tests {
                     if let Ok(mut s) = state.lock() {
                         let slot = (n as usize) % s.tones.len();
                         s.tones[slot] = Some(Tone::new(ToneParams {
-                            freq: 200.0 + (n % 800) as f32, amp: 0.5, ..Default::default()
+                            freq: 200.0 + (n % 800) as f32,
+                            amp: 0.5,
+                            ..Default::default()
                         }));
-                        if s.sfx.len() >= 64 { s.sfx.remove(0); } // same cap the engine enforces
+                        if s.sfx.len() >= 64 {
+                            s.sfx.remove(0);
+                        } // same cap the engine enforces
                         s.sfx.push(SfxVoice {
-                            x: ((n % 17) as f32) - 8.0, y: 0.0, z: 0.0, w: 1.0,
-                            freq: 440.0, amp: 0.4, wave: Wave::Triangle,
-                            dur: 0.05, age: 0.0, phase: 0.0, w_phase: 0.0, seed: n.max(1),
+                            x: ((n % 17) as f32) - 8.0,
+                            y: 0.0,
+                            z: 0.0,
+                            w: 1.0,
+                            freq: 440.0,
+                            amp: 0.4,
+                            wave: Wave::Triangle,
+                            dur: 0.05,
+                            age: 0.0,
+                            phase: 0.0,
+                            w_phase: 0.0,
+                            seed: n.max(1),
                         });
                     }
                     n = n.wrapping_add(1);
@@ -1408,7 +1505,8 @@ mod tests {
                     if let Ok(mut s) = state.lock() {
                         for _ in 0..256 {
                             let (l, r) = s.next_sample();
-                            if !(l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0) {
+                            if !(l.is_finite() && r.is_finite() && l.abs() <= 1.0 && r.abs() <= 1.0)
+                            {
                                 bad += 1;
                             }
                             produced += 1;
@@ -1426,24 +1524,34 @@ mod tests {
         producer.join().expect("producer thread must not panic");
         let (produced, bad) = consumer.join().expect("consumer thread must not panic");
         assert!(produced > 0, "consumer should have mixed some samples");
-        assert_eq!(bad, 0, "every concurrently-mixed sample must be finite and in range");
+        assert_eq!(
+            bad, 0,
+            "every concurrently-mixed sample must be finite and in range"
+        );
     }
 
     // ── YIN-YANG morph voice: every material makes sound, stays bounded ───────
     #[test]
     fn morph_voice_each_material_is_audible_and_bounded() {
         for material in 0u8..4 {
-            let mut v = MorphVoice::new(44100.0, 220.0, 0.7, 0.4, material, 0.5, 0.0, 0.0, 0.0, 1.0);
+            let mut v =
+                MorphVoice::new(44100.0, 220.0, 0.7, 0.4, material, 0.5, 0.0, 0.0, 0.0, 1.0);
             let dt = 1.0 / 44100.0;
             let mut peak = 0.0f32;
             let mut steps = 0;
             while !v.done() && steps < 44100 {
                 let s = v.next(dt);
-                assert!(s.is_finite() && s.abs() <= 1.0, "material {material} out of range: {s}");
+                assert!(
+                    s.is_finite() && s.abs() <= 1.0,
+                    "material {material} out of range: {s}"
+                );
                 peak = peak.max(s.abs());
                 steps += 1;
             }
-            assert!(peak > 0.01, "material {material} should produce sound (peak {peak})");
+            assert!(
+                peak > 0.01,
+                "material {material} should produce sound (peak {peak})"
+            );
         }
     }
 
@@ -1463,6 +1571,9 @@ mod tests {
         let light = render(0.0);
         let dark = render(1.0);
         // Dark adds FM sidebands + crush + tanh drive → a materially different signal.
-        assert!((light - dark).abs() / (light + dark + 1e-6) > 0.05, "light {light} vs dark {dark} should differ");
+        assert!(
+            (light - dark).abs() / (light + dark + 1e-6) > 0.05,
+            "light {light} vs dark {dark} should differ"
+        );
     }
 }

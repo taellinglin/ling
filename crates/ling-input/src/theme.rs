@@ -23,24 +23,29 @@ impl Color {
     pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         Self { r, g, b, a }
     }
+
     #[must_use]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Self::rgba(r, g, b, 255)
     }
+
     /// From a packed `0xRRGGBB` literal.
     #[must_use]
     pub const fn hex(rgb: u32) -> Self {
         Self::rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
     }
+
     #[must_use]
     pub const fn with_alpha(self, a: u8) -> Self {
         Self { a, ..self }
     }
+
     /// Multiply alpha by `k` (`0..=1`), for fade-out of idle controls.
     #[must_use]
     pub fn faded(self, k: f32) -> Self {
         Self { a: (f32::from(self.a) * k.clamp(0.0, 1.0)) as u8, ..self }
     }
+
     /// Linear-ish blend toward `other` by `t` (`0..=1`).
     #[must_use]
     pub fn lerp(self, other: Self, t: f32) -> Self {
@@ -53,6 +58,7 @@ impl Color {
             a: mix(self.a, other.a),
         }
     }
+
     /// As normalized `[r, g, b, a]` floats for a renderer.
     #[must_use]
     pub fn to_f32(self) -> [f32; 4] {

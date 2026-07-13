@@ -77,7 +77,9 @@ impl LingCompiler {
         source: &str,
         source_dir: Option<std::path::PathBuf>,
     ) -> LingResult<()> {
-        let dir = source_dir.clone().unwrap_or_else(|| Path::new(".").to_path_buf());
+        let dir = source_dir
+            .clone()
+            .unwrap_or_else(|| Path::new(".").to_path_buf());
         let flat = mir::flatten_source(source, &dir)?;
         let mir = mir::lower_and_optimize(&flat, self.config.optimization);
         let mir_prog = ling_codegen::MirProgram::new(mir, "__main__".to_string());

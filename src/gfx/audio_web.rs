@@ -13,7 +13,10 @@
 use js_sys::{Array, Function, Reflect, Uint8Array};
 use std::cell::RefCell;
 use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{AudioContext, AudioBuffer, AudioBufferSourceNode, GainNode, OscillatorNode, OscillatorType, PannerNode};
+use web_sys::{
+    AudioBuffer, AudioBufferSourceNode, AudioContext, GainNode, OscillatorNode, OscillatorType,
+    PannerNode,
+};
 
 struct Tone {
     osc: OscillatorNode,
@@ -246,7 +249,7 @@ pub fn load_bgm(path: &str, vol: f32) {
         Err(e) => {
             web_sys::console::warn_1(&format!("Failed to fetch BGM {}: {}", path, e).into());
             return;
-        }
+        },
     };
 
     AUDIO.with(|a| {
@@ -291,16 +294,11 @@ pub fn load_bgm(path: &str, vol: f32) {
                         return;
                     }
 
-                    state.bgm = Some(BgmState {
-                        buffer,
-                        source: Some(source),
-                        gain,
-                        volume: vol,
-                    });
+                    state.bgm = Some(BgmState { buffer, source: Some(source), gain, volume: vol });
                 },
                 Err(e) => {
                     web_sys::console::warn_1(&format!("Failed to decode audio: {}", e).into());
-                }
+                },
             }
         }
     });
@@ -310,7 +308,12 @@ pub fn load_bgm(path: &str, vol: f32) {
 
 /// Convert interleaved PCM (`stereo`, channel-count `channels`) into a Web
 /// Audio `AudioBuffer`. Supports mono and stereo; silently clamps to 2 ch.
-fn pcm_to_audio_buffer(ctx: &AudioContext, stereo: &[f32], channels: usize, rate: u32) -> Option<AudioBuffer> {
+fn pcm_to_audio_buffer(
+    ctx: &AudioContext,
+    stereo: &[f32],
+    channels: usize,
+    rate: u32,
+) -> Option<AudioBuffer> {
     if channels == 0 || stereo.is_empty() || rate == 0 {
         return None;
     }
@@ -519,7 +522,11 @@ pub fn play_sample(id: usize, x: f32, y: f32, z: f32, vol: f32, looping: bool) {
                 Ok(p) => p,
                 Err(_) => return,
             };
-            js_call(panner.as_ref(), "setPosition", &[x as f64, y as f64, z as f64]);
+            js_call(
+                panner.as_ref(),
+                "setPosition",
+                &[x as f64, y as f64, z as f64],
+            );
 
             if gain.connect_with_audio_node(&panner).is_err() {
                 return;
@@ -583,8 +590,7 @@ fn fetch_audio_sync(path: &str) -> Result<Vec<u8>, String> {
         path.replace('\\', "\\\\").replace('\'', "\\'")
     );
 
-    let result = js_sys::eval(&script)
-        .map_err(|e| format!("XHR failed: {:?}", e))?;
+    let result = js_sys::eval(&script).map_err(|e| format!("XHR failed: {:?}", e))?;
 
     let arr = Uint8Array::new(&result);
     let mut bytes = vec![0u8; arr.length() as usize];

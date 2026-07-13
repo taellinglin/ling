@@ -58,6 +58,7 @@ impl Palette {
     pub fn new(a: [f32; 3], b: [f32; 3], c: [f32; 3], d: [f32; 3]) -> Self {
         Self { a, b, c, d }
     }
+
     pub fn rainbow() -> Self {
         Self::new(
             [0.5, 0.5, 0.5],
@@ -66,6 +67,7 @@ impl Palette {
             [0.0, 0.333, 0.667],
         )
     }
+
     pub fn fire() -> Self {
         Self::new(
             [0.8, 0.4, 0.1],
@@ -74,6 +76,7 @@ impl Palette {
             [0.0, 0.5, 0.8],
         )
     }
+
     pub fn ocean() -> Self {
         Self::new(
             [0.1, 0.4, 0.7],
@@ -82,6 +85,7 @@ impl Palette {
             [0.3, 0.0, 0.6],
         )
     }
+
     pub fn psychedelic() -> Self {
         Self::new(
             [0.5, 0.5, 0.5],
@@ -90,6 +94,7 @@ impl Palette {
             [0.0, 0.15, 0.3],
         )
     }
+
     pub fn neon() -> Self {
         Self::new(
             [0.5, 0.5, 0.5],
@@ -98,6 +103,7 @@ impl Palette {
             [0.5, 0.2, 0.25],
         )
     }
+
     pub fn forest() -> Self {
         Self::new(
             [0.3, 0.5, 0.2],
@@ -113,10 +119,12 @@ impl Palette {
                 .clamp(0.0, 1.0)
         })
     }
+
     pub fn rgba(&self, t: f32) -> [u8; 4] {
         let [r, g, b] = self.eval(t);
         [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8, 255]
     }
+
     pub fn rgba_alpha(&self, t: f32, a: f32) -> [u8; 4] {
         let [r, g, b] = self.eval(t);
         [
@@ -143,12 +151,14 @@ impl TexBuf {
             height,
         }
     }
+
     pub fn set(&mut self, x: u32, y: u32, rgba: [u8; 4]) {
         let i = ((y * self.width + x) * 4) as usize;
         if i + 3 < self.data.len() {
             self.data[i..i + 4].copy_from_slice(&rgba);
         }
     }
+
     pub fn into_vec(self) -> Vec<u8> {
         self.data
     }

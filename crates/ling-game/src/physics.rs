@@ -11,9 +11,11 @@ impl Vec2 {
     pub fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
+
     pub fn len(self) -> f32 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
+
     pub fn normalise(self) -> Self {
         let l = self.len();
         if l < 1e-9 {
@@ -22,6 +24,7 @@ impl Vec2 {
             Self::new(self.x / l, self.y / l)
         }
     }
+
     pub fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y
     }
@@ -29,18 +32,21 @@ impl Vec2 {
 
 impl std::ops::Add for Vec2 {
     type Output = Self;
+
     fn add(self, r: Self) -> Self {
         Self::new(self.x + r.x, self.y + r.y)
     }
 }
 impl std::ops::Sub for Vec2 {
     type Output = Self;
+
     fn sub(self, r: Self) -> Self {
         Self::new(self.x - r.x, self.y - r.y)
     }
 }
 impl std::ops::Mul<f32> for Vec2 {
     type Output = Self;
+
     fn mul(self, s: f32) -> Self {
         Self::new(self.x * s, self.y * s)
     }
@@ -88,6 +94,7 @@ impl Aabb {
             max: Vec2::new(cx + hw, cy + hh),
         }
     }
+
     pub fn overlaps(self, other: Self) -> bool {
         self.min.x < other.max.x
             && self.max.x > other.min.x

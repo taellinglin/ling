@@ -33,9 +33,11 @@ impl Mesh {
         self.verts.push([x, y, z]);
         i
     }
+
     fn tri(&mut self, a: u32, b: u32, c: u32) {
         self.tris.push([a, b, c]);
     }
+
     fn edge(&mut self, a: u32, b: u32) {
         self.edges.push([a, b]);
     }

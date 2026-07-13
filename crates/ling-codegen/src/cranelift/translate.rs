@@ -262,7 +262,10 @@ pub(crate) fn translate_rvalue(
         },
         Rvalue::UnaryOp(op, operand) => {
             let v = translate_op(operand, builder, ctx);
-            (translate_unop(op, builder, v, ctx.runtime_refs), Repr::Boxed)
+            (
+                translate_unop(op, builder, v, ctx.runtime_refs),
+                Repr::Boxed,
+            )
         },
         Rvalue::Call { func: callee, args } => {
             let callee_name = match callee {
@@ -332,8 +335,7 @@ fn translate_binop_rvalue(
     builder: &mut FunctionBuilder,
     ctx: &TransCtx,
 ) -> (Value, Repr) {
-    let both_int =
-        ctx.nt.operand_is_int(ctx.fname, lhs) && ctx.nt.operand_is_int(ctx.fname, rhs);
+    let both_int = ctx.nt.operand_is_int(ctx.fname, lhs) && ctx.nt.operand_is_int(ctx.fname, rhs);
     if both_int {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul => {
@@ -1014,17 +1016,30 @@ pub(crate) fn emit_builtin_call(
         // List ops dispatch straight to their O(1) ABI symbols, bypassing the
         // generic `__ling_builtin` → interpreter path (which deep-copies the Vec
         // on every push/get). Names mirror the interpreter's alias sets.
-        "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" => {
+        "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" =>
+        {
             return emit_runtime_call0(builder, "__ling_list_new", runtime_refs);
         },
         "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" => {
             if args.len() >= 2 {
-                return emit_runtime_call2(builder, "__ling_list_push", args[0], args[1], runtime_refs);
+                return emit_runtime_call2(
+                    builder,
+                    "__ling_list_push",
+                    args[0],
+                    args[1],
+                    runtime_refs,
+                );
             }
         },
         "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" => {
             if args.len() >= 2 {
-                return emit_runtime_call2(builder, "__ling_list_get", args[0], args[1], runtime_refs);
+                return emit_runtime_call2(
+                    builder,
+                    "__ling_list_get",
+                    args[0],
+                    args[1],
+                    runtime_refs,
+                );
             }
         },
         _ => {},

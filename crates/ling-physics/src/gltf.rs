@@ -103,6 +103,16 @@ pub struct GltfAnimation {
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
+/// A procedurally-generated bone for auto-rigging a mesh that shipped with no
+/// skeleton. `head`/`tail` are rest positions in mesh-local space; `parent` is
+/// an index into the bone list (or -1 for the root).
+#[derive(Clone, Debug)]
+pub struct SimpleBone {
+    pub head: Vec3,
+    pub tail: Vec3,
+    pub parent: i32,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct GltfModel {
     pub meshes: Vec<GltfMesh>,
@@ -110,6 +120,16 @@ pub struct GltfModel {
     pub skins: Vec<GltfSkin>,
     pub animations: Vec<GltfAnimation>,
     pub root_nodes: Vec<usize>,
+    /// Procedural humanoid skeleton (empty until `autorig()` is called).
+    pub bones: Vec<SimpleBone>,
+}
+
+/// Shortest distance from point `p` to segment `a`→`b`.
+fn point_seg_dist(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let ab = b - a;
+    let l2 = ab.length_squared();
+    let t = if l2 > 1e-9 { ((p - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (p - (a + ab * t)).length()
 }
 
 impl GltfModel {
@@ -197,6 +217,129 @@ impl GltfModel {
     #[cfg(not(feature = "with-gltf"))]
     pub fn load(_path: &str) -> Result<Self, String> {
         Err("compile with feature 'with-gltf' to load glTF files".to_string())
+    }
+
+    /// Procedurally rig a mesh that has no skeleton: build a 12-bone humanoid
+    /// skeleton from the model's bounding box and weight-paint every vertex to
+    /// its nearest two bones (envelope skinning). Returns the bone count.
+    pub fn autorig(&mut self) -> usize {
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        for m in &self.meshes {
+            for v in &m.verts {
+                lo = lo.min(v.pos);
+                hi = hi.max(v.pos);
+            }
+        }
+        if !lo.is_finite() || !hi.is_finite() {
+            return 0;
+        }
+        let h = (hi.y - lo.y).max(1e-3);
+        let cx = (lo.x + hi.x) * 0.5;
+        let cz = (lo.z + hi.z) * 0.5;
+        let aw = (hi.x - lo.x).max(1e-3) * 0.5; // half-width, for arm/leg spread
+        let y = |f: f32| lo.y + f * h;
+        let bone = |hx: f32, hy: f32, tx: f32, ty: f32, p: i32| SimpleBone {
+            head: Vec3::new(hx, hy, cz),
+            tail: Vec3::new(tx, ty, cz),
+            parent: p,
+        };
+        self.bones = vec![
+            bone(cx, y(0.50), cx, y(0.62), -1),                            // 0 hips
+            bone(cx, y(0.62), cx, y(0.74), 0),                             // 1 spine
+            bone(cx, y(0.74), cx, y(0.84), 1),                             // 2 chest
+            bone(cx, y(0.86), cx, y(1.00), 2),                             // 3 head
+            bone(cx + aw * 0.28, y(0.80), cx + aw * 0.60, y(0.78), 2),     // 4 L upper arm
+            bone(cx + aw * 0.60, y(0.78), cx + aw * 0.95, y(0.70), 4),     // 5 L forearm
+            bone(cx - aw * 0.28, y(0.80), cx - aw * 0.60, y(0.78), 2),     // 6 R upper arm
+            bone(cx - aw * 0.60, y(0.78), cx - aw * 0.95, y(0.70), 6),     // 7 R forearm
+            bone(cx + aw * 0.18, y(0.50), cx + aw * 0.18, y(0.26), 0),     // 8 L thigh
+            bone(cx + aw * 0.18, y(0.26), cx + aw * 0.18, y(0.02), 8),     // 9 L shin
+            bone(cx - aw * 0.18, y(0.50), cx - aw * 0.18, y(0.26), 0),     // 10 R thigh
+            bone(cx - aw * 0.18, y(0.26), cx - aw * 0.18, y(0.02), 10),    // 11 R shin
+        ];
+        // weight each vertex to its nearest two bones (inverse-square falloff)
+        for m in &mut self.meshes {
+            for v in &mut m.verts {
+                let mut best0 = (f32::INFINITY, 0usize);
+                let mut best1 = (f32::INFINITY, 0usize);
+                for (i, b) in self.bones.iter().enumerate() {
+                    let d = point_seg_dist(v.pos, b.head, b.tail);
+                    if d < best0.0 {
+                        best1 = best0;
+                        best0 = (d, i);
+                    } else if d < best1.0 {
+                        best1 = (d, i);
+                    }
+                }
+                let w0 = 1.0 / (best0.0 * best0.0 + 1e-4);
+                let w1 = 1.0 / (best1.0 * best1.0 + 1e-4);
+                let s = w0 + w1;
+                v.joints = [best0.1 as u16, best1.1 as u16, 0, 0];
+                v.weights = [w0 / s, w1 / s, 0.0, 0.0];
+            }
+        }
+        self.bones.len()
+    }
+
+    /// Forward-kinematics: turn a per-bone local rotation pose (flat XYZ-euler
+    /// radians, 3 per bone) into per-bone linear-blend skinning matrices.
+    pub fn skinning_mats(&self, euler: &[f32]) -> Vec<Mat4> {
+        let n = self.bones.len();
+        let mut world = vec![Mat4::IDENTITY; n];
+        for i in 0..n {
+            let b = &self.bones[i];
+            let ex = euler.get(i * 3).copied().unwrap_or(0.0);
+            let ey = euler.get(i * 3 + 1).copied().unwrap_or(0.0);
+            let ez = euler.get(i * 3 + 2).copied().unwrap_or(0.0);
+            let r = Quat::from_euler(glam::EulerRot::XYZ, ex, ey, ez);
+            let parent_head = if b.parent < 0 {
+                Vec3::ZERO
+            } else {
+                self.bones[b.parent as usize].head
+            };
+            let local = Mat4::from_translation(b.head - parent_head) * Mat4::from_quat(r);
+            world[i] = if b.parent < 0 {
+                local
+            } else {
+                world[b.parent as usize] * local
+            };
+        }
+        // skinning = posed_world * rest_world⁻¹, and rest_world = translate(head)
+        for i in 0..n {
+            world[i] *= Mat4::from_translation(-self.bones[i].head);
+        }
+        world
+    }
+
+    /// Skin every mesh with the given pose; returns per-mesh, per-vertex
+    /// deformed positions in mesh-local space. Falls back to the rest positions
+    /// when the model has not been auto-rigged.
+    pub fn skin_local(&self, euler: &[f32]) -> Vec<Vec<[f32; 3]>> {
+        if self.bones.is_empty() {
+            return self
+                .meshes
+                .iter()
+                .map(|m| m.verts.iter().map(|v| [v.pos.x, v.pos.y, v.pos.z]).collect())
+                .collect();
+        }
+        let mats = self.skinning_mats(euler);
+        self.meshes
+            .iter()
+            .map(|m| {
+                m.verts
+                    .iter()
+                    .map(|v| {
+                        let p = v.pos.extend(1.0);
+                        let j0 = v.joints[0] as usize;
+                        let j1 = v.joints[1] as usize;
+                        let sp = (mats[j0] * p).truncate() * v.weights[0]
+                            + (mats[j1] * p).truncate() * v.weights[1];
+                        [sp.x, sp.y, sp.z]
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// Build a unit cube model for testing.

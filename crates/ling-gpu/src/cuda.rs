@@ -98,7 +98,10 @@ impl CudaBackend {
 
     fn device_name(&self) -> &str {
         // Strip the "CUDA[n]: " prefix for the aggregate multi-GPU label.
-        self.name.split_once(": ").map(|(_, n)| n).unwrap_or(&self.name)
+        self.name
+            .split_once(": ")
+            .map(|(_, n)| n)
+            .unwrap_or(&self.name)
     }
 
     /// Accelerate output rows `[row0, row0+count)` into `out_local` (len
@@ -138,7 +141,8 @@ impl CudaBackend {
                     ),
                 )?;
             }
-            self.dev.dtoh_sync_copy_into(&out_d, &mut out_local[..3 * count])?;
+            self.dev
+                .dtoh_sync_copy_into(&out_d, &mut out_local[..3 * count])?;
             Ok(())
         };
         if run().is_err() {
@@ -166,7 +170,8 @@ impl CudaBackend {
             unsafe {
                 f.launch(cfg, (&world_d, &mut out_d, &cam_d, m as i32))?;
             }
-            self.dev.dtoh_sync_copy_into(&out_d, &mut out_slice[..3 * m])?;
+            self.dev
+                .dtoh_sync_copy_into(&out_d, &mut out_slice[..3 * m])?;
             Ok(())
         };
         if run().is_err() {
@@ -179,9 +184,11 @@ impl Backend for CudaBackend {
     fn name(&self) -> &str {
         &self.name
     }
+
     fn is_gpu(&self) -> bool {
         true
     }
+
     fn gpu_count(&self) -> usize {
         1
     }
@@ -236,9 +243,11 @@ impl Backend for MultiCudaBackend {
     fn name(&self) -> &str {
         &self.name
     }
+
     fn is_gpu(&self) -> bool {
         true
     }
+
     fn gpu_count(&self) -> usize {
         self.devs.len()
     }
@@ -296,4 +305,3 @@ impl Backend for MultiCudaBackend {
         });
     }
 }
-

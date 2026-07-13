@@ -88,12 +88,15 @@ impl NativeMic {
     pub fn peak(&self) -> f32 {
         *self.peak.lock().unwrap()
     }
+
     pub fn rms(&self) -> f32 {
         *self.rms.lock().unwrap()
     }
+
     pub fn latest_samples(&self) -> Vec<f32> {
         self.samples.lock().unwrap().clone()
     }
+
     pub fn sample_rate(&self) -> u32 {
         *self.rate.lock().unwrap()
     }

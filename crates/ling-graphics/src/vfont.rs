@@ -79,24 +79,28 @@ impl OutlineBuilder for Collector {
         self.cp = [x, y];
         self.cur = Some(Contour { start: [x, y], segs: Vec::new() });
     }
+
     fn line_to(&mut self, x: f32, y: f32) {
         if let Some(c) = &mut self.cur {
             c.segs.push(Seg::Line([x, y]));
         }
         self.cp = [x, y];
     }
+
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
         if let Some(c) = &mut self.cur {
             c.segs.push(Seg::Quad([x1, y1], [x, y]));
         }
         self.cp = [x, y];
     }
+
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
         if let Some(c) = &mut self.cur {
             c.segs.push(Seg::Cubic([x1, y1], [x2, y2], [x, y]));
         }
         self.cp = [x, y];
     }
+
     fn close(&mut self) {
         self.finish_cur();
     }
@@ -264,6 +268,7 @@ impl VectorFont {
     pub fn ascent(&self) -> f32 {
         self.ascent
     }
+
     pub fn descent(&self) -> f32 {
         self.descent
     }

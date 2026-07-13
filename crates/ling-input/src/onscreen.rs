@@ -32,10 +32,12 @@ impl Rect {
         let h = size * 0.5;
         Self { min: center - h, max: center + h }
     }
+
     #[must_use]
     pub fn contains(&self, p: Vec2) -> bool {
         p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
     }
+
     #[must_use]
     pub fn center(&self) -> Vec2 {
         (self.min + self.max) * 0.5

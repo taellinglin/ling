@@ -185,7 +185,11 @@ pub fn compute_lit_color_linear(
         let dz = l.z - centroid[2];
         let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
 
-        let atten = if l.radius > 0.0 { (1.0 - dist / l.radius).max(0.0) } else { 1.0 };
+        let atten = if l.radius > 0.0 {
+            (1.0 - dist / l.radius).max(0.0)
+        } else {
+            1.0
+        };
         if atten <= 0.0 {
             continue;
         }
@@ -270,17 +274,27 @@ mod tests {
         // A light positioned near vertex A should make A brighter than C.
         let base = 0x00FF_FFFF;
         let normal = [0.0, 0.0, 1.0];
-        let light = Light { x: 0.0, y: 0.0, z: 10.0, r: 1.0, g: 1.0, b: 1.0,
-            intensity: 1.0, radius: 0.0 };
+        let light = Light {
+            x: 0.0,
+            y: 0.0,
+            z: 10.0,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            intensity: 1.0,
+            radius: 0.0,
+        };
         let va = [0.0f32, 0.0, 0.0];
         let vb = [100.0, 0.0, 0.0];
         let vc = [200.0, 0.0, 0.0];
-        let (ca, _cb, cc) =
-            compute_lit_color_vertices(base, normal, va, vb, vc, &[light], 0.1);
+        let (ca, _cb, cc) = compute_lit_color_vertices(base, normal, va, vb, vc, &[light], 0.1);
         // vertex A is closer to the light, so its red channel should be >= C's
         let ra = (ca >> 16) & 0xFF;
         let rc = (cc >> 16) & 0xFF;
-        assert!(ra >= rc, "expected A ({ra}) brighter than C ({rc}) under close light");
+        assert!(
+            ra >= rc,
+            "expected A ({ra}) brighter than C ({rc}) under close light"
+        );
     }
 
     #[test]
@@ -289,9 +303,15 @@ mod tests {
         // the base colour at every vertex (no gradient possible).
         let base = 0x00AA_BBCC;
         let normal = [0.0, 1.0, 0.0];
-        let (a, b, c) =
-            compute_lit_color_vertices(base, normal, [0.0,0.0,0.0], [1.0,0.0,0.0],
-                [2.0,0.0,0.0], &[], 1.0);
+        let (a, b, c) = compute_lit_color_vertices(
+            base,
+            normal,
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            &[],
+            1.0,
+        );
         assert_eq!(a, base);
         assert_eq!(b, base);
         assert_eq!(c, base);

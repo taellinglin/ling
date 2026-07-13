@@ -141,6 +141,7 @@ impl RigidBody {
     pub fn aabb_min(&self) -> Vec3 {
         self.pos - self.half_extents
     }
+
     pub fn aabb_max(&self) -> Vec3 {
         self.pos + self.half_extents
     }

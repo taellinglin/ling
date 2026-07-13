@@ -1,8 +1,8 @@
-// src/gfx/raster.rs — software 2-D pixel rasteriser
+// src/gfx/raster.rs â€” software 2-D pixel rasteriser
 // All buffers are row-major Vec<u32> with pixels as 0x00RRGGBB.
 
 /// Fill a triangle using incremental edge evaluation (Pineda 1988).
-/// For convex triangles we break early once we exit the span — roughly 2× faster
+/// For convex triangles we break early once we exit the span â€” roughly 2Ã— faster
 /// than scanning the full bounding box.
 pub fn fill_triangle(
     buf: &mut [u32],
@@ -38,7 +38,7 @@ pub fn fill_triangle(
         return;
     }
 
-    // x-step deltas: adding 1 to fx changes each edge by -(Δy)
+    // x-step deltas: adding 1 to fx changes each edge by -(Î”y)
     let de0 = -(y1 - y0);
     let de1 = -(y2 - y1);
     let de2 = -(y0 - y2);
@@ -60,7 +60,7 @@ pub fn fill_triangle(
                 buf[row + px as usize] = color;
                 in_span = true;
             } else if in_span {
-                break; // convex — span finished for this scanline
+                break; // convex â€” span finished for this scanline
             }
             e0 += de0;
             e1 += de1;
@@ -73,7 +73,7 @@ pub fn fill_triangle(
 ///
 /// Vertex colours are linearly interpolated with barycentric weights; the
 /// resulting per-pixel luminance is snapped to 3 discrete toon bands (shadow /
-/// mid / lit) matching `cel_quantize` — giving a smooth gradient of bands across
+/// mid / lit) matching `cel_quantize` â€” giving a smooth gradient of bands across
 /// the face rather than a per-vertex flat-shade seam.
 ///
 /// `alpha` + `mode`: when `alpha < 1.0` or `mode != 0` the pixel is composited
@@ -170,7 +170,11 @@ pub fn fill_triangle_gouraud(
                             buf[row + px as usize] |= crate::gfx::UNLIT;
                         }
                     } else {
-                        buf[row + px as usize] = if tag_unlit { packed | crate::gfx::UNLIT } else { packed };
+                        buf[row + px as usize] = if tag_unlit {
+                            packed | crate::gfx::UNLIT
+                        } else {
+                            packed
+                        };
                     }
                 }
                 in_span = true;
@@ -185,8 +189,8 @@ pub fn fill_triangle_gouraud(
 }
 
 /// Alpha-composite `color` over the pixel at (x,y) at coverage `cov` using the
-/// modern compositing path: blend `mode` (0 normal · 1 add · 2 multiply ·
-/// 3 screen · 4 subtract · 5 overlay) optionally in linear light (`linear`).
+/// modern compositing path: blend `mode` (0 normal Â· 1 add Â· 2 multiply Â·
+/// 3 screen Â· 4 subtract Â· 5 overlay) optionally in linear light (`linear`).
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn composite_pixel(
@@ -219,7 +223,7 @@ pub fn composite_pixel(
 
 /// Smooth gradient-interpolated triangle blended at a constant `alpha`. The
 /// "gradient surface" fill: give each vertex a colour and the interior blends
-/// smoothly — point the bright vertex toward a light to fake directional
+/// smoothly â€” point the bright vertex toward a light to fake directional
 /// lighting without a shader. When `oklab` the interior is interpolated
 /// perceptually through OkLab (no muddy mid-tones); otherwise in sRGB. `mode`
 /// + `linear` select the compositing operator (see `composite_pixel`).
@@ -682,7 +686,11 @@ pub fn fill_triangle_gouraud_z(
                             }
                         } else {
                             zbuf[idx] = z;
-                            buf[idx] = if tag_unlit { packed | crate::gfx::UNLIT } else { packed };
+                            buf[idx] = if tag_unlit {
+                                packed | crate::gfx::UNLIT
+                            } else {
+                                packed
+                            };
                         }
                     }
                 }
@@ -698,7 +706,7 @@ pub fn fill_triangle_gouraud_z(
 }
 
 /// Axis-aligned rectangle filled with a gradient from `c0` to `c1`.
-/// `dir`: 0 = horizontal (left→right), anything else = vertical (top→bottom).
+/// `dir`: 0 = horizontal (leftâ†’right), anything else = vertical (topâ†’bottom).
 /// `oklab` interpolates the gradient perceptually; `mode`+`linear` select the
 /// compositing operator. A quick way to fake a lit wall/floor or a sky band.
 #[allow(clippy::too_many_arguments)]
@@ -766,10 +774,10 @@ pub fn fill_rect_grad(
     }
 }
 
-/// Soft-edged filled ellipse — the blob/contact shadow primitive. Pixels within
+/// Soft-edged filled ellipse â€” the blob/contact shadow primitive. Pixels within
 /// the `(rx, ry)` radii are composited in `color` at `alpha`; from `(1 - soft)`
 /// of the radius out to the rim the coverage falls off linearly for a feather.
-/// `soft` ∈ [0,1] (0 = hard edge, 1 = fully feathered). `mode`+`linear` select
+/// `soft` âˆˆ [0,1] (0 = hard edge, 1 = fully feathered). `mode`+`linear` select
 /// the compositing operator (normal/linear give a natural darkening shadow).
 #[allow(clippy::too_many_arguments)]
 pub fn fill_disc_soft(
@@ -912,7 +920,7 @@ fn scale_rgb(color: u32, a: f32) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-/// Blended Bresenham line (no AA — fast, matches the old `draw_line` speed).
+/// Blended Bresenham line (no AA â€” fast, matches the old `draw_line` speed).
 /// Additive (mode 1) uses an integer saturating add; other modes/alpha fall
 /// back to `composite_pixel`. Used for translucent 3-D FX lines (ring trails).
 #[allow(clippy::too_many_arguments)]
@@ -981,7 +989,7 @@ pub fn draw_line_blend(
     }
 }
 
-// ── Cohen-Sutherland helpers ─────────────────────────────────────────────────
+// â”€â”€ Cohen-Sutherland helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 #[inline]
 fn cs_code(x: f32, y: f32, xmax: f32, ymax: f32) -> u8 {
@@ -1001,7 +1009,7 @@ fn cs_code(x: f32, y: f32, xmax: f32, ymax: f32) -> u8 {
     c
 }
 
-/// Returns true if the segment (ax,ay)→(bx,by) has any part inside the viewport;
+/// Returns true if the segment (ax,ay)â†’(bx,by) has any part inside the viewport;
 /// clips the endpoints in-place.  Returns false if entirely outside.
 fn cs_clip(ax: &mut f32, ay: &mut f32, bx: &mut f32, by: &mut f32, xmax: f32, ymax: f32) -> bool {
     loop {
@@ -1039,9 +1047,9 @@ fn cs_clip(ax: &mut f32, ay: &mut f32, bx: &mut f32, by: &mut f32, xmax: f32, ym
     }
 }
 
-// ── Anti-aliased primitives (used by the vector-font renderer) ───────────────
+// â”€â”€ Anti-aliased primitives (used by the vector-font renderer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/// Alpha-blend `color` over the pixel at (x,y) with `cov` ∈ [0,1].
+/// Alpha-blend `color` over the pixel at (x,y) with `cov` âˆˆ [0,1].
 /// `additive` matches `set_blend(1)`: source is added instead of mixed.
 #[inline]
 pub fn blend_pixel(
@@ -1195,8 +1203,8 @@ pub fn draw_arc(
 }
 
 /// Coverage-based scanline fill of closed `polylines` (screen space, y-down)
-/// using the non-zero winding rule, with 4× vertical supersampling and analytic
-/// horizontal span coverage — smooth filled glyph interiors without aliasing.
+/// using the non-zero winding rule, with 4Ã— vertical supersampling and analytic
+/// horizontal span coverage â€” smooth filled glyph interiors without aliasing.
 pub fn fill_contours_aa(
     buf: &mut [u32],
     w: usize,
@@ -1325,10 +1333,10 @@ fn add_span(cov: &mut [f32], x0: i32, xa: f32, xb: f32, weight: f32) {
 
 /// Depth-of-field post pass (uses the z-buffer). Blurs the framebuffer by up to
 /// `rad` px wherever the camera-space depth departs from `focus` by more than
-/// `range` — sharp at the focal plane, progressively soft toward near/far.
-/// Background pixels (no geometry, depth = +∞) are treated as fully far → max
+/// `range` â€” sharp at the focal plane, progressively soft toward near/far.
+/// Background pixels (no geometry, depth = +âˆž) are treated as fully far â†’ max
 /// blur. Implementation: one separable box blur (sliding window, O(1)/px per
-/// pass) at the max radius, then a per-pixel mix by circle-of-confusion — cheap
+/// pass) at the max radius, then a per-pixel mix by circle-of-confusion â€” cheap
 /// enough for a full-frame pass and the canonical z-buffer showcase effect.
 pub fn depth_of_field(
     buf: &mut [u32],
@@ -1439,7 +1447,7 @@ mod fill_tests {
     fn grad_triangle_blends_between_vertex_colors() {
         let (w, h) = (40usize, 40usize);
         let mut buf = vec![0u32; w * h];
-        // red apex top, blue base — midline should be a red/blue mix.
+        // red apex top, blue base â€” midline should be a red/blue mix.
         fill_triangle_grad(
             &mut buf, w, h, 1.0, 0, false, false, 20.0, 2.0, 0xFF0000, 2.0, 38.0, 0x0000FF, 38.0,
             38.0, 0x0000FF,
@@ -1454,7 +1462,7 @@ mod fill_tests {
     fn grad_rect_runs_dark_to_light() {
         let (w, h) = (32usize, 8usize);
         let mut buf = vec![0u32; w * h];
-        // horizontal black→white gradient
+        // horizontal blackâ†’white gradient
         fill_rect_grad(
             &mut buf, w, h, 1.0, 0, false, false, 0.0, 0.0, 32.0, 8.0, 0x000000, 0xFFFFFF, 0,
         );
@@ -1471,7 +1479,7 @@ mod fill_tests {
     fn soft_disc_is_darkest_at_center() {
         let (w, h) = (40usize, 40usize);
         let mut buf = vec![0xFFFFFFu32; w * h]; // white bg
-                                                // black shadow, alpha 0.8, soft edge
+        // black shadow, alpha 0.8, soft edge
         fill_disc_soft(
             &mut buf, w, h, 20.0, 20.0, 12.0, 12.0, 0x000000, 0.8, 0.5, 0, false,
         );
@@ -1489,7 +1497,7 @@ mod fill_tests {
         let tri = |x: [f32; 3]| (x[0], x[1], x[2]);
         let _ = tri;
         // Cover the whole quad twice: a FAR red triangle drawn last must NOT
-        // overwrite a NEAR blue triangle drawn first — the z-test rejects it.
+        // overwrite a NEAR blue triangle drawn first â€” the z-test rejects it.
         let mut buf = vec![0u32; w * h];
         let mut z = vec![f32::INFINITY; w * h];
         fill_triangle_z(
@@ -1547,15 +1555,22 @@ mod fill_tests {
         assert!(hole == 0, "hole should be empty");
     }
 
-<<<<<<< HEAD
     #[test]
     fn draw_line_sets_unlit_tag() {
         let (w, h) = (10usize, 10usize);
         let mut buf = vec![0u32; w * h];
         draw_line(&mut buf, w, h, 0x00FF00, 1.0, 5.0, 8.0, 5.0);
         let p = buf[5 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "line pixel must be tagged unlit");
-        assert_eq!(p & crate::gfx::RGB_MASK, 0x00FF00, "line colour must be exact");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "line pixel must be tagged unlit"
+        );
+        assert_eq!(
+            p & crate::gfx::RGB_MASK,
+            0x00FF00,
+            "line colour must be exact"
+        );
     }
 
     #[test]
@@ -1564,7 +1579,11 @@ mod fill_tests {
         let mut buf = vec![0u32; w * h];
         draw_line_blend(&mut buf, w, h, 0x00FF00, 1, 1.0, 1.0, 5.0, 8.0, 5.0);
         let p = buf[5 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "additive line pixel must be tagged unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "additive line pixel must be tagged unlit"
+        );
     }
 
     #[test]
@@ -1573,7 +1592,11 @@ mod fill_tests {
         let mut buf = vec![0u32; w * h];
         draw_line_blend(&mut buf, w, h, 0x00FF00, 0, 0.5, 1.0, 5.0, 8.0, 5.0);
         let p = buf[5 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "composite line pixel must be tagged unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "composite line pixel must be tagged unlit"
+        );
     }
 
     #[test]
@@ -1581,11 +1604,19 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         let sq = vec![vec![
-            [5.0, 5.0], [15.0, 5.0], [15.0, 15.0], [5.0, 15.0], [5.0, 5.0],
+            [5.0, 5.0],
+            [15.0, 5.0],
+            [15.0, 15.0],
+            [5.0, 15.0],
+            [5.0, 5.0],
         ]];
         fill_contours_aa(&mut buf, w, h, 0xFFFFFF, false, &sq);
         let p = buf[10 * w + 10];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "text/glyph fill must be tagged unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "text/glyph fill must be tagged unlit"
+        );
     }
 
     #[test]
@@ -1593,12 +1624,15 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h,
-            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
-            3, 1.0, 0, true,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
+            0, true,
         );
         let p = buf[10 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "flat-shaded triangle must tag unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "flat-shaded triangle must tag unlit"
+        );
         assert_eq!(p & crate::gfx::RGB_MASK, 0x00FF00);
     }
 
@@ -1607,12 +1641,15 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h,
-            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
-            3, 1.0, 0, false,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
+            0, false,
         );
         let p = buf[10 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, 0, "lit triangle must not be tagged unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            0,
+            "lit triangle must not be tagged unlit"
+        );
     }
 
     #[test]
@@ -1620,12 +1657,15 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h,
-            2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00,
-            3, 1.0, 1, true,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
+            1, true,
         );
         let p = buf[10 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "additive-blended flat triangle must tag unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "additive-blended flat triangle must tag unlit"
+        );
     }
 
     #[test]
@@ -1634,12 +1674,15 @@ mod fill_tests {
         let mut buf = vec![0u32; w * h];
         let mut z = vec![f32::INFINITY; w * h];
         fill_triangle_gouraud_z(
-            &mut buf, &mut z, w, h,
-            2.0, 2.0, 1.0, 0x00FF00, 18.0, 2.0, 1.0, 0x00FF00, 2.0, 18.0, 1.0, 0x00FF00,
-            3, 1.0, 0, true,
+            &mut buf, &mut z, w, h, 2.0, 2.0, 1.0, 0x00FF00, 18.0, 2.0, 1.0, 0x00FF00, 2.0, 18.0,
+            1.0, 0x00FF00, 3, 1.0, 0, true,
         );
         let p = buf[10 * w + 5];
-        assert_eq!(p & crate::gfx::UNLIT, crate::gfx::UNLIT, "flat-shaded z-tested triangle must tag unlit");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            crate::gfx::UNLIT,
+            "flat-shaded z-tested triangle must tag unlit"
+        );
     }
 
     #[test]
@@ -1653,23 +1696,26 @@ mod fill_tests {
         assert_eq!(buf[10 * w + 10] & crate::gfx::UNLIT, crate::gfx::UNLIT);
         // A triangle large enough to fully cover the small buffer.
         fill_triangle_z(
-            &mut buf, &mut z, w, h, 0xFF0000,
-            -100.0, -100.0, 1.0,
-            200.0, -100.0, 1.0,
-            -100.0, 200.0, 1.0,
+            &mut buf, &mut z, w, h, 0xFF0000, -100.0, -100.0, 1.0, 200.0, -100.0, 1.0, -100.0,
+            200.0, 1.0,
         );
         let p = buf[10 * w + 10];
-        assert_eq!(p & crate::gfx::UNLIT, 0, "triangle overwrite must clear the unlit tag");
+        assert_eq!(
+            p & crate::gfx::UNLIT,
+            0,
+            "triangle overwrite must clear the unlit tag"
+        );
         assert_eq!(p, 0xFF0000, "triangle colour must win");
-=======
+    }
+
     // Count (pixels exactly == color, non-zero pixels that are NOT the color).
     // The second bucket represents partial-coverage / smoothed edge pixels.
     fn coverage_buckets(buf: &[u32], color: u32) -> (usize, usize) {
-        let color = color & 0x00FF_FFFF;
+        let color = color & crate::gfx::RGB_MASK;
         let mut exact = 0;
         let mut partial = 0;
         for &p in buf {
-            let p = p & 0x00FF_FFFF;
+            let p = p & crate::gfx::RGB_MASK;
             if p == color {
                 exact += 1;
             } else if p != 0 {
@@ -1687,19 +1733,24 @@ mod fill_tests {
         let (exact, partial) = coverage_buckets(&buf, 0xFFFFFF);
         eprintln!("aliased line: exact={exact} partial={partial}");
         assert!(exact > 0, "aliased line must draw pixels");
-        assert_eq!(partial, 0, "aliased line must be fully opaque (no smoothing)");
+        assert_eq!(
+            partial, 0,
+            "aliased line must be fully opaque (no smoothing)"
+        );
     }
 
     #[test]
     fn aa_line_has_smoothed_edges() {
         let (w, h) = (64usize, 64usize);
         let mut buf = vec![0u32; w * h];
-        // additive=false -> alpha-blended AA over black background
         draw_line_aa(&mut buf, w, h, 0xFFFFFF, false, 4.0, 4.0, 60.0, 40.0);
         let (exact, partial) = coverage_buckets(&buf, 0xFFFFFF);
         eprintln!("aa line: exact={exact} partial={partial}");
         assert!(exact > 0, "AA line keeps opaque full-coverage core pixels");
-        assert!(partial > 0, "AA line must produce smoothed partial-coverage pixels");
+        assert!(
+            partial > 0,
+            "AA line must produce smoothed partial-coverage pixels"
+        );
     }
 
     #[test]
@@ -1709,20 +1760,33 @@ mod fill_tests {
         let (cx, cy, r) = (32.0, 32.0, 20.0);
         let full = std::f32::consts::TAU;
 
-        // Aliased full circle -> opaque, no partial-coverage pixels.
-        let mut a = vec![0u32; w * h];
-        draw_arc(&mut a, w, h, color, false, false, cx, cy, r, 0.0, full, 96);
-        let (ea, pa) = coverage_buckets(&a, color);
-        eprintln!("aliased arc: exact={ea} partial={pa}");
-        assert!(ea > 0, "aliased arc must draw pixels");
-        assert_eq!(pa, 0, "aliased arc must be fully opaque");
+        let mut aliased = vec![0u32; w * h];
+        draw_arc(
+            &mut aliased,
+            w,
+            h,
+            color,
+            false,
+            false,
+            cx,
+            cy,
+            r,
+            0.0,
+            full,
+            96,
+        );
+        let (exact, partial) = coverage_buckets(&aliased, color);
+        eprintln!("aliased arc: exact={exact} partial={partial}");
+        assert!(exact > 0, "aliased arc must draw pixels");
+        assert_eq!(partial, 0, "aliased arc must be fully opaque");
 
-        // AA full circle -> produces smoothed partial-coverage pixels.
-        let mut b = vec![0u32; w * h];
-        draw_arc(&mut b, w, h, color, true, false, cx, cy, r, 0.0, full, 96);
-        let (_eb, pb) = coverage_buckets(&b, color);
-        eprintln!("aa arc: partial={pb}");
-        assert!(pb > 0, "AA arc must produce smoothed partial-coverage pixels");
->>>>>>> 4374cba (Ling Lin)
+        let mut aa = vec![0u32; w * h];
+        draw_arc(&mut aa, w, h, color, true, false, cx, cy, r, 0.0, full, 96);
+        let (_exact, partial) = coverage_buckets(&aa, color);
+        eprintln!("aa arc: partial={partial}");
+        assert!(
+            partial > 0,
+            "AA arc must produce smoothed partial-coverage pixels"
+        );
     }
 }

@@ -27,6 +27,7 @@ pub enum MouseButton {
 
 impl MouseButton {
     pub const COUNT: usize = 5;
+
     #[must_use]
     pub const fn index(self) -> usize {
         self as usize
@@ -76,14 +77,17 @@ impl Mouse {
         self.delta += pos - self.pos;
         self.pos = pos;
     }
+
     /// Feed relative motion directly (locked / raw-input mode).
     pub fn move_by(&mut self, delta: Vec2) {
         self.delta += delta;
         self.pos += delta;
     }
+
     pub fn scroll(&mut self, by: Vec2) {
         self.wheel += by;
     }
+
     pub fn set_button(&mut self, b: MouseButton, down: bool, dt: f32) {
         self.buttons[b.index()].update(down, dt);
     }
@@ -92,10 +96,12 @@ impl Mouse {
     pub fn is_down(&self, b: MouseButton) -> bool {
         self.buttons[b.index()].is_down()
     }
+
     #[must_use]
     pub fn just_pressed(&self, b: MouseButton) -> bool {
         self.buttons[b.index()].just_pressed()
     }
+
     #[must_use]
     pub fn just_released(&self, b: MouseButton) -> bool {
         self.buttons[b.index()].just_released()

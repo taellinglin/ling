@@ -26,7 +26,11 @@ pub struct CraneliftBackend {
 fn render_progress(done: usize, total: usize, label: &str) {
     use std::io::Write as _;
     const WIDTH: usize = 28;
-    let frac = if total == 0 { 1.0 } else { done as f64 / total as f64 };
+    let frac = if total == 0 {
+        1.0
+    } else {
+        done as f64 / total as f64
+    };
     let filled = ((frac * WIDTH as f64).round() as usize).min(WIDTH);
     let bar_full = "█".repeat(filled);
     let bar_empty = "░".repeat(WIDTH - filled);

@@ -7,6 +7,7 @@ impl Shape {
     pub fn numel(&self) -> usize {
         self.0.iter().product()
     }
+
     pub fn rank(&self) -> usize {
         self.0.len()
     }

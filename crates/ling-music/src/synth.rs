@@ -32,6 +32,7 @@ impl Wave {
             _ => Wave::Sine,
         }
     }
+
     #[inline]
     fn eval(self, phase: f32, rng: &mut u32) -> f32 {
         use std::f32::consts::TAU;
@@ -171,12 +172,15 @@ impl Env {
     fn new() -> Self {
         Self { stage: Stage::Attack, level: 0.0 }
     }
+
     fn release(&mut self) {
         self.stage = Stage::Release;
     }
+
     fn done(&self) -> bool {
         matches!(self.stage, Stage::Done)
     }
+
     #[inline]
     fn next(&mut self, a: &Adsr, dt: f32) -> f32 {
         match self.stage {
@@ -411,6 +415,7 @@ impl Synth {
             v.release();
         }
     }
+
     pub fn active_voices(&self) -> usize {
         self.voices.iter().filter(|v| v.active).count()
     }

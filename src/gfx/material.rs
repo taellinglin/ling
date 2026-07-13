@@ -28,76 +28,76 @@
 //   outline_color     — ink colour
 //   highlight_color   — colour of the brightest toon band (normally white)
 
-use crate::gfx::light::{Light, cel_quantize};
+use crate::gfx::light::{cel_quantize, Light};
 
 // ── Material struct ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct LingMaterial {
     // Core
-    pub albedo:             u32,    // 0x00RRGGBB
-    pub roughness:          f32,    // 0 = mirror, 1 = diffuse
-    pub metallic:           f32,    // 0 = dielectric, 1 = conductor
+    pub albedo: u32,    // 0x00RRGGBB
+    pub roughness: f32, // 0 = mirror, 1 = diffuse
+    pub metallic: f32,  // 0 = dielectric, 1 = conductor
 
     // Emission
-    pub emission:           u32,
-    pub emission_strength:  f32,
+    pub emission: u32,
+    pub emission_strength: f32,
 
     // Specular
-    pub specular:           f32,    // base Fresnel reflectance at 0°
-    pub specular_tint:      f32,    // 0 = white hotspot, 1 = albedo-tinted
+    pub specular: f32,      // base Fresnel reflectance at 0°
+    pub specular_tint: f32, // 0 = white hotspot, 1 = albedo-tinted
 
     // Subsurface scattering (approximated)
-    pub subsurface:         f32,
-    pub subsurface_color:   u32,
+    pub subsurface: f32,
+    pub subsurface_color: u32,
 
     // Clearcoat
-    pub clearcoat:          f32,
-    pub clearcoat_roughness:f32,
+    pub clearcoat: f32,
+    pub clearcoat_roughness: f32,
 
     // Transmission
-    pub transmission:       f32,    // 0 = opaque, 1 = glass
-    pub ior:                f32,    // index of refraction
+    pub transmission: f32, // 0 = opaque, 1 = glass
+    pub ior: f32,          // index of refraction
 
     // 2030 extras
-    pub iridescence:        f32,    // thin-film interference [0..1]
-    pub sheen:              f32,    // fabric retro-reflection [0..1]
-    pub anisotropy:         f32,    // specular elongation [0..1]
-    pub anisotropy_angle:   f32,    // radians
+    pub iridescence: f32,      // thin-film interference [0..1]
+    pub sheen: f32,            // fabric retro-reflection [0..1]
+    pub anisotropy: f32,       // specular elongation [0..1]
+    pub anisotropy_angle: f32, // radians
 
     // Toon overrides
-    pub toon_bands:         u32,    // discrete shading levels (≥2)
-    pub shadow_softness:    f32,    // band-boundary blend width [0..1]
-    pub outline_px:         f32,    // ink-line thickness (0 = off)
-    pub outline_color:      u32,
-    pub highlight_color:    u32,
+    pub toon_bands: u32,      // discrete shading levels (≥2)
+    pub shadow_softness: f32, // band-boundary blend width [0..1]
+    pub outline_px: f32,      // ink-line thickness (0 = off)
+    pub outline_color: u32,
+    pub highlight_color: u32,
 }
 
 impl Default for LingMaterial {
     fn default() -> Self {
         Self {
-            albedo:              0x00FF_FFFF,
-            roughness:           0.8,
-            metallic:            0.0,
-            emission:            0,
-            emission_strength:   0.0,
-            specular:            0.04,
-            specular_tint:       0.0,
-            subsurface:          0.0,
-            subsurface_color:    0x00FF_C8A0,
-            clearcoat:           0.0,
+            albedo: 0x00FF_FFFF,
+            roughness: 0.8,
+            metallic: 0.0,
+            emission: 0,
+            emission_strength: 0.0,
+            specular: 0.04,
+            specular_tint: 0.0,
+            subsurface: 0.0,
+            subsurface_color: 0x00FF_C8A0,
+            clearcoat: 0.0,
             clearcoat_roughness: 0.03,
-            transmission:        0.0,
-            ior:                 1.5,
-            iridescence:         0.0,
-            sheen:               0.0,
-            anisotropy:          0.0,
-            anisotropy_angle:    0.0,
-            toon_bands:          3,
-            shadow_softness:     0.04,
-            outline_px:          0.0,
-            outline_color:       0x00_00_00,
-            highlight_color:     0x00FF_FFFF,
+            transmission: 0.0,
+            ior: 1.5,
+            iridescence: 0.0,
+            sheen: 0.0,
+            anisotropy: 0.0,
+            anisotropy_angle: 0.0,
+            toon_bands: 3,
+            shadow_softness: 0.04,
+            outline_px: 0.0,
+            outline_color: 0x00_00_00,
+            highlight_color: 0x00FF_FFFF,
         }
     }
 }
@@ -115,10 +115,26 @@ fn unpack(c: u32) -> (f32, f32, f32) {
 
 #[inline]
 fn pack01(r: f32, g: f32, b: f32) -> u32 {
-    let r = (r.clamp(0.0, 1.0) * 255.0) as u32;
-    let g = (g.clamp(0.0, 1.0) * 255.0) as u32;
-    let b = (b.clamp(0.0, 1.0) * 255.0) as u32;
+    let (r, g, b) = tone_map_rgb(r, g, b);
+    let r = (r * 255.0) as u32;
+    let g = (g * 255.0) as u32;
+    let b = (b * 255.0) as u32;
     (r << 16) | (g << 8) | b
+}
+
+#[inline]
+fn tone_map_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let r = r.max(0.0);
+    let g = g.max(0.0);
+    let b = b.max(0.0);
+    let lum = r * 0.2126 + g * 0.7152 + b * 0.0722;
+    if lum <= 1.0 {
+        return (r.min(1.0), g.min(1.0), b.min(1.0));
+    }
+
+    let mapped = 1.0 - (-lum * 0.82).exp();
+    let scale = mapped / lum.max(1e-6);
+    ((r * scale).min(1.0), (g * scale).min(1.0), (b * scale).min(1.0))
 }
 
 /// Schlick Fresnel: f0 + (1-f0)*(1-cosθ)^5
@@ -136,10 +152,11 @@ fn ggx_toon(n_dot_h: f32, roughness: f32) -> f32 {
     let a2 = roughness * roughness * roughness * roughness; // α⁴
     let d = n_dot_h * n_dot_h * (a2 - 1.0) + 1.0;
     let ggx = a2 / (std::f32::consts::PI * d * d + 1e-6);
-    // Normalise to [0,1] and snap: the hotspot is on when the lobe is bright
+    // Normalise to [0,1] and use a soft toon shoulder. A binary hotspot creates
+    // salt-and-pepper white flicker on dense tessellated floors under many lights.
     let t = (ggx * a2 * 3.0).clamp(0.0, 1.0);
-    // Hard step at 0.5 → binary toon hotspot
-    if t > 0.5 { 1.0 } else { 0.0 }
+    let s = ((t - 0.38) / 0.44).clamp(0.0, 1.0);
+    s * s * (3.0 - 2.0 * s)
 }
 
 /// Smooth GGX specular: continuous [0,1], same normalisation as `ggx_toon`
@@ -194,7 +211,11 @@ fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
 #[inline]
 fn norm3(v: [f32; 3]) -> [f32; 3] {
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if len < 1e-7 { [0.0, 0.0, 1.0] } else { [v[0] / len, v[1] / len, v[2] / len] }
+    if len < 1e-7 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [v[0] / len, v[1] / len, v[2] / len]
+    }
 }
 
 // ── Main shade function ───────────────────────────────────────────────────────
@@ -208,12 +229,12 @@ fn norm3(v: [f32; 3]) -> [f32; 3] {
 /// * `lights`    — active point lights
 /// * `ambient`   — ambient fill level [0..1]
 pub fn shade(
-    mat:      &LingMaterial,
-    normal:   [f32; 3],
+    mat: &LingMaterial,
+    normal: [f32; 3],
     view_dir: [f32; 3],
     centroid: [f32; 3],
-    lights:   &[Light],
-    ambient:  f32,
+    lights: &[Light],
+    ambient: f32,
 ) -> u32 {
     let (ar, ag, ab) = unpack(mat.albedo);
     let n = norm3(normal);
@@ -237,8 +258,14 @@ pub fn shade(
         let dy = l.y - centroid[1];
         let dz = l.z - centroid[2];
         let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(1e-6);
-        let atten = if l.radius > 0.0 { (1.0 - dist / l.radius).max(0.0) } else { 1.0 };
-        if atten <= 0.0 { continue; }
+        let atten = if l.radius > 0.0 {
+            (1.0 - dist / l.radius).max(0.0)
+        } else {
+            1.0
+        };
+        if atten <= 0.0 {
+            continue;
+        }
 
         let ld = [dx / dist, dy / dist, dz / dist];
         let n_dot_l = dot3(n, ld).abs(); // two-sided shading
@@ -257,7 +284,11 @@ pub fn shade(
         let (eff_r, eff_g, eff_b) = if mat.subsurface > 0.0 {
             let (sr, sg, sb) = unpack(mat.subsurface_color);
             let zone = ((0.3 - n_dot_l) * 3.33).clamp(0.0, 1.0) * mat.subsurface;
-            (ar + (sr - ar) * zone, ag + (sg - ag) * zone, ab + (sb - ab) * zone)
+            (
+                ar + (sr - ar) * zone,
+                ag + (sg - ag) * zone,
+                ab + (sb - ab) * zone,
+            )
         } else {
             (ar, ag, ab)
         };
@@ -317,16 +348,22 @@ pub fn shade(
 /// Compute per-vertex material colours for a Gouraud-shaded triangle.
 /// Returns three 0x00RRGGBB colours.
 pub fn shade_vertices(
-    mat:        &LingMaterial,
-    normal:     [f32; 3],
-    va:         [f32; 3],
-    vb:         [f32; 3],
-    vc:         [f32; 3],
+    mat: &LingMaterial,
+    normal: [f32; 3],
+    va: [f32; 3],
+    vb: [f32; 3],
+    vc: [f32; 3],
     camera_pos: [f32; 3],
-    lights:     &[Light],
-    ambient:    f32,
+    lights: &[Light],
+    ambient: f32,
 ) -> (u32, u32, u32) {
-    let view = |v: [f32; 3]| [camera_pos[0]-v[0], camera_pos[1]-v[1], camera_pos[2]-v[2]];
+    let view = |v: [f32; 3]| {
+        [
+            camera_pos[0] - v[0],
+            camera_pos[1] - v[1],
+            camera_pos[2] - v[2],
+        ]
+    };
     (
         shade(mat, normal, view(va), va, lights, ambient),
         shade(mat, normal, view(vb), vb, lights, ambient),
@@ -337,16 +374,22 @@ pub fn shade_vertices(
 /// Compute per-vertex material colours for an n-gon (up to N vertices).
 /// Writes results into `out[0..n]`.
 pub fn shade_polygon(
-    mat:        &LingMaterial,
-    normal:     [f32; 3],
-    verts:      &[[f32; 3]],
-    n:          usize,
+    mat: &LingMaterial,
+    normal: [f32; 3],
+    verts: &[[f32; 3]],
+    n: usize,
     camera_pos: [f32; 3],
-    lights:     &[Light],
-    ambient:    f32,
-    out:        &mut [u32],
+    lights: &[Light],
+    ambient: f32,
+    out: &mut [u32],
 ) {
-    let view = |v: [f32; 3]| [camera_pos[0]-v[0], camera_pos[1]-v[1], camera_pos[2]-v[2]];
+    let view = |v: [f32; 3]| {
+        [
+            camera_pos[0] - v[0],
+            camera_pos[1] - v[1],
+            camera_pos[2] - v[2],
+        ]
+    };
     for i in 0..n.min(verts.len()).min(out.len()) {
         out[i] = shade(mat, normal, view(verts[i]), verts[i], lights, ambient);
     }
@@ -359,10 +402,18 @@ mod tests {
     #[test]
     fn default_material_no_crash_no_lights() {
         let mat = LingMaterial::default();
-        let c = shade(&mat, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0], &[], 0.5);
+        let c = shade(
+            &mat,
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            &[],
+            0.5,
+        );
         let lum = ((c >> 16 & 0xFF) as f32 * 0.299
             + (c >> 8 & 0xFF) as f32 * 0.587
-            + (c & 0xFF) as f32 * 0.114) / 255.0;
+            + (c & 0xFF) as f32 * 0.114)
+            / 255.0;
         // With ambient=0.5 and white albedo the result should be non-zero
         assert!(lum > 0.1, "expected visible output, got lum={lum:.3}");
     }
@@ -376,14 +427,19 @@ mod tests {
         mat.roughness = 0.1;
 
         let light = crate::gfx::light::Light {
-            x: 0.0, y: 0.0, z: 10.0,
-            r: 1.0, g: 1.0, b: 1.0,
-            intensity: 2.0, radius: 0.0,
+            x: 0.0,
+            y: 0.0,
+            z: 10.0,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            intensity: 2.0,
+            radius: 0.0,
         };
         let c = shade(
             &mat,
             [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],  // view = straight ahead
+            [0.0, 0.0, 1.0], // view = straight ahead
             [0.0, 0.0, 0.0],
             &[light],
             0.05,

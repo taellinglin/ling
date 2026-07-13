@@ -27,10 +27,10 @@
 
 /// HDR light-accumulation buffer — one f32 per channel per pixel.
 pub struct PhotonBuf {
-    pub r:      Vec<f32>,
-    pub g:      Vec<f32>,
-    pub b:      Vec<f32>,
-    pub width:  usize,
+    pub r: Vec<f32>,
+    pub g: Vec<f32>,
+    pub b: Vec<f32>,
+    pub width: usize,
     pub height: usize,
 }
 
@@ -56,7 +56,7 @@ impl PhotonBuf {
         self.r[..n].fill(0.0);
         self.g[..n].fill(0.0);
         self.b[..n].fill(0.0);
-        self.width  = width;
+        self.width = width;
         self.height = height;
     }
 
@@ -110,20 +110,44 @@ impl PhotonBuf {
         // Centre keeps `c` = 1 - 2k so total energy is conserved.
         // Boundary pixels treat the missing neighbour as 0 (virtual zero outside
         // the grid) — this keeps the full pass energy-conserving for all pixels.
-        let k = s * 0.5;   // 0..0.5
-        let c = 1.0 - s;   // 1..0  (never goes negative because k≤0.5)
+        let k = s * 0.5; // 0..0.5
+        let c = 1.0 - s; // 1..0  (never goes negative because k≤0.5)
 
         // Horizontal sweep — ALL columns including boundaries
         for row in 0..h {
             let base = row * w;
             for col in 0..w {
                 let i = base + col;
-                let l_val_r = if col > 0 { unsafe { *self.r.get_unchecked(i - 1) } } else { 0.0 };
-                let r_val_r = if col + 1 < w { unsafe { *self.r.get_unchecked(i + 1) } } else { 0.0 };
-                let l_val_g = if col > 0 { unsafe { *self.g.get_unchecked(i - 1) } } else { 0.0 };
-                let r_val_g = if col + 1 < w { unsafe { *self.g.get_unchecked(i + 1) } } else { 0.0 };
-                let l_val_b = if col > 0 { unsafe { *self.b.get_unchecked(i - 1) } } else { 0.0 };
-                let r_val_b = if col + 1 < w { unsafe { *self.b.get_unchecked(i + 1) } } else { 0.0 };
+                let l_val_r = if col > 0 {
+                    unsafe { *self.r.get_unchecked(i - 1) }
+                } else {
+                    0.0
+                };
+                let r_val_r = if col + 1 < w {
+                    unsafe { *self.r.get_unchecked(i + 1) }
+                } else {
+                    0.0
+                };
+                let l_val_g = if col > 0 {
+                    unsafe { *self.g.get_unchecked(i - 1) }
+                } else {
+                    0.0
+                };
+                let r_val_g = if col + 1 < w {
+                    unsafe { *self.g.get_unchecked(i + 1) }
+                } else {
+                    0.0
+                };
+                let l_val_b = if col > 0 {
+                    unsafe { *self.b.get_unchecked(i - 1) }
+                } else {
+                    0.0
+                };
+                let r_val_b = if col + 1 < w {
+                    unsafe { *self.b.get_unchecked(i + 1) }
+                } else {
+                    0.0
+                };
                 unsafe {
                     *self.r.get_unchecked_mut(i) =
                         *self.r.get_unchecked(i) * c + (l_val_r + r_val_r) * k;
@@ -138,12 +162,36 @@ impl PhotonBuf {
         for col in 0..w {
             for row in 0..h {
                 let i = row * w + col;
-                let u_val_r = if row > 0 { unsafe { *self.r.get_unchecked(i - w) } } else { 0.0 };
-                let d_val_r = if row + 1 < h { unsafe { *self.r.get_unchecked(i + w) } } else { 0.0 };
-                let u_val_g = if row > 0 { unsafe { *self.g.get_unchecked(i - w) } } else { 0.0 };
-                let d_val_g = if row + 1 < h { unsafe { *self.g.get_unchecked(i + w) } } else { 0.0 };
-                let u_val_b = if row > 0 { unsafe { *self.b.get_unchecked(i - w) } } else { 0.0 };
-                let d_val_b = if row + 1 < h { unsafe { *self.b.get_unchecked(i + w) } } else { 0.0 };
+                let u_val_r = if row > 0 {
+                    unsafe { *self.r.get_unchecked(i - w) }
+                } else {
+                    0.0
+                };
+                let d_val_r = if row + 1 < h {
+                    unsafe { *self.r.get_unchecked(i + w) }
+                } else {
+                    0.0
+                };
+                let u_val_g = if row > 0 {
+                    unsafe { *self.g.get_unchecked(i - w) }
+                } else {
+                    0.0
+                };
+                let d_val_g = if row + 1 < h {
+                    unsafe { *self.g.get_unchecked(i + w) }
+                } else {
+                    0.0
+                };
+                let u_val_b = if row > 0 {
+                    unsafe { *self.b.get_unchecked(i - w) }
+                } else {
+                    0.0
+                };
+                let d_val_b = if row + 1 < h {
+                    unsafe { *self.b.get_unchecked(i + w) }
+                } else {
+                    0.0
+                };
                 unsafe {
                     *self.r.get_unchecked_mut(i) =
                         *self.r.get_unchecked(i) * c + (u_val_r + d_val_r) * k;
@@ -195,8 +243,7 @@ impl PhotonBuf {
                 let r = snap(*self.r.get_unchecked(i), bands);
                 let g = snap(*self.g.get_unchecked(i), bands);
                 let b = snap(*self.b.get_unchecked(i), bands);
-                *buf.get_unchecked_mut(i) =
-                    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                *buf.get_unchecked_mut(i) = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
             }
         }
     }
@@ -226,9 +273,17 @@ fn snap(v: f32, bands: u32) -> u8 {
     let t = v.clamp(0.0, 1.0);
     let out = if bands == 3 {
         // Fast-path for the common 3-band case — matches cel_quantize exactly
-        if t < 0.25 { 20u8 }       // 0.08 * 255 ≈ 20
-        else if t < 0.60 { 127u8 } // 0.50 * 255
-        else { 255u8 }             // 1.00 * 255
+        if t < 0.25 {
+            20u8
+        }
+        // 0.08 * 255 ≈ 20
+        else if t < 0.60 {
+            127u8
+        }
+        // 0.50 * 255
+        else {
+            255u8
+        } // 1.00 * 255
     } else {
         // Generic n-band: evenly divide [0,1]
         let n = bands as f32;
@@ -242,8 +297,8 @@ fn snap(v: f32, bands: u32) -> u8 {
 #[inline]
 fn add_sat(a: u32, b: u32) -> u32 {
     let r = ((a >> 16 & 0xFF) + (b >> 16 & 0xFF)).min(0xFF);
-    let g = ((a >> 8  & 0xFF) + (b >> 8  & 0xFF)).min(0xFF);
-    let bl= ((a       & 0xFF) + (b       & 0xFF)).min(0xFF);
+    let g = ((a >> 8 & 0xFF) + (b >> 8 & 0xFF)).min(0xFF);
+    let bl = ((a & 0xFF) + (b & 0xFF)).min(0xFF);
     (r << 16) | (g << 8) | bl
 }
 
@@ -257,7 +312,7 @@ mod tests {
         pb.add(0, 1.0, 1.0, 1.0); // full energy
         pb.add(1, 0.5, 0.5, 0.5); // half
         pb.add(2, 0.1, 0.1, 0.1); // dark
-        // idx 3 stays zero (background)
+                                  // idx 3 stays zero (background)
         let mut buf = vec![0u32; 4];
         pb.drain_toon(&mut buf, 3);
         // lit (≥0.6): pixel 0 should be 0xFFFFFF
@@ -281,7 +336,9 @@ mod tests {
         pb.flow(0.2);
         let sum_after: f32 = pb.r.iter().sum();
         // Energy shouldn't spontaneously appear (tolerance 5%)
-        assert!((sum_after - sum_before).abs() < sum_before * 0.05,
-            "flow should approximately conserve energy: {sum_before} vs {sum_after}");
+        assert!(
+            (sum_after - sum_before).abs() < sum_before * 0.05,
+            "flow should approximately conserve energy: {sum_before} vs {sum_after}"
+        );
     }
 }

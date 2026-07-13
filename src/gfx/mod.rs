@@ -12,6 +12,8 @@
 //   vtex     — vector texture primitives
 //   webgl    — WebGL2 backend (wasm32 only)
 
+#[cfg(target_arch = "wasm32")]
+pub mod audio_web;
 pub mod camera;
 pub mod color;
 pub mod depth;
@@ -23,8 +25,6 @@ pub mod raster;
 pub mod shapes;
 pub mod toon;
 pub mod vtex;
-#[cfg(target_arch = "wasm32")]
-pub mod audio_web;
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
 #[cfg(feature = "gpu")]
@@ -141,6 +141,8 @@ pub struct GfxState {
     /// Active material override.  When `Some`, polygon draws use the BSDF
     /// instead of `compute_lit_color_linear`.  `None` = legacy path.
     pub material: Option<LingMaterial>,
+    /// Optional world-space normal override for stylized surfaces.
+    pub normal_override: Option<[f32; 3]>,
     /// Toon post-processing configuration (outlines, shadow softness, highlight).
     pub toon: ToonConfig,
     /// Baked local-space triangle meshes (display lists) indexed by handle.
@@ -192,6 +194,7 @@ impl GfxState {
             vsync: true,
             edge_set: poly::EdgeSet::default(),
             material: None,
+            normal_override: None,
             toon: ToonConfig::default(),
             meshes: Vec::new(),
             mesh_capture: None,
@@ -233,7 +236,9 @@ impl GfxState {
     pub fn toon_post_process(&mut self) {
         let w = self.width;
         let h = self.height;
-        if self.buffer.len() < w * h { return; }
+        if self.buffer.len() < w * h {
+            return;
+        }
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
     }
 }
@@ -290,9 +295,7 @@ pub fn wasm_clear_frame_keys() {
 #[cfg(target_arch = "wasm32")]
 pub fn wasm_is_key_pressed(key: &str) -> bool {
     let key = normalize_key(key);
-    WASM_KEYS_PRESSED.with(|keys| {
-        keys.borrow().contains(&key)
-    })
+    WASM_KEYS_PRESSED.with(|keys| keys.borrow().contains(&key))
 }
 
 /// Normalize browser key names to match Ling's key naming convention
@@ -372,6 +375,8 @@ pub struct GfxState {
     pub edge_set: poly::EdgeSet,
     /// Active material override (mirrors native).
     pub material: Option<LingMaterial>,
+    /// Optional world-space normal override (mirrors native).
+    pub normal_override: Option<[f32; 3]>,
     /// Toon post-processing configuration (mirrors native).
     pub toon: ToonConfig,
     /// Baked local-space triangle meshes (mirrors native).
@@ -419,6 +424,7 @@ impl GfxState {
             keys_down: std::collections::HashSet::new(),
             edge_set: poly::EdgeSet::default(),
             material: None,
+            normal_override: None,
             toon: ToonConfig::default(),
             meshes: Vec::new(),
             mesh_capture: None,
@@ -478,7 +484,9 @@ impl GfxState {
     pub fn toon_post_process(&mut self) {
         let w = self.width;
         let h = self.height;
-        if self.buffer.len() < w * h { return; }
+        if self.buffer.len() < w * h {
+            return;
+        }
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
     }
 }
@@ -491,9 +499,15 @@ impl GfxState {
     #[inline]
     pub fn submit_triangle(
         &mut self,
-        ax: f32, ay: f32, az: f32,
-        bx: f32, by: f32, bz: f32,
-        cx: f32, cy: f32, cz: f32,
+        ax: f32,
+        ay: f32,
+        az: f32,
+        bx: f32,
+        by: f32,
+        bz: f32,
+        cx: f32,
+        cy: f32,
+        cz: f32,
     ) {
         let ux = bx - ax;
         let uy = by - ay;
@@ -501,7 +515,9 @@ impl GfxState {
         let vx = cx - ax;
         let vy = cy - ay;
         let vz = cz - az;
-        let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+        let normal = self
+            .normal_override
+            .unwrap_or([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
 
         let (c0, c1, c2) = if self.flat_shade {
             (self.color, self.color, self.color)
@@ -514,9 +530,30 @@ impl GfxState {
             let cam_y = self.camera.cy;
             let cam_z = self.camera.zdist;
             let amb = self.ambient;
-            let s0 = crate::gfx::material::shade(&m, normal, [cam_x - ax, cam_y - ay, cam_z - az], [ax, ay, az], &self.lights, amb);
-            let s1 = crate::gfx::material::shade(&m, normal, [cam_x - bx, cam_y - by, cam_z - bz], [bx, by, bz], &self.lights, amb);
-            let s2 = crate::gfx::material::shade(&m, normal, [cam_x - cx, cam_y - cy, cam_z - cz], [cx, cy, cz], &self.lights, amb);
+            let s0 = crate::gfx::material::shade(
+                &m,
+                normal,
+                [cam_x - ax, cam_y - ay, cam_z - az],
+                [ax, ay, az],
+                &self.lights,
+                amb,
+            );
+            let s1 = crate::gfx::material::shade(
+                &m,
+                normal,
+                [cam_x - bx, cam_y - by, cam_z - bz],
+                [bx, by, bz],
+                &self.lights,
+                amb,
+            );
+            let s2 = crate::gfx::material::shade(
+                &m,
+                normal,
+                [cam_x - cx, cam_y - cy, cam_z - cz],
+                [cx, cy, cz],
+                &self.lights,
+                amb,
+            );
             (s0, s1, s2)
         } else {
             crate::gfx::light::compute_lit_color_vertices(
@@ -574,10 +611,20 @@ impl GfxState {
         let mut fk = 1;
         while fk + 1 < pn {
             self.depth_queue.push_triangle_g_zv(
-                proj[0].0, proj[0].1, proj[0].2, proj[0].3,
-                proj[fk].0, proj[fk].1, proj[fk].2, proj[fk].3,
-                proj[fk + 1].0, proj[fk + 1].1, proj[fk + 1].2, proj[fk + 1].3,
-                3, self.flat_shade,
+                proj[0].0,
+                proj[0].1,
+                proj[0].2,
+                proj[0].3,
+                proj[fk].0,
+                proj[fk].1,
+                proj[fk].2,
+                proj[fk].3,
+                proj[fk + 1].0,
+                proj[fk + 1].1,
+                proj[fk + 1].2,
+                proj[fk + 1].3,
+                3,
+                self.flat_shade,
             );
             fk += 1;
         }
@@ -603,9 +650,15 @@ impl GfxState {
     pub fn mesh_draw(
         &mut self,
         id: usize,
-        ox: f32, oy: f32, oz: f32,
-        rx: f32, ry: f32, rz: f32,
-        ux: f32, uy: f32, uz: f32,
+        ox: f32,
+        oy: f32,
+        oz: f32,
+        rx: f32,
+        ry: f32,
+        rz: f32,
+        ux: f32,
+        uy: f32,
+        uz: f32,
         s: f32,
         use_baked_color: bool,
     ) {

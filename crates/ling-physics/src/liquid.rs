@@ -85,8 +85,16 @@ fn build_neighbor_axis(n: usize, wrap: bool) -> (Vec<usize>, Vec<usize>) {
     let mut minus = vec![0usize; n];
     let mut plus = vec![0usize; n];
     for i in 0..n {
-        minus[i] = if wrap { (i + n - 1) % n } else { i.saturating_sub(1) };
-        plus[i] = if wrap { (i + 1) % n } else { (i + 1).min(n - 1) };
+        minus[i] = if wrap {
+            (i + n - 1) % n
+        } else {
+            i.saturating_sub(1)
+        };
+        plus[i] = if wrap {
+            (i + 1) % n
+        } else {
+            (i + 1).min(n - 1)
+        };
     }
     (minus, plus)
 }
@@ -325,6 +333,7 @@ impl LiquidGrid {
     pub fn water_at(&self, x: usize, y: usize) -> f32 {
         self.water[self.idx(x.min(self.w - 1), y.min(self.h - 1))]
     }
+
     pub fn oil_at(&self, x: usize, y: usize) -> f32 {
         self.oil[self.idx(x.min(self.w - 1), y.min(self.h - 1))]
     }
@@ -366,6 +375,7 @@ impl LiquidGrid {
     pub fn total_water(&self) -> f32 {
         self.water.iter().sum()
     }
+
     pub fn total_oil(&self) -> f32 {
         self.oil.iter().sum()
     }

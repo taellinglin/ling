@@ -19,6 +19,7 @@ impl<T: ?Sized> Clone for Gc<T> {
 }
 impl<T: ?Sized> std::ops::Deref for Gc<T> {
     type Target = T;
+
     fn deref(&self) -> &T {
         &self.0
     }

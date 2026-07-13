@@ -97,6 +97,7 @@ impl MusicEngine {
             });
         }
     }
+
     pub fn play(&self) {
         if let Ok(mut s) = self.state.lock() {
             if let Some(t) = &mut s.track {
@@ -104,6 +105,7 @@ impl MusicEngine {
             }
         }
     }
+
     pub fn pause(&self) {
         if let Ok(mut s) = self.state.lock() {
             if let Some(t) = &mut s.track {
@@ -111,6 +113,7 @@ impl MusicEngine {
             }
         }
     }
+
     pub fn stop(&self) {
         if let Ok(mut s) = self.state.lock() {
             if let Some(t) = &mut s.track {
@@ -119,6 +122,7 @@ impl MusicEngine {
             }
         }
     }
+
     pub fn seek(&self, sec: f32) {
         if let Ok(mut s) = self.state.lock() {
             if let Some(t) = &mut s.track {
@@ -126,6 +130,7 @@ impl MusicEngine {
             }
         }
     }
+
     /// Current playback position in seconds.
     pub fn position(&self) -> f32 {
         self.state
@@ -134,11 +139,13 @@ impl MusicEngine {
             .and_then(|s| s.track.as_ref().map(|t| (t.pos / t.src_rate as f64) as f32))
             .unwrap_or(0.0)
     }
+
     pub fn set_volume(&self, v: f32) {
         if let Ok(mut s) = self.state.lock() {
             s.master = v.clamp(0.0, 2.0);
         }
     }
+
     pub fn set_track_volume(&self, v: f32) {
         if let Ok(mut s) = self.state.lock() {
             if let Some(t) = &mut s.track {
@@ -154,23 +161,27 @@ impl MusicEngine {
             .map(|mut s| s.synth.add_patch(p))
             .unwrap_or(0)
     }
+
     pub fn note(&self, patch: usize, midi: i32, vel: f32, dur: f32) -> u32 {
         self.state
             .lock()
             .map(|mut s| s.synth.note(patch, midi, vel, dur))
             .unwrap_or(0)
     }
+
     pub fn note_on(&self, patch: usize, midi: i32, vel: f32) -> u32 {
         self.state
             .lock()
             .map(|mut s| s.synth.note_on(patch, midi, vel))
             .unwrap_or(0)
     }
+
     pub fn note_off(&self, patch: usize, midi: i32) {
         if let Ok(mut s) = self.state.lock() {
             s.synth.note_off_pitch(patch, midi);
         }
     }
+
     pub fn all_notes_off(&self) {
         if let Ok(mut s) = self.state.lock() {
             s.synth.all_notes_off();

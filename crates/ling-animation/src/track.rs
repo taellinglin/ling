@@ -89,12 +89,15 @@ impl Timeline {
             duration: duration.max(0.0),
         }
     }
+
     pub fn play(&mut self) {
         self.playing = true;
     }
+
     pub fn pause(&mut self) {
         self.playing = false;
     }
+
     pub fn stop(&mut self) {
         self.playing = false;
         self.time = 0.0;

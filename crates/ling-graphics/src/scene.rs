@@ -22,9 +22,11 @@ impl Transform {
     pub fn from_translation(t: Vec3) -> Self {
         Self { translation: t, ..Self::IDENTITY }
     }
+
     pub fn from_rotation(r: Quat) -> Self {
         Self { rotation: r, ..Self::IDENTITY }
     }
+
     pub fn from_scale(s: Vec3) -> Self {
         Self { scale: s, ..Self::IDENTITY }
     }
@@ -44,9 +46,11 @@ impl Transform {
     pub fn forward(&self) -> Vec3 {
         self.rotation * -Vec3::Z
     }
+
     pub fn right(&self) -> Vec3 {
         self.rotation * Vec3::X
     }
+
     pub fn up(&self) -> Vec3 {
         self.rotation * Vec3::Y
     }
@@ -108,10 +112,12 @@ impl SceneNode {
         self.mesh = Some(mesh);
         self
     }
+
     pub fn with_material(mut self, mat: Arc<Material>) -> Self {
         self.material = Some(mat);
         self
     }
+
     pub fn with_transform(mut self, t: Transform) -> Self {
         self.transform = t;
         self
@@ -147,6 +153,7 @@ impl Scene {
     pub fn node(&self, id: NodeId) -> &SceneNode {
         &self.nodes[id]
     }
+
     pub fn node_mut(&mut self, id: NodeId) -> &mut SceneNode {
         &mut self.nodes[id]
     }

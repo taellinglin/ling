@@ -9,18 +9,19 @@ pub struct Color {
 
 impl Color {
     pub const BLACK: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
-    pub const WHITE: Self = Self { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
-    pub const RED: Self = Self { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
-    pub const GREEN: Self = Self { r: 0.0, g: 1.0, b: 0.0, a: 1.0 };
     pub const BLUE: Self = Self { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
-    pub const YELLOW: Self = Self { r: 1.0, g: 1.0, b: 0.0, a: 1.0 };
     pub const CYAN: Self = Self { r: 0.0, g: 1.0, b: 1.0, a: 1.0 };
+    pub const GREEN: Self = Self { r: 0.0, g: 1.0, b: 0.0, a: 1.0 };
     pub const MAGENTA: Self = Self { r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
+    pub const RED: Self = Self { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
     pub const TRANSPARENT: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+    pub const WHITE: Self = Self { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
+    pub const YELLOW: Self = Self { r: 1.0, g: 1.0, b: 0.0, a: 1.0 };
 
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
+
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b, a: 1.0 }
     }
@@ -88,18 +89,21 @@ impl Color {
 
 impl std::ops::Add for Color {
     type Output = Self;
+
     fn add(self, r: Self) -> Self {
         Self::new(self.r + r.r, self.g + r.g, self.b + r.b, self.a + r.a)
     }
 }
 impl std::ops::Mul for Color {
     type Output = Self;
+
     fn mul(self, r: Self) -> Self {
         Self::new(self.r * r.r, self.g * r.g, self.b * r.b, self.a * r.a)
     }
 }
 impl std::ops::Mul<f32> for Color {
     type Output = Self;
+
     fn mul(self, s: f32) -> Self {
         Self::new(self.r * s, self.g * s, self.b * s, self.a * s)
     }

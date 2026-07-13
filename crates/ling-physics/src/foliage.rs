@@ -9,12 +9,14 @@ impl Rng {
     fn new(seed: u64) -> Self {
         Self(seed ^ 0xdeadbeef_cafebabe)
     }
+
     fn next_f32(&mut self) -> f32 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         (self.0 as u32) as f32 / u32::MAX as f32
     }
+
     fn range(&mut self, lo: f32, hi: f32) -> f32 {
         lo + self.next_f32() * (hi - lo)
     }

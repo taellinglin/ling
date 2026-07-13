@@ -29,7 +29,7 @@
 /// `value` — output brightness multiplier [0..1]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToneStop {
-    pub t:     f32,
+    pub t: f32,
     pub value: f32,
 }
 
@@ -42,7 +42,7 @@ pub struct ToneStop {
 ///            `None` = identity (no remap).
 #[derive(Debug, Clone)]
 pub struct ToneRamp {
-    pub stops:  Vec<ToneStop>,
+    pub stops: Vec<ToneStop>,
     pub smooth: bool,
     pub bezier: Option<[f32; 2]>,
 }
@@ -84,21 +84,31 @@ pub fn sample_ramp(ramp: &ToneRamp, t_in: f32) -> f32 {
     };
 
     let stops = &ramp.stops;
-    if stops.is_empty() { return t; }
+    if stops.is_empty() {
+        return t;
+    }
 
     // Before first stop → first value
-    if t <= stops[0].t { return stops[0].value; }
+    if t <= stops[0].t {
+        return stops[0].value;
+    }
 
     let last = stops.len() - 1;
     // At or past last stop → last value
-    if t >= stops[last].t { return stops[last].value; }
+    if t >= stops[last].t {
+        return stops[last].value;
+    }
 
     // Find the surrounding pair
     for i in 0..last {
         if t < stops[i + 1].t {
             if ramp.smooth {
                 let span = stops[i + 1].t - stops[i].t;
-                let f = if span > 1e-6 { (t - stops[i].t) / span } else { 1.0 };
+                let f = if span > 1e-6 {
+                    (t - stops[i].t) / span
+                } else {
+                    1.0
+                };
                 return stops[i].value + f * (stops[i + 1].value - stops[i].value);
             } else {
                 return stops[i].value; // hard snap: use the left stop's output
@@ -118,29 +128,32 @@ pub fn sample_ramp(ramp: &ToneRamp, t_in: f32) -> f32 {
 /// left exact — the tag is stripped instead of shaded, so vector lines and
 /// vector text render as flat, un-quantised colour and never cel-band-snap
 /// or flicker against the lit triangles around them.
-pub fn apply_ramp(
-    buf:    &mut Vec<u32>,
-    width:  usize,
-    height: usize,
-    ramp:   &ToneRamp,
-) {
+pub fn apply_ramp(buf: &mut Vec<u32>, width: usize, height: usize, ramp: &ToneRamp) {
     let n = width * height;
-    if buf.len() < n { return; }
+    if buf.len() < n {
+        return;
+    }
 
     #[inline]
     fn shade(p: u32, ramp: &ToneRamp) -> u32 {
-        if p & crate::gfx::UNLIT != 0 { return p & crate::gfx::RGB_MASK; }
-        if ramp.stops.is_empty() { return p; }
+        if p & crate::gfx::UNLIT != 0 {
+            return p & crate::gfx::RGB_MASK;
+        }
+        if ramp.stops.is_empty() {
+            return p;
+        }
         let r = ((p >> 16) & 0xFF) as f32;
-        let g = ((p >>  8) & 0xFF) as f32;
-        let b = ( p        & 0xFF) as f32;
+        let g = ((p >> 8) & 0xFF) as f32;
+        let b = (p & 0xFF) as f32;
         let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        if lum < 0.001 { return p; }
+        if lum < 0.001 {
+            return p;
+        }
         let new_val = sample_ramp(ramp, lum / 255.0);
-        let scale   = (new_val * 255.0 / lum).clamp(0.0, 8.0);
+        let scale = (new_val * 255.0 / lum).clamp(0.0, 8.0);
         (((r * scale).min(255.0) as u32) << 16)
-            | (((g * scale).min(255.0) as u32) <<  8)
-            |  ((b * scale).min(255.0) as u32)
+            | (((g * scale).min(255.0) as u32) << 8)
+            | ((b * scale).min(255.0) as u32)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -174,46 +187,55 @@ pub fn apply_ramp(
 /// `color`     — 0x00RRGGBB ink colour
 /// `threshold` — depth difference that triggers the edge (0.02–0.1 for typical scenes)
 pub fn draw_outlines(
-    buf:       &mut Vec<u32>,
-    zbuf:      &[f32],
-    width:     usize,
-    height:    usize,
+    buf: &mut Vec<u32>,
+    zbuf: &[f32],
+    width: usize,
+    height: usize,
     thickness: f32,
-    color:     u32,
+    color: u32,
     threshold: f32,
 ) {
     if zbuf.len() < width * height || buf.len() < width * height {
         return;
     }
-    let t   = thickness.clamp(0.5, 6.0);
+    let t = thickness.clamp(0.5, 6.0);
     let t_i = t.ceil() as i32;
-    let t2  = t * t;
+    let t2 = t * t;
 
     for y in t_i..(height as i32 - t_i) {
         for x in t_i..(width as i32 - t_i) {
             let idx = y as usize * width + x as usize;
             let z = zbuf[idx];
-            if !z.is_finite() { continue; }
+            if !z.is_finite() {
+                continue;
+            }
 
             let zn = zbuf[(y - 1) as usize * width + x as usize];
             let zs = zbuf[(y + 1) as usize * width + x as usize];
             let zw = zbuf[y as usize * width + (x - 1) as usize];
             let ze = zbuf[y as usize * width + (x + 1) as usize];
-            let dmax = (z - zn).abs()
+            let dmax = (z - zn)
+                .abs()
                 .max((z - zs).abs())
                 .max((z - zw).abs())
                 .max((z - ze).abs());
-            if dmax < threshold { continue; }
+            if dmax < threshold {
+                continue;
+            }
 
             for dy in -t_i..=t_i {
                 for dx in -t_i..=t_i {
                     let dist2 = (dx as f32) * (dx as f32) + (dy as f32) * (dy as f32);
-                    if dist2 > t2 { continue; }
+                    if dist2 > t2 {
+                        continue;
+                    }
                     let nx = x + dx;
                     let ny = y + dy;
                     if nx >= 0 && ny >= 0 && nx < width as i32 && ny < height as i32 {
                         let ni = ny as usize * width + nx as usize;
-                        if buf[ni] & crate::gfx::UNLIT != 0 { continue; }
+                        if buf[ni] & crate::gfx::UNLIT != 0 {
+                            continue;
+                        }
                         let cov = (t2 - dist2).sqrt() / t.max(1.0);
                         let cov = cov.clamp(0.0, 1.0);
                         if cov >= 0.999 {
@@ -221,11 +243,11 @@ pub fn draw_outlines(
                         } else {
                             let dst = buf[ni];
                             let dr = ((dst >> 16) & 0xFF) as f32;
-                            let dg = ((dst >>  8) & 0xFF) as f32;
-                            let db = ( dst        & 0xFF) as f32;
+                            let dg = ((dst >> 8) & 0xFF) as f32;
+                            let db = (dst & 0xFF) as f32;
                             let ir = ((color >> 16) & 0xFF) as f32;
-                            let ig = ((color >>  8) & 0xFF) as f32;
-                            let ib = ( color        & 0xFF) as f32;
+                            let ig = ((color >> 8) & 0xFF) as f32;
+                            let ib = (color & 0xFF) as f32;
                             let r = (ir * cov + dr * (1.0 - cov)) as u32;
                             let g = (ig * cov + dg * (1.0 - cov)) as u32;
                             let b = (ib * cov + db * (1.0 - cov)) as u32;
@@ -251,20 +273,20 @@ pub struct ToonConfig {
     /// Applied as a post-process after geometry rendering.
     pub ramp: ToneRamp,
     /// Outline thickness in pixels (0 = off).
-    pub outline_px:     f32,
+    pub outline_px: f32,
     /// Depth discontinuity that triggers an outline stamp.
     pub outline_thresh: f32,
     /// Ink colour (0x00RRGGBB).
-    pub outline_color:  u32,
+    pub outline_color: u32,
 }
 
 impl Default for ToonConfig {
     fn default() -> Self {
         Self {
-            ramp:           ToneRamp::default(),
-            outline_px:     0.0,
+            ramp: ToneRamp::default(),
+            outline_px: 0.0,
             outline_thresh: 0.05,
-            outline_color:  0x00_00_00,
+            outline_color: 0x00_00_00,
         }
     }
 }
@@ -276,16 +298,17 @@ impl Default for ToonConfig {
 ///    strips the [`crate::gfx::UNLIT`] tag, so it must run last.
 ///
 /// Call this after `queue.flush()` and before presenting the buffer to screen.
-pub fn apply(
-    cfg:    &ToonConfig,
-    buf:    &mut Vec<u32>,
-    zbuf:   &[f32],
-    width:  usize,
-    height: usize,
-) {
+pub fn apply(cfg: &ToonConfig, buf: &mut Vec<u32>, zbuf: &[f32], width: usize, height: usize) {
     if cfg.outline_px > 0.0 {
-        draw_outlines(buf, zbuf, width, height,
-            cfg.outline_px, cfg.outline_color, cfg.outline_thresh);
+        draw_outlines(
+            buf,
+            zbuf,
+            width,
+            height,
+            cfg.outline_px,
+            cfg.outline_color,
+            cfg.outline_thresh,
+        );
     }
 
     apply_ramp(buf, width, height, &cfg.ramp);
@@ -297,7 +320,9 @@ pub fn apply(
 mod tests {
     use super::*;
 
-    fn make_toon_default() -> ToonConfig { ToonConfig::default() }
+    fn make_toon_default() -> ToonConfig {
+        ToonConfig::default()
+    }
 
     #[test]
     fn sample_ramp_hard_snap_3band() {
@@ -327,7 +352,10 @@ mod tests {
     fn bezier_identity_at_1third_2third() {
         // y1=1/3, y2=2/3 → exact identity f(t)=t
         let ramp = ToneRamp {
-            stops: vec![ToneStop { t: 0.0, value: 0.0 }, ToneStop { t: 1.0, value: 1.0 }],
+            stops: vec![
+                ToneStop { t: 0.0, value: 0.0 },
+                ToneStop { t: 1.0, value: 1.0 },
+            ],
             smooth: true,
             bezier: Some([1.0 / 3.0, 2.0 / 3.0]),
         };
@@ -342,17 +370,22 @@ mod tests {
         // A pure-red pixel at lum ≈ 0.3*255 = 76.5 (within shadow band t≈0.30 → mid)
         // With default ramp (hard snap): t=0.30 → value=0.50
         // Expected scale = 0.50*255/76.5 ≈ 1.67 → r scales up
-        let width = 4; let height = 4;
+        let width = 4;
+        let height = 4;
         let mut buf = vec![0u32; width * height];
-        let r_in = 255u32; let g_in = 0u32; let b_in = 0u32;
+        let r_in = 255u32;
+        let g_in = 0u32;
+        let b_in = 0u32;
         let _lum_in = 0.299 * r_in as f32; // ≈76.5 (kept for readability)
-        for px in buf.iter_mut() { *px = (r_in << 16) | (g_in << 8) | b_in; }
+        for px in buf.iter_mut() {
+            *px = (r_in << 16) | (g_in << 8) | b_in;
+        }
         let ramp = ToneRamp::default();
         apply_ramp(&mut buf, width, height, &ramp);
         let p = buf[5];
         let r = (p >> 16) & 0xFF;
-        let g = (p >>  8) & 0xFF;
-        let b =  p        & 0xFF;
+        let g = (p >> 8) & 0xFF;
+        let b = p & 0xFF;
         // Hue: must stay pure red (g=b=0)
         assert_eq!(g, 0, "hue must remain red");
         assert_eq!(b, 0, "hue must remain red");
@@ -363,15 +396,16 @@ mod tests {
 
     #[test]
     fn apply_ramp_background_now_processed() {
-        let width = 2; let height = 2;
+        let width = 2;
+        let height = 2;
         let mut buf = vec![0x808080u32; width * height]; // grey bg, lum=128
         let ramp = ToneRamp::default();
         apply_ramp(&mut buf, width, height, &ramp);
         // Grey (128,128,128) has t≈0.502 → mid band (0.50) → output ≈127
         for px in &buf {
             let r = (*px >> 16) & 0xFF;
-            let g = (*px >>  8) & 0xFF;
-            let b =  *px        & 0xFF;
+            let g = (*px >> 8) & 0xFF;
+            let b = *px & 0xFF;
             assert!(r < 0x81, "red should be cel-adjusted, was {r:#04x}");
             assert!(g < 0x81, "green should be cel-adjusted, was {g:#04x}");
             assert!(b < 0x81, "blue should be cel-adjusted, was {b:#04x}");
@@ -380,7 +414,8 @@ mod tests {
 
     #[test]
     fn apply_ramp_skips_and_strips_unlit() {
-        let width = 2; let height = 2;
+        let width = 2;
+        let height = 2;
         let mut buf = vec![0x0100FF00u32; width * height]; // unlit green, tagged
         let ramp = ToneRamp::default();
         apply_ramp(&mut buf, width, height, &ramp);
@@ -391,7 +426,8 @@ mod tests {
 
     #[test]
     fn apply_ramp_strips_when_stops_empty() {
-        let width = 2; let height = 2;
+        let width = 2;
+        let height = 2;
         let mut buf = vec![0x0100FF00u32; width * height];
         let ramp = ToneRamp { stops: vec![], smooth: false, bezier: None };
         apply_ramp(&mut buf, width, height, &ramp);
@@ -402,12 +438,18 @@ mod tests {
 
     #[test]
     fn outlines_skip_unlit_and_write_tagged_ink() {
-        let width = 8; let height = 8;
+        let width = 8;
+        let height = 8;
         let mut buf = vec![0u32; width * height];
         buf[4 * width + 4] = crate::gfx::UNLIT | 0x00FF00FF; // unlit ink pixel
         let mut zbuf = vec![1.0f32; width * height];
         zbuf[4 * width + 4] = 5.0; // sharp discontinuity vs neighbours
-        let cfg = ToonConfig { outline_px: 2.0, outline_thresh: 0.05, outline_color: 0x00FFFFFF, ..ToonConfig::default() };
+        let cfg = ToonConfig {
+            outline_px: 2.0,
+            outline_thresh: 0.05,
+            outline_color: 0x00FFFFFF,
+            ..ToonConfig::default()
+        };
         apply(&cfg, &mut buf, &zbuf, width, height);
         // The unlit source pixel itself must be untouched by outline stamping,
         // then stripped (not shaded) by the ramp pass.
@@ -415,7 +457,10 @@ mod tests {
         // Ink stamped on a neighbouring plain-black pixel must survive the ramp
         // pass exactly (tagged unlit while drawn, stripped not shaded on exit).
         let ni = 4 * width + 5;
-        assert!(buf[ni] & crate::gfx::RGB_MASK != 0, "outline ink must be visible, not cel-quantised to black");
+        assert!(
+            buf[ni] & crate::gfx::RGB_MASK != 0,
+            "outline ink must be visible, not cel-quantised to black"
+        );
     }
 
     #[test]

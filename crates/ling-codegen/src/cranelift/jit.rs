@@ -278,7 +278,12 @@ impl JitBackend {
         let oversized = |func: &MirFunction| -> bool {
             func.name != "__main__"
                 && func.name != "main"
-                && func.basic_blocks.iter().map(|b| b.statements.len()).sum::<usize>() > max_stmts
+                && func
+                    .basic_blocks
+                    .iter()
+                    .map(|b| b.statements.len())
+                    .sum::<usize>()
+                    > max_stmts
         };
 
         for func in &program.mir.functions {

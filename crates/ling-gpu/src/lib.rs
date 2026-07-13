@@ -115,7 +115,6 @@ pub fn gpu_count() -> usize {
     backend().gpu_count()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,7 +179,11 @@ mod tests {
     fn split_ranges_covers_everything_once() {
         for &(n, k) in &[(0, 2), (1, 2), (7, 2), (8, 2), (1000, 2), (1000, 3), (5, 8)] {
             let ranges = split_ranges(n, k);
-            assert_eq!(ranges.len(), k.max(1), "one range per device (n={n}, k={k})");
+            assert_eq!(
+                ranges.len(),
+                k.max(1),
+                "one range per device (n={n}, k={k})"
+            );
             // Contiguous, non-overlapping, starting at 0 and ending at n.
             assert_eq!(ranges[0].0, 0);
             assert_eq!(ranges.last().unwrap().1, n);
@@ -239,7 +242,11 @@ mod tests {
             for c in 0..3 {
                 let a = part[3 * t + c];
                 let b = full[3 * (row0 + t) + c];
-                assert!((a - b).abs() < 1e-4, "row {} chan {c}: {a} vs {b}", row0 + t);
+                assert!(
+                    (a - b).abs() < 1e-4,
+                    "row {} chan {c}: {a} vs {b}",
+                    row0 + t
+                );
             }
         }
     }
@@ -257,4 +264,3 @@ mod tests {
         assert_eq!(gpu_count(), backend().gpu_count());
     }
 }
-

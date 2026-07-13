@@ -233,8 +233,18 @@ fn has_wasm_pack() -> bool {
 fn scan_use_paths(source: &str) -> Vec<String> {
     // Use keywords across all supported human languages (mirrors the parser).
     let use_kws = [
-        "use", "ใช้", "载", "引", "使う", "사용", "використати", "использовать",
-        "استخدم", "用", "להשתמש", "उपयोग",
+        "use",
+        "ใช้",
+        "载",
+        "引",
+        "使う",
+        "사용",
+        "використати",
+        "использовать",
+        "استخدم",
+        "用",
+        "להשתמש",
+        "उपयोग",
     ];
     let mut paths = Vec::new();
     for line in source.lines() {
@@ -289,7 +299,10 @@ fn collect_ling_modules(
                 continue;
             },
         };
-        let sub_dir = file_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| dir.clone());
+        let sub_dir = file_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| dir.clone());
         for sub_path in scan_use_paths(&content) {
             if !modules.contains_key(&sub_path) {
                 queue.push((sub_path, sub_dir.clone()));
@@ -306,7 +319,12 @@ fn serde_json_modules(modules: &std::collections::HashMap<String, String>) -> St
     let entries: Vec<_> = modules.iter().collect();
     for (i, (path, src)) in entries.iter().enumerate() {
         let comma = if i + 1 < entries.len() { "," } else { "" };
-        out.push_str(&format!("  {}: {}{}\n", json_str(path), json_str(src), comma));
+        out.push_str(&format!(
+            "  {}: {}{}\n",
+            json_str(path),
+            json_str(src),
+            comma
+        ));
     }
     out.push('}');
     out
@@ -489,4 +507,3 @@ const INDEX_HTML: &str = r#"<!DOCTYPE html>
 </body>
 </html>
 "#;
-

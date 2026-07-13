@@ -319,21 +319,25 @@ impl<'a> Reader<'a> {
     fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
+
     fn tag(&mut self, n: usize) -> Option<&'a [u8]> {
         let s = self.data.get(self.pos..self.pos + n)?;
         self.pos += n;
         Some(s)
     }
+
     fn u8(&mut self) -> Option<u8> {
         let v = *self.data.get(self.pos)?;
         self.pos += 1;
         Some(v)
     }
+
     fn u32(&mut self) -> Option<u32> {
         let s = self.data.get(self.pos..self.pos + 4)?;
         self.pos += 4;
         Some(u32::from_le_bytes(s.try_into().ok()?))
     }
+
     fn f32s(&mut self, n: usize) -> Option<Vec<f32>> {
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {

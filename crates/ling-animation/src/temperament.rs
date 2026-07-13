@@ -10,20 +10,23 @@
 pub struct Temperament(pub f32);
 
 impl Temperament {
-    pub const ORGANIC: Self = Self(0.0);
-    pub const MECHANICAL: Self = Self(1.0);
     /// Half-and-half — e.g. a hydraulic limb with organic sag.
     pub const HYBRID: Self = Self(0.5);
+    pub const MECHANICAL: Self = Self(1.0);
+    pub const ORGANIC: Self = Self(0.0);
 
     pub fn new(t: f32) -> Self {
         Self(t.clamp(0.0, 1.0))
     }
+
     pub fn value(self) -> f32 {
         self.0
     }
+
     pub fn is_organic(self) -> bool {
         self.0 < 0.5
     }
+
     pub fn is_mechanical(self) -> bool {
         self.0 >= 0.5
     }

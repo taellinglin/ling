@@ -62,6 +62,7 @@ impl Capabilities {
             ..Self::default()
         }
     }
+
     /// A typical XR controller.
     #[must_use]
     pub fn xr_controller() -> Self {
@@ -152,6 +153,7 @@ impl DeviceRegistry {
     pub fn get(&self, id: DeviceId) -> Option<&DeviceInfo> {
         self.devices.iter().find(|d| d.id == id)
     }
+
     pub fn get_mut(&mut self, id: DeviceId) -> Option<&mut DeviceInfo> {
         self.devices.iter_mut().find(|d| d.id == id)
     }
@@ -159,6 +161,7 @@ impl DeviceRegistry {
     pub fn iter(&self) -> impl Iterator<Item = &DeviceInfo> {
         self.devices.iter()
     }
+
     pub fn of_kind(&self, kind: DeviceKind) -> impl Iterator<Item = &DeviceInfo> {
         self.devices
             .iter()

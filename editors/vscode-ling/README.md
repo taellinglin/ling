@@ -22,7 +22,9 @@ provided by the host).
 
 ```powershell
 # Windows (PowerShell)
+Set-Location C:\Users\User\Programs\ling\editors\vscode-ling
 $dst = "$env:USERPROFILE\.vscode\extensions\ling-lang-0.1.0"
+New-Item -ItemType Directory -Force -Path (Split-Path $dst)
 New-Item -ItemType SymbolicLink -Path $dst -Target (Resolve-Path .)
 ```
 

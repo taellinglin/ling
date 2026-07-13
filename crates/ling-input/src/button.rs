@@ -89,22 +89,27 @@ impl Button {
     pub const fn is_down(&self) -> bool {
         self.down
     }
+
     /// Currently released.
     pub const fn is_up(&self) -> bool {
         !self.down
     }
+
     /// Went down this frame (rising edge).
     pub const fn just_pressed(&self) -> bool {
         self.down && !self.prev
     }
+
     /// Went up this frame (falling edge).
     pub const fn just_released(&self) -> bool {
         !self.down && self.prev
     }
+
     /// Seconds the button has been continuously held (`0` while up).
     pub const fn held_for(&self) -> f32 {
         self.held_for
     }
+
     /// `true` on the initial press and on each auto-repeat tick thereafter.
     /// Always `false` unless [`with_repeat`](Self::with_repeat) was set.
     pub const fn repeated(&self) -> bool {

@@ -10,6 +10,7 @@ impl<T> LingBox<T> {
     pub fn new(val: T) -> Self {
         Self(Box::new(val))
     }
+
     pub fn into_inner(self) -> T {
         *self.0
     }
@@ -17,6 +18,7 @@ impl<T> LingBox<T> {
 
 impl<T> std::ops::Deref for LingBox<T> {
     type Target = T;
+
     fn deref(&self) -> &T {
         &self.0
     }

@@ -40,14 +40,17 @@ impl Pose {
     pub fn forward(&self) -> Vec3 {
         self.orientation * Vec3::NEG_Z
     }
+
     #[must_use]
     pub fn right(&self) -> Vec3 {
         self.orientation * Vec3::X
     }
+
     #[must_use]
     pub fn up(&self) -> Vec3 {
         self.orientation * Vec3::Y
     }
+
     /// Transform a local-space point into world space.
     #[must_use]
     pub fn transform_point(&self, local: Vec3) -> Vec3 {
@@ -88,7 +91,6 @@ pub enum XrButton {
 }
 
 impl XrButton {
-    pub const COUNT: usize = 6;
     pub const ALL: [Self; Self::COUNT] = [
         Self::PrimaryFace,
         Self::SecondaryFace,
@@ -97,6 +99,8 @@ impl XrButton {
         Self::Grip,
         Self::Menu,
     ];
+    pub const COUNT: usize = 6;
+
     #[must_use]
     pub const fn index(self) -> usize {
         self as usize
@@ -137,6 +141,7 @@ pub enum HandJoint {
 
 impl HandJoint {
     pub const COUNT: usize = 26;
+
     #[must_use]
     pub const fn index(self) -> usize {
         self as usize
@@ -219,9 +224,11 @@ impl XrController {
     pub fn button(&self, b: XrButton) -> &Button {
         &self.buttons[b.index()]
     }
+
     pub fn set_button(&mut self, b: XrButton, down: bool, dt: f32) {
         self.buttons[b.index()].update(down, dt);
     }
+
     /// The far-interaction pointer ray `(origin, direction)`.
     #[must_use]
     pub fn ray(&self) -> (Vec3, Vec3) {
@@ -339,6 +346,7 @@ impl Xr {
     pub fn new() -> Self {
         Self::default()
     }
+
     #[must_use]
     pub fn hand(&self, hand: Hand) -> &XrController {
         match hand {
@@ -346,6 +354,7 @@ impl Xr {
             Hand::Right => &self.right,
         }
     }
+
     pub fn hand_mut(&mut self, hand: Hand) -> &mut XrController {
         match hand {
             Hand::Left => &mut self.left,

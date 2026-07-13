@@ -19,6 +19,7 @@ impl Role {
     pub fn index(self) -> usize {
         self as usize
     }
+
     fn from_tag(c: char) -> Option<Role> {
         match c {
             'n' => Some(Role::Name),
@@ -123,9 +124,11 @@ impl Dialog {
     pub fn is_typing(&self) -> bool {
         (self.revealed as usize) < self.page_len()
     }
+
     pub fn is_last_page(&self) -> bool {
         self.page + 1 >= self.pages.len()
     }
+
     pub fn is_closed(&self) -> bool {
         self.closed
     }

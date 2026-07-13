@@ -56,6 +56,7 @@ impl Grade {
             Grade::Miss
         }
     }
+
     pub fn name(self) -> &'static str {
         match self {
             Grade::Perfect => "PERFECT",
@@ -65,6 +66,7 @@ impl Grade {
             Grade::Miss => "MISS",
         }
     }
+
     /// Index 0=Perfect … 4=Miss (handy as a return value for scripts).
     pub fn index(self) -> i32 {
         match self {
@@ -75,6 +77,7 @@ impl Grade {
             Grade::Miss => 4,
         }
     }
+
     pub fn from_index(i: i32) -> Grade {
         match i {
             0 => Grade::Perfect,
@@ -84,6 +87,7 @@ impl Grade {
             _ => Grade::Miss,
         }
     }
+
     fn points(self) -> u32 {
         match self {
             Grade::Perfect => 300,
@@ -93,6 +97,7 @@ impl Grade {
             Grade::Miss => 0,
         }
     }
+
     fn accuracy(self) -> f32 {
         match self {
             Grade::Perfect => 1.0,

@@ -75,8 +75,10 @@ fn try_poll() -> Option<usize> {
             let axes = gp.axes();
             let alen = axes.length().min(4) as usize;
             for a in 0..alen {
-                pad.axes[a] = js_sys::Array::from(&axes).get(a as u32).as_f64().unwrap_or(0.0)
-                    as f32;
+                pad.axes[a] = js_sys::Array::from(&axes)
+                    .get(a as u32)
+                    .as_f64()
+                    .unwrap_or(0.0) as f32;
             }
         }
         connected

@@ -131,17 +131,21 @@ impl Chunk {
     fn w(&mut self, b: u8) {
         self.code.push(b);
     }
+
     fn w2(&mut self, v: u16) {
         self.code.extend_from_slice(&v.to_le_bytes());
     }
+
     fn w8(&mut self, v: i64) {
         self.code.extend_from_slice(&v.to_le_bytes());
     }
+
     fn add_float(&mut self, v: f64) -> u16 {
         let i = self.floats.len();
         self.floats.push(v);
         i as u16
     }
+
     fn add_str(&mut self, s: &str) -> u16 {
         let i = self.strings.len();
         self.strings.push(s.to_string());

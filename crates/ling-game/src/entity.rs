@@ -36,6 +36,7 @@ impl<T> ComponentStore<T> {
     pub fn remove(&mut self, entity: EntityId) {
         self.sparse.remove(&entity);
     }
+
     pub fn iter(&self) -> impl Iterator<Item = (&EntityId, &T)> {
         self.sparse.iter().map(|(id, &i)| (id, &self.dense[i]))
     }

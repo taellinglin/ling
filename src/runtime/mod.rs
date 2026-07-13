@@ -87,8 +87,11 @@ fn wasm_sleep_ms(ms: i32) {
     // Keep this in Rust/js_sys so wasm-bindgen doesn't emit `require(...)`
     // snippets, which break worker/no-modules output.
     let global = js_sys::global();
-    let has_sab = js_sys::Reflect::has(&global, &wasm_bindgen::JsValue::from_str("SharedArrayBuffer"))
-        .unwrap_or(false);
+    let has_sab = js_sys::Reflect::has(
+        &global,
+        &wasm_bindgen::JsValue::from_str("SharedArrayBuffer"),
+    )
+    .unwrap_or(false);
     let has_atomics =
         js_sys::Reflect::has(&global, &wasm_bindgen::JsValue::from_str("Atomics")).unwrap_or(false);
     if has_sab && has_atomics {
@@ -104,7 +107,11 @@ fn wasm_sleep_ms(ms: i32) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn wasm_fetch_sync(path: &str, response_type: &str, return_expr: &str) -> Result<wasm_bindgen::JsValue, String> {
+fn wasm_fetch_sync(
+    path: &str,
+    response_type: &str,
+    return_expr: &str,
+) -> Result<wasm_bindgen::JsValue, String> {
     let quoted = js_sys::JSON::stringify(&wasm_bindgen::JsValue::from_str(path))
         .ok()
         .and_then(|s| s.as_string())
@@ -114,13 +121,19 @@ fn wasm_fetch_sync(path: &str, response_type: &str, return_expr: &str) -> Result
         "(function(){{\n  var xhr = new XMLHttpRequest();\n  xhr.open('GET', {quoted}, false);\n  xhr.responseType = '{response_type}';\n  xhr.send(null);\n  if ((xhr.status|0) !== 200 && (xhr.status|0) !== 0) {{ throw new Error('HTTP ' + xhr.status + ' for ' + {quoted}); }}\n  return {return_expr};\n}})()"
     );
 
-    js_sys::eval(&script)
-        .map_err(|e| e.as_string().unwrap_or_else(|| format!("JS eval failed: {:?}", e)))
+    js_sys::eval(&script).map_err(|e| {
+        e.as_string()
+            .unwrap_or_else(|| format!("JS eval failed: {:?}", e))
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
 fn wasm_fetch_bytes(path: &str) -> Result<Vec<u8>, String> {
-    let value = wasm_fetch_sync(path, "arraybuffer", "new Uint8Array(xhr.response || new ArrayBuffer(0))")?;
+    let value = wasm_fetch_sync(
+        path,
+        "arraybuffer",
+        "new Uint8Array(xhr.response || new ArrayBuffer(0))",
+    )?;
     let arr = js_sys::Uint8Array::new(&value);
     let mut out = vec![0u8; arr.length() as usize];
     arr.copy_to(&mut out);
@@ -135,10 +148,10 @@ fn wasm_fetch_text(path: &str) -> Result<String, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
-#[cfg(target_arch = "wasm32")]
-use js_sys;
 use crate::gfx::{GfxState, Light};
 use crate::parser::ast::*;
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -249,56 +262,172 @@ impl std::fmt::Display for Value {
 fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
     Some(match name {
         // interface blips (native-only today)
-        "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ"
-        | "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม"
-        | "audio_stop_sfx" | "停止音效" | "効果音停止" | "효과음정지" | "หยุดเอฟเฟกต์ทั้งหมด" => {
-            Value::Unit
-        },
+        "audio_blip"
+        | "提示音"
+        | "ビープ音"
+        | "효과음"
+        | "เสียงบี๊บ"
+        | "ui_sound"
+        | "界面音"
+        | "UI音"
+        | "인터페이스음"
+        | "เสียงปุ่ม"
+        | "audio_stop_sfx"
+        | "停止音效"
+        | "効果音停止"
+        | "효과음정지"
+        | "หยุดเอฟเฟกต์ทั้งหมด" => Value::Unit,
 
         // music loading / analysis / playback / midi (native-only today)
-        "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง"
-        | "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี"
-        | "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง"
-        | "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
-            Value::Number(-1.0)
-        },
+        "music_load"
+        | "载入音乐"
+        | "音楽読込"
+        | "음악로드"
+        | "โหลดเพลง"
+        | "music_patch"
+        | "乐器音色"
+        | "音色読込"
+        | "악기패치"
+        | "แพตช์เครื่องดนตรี"
+        | "music_lrc"
+        | "载入歌词"
+        | "歌詞読込"
+        | "가사로드"
+        | "โหลดเนื้อเพลง"
+        | "music_midi_load"
+        | "载入MIDI"
+        | "MIDI読込"
+        | "미디로드"
+        | "โหลดมิดี" => Value::Number(-1.0),
 
-        "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง"
-        | "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที"
-        | "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง"
-        | "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์"
-        | "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต"
-        | "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง"
-        | "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ"
-        | "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
-            Value::Number(0.0)
-        },
+        "music_duration"
+        | "音乐时长"
+        | "音楽長さ"
+        | "음악길이"
+        | "ความยาวเพลง"
+        | "music_bpm"
+        | "节拍速度"
+        | "テンポ"
+        | "템포"
+        | "จังหวะต่อนาที"
+        | "music_pos"
+        | "音乐位置"
+        | "音楽位置"
+        | "음악위치"
+        | "ตำแหน่งเพลง"
+        | "music_mic_pitch"
+        | "麦克风音高"
+        | "マイク音程"
+        | "마이크음정"
+        | "ระดับเสียงไมค์"
+        | "music_hz"
+        | "音符频率"
+        | "音符周波数"
+        | "음표주파수"
+        | "ความถี่โน้ต"
+        | "music_pitch_score"
+        | "音准评分"
+        | "音程スコア"
+        | "음정점수"
+        | "คะแนนเสียง"
+        | "music_judge"
+        | "判定"
+        | "判定する"
+        | "판정"
+        | "ตัดสินจังหวะ"
+        | "music_midi_count"
+        | "MIDI数量"
+        | "MIDI数"
+        | "미디수"
+        | "จำนวนมิดี" => Value::Number(0.0),
 
-        "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง"
-        | "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน"
-        | "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต"
-        | "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
-            Value::Str(String::new())
-        },
+        "music_key"
+        | "调性"
+        | "調性"
+        | "조성"
+        | "คีย์เพลง"
+        | "music_lyric"
+        | "当前歌词"
+        | "現在歌詞"
+        | "현재가사"
+        | "เนื้อเพลงปัจจุบัน"
+        | "music_note_name"
+        | "音名"
+        | "音名称"
+        | "음이름"
+        | "ชื่อโน้ต"
+        | "music_grade_name"
+        | "判定名"
+        | "判定名称"
+        | "판정이름"
+        | "ชื่อการตัดสิน" => Value::Str(String::new()),
 
-        "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง"
-        | "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ"
-        | "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี"
-        | "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี"
-        | "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
-            Value::List(Vec::new())
-        },
+        "music_onsets"
+        | "音符起点"
+        | "オンセット"
+        | "온셋"
+        | "จุดเริ่มเสียง"
+        | "music_beat_grid"
+        | "节拍网格"
+        | "ビートグリッド"
+        | "비트그리드"
+        | "กริดจังหวะ"
+        | "music_midi_notes"
+        | "MIDI音符"
+        | "MIDIノート"
+        | "미디음표"
+        | "โน้ตมิดี"
+        | "music_midi_bars"
+        | "MIDI音条"
+        | "MIDIバー"
+        | "미디바"
+        | "แท่งมิดี"
+        | "music_fft"
+        | "音乐频谱"
+        | "音楽スペクトル"
+        | "음악스펙트럼"
+        | "สเปกตรัมเพลง" => Value::List(Vec::new()),
 
-        "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง"
-        | "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว"
-        | "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง"
-        | "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง"
-        | "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง"
-        | "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต"
-        | "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม"
-        | "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" => {
-            Value::Unit
-        },
+        "music_play"
+        | "播放音乐"
+        | "音楽再生"
+        | "음악재생"
+        | "เล่นเพลง"
+        | "music_pause"
+        | "暂停音乐"
+        | "音楽一時停止"
+        | "음악일시정지"
+        | "หยุดเพลงชั่วคราว"
+        | "music_stop"
+        | "停止音乐"
+        | "音楽停止"
+        | "음악정지"
+        | "หยุดเพลง"
+        | "music_seek"
+        | "定位音乐"
+        | "音楽シーク"
+        | "음악탐색"
+        | "ค้นหาเพลง"
+        | "music_volume"
+        | "音乐音量"
+        | "音楽音量"
+        | "음악음량"
+        | "ระดับเพลง"
+        | "music_note"
+        | "弹音符"
+        | "音符演奏"
+        | "음표연주"
+        | "เล่นโน้ต"
+        | "music_note_on"
+        | "音符开始"
+        | "音符オン"
+        | "음표켜기"
+        | "โน้ตเริ่ม"
+        | "music_note_off"
+        | "音符结束"
+        | "音符オフ"
+        | "음표끄기"
+        | "โน้ตจบ" => Value::Unit,
 
         // liquid sim — return handle 0 for new, Unit for everything else
         "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
@@ -307,29 +436,71 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
             Value::Number(0.0)
         },
-        "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว"
-        | "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว"
-        | "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว"
-        | "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว"
-        | "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด"
-        | "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง"
-        | "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว"
-        | "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" => {
-            Value::Unit
-        },
+        "liquid_set_colors"
+        | "液体颜色"
+        | "液体配色"
+        | "액체색상"
+        | "สีของเหลว"
+        | "liquid_splat"
+        | "液体注入"
+        | "液体追加"
+        | "액체분사"
+        | "หยดของเหลว"
+        | "liquid_gravity"
+        | "液体重力"
+        | "液体重力ベクトル"
+        | "액체중력"
+        | "แรงโน้มถ่วงเหลว"
+        | "liquid_step"
+        | "液体步进"
+        | "液体更新"
+        | "액체스텝"
+        | "ก้าวของเหลว"
+        | "liquid_step_all"
+        | "液体全步进"
+        | "液体全更新"
+        | "전체액체스텝"
+        | "ก้าวของเหลวทั้งหมด"
+        | "liquid_rainbow"
+        | "液体彩虹"
+        | "液体虹"
+        | "액체무지개"
+        | "ของเหลวสายรุ้ง"
+        | "liquid_draw"
+        | "绘制液体"
+        | "液体描画"
+        | "액체그리기"
+        | "วาดของเหลว"
+        | "liquid_draw_surface"
+        | "液体贴面"
+        | "液体曲面"
+        | "액체곡면"
+        | "ของเหลวบนพื้นผิว" => Value::Unit,
 
         // ── game AI: neural networks ─────────────────────────────────────────
-        "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย"
-        | "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" => {
-            Value::Number(-1.0)
-        },
+        "nn_new"
+        | "建神经网"
+        | "ニューラル作成"
+        | "신경망생성"
+        | "สร้างโครงข่าย"
+        | "nn_load"
+        | "载入网"
+        | "網読込"
+        | "신경망불러오기"
+        | "โหลดโครงข่าย" => Value::Number(-1.0),
         "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
             Value::List(Vec::new())
         },
-        "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย"
-        | "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" => {
-            Value::Number(0.0)
-        },
+        "nn_train"
+        | "训练网"
+        | "ニューラル学習"
+        | "신경망학습"
+        | "ฝึกโครงข่าย"
+        | "nn_dense"
+        | "密集层"
+        | "密層追加"
+        | "밀집층"
+        | "ชั้นหนาแน่น" => Value::Number(0.0),
         "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" => {
             Value::Bool(false)
         },
@@ -344,39 +515,80 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" => {
             Value::Number(0.0)
         },
-        "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => Value::Unit,
+        "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => {
+            Value::Unit
+        },
 
         // ── game AI: dialog LLM ─────────────────────────────────────────────
-        "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา"
-        | "dialog_load_model" | "对话载模" | "対話モデル読込" | "대화모델불러오기"
-            | "โหลดโมเดลสนทนา"
-        | "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา"
-        | "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" => {
-            Value::Number(-1.0)
-        },
+        "dialog_new"
+        | "建对话模型"
+        | "対話モデル作成"
+        | "대화모델생성"
+        | "สร้างโมเดลสนทนา"
+        | "dialog_load_model"
+        | "对话载模"
+        | "対話モデル読込"
+        | "대화모델불러오기"
+        | "โหลดโมเดลสนทนา"
+        | "dialog_train"
+        | "对话训练"
+        | "対話訓練"
+        | "대화훈련"
+        | "ฝึกสนทนา"
+        | "dialog_load"
+        | "对话载入"
+        | "対話読込"
+        | "대화불러오기"
+        | "โหลดชุดสนทนา" => Value::Number(-1.0),
         "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" => {
             Value::Str(String::new())
         },
         "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" => {
             Value::Bool(false)
         },
-        "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => Value::Unit,
+        "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => {
+            Value::Unit
+        },
 
         // ── networking ──────────────────────────────────────────────────────
-        "net_connect" | "联网" | "ネット接続" | "네트연결" | "เชื่อมเน็ต"
-        | "net_listen" | "监听" | "待機" | "리슨" | "รอรับ"
-        | "net_send" | "发送" | "送信" | "전송" | "ส่ง" => Value::Number(-1.0),
-        "net_recv" | "接收" | "受信" | "수신" | "รับ"
-        | "net_status" | "连接状态" | "接続状態" | "연결상태" | "สถานะการเชื่อม" => {
-            Value::Str(String::new())
-        },
+        "net_connect"
+        | "联网"
+        | "ネット接続"
+        | "네트연결"
+        | "เชื่อมเน็ต"
+        | "net_listen"
+        | "监听"
+        | "待機"
+        | "리슨"
+        | "รอรับ"
+        | "net_send"
+        | "发送"
+        | "送信"
+        | "전송"
+        | "ส่ง" => Value::Number(-1.0),
+        "net_recv"
+        | "接收"
+        | "受信"
+        | "수신"
+        | "รับ"
+        | "net_status"
+        | "连接状态"
+        | "接続状態"
+        | "연결상태"
+        | "สถานะการเชื่อม" => Value::Str(String::new()),
         "net_discover" | "发现" | "探索" | "검색" | "ค้นหาเครือข่าย" => {
             Value::List(Vec::new())
         },
-        "net_close" | "断开" | "切断" | "연결종료" | "ตัดเชื่อม"
-        | "net_test" | "测连接" | "接続テスト" | "연결테스트" | "ทดสอบเน็ต" => {
-            Value::Number(0.0)
-        },
+        "net_close"
+        | "断开"
+        | "切断"
+        | "연결종료"
+        | "ตัดเชื่อม"
+        | "net_test"
+        | "测连接"
+        | "接続テスト"
+        | "연결테스트"
+        | "ทดสอบเน็ต" => Value::Number(0.0),
 
         // catch-all: any other native-only builtin silently no-ops on wasm32
         _ => Value::Unit,
@@ -1000,6 +1212,8 @@ pub struct Interpreter {
     /// Liquid grids (water/oil), by `liquid_new` handle.
     liquids: Vec<ling_physics::liquid::LiquidGrid>,
     meshes: Vec<crate::gfx::shapes::ColorMesh>,
+    /// Loaded glTF models (skeleton + skin weights + animations), by `mesh_load` handle.
+    gltf_models: std::cell::RefCell<Vec<ling_physics::gltf::GltfModel>>,
     /// Active cinematic dialog box (Ocarina/Majora-style), if any.
     dialog: Option<ling_game::dialog::Dialog>,
     /// Dialog highlight colours by role: text, name, place, item (0x00RRGGBB).
@@ -1075,6 +1289,7 @@ impl Interpreter {
             rigid_world: ling_physics::rigid::PhysicsWorld::new(),
             liquids: Vec::new(),
             meshes: Vec::new(),
+            gltf_models: std::cell::RefCell::new(Vec::new()),
             dialog: None,
             dialog_colors: [0xE6F2FF, 0xFFD24A, 0x4AD2FF, 0x6CFF8C], // text · name · place · item
             frames: Vec::new(),
@@ -1337,7 +1552,8 @@ impl Interpreter {
     fn wasm_music_builtin(&mut self, name: &str, args: &[Value]) -> Result<Option<Value>, EvalErr> {
         match name {
             // music_load(path) -> track handle (decode from fetched bytes)
-            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" => {
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" =>
+            {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
                 match wasm_fetch_bytes(&resolved)
@@ -1354,7 +1570,8 @@ impl Interpreter {
                     },
                 }
             },
-            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" => {
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let d = self
                     .tracks
@@ -1363,7 +1580,8 @@ impl Interpreter {
                     .unwrap_or(0.0);
                 return Ok(Some(Value::Number(d as f64)));
             },
-            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" => {
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let b = self
                     .tracks
@@ -1381,7 +1599,8 @@ impl Interpreter {
                     .unwrap_or_default();
                 return Ok(Some(Value::Str(k)));
             },
-            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" => {
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let v = self
                     .tracks
@@ -1392,7 +1611,8 @@ impl Interpreter {
                     v.into_iter().map(|x| Value::Number(x as f64)).collect(),
                 )));
             },
-            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" => {
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let beats = self
                     .tracks
@@ -1406,7 +1626,8 @@ impl Interpreter {
                     beats.into_iter().map(|x| Value::Number(x as f64)).collect(),
                 )));
             },
-            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" => {
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" =>
+            {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
                 match wasm_fetch_text(&resolved) {
@@ -1421,7 +1642,8 @@ impl Interpreter {
                     },
                 }
             },
-            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" => {
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let t = self.arg_num(args, 1, 0.0)? as f32;
                 let line = self
@@ -1431,12 +1653,13 @@ impl Interpreter {
                     .unwrap_or_default();
                 return Ok(Some(Value::Str(line)));
             },
-            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" => {
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" =>
+            {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
-                match wasm_fetch_bytes(&resolved)
-                    .and_then(|bytes| ling_music::midi::from_bytes(&bytes).map_err(|e| e.to_string()))
-                {
+                match wasm_fetch_bytes(&resolved).and_then(|bytes| {
+                    ling_music::midi::from_bytes(&bytes).map_err(|e| e.to_string())
+                }) {
                     Ok(m) => {
                         let id = self.midis.len();
                         self.midis.push(m);
@@ -1448,7 +1671,8 @@ impl Interpreter {
                     },
                 }
             },
-            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" => {
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let n = self
                     .midis
@@ -1457,7 +1681,8 @@ impl Interpreter {
                     .unwrap_or(0);
                 return Ok(Some(Value::Number(n as f64)));
             },
-            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" => {
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
                 if let Some(m) = self.midis.get(id as usize) {
@@ -1468,7 +1693,8 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::List(out)));
             },
-            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" => {
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
                 if let Some(m) = self.midis.get(id as usize) {
@@ -1480,23 +1706,27 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::List(out)));
             },
-            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" => {
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" =>
+            {
                 let delta_ms = self.arg_num(args, 0, 9999.0)? as f32;
                 return Ok(Some(Value::Number(
                     ling_music::Grade::judge(delta_ms).index() as f64,
                 )));
             },
-            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" => {
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" =>
+            {
                 let idx = self.arg_num(args, 0, 4.0)? as i32;
                 return Ok(Some(Value::Str(
                     ling_music::Grade::from_index(idx).name().to_string(),
                 )));
             },
-            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" => {
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" =>
+            {
                 let hz = self.arg_num(args, 0, 0.0)? as f32;
                 return Ok(Some(Value::Str(ling_music::note::hz_to_name(hz))));
             },
-            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" => {
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" =>
+            {
                 let midi = match args.get(0) {
                     Some(Value::Str(s)) => ling_music::note::parse_pitch(s).unwrap_or(69),
                     Some(Value::Number(n)) => *n as i32,
@@ -1506,7 +1736,8 @@ impl Interpreter {
                     ling_music::note::midi_to_hz(midi as f32) as f64,
                 )));
             },
-            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" => {
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" =>
+            {
                 let hz = self.arg_num(args, 0, 0.0)? as f32;
                 let target = self.arg_num(args, 1, 0.0)? as f32;
                 return Ok(Some(Value::Number(
@@ -1515,29 +1746,41 @@ impl Interpreter {
             },
 
             // ── Playback ──────────────────────────────────────────────────────
-            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" => {
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 if let Some(t) = self.tracks.get(id) {
                     crate::gfx::audio_web::play_music(id, &t.stereo, t.channels, t.rate, 1.0);
                 }
                 return Ok(Some(Value::Unit));
             },
-            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว"
-            | "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" => {
+            "music_pause"
+            | "暂停音乐"
+            | "音楽一時停止"
+            | "음악일시정지"
+            | "หยุดเพลงชั่วคราว"
+            | "music_stop"
+            | "停止音乐"
+            | "音楽停止"
+            | "음악정지"
+            | "หยุดเพลง" => {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 crate::gfx::audio_web::stop_music(id);
                 return Ok(Some(Value::Unit));
             },
-            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" => {
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" =>
+            {
                 // Seek is not straightforward on AudioBufferSourceNode; no-op for now.
                 return Ok(Some(Value::Unit));
             },
-            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" => {
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" =>
+            {
                 return Ok(Some(Value::Number(
                     crate::gfx::audio_web::current_music_position(),
                 )));
             },
-            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" => {
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" =>
+            {
                 let vol = self.arg_num(args, 0, 0.8)? as f32;
                 // Apply to the most-recently started slot (slot 0 is typical).
                 crate::gfx::audio_web::set_music_volume(0, vol);
@@ -1545,7 +1788,8 @@ impl Interpreter {
             },
 
             // ── FFT bands at current playback position ─────────────────────
-            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" => {
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" =>
+            {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 let nbands = self.arg_num(args, 1, 16.0)? as usize;
                 let pos = crate::gfx::audio_web::current_music_position() as f32;
@@ -2132,7 +2376,10 @@ impl Interpreter {
         }
         let t0 = crate::runtime::now_secs();
         let r = self.call_named_inner(name, args, env);
-        ling_profile_record(name, ((crate::runtime::now_secs() - t0) * 1_000_000_000.0) as u128);
+        ling_profile_record(
+            name,
+            ((crate::runtime::now_secs() - t0) * 1_000_000_000.0) as u128,
+        );
         r
     }
 
@@ -2140,7 +2387,8 @@ impl Interpreter {
         // A user-defined function shadows any builtin of the same name, matching
         // the JIT/AOT backends (which always resolve a defined function first).
         if let Some(def) = self.functions.get(name).cloned() {
-            let mut call_env = FxHashMap::with_capacity_and_hasher(def.params.len(), Default::default());
+            let mut call_env =
+                FxHashMap::with_capacity_and_hasher(def.params.len(), Default::default());
             let _ = env; // call-site locals are intentionally NOT visible to fns
             for (param, arg) in def.params.iter().zip(args) {
                 call_env.insert(param.clone(), arg);
@@ -2246,7 +2494,9 @@ impl Interpreter {
                 }
                 return Ok(Value::List(Rc::new(args)));
             },
-            "向量::有容量" | "Vec::with_capacity" => return Ok(Value::List(Rc::new(Vec::new()))),
+            "向量::有容量" | "Vec::with_capacity" => {
+                return Ok(Value::List(Rc::new(Vec::new())))
+            },
             // ── Timer stubs ──
             "计时::获取当前小时" | "Timer::hour" => return Ok(Value::Number(14.0)),
             "计时::现在" | "Timer::now" => return Ok(Value::Number(1000.0)),
@@ -2523,7 +2773,9 @@ impl Interpreter {
             // ── Step 3: Real-Time Clock ──
             "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
             {
-                return Ok(Value::Number(crate::runtime::now_secs() - self.start_time_secs));
+                return Ok(Value::Number(
+                    crate::runtime::now_secs() - self.start_time_secs,
+                ));
             },
 
             // Wall-clock seconds since the Unix epoch (real date/time). Lets a
@@ -2601,7 +2853,8 @@ impl Interpreter {
                         self.fft.borrow_mut().push_samples(&samples);
                     }
                     let bands = self.fft.borrow().freq_bands(n);
-                    let result: Vec<Value> = bands.iter().map(|&v| Value::Number(v as f64)).collect();
+                    let result: Vec<Value> =
+                        bands.iter().map(|&v| Value::Number(v as f64)).collect();
                     return Ok(Value::List(Rc::new(result)));
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -2629,8 +2882,11 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             // get_antialias() -> bool — current wireframe anti-aliasing state.
-            "get_antialias" | "อ่านลบรอยหยัก" | "读取抗锯齿" | "アンチエイリアス取得" | "안티에일리어싱상태" =>
-            {
+            "get_antialias"
+            | "อ่านลบรอยหยัก"
+            | "读取抗锯齿"
+            | "アンチエイリアス取得"
+            | "안티에일리어싱상태" => {
                 return Ok(Value::Bool(self.gfx.borrow().antialias));
             },
 
@@ -2647,8 +2903,18 @@ impl Interpreter {
                     let (uw, uh) = (gfx.width, gfx.height);
                     let segs = ((r.max(1) as u32) * 4).clamp(24, 512);
                     crate::gfx::raster::draw_arc(
-                        &mut gfx.buffer, uw, uh, color, true, blend == 1,
-                        cx as f32, cy as f32, r as f32, 0.0, std::f32::consts::TAU, segs,
+                        &mut gfx.buffer,
+                        uw,
+                        uh,
+                        color,
+                        true,
+                        blend == 1,
+                        cx as f32,
+                        cy as f32,
+                        r as f32,
+                        0.0,
+                        std::f32::consts::TAU,
+                        segs,
                     );
                 } else {
                     draw_circle_outline(&mut gfx.buffer, w, h, cx, cy, r, color, blend);
@@ -2688,10 +2954,20 @@ impl Interpreter {
                 let color = gfx.color;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let (uw, uh, aa, add) =
-                        (gfx.width, gfx.height, gfx.antialias, gfx.blend == 1);
+                    let (uw, uh, aa, add) = (gfx.width, gfx.height, gfx.antialias, gfx.blend == 1);
                     crate::gfx::raster::draw_arc(
-                        &mut gfx.buffer, uw, uh, color, aa, add, cx, cy, r, a0, a1, segs,
+                        &mut gfx.buffer,
+                        uw,
+                        uh,
+                        color,
+                        aa,
+                        add,
+                        cx,
+                        cy,
+                        r,
+                        a0,
+                        a1,
+                        segs,
                     );
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -2732,8 +3008,7 @@ impl Interpreter {
             // set_line_hue_cycle(rate) — rapidly cycle the hue of ALL wireframe line
             // strokes (draw_line / draw_line_3d). `rate` in radians/sec; 0 = off.
             // Process-global so a single call covers every stroke, every frame.
-            "set_line_hue_cycle" | "ตั้งวนสีเส้น" =>
-            {
+            "set_line_hue_cycle" | "ตั้งวนสีเส้น" => {
                 let rate = self.arg_num(&args, 0, 0.0)?;
                 crate::runtime::set_line_hue_rate(rate);
                 return Ok(Value::Unit);
@@ -2793,6 +3068,23 @@ impl Interpreter {
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().flat_shade = on;
+                return Ok(Value::Unit);
+            },
+
+            // set_normal_override(x,y,z) - force subsequent triangle/mesh lighting
+            // to use a stylized world-space normal until reset_normal_override().
+            "set_normal_override" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, -1.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                self.gfx.borrow_mut().normal_override = Some([x, y, z]);
+                return Ok(Value::Unit);
+            },
+
+            "reset_normal_override" =>
+            {
+                self.gfx.borrow_mut().normal_override = None;
                 return Ok(Value::Unit);
             },
 
@@ -3120,7 +3412,7 @@ impl Interpreter {
                     let mut gfx = self.gfx.borrow_mut();
                     gfx.buffer.fill(c);
                     gfx.zbuf_needs_clear = true; // clear color ⇒ clear depth next flush
-                    gfx.edge_set.clear();         // reset shared-edge dedup for new frame
+                    gfx.edge_set.clear(); // reset shared-edge dedup for new frame
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -3206,7 +3498,15 @@ impl Interpreter {
                     let add = gfx.blend == 1;
                     if aa {
                         crate::gfx::raster::draw_line_aa(
-                            &mut gfx.buffer, w, h, color, add, x0, y0, x1, y1,
+                            &mut gfx.buffer,
+                            w,
+                            h,
+                            color,
+                            add,
+                            x0,
+                            y0,
+                            x1,
+                            y1,
                         );
                     } else {
                         draw_line(&mut gfx.buffer, w, h, color, x0, y0, x1, y1);
@@ -3563,12 +3863,8 @@ impl Interpreter {
             // set_vsync(on) → pace the window to the monitor's refresh rate.
             // Frame-rate pacing (minifb has no swap-interval), not tear-free
             // vsync; `LING_FPS_CAP` and an explicit `set_fps` call still win.
-            "set_vsync"
-            | "vsync"
-            | "垂直同步"
-            | "垂直同期"
-            | "수직동기"
-            | "ตั้งวีซิงก์" => {
+            "set_vsync" | "vsync" | "垂直同步" | "垂直同期" | "수직동기" | "ตั้งวีซิงก์" =>
+            {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -3985,6 +4281,322 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // ── mesh_load(path) → handle · loads a glb/gltf (skeleton + skin + animation) ──
+            "gltf_load" => {
+                let path = self.arg_str(&args, 0, "");
+                match ling_physics::gltf::GltfModel::load(&path) {
+                    Ok(m) => {
+                        self.gltf_models.borrow_mut().push(m);
+                        let h = self.gltf_models.borrow().len() - 1;
+                        return Ok(Value::Number(h as f64));
+                    }
+                    Err(e) => {
+                        eprintln!("mesh_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    }
+                }
+            },
+            // mesh_anim_count(handle) → number of animation clips
+            "gltf_anim_count" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let n = self
+                    .gltf_models
+                    .borrow()
+                    .get(h as usize)
+                    .map(|m| m.animations.len())
+                    .unwrap_or(0);
+                return Ok(Value::Number(n as f64));
+            },
+            // mesh_anim_name(handle, i) → clip name
+            "gltf_anim_name" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let i = self.arg_num(&args, 1, 0.0)? as usize;
+                let s = self
+                    .gltf_models
+                    .borrow()
+                    .get(h as usize)
+                    .and_then(|m| m.animations.get(i))
+                    .map(|a| a.name.clone())
+                    .unwrap_or_default();
+                return Ok(Value::Str(s));
+            },
+            // mesh_anim_dur(handle, i) → clip duration (seconds)
+            "gltf_anim_dur" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let i = self.arg_num(&args, 1, 0.0)? as usize;
+                let d = self
+                    .gltf_models
+                    .borrow()
+                    .get(h as usize)
+                    .and_then(|m| m.animations.get(i))
+                    .map(|a| a.duration)
+                    .unwrap_or(0.0);
+                return Ok(Value::Number(d as f64));
+            },
+            // mesh_tris(handle) → total triangle count (perf sanity check)
+            "gltf_tris" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let n: usize = self
+                    .gltf_models
+                    .borrow()
+                    .get(h as usize)
+                    .map(|m| m.meshes.iter().map(|mm| mm.indices.len()).sum::<usize>() / 3)
+                    .unwrap_or(0);
+                return Ok(Value::Number(n as f64));
+            },
+
+            // gltf_joint_count(handle) → number of skin joints (bones)
+            "gltf_joint_count" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let n = self
+                    .gltf_models
+                    .borrow()
+                    .get(h as usize)
+                    .and_then(|m| m.skins.first())
+                    .map(|s| s.joints.len())
+                    .unwrap_or(0);
+                return Ok(Value::Number(n as f64));
+            },
+            // gltf_joint_name(handle, j) → bone name (its node's name)
+            "gltf_joint_name" => {
+                let h = self.arg_num(&args, 0, -1.0)? as i64;
+                let j = self.arg_num(&args, 1, 0.0)? as usize;
+                let models = self.gltf_models.borrow();
+                let s = models
+                    .get(h as usize)
+                    .and_then(|m| {
+                        m.skins
+                            .first()
+                            .and_then(|sk| sk.joints.get(j))
+                            .and_then(|jt| m.nodes.get(jt.node_idx))
+                            .map(|n| n.name.clone())
+                    })
+                    .unwrap_or_default();
+                return Ok(Value::Str(s));
+            },
+
+            // ── gltf_draw(handle, ox,oy,oz, scale, yaw) — filled render of a loaded model ──
+            //   glTF is Y-up / -Z-forward; the engine is Y-down, so we flip Y and Z, then
+            //   yaw about Y, scale, translate. Per-part colour by mesh name. Lit + depth-queued
+            //   exactly like draw_mesh, so it shares the camera + z-buffer.
+            "gltf_draw" => {
+                let hh = self.arg_num(&args, 0, -1.0)? as i64;
+                let ox = self.arg_num(&args, 1, 0.0)? as f32;
+                let oy = self.arg_num(&args, 2, 0.0)? as f32;
+                let oz = self.arg_num(&args, 3, 0.0)? as f32;
+                let scale = self.arg_num(&args, 4, 1.0)? as f32;
+                let yaw = self.arg_num(&args, 5, 0.0)? as f32;
+                let (sy, cyy) = yaw.sin_cos();
+                let models = self.gltf_models.borrow();
+                let model = match models.get(hh as usize) {
+                    Some(m) => m,
+                    None => return Ok(Value::Unit),
+                };
+                let mut gfx = self.gfx.borrow_mut();
+                let cp = {
+                    let c = &gfx.camera;
+                    ling_gpu::CameraParams {
+                        cry: c.cry, sry: c.sry, crx: c.crx, srx: c.srx,
+                        cx: c.cx, cy: c.cy, focal: c.focal, zdist: c.zdist,
+                        tx: c.tx, ty: c.ty, tz: c.tz,
+                    }
+                };
+                let near = -gfx.camera.zdist + 0.02;
+                let ambient = gfx.ambient;
+                for mesh in &model.meshes {
+                    let nlow = mesh.name.to_lowercase();
+                    let base: u32 = if nlow.contains("hair") {
+                        0x7a4a28
+                    } else if nlow.contains("cloth") || nlow.contains("top") {
+                        0x4a86e0
+                    } else if nlow.contains("wing") {
+                        0xe6ecf5
+                    } else if nlow.contains("star") {
+                        0xffd24d
+                    } else {
+                        0xf2d6b8
+                    };
+                    let nv = mesh.verts.len();
+                    if nv == 0 {
+                        continue;
+                    }
+                    let mut world = vec![0.0f32; nv * 3];
+                    for (i, v) in mesh.verts.iter().enumerate() {
+                        let gx = v.pos.x * scale;
+                        let gy = -v.pos.y * scale;
+                        let gz = -v.pos.z * scale;
+                        let rx = gx * cyy + gz * sy;
+                        let rz = -gx * sy + gz * cyy;
+                        world[i * 3] = ox + rx;
+                        world[i * 3 + 1] = oy + gy;
+                        world[i * 3 + 2] = oz + rz;
+                    }
+                    let mut proj = vec![0.0f32; nv * 3];
+                    ling_gpu::backend().project_points(&world, &cp, &mut proj);
+                    let idx = &mesh.indices;
+                    let nt = idx.len() / 3;
+                    for t in 0..nt {
+                        let ia = idx[t * 3] as usize;
+                        let ib = idx[t * 3 + 1] as usize;
+                        let ic = idx[t * 3 + 2] as usize;
+                        if ia >= nv || ib >= nv || ic >= nv {
+                            continue;
+                        }
+                        let (da, db, dc) = (proj[ia * 3 + 2], proj[ib * 3 + 2], proj[ic * 3 + 2]);
+                        if (da + db + dc) / 3.0 <= near {
+                            continue;
+                        }
+                        let col = {
+                            let (ax, ay, az) = (world[ia * 3], world[ia * 3 + 1], world[ia * 3 + 2]);
+                            let (bx, by, bz) = (world[ib * 3], world[ib * 3 + 1], world[ib * 3 + 2]);
+                            let (px, py, pz) = (world[ic * 3], world[ic * 3 + 1], world[ic * 3 + 2]);
+                            let (ux, uy, uz) = (bx - ax, by - ay, bz - az);
+                            let (vx, vy, vz) = (px - ax, py - ay, pz - az);
+                            let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+                            let centroid =
+                                [(ax + bx + px) / 3.0, (ay + by + py) / 3.0, (az + bz + pz) / 3.0];
+                            if gfx.flat_shade {
+                                base
+                            } else {
+                                crate::gfx::light::compute_lit_color(
+                                    base, normal, centroid, &gfx.lights, ambient,
+                                )
+                            }
+                        };
+                        let depth = (da + db + dc) / 3.0;
+                        let col = gfx.fog_apply(col, depth);
+                        gfx.depth_queue.push_triangle_zv(
+                            col,
+                            proj[ia * 3], proj[ia * 3 + 1], da,
+                            proj[ib * 3], proj[ib * 3 + 1], db,
+                            proj[ic * 3], proj[ic * 3 + 1], dc,
+                        );
+                    }
+                }
+                return Ok(Value::Unit);
+            },
+
+            // ── gltf_autorig(handle) → synthesize a humanoid skeleton + skin weights ──
+            "gltf_autorig" => {
+                let hh = self.arg_num(&args, 0, -1.0)? as i64;
+                let mut models = self.gltf_models.borrow_mut();
+                if let Some(m) = models.get_mut(hh as usize) {
+                    return Ok(Value::Number(m.autorig() as f64));
+                }
+                return Ok(Value::Number(0.0));
+            },
+
+            // ── gltf_pose_draw(handle, ox,oy,oz, scale, yaw, poseList) ──
+            //   Like gltf_draw, but linear-blend-skins the mesh by `poseList` first.
+            //   poseList = flat XYZ-euler radians, 3 per bone (12 bones → 36 values).
+            "gltf_pose_draw" => {
+                let hh = self.arg_num(&args, 0, -1.0)? as i64;
+                let ox = self.arg_num(&args, 1, 0.0)? as f32;
+                let oy = self.arg_num(&args, 2, 0.0)? as f32;
+                let oz = self.arg_num(&args, 3, 0.0)? as f32;
+                let scale = self.arg_num(&args, 4, 1.0)? as f32;
+                let yaw = self.arg_num(&args, 5, 0.0)? as f32;
+                let euler: Vec<f32> = match args.get(6) {
+                    Some(Value::List(v)) => {
+                        v.iter().map(|x| self.to_number(x).unwrap_or(0.0) as f32).collect()
+                    },
+                    _ => Vec::new(),
+                };
+                let (sy, cyy) = yaw.sin_cos();
+                let models = self.gltf_models.borrow();
+                let model = match models.get(hh as usize) {
+                    Some(m) => m,
+                    None => return Ok(Value::Unit),
+                };
+                let skinned = model.skin_local(&euler);
+                let mut gfx = self.gfx.borrow_mut();
+                let cp = {
+                    let c = &gfx.camera;
+                    ling_gpu::CameraParams {
+                        cry: c.cry, sry: c.sry, crx: c.crx, srx: c.srx,
+                        cx: c.cx, cy: c.cy, focal: c.focal, zdist: c.zdist,
+                        tx: c.tx, ty: c.ty, tz: c.tz,
+                    }
+                };
+                let near = -gfx.camera.zdist + 0.02;
+                let ambient = gfx.ambient;
+                for (mi, mesh) in model.meshes.iter().enumerate() {
+                    let nlow = mesh.name.to_lowercase();
+                    let base: u32 = if nlow.contains("hair") {
+                        0x7a4a28
+                    } else if nlow.contains("cloth") || nlow.contains("top") {
+                        0x4a86e0
+                    } else if nlow.contains("wing") {
+                        0xe6ecf5
+                    } else if nlow.contains("star") {
+                        0xffd24d
+                    } else {
+                        0xf2d6b8
+                    };
+                    let sk = match skinned.get(mi) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let nv = sk.len();
+                    if nv == 0 {
+                        continue;
+                    }
+                    let mut world = vec![0.0f32; nv * 3];
+                    for i in 0..nv {
+                        let gx = sk[i][0] * scale;
+                        let gy = -sk[i][1] * scale;
+                        let gz = -sk[i][2] * scale;
+                        let rx = gx * cyy + gz * sy;
+                        let rz = -gx * sy + gz * cyy;
+                        world[i * 3] = ox + rx;
+                        world[i * 3 + 1] = oy + gy;
+                        world[i * 3 + 2] = oz + rz;
+                    }
+                    let mut proj = vec![0.0f32; nv * 3];
+                    ling_gpu::backend().project_points(&world, &cp, &mut proj);
+                    let idx = &mesh.indices;
+                    let nt = idx.len() / 3;
+                    for t in 0..nt {
+                        let ia = idx[t * 3] as usize;
+                        let ib = idx[t * 3 + 1] as usize;
+                        let ic = idx[t * 3 + 2] as usize;
+                        if ia >= nv || ib >= nv || ic >= nv {
+                            continue;
+                        }
+                        let (da, db, dc) = (proj[ia * 3 + 2], proj[ib * 3 + 2], proj[ic * 3 + 2]);
+                        if (da + db + dc) / 3.0 <= near {
+                            continue;
+                        }
+                        let col = {
+                            let (ax, ay, az) = (world[ia * 3], world[ia * 3 + 1], world[ia * 3 + 2]);
+                            let (bx, by, bz) = (world[ib * 3], world[ib * 3 + 1], world[ib * 3 + 2]);
+                            let (px, py, pz) = (world[ic * 3], world[ic * 3 + 1], world[ic * 3 + 2]);
+                            let (ux, uy, uz) = (bx - ax, by - ay, bz - az);
+                            let (vx, vy, vz) = (px - ax, py - ay, pz - az);
+                            let normal = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+                            let centroid =
+                                [(ax + bx + px) / 3.0, (ay + by + py) / 3.0, (az + bz + pz) / 3.0];
+                            if gfx.flat_shade {
+                                base
+                            } else {
+                                crate::gfx::light::compute_lit_color(
+                                    base, normal, centroid, &gfx.lights, ambient,
+                                )
+                            }
+                        };
+                        let depth = (da + db + dc) / 3.0;
+                        let col = gfx.fog_apply(col, depth);
+                        gfx.depth_queue.push_triangle_zv(
+                            col,
+                            proj[ia * 3], proj[ia * 3 + 1], da,
+                            proj[ib * 3], proj[ib * 3 + 1], db,
+                            proj[ic * 3], proj[ic * 3 + 1], dc,
+                        );
+                    }
+                }
+                return Ok(Value::Unit);
+            },
+
             // ── draw_mesh(pos, idx, ox, oy, oz, scale, mode) ──
             //   Native batched triangle mesh. pos = flat [x,y,z,…], idx = flat tri indices.
             //   mode 0 = lit with current pen colour; 1 = per-face hue cycle.
@@ -4150,31 +4762,33 @@ impl Interpreter {
                 let key = self.arg_str(&args, 0, "");
                 let val = self.arg_num(&args, 1, 0.0)?;
                 let mut gfx = self.gfx.borrow_mut();
-                let mat = gfx.material.get_or_insert_with(crate::gfx::LingMaterial::default);
+                let mat = gfx
+                    .material
+                    .get_or_insert_with(crate::gfx::LingMaterial::default);
                 match key.as_str() {
-                    "albedo"             => mat.albedo             = val as u32,
-                    "roughness"          => mat.roughness          = val as f32,
-                    "metallic"           => mat.metallic           = val as f32,
-                    "emission"           => mat.emission           = val as u32,
-                    "emission_strength"  => mat.emission_strength  = val as f32,
-                    "specular"           => mat.specular           = val as f32,
-                    "specular_tint"      => mat.specular_tint      = val as f32,
-                    "subsurface"         => mat.subsurface         = val as f32,
-                    "subsurface_color"   => mat.subsurface_color   = val as u32,
-                    "clearcoat"          => mat.clearcoat          = val as f32,
-                    "clearcoat_roughness"=> mat.clearcoat_roughness= val as f32,
-                    "transmission"       => mat.transmission       = val as f32,
-                    "ior"                => mat.ior                = val as f32,
-                    "iridescence"        => mat.iridescence        = val as f32,
-                    "sheen"              => mat.sheen              = val as f32,
-                    "anisotropy"         => mat.anisotropy         = val as f32,
-                    "anisotropy_angle"   => mat.anisotropy_angle   = val as f32,
-                    "toon_bands"         => mat.toon_bands         = val as u32,
-                    "shadow_softness"    => mat.shadow_softness    = val as f32,
-                    "outline_px"         => mat.outline_px         = val as f32,
-                    "outline_color"      => mat.outline_color      = val as u32,
-                    "highlight_color"    => mat.highlight_color    = val as u32,
-                    _ => {}
+                    "albedo" => mat.albedo = val as u32,
+                    "roughness" => mat.roughness = val as f32,
+                    "metallic" => mat.metallic = val as f32,
+                    "emission" => mat.emission = val as u32,
+                    "emission_strength" => mat.emission_strength = val as f32,
+                    "specular" => mat.specular = val as f32,
+                    "specular_tint" => mat.specular_tint = val as f32,
+                    "subsurface" => mat.subsurface = val as f32,
+                    "subsurface_color" => mat.subsurface_color = val as u32,
+                    "clearcoat" => mat.clearcoat = val as f32,
+                    "clearcoat_roughness" => mat.clearcoat_roughness = val as f32,
+                    "transmission" => mat.transmission = val as f32,
+                    "ior" => mat.ior = val as f32,
+                    "iridescence" => mat.iridescence = val as f32,
+                    "sheen" => mat.sheen = val as f32,
+                    "anisotropy" => mat.anisotropy = val as f32,
+                    "anisotropy_angle" => mat.anisotropy_angle = val as f32,
+                    "toon_bands" => mat.toon_bands = val as u32,
+                    "shadow_softness" => mat.shadow_softness = val as f32,
+                    "outline_px" => mat.outline_px = val as f32,
+                    "outline_color" => mat.outline_color = val as u32,
+                    "highlight_color" => mat.highlight_color = val as u32,
+                    _ => {},
                 }
                 return Ok(Value::Unit);
             },
@@ -4192,14 +4806,17 @@ impl Interpreter {
             //   thickness  — ink-line half-width in pixels (0 = off, 1.5 = anime default)
             //   color      — 0xRRGGBB ink colour (default black = 0)
             //   threshold  — depth delta that triggers an edge (0.05 recommended)
-            "toon_outlines" | "ตั้งเส้นขอบการ์ตูน" | "卡通轮廓" | "トゥーンアウトライン" | "툰아웃라인" =>
-            {
-                let px    = self.arg_num(&args, 0, 0.0)? as f32;
+            "toon_outlines"
+            | "ตั้งเส้นขอบการ์ตูน"
+            | "卡通轮廓"
+            | "トゥーンアウトライン"
+            | "툰아웃라인" => {
+                let px = self.arg_num(&args, 0, 0.0)? as f32;
                 let color = self.arg_num(&args, 1, 0.0)? as u32;
-                let thresh= self.arg_num(&args, 2, 0.05)? as f32;
+                let thresh = self.arg_num(&args, 2, 0.05)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
-                gfx.toon.outline_px     = px;
-                gfx.toon.outline_color  = color;
+                gfx.toon.outline_px = px;
+                gfx.toon.outline_color = color;
                 gfx.toon.outline_thresh = thresh;
                 return Ok(Value::Unit);
             },
@@ -4211,15 +4828,17 @@ impl Interpreter {
             // Stops are automatically sorted; call tone_ramp_reset() first to clear.
             "tone_stop" | "ตั้งจุดโทน" | "色调停止" | "トーンストップ" | "톤스톱" =>
             {
-                let t   = self.arg_num(&args, 0, 0.0)? as f32;
+                let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let val = self.arg_num(&args, 1, 1.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 gfx.toon.ramp.stops.push(crate::gfx::toon::ToneStop {
-                    t:     t.clamp(0.0, 1.0),
+                    t: t.clamp(0.0, 1.0),
                     value: val.clamp(0.0, 1.0),
                 });
-                gfx.toon.ramp.stops.sort_by(|a, b|
-                    a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+                gfx.toon
+                    .ramp
+                    .stops
+                    .sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
                 return Ok(Value::Unit);
             },
 
@@ -4241,29 +4860,38 @@ impl Interpreter {
             //   tone_bezier_off()            → disable (back to linear)
             "tone_bezier" | "ตั้งโทนเบซิเยร์" | "色调贝塞尔" | "トーンベジェ" | "톤베지어" =>
             {
-                let y1 = self.arg_num(&args, 0, 1.0/3.0)? as f32;
-                let y2 = self.arg_num(&args, 1, 2.0/3.0)? as f32;
+                let y1 = self.arg_num(&args, 0, 1.0 / 3.0)? as f32;
+                let y2 = self.arg_num(&args, 1, 2.0 / 3.0)? as f32;
                 self.gfx.borrow_mut().toon.ramp.bezier = Some([y1, y2]);
                 return Ok(Value::Unit);
             },
 
             // ── tone_bezier_off() — disable Bézier remap ──
-            "tone_bezier_off" | "ปิดโทนเบซิเยร์" | "关闭色调贝塞尔" | "トーンベジェオフ" | "톤베지어끄기" =>
-            {
+            "tone_bezier_off"
+            | "ปิดโทนเบซิเยร์"
+            | "关闭色调贝塞尔"
+            | "トーンベジェオフ"
+            | "톤베지어끄기" => {
                 self.gfx.borrow_mut().toon.ramp.bezier = None;
                 return Ok(Value::Unit);
             },
 
             // ── tone_ramp_reset() — restore default 3-band cel ramp ──
-            "tone_ramp_reset" | "รีเซ็ตการไล่โทน" | "重置色调渐变" | "トーンランプリセット" | "톤램프리셋" =>
-            {
+            "tone_ramp_reset"
+            | "รีเซ็ตการไล่โทน"
+            | "重置色调渐变"
+            | "トーンランプリセット"
+            | "톤램프리셋" => {
                 self.gfx.borrow_mut().toon.ramp = crate::gfx::toon::ToneRamp::default();
                 return Ok(Value::Unit);
             },
 
             // ── tone_ramp_clear() — clear all stops (build your own ramp) ──
-            "tone_ramp_clear" | "ล้างการไล่โทน" | "清除色调渐变" | "トーンランプクリア" | "톤램프클리어" =>
-            {
+            "tone_ramp_clear"
+            | "ล้างการไล่โทน"
+            | "清除色调渐变"
+            | "トーンランプクリア"
+            | "톤램프클리어" => {
                 self.gfx.borrow_mut().toon.ramp.stops.clear();
                 return Ok(Value::Unit);
             },
@@ -4286,11 +4914,14 @@ impl Interpreter {
             },
 
             // ── toon_highlight [compat] — no-op, use tone_stop instead ──
-            "toon_highlight" | "ตั้งไฮไลท์การ์ตูน" | "卡通高光" | "トゥーンハイライト" | "툰하이라이트" =>
-            {
+            "toon_highlight"
+            | "ตั้งไฮไลท์การ์ตูน"
+            | "卡通高光"
+            | "トゥーンハイライト"
+            | "툰하이라이트" => {
                 // Remap as a lit-band brightness boost: adds a stop near the highlight threshold.
                 let _strength = self.arg_num(&args, 0, 0.0)? as f32;
-                let _thresh   = self.arg_num(&args, 2, 0.78)? as f32;
+                let _thresh = self.arg_num(&args, 2, 0.78)? as f32;
                 // No-op: configure via tone_stop() for precise control.
                 return Ok(Value::Unit);
             },
@@ -4350,23 +4981,20 @@ impl Interpreter {
             },
 
             // ── เริ่มอบเมช() — begin capturing 3-D triangles into a display list ──
-            "เริ่มอบเมช" | "mesh_bake_begin" =>
-            {
+            "เริ่มอบเมช" | "mesh_bake_begin" => {
                 self.gfx.borrow_mut().mesh_capture = Some(Vec::new());
                 return Ok(Value::Unit);
             },
 
             // ── เมชแคชรับ(key) — keyed display-list cache lookup (-1 = miss) ──
-            "เมชแคชรับ" | "mesh_cache_get" =>
-            {
+            "เมชแคชรับ" | "mesh_cache_get" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
                 let h = self.gfx.borrow().mesh_cache.get(&key).copied();
                 return Ok(Value::Number(h.map(|x| x as f64).unwrap_or(-1.0)));
             },
 
             // ── เมชแคชตั้ง(key, handle) — store a baked mesh under key (bounded) ──
-            "เมชแคชตั้ง" | "mesh_cache_put" =>
-            {
+            "เมชแคชตั้ง" | "mesh_cache_put" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
                 let h = self.arg_num(&args, 1, 0.0)? as usize;
                 let mut gfx = self.gfx.borrow_mut();
@@ -4386,8 +5014,7 @@ impl Interpreter {
             },
 
             // ── เมชแคชล้าง() — drop the keyed cache (e.g. on level change) ──
-            "เมชแคชล้าง" | "mesh_cache_clear" =>
-            {
+            "เมชแคชล้าง" | "mesh_cache_clear" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
                 gfx.mesh_cache.clear();
@@ -4401,8 +5028,7 @@ impl Interpreter {
             },
 
             // ── จบอบเมช() — bake captured triangles, return mesh handle ──
-            "จบอบเมช" | "mesh_bake_end" =>
-            {
+            "จบอบเมช" | "mesh_bake_end" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let tris = gfx.mesh_capture.take().unwrap_or_default();
                 let id = gfx.mesh_register(tris);
@@ -4426,18 +5052,27 @@ impl Interpreter {
                 let uy = self.arg_num(&args, 8, 1.0)? as f32;
                 let uz = self.arg_num(&args, 9, 0.0)? as f32;
                 let s = self.arg_num(&args, 10, 1.0)? as f32;
-                self.gfx.borrow_mut().mesh_draw(id, ox, oy, oz, rx, ry, rz, ux, uy, uz, s, baked_col);
+                self.gfx
+                    .borrow_mut()
+                    .mesh_draw(id, ox, oy, oz, rx, ry, rz, ux, uy, uz, s, baked_col);
                 return Ok(Value::Unit);
             },
 
             // ── draw_quad_3d / draw_pent_3d / draw_hex_3d / draw_polygon_3d ──
             // Fan-triangulate convex n-gons.  Lighting, near-plane clip, fog, and
             // Gouraud shading all mirror draw_triangle_3d exactly.
-            "draw_quad_3d" | "quad3d" | "วาดสี่เหลี่ยม3มิติ"
-            | "draw_pent_3d" | "pent3d" | "วาดห้าเหลี่ยม3มิติ"
-            | "draw_hex_3d"  | "hex3d"  | "วาดหกเหลี่ยม3มิติ"
-            | "draw_polygon_3d" | "polygon3d" | "วาดรูปหลายเหลี่ยม3มิติ" =>
-            {
+            "draw_quad_3d"
+            | "quad3d"
+            | "วาดสี่เหลี่ยม3มิติ"
+            | "draw_pent_3d"
+            | "pent3d"
+            | "วาดห้าเหลี่ยม3มิติ"
+            | "draw_hex_3d"
+            | "hex3d"
+            | "วาดหกเหลี่ยม3มิติ"
+            | "draw_polygon_3d"
+            | "polygon3d"
+            | "วาดรูปหลายเหลี่ยม3มิติ" => {
                 // Collect (wx, wy, wz) triples from args or list
                 let mut wxs: [f32; 8] = [0.0; 8];
                 let mut wys: [f32; 8] = [0.0; 8];
@@ -4448,10 +5083,16 @@ impl Interpreter {
                     // draw_polygon_3d([x0,y0,z0, x1,y1,z1, ...])
                     let list = match &args[0] {
                         Value::List(l) => l.clone(),
-                        _ => return Err(EvalErr::from("draw_polygon_3d: expected list".to_string())),
+                        _ => {
+                            return Err(EvalErr::from("draw_polygon_3d: expected list".to_string()))
+                        },
                     };
-                    let coords: Vec<f32> = list.iter()
-                        .map(|v| match v { Value::Number(n) => *n as f32, _ => 0.0 })
+                    let coords: Vec<f32> = list
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => *n as f32,
+                            _ => 0.0,
+                        })
                         .collect();
                     n_verts = (coords.len() / 3).min(8);
                     for i in 0..n_verts {
@@ -4463,76 +5104,90 @@ impl Interpreter {
                     // draw_quad/pent/hex_3d(x0,y0,z0, x1,y1,z1, ...)
                     n_verts = (args.len() / 3).min(8);
                     for i in 0..n_verts {
-                        wxs[i] = self.arg_num(&args, i * 3,     0.0)? as f32;
+                        wxs[i] = self.arg_num(&args, i * 3, 0.0)? as f32;
                         wys[i] = self.arg_num(&args, i * 3 + 1, 0.0)? as f32;
                         wzs[i] = self.arg_num(&args, i * 3 + 2, 0.0)? as f32;
                     }
                 }
-                if n_verts < 3 { return Ok(Value::Unit); }
+                if n_verts < 3 {
+                    return Ok(Value::Unit);
+                }
 
                 let mut gfx = self.gfx.borrow_mut();
 
                 // Face normal from first triangle of the fan
                 let normal = crate::gfx::poly::face_normal(
-                    wxs[0], wys[0], wzs[0],
-                    wxs[1], wys[1], wzs[1],
-                    wxs[2], wys[2], wzs[2],
+                    wxs[0], wys[0], wzs[0], wxs[1], wys[1], wzs[1], wxs[2], wys[2], wzs[2],
                 );
 
                 // Per-vertex lit colours
                 let mut wcs: [u32; 8] = [0; 8];
                 if gfx.flat_shade {
                     let c = gfx.color;
-                    for i in 0..n_verts { wcs[i] = c; }
+                    for i in 0..n_verts {
+                        wcs[i] = c;
+                    }
                 } else if let Some(ref mat) = gfx.material.clone() {
                     let cam = [gfx.camera.cx, gfx.camera.cy, gfx.camera.zdist];
                     let lights: Vec<_> = gfx.lights.clone();
                     let ambient = gfx.ambient;
                     for i in 0..n_verts {
                         let v = [wxs[i], wys[i], wzs[i]];
-                        let vd = [cam[0]-v[0], cam[1]-v[1], cam[2]-v[2]];
+                        let vd = [cam[0] - v[0], cam[1] - v[1], cam[2] - v[2]];
                         wcs[i] = crate::gfx::material::shade(mat, normal, vd, v, &lights, ambient);
                     }
                 } else {
-                    let base   = gfx.color;
+                    let base = gfx.color;
                     let lights: Vec<_> = gfx.lights.clone();
                     let ambient = gfx.ambient;
                     for i in 0..n_verts {
                         wcs[i] = crate::gfx::light::compute_lit_color_linear(
-                            base, normal, [wxs[i], wys[i], wzs[i]], &lights, ambient,
+                            base,
+                            normal,
+                            [wxs[i], wys[i], wzs[i]],
+                            &lights,
+                            ambient,
                         );
                     }
                 }
 
                 // Near-plane clip (Sutherland-Hodgman per vertex)
                 let near = -gfx.camera.zdist + 0.05;
-                let mut clip_in:  [(f32,f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
-                    = [(0.0,0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                let mut clip_in: [(f32, f32, f32, f32, u32); crate::gfx::poly::MAX_CLIP_VERTS] =
+                    [(0.0, 0.0, 0.0, 0.0, 0); crate::gfx::poly::MAX_CLIP_VERTS];
                 for i in 0..n_verts {
                     let d = gfx.camera.depth(wxs[i], wys[i], wzs[i]);
                     clip_in[i] = (wxs[i], wys[i], wzs[i], d, wcs[i]);
                 }
-                let mut clip_out: [(f32,f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
-                    = [(0.0,0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                let mut clip_out: [(f32, f32, f32, f32, u32); crate::gfx::poly::MAX_CLIP_VERTS] =
+                    [(0.0, 0.0, 0.0, 0.0, 0); crate::gfx::poly::MAX_CLIP_VERTS];
                 let pn = crate::gfx::poly::clip_near(&clip_in, n_verts, near, &mut clip_out);
-                if pn < 3 { return Ok(Value::Unit); }
+                if pn < 3 {
+                    return Ok(Value::Unit);
+                }
 
                 // Project + fog
-                let mut proj: [(f32,f32,f32,u32); crate::gfx::poly::MAX_CLIP_VERTS]
-                    = [(0.0,0.0,0.0,0); crate::gfx::poly::MAX_CLIP_VERTS];
+                let mut proj: [(f32, f32, f32, u32); crate::gfx::poly::MAX_CLIP_VERTS] =
+                    [(0.0, 0.0, 0.0, 0); crate::gfx::poly::MAX_CLIP_VERTS];
                 for i in 0..pn {
-                    let (sx, sy, sz) = gfx.camera.project(clip_out[i].0, clip_out[i].1, clip_out[i].2);
+                    let (sx, sy, sz) =
+                        gfx.camera
+                            .project(clip_out[i].0, clip_out[i].1, clip_out[i].2);
                     let fc = gfx.fog_apply(clip_out[i].4, sz);
                     proj[i] = (sx, sy, sz, fc);
                 }
 
                 // Fan-triangulate and push
                 let unlit = gfx.flat_shade;
-                crate::gfx::poly::fan_emit_proj(&proj, pn, |x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2| {
-                    gfx.depth_queue.push_triangle_g_zv(
-                        x0,y0,z0,c0, x1,y1,z1,c1, x2,y2,z2,c2, 3, unlit,
-                    );
-                });
+                crate::gfx::poly::fan_emit_proj(
+                    &proj,
+                    pn,
+                    |x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2| {
+                        gfx.depth_queue.push_triangle_g_zv(
+                            x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, 3, unlit,
+                        );
+                    },
+                );
                 return Ok(Value::Unit);
             },
 
@@ -5620,10 +6275,26 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง"
-            | "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง"
-            | "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน"
-            | "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" => {
+            "audio_sample_stop"
+            | "停止采样"
+            | "サンプル停止"
+            | "샘플정지"
+            | "หยุดตัวอย่างเสียง"
+            | "audio_fx_reverb"
+            | "混响"
+            | "リバーブ"
+            | "리버브"
+            | "เสียงก้อง"
+            | "audio_fx_delay"
+            | "回声"
+            | "ディレイ効果"
+            | "딜레이"
+            | "เสียงสะท้อน"
+            | "audio_fx_lowpass"
+            | "低通滤波"
+            | "ローパス"
+            | "저역통과"
+            | "กรองความถี่ต่ำ" => {
                 return Ok(Value::Unit);
             },
 
@@ -5756,14 +6427,12 @@ impl Interpreter {
             },
             // wasm32: gamepad not available — return safe no-op values
             #[cfg(target_arch = "wasm32")]
-            "gamepad_poll" | "จอยโพล"
-            | "gamepad_rumble" | "จอยสั่น" => {
+            "gamepad_poll" | "จอยโพล" | "gamepad_rumble" | "จอยสั่น" => {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "gamepad_button" | "จอยปุ่ม"
-            | "gamepad_axis" | "จอยแกน"
-            | "gamepad_any" | "จอยใดๆ" => {
+            "gamepad_button" | "จอยปุ่ม" | "gamepad_axis" | "จอยแกน" | "gamepad_any" | "จอยใดๆ" =>
+            {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
@@ -6044,7 +6713,9 @@ impl Interpreter {
             // BLAKE3 hex of an arbitrary string (deterministic id/colour/role seed).
             "hash_hex" | "แฮชสตริง" => {
                 let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(hex_encode(&ling_crypto::Blake3::hash(s.as_bytes()))));
+                return Ok(Value::Str(hex_encode(&ling_crypto::Blake3::hash(
+                    s.as_bytes(),
+                ))));
             },
             // Read an environment variable, falling back to a default.
             #[cfg(not(target_arch = "wasm32"))]
@@ -6160,7 +6831,10 @@ impl Interpreter {
             },
             "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" =>
             {
-                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let lst = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::List(Rc::new(vec![])));
                 let val = args.get(1).cloned().unwrap_or(Value::Unit);
                 if let Value::List(mut v) = lst {
                     Rc::make_mut(&mut v).push(val);
@@ -6197,7 +6871,10 @@ impl Interpreter {
             },
             "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" =>
             {
-                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let lst = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::List(Rc::new(vec![])));
                 let sep = args.get(1).map(|v| v.to_string()).unwrap_or_default();
                 if let Value::List(v) = lst {
                     return Ok(Value::Str(
@@ -9006,8 +9683,11 @@ impl Interpreter {
             // an embarrassingly-parallel batch: a scene with many liquid surfaces
             // steps in one call that scales across cores instead of N serial
             // `liquid_step` calls.
-            "liquid_step_all" | "液体全步进" | "液体全更新" | "전체액체스텝" | "ก้าวของเหลวทั้งหมด" =>
-            {
+            "liquid_step_all"
+            | "液体全步进"
+            | "液体全更新"
+            | "전체액체스텝"
+            | "ก้าวของเหลวทั้งหมด" => {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
                 ling_physics::liquid::step_all(&mut self.liquids, dt);
                 return Ok(Value::Unit);
@@ -9070,142 +9750,142 @@ impl Interpreter {
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                let id = self.arg_num(&args, 0, 0.)? as usize;
-                let kind = self.arg_num(&args, 1, 1.)? as i32;
-                let cx = self.arg_num(&args, 2, 0.)? as f32;
-                let cy = self.arg_num(&args, 3, 0.)? as f32;
-                let cz = self.arg_num(&args, 4, 0.)? as f32;
-                let radius = self.arg_num(&args, 5, 2.0)? as f32;
-                let height = self.arg_num(&args, 6, 3.0)? as f32;
-                if id < self.liquids.len() {
-                    let (gw, gh) = {
+                    let id = self.arg_num(&args, 0, 0.)? as usize;
+                    let kind = self.arg_num(&args, 1, 1.)? as i32;
+                    let cx = self.arg_num(&args, 2, 0.)? as f32;
+                    let cy = self.arg_num(&args, 3, 0.)? as f32;
+                    let cz = self.arg_num(&args, 4, 0.)? as f32;
+                    let radius = self.arg_num(&args, 5, 2.0)? as f32;
+                    let height = self.arg_num(&args, 6, 3.0)? as f32;
+                    if id < self.liquids.len() {
+                        let (gw, gh) = {
+                            let g = &self.liquids[id];
+                            (g.w, g.h)
+                        };
+                        let mut gfx = self.gfx.borrow_mut();
+                        let (w, h, add) = (gfx.width, gfx.height, gfx.blend == 1);
+                        let cam = gfx.camera.clone();
+                        let near = -cam.zdist + 0.05;
                         let g = &self.liquids[id];
-                        (g.w, g.h)
-                    };
-                    let mut gfx = self.gfx.borrow_mut();
-                    let (w, h, add) = (gfx.width, gfx.height, gfx.blend == 1);
-                    let cam = gfx.camera.clone();
-                    let near = -cam.zdist + 0.05;
-                    let g = &self.liquids[id];
-                    let tau = std::f32::consts::TAU;
-                    let pi = std::f32::consts::PI;
-                    // surface point for a (u,v) in [0,1] on the chosen primitive
-                    let sp = |u: f32, v: f32| -> [f32; 3] {
-                        if kind == 0 {
-                            [
-                                cx + (u - 0.5) * 2.0 * radius,
-                                cy,
-                                cz + (v - 0.5) * 2.0 * radius,
-                            ]
-                        } else if kind == 2 {
-                            let th = u * tau;
-                            [
-                                cx + th.cos() * radius,
-                                cy + (v - 0.5) * height,
-                                cz + th.sin() * radius,
-                            ]
-                        } else if kind == 3 {
-                            let th = u * tau;
-                            let rr = radius * (1.0 - v);
-                            [
-                                cx + th.cos() * rr,
-                                cy + (v - 0.5) * height,
-                                cz + th.sin() * rr,
-                            ]
-                        } else if kind == 4 {
-                            let th = u * tau;
-                            let ph = v * pi * 0.5;
-                            [
-                                cx + ph.sin() * th.cos() * radius,
-                                cy - ph.cos() * radius,
-                                cz + ph.sin() * th.sin() * radius,
-                            ]
-                        } else {
-                            let th = u * tau;
-                            let ph = v * pi;
-                            [
-                                cx + ph.sin() * th.cos() * radius,
-                                cy + ph.cos() * radius,
-                                cz + ph.sin() * th.sin() * radius,
-                            ]
-                        }
-                    };
-                    let nrm = |u: f32, v: f32| -> [f32; 3] {
-                        if kind == 0 {
-                            [0.0, -1.0, 0.0]
-                        } else if kind == 2 {
-                            let th = u * tau;
-                            [th.cos(), 0.0, th.sin()]
-                        } else if kind == 3 {
-                            let th = u * tau;
-                            let s = (radius / height.max(0.01)).atan();
-                            [th.cos() * s.cos(), s.sin(), th.sin() * s.cos()]
-                        } else if kind == 4 {
-                            let th = u * tau;
-                            let ph = v * pi * 0.5;
-                            [ph.sin() * th.cos(), -ph.cos(), ph.sin() * th.sin()]
-                        } else {
-                            let th = u * tau;
-                            let ph = v * pi;
-                            [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()]
-                        }
-                    };
-                    let gwf = gw as f32;
-                    let ghf = gh as f32;
-                    let mut cyc = 0usize;
-                    while cyc < gh {
-                        let mut cxc = 0usize;
-                        while cxc < gw {
-                            // cull by the cell centre's outward normal
-                            let uc = (cxc as f32 + 0.5) / gwf;
-                            let vc = (cyc as f32 + 0.5) / ghf;
-                            let c = sp(uc, vc);
-                            let n = nrm(uc, vc);
-                            let dc = cam.depth(c[0], c[1], c[2]);
-                            if dc > near {
-                                let cull = kind != 0
-                                    && cam.depth(
-                                        c[0] + n[0] * 0.06,
-                                        c[1] + n[1] * 0.06,
-                                        c[2] + n[2] * 0.06,
-                                    ) > dc;
-                                if !cull {
-                                    // project the 4 cell corners → a filled AA vector quad
-                                    let u0 = cxc as f32 / gwf;
-                                    let u1 = (cxc + 1) as f32 / gwf;
-                                    let v0 = cyc as f32 / ghf;
-                                    let v1 = (cyc + 1) as f32 / ghf;
-                                    let q = [sp(u0, v0), sp(u1, v0), sp(u1, v1), sp(u0, v1)];
-                                    let mut poly: Vec<[f32; 2]> = Vec::with_capacity(5);
-                                    let mut ok = true;
-                                    for p in &q {
-                                        if cam.depth(p[0], p[1], p[2]) <= near {
-                                            ok = false;
-                                            break;
+                        let tau = std::f32::consts::TAU;
+                        let pi = std::f32::consts::PI;
+                        // surface point for a (u,v) in [0,1] on the chosen primitive
+                        let sp = |u: f32, v: f32| -> [f32; 3] {
+                            if kind == 0 {
+                                [
+                                    cx + (u - 0.5) * 2.0 * radius,
+                                    cy,
+                                    cz + (v - 0.5) * 2.0 * radius,
+                                ]
+                            } else if kind == 2 {
+                                let th = u * tau;
+                                [
+                                    cx + th.cos() * radius,
+                                    cy + (v - 0.5) * height,
+                                    cz + th.sin() * radius,
+                                ]
+                            } else if kind == 3 {
+                                let th = u * tau;
+                                let rr = radius * (1.0 - v);
+                                [
+                                    cx + th.cos() * rr,
+                                    cy + (v - 0.5) * height,
+                                    cz + th.sin() * rr,
+                                ]
+                            } else if kind == 4 {
+                                let th = u * tau;
+                                let ph = v * pi * 0.5;
+                                [
+                                    cx + ph.sin() * th.cos() * radius,
+                                    cy - ph.cos() * radius,
+                                    cz + ph.sin() * th.sin() * radius,
+                                ]
+                            } else {
+                                let th = u * tau;
+                                let ph = v * pi;
+                                [
+                                    cx + ph.sin() * th.cos() * radius,
+                                    cy + ph.cos() * radius,
+                                    cz + ph.sin() * th.sin() * radius,
+                                ]
+                            }
+                        };
+                        let nrm = |u: f32, v: f32| -> [f32; 3] {
+                            if kind == 0 {
+                                [0.0, -1.0, 0.0]
+                            } else if kind == 2 {
+                                let th = u * tau;
+                                [th.cos(), 0.0, th.sin()]
+                            } else if kind == 3 {
+                                let th = u * tau;
+                                let s = (radius / height.max(0.01)).atan();
+                                [th.cos() * s.cos(), s.sin(), th.sin() * s.cos()]
+                            } else if kind == 4 {
+                                let th = u * tau;
+                                let ph = v * pi * 0.5;
+                                [ph.sin() * th.cos(), -ph.cos(), ph.sin() * th.sin()]
+                            } else {
+                                let th = u * tau;
+                                let ph = v * pi;
+                                [ph.sin() * th.cos(), ph.cos(), ph.sin() * th.sin()]
+                            }
+                        };
+                        let gwf = gw as f32;
+                        let ghf = gh as f32;
+                        let mut cyc = 0usize;
+                        while cyc < gh {
+                            let mut cxc = 0usize;
+                            while cxc < gw {
+                                // cull by the cell centre's outward normal
+                                let uc = (cxc as f32 + 0.5) / gwf;
+                                let vc = (cyc as f32 + 0.5) / ghf;
+                                let c = sp(uc, vc);
+                                let n = nrm(uc, vc);
+                                let dc = cam.depth(c[0], c[1], c[2]);
+                                if dc > near {
+                                    let cull = kind != 0
+                                        && cam.depth(
+                                            c[0] + n[0] * 0.06,
+                                            c[1] + n[1] * 0.06,
+                                            c[2] + n[2] * 0.06,
+                                        ) > dc;
+                                    if !cull {
+                                        // project the 4 cell corners → a filled AA vector quad
+                                        let u0 = cxc as f32 / gwf;
+                                        let u1 = (cxc + 1) as f32 / gwf;
+                                        let v0 = cyc as f32 / ghf;
+                                        let v1 = (cyc + 1) as f32 / ghf;
+                                        let q = [sp(u0, v0), sp(u1, v0), sp(u1, v1), sp(u0, v1)];
+                                        let mut poly: Vec<[f32; 2]> = Vec::with_capacity(5);
+                                        let mut ok = true;
+                                        for p in &q {
+                                            if cam.depth(p[0], p[1], p[2]) <= near {
+                                                ok = false;
+                                                break;
+                                            }
+                                            let (sx, sy, _) = cam.project(p[0], p[1], p[2]);
+                                            poly.push([sx, sy]);
                                         }
-                                        let (sx, sy, _) = cam.project(p[0], p[1], p[2]);
-                                        poly.push([sx, sy]);
-                                    }
-                                    if ok {
-                                        let p0 = poly[0];
-                                        poly.push(p0);
-                                        let col = g.sample_rgb(cxc, cyc);
-                                        crate::gfx::raster::fill_contours_aa(
-                                            &mut gfx.buffer,
-                                            w,
-                                            h,
-                                            col,
-                                            add,
-                                            std::slice::from_ref(&poly),
-                                        );
+                                        if ok {
+                                            let p0 = poly[0];
+                                            poly.push(p0);
+                                            let col = g.sample_rgb(cxc, cyc);
+                                            crate::gfx::raster::fill_contours_aa(
+                                                &mut gfx.buffer,
+                                                w,
+                                                h,
+                                                col,
+                                                add,
+                                                std::slice::from_ref(&poly),
+                                            );
+                                        }
                                     }
                                 }
+                                cxc += 1;
                             }
-                            cxc += 1;
+                            cyc += 1;
                         }
-                        cyc += 1;
                     }
-                }
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -10163,7 +10843,10 @@ fn make_borderless_fullscreen(hwnd: isize, screen_w: i32, screen_h: i32) {
 /// refresh rate, not a tear-free guarantee.
 #[cfg(not(target_arch = "wasm32"))]
 fn apply_frame_pacing(win: &mut minifb::Window, vsync: bool) {
-    match std::env::var("LING_FPS_CAP").ok().and_then(|v| v.parse::<usize>().ok()) {
+    match std::env::var("LING_FPS_CAP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
         Some(0) => win.set_target_fps(100_000),
         Some(cap) => win.set_target_fps(cap),
         None if vsync => win.set_target_fps(monitor_info().2.max(30) as usize),
@@ -10211,7 +10894,10 @@ fn monitor_info() -> (i32, i32, i32) {
 /// its fastest panel.
 #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
 fn linux_refresh_hz() -> Option<i32> {
-    let out = std::process::Command::new("xrandr").arg("--current").output().ok()?;
+    let out = std::process::Command::new("xrandr")
+        .arg("--current")
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -10224,7 +10910,11 @@ fn linux_refresh_hz() -> Option<i32> {
 fn parse_xrandr_max_hz(text: &str) -> Option<i32> {
     text.split_whitespace()
         .filter(|tok| tok.contains('*'))
-        .filter_map(|tok| tok.trim_matches(|c: char| !c.is_ascii_digit() && c != '.').parse::<f64>().ok())
+        .filter_map(|tok| {
+            tok.trim_matches(|c: char| !c.is_ascii_digit() && c != '.')
+                .parse::<f64>()
+                .ok()
+        })
         .map(|hz| hz.round() as i32)
         .filter(|&hz| (24..=1000).contains(&hz))
         .max()
@@ -10325,14 +11015,21 @@ thread_local! {
 fn ling_fps_tick() {
     LING_FPS.with(|s| {
         let mut s = s.borrow_mut();
-        if !s.0 { return; }
+        if !s.0 {
+            return;
+        }
         let now = crate::runtime::now_secs();
         if s.1 > 0.0 {
             s.3 += now - s.1;
             s.2 += 1;
             if s.2 >= 120 {
                 let avg = s.3 / s.2 as f64;
-                eprintln!("[fps] {:.1} fps  ({:.2} ms/frame, wall, {} frames)", 1.0 / avg, avg * 1000.0, s.2);
+                eprintln!(
+                    "[fps] {:.1} fps  ({:.2} ms/frame, wall, {} frames)",
+                    1.0 / avg,
+                    avg * 1000.0,
+                    s.2
+                );
                 s.2 = 0;
                 s.3 = 0.0;
             }
@@ -10375,14 +11072,20 @@ pub fn ling_phase_add(idx: usize, nanos: u128) {
 fn ling_phase_frame() {
     LING_PHASE.with(|p| {
         let mut p = p.borrow_mut();
-        if !p.0 { return; }
+        if !p.0 {
+            return;
+        }
         p.1 += 1;
         if p.1 >= 120 {
             let f = p.1 as f64;
             let ms = |i: usize| p.2[i] as f64 / 1e6 / f;
             eprintln!(
                 "[phase] sort={:.2} flush={:.2} toon={:.2} blit={:.2} distort={:.2} ms/frame",
-                ms(phase::SORT), ms(phase::FLUSH), ms(phase::TOON), ms(phase::BLIT), ms(phase::DISTORT)
+                ms(phase::SORT),
+                ms(phase::FLUSH),
+                ms(phase::TOON),
+                ms(phase::BLIT),
+                ms(phase::DISTORT)
             );
             p.1 = 0;
             p.2 = [0; 5];
@@ -10428,7 +11131,11 @@ fn ling_profile_print(p: &LingProfileState) {
     eprintln!("├──────────────────────────────────────────────────────────────────────────────");
     for (name, count, ns) in rows.iter().take(30) {
         let ms = *ns as f64 / 1e6;
-        let pct = if total_ns > 0 { *ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+        let pct = if total_ns > 0 {
+            *ns as f64 / total_ns as f64 * 100.0
+        } else {
+            0.0
+        };
         eprintln!(
             "│ {:<24} {:>9} {:>9.1} {:>10.1} {:>9.3} {:>5.1}%",
             truncate_name(name),

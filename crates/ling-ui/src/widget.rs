@@ -24,6 +24,7 @@ impl View {
     pub fn new() -> Self {
         Self { children: vec![], next_id: 1 }
     }
+
     pub fn add(&mut self, w: impl Widget + 'static) {
         self.children.push(Box::new(w));
     }
@@ -51,7 +52,9 @@ impl Widget for Label {
     fn id(&self) -> u64 {
         self.id
     }
+
     fn render(&self, _ctx: &mut RenderCtx) {}
+
     fn handle(&mut self, _e: &crate::event::Event) -> bool {
         false
     }
@@ -74,7 +77,9 @@ impl Widget for Button {
     fn id(&self) -> u64 {
         self.id
     }
+
     fn render(&self, _ctx: &mut RenderCtx) {}
+
     fn handle(&mut self, e: &crate::event::Event) -> bool {
         if let crate::event::Event::Click { widget_id } = e {
             if *widget_id == self.id {

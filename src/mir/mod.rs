@@ -372,7 +372,8 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) -> Option<Operand> {
                     let total_args = arg_count + capture_count;
                     let mut closure_func = MirFunction::new(&closure_name, total_args);
                     closure_func.param_names = params.clone();
-                    let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
+                    let mut closure_ctx =
+                        LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
                     for (i, pname) in params.iter().enumerate() {
                         closure_ctx.declare_in_scope(pname, Local(i + 1));
                     }
@@ -477,7 +478,11 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 let closure_name = format!("__closure_{}", closure_id);
                 let mut closure_func = MirFunction::new(&closure_name, arg_count + capture_count);
                 closure_func.param_names = params.clone();
-                let mut closure_ctx = LowerCtx::new(&mut closure_func, arg_count + capture_count, ctx.globals.clone());
+                let mut closure_ctx = LowerCtx::new(
+                    &mut closure_func,
+                    arg_count + capture_count,
+                    ctx.globals.clone(),
+                );
                 for (i, pname) in params.iter().enumerate() {
                     let local = Local(i + 1);
                     closure_ctx.declare_in_scope(pname, local);

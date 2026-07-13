@@ -265,7 +265,10 @@ pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -
         .collect();
 
     let mut buf: Vec<Complex<f32>> = (0..n)
-        .map(|i| Complex { re: slice.get(i).copied().unwrap_or(0.0) * window[i], im: 0.0 })
+        .map(|i| Complex {
+            re: slice.get(i).copied().unwrap_or(0.0) * window[i],
+            im: 0.0,
+        })
         .collect();
 
     let mut scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
@@ -282,7 +285,9 @@ pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -
         let t1 = (b + 1) as f32 / nbands as f32;
         let hz0 = min_hz * (max_hz / min_hz).powf(t0);
         let hz1 = min_hz * (max_hz / min_hz).powf(t1);
-        let k0 = ((hz0 * n as f32 / rate as f32).round() as usize).max(1).min(bins - 1);
+        let k0 = ((hz0 * n as f32 / rate as f32).round() as usize)
+            .max(1)
+            .min(bins - 1);
         let k1 = ((hz1 * n as f32 / rate as f32).round() as usize)
             .max(k0 + 1)
             .min(bins);

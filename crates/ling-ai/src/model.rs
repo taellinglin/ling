@@ -59,6 +59,7 @@ impl InferenceBackend for StubBackend {
     fn forward(&self, input_ids: &[u32]) -> Tensor {
         Tensor::zeros(vec![input_ids.len(), self.cfg.vocab_size])
     }
+
     fn config(&self) -> &ModelConfig {
         &self.cfg
     }

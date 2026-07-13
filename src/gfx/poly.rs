@@ -17,7 +17,11 @@ use std::collections::HashSet;
 /// Canonical edge: always (min, max) so direction doesn't matter.
 #[inline]
 fn canonical(a: u64, b: u64) -> (u64, u64) {
-    if a <= b { (a, b) } else { (b, a) }
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 /// Encode a 3-D world-space point to a u64 key quantised to 1/64 unit.
@@ -68,26 +72,31 @@ impl EdgeSet {
 ///
 /// The arrays must all be at least `n` elements; `n` must be ≤ the array length.
 #[inline]
-pub fn fan_emit_3d<F>(
-    xs: &[f32],
-    ys: &[f32],
-    zs: &[f32],
-    cs: &[u32],
-    n: usize,
-    mut emit: F,
-)
+pub fn fan_emit_3d<F>(xs: &[f32], ys: &[f32], zs: &[f32], cs: &[u32], n: usize, mut emit: F)
 where
     F: FnMut(f32, f32, f32, u32, f32, f32, f32, u32, f32, f32, f32, u32),
 {
     if n < 3 {
         return;
     }
-    let ax = xs[0]; let ay = ys[0]; let az = zs[0]; let ac = cs[0];
+    let ax = xs[0];
+    let ay = ys[0];
+    let az = zs[0];
+    let ac = cs[0];
     for i in 1..n - 1 {
         emit(
-            ax, ay, az, ac,
-            xs[i],     ys[i],     zs[i],     cs[i],
-            xs[i + 1], ys[i + 1], zs[i + 1], cs[i + 1],
+            ax,
+            ay,
+            az,
+            ac,
+            xs[i],
+            ys[i],
+            zs[i],
+            cs[i],
+            xs[i + 1],
+            ys[i + 1],
+            zs[i + 1],
+            cs[i + 1],
         );
     }
 }
@@ -126,10 +135,10 @@ pub const MAX_CLIP_VERTS: usize = 9; // sufficient for hex (6) + 3 extra
 /// Uses `lerp_color` for interpolated vertex colours at clip edges.
 #[allow(clippy::too_many_arguments)]
 pub fn clip_near(
-    input:      &[(f32, f32, f32, f32, u32)], // (wx, wy, wz, cam_depth, color)
-    n_in:       usize,
-    near:       f32,
-    output:     &mut [(f32, f32, f32, f32, u32); MAX_CLIP_VERTS],
+    input: &[(f32, f32, f32, f32, u32)], // (wx, wy, wz, cam_depth, color)
+    n_in: usize,
+    near: f32,
+    output: &mut [(f32, f32, f32, f32, u32); MAX_CLIP_VERTS],
 ) -> usize {
     let mut n_out = 0usize;
     for ei in 0..n_in {
@@ -176,11 +185,21 @@ pub fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
 /// World-space face normal (B−A) × (C−A).  Not normalised.
 #[inline]
 pub fn face_normal(
-    ax: f32, ay: f32, az: f32,
-    bx: f32, by: f32, bz: f32,
-    cx: f32, cy: f32, cz: f32,
+    ax: f32,
+    ay: f32,
+    az: f32,
+    bx: f32,
+    by: f32,
+    bz: f32,
+    cx: f32,
+    cy: f32,
+    cz: f32,
 ) -> [f32; 3] {
-    let ux = bx - ax; let uy = by - ay; let uz = bz - az;
-    let vx = cx - ax; let vy = cy - ay; let vz = cz - az;
+    let ux = bx - ax;
+    let uy = by - ay;
+    let uz = bz - az;
+    let vx = cx - ax;
+    let vy = cy - ay;
+    let vz = cz - az;
     [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]
 }

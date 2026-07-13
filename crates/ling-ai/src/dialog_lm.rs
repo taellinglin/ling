@@ -35,9 +35,11 @@ impl Vocab {
         }
         v
     }
+
     fn len(&self) -> usize {
         self.to_word.len()
     }
+
     fn intern(&mut self, w: &str) -> u32 {
         if let Some(&id) = self.to_id.get(w) {
             return id;
@@ -47,9 +49,11 @@ impl Vocab {
         self.to_id.insert(w.to_string(), id);
         id
     }
+
     fn id_of(&self, w: &str) -> u32 {
         self.to_id.get(w).copied().unwrap_or(UNK)
     }
+
     fn word(&self, id: u32) -> &str {
         self.to_word
             .get(id as usize)
@@ -450,6 +454,7 @@ impl<'a> Cur<'a> {
         self.i += n;
         Some(s)
     }
+
     fn u32(&mut self) -> Option<u32> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
     }

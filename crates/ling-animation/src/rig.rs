@@ -20,12 +20,15 @@ impl Transform {
         rotation: Quat::IDENTITY,
         scale: Vec3::ONE,
     };
+
     pub fn from_translation(t: Vec3) -> Self {
         Self { translation: t, ..Self::IDENTITY }
     }
+
     pub fn matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
     }
+
     pub fn lerp(&self, o: &Self, t: f32) -> Self {
         Self {
             translation: self.translation.lerp(o.translation, t),
@@ -94,6 +97,7 @@ impl Rig {
     pub fn len(&self) -> usize {
         self.joints.len()
     }
+
     pub fn is_empty(&self) -> bool {
         self.joints.is_empty()
     }

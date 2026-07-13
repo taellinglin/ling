@@ -46,11 +46,13 @@ impl Touch {
     pub fn delta(&self) -> Vec2 {
         self.pos - self.prev
     }
+
     /// Total movement since the touch began.
     #[must_use]
     pub fn drift(&self) -> Vec2 {
         self.pos - self.start
     }
+
     #[must_use]
     pub fn is_active(&self) -> bool {
         !matches!(self.phase, TouchPhase::Ended | TouchPhase::Cancelled)
@@ -122,6 +124,7 @@ impl TouchPool {
     pub fn get(&self, id: TouchId) -> Option<&Touch> {
         self.touches.iter().find(|t| t.id == id)
     }
+
     pub fn get_mut(&mut self, id: TouchId) -> Option<&mut Touch> {
         self.touches.iter_mut().find(|t| t.id == id)
     }

@@ -39,9 +39,11 @@ impl Camera3D {
     pub fn forward(&self) -> Vec3 {
         self.rotation * -Vec3::Z
     }
+
     pub fn right(&self) -> Vec3 {
         self.rotation * Vec3::X
     }
+
     pub fn up(&self) -> Vec3 {
         self.rotation * Vec3::Y
     }
@@ -89,9 +91,11 @@ impl Camera3D {
     pub fn move_forward(&mut self, dist: f32) {
         self.position += self.forward() * dist;
     }
+
     pub fn move_right(&mut self, dist: f32) {
         self.position += self.right() * dist;
     }
+
     pub fn move_up(&mut self, dist: f32) {
         self.position += self.up() * dist;
     }

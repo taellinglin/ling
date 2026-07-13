@@ -108,10 +108,7 @@ fn try_init() -> Option<Gpu> {
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("ling-bg"),
         layout: &bgl,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: uniform.as_entire_binding(),
-        }],
+        entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }],
     });
 
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -161,13 +158,7 @@ fn try_init() -> Option<Gpu> {
         cache: None,
     });
 
-    Some(Gpu {
-        device,
-        queue,
-        pipeline,
-        uniform,
-        bind_group,
-    })
+    Some(Gpu { device, queue, pipeline, uniform, bind_group })
 }
 
 /// Rasterise `verts` (a triangle list, 3 vertices per triangle) into `out`
@@ -194,7 +185,7 @@ pub fn raster(
             None => {
                 *INIT_FAILED.lock().unwrap() = true;
                 return false;
-            }
+            },
         }
     }
     let g = guard.as_ref().unwrap();
@@ -250,9 +241,7 @@ pub fn raster(
 
     let mut enc = g
         .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("ling-enc"),
-        });
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ling-enc") });
     {
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ling-rp"),

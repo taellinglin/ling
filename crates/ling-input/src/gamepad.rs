@@ -56,9 +56,6 @@ pub enum GamepadButton {
 }
 
 impl GamepadButton {
-    /// Number of distinct button positions.
-    pub const COUNT: usize = 23;
-
     /// Every button in declaration (index) order.
     pub const ALL: [Self; Self::COUNT] = [
         Self::South,
@@ -85,6 +82,8 @@ impl GamepadButton {
         Self::Touchpad,
         Self::Misc,
     ];
+    /// Number of distinct button positions.
+    pub const COUNT: usize = 23;
 
     /// Dense index into a `[_; COUNT]` array.
     #[must_use]
@@ -218,6 +217,7 @@ impl Gamepad {
     pub fn button(&self, b: GamepadButton) -> &Button {
         &self.buttons[b.index()]
     }
+
     /// Mutable access to a button's edge state.
     pub fn button_mut(&mut self, b: GamepadButton) -> &mut Button {
         &mut self.buttons[b.index()]
@@ -248,10 +248,12 @@ impl Gamepad {
     pub fn is_down(&self, b: GamepadButton) -> bool {
         self.buttons[b.index()].is_down()
     }
+
     #[must_use]
     pub fn just_pressed(&self, b: GamepadButton) -> bool {
         self.buttons[b.index()].just_pressed()
     }
+
     #[must_use]
     pub fn just_released(&self, b: GamepadButton) -> bool {
         self.buttons[b.index()].just_released()

@@ -133,6 +133,7 @@ impl Spring {
     pub fn new(value: f32, stiffness: f32, damping: f32) -> Self {
         Self { value, target: value, velocity: 0.0, stiffness, damping }
     }
+
     /// A pleasant default for UI (snappy, slightly springy).
     pub fn ui(value: f32) -> Self {
         Self::new(value, 180.0, 18.0)
@@ -173,15 +174,18 @@ impl Tween {
     pub fn new(from: f32, to: f32, duration: f32, curve: Easing) -> Self {
         Self { from, to, duration: duration.max(1e-4), elapsed: 0.0, curve }
     }
+
     /// Advance and return the current value.
     pub fn update(&mut self, dt: f32) -> f32 {
         self.elapsed = (self.elapsed + dt).min(self.duration);
         self.value()
     }
+
     pub fn value(&self) -> f32 {
         let t = self.elapsed / self.duration;
         ease(self.curve, self.from, self.to, t)
     }
+
     pub fn done(&self) -> bool {
         self.elapsed >= self.duration
     }

@@ -31,11 +31,13 @@ impl<'a> Devices<'a> {
     pub fn gamepad(g: &'a Gamepad) -> Self {
         Self { gamepad: Some(g), ..Self::default() }
     }
+
     #[must_use]
     pub fn with_keyboard(mut self, k: &'a Keyboard) -> Self {
         self.keyboard = Some(k);
         self
     }
+
     #[must_use]
     pub fn with_mouse(mut self, m: &'a Mouse) -> Self {
         self.mouse = Some(m);
@@ -133,12 +135,14 @@ impl Action {
     pub fn new() -> Self {
         Self::default()
     }
+
     /// Builder: add a digital/analog source.
     #[must_use]
     pub fn bind(mut self, b: Binding) -> Self {
         self.bindings.push(b);
         self
     }
+
     /// Builder: set the 2-D source.
     #[must_use]
     pub fn vector(mut self, v: VectorBinding) -> Self {
@@ -163,18 +167,22 @@ impl Action {
     pub fn pressed(&self) -> bool {
         self.button.is_down()
     }
+
     #[must_use]
     pub fn just_pressed(&self) -> bool {
         self.button.just_pressed()
     }
+
     #[must_use]
     pub fn just_released(&self) -> bool {
         self.button.just_released()
     }
+
     #[must_use]
     pub fn analog(&self) -> f32 {
         self.value
     }
+
     #[must_use]
     pub fn axis2d(&self) -> Vec2 {
         self.vec
@@ -210,6 +218,7 @@ impl ActionMap {
     pub fn get(&self, name: &str) -> Option<&Action> {
         self.actions.get(name)
     }
+
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Action> {
         self.actions.get_mut(name)
     }
@@ -218,14 +227,17 @@ impl ActionMap {
     pub fn pressed(&self, name: &str) -> bool {
         self.get(name).is_some_and(Action::pressed)
     }
+
     #[must_use]
     pub fn just_pressed(&self, name: &str) -> bool {
         self.get(name).is_some_and(Action::just_pressed)
     }
+
     #[must_use]
     pub fn analog(&self, name: &str) -> f32 {
         self.get(name).map_or(0.0, Action::analog)
     }
+
     #[must_use]
     pub fn axis2d(&self, name: &str) -> Vec2 {
         self.get(name).map_or(Vec2::ZERO, Action::axis2d)
@@ -267,10 +279,12 @@ impl ActionSets {
         self.stack.retain(|n| n != &name);
         self.stack.push(name);
     }
+
     /// Remove a context from the active stack.
     pub fn pop(&mut self, name: &str) {
         self.stack.retain(|n| n != name);
     }
+
     /// The active context names, top last.
     #[must_use]
     pub fn active(&self) -> &[String] {
@@ -301,6 +315,7 @@ impl ActionSets {
     pub fn map(&self, name: &str) -> Option<&ActionMap> {
         self.sets.get(name).map(|s| &s.map)
     }
+
     pub fn map_mut(&mut self, name: &str) -> Option<&mut ActionMap> {
         self.sets.get_mut(name).map(|s| &mut s.map)
     }

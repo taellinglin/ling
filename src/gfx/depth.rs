@@ -31,7 +31,10 @@ fn render_bands(width: usize, height: usize, est_pixels: usize) -> usize {
     }
     let by_rows = height / 96; // keep bands ≥ ~96 rows tall
     let by_fill = est_pixels / screen; // more overdraw → more bands worth it
-    rayon::current_num_threads().min(by_rows).min(by_fill.max(1) + 1).max(1)
+    rayon::current_num_threads()
+        .min(by_rows)
+        .min(by_fill.max(1) + 1)
+        .max(1)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -76,30 +79,90 @@ fn rasterize_call(
             DrawKind::Triangle { x0, y0, z0, x1, y1, z1, x2, y2, z2 } => {
                 if blended {
                     raster::fill_triangle_z_blend(
-                        buf, z, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, z0,
-                        x1, y1 - ysh, z1, x2, y2 - ysh, z2,
+                        buf,
+                        z,
+                        width,
+                        height,
+                        call.color,
+                        call.mode,
+                        call.alpha,
+                        x0,
+                        y0 - ysh,
+                        z0,
+                        x1,
+                        y1 - ysh,
+                        z1,
+                        x2,
+                        y2 - ysh,
+                        z2,
                     );
                 } else {
                     raster::fill_triangle_z(
-                        buf, z, width, height, call.color, x0, y0 - ysh, z0, x1, y1 - ysh, z1, x2,
-                        y2 - ysh, z2,
+                        buf,
+                        z,
+                        width,
+                        height,
+                        call.color,
+                        x0,
+                        y0 - ysh,
+                        z0,
+                        x1,
+                        y1 - ysh,
+                        z1,
+                        x2,
+                        y2 - ysh,
+                        z2,
                     );
                 }
             },
-            DrawKind::TriangleG {
-                x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands,
-            } => raster::fill_triangle_gouraud_z(
-                buf, z, width, height, x0, y0 - ysh, z0, c0, x1, y1 - ysh, z1, c1, x2, y2 - ysh, z2,
-                c2, bands, call.alpha, call.mode, call.unlit,
-            ),
+            DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands } => {
+                raster::fill_triangle_gouraud_z(
+                    buf,
+                    z,
+                    width,
+                    height,
+                    x0,
+                    y0 - ysh,
+                    z0,
+                    c0,
+                    x1,
+                    y1 - ysh,
+                    z1,
+                    c1,
+                    x2,
+                    y2 - ysh,
+                    z2,
+                    c2,
+                    bands,
+                    call.alpha,
+                    call.mode,
+                    call.unlit,
+                )
+            },
             DrawKind::Line { x0, y0, x1, y1, .. } => {
                 if aa {
                     raster::draw_line_aa(
-                        buf, width, height, call.color, call.mode == 1, x0, y0 - ysh, x1, y1 - ysh,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        call.mode == 1,
+                        x0,
+                        y0 - ysh,
+                        x1,
+                        y1 - ysh,
                     );
                 } else if blended {
                     raster::draw_line_blend(
-                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        call.mode,
+                        call.alpha,
+                        x0,
+                        y0 - ysh,
+                        x1,
                         y1 - ysh,
                     );
                 } else {
@@ -111,29 +174,78 @@ fn rasterize_call(
             DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
                 if blended {
                     raster::fill_triangle_blend(
-                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
-                        y1 - ysh, x2, y2 - ysh,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        call.mode,
+                        call.alpha,
+                        x0,
+                        y0 - ysh,
+                        x1,
+                        y1 - ysh,
+                        x2,
+                        y2 - ysh,
                     );
                 } else {
                     raster::fill_triangle(
-                        buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh, x2, y2 - ysh,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        x0,
+                        y0 - ysh,
+                        x1,
+                        y1 - ysh,
+                        x2,
+                        y2 - ysh,
                     );
                 }
             },
             DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, .. } => {
                 raster::fill_triangle_gouraud(
-                    buf, width, height, x0, y0 - ysh, c0, x1, y1 - ysh, c1, x2, y2 - ysh, c2, bands,
-                    call.alpha, call.mode, call.unlit,
+                    buf,
+                    width,
+                    height,
+                    x0,
+                    y0 - ysh,
+                    c0,
+                    x1,
+                    y1 - ysh,
+                    c1,
+                    x2,
+                    y2 - ysh,
+                    c2,
+                    bands,
+                    call.alpha,
+                    call.mode,
+                    call.unlit,
                 )
             },
             DrawKind::Line { x0, y0, x1, y1, .. } => {
                 if aa {
                     raster::draw_line_aa(
-                        buf, width, height, call.color, call.mode == 1, x0, y0 - ysh, x1, y1 - ysh,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        call.mode == 1,
+                        x0,
+                        y0 - ysh,
+                        x1,
+                        y1 - ysh,
                     );
                 } else if blended {
                     raster::draw_line_blend(
-                        buf, width, height, call.color, call.mode, call.alpha, x0, y0 - ysh, x1,
+                        buf,
+                        width,
+                        height,
+                        call.color,
+                        call.mode,
+                        call.alpha,
+                        x0,
+                        y0 - ysh,
+                        x1,
                         y1 - ysh,
                     );
                 } else {
@@ -367,7 +479,7 @@ impl DepthQueue {
                 let g = (((p + 2.0944).sin() * 0.5 + 0.5) * 255.0) as u32;
                 let b = (((p + 4.1888).sin() * 0.5 + 0.5) * 255.0) as u32;
                 (r << 16) | (g << 8) | b
-            }
+            },
             None => color,
         };
         self.calls.push(DrawCall {
@@ -463,13 +575,15 @@ impl DepthQueue {
                 #[cfg(not(target_arch = "wasm32"))]
                 if bands > 1 {
                     let rows = height.div_ceil(bands);
-                    buf.par_chunks_mut(rows * width).enumerate().for_each(|(b, bbuf)| {
-                        let ysh = (b * rows) as f32;
-                        let bh = bbuf.len() / width;
-                        for call in calls {
-                            rasterize_call(call, bbuf, None, width, bh, ysh, aa);
-                        }
-                    });
+                    buf.par_chunks_mut(rows * width)
+                        .enumerate()
+                        .for_each(|(b, bbuf)| {
+                            let ysh = (b * rows) as f32;
+                            let bh = bbuf.len() / width;
+                            for call in calls {
+                                rasterize_call(call, bbuf, None, width, bh, ysh, aa);
+                            }
+                        });
                     return;
                 }
                 let _ = bands;
@@ -554,22 +668,18 @@ impl DepthQueue {
         let mut verts: Vec<Vert> = Vec::with_capacity(self.calls.len() * 3);
         for call in &self.calls {
             match call.kind {
-                DrawKind::Triangle {
-                    x0, y0, x1, y1, x2, y2, ..
-                } => {
+                DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
                     let c = to_rgb(call.color);
                     verts.push(Vert { pos: [x0, y0], color: c });
                     verts.push(Vert { pos: [x1, y1], color: c });
                     verts.push(Vert { pos: [x2, y2], color: c });
-                }
-                DrawKind::TriangleG {
-                    x0, y0, c0, x1, y1, c1, x2, y2, c2, ..
-                } => {
+                },
+                DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, .. } => {
                     verts.push(Vert { pos: [x0, y0], color: to_rgb(c0) });
                     verts.push(Vert { pos: [x1, y1], color: to_rgb(c1) });
                     verts.push(Vert { pos: [x2, y2], color: to_rgb(c2) });
-                }
-                DrawKind::Line { .. } => { /* TODO: emit lines as thin quads on the GPU path */ }
+                },
+                DrawKind::Line { .. } => { /* TODO: emit lines as thin quads on the GPU path */ },
             }
         }
         if buf.len() < width * height {
