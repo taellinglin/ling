@@ -180,6 +180,7 @@ impl HyperPoint4D {
         )
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_klein(&self) -> Vec4H {
         Vec4H::new(
             self.x1 / self.x0,
@@ -189,6 +190,7 @@ impl HyperPoint4D {
         )
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_poincare(&self) -> Vec4H {
         let d = 1.0 + self.x0;
         Vec4H::new(self.x1 / d, self.x2 / d, self.x3 / d, self.x4 / d)

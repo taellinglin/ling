@@ -159,6 +159,7 @@ pub struct GfxState {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl GfxState {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             window: None,
@@ -391,6 +392,7 @@ pub struct GfxState {
 
 #[cfg(target_arch = "wasm32")]
 impl GfxState {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             width: 800,
@@ -497,6 +499,7 @@ impl GfxState {
     /// Light, near-plane clip, project, and fan-push a world-space triangle to
     /// the depth queue. Shared by `draw_triangle_3d` and `mesh_draw`.
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn submit_triangle(
         &mut self,
         ax: f32,
@@ -647,6 +650,7 @@ impl GfxState {
     /// Forward axis is `r × u` so 3-D meshes baked at identity reconstruct exactly.
     /// `use_baked_color` replays each triangle's captured colour (multi-colour
     /// models); otherwise the current pen colour applies (e.g. tinted glyphs).
+    #[allow(clippy::too_many_arguments)]
     pub fn mesh_draw(
         &mut self,
         id: usize,

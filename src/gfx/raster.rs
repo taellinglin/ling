@@ -4,6 +4,7 @@
 /// Fill a triangle using incremental edge evaluation (Pineda 1988).
 /// For convex triangles we break early once we exit the span â€” roughly 2Ã— faster
 /// than scanning the full bounding box.
+#[allow(clippy::too_many_arguments)]
 pub fn fill_triangle(
     buf: &mut [u32],
     width: usize,
@@ -79,6 +80,7 @@ pub fn fill_triangle(
 /// `alpha` + `mode`: when `alpha < 1.0` or `mode != 0` the pixel is composited
 /// over the existing buffer instead of directly overwritten.
 /// `bands == 0` skips posterisation (full smooth shading).
+#[allow(clippy::too_many_arguments)]
 pub fn fill_triangle_gouraud(
     buf: &mut [u32],
     width: usize,
@@ -846,6 +848,7 @@ pub fn fill_disc_soft(
 /// Lines with one endpoint way off-screen (from behind-camera perspective blowup)
 /// are clipped to the viewport before rasterisation so Bresenham never iterates
 /// millions of steps.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_line(
     buf: &mut [u32],
     width: usize,
@@ -1052,6 +1055,7 @@ fn cs_clip(ax: &mut f32, ay: &mut f32, bx: &mut f32, by: &mut f32, xmax: f32, ym
 /// Alpha-blend `color` over the pixel at (x,y) with `cov` âˆˆ [0,1].
 /// `additive` matches `set_blend(1)`: source is added instead of mixed.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn blend_pixel(
     buf: &mut [u32],
     w: usize,
@@ -1094,6 +1098,7 @@ pub fn blend_pixel(
 }
 
 /// Xiaolin-Wu anti-aliased line. `additive` selects the blend mode.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_line_aa(
     buf: &mut [u32],
     w: usize,

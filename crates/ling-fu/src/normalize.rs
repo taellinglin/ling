@@ -26,7 +26,8 @@ pub enum Lang {
 }
 
 impl Lang {
-    pub fn from_str(s: &str) -> Option<Self> {
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_name(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "en" | "english" | "英语" | "英語" | "영어" | "อังกฤษ" => {
                 Some(Lang::En)
@@ -4384,7 +4385,7 @@ fn build_map_from(target: Lang, tables: &[&[Entry]]) -> Vec<(String, String)> {
             }
         }
     }
-    map.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    map.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
     map.dedup_by(|a, b| a.0 == b.0);
     map
 }
@@ -4636,34 +4637,33 @@ pub fn normalize_project(
 
         // ── 3. Rename directories (deepest first) ────────────────────────────
         let mut dirs_sorted = dirs;
-        dirs_sorted.sort_by(|a, b| b.components().count().cmp(&a.components().count()));
+        dirs_sorted.sort_by_key(|a| std::cmp::Reverse(a.components().count()));
 
         for dir in dirs_sorted {
-            if let Some(dir_name) = dir.file_name().and_then(|n| n.to_str()) {
-                if let Some(new_name) = translate_name(dir_name, &name_map) {
-                    if new_name != dir_name {
-                        let new_path = dir.with_file_name(&new_name);
-                        let rel_from = dir.strip_prefix(root).unwrap_or(&dir);
-                        let rel_to = new_path.strip_prefix(root).unwrap_or(&new_path);
-                        if dry_run {
-                            println!(
-                                "  {} {} → {}",
-                                "mv".magenta(),
-                                rel_from.display(),
-                                rel_to.display()
-                            );
-                        } else {
-                            fs::rename(&dir, &new_path)?;
-                            println!(
-                                "  {} {} → {}",
-                                "mv".magenta(),
-                                rel_from.display(),
-                                rel_to.display()
-                            );
-                        }
-                        stats.dirs_renamed += 1;
-                    }
+            if let Some(dir_name) = dir.file_name().and_then(|n| n.to_str())
+                && let Some(new_name) = translate_name(dir_name, &name_map)
+                && new_name != dir_name
+            {
+                let new_path = dir.with_file_name(&new_name);
+                let rel_from = dir.strip_prefix(root).unwrap_or(&dir);
+                let rel_to = new_path.strip_prefix(root).unwrap_or(&new_path);
+                if dry_run {
+                    println!(
+                        "  {} {} → {}",
+                        "mv".magenta(),
+                        rel_from.display(),
+                        rel_to.display()
+                    );
+                } else {
+                    fs::rename(&dir, &new_path)?;
+                    println!(
+                        "  {} {} → {}",
+                        "mv".magenta(),
+                        rel_from.display(),
+                        rel_to.display()
+                    );
                 }
+                stats.dirs_renamed += 1;
             }
         }
     }

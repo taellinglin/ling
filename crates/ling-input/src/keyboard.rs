@@ -126,7 +126,7 @@ impl Keyboard {
     pub fn set(&mut self, key: Key, down: bool, dt: f32) {
         self.keys
             .entry(key)
-            .or_insert_with(Button::new)
+            .or_default()
             .update(down, dt);
         match key {
             Key::LeftCtrl | Key::RightCtrl => self.modifiers.ctrl = down,

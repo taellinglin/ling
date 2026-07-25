@@ -43,14 +43,14 @@ impl<'a> Lexer<'a> {
                 self.advance();
             }
             if self.peek() == Some('/') && self.peek_nth(1) == Some('/') {
-                while self.peek().map_or(false, |c| c != '\n') {
+                while self.peek().is_some_and(|c| c != '\n') {
                     self.advance();
                 }
                 continue;
             }
             // Shebang or # comment
             if self.peek() == Some('#') {
-                while self.peek().map_or(false, |c| c != '\n') {
+                while self.peek().is_some_and(|c| c != '\n') {
                     self.advance();
                 }
                 continue;

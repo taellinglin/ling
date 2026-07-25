@@ -16,7 +16,7 @@ pub enum ProjectKind {
 }
 
 impl ProjectKind {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s {
             "bin" | "独行" | "독립" | "単独" | "โปรแกรม" => ProjectKind::Bin,
             "lib" | "共修" | "라이브러리" | "ライブラリ" | "ไลบรารี" => {

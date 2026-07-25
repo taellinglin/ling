@@ -2845,8 +2845,8 @@ pub fn render(filename: &str, program: &Program) -> String {
     let doc = Document::build(filename, program);
 
     // Layout: pack cards into COLS columns using shortest-column strategy
-    let heights: Vec<f32> = doc.funcs.iter().map(|f| card_height(f)).collect();
-    let mut col_y = vec![CONTENT_Y; COLS];
+    let heights: Vec<f32> = doc.funcs.iter().map(card_height).collect();
+    let mut col_y = [CONTENT_Y; COLS];
     let mut positions: Vec<(f32, f32)> = Vec::with_capacity(doc.funcs.len());
 
     for &h in &heights {

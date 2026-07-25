@@ -95,11 +95,11 @@ impl Dataset {
             }
 
             // Continuation of the previous turn (indented wrap line).
-            if let Some(conv) = cur.as_mut() {
-                if let Some(last) = conv.turns.last_mut() {
-                    last.text.push(' ');
-                    last.text.push_str(trimmed);
-                }
+            if let Some(conv) = cur.as_mut()
+                && let Some(last) = conv.turns.last_mut()
+            {
+                last.text.push(' ');
+                last.text.push_str(trimmed);
             }
         }
         if let Some(c) = cur {

@@ -3,6 +3,12 @@ use rustc_hash::FxHashMap as HashMap;
 
 pub struct Inliner;
 
+impl Default for Inliner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Inliner {
     pub fn new() -> Self {
         Self
@@ -25,13 +31,14 @@ impl Inliner {
                 {
                     let bb = &func.basic_blocks[i];
                     for (stmt_idx, stmt) in bb.statements.iter().enumerate() {
-                        if let StatementKind::Assign(_, Rvalue::Call { func: fop, args }) =
-                            &stmt.kind
+                        if let StatementKind::Assign(
+                            _,
+                            Rvalue::Call { func: Operand::Constant(Constant::Function(name)), args },
+                        ) = &stmt.kind
                         {
-                            if let Operand::Constant(Constant::Function(name)) = fop {
-                                if name == &func.name {
-                                    continue;
-                                }
+                            if name == &func.name {
+                                continue;
+                            }
                                 if let Some(target_fn) = fn_map.get(name) {
                                     let is_recursive = target_fn.basic_blocks.iter().any(|bb| {
                                         bb.statements.iter().any(|s| {
@@ -48,7 +55,6 @@ impl Inliner {
                                         break;
                                     }
                                 }
-                            }
                         }
                     }
                 }

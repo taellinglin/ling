@@ -128,7 +128,7 @@ pub fn sample_ramp(ramp: &ToneRamp, t_in: f32) -> f32 {
 /// left exact — the tag is stripped instead of shaded, so vector lines and
 /// vector text render as flat, un-quantised colour and never cel-band-snap
 /// or flicker against the lit triangles around them.
-pub fn apply_ramp(buf: &mut Vec<u32>, width: usize, height: usize, ramp: &ToneRamp) {
+pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp) {
     let n = width * height;
     if buf.len() < n {
         return;
@@ -166,8 +166,8 @@ pub fn apply_ramp(buf: &mut Vec<u32>, width: usize, height: usize, ramp: &ToneRa
                 *px = shade(*px, ramp);
             }
         });
-        return;
     }
+
     #[cfg(target_arch = "wasm32")]
     for px in buf[..n].iter_mut() {
         *px = shade(*px, ramp);
@@ -187,7 +187,7 @@ pub fn apply_ramp(buf: &mut Vec<u32>, width: usize, height: usize, ramp: &ToneRa
 /// `color`     — 0x00RRGGBB ink colour
 /// `threshold` — depth difference that triggers the edge (0.02–0.1 for typical scenes)
 pub fn draw_outlines(
-    buf: &mut Vec<u32>,
+    buf: &mut [u32],
     zbuf: &[f32],
     width: usize,
     height: usize,
@@ -298,7 +298,7 @@ impl Default for ToonConfig {
 ///    strips the [`crate::gfx::UNLIT`] tag, so it must run last.
 ///
 /// Call this after `queue.flush()` and before presenting the buffer to screen.
-pub fn apply(cfg: &ToonConfig, buf: &mut Vec<u32>, zbuf: &[f32], width: usize, height: usize) {
+pub fn apply(cfg: &ToonConfig, buf: &mut [u32], zbuf: &[f32], width: usize, height: usize) {
     if cfg.outline_px > 0.0 {
         draw_outlines(
             buf,

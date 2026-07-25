@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::button::Button;
 
 /// A point-of-view hat switch (8-way + centered).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Hat {
+    #[default]
     Centered,
     Up,
     UpRight,
@@ -23,12 +24,6 @@ pub enum Hat {
     DownLeft,
     Left,
     UpLeft,
-}
-
-impl Default for Hat {
-    fn default() -> Self {
-        Self::Centered
-    }
 }
 
 impl Hat {

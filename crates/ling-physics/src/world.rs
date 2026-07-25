@@ -5,9 +5,10 @@ use std::collections::HashMap;
 
 // ── World geometry ─────────────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum WorldGeometry {
     /// Infinite flat plane (standard Euclidean world).
+    #[default]
     Flat,
     /// Inside a sphere — gravity points outward, normals flipped.
     HyperbolicSphere { radius: f32, curvature: f32 },
@@ -15,12 +16,6 @@ pub enum WorldGeometry {
     Sphere { radius: f32 },
     /// Toroidal world.
     Torus { major_r: f32, minor_r: f32 },
-}
-
-impl Default for WorldGeometry {
-    fn default() -> Self {
-        WorldGeometry::Flat
-    }
 }
 
 // ── Entity placement ──────────────────────────────────────────────────────────

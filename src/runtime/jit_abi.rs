@@ -552,7 +552,7 @@ pub unsafe extern "C" fn ling_struct_new(
         if let Some(field_names) = interp.structs.get(&name) {
             let fields: Vec<(String, Value)> = field_names
                 .iter()
-                .zip(args.into_iter())
+                .zip(args)
                 .map(|(n, v)| (n.clone(), v))
                 .collect();
             let val = Value::Struct { name, fields };

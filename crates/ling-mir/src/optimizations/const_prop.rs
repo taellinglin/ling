@@ -27,18 +27,12 @@ impl Transform for ConstantPropagation {
                     if let Rvalue::Use(Operand::Constant(c)) = rval {
                         constant_assignments.insert(*dest, c.clone());
                     }
-                } else if let StatementKind::SetAttr(obj, _, _) = &stmt.kind {
-                    if let Operand::Copy(l) | Operand::Move(l) = obj {
-                        *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
-                    }
-                } else if let StatementKind::SetIndex(obj, _, _) = &stmt.kind {
-                    if let Operand::Copy(l) | Operand::Move(l) = obj {
-                        *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
-                    }
-                } else if let StatementKind::VectorStore(obj, _, _) = &stmt.kind {
-                    if let Operand::Copy(l) | Operand::Move(l) = obj {
-                        *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
-                    }
+                } else if let StatementKind::SetAttr(Operand::Copy(l) | Operand::Move(l), _, _) = &stmt.kind {
+                    *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
+                } else if let StatementKind::SetIndex(Operand::Copy(l) | Operand::Move(l), _, _) = &stmt.kind {
+                    *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
+                } else if let StatementKind::VectorStore(Operand::Copy(l) | Operand::Move(l), _, _) = &stmt.kind {
+                    *assign_counts.entry(*l).or_insert(0) += if in_loop { 2 } else { 1 };
                 }
             }
         }

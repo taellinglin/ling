@@ -780,7 +780,7 @@ const A_CELL: f32 = 620.0;
 fn render_artwork(p: &Project) -> String {
     let nf = p.files.len().max(1);
     let cols = (nf as f32).sqrt().ceil() as usize;
-    let rows = (nf + cols - 1) / cols;
+    let rows = nf.div_ceil(cols);
     let w = cols as f32 * A_CELL;
     let h = rows as f32 * A_CELL;
 
@@ -804,7 +804,7 @@ fn render_artwork(p: &Project) -> String {
         let _ = write!(
             body,
             r##"<polygon points="{}" fill="hsl({},55%,55%)" opacity="0.05"/>"##,
-            ngon_points(cx, cy, r, sides, frand(seed, i + 300) * 6.28),
+            ngon_points(cx, cy, r, sides, frand(seed, i + 300) * std::f32::consts::TAU),
             hue
         );
     }
@@ -841,8 +841,7 @@ fn render_artwork(p: &Project) -> String {
                 .iter()
                 .map(|c| c.count)
                 .sum::<usize>()
-                .max(1)
-                .min(14);
+                .clamp(1, 14);
             let fnseed = hash(&fc.name) ^ fseed;
             let pal: Vec<&str> = if fc.calls.is_empty() {
                 vec!["#6ab0f5"]
@@ -850,7 +849,7 @@ fn render_artwork(p: &Project) -> String {
                 fc.calls.iter().map(|c| c.cat.color()).collect()
             };
             for si in 0..shapes {
-                let ang = frand(fnseed, si as u64) * 6.2831853;
+                let ang = frand(fnseed, si as u64) * std::f32::consts::TAU;
                 let dist = frand(fnseed, si as u64 + 7) * 30.0;
                 let sx = fx + dist * ang.cos();
                 let sy = fy + dist * ang.sin();
@@ -864,7 +863,7 @@ fn render_artwork(p: &Project) -> String {
                     .map(|c| c.cat)
                     .unwrap_or(Cat::User);
                 let sides = shape_sides(cat, &fc.name);
-                let rot = frand(fnseed, si as u64 + 23) * 6.2831853;
+                let rot = frand(fnseed, si as u64 + 23) * std::f32::consts::TAU;
                 let op = 0.28 + frand(fnseed, si as u64 + 31) * 0.30;
                 // alternate filled star vs polygon for rhythm
                 let pts = if si % 2 == 0 {
@@ -946,7 +945,7 @@ fn render_ling(p: &Project) -> String {
     let mut y = L_TITLE_H + 12.0;
     for (fi, fs) in p.files.iter().enumerate() {
         let n = fs.funcs.len().max(1);
-        let rows = (n + tiles_per_row - 1) / tiles_per_row;
+        let rows = n.div_ceil(tiles_per_row);
         let body_h = rows as f32 * (L_TILE_H + L_TILE_GAP) - L_TILE_GAP;
         let glob_h = if fs.globals.is_empty() && fs.uses.is_empty() {
             0.0
@@ -1012,7 +1011,7 @@ fn render_ling(p: &Project) -> String {
 
         // Globals / uses strip
         if !fs.globals.is_empty() || !fs.uses.is_empty() {
-            let rows = (fs.funcs.len().max(1) + tiles_per_row - 1) / tiles_per_row;
+            let rows = fs.funcs.len().max(1).div_ceil(tiles_per_row);
             let gy = t0y + rows as f32 * (L_TILE_H + L_TILE_GAP) + 6.0;
             let mut parts: Vec<String> = fs
                 .globals
@@ -1101,7 +1100,7 @@ fn l_tile(fc: &Func, x: f32, y: f32) -> String {
     if !fc.params.is_empty() {
         st.push(format!("{}p", fc.params.len()));
     }
-    if fc.calls.len() > 0 {
+    if !fc.calls.is_empty() {
         st.push(format!(
             "{} calls",
             fc.calls.iter().map(|c| c.count).sum::<usize>()

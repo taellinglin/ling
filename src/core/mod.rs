@@ -176,7 +176,7 @@ impl LingCompiler {
         fallback.source_dir = source_dir;
         fallback
             .register_program(&fallback_ast)
-            .map_err(|e| LingError::Mir(e))?;
+            .map_err(LingError::Mir)?;
         crate::runtime::jit_abi::init(fallback);
 
         // Compile all functions. A failure here is pre-execution (Codegen),

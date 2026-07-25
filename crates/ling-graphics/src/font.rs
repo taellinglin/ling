@@ -246,6 +246,7 @@ impl GlyphFont {
     /// `(x, y)` is the top-left of the text box (matching the vector `ui_text`
     /// convention): the baseline is placed `px` below `y` via the font's ascent.
     /// Each glyph's coverage alpha-blends `color` over the existing pixels.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_text(
         &mut self,
         buf: &mut [u32],

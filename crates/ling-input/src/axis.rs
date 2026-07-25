@@ -12,10 +12,11 @@ use serde::{Deserialize, Serialize};
 use glam::Vec2;
 
 /// Response shaping applied after the deadzone, on the `0..=1` magnitude.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Curve {
     /// Output equals input.
+    #[default]
     Linear,
     /// `m^exp`. `exp > 1` softens the center for fine aim; `exp < 1` sharpens it.
     Power(f32),
@@ -33,12 +34,6 @@ impl Curve {
             Self::Power(e) => m.powf(e),
             Self::Smooth => m * m * (3.0 - 2.0 * m),
         }
-    }
-}
-
-impl Default for Curve {
-    fn default() -> Self {
-        Self::Linear
     }
 }
 

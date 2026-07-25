@@ -359,7 +359,7 @@ impl<'a> BorrowChecker<'a> {
                     let is_unnamed = self
                         .func
                         .local_decl(*local)
-                        .map_or(true, |d| d.name.is_none());
+                        .is_none_or(|d| d.name.is_none());
                     if is_unnamed {
                         return;
                     }
@@ -400,14 +400,12 @@ impl<'a> BorrowChecker<'a> {
         }
 
         for (ref_var, pointed_var) in &self.provenance {
-            if !live_locals.contains(ref_var) && !still_borrowed.contains(pointed_var) {
-                if pointed_var.0 < state.borrows.len() {
-                    let borrow = &mut state.borrows[pointed_var.0];
-                    if borrow.0 > 0 {
-                        borrow.0 -= 1;
-                    } else {
-                        borrow.1 = false;
-                    }
+            if !live_locals.contains(ref_var) && !still_borrowed.contains(pointed_var) && pointed_var.0 < state.borrows.len() {
+                let borrow = &mut state.borrows[pointed_var.0];
+                if borrow.0 > 0 {
+                    borrow.0 -= 1;
+                } else {
+                    borrow.1 = false;
                 }
             }
         }

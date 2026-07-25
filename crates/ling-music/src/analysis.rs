@@ -62,8 +62,8 @@ pub fn onset_envelope(mono: &[f32]) -> Vec<f32> {
     let mut env = vec![0.0f32; spec.len()];
     for t in 1..spec.len() {
         let mut flux = 0.0f32;
-        for b in 0..spec[t].len() {
-            let d = spec[t][b] - spec[t - 1][b];
+        for (cur, prev) in spec[t].iter().zip(spec[t - 1].iter()) {
+            let d = cur - prev;
             if d > 0.0 {
                 flux += d;
             }
@@ -190,7 +190,7 @@ pub fn chroma(mono: &[f32], rate: u32) -> [f32; 12] {
                 continue;
             }
             let hz = b as f32 * bin_hz;
-            if hz < 55.0 || hz > 2000.0 {
+            if !(55.0..=2000.0).contains(&hz) {
                 continue;
             }
             let midi = 69.0 + 12.0 * (hz / 440.0).log2();
@@ -280,7 +280,7 @@ pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -
     let max_hz = nyquist.min(20000.0);
 
     let mut bands = vec![0.0f32; nbands];
-    for b in 0..nbands {
+    for (b, band) in bands.iter_mut().enumerate().take(nbands) {
         let t0 = b as f32 / nbands as f32;
         let t1 = (b + 1) as f32 / nbands as f32;
         let hz0 = min_hz * (max_hz / min_hz).powf(t0);
@@ -297,7 +297,7 @@ pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -
             .map(|c| (c.re * c.re + c.im * c.im).sqrt())
             .sum::<f32>()
             / count;
-        bands[b] = energy;
+        *band = energy;
     }
 
     let peak = bands.iter().cloned().fold(0.0f32, f32::max);

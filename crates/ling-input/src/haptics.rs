@@ -208,10 +208,11 @@ impl HapticPlayer {
 }
 
 /// A DualSense-style adaptive-trigger profile (resistance the player *feels*).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum TriggerEffect {
     /// No added resistance.
+    #[default]
     Off,
     /// Constant resistance once the trigger passes `start` (`0..1`).
     Resistance { start: f32, force: f32 },
@@ -219,12 +220,6 @@ pub enum TriggerEffect {
     Weapon { start: f32, end: f32, force: f32 },
     /// Vibrate the trigger at `freq` Hz with `amplitude` once past `start`.
     Vibration { start: f32, amplitude: f32, freq: f32 },
-}
-
-impl Default for TriggerEffect {
-    fn default() -> Self {
-        Self::Off
-    }
 }
 
 #[cfg(test)]

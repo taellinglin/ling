@@ -260,18 +260,15 @@ fn compile_fn(mir_fn: &MirFunction, fn_names: &[String]) -> Chunk {
 }
 
 fn compile_stmt(stmt: &Statement, fn_names: &[String], ctx: &mut Ctx) {
-    match &stmt.kind {
-        StatementKind::Assign(local, rvalue) => {
-            compile_rval(rvalue, fn_names, ctx);
-            let slot = *ctx.local_map.entry(*local).or_insert_with(|| {
-                let s = ctx.local_next;
-                ctx.local_next += 1;
-                s
-            });
-            ctx.chunk.w(OP_STORELOCAL);
-            ctx.chunk.w2(slot);
-        },
-        _ => {},
+    if let StatementKind::Assign(local, rvalue) = &stmt.kind {
+        compile_rval(rvalue, fn_names, ctx);
+        let slot = *ctx.local_map.entry(*local).or_insert_with(|| {
+            let s = ctx.local_next;
+            ctx.local_next += 1;
+            s
+        });
+        ctx.chunk.w(OP_STORELOCAL);
+        ctx.chunk.w2(slot);
     }
 }
 
@@ -738,6 +735,12 @@ impl Vm {
             _ => return Err(format!("unimplemented builtin: {}", name)),
         }
         Ok(())
+    }
+}
+
+impl Default for Vm {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

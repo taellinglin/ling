@@ -232,7 +232,7 @@ impl TerrainManager {
                 let lod = (dist / self.config.lod_dist) as u32;
                 let lod = lod.min(self.config.lod_levels - 1);
 
-                let needs_rebuild = self.chunks.get(&(cx, cz)).map_or(true, |c| c.lod != lod);
+                let needs_rebuild = self.chunks.get(&(cx, cz)).is_none_or(|c| c.lod != lod);
 
                 if needs_rebuild {
                     self.load_chunk(cx, cz, lod);

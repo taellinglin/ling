@@ -11,72 +11,75 @@ documentation = "https://docs.ling-lang.org"
 keywords = ["ling", "polyglot", "multilingual", "build-tool", "package-manager"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lib]
+name = "lingfu"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lingfu"
 path = "src/main.rs"
 
 [[bin]]
 name = "灵符"
-path = "src/main.rs"
+path = "src/bin/灵符.rs"
 
 [[bin]]
 name = "霊符"
-path = "src/main.rs"
+path = "src/bin/霊符.rs"
 
 [[bin]]
 name = "영부"
-path = "src/main.rs"
+path = "src/bin/영부.rs"
 
 [[bin]]
 name = "линфу"
-path = "src/main.rs"
+path = "src/bin/линфу.rs"
 
 [[bin]]
 name = "لينغفو"
-path = "src/main.rs"
+path = "src/bin/لينغفو.rs"
 
 [[bin]]
 name = "लिंगफू"
-path = "src/main.rs"
+path = "src/bin/लिंगफू.rs"
 
 [[bin]]
 name = "ลิงฟู"
-path = "src/main.rs"
+path = "src/bin/ลิงฟู.rs"
 
 [[bin]]
 name = "lingfu-de"
-path = "src/main.rs"
+path = "src/bin/lingfu-de.rs"
 
 [[bin]]
 name = "lingfu-fr"
-path = "src/main.rs"
+path = "src/bin/lingfu-fr.rs"
 
 [[bin]]
 name = "lingfu-es"
-path = "src/main.rs"
+path = "src/bin/lingfu-es.rs"
 
 [[bin]]
 name = "linhphu"
-path = "src/main.rs"
+path = "src/bin/linhphu.rs"
 
 [[bin]]
 name = "λινγφυ"
-path = "src/main.rs"
+path = "src/bin/λινγφυ.rs"
 
 [[bin]]
 name = "לינגפו"
-path = "src/main.rs"
+path = "src/bin/לינגפו.rs"
 
 [[bin]]
 name = "lingfu-tr"
-path = "src/main.rs"
+path = "src/bin/lingfu-tr.rs"
 
 [[bin]]
 name = "lingfu-pl"
-path = "src/main.rs"
+path = "src/bin/lingfu-pl.rs"
 
 [build-dependencies]
-# Embeds the default Ling icon into lingfu.exe (and its localized bin aliases).
 winresource = "0.1"
 
 [dependencies]
@@ -94,4 +97,3 @@ tempfile = "3.8"
 rayon = "1.10"
 unicode-normalization = "0.1"
 unicode-script = "0.5"
-

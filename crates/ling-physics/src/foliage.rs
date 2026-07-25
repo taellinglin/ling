@@ -130,6 +130,7 @@ fn spread_dir(axis: Vec3, azimuth: f32, elevation: f32) -> Vec3 {
     (axis * local.y + right * local.x + fwd * local.z).normalize_or(Vec3::Y)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cylinder_mesh(
     start: Vec3,
     end: Vec3,

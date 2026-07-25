@@ -89,19 +89,14 @@ pub mod palette {
 }
 
 /// Outline / body shape of a control.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ControlShape {
+    #[default]
     Circle,
     RoundedRect,
     Pill,
     Hexagon,
-}
-
-impl Default for ControlShape {
-    fn default() -> Self {
-        Self::Circle
-    }
 }
 
 /// A complete skin for on-screen controls. Renderer-agnostic data.

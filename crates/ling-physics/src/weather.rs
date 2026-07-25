@@ -80,16 +80,10 @@ impl Default for Weather {
 
 // ── Atmosphere (combines time + weather) ─────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Atmosphere {
     pub time: WorldTime,
     pub weather: Weather,
-}
-
-impl Default for Atmosphere {
-    fn default() -> Self {
-        Self { time: WorldTime::default(), weather: Weather::default() }
-    }
 }
 
 impl Atmosphere {

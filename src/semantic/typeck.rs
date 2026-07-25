@@ -158,7 +158,7 @@ impl TypeChecker {
 
     fn env_free_vars(&self, env: &TypeEnv) -> Vec<usize> {
         let mut v = Vec::new();
-        for (_, (t, _)) in env {
+        for (t, _) in env.values() {
             v.extend(self.free_vars(t));
         }
         v.sort();

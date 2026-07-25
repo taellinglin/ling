@@ -179,7 +179,7 @@ pub fn checkerboard(
         for x in 0..width {
             let tx = x * tiles / width;
             let ty = y * tiles / height;
-            tex.set(x, y, if (tx + ty) % 2 == 0 { color_a } else { color_b });
+            tex.set(x, y, if (tx + ty).is_multiple_of(2) { color_a } else { color_b });
         }
     }
     tex.into_vec()
@@ -399,7 +399,7 @@ pub fn color_cycle(data: &mut [u8], phase: f32, speed: f32) {
         let new_h = (h + speed * phase) % 1.0;
         // Simple hue rotation in RGB — approximate.
         let d = [px[0] as f32, px[1] as f32, px[2] as f32];
-        let r = d[0] * (1.0 - speed) + d[(0 + 1) % 3] * speed * new_h;
+        let r = d[0] * (1.0 - speed) + d[1] * speed * new_h;
         px[0] = r.clamp(0.0, 255.0) as u8;
     }
 }

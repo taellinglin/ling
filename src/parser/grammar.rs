@@ -18,3 +18,9 @@ impl ProgramParser {
         Ok(Program { items: vec![] })
     }
 }
+
+impl Default for ProgramParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}

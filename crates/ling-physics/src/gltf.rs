@@ -159,8 +159,7 @@ impl GltfModel {
                     .read_tex_coords(0)
                     .map(|u| u.into_f32().collect())
                     .unwrap_or_default();
-                for i in 0..positions.len() {
-                    let p = positions[i];
+                for (i, p) in positions.iter().enumerate() {
                     let n = normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                     let uv = uvs.get(i).copied().unwrap_or([0.0, 0.0]);
                     verts.push(GltfVertex {
@@ -306,8 +305,8 @@ impl GltfModel {
             };
         }
         // skinning = posed_world * rest_world⁻¹, and rest_world = translate(head)
-        for i in 0..n {
-            world[i] *= Mat4::from_translation(-self.bones[i].head);
+        for (i, w) in world.iter_mut().enumerate() {
+            *w *= Mat4::from_translation(-self.bones[i].head);
         }
         world
     }

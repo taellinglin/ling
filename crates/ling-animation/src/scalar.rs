@@ -32,7 +32,7 @@ pub fn idle_noise(t: f32, seed: f32) -> f32 {
 }
 
 fn hash01(n: f32) -> f32 {
-    let s = (n * 127.1 + 311.7).sin() * 43758.5453;
+    let s = (n * 127.1 + 311.7).sin() * 43_758.547;
     s - s.floor()
 }
 

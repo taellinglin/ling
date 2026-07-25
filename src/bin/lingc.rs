@@ -250,11 +250,11 @@ fn scan_use_paths(source: &str) -> Vec<String> {
     for line in source.lines() {
         let trimmed = line.trim();
         for kw in &use_kws {
-            if trimmed.starts_with(kw) {
-                let rest = trimmed[kw.len()..].trim_start();
-                if rest.starts_with('"') {
-                    if let Some(end) = rest[1..].find('"') {
-                        paths.push(rest[1..end + 1].to_string());
+            if let Some(rest) = trimmed.strip_prefix(kw) {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('"') {
+                    if let Some(end) = rest.find('"') {
+                        paths.push(rest[..end].to_string());
                     }
                 }
                 break;

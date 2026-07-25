@@ -31,6 +31,7 @@ impl GilrsBackend {
     ///
     /// # Errors
     /// Returns the gilrs initialization error if no input subsystem is available.
+    #[allow(clippy::result_large_err)]
     pub fn new() -> Result<Self, gilrs::Error> {
         Ok(Self { gilrs: Gilrs::new()?, ids: HashMap::new() })
     }

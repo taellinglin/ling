@@ -7,7 +7,7 @@
 // in front of (i.e., are drawn after) solid surfaces at the same depth.
 
 use crate::gfx::{camera::Camera3D, depth::DepthQueue};
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 /// How much to shift vtex lines toward the camera vs. same-depth surfaces.
 const DEPTH_BIAS: f32 = -0.06;
@@ -15,6 +15,7 @@ const DEPTH_BIAS: f32 = -0.06;
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn p2w(
     cx: f32,
     cy: f32,
@@ -39,6 +40,7 @@ fn p2w(
 /// One endpoint behind the camera is lerped to the near plane;
 /// both behind = segment discarded entirely.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn push_seg(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -91,6 +93,7 @@ pub fn cycle(phase: f32) -> u32 {
 // ── draw_grid ─────────────────────────────────────────────────────────────────
 /// `cols`×`rows` rectilinear grid. `cw`/`ch` = cell width/height in world units.
 /// Colour cycles per line proportional to position + time.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_grid(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -131,6 +134,7 @@ pub fn draw_grid(
 // ── draw_rings ────────────────────────────────────────────────────────────────
 /// Concentric N-sided polygon rings.  Each ring rotates by an additional
 /// `twist` radians relative to the previous — creates a vortex/galaxy feel.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_rings(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -192,6 +196,7 @@ pub fn draw_rings(
 // ── draw_star ─────────────────────────────────────────────────────────────────
 /// Star polygon that alternates between outer and inner radius.
 /// `rot_speed` is radians per frame (the star spins).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_star(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -235,6 +240,7 @@ pub fn draw_star(
 
 // ── draw_spiral ───────────────────────────────────────────────────────────────
 /// Archimedean spiral: `n_turns` revolutions from centre to `max_r`.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_spiral(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -271,6 +277,7 @@ pub fn draw_spiral(
 // ── draw_flower ───────────────────────────────────────────────────────────────
 /// Flower of Life: 7 circles (centre + 6 surrounding at radius distance).
 /// Each circle is drawn as an `n_sides`-gon.  The whole flower slowly rotates.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_flower(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -319,6 +326,7 @@ pub fn draw_flower(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_ngon(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -382,6 +390,7 @@ fn draw_ngon(
 /// pointillist look, 0.7–1.0 for heavy cross-hatching.
 ///
 /// `phase` is the colour cycle offset; `fr` drives slow colour animation.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_halftone(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -440,6 +449,7 @@ pub fn draw_halftone(
 ///
 /// `cell` = grid spacing, `amplitude` = vertex displacement (0.1–0.4 of cell),
 /// `freq` = number of sine waves across the region (3–8 looks good).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_tessellated(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -508,6 +518,7 @@ pub fn draw_tessellated(
 /// Thai lotus (dok bua): n_petals pointed kite-shaped petals arranged radially.
 /// Each petal is a kite from two base-ring points to an outer tip.
 /// An inner hub ring is drawn in the centre.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_lotus(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -619,6 +630,7 @@ pub fn draw_lotus(
 // ── draw_chakra ───────────────────────────────────────────────────────────────
 /// Thai Dhamma chakra (Wheel of the Law).
 /// Outer rim (36-gon) + inner hub (12-gon) + n_spokes spokes + rim tick marks.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_chakra(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -778,6 +790,7 @@ pub fn draw_chakra(
 /// Thai yantra: nested pairs of interlocked up/down equilateral triangles
 /// (like a Sri Yantra simplified), enclosed in a two-ring bhupura (earth square)
 /// with traditional T-shaped gates on all four sides.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_yantra(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -801,7 +814,7 @@ pub fn draw_yantra(
     for layer in 0..n_layers {
         let scale = max_r * (1.0 - layer as f32 * 0.20);
         let c_up = cycle(fr * 0.015 + hue + layer as f32 * 0.65);
-        let c_down = cycle(fr * 0.015 + hue + layer as f32 * 0.65 + 3.14);
+        let c_down = cycle(fr * 0.015 + hue + layer as f32 * 0.65 + PI);
 
         // Up triangle (apex at top of pattern)
         draw_equi_tri(
@@ -816,7 +829,7 @@ pub fn draw_yantra(
             vx,
             vy,
             vz,
-            rot + 3.14159 * 0.5, // apex pointing toward +V
+            rot + PI * 0.5, // apex pointing toward +V
             scale,
             c_up,
         );
@@ -834,7 +847,7 @@ pub fn draw_yantra(
             vx,
             vy,
             vz,
-            rot + 3.14159 * 0.5 + TAU / 6.0,
+            rot + PI * 0.5 + TAU / 6.0,
             scale * 0.92,
             c_down,
         );
@@ -854,6 +867,7 @@ pub fn draw_yantra(
 
 /// Draw a single equilateral triangle centred at the plane's origin,
 /// with one apex at angle `apex_rot` from the +U axis.
+#[allow(clippy::too_many_arguments)]
 fn draw_equi_tri(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -909,6 +923,7 @@ fn draw_equi_tri(
 ///   ─────  gap  ─────   ← outer square top
 ///        │     │         ← gate posts (from outer to inner)
 ///   ──────────────────   ← inner square top (intact)
+#[allow(clippy::too_many_arguments)]
 fn draw_bhupura(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -978,6 +993,7 @@ fn draw_bhupura(
 /// `r_spike`  — radius of spike tips (> r_body)
 /// `r_hub`    — inner hub radius
 /// `n_spokes` — spokes from hub to body (0 = none)
+#[allow(clippy::too_many_arguments)]
 pub fn draw_spiked_cog(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -1164,6 +1180,7 @@ pub fn draw_spiked_cog(
 /// A Japanese torii gate silhouette drawn on a plane (U=right, V=up).
 /// `width` = total gate width, `height` = pillar height.
 /// Draws two pillars, a straight nuki crossbar, and a curved kasagi (top beam).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_torii(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -1279,6 +1296,7 @@ pub fn draw_torii(
 /// `tier_h`   — height of each tier
 /// `taper`    — width reduction factor per tier (0.65–0.80)
 /// `eave_out` — eave overhang as fraction of tier half-width (0.2–0.4)
+#[allow(clippy::too_many_arguments)]
 pub fn draw_pagoda(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -1461,6 +1479,7 @@ static GLYPHS: &[&[(f32, f32, f32, f32)]] = &[
 /// "hexagonal cylinder" texture the eye expects from a prism surface).
 ///
 /// `speed` is the base scroll rate in world units per frame.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_letter_rain(
     q: &mut DepthQueue,
     cam: &Camera3D,
@@ -1577,6 +1596,7 @@ fn cycle_dark(phase: f32, brightness: f32) -> u32 {
 /// (bunched near the outer edge) and `n_rays` radial lines that carry a subtle
 /// wobble — together they look like the UV parameter-lines of a hyperbolic
 /// surface projected onto the plane.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_hyperbolic_uv(
     q: &mut DepthQueue,
     cam: &Camera3D,

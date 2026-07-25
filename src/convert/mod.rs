@@ -508,6 +508,7 @@ fn svg_path_to_polylines(d: &str) -> Vec<Vec<[f32; 2]>> {
         }
         let rel = cmd.is_ascii_lowercase();
         let uc = cmd.to_ascii_uppercase();
+        #[allow(clippy::never_loop)]
         let next = |i: &mut usize| -> f32 {
             while *i < toks.len() {
                 if let Tok::Num(n) = toks[*i] {

@@ -991,6 +991,7 @@ fn rgb(r: f64, g: f64, b: f64) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_circle_outline(
     buf: &mut [u32],
     w: i32,
@@ -1020,6 +1021,7 @@ fn draw_circle_outline(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plot_circle_points(
     buf: &mut [u32],
     w: i32,
@@ -1048,6 +1050,7 @@ fn plot_circle_points(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_circle_filled(
     buf: &mut [u32],
     w: i32,
@@ -1235,6 +1238,12 @@ pub struct Interpreter {
 struct InputState {
     sensorium: ling_input::Sensorium,
     backend: ling_input::backend::GilrsBackend,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Interpreter {
@@ -3752,7 +3761,7 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let title = args
-                        .get(0)
+                        .first()
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| "Ling".into());
                     let mut gfx = self.gfx.borrow_mut();
@@ -5124,8 +5133,8 @@ impl Interpreter {
                 let mut wcs: [u32; 8] = [0; 8];
                 if gfx.flat_shade {
                     let c = gfx.color;
-                    for i in 0..n_verts {
-                        wcs[i] = c;
+                    for wc in wcs.iter_mut().take(n_verts) {
+                        *wc = c;
                     }
                 } else if let Some(ref mat) = gfx.material.clone() {
                     let cam = [gfx.camera.cx, gfx.camera.cy, gfx.camera.zdist];
@@ -8530,10 +8539,10 @@ impl Interpreter {
                 let (mx, my, down) = self.mouse_now();
                 let hover = ling_ui::holo::hit_rect(mx, my, x - 8.0, y - 10.0, w0 + 16.0, 20.0);
                 if hover && down {
-                    let frac = ((mx - x) / w0).max(0.0).min(1.0);
+                    let frac = ((mx - x) / w0).clamp(0.0, 1.0);
                     val = mn + (mx_ - mn) * frac;
                 }
-                let frac = ((val - mn) / (mx_ - mn).abs().max(1e-6)).max(0.0).min(1.0);
+                let frac = ((val - mn) / (mx_ - mn).abs().max(1e-6)).clamp(0.0, 1.0);
                 let th = self.ui_theme;
                 let fill = self.color_at(&args, 6, th.primary);
                 self.draw_ui(&ling_ui::widgets::slider(
@@ -10019,7 +10028,7 @@ impl Interpreter {
                     let u = ((hsh >> 8) & 1023) as f32 / 1023.0;
                     let v = ((hsh >> 18) & 1023) as f32 / 1023.0;
                     let phase = (hsh & 255) as f32 / 255.0;
-                    let tw = (t * 3.0 + phase * 6.2831 + n as f32).sin() * 0.5 + 0.5;
+                    let tw = (t * 3.0 + phase * std::f32::consts::TAU + n as f32).sin() * 0.5 + 0.5;
                     let sz = 1.5 + tw * 5.0;
                     let px = x + u * ww;
                     let py = y + v * hh;
@@ -10744,10 +10753,10 @@ impl Interpreter {
                         spec.push(ch);
                     }
                     if arg_idx < args.len() {
-                        if spec.starts_with(":.") {
+                        if let Some(suffix) = spec.strip_prefix(":.") {
                             if let Value::Number(n) = &args[arg_idx] {
                                 let prec: usize =
-                                    spec[2..].trim_end_matches('f').parse().unwrap_or(2);
+                                    suffix.trim_end_matches('f').parse().unwrap_or(2);
                                 result.push_str(&format!("{:.prec$}", n));
                                 arg_idx += 1;
                                 continue;
@@ -11218,7 +11227,8 @@ fn ling_profile_record(name: &str, nanos: u128) {
 fn ling_profile_print(p: &LingProfileState) {
     let mut rows: Vec<(&String, u64, u128)> =
         p.calls.iter().map(|(n, (c, ns))| (n, *c, *ns)).collect();
-    rows.sort_by(|a, b| b.2.cmp(&a.2)); // by total time desc
+    use std::cmp::Reverse;
+    rows.sort_by_key(|x| Reverse(x.2)); // by total time desc
     let total_ns: u128 = p.calls.values().map(|(_, ns)| *ns).sum();
     let total_calls: u64 = p.calls.values().map(|(c, _)| *c).sum();
     let fr = p.frames.max(1) as f64;

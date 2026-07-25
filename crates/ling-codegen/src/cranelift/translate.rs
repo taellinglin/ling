@@ -1020,27 +1020,27 @@ pub(crate) fn emit_builtin_call(
         {
             return emit_runtime_call0(builder, "__ling_list_new", runtime_refs);
         },
-        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" => {
-            if args.len() >= 2 {
-                return emit_runtime_call2(
-                    builder,
-                    "__ling_list_push",
-                    args[0],
-                    args[1],
-                    runtime_refs,
-                );
-            }
+        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가"
+            if args.len() >= 2 =>
+        {
+            return emit_runtime_call2(
+                builder,
+                "__ling_list_push",
+                args[0],
+                args[1],
+                runtime_refs,
+            );
         },
-        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" => {
-            if args.len() >= 2 {
-                return emit_runtime_call2(
-                    builder,
-                    "__ling_list_get",
-                    args[0],
-                    args[1],
-                    runtime_refs,
-                );
-            }
+        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기"
+            if args.len() >= 2 =>
+        {
+            return emit_runtime_call2(
+                builder,
+                "__ling_list_get",
+                args[0],
+                args[1],
+                runtime_refs,
+            );
         },
         _ => {},
     }

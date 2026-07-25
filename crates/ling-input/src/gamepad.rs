@@ -113,19 +113,14 @@ pub enum GamepadStick {
 }
 
 /// Vendor label set, for rendering the correct face-button glyphs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Layout {
     Xbox,
     PlayStation,
     Nintendo,
+    #[default]
     Generic,
-}
-
-impl Default for Layout {
-    fn default() -> Self {
-        Self::Generic
-    }
 }
 
 impl Layout {

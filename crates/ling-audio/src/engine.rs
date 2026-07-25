@@ -166,6 +166,7 @@ struct BgmTrack {
 
 /// Equal-power pan + distance attenuation gains for a world-space point, using
 /// the current listener (camera) orientation. Shared by tones, sfx and samples.
+#[allow(clippy::too_many_arguments)]
 #[inline]
 fn spatial_gains(
     cry: f32,
@@ -869,6 +870,7 @@ impl AudioEngine {
     }
 
     /// Fire a positional (2D/3D/4D) one-shot sound effect at a world point.
+    #[allow(clippy::too_many_arguments)]
     pub fn sfx(&self, x: f32, y: f32, z: f32, w: f32, freq: f32, amp: f32, dur: f32, wave: Wave) {
         if let Ok(mut s) = self.state.lock() {
             if s.sfx.len() >= 64 {
@@ -941,6 +943,7 @@ impl AudioEngine {
     }
 
     /// Play a loaded sample at a world position (looping or one-shot). Returns a voice id.
+    #[allow(clippy::too_many_arguments)]
     pub fn play_sample(
         &self,
         id: usize,

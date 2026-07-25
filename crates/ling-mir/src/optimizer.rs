@@ -134,11 +134,7 @@ impl Optimizer {
 
             let scalarize_did_work = ScalarizeStructs.run(func);
 
-            if scalarize_did_work && matches!(self.opt_level, OptLevel::O2 | OptLevel::O3) {
-                for pass in &self.late_passes {
-                    pass.run(func);
-                }
-            } else if !scalarize_did_work {
+            if !scalarize_did_work || matches!(self.opt_level, OptLevel::O2 | OptLevel::O3) {
                 for pass in &self.late_passes {
                     pass.run(func);
                 }

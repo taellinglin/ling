@@ -63,7 +63,7 @@ impl Draw {
 
 #[inline]
 fn clamp01(v: f32) -> f32 {
-    v.max(0.0).min(1.0)
+    v.clamp(0.0, 1.0)
 }
 
 /// Mix two packed colours by `t∈[0,1]`.
@@ -77,7 +77,7 @@ pub fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
 
 /// Scale a colour's brightness by `k` (clamped).
 pub fn shade(c: Rgba, k: f32) -> Rgba {
-    let f = |x: u32| ((x as f32 * k).max(0.0).min(255.0)) as u32;
+    let f = |x: u32| ((x as f32 * k).clamp(0.0, 255.0)) as u32;
     (f(c >> 16 & 0xFF) << 16) | (f(c >> 8 & 0xFF) << 8) | f(c & 0xFF)
 }
 
@@ -272,6 +272,7 @@ pub fn bar(x: f32, y: f32, w: f32, h: f32, frac: f32, fill: Rgba, track: Rgba) -
 }
 
 /// Segmented/notched bar — `segs` cells, `frac` lit proportionally.
+#[allow(clippy::too_many_arguments)]
 pub fn segbar(
     x: f32,
     y: f32,
@@ -385,6 +386,7 @@ pub fn spark(x: f32, y: f32, w: f32, h: f32, vals: &[f32], line: Rgba) -> Draw {
 }
 
 /// Battery cell with bezel, terminal nub and proportional charge fill.
+#[allow(clippy::too_many_arguments)]
 pub fn battery(
     x: f32,
     y: f32,
@@ -412,6 +414,7 @@ pub fn battery(
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Beveled button background (label drawn by the host). `hover`/`active` brighten.
+#[allow(clippy::too_many_arguments)]
 pub fn button(
     x: f32,
     y: f32,
@@ -506,6 +509,7 @@ pub fn checkbox(
 }
 
 /// Tab strip: `count` tabs, `active` highlighted. Returns per-tab rects via geometry.
+#[allow(clippy::too_many_arguments)]
 pub fn tabs(
     x: f32,
     y: f32,
@@ -585,6 +589,7 @@ pub fn tooltip(x: f32, y: f32, w: f32, h: f32, primary: Rgba, bg: Rgba) -> Draw 
 }
 
 /// Stepper: [ - value + ] frame (host draws value). Returns the two button rects' geometry.
+#[allow(clippy::too_many_arguments)]
 pub fn stepper(
     x: f32,
     y: f32,
@@ -630,6 +635,7 @@ pub fn stepper(
 
 /// Health bar: notched fill that shifts colour low→high and can pulse (host
 /// passes a 0..1 `pulse`).
+#[allow(clippy::too_many_arguments)]
 pub fn healthbar(
     x: f32,
     y: f32,
@@ -671,6 +677,7 @@ pub fn cooldown(cx: f32, cy: f32, r: f32, frac: f32, fill: Rgba, track: Rgba) ->
 }
 
 /// 7-segment style vector number for `value` with `digits` places.
+#[allow(clippy::too_many_arguments)]
 pub fn counter(
     x: f32,
     y: f32,
@@ -697,6 +704,7 @@ pub fn counter(
     d
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seven_seg(d: &mut Draw, x: f32, y: f32, w: f32, h: f32, mask: u8, on: Rgba, off: Rgba) {
     let t = w * 0.12; // segment thickness
     let mid = y + h * 0.5;
@@ -764,6 +772,7 @@ pub fn dpad(cx: f32, cy: f32, r: f32, dir: i32, primary: Rgba, track: Rgba) -> D
 }
 
 /// Item slot grid (`cols`×`rows`), `sel` index highlighted.
+#[allow(clippy::too_many_arguments)]
 pub fn slotgrid(
     x: f32,
     y: f32,

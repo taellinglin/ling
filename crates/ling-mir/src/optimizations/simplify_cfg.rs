@@ -60,10 +60,8 @@ impl SimplifyCfg {
         for bb in &func.basic_blocks {
             if let Some(term) = &bb.terminator {
                 match &term.kind {
-                    TerminatorKind::Goto { target } => {
-                        if target.0 < n {
-                            pred_count[target.0] += 1;
-                        }
+                    TerminatorKind::Goto { target } if target.0 < n => {
+                        pred_count[target.0] += 1;
                     },
                     TerminatorKind::SwitchInt { targets, otherwise, .. } => {
                         for (_, t) in targets {

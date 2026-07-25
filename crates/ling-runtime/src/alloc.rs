@@ -36,12 +36,22 @@ impl<T: std::fmt::Debug> std::fmt::Debug for LingBox<T> {
 
 /// Allocate `size` bytes with `align` alignment using the system allocator.
 /// Returns a null pointer on allocation failure.
+///
+/// # Safety
+///
+/// `align` must be a power of two and `size` must be a multiple of `align`.
+/// The caller must ensure the returned pointer is freed via [`raw_dealloc`].
 pub unsafe fn raw_alloc(size: usize, align: usize) -> *mut u8 {
     let layout = Layout::from_size_align_unchecked(size, align);
     System.alloc(layout)
 }
 
 /// Deallocate a previously-allocated block.
+///
+/// # Safety
+///
+/// `ptr` must have been returned by [`raw_alloc`] with matching `size` and `align`.
+/// The pointer must not be used after this call.
 pub unsafe fn raw_dealloc(ptr: *mut u8, size: usize, align: usize) {
     let layout = Layout::from_size_align_unchecked(size, align);
     System.dealloc(ptr, layout)

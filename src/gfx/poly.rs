@@ -184,6 +184,7 @@ pub fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
 
 /// World-space face normal (B−A) × (C−A).  Not normalised.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 pub fn face_normal(
     ax: f32,
     ay: f32,

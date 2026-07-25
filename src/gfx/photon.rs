@@ -219,18 +219,18 @@ impl PhotonBuf {
         let n = self.r.len().min(buf.len());
         if bands < 2 {
             // Passthrough: clamp + pack, no quantisation
-            for i in 0..n {
+            for (i, px) in buf[..n].iter_mut().enumerate() {
                 if self.r[i] <= 0.0 && self.g[i] <= 0.0 && self.b[i] <= 0.0 {
                     continue; // zero energy → leave buffer black
                 }
                 let r = (self.r[i].clamp(0.0, 1.0) * 255.0) as u32;
                 let g = (self.g[i].clamp(0.0, 1.0) * 255.0) as u32;
                 let b = (self.b[i].clamp(0.0, 1.0) * 255.0) as u32;
-                buf[i] = (r << 16) | (g << 8) | b;
+                *px = (r << 16) | (g << 8) | b;
             }
             return;
         }
-        for i in 0..n {
+        for (i, px) in buf[..n].iter_mut().enumerate() {
             // SAFETY: i < n ≤ min(r.len(), buf.len())
             unsafe {
                 // Zero-energy pixel → leave buffer as-is (background stays black).
@@ -243,7 +243,7 @@ impl PhotonBuf {
                 let r = snap(*self.r.get_unchecked(i), bands);
                 let g = snap(*self.g.get_unchecked(i), bands);
                 let b = snap(*self.b.get_unchecked(i), bands);
-                *buf.get_unchecked_mut(i) = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                *px = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
             }
         }
     }
@@ -253,7 +253,7 @@ impl PhotonBuf {
     /// photon-accumulated highlights on top).
     pub fn drain_additive(&self, buf: &mut [u32]) {
         let n = self.r.len().min(buf.len());
-        for i in 0..n {
+        for (i, px) in buf[..n].iter_mut().enumerate() {
             if self.r[i] <= 0.0 && self.g[i] <= 0.0 && self.b[i] <= 0.0 {
                 continue;
             }
@@ -261,7 +261,7 @@ impl PhotonBuf {
             let g = (self.g[i].clamp(0.0, 1.0) * 255.0) as u32;
             let b = (self.b[i].clamp(0.0, 1.0) * 255.0) as u32;
             let src = (r << 16) | (g << 8) | b;
-            buf[i] = add_sat(buf[i], src);
+            *px = add_sat(*px, src);
         }
     }
 }
@@ -271,7 +271,7 @@ impl PhotonBuf {
 #[inline]
 fn snap(v: f32, bands: u32) -> u8 {
     let t = v.clamp(0.0, 1.0);
-    let out = if bands == 3 {
+    if bands == 3 {
         // Fast-path for the common 3-band case — matches cel_quantize exactly
         if t < 0.25 {
             20u8
@@ -290,8 +290,7 @@ fn snap(v: f32, bands: u32) -> u8 {
         let band = (t * n).floor().min(n - 1.0);
         // map to [0, 255]: centre of each band
         ((band + 0.5) / n * 255.0) as u8
-    };
-    out
+    }
 }
 
 #[inline]

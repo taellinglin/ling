@@ -302,7 +302,7 @@ impl Timeline {
         self.time += dt * self.speed;
         if self.time >= self.duration {
             if self.looping {
-                self.time = self.time % self.duration;
+                self.time %= self.duration;
             } else {
                 self.time = self.duration;
                 self.playing = false;

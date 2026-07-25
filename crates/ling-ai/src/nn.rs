@@ -7,7 +7,7 @@
 //!
 //! The network doubles as the backbone for [`crate::dialog_lm`]: `forward_cache`
 //! + `backward` expose the input gradient so an embedding table can be trained
-//! end-to-end through the MLP.
+//!   end-to-end through the MLP.
 
 /// Seeded SplitMix64 RNG — reproducible init & sampling (games want determinism).
 #[derive(Clone)]
@@ -214,8 +214,8 @@ impl Net {
             let mut delta_prev = vec![0.0f32; n_in];
             for i in 0..n_in {
                 let mut s = 0.0;
-                for o in 0..n_out {
-                    s += self.layers[li].w[o * n_in + i] * delta[o];
+                for (o, d) in delta.iter().enumerate().take(n_out) {
+                    s += self.layers[li].w[o * n_in + i] * d;
                 }
                 // Input layer (li==0) has no activation to differentiate.
                 delta_prev[i] = if li > 0 {
@@ -227,12 +227,12 @@ impl Net {
 
             // Apply SGD step to this layer.
             let layer = &mut self.layers[li];
-            for o in 0..n_out {
-                let g = delta[o];
+            for (o, d) in delta.iter().enumerate().take(n_out) {
+                let g = d;
                 layer.b[o] -= lr * g;
                 let row = o * n_in;
-                for i in 0..n_in {
-                    layer.w[row + i] -= lr * g * a_prev[i];
+                for (i, a) in a_prev.iter().enumerate().take(n_in) {
+                    layer.w[row + i] -= lr * g * a;
                 }
             }
             delta = delta_prev;

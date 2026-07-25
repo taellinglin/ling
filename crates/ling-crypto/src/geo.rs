@@ -224,7 +224,7 @@ pub fn scatter(data: &[u8]) -> Vec<HoloFragment> {
     // Length-prefix so we can trim padding on the way back.
     let mut msg = (data.len() as u64).to_le_bytes().to_vec();
     msg.extend_from_slice(data);
-    while msg.len() % HOLO_BLOCK != 0 {
+    while !msg.len().is_multiple_of(HOLO_BLOCK) {
         msg.push(0);
     }
     let n = (msg.len() / HOLO_BLOCK) as u32;
@@ -294,10 +294,10 @@ pub fn gather(fragments: &[HoloFragment]) -> Option<Vec<u8>> {
 
     // Unmask: m_i = c_i ⊕ KS_k(i)
     let mut msg = Vec::with_capacity(n * HOLO_BLOCK);
-    for i in 0..n {
+    for (i, f) in frags[..n].iter().enumerate() {
         let ks = ks_block(&k, i as u32);
-        for j in 0..HOLO_BLOCK {
-            msg.push(frags[i].block[j] ^ ks[j]);
+        for (j, c) in ks.iter().enumerate() {
+            msg.push(f.block[j] ^ c);
         }
     }
     if msg.len() < 8 {
@@ -314,7 +314,7 @@ pub fn gather(fragments: &[HoloFragment]) -> Option<Vec<u8>> {
 fn sphere4_point(index: u32, block: &[u8; 32]) -> [f32; 4] {
     let a = (u16::from_le_bytes([block[0], block[1]]) as f32 / 65535.0) * std::f32::consts::PI;
     let b = (u16::from_le_bytes([block[2], block[3]]) as f32 / 65535.0) * std::f32::consts::TAU;
-    let c = ((index as f32) * 0.61803398875).fract() * std::f32::consts::TAU;
+    let c = ((index as f32) * 0.618_034).fract() * std::f32::consts::TAU;
     [
         a.sin() * b.cos(),
         a.sin() * b.sin(),
@@ -370,8 +370,8 @@ mod tests {
         for drop in 0..frags.len() {
             let partial: Vec<_> = frags
                 .iter()
-                .cloned()
                 .filter(|f| f.index as usize != drop)
+                .cloned()
                 .collect();
             assert!(
                 gather(&partial).is_none(),

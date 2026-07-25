@@ -630,7 +630,7 @@ fn auto_entry(dir: &Path) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
-        .find(|e| e.path().extension().map_or(false, |x| x == "ling"))
+        .find(|e| e.path().extension().is_some_and(|x| x == "ling"))
         .map(|e| e.path())
 }
 
@@ -675,7 +675,7 @@ fn sanitise_name(s: &str) -> String {
         .collect();
     let out = out.trim_matches('-').to_string();
     let out = if out.is_empty() { "app".into() } else { out };
-    if out.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         format!("r{}", out)
     } else {
         out
@@ -1129,7 +1129,7 @@ fn copy_ling_sources(src: &Path, dst: &Path) {
             if dname == "灵源" || dname == "src" {
                 copy_ling_sources(&path, dst);
             }
-        } else if path.extension().map_or(false, |e| e == "ling") {
+        } else if path.extension().is_some_and(|e| e == "ling") {
             if let Some(name) = path.file_name() {
                 let _ = std::fs::copy(&path, dst.join(name));
             }

@@ -297,9 +297,9 @@ impl Voice {
             } * detune;
             // FM: sum modulators whose target is this op
             let mut pmod = 0.0f32;
-            for j in (i + 1)..n {
-                if p.ops[j].fm_target == i as i32 {
-                    pmod += out_buf[j];
+            for (opj, outj) in p.ops[(i + 1)..].iter().zip(out_buf[(i + 1)..].iter()) {
+                if opj.fm_target == i as i32 {
+                    pmod += outj;
                 }
             }
             self.phases[i] = (self.phases[i] + hz * dt).fract();

@@ -50,6 +50,11 @@ pub fn register_builtin_dispatch(f: BuiltinDispatch) {
 }
 
 /// Call a builtin by name from JIT'd code.
+///
+/// # Safety
+///
+/// `name` must point to a valid UTF-8 string and `args` to a valid slice.
+/// The builtin dispatch table must have been registered before calling.
 #[inline]
 pub unsafe fn call_builtin(name: &str, args: &[u64]) -> u64 {
     let dispatch = BUILTIN_DISPATCH

@@ -330,8 +330,7 @@ pub fn shade(
 
         // ── Sheen (retro-reflection: peak at 90° incidence) ───────────────────
         let sheen = if mat.sheen > 0.0 {
-            let t = (1.0 - n_dot_l).powi(3) * mat.sheen;
-            t
+            (1.0 - n_dot_l).powi(3) * mat.sheen
         } else {
             0.0
         };
@@ -347,6 +346,7 @@ pub fn shade(
 
 /// Compute per-vertex material colours for a Gouraud-shaded triangle.
 /// Returns three 0x00RRGGBB colours.
+#[allow(clippy::too_many_arguments)]
 pub fn shade_vertices(
     mat: &LingMaterial,
     normal: [f32; 3],
@@ -373,6 +373,7 @@ pub fn shade_vertices(
 
 /// Compute per-vertex material colours for an n-gon (up to N vertices).
 /// Writes results into `out[0..n]`.
+#[allow(clippy::too_many_arguments)]
 pub fn shade_polygon(
     mat: &LingMaterial,
     normal: [f32; 3],

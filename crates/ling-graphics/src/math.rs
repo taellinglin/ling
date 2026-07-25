@@ -90,8 +90,8 @@ pub struct Mat5(pub [[f32; 5]; 5]);
 impl Mat5 {
     pub fn identity() -> Self {
         let mut m = [[0f32; 5]; 5];
-        for i in 0..5 {
-            m[i][i] = 1.0;
+        for (i, row) in m.iter_mut().enumerate() {
+            row[i] = 1.0;
         }
         Self(m)
     }
@@ -102,9 +102,9 @@ impl Mat5 {
 
     pub fn mul_vec(&self, v: [f32; 5]) -> [f32; 5] {
         let mut out = [0f32; 5];
-        for i in 0..5 {
-            for j in 0..5 {
-                out[i] += self.0[i][j] * v[j];
+        for (i, out_elem) in out.iter_mut().enumerate() {
+            for (j, v_elem) in v.iter().enumerate() {
+                *out_elem += self.0[i][j] * v_elem;
             }
         }
         out
@@ -112,10 +112,10 @@ impl Mat5 {
 
     pub fn mul(&self, rhs: &Self) -> Self {
         let mut out = [[0f32; 5]; 5];
-        for i in 0..5 {
-            for j in 0..5 {
-                for k in 0..5 {
-                    out[i][j] += self.0[i][k] * rhs.0[k][j];
+        for (i, out_row) in out.iter_mut().enumerate() {
+            for (j, out_elem) in out_row.iter_mut().enumerate() {
+                for (k, self_val) in self.0[i].iter().enumerate() {
+                    *out_elem += self_val * rhs.0[k][j];
                 }
             }
         }
@@ -124,9 +124,9 @@ impl Mat5 {
 
     pub fn transpose(&self) -> Self {
         let mut out = [[0f32; 5]; 5];
-        for i in 0..5 {
-            for j in 0..5 {
-                out[i][j] = self.0[j][i];
+        for (i, out_row) in out.iter_mut().enumerate() {
+            for (j, out_elem) in out_row.iter_mut().enumerate() {
+                *out_elem = self.0[j][i];
             }
         }
         Self(out)

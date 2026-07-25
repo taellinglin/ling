@@ -5,6 +5,8 @@
 
 use std::f32::consts::{PI, TAU};
 
+type Face = ([f32; 3], [f32; 3], [f32; 3], [f32; 3]);
+
 #[derive(Clone, Debug, Default)]
 pub struct ProceduralMesh {
     /// Flat: [x,y,z, nx,ny,nz, u,v]  per vertex
@@ -160,7 +162,7 @@ pub fn cube(size: f32) -> ProceduralMesh {
     let h = size * 0.5;
     let mut m = ProceduralMesh::new();
     // 6 faces: +X -X +Y -Y +Z -Z
-    let faces: [([f32; 3], [f32; 3], [f32; 3], [f32; 3]); 6] = [
+    let faces: [Face; 6] = [
         ([h, h, -h], [h, -h, -h], [h, -h, h], [h, h, h]), // +X
         ([-h, h, h], [-h, -h, h], [-h, -h, -h], [-h, h, -h]), // -X
         ([-h, h, -h], [-h, h, h], [h, h, h], [h, h, -h]), // +Y

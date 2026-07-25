@@ -54,8 +54,7 @@ impl Camera3D {
         let wy = wy - self.ty;
         let wz = wz - self.tz;
         let rz1 = wx * self.sry + wz * self.cry;
-        let rz = wy * self.srx + rz1 * self.crx;
-        rz
+        wy * self.srx + rz1 * self.crx
     }
 
     /// Project a world-space point to (screen_x, screen_y, camera_depth).

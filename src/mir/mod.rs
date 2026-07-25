@@ -10,7 +10,7 @@ mod modules;
 
 /// Parse source, lower to MIR, run optimizer, return optimized MIR.
 pub fn compile_and_optimize(source: &str, opt_level: OptimizationLevel) -> LingResult<MirProgram> {
-    let ast = parser::parse(source).map_err(|e| LingError::Parse(e))?;
+    let ast = parser::parse(source).map_err(LingError::Parse)?;
 
     // Run semantic analysis (type checking)
     // let mut semantic = crate::semantic::SemanticAnalyzer::new();
@@ -228,7 +228,7 @@ impl<'a> LowerCtx<'a> {
         arg_count: usize,
         globals: std::rc::Rc<std::collections::HashSet<String>>,
     ) -> Self {
-        let next = (arg_count + 1) as usize;
+        let next = arg_count + 1;
         // bb0 already exists; clear its terminator — lowering fills it in.
         func.basic_blocks[0].terminator = None;
         Self {
@@ -928,10 +928,8 @@ fn free_vars_in_expr(
     free: &mut std::collections::HashSet<String>,
 ) {
     match expr {
-        parser::ast::Expr::Ident(name) => {
-            if !params.contains(name.as_str()) {
-                free.insert(name.clone());
-            }
+        parser::ast::Expr::Ident(name) if !params.contains(name.as_str()) => {
+            free.insert(name.clone());
         },
         parser::ast::Expr::BinOp(_, lhs, rhs) => {
             free_vars_in_expr(lhs, params, free);

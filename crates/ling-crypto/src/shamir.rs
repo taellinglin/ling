@@ -86,6 +86,34 @@ pub fn split_secret(secret: &[u8], threshold: u8, n: u8) -> Vec<Share> {
     shares
 }
 
+/// Reconstruct the secret from at least `threshold` shares via Lagrange interpolation.
+pub fn reconstruct_secret(shares: &[Share]) -> Vec<u8> {
+    assert!(!shares.is_empty(), "need at least one share");
+    let len = shares[0].y.len();
+    let mut secret = vec![0u8; len];
+
+    for (i, secret_byte) in secret.iter_mut().enumerate() {
+        let mut val = 0u8;
+        for (j, sj) in shares.iter().enumerate() {
+            let xj = sj.x;
+            let yj = sj.y[i];
+            let mut num = 1u8;
+            let mut den = 1u8;
+            for (k, sk) in shares.iter().enumerate() {
+                if k == j {
+                    continue;
+                }
+                let xk = sk.x;
+                num = gf_mul(num, xk);
+                den = gf_mul(den, xj ^ xk);
+            }
+            val ^= gf_mul(yj, gf_mul(num, gf_inv(den)));
+        }
+        *secret_byte = val;
+    }
+    secret
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,32 +145,4 @@ mod tests {
         // With only 2 of 3 required shares, reconstruction must NOT yield the secret.
         assert_ne!(reconstruct_secret(&two), secret);
     }
-}
-
-/// Reconstruct the secret from at least `threshold` shares via Lagrange interpolation.
-pub fn reconstruct_secret(shares: &[Share]) -> Vec<u8> {
-    assert!(!shares.is_empty(), "need at least one share");
-    let len = shares[0].y.len();
-    let mut secret = vec![0u8; len];
-
-    for i in 0..len {
-        let mut val = 0u8;
-        for (j, sj) in shares.iter().enumerate() {
-            let xj = sj.x;
-            let yj = sj.y[i];
-            let mut num = 1u8;
-            let mut den = 1u8;
-            for (k, sk) in shares.iter().enumerate() {
-                if k == j {
-                    continue;
-                }
-                let xk = sk.x;
-                num = gf_mul(num, xk);
-                den = gf_mul(den, xj ^ xk);
-            }
-            val ^= gf_mul(yj, gf_mul(num, gf_inv(den)));
-        }
-        secret[i] = val;
-    }
-    secret
 }

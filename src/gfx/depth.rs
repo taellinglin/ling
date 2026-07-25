@@ -347,6 +347,7 @@ impl DepthQueue {
     }
 
     /// Queue a filled triangle (flat per-vertex depth = the sort key).
+    #[allow(clippy::too_many_arguments)]
     pub fn push_triangle(
         &mut self,
         depth: f32,
@@ -505,6 +506,7 @@ impl DepthQueue {
     /// layer over the opaque scene (back-to-front sort handles their ordering).
     ///
     /// Consumes `self` — call site does `mem::take` to avoid borrow conflict.
+    #[allow(clippy::ptr_arg)]
     pub fn flush(
         mut self,
         buf: &mut Vec<u32>,

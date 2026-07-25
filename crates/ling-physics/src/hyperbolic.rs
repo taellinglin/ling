@@ -104,8 +104,7 @@ impl HyperbolicSphereWorld {
     /// Gravity direction for a player at world position `pos` (Euclidean coords).
     /// Points *away* from sphere centre so the player is pressed against the inside shell.
     pub fn gravity_dir(&self, pos: Vec3) -> Vec3 {
-        let dir = pos.normalize_or(Vec3::Y);
-        dir // outward
+        pos.normalize_or(Vec3::Y)
     }
 
     /// Gravity force vector.
@@ -119,6 +118,7 @@ impl HyperbolicSphereWorld {
     }
 
     /// Convert Poincaré coordinate back to world space.
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_poincare(&self, p: Vec3) -> Vec3 {
         p * self.radius
     }
@@ -153,9 +153,9 @@ pub fn pentagon_vertices() -> [[f32; 2]; 5] {
         d.tanh()
     };
     let mut verts = [[0.0f32; 2]; 5];
-    for i in 0..5 {
+    for (i, v) in verts.iter_mut().enumerate() {
         let angle = i as f32 * 2.0 * std::f32::consts::PI / 5.0 - std::f32::consts::FRAC_PI_2;
-        verts[i] = [r * angle.cos(), r * angle.sin()];
+        *v = [r * angle.cos(), r * angle.sin()];
     }
     verts
 }
@@ -166,8 +166,7 @@ pub fn translate_pentagon(centre: Vec3, vertices: &[[f32; 2]; 5]) -> Vec<Vec3> {
         .iter()
         .map(|&[x, y]| {
             let p = Vec3::new(x, 0.0, y);
-            let wp = mobius_add(centre, p);
-            wp
+            mobius_add(centre, p)
         })
         .collect()
 }

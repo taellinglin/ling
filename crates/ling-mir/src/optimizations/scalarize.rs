@@ -47,7 +47,7 @@ impl Transform for ScalarizeStructs {
             let mut sorted_fields: Vec<(&String, &(usize, MirType))> = field_map.iter().collect();
             sorted_fields.sort_by_key(|&(_, &(idx, _))| idx);
 
-            for (_, &(_, ref ty)) in sorted_fields {
+            for (_, (_, ty)) in sorted_fields {
                 func.locals.push(LocalDecl {
                     ty: ty.clone(),
                     name: None,
@@ -68,14 +68,8 @@ fn find_candidates(func: &MirFunction) -> Vec<Local> {
     let mut seen: HashMap<Local, usize> = HashMap::new();
     for bb in &func.basic_blocks {
         for stmt in &bb.statements {
-            if let StatementKind::Assign(local, rval) = &stmt.kind {
-                match rval {
-                    Rvalue::Aggregate(AggregateKind::Dict, _)
-                    | Rvalue::Aggregate(AggregateKind::List, _) => {
-                        *seen.entry(*local).or_insert(0) += 1;
-                    },
-                    _ => {},
-                }
+            if let StatementKind::Assign(local, Rvalue::Aggregate(_, _)) = &stmt.kind {
+                *seen.entry(*local).or_insert(0) += 1;
             }
         }
     }
@@ -103,15 +97,15 @@ fn can_scalarize(func: &MirFunction, aliases: &HashSet<Local>, origin: Local) ->
                 StatementKind::Assign(l, Rvalue::Aggregate(..)) if *l == origin => {},
 
                 StatementKind::SetAttr(op, _, val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
-                    if operand_local(val).map_or(false, |l| aliases.contains(&l)) {
+                    if operand_local(val).is_some_and(|l| aliases.contains(&l)) {
                         return false;
                     }
                 },
 
                 StatementKind::Assign(dst, Rvalue::GetAttr(op, _))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     if aliases.contains(dst) {
                         return false;
@@ -119,20 +113,20 @@ fn can_scalarize(func: &MirFunction, aliases: &HashSet<Local>, origin: Local) ->
                 },
 
                 StatementKind::SetIndex(op, idx_op, val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     match idx_op {
                         Operand::Constant(Constant::I64(_))
                         | Operand::Constant(Constant::Str(_)) => {},
                         _ => return false,
                     }
-                    if operand_local(val).map_or(false, |l| aliases.contains(&l)) {
+                    if operand_local(val).is_some_and(|l| aliases.contains(&l)) {
                         return false;
                     }
                 },
 
                 StatementKind::Assign(dst, Rvalue::GetIndex(op, idx_op))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     match idx_op {
                         Operand::Constant(Constant::I64(_))
@@ -146,7 +140,7 @@ fn can_scalarize(func: &MirFunction, aliases: &HashSet<Local>, origin: Local) ->
 
                 StatementKind::Assign(dst, Rvalue::Use(op))
                     if aliases.contains(dst)
-                        && operand_local(op).map_or(false, |l| aliases.contains(&l)) => {},
+                        && operand_local(op).is_some_and(|l| aliases.contains(&l)) => {},
 
                 StatementKind::Drop(l)
                 | StatementKind::StorageLive(l)
@@ -184,24 +178,22 @@ fn collect_field_map(
         for stmt in &bb.statements {
             match &stmt.kind {
                 StatementKind::SetAttr(op, field, val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l))
+                    && !map.contains_key(field) =>
                 {
-                    if !map.contains_key(field) {
-                        let ty = infer_type(func, val);
-                        let next = map.len();
-                        map.insert(field.clone(), (next, ty));
-                    }
+                    let ty = infer_type(func, val);
+                    let next = map.len();
+                    map.insert(field.clone(), (next, ty));
                 },
                 StatementKind::Assign(_, Rvalue::GetAttr(op, field))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l))
+                    && !map.contains_key(field) =>
                 {
-                    if !map.contains_key(field) {
-                        let next = map.len();
-                        map.insert(field.clone(), (next, MirType::Any));
-                    }
+                    let next = map.len();
+                    map.insert(field.clone(), (next, MirType::Any));
                 },
                 StatementKind::SetIndex(op, idx_op, val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     let field = match idx_op {
                         Operand::Constant(Constant::I64(i)) => i.to_string(),
@@ -215,7 +207,7 @@ fn collect_field_map(
                     }
                 },
                 StatementKind::Assign(_, Rvalue::GetIndex(op, idx_op))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     let field = match idx_op {
                         Operand::Constant(Constant::I64(i)) => i.to_string(),
@@ -293,7 +285,7 @@ fn rewrite(
                 },
 
                 StatementKind::SetAttr(ref op, ref field, ref val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     if let Some(&(idx, _)) = field_map.get(field) {
                         new_stmts.push(Statement {
@@ -307,7 +299,7 @@ fn rewrite(
                 },
 
                 StatementKind::Assign(dst, Rvalue::GetAttr(ref op, ref field))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     if let Some(&(idx, _)) = field_map.get(field) {
                         new_stmts.push(Statement {
@@ -321,7 +313,7 @@ fn rewrite(
                 },
 
                 StatementKind::SetIndex(ref op, ref idx_op, ref val)
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     let field = match idx_op {
                         Operand::Constant(Constant::I64(i)) => i.to_string(),
@@ -340,7 +332,7 @@ fn rewrite(
                 },
 
                 StatementKind::Assign(dst, Rvalue::GetIndex(ref op, ref idx_op))
-                    if operand_local(op).map_or(false, |l| aliases.contains(&l)) =>
+                    if operand_local(op).is_some_and(|l| aliases.contains(&l)) =>
                 {
                     let field = match idx_op {
                         Operand::Constant(Constant::I64(i)) => i.to_string(),
@@ -360,7 +352,7 @@ fn rewrite(
 
                 StatementKind::Assign(dst, Rvalue::Use(ref op))
                     if aliases.contains(&dst)
-                        && operand_local(op).map_or(false, |l| aliases.contains(&l)) => {},
+                        && operand_local(op).is_some_and(|l| aliases.contains(&l)) => {},
 
                 StatementKind::Drop(l) if aliases.contains(&l) => {},
 
