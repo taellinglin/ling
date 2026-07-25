@@ -8030,6 +8030,10 @@ impl Interpreter {
                 let vz = self.arg_num(&args, 9, 0.0)? as f32;
                 let size = self.arg_num(&args, 10, 1.0)? as f32;
                 let s = self.arg_str(&args, 11, "");
+                // Optional arg 12: fill_rows — when > 0, each glyph interior is
+                // filled with that many even-odd scanline spans (true filled
+                // letterforms, not a bounding box). 0/omitted = outline only.
+                let fill_rows = self.arg_num(&args, 12, 0.0)? as i32;
                 if id >= 0 && (id as usize) < self.fonts.len() && size > 0.0 {
                     // Build world-space polylines: world = C + (pen+ex)*size*U + ey*size*V
                     let font = &mut self.fonts[id as usize];
@@ -8038,20 +8042,70 @@ impl Interpreter {
                     let mut lines: Vec<[f32; 6]> = Vec::new();
                     for ch in s.chars() {
                         let go = font.glyph_outline(ch, 0.01);
+                        let map = |p: [f32; 2], pen: f32| {
+                            let a = pen + p[0];
+                            let b = p[1] - asc; // shift so the top of the cap sits near C
+                            [
+                                cx + a * size * ux + b * size * vx,
+                                cy + a * size * uy + b * size * vy,
+                                cz + a * size * uz + b * size * vz,
+                            ]
+                        };
                         for pl in &go.polylines {
                             for seg in pl.windows(2) {
-                                let map = |p: [f32; 2]| {
-                                    let a = pen + p[0];
-                                    let b = p[1] - asc; // shift so the top of the cap sits near C
-                                    [
-                                        cx + a * size * ux + b * size * vx,
-                                        cy + a * size * uy + b * size * vy,
-                                        cz + a * size * uz + b * size * vz,
-                                    ]
-                                };
-                                let p0 = map(seg[0]);
-                                let p1 = map(seg[1]);
+                                let p0 = map(seg[0], pen);
+                                let p1 = map(seg[1], pen);
                                 lines.push([p0[0], p0[1], p0[2], p1[0], p1[1], p1[2]]);
+                            }
+                        }
+                        if fill_rows > 0 {
+                            // Even-odd scanline fill in glyph space. Contours may
+                            // omit their closing edge, so the implicit last→first
+                            // segment is scanned too (skipped when degenerate).
+                            let (mut ymin, mut ymax) = (f32::MAX, f32::MIN);
+                            for pl in &go.polylines {
+                                for p in pl {
+                                    ymin = ymin.min(p[1]);
+                                    ymax = ymax.max(p[1]);
+                                }
+                            }
+                            if ymax > ymin {
+                                for r in 0..fill_rows {
+                                    let y =
+                                        ymin + (r as f32 + 0.5) * (ymax - ymin) / fill_rows as f32;
+                                    let mut xs: Vec<f32> = Vec::new();
+                                    for pl in &go.polylines {
+                                        let n = pl.len();
+                                        if n < 2 {
+                                            continue;
+                                        }
+                                        for k in 0..n {
+                                            let p0 = pl[k];
+                                            let p1 = pl[(k + 1) % n];
+                                            if k + 1 == n
+                                                && (p1[0] - p0[0]).abs() < 1e-6
+                                                && (p1[1] - p0[1]).abs() < 1e-6
+                                            {
+                                                continue; // contour already closed
+                                            }
+                                            let (y0, y1) = (p0[1], p1[1]);
+                                            if (y0 <= y && y1 > y) || (y1 <= y && y0 > y) {
+                                                let t = (y - y0) / (y1 - y0);
+                                                xs.push(p0[0] + t * (p1[0] - p0[0]));
+                                            }
+                                        }
+                                    }
+                                    xs.sort_by(|a, b| {
+                                        a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                    });
+                                    let mut k = 0;
+                                    while k + 1 < xs.len() {
+                                        let a = map([xs[k], y], pen);
+                                        let b = map([xs[k + 1], y], pen);
+                                        lines.push([a[0], a[1], a[2], b[0], b[1], b[2]]);
+                                        k += 2;
+                                    }
+                                }
                             }
                         }
                         pen += go.advance;
@@ -8108,6 +8162,54 @@ impl Interpreter {
             {
                 return Ok(Value::Number(0.0));
             },
+            // font_glyph_outline(handle, "char", tol_em) — flattened vector outline of
+            // ONE glyph in normalized em space (x→right, y→up, baseline at 0). Returns a
+            // list of contours; each contour is a flat list [x0,y0,x1,y1,…]. Curves are
+            // subdivided so deviation stays under tol_em (default 0.01). Empty on failure.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_glyph_outline" | "font_outline" | "เส้นขอบฟอนต์" | "字体轮廓"
+            | "フォント輪郭" | "글꼴윤곽" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let s = self.arg_str(&args, 1, "");
+                let tol = self.arg_num(&args, 2, 0.01)? as f32;
+                let ch = s.chars().next().unwrap_or(' ');
+                if id >= 0 && (id as usize) < self.fonts.len() {
+                    let go = self.fonts[id as usize].glyph_outline(ch, tol.max(1e-4));
+                    let mut contours: Vec<Value> = Vec::with_capacity(go.polylines.len());
+                    for pl in &go.polylines {
+                        let mut flat: Vec<Value> = Vec::with_capacity(pl.len() * 2);
+                        for p in pl {
+                            flat.push(Value::Number(p[0] as f64));
+                            flat.push(Value::Number(p[1] as f64));
+                        }
+                        contours.push(Value::List(Rc::new(flat)));
+                    }
+                    return Ok(Value::List(Rc::new(contours)));
+                }
+                return Ok(Value::List(Rc::new(vec![])));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "font_glyph_outline" | "font_outline" | "เส้นขอบฟอนต์" | "字体轮廓"
+            | "フォント輪郭" | "글꼴윤곽" => {
+                return Ok(Value::List(Rc::new(vec![])));
+            },
+            // font_advance(handle, "char") — normalized em advance width of ONE glyph
+            // (baseline metric, ignores side bearings). Multiply by px for pixels.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let s = self.arg_str(&args, 1, "");
+                let ch = s.chars().next().unwrap_or(' ');
+                if id >= 0 && (id as usize) < self.fonts.len() {
+                    return Ok(Value::Number(self.fonts[id as usize].advance(ch) as f64));
+                }
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" => {
+                return Ok(Value::Number(0.0));
+            },
+
             // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
             "ui_frame" | "边框" | "フレーム枠" | "프레임틀" | "กรอบ" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;

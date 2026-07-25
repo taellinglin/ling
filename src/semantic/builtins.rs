@@ -177,6 +177,8 @@ pub fn is_builtin(name: &str) -> bool {
         "fire" => true,
         "floor" => true,
         "flush_3d" => true,
+        "font_advance" => true,
+        "font_glyph_outline" => true,
         "font_load" => true,
         "font_text" => true,
         "font_text_3d" => true,
