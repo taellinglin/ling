@@ -336,6 +336,7 @@ impl<'a> BorrowChecker<'a> {
                 self.check_operand(b, state, span);
                 self.check_operand(c, state, span);
             },
+            Rvalue::InlineAsm(_) => {},
         }
     }
 

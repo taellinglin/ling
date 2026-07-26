@@ -201,6 +201,19 @@ fn visit_rvalue_strings(
                 visit_operand_strings(op, module, string_ids);
             }
         },
+        Rvalue::InlineAsm(template) => {
+            if !string_ids.contains_key(template) {
+                let name = format!("__asm_{}", string_ids.len());
+                let data_id = module
+                    .declare_data(&name, Linkage::Local, true, false)
+                    .unwrap();
+                let mut desc = DataDescription::new();
+                desc.define(template.as_bytes().to_vec().into_boxed_slice());
+                desc.set_align(1);
+                module.define_data(data_id, &desc).unwrap();
+                string_ids.insert(template.clone(), data_id);
+            }
+        },
         _ => {},
     }
 }

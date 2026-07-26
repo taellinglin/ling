@@ -119,6 +119,20 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             &[types::I64, types::I64, types::I64, types::I64],
             types::I64,
         ),
+        // Kernel runtime intrinsics (no_std)
+        ("ling_kernel_vga_write_str", &[types::I64], types::I64),
+        ("ling_kernel_vga_write_char", &[types::I64], types::I64),
+        ("ling_kernel_vga_clear", &[], types::I64),
+        ("ling_kernel_serial_write", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_halt", &[], types::I64),
+        ("ling_kernel_cli", &[], types::I64),
+        ("ling_kernel_sti", &[], types::I64),
+        ("ling_kernel_inb", &[types::I64], types::I64),
+        ("ling_kernel_outb", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_panic", &[types::I64], types::I64),
+        ("ling_kernel_init", &[], types::I64),
+        ("ling_kernel_cpuid", &[types::I64, types::I64, types::I64, types::I64], types::I64),
+        ("ling_kernel_asm_exec", &[types::I64, types::I64], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {
@@ -223,6 +237,19 @@ fn visit_rvalue_strings(
                 visit_operand_strings(op, module, string_ids);
             }
         },
+        Rvalue::InlineAsm(template) => {
+            if !string_ids.contains_key(template) {
+                let name = format!("__asm_{}", string_ids.len());
+                let data_id = module
+                    .declare_data(&name, Linkage::Local, true, false)
+                    .unwrap();
+                let mut desc = DataDescription::new();
+                desc.define(template.as_bytes().to_vec().into_boxed_slice());
+                desc.set_align(1);
+                module.define_data(data_id, &desc).unwrap();
+                string_ids.insert(template.clone(), data_id);
+            }
+        },
         _ => {},
     }
 }
@@ -296,6 +323,9 @@ fn collect_rvalue_refs(rval: &Rvalue, refs: &mut FuncRefs) {
             for op in ops {
                 collect_operand_str(op, refs);
             }
+        },
+        Rvalue::InlineAsm(template) => {
+            refs.strings.insert(template.clone());
         },
         _ => {},
     }
@@ -440,6 +470,10 @@ impl CodegenBackend for CraneliftBackend {
                 } else if let Some(&data_id) = builtin_ids.get(name) {
                     let gv = module.declare_data_in_func(data_id, builder.func);
                     builtin_gvs.insert(name.clone(), gv);
+                } else if let Some(decl) = runtime_decls.get(name) {
+                    // Kernel runtime functions (ling_kernel_*) declared as imports
+                    let fr = module.declare_func_in_func(decl.id, builder.func);
+                    func_refs.insert(name.clone(), fr);
                 }
             }
 

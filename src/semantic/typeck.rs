@@ -520,6 +520,7 @@ impl TypeChecker {
                 .map(|(t, _)| self.subst(t))
                 .unwrap_or(Type::Any),
             ast::Expr::Await(_) => self.new_var(),
+            ast::Expr::Asm(_) => Type::Unit,
         }
     }
 

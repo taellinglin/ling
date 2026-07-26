@@ -405,6 +405,7 @@ enum ProjKind {
     Crypto,
     Lib,
     Polyglot,
+    Kernel,
 }
 
 impl ProjKind {
@@ -643,6 +644,7 @@ fn parse_kind(s: &str) -> ProjKind {
         "crypto" | "密灵" => ProjKind::Crypto,
         "lib" | "共修" => ProjKind::Lib,
         "polyglot" | "万言" => ProjKind::Polyglot,
+        "kernel" | "内核" => ProjKind::Kernel,
         _ => ProjKind::Bin,
     }
 }
@@ -716,8 +718,11 @@ fn run_build(
             "mac" | "macos" | "darwin" => {
                 build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
             },
+            "kernel" | "bare" => {
+                build_native(&project, out, NativePlatform::BareMetal, icon, pack, aot)
+            },
             other => {
-                eprintln!("unknown platform '{}' — use web|win|lin|mac|all", other);
+                eprintln!("unknown platform '{}' — use web|win|lin|mac|kernel|all", other);
                 std::process::exit(1);
             },
         }
@@ -883,6 +888,7 @@ enum NativePlatform {
     Windows,
     Linux,
     Mac,
+    BareMetal,
 }
 
 impl NativePlatform {
@@ -891,6 +897,7 @@ impl NativePlatform {
             Self::Windows => "windows",
             Self::Linux => "linux",
             Self::Mac => "macos",
+            Self::BareMetal => "kernel",
         }
     }
 
@@ -919,12 +926,14 @@ impl NativePlatform {
                     "x86_64-apple-darwin"
                 }
             },
+            Self::BareMetal => "x86_64-unknown-none",
         }
     }
 
     fn exe_suffix(self) -> &'static str {
         match self {
             Self::Windows => ".exe",
+            Self::BareMetal => "",
             _ => "",
         }
     }
@@ -934,6 +943,7 @@ impl NativePlatform {
             Self::Windows => cfg!(target_os = "windows"),
             Self::Linux => cfg!(target_os = "linux"),
             Self::Mac => cfg!(target_os = "macos"),
+            Self::BareMetal => false,
         }
     }
 }
@@ -947,6 +957,7 @@ fn build_native(
     aot: bool,
 ) {
     let triple = platform.triple();
+    let is_kernel = matches!(platform, NativePlatform::BareMetal);
     println!(
         "  [{}] building {} ({triple}){}…",
         platform.dir_name(),
@@ -969,8 +980,11 @@ fn build_native(
         std::process::exit(1);
     });
 
+    // Kernel builds always use AOT (compiling the .ling to a .o and linking it)
+    let use_aot = aot || is_kernel;
+
     // Copy all .ling files from source_dir (recurse one level for ling-fu 灵源/)
-    if !aot {
+    if !use_aot {
         copy_ling_sources(&project.source_dir, build_dir);
     }
 
@@ -982,17 +996,60 @@ fn build_native(
         .to_string_lossy()
         .into_owned();
 
-    std::fs::write(
-        build_dir.join("Cargo.toml"),
-        gen_cargo_toml(&project.name, &project.version, &ling_root),
-    )
-    .expect("write Cargo.toml");
-
     // Resources declared in the manifest [includes] block (glob-expanded).
     let resources = expand_includes(project);
     let do_pack = pack && !resources.is_empty();
 
-    if aot {
+    if is_kernel {
+        // ── Kernel path: AOT compile + no_std runtime ──────────────────────
+        println!("    AOT-compiling {} for kernel…", entry_filename);
+
+        let mir = ling::mir::compile_path(&project.entry, ling::core::OptimizationLevel::O3)
+            .unwrap_or_else(|e| {
+                eprintln!("    MIR compilation failed: {e}");
+                std::process::exit(1);
+            });
+
+        let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
+        println!(
+            "    compiling {} functions to native code…",
+            mir_prog.mir.functions.len()
+        );
+        let mut backend = ling_codegen::CraneliftBackend::new().with_progress(true);
+        let obj_path = build_dir.join("entry.o");
+        use ling_codegen::CodegenBackend;
+        backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
+            eprintln!("    AOT codegen failed: {e}");
+            std::process::exit(1);
+        });
+
+        println!("    AOT object written to {}", obj_path.display());
+
+        // Generate kernel-specific Cargo.toml with ling-kernel dependency
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_kernel_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
+
+        std::fs::write(build_dir.join("src/main.rs"), gen_kernel_main_rs())
+            .expect("write src/main.rs");
+
+        std::fs::write(build_dir.join("build.rs"), gen_kernel_build_rs())
+            .expect("write build.rs");
+
+        // Write linker script
+        std::fs::write(
+            build_dir.join("linker.ld"),
+            KERNEL_LINKER_SCRIPT,
+        )
+        .expect("write linker.ld");
+
+        // Write multiboot header as a separate object
+        write_multiboot_header(build_dir);
+
+        println!("    kernel build files written to {}", build_dir.display());
+    } else if use_aot {
         // ── AOT path: compile to native .o, link via Rust stub ──────────────
         println!("    AOT-compiling {}…", entry_filename);
 
@@ -1060,25 +1117,63 @@ fn build_native(
 
     // ── 4. Build ─────────────────────────────────────────────────────────────
     let build_cmd = choose_build_tool(platform);
-    let status = Command::new(build_cmd)
-        .args(["build", "--release", "--target", triple])
-        .current_dir(build_dir)
-        .status()
-        .unwrap_or_else(|e| {
-            eprintln!("  {build_cmd}: {e}");
-            if build_cmd == "cross" {
-                eprintln!("  install cross: cargo install cross  (requires Docker)");
+
+    let mut cargo_args: Vec<&str> = vec!["build", "--release", "--target", triple];
+
+    // For no_std targets, we need nightly features
+    if is_kernel {
+        // Write .cargo/config.toml to enable build-std
+        let cargo_dir = build_dir.join(".cargo");
+        std::fs::create_dir_all(&cargo_dir).expect("create .cargo dir");
+        std::fs::write(
+            cargo_dir.join("config.toml"),
+            r#"[unstable]
+build-std = ["core", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.x86_64-unknown-none]
+rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=-nostartfiles"]
+"#,
+        )
+        .ok();
+        // Use nightly for build-std support
+        let nightly = "cargo";
+        cargo_args = vec!["+nightly", "build", "--release", "--target", triple, "-Z", "build-std=core,compiler_builtins", "-Z", "build-std-features=compiler-builtins-mem"];
+        let status = Command::new(nightly)
+            .args(&cargo_args)
+            .current_dir(build_dir)
+            .status()
+            .unwrap_or_else(|e| {
+                eprintln!("  {nightly}: {e}");
+                std::process::exit(1);
+            });
+        if !status.success() {
+            eprintln!("  [{}] build failed.", platform.dir_name());
+            eprintln!("  Tip: ensure nightly Rust is installed: rustup toolchain install nightly");
+            eprintln!("  Then install: rustup target add x86_64-unknown-none --toolchain nightly");
+            eprintln!("  And: rustup component add rust-src --toolchain nightly");
+            std::process::exit(1);
+        }
+    } else {
+        let status = Command::new(build_cmd)
+            .args(&cargo_args)
+            .current_dir(build_dir)
+            .status()
+            .unwrap_or_else(|e| {
+                eprintln!("  {build_cmd}: {e}");
+                if build_cmd == "cross" {
+                    eprintln!("  install cross: cargo install cross  (requires Docker)");
+                }
+                std::process::exit(1);
+            });
+        if !status.success() {
+            eprintln!("  [{}] build failed.", platform.dir_name());
+            if !platform.is_current_host() && build_cmd == "cargo" && !has_cross() {
+                eprintln!("  Tip: install `cross` for cross-compilation (needs Docker):");
+                eprintln!("       cargo install cross");
             }
             std::process::exit(1);
-        });
-
-    if !status.success() {
-        eprintln!("  [{}] build failed.", platform.dir_name());
-        if !platform.is_current_host() && build_cmd == "cargo" && !has_cross() {
-            eprintln!("  Tip: install `cross` for cross-compilation (needs Docker):");
-            eprintln!("       cargo install cross");
         }
-        std::process::exit(1);
     }
 
     // ── 5. Copy binary to dist/<platform>/ ──────────────────────────────────
@@ -1137,46 +1232,6 @@ fn copy_ling_sources(src: &Path, dst: &Path) {
     }
 }
 
-fn gen_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
-    // On Windows canonicalize gives UNC paths; forward-slashes work fine in TOML paths.
-    let root_str = ling_root.display().to_string().replace('\\', "/");
-    // Fat LTO needs a single codegen unit; thin parallelises across many.
-    let fat = std::env::var("LING_BUILD_LTO")
-        .map(|v| v == "fat")
-        .unwrap_or(false);
-    let (lto, cgu) = if fat { ("fat", 1) } else { ("thin", 16) };
-    format!(
-        r#"[workspace]
-[package]
-name = "{name}"
-version = "{version}"
-edition = "2021"
-build = "build.rs"
-
-[[bin]]
-name = "{name}"
-path = "src/main.rs"
-
-[dependencies]
-ling-lang = {{ path = "{root_str}" }}
-
-[build-dependencies]
-winresource = "0.1"
-
-[profile.release]
-# Thin LTO keeps cross-crate inlining but links in parallel with a fraction of
-# fat LTO's peak memory, so the whole ling-lang graph builds without OOMing on
-# normal-RAM machines. Set LING_BUILD_LTO=fat to force fat LTO when you have the
-# headroom and want the last few percent of runtime speed.
-lto = "{lto}"
-codegen-units = {cgu}
-opt-level = 3
-panic = "abort"
-strip = true
-"#
-    )
-}
-
 /// The build script written into each generated app crate. It embeds `app.ico`
 /// (produced by `ling build`) into the Windows executable; on other targets, or
 /// if no icon was generated, it does nothing.
@@ -1201,6 +1256,183 @@ fn main() {
 "#
     .to_string()
 }
+
+/// Generate Cargo.toml for kernel (no_std, no default features, links to ling-kernel).
+fn gen_kernel_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+    let root_str = ling_root.display().to_string().replace('\\', "/");
+    format!(
+        r#"[workspace]
+[package]
+name = "{name}"
+version = "{version}"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "{name}"
+path = "src/main.rs"
+
+[dependencies]
+ling-kernel = {{ path = "{root_str}/crates/ling-kernel" }}
+
+[build-dependencies]
+cc = "1.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true
+"#
+    )
+}
+
+/// Generate `src/main.rs` for kernel builds: no_std, no_main, multiboot header.
+fn gen_kernel_main_rs() -> String {
+    r#"#![no_std]
+#![no_main]
+
+use core::ptr;
+
+#[used]
+#[link_section = ".ling_multiboot"]
+static MULTIBOOT_HEADER: [u8; 64] = {
+    let magic: u32 = 0xE852_50D6;
+    let flags: u32 = 0;
+    let checksum: u32 = 0u32.wrapping_sub(magic.wrapping_add(flags));
+    let mut bytes = [0u8; 64];
+    let mut i = 0;
+    // Multiboot2 header
+    bytes[i..i+4].copy_from_slice(&magic.to_le_bytes()); i += 4;
+    bytes[i..i+4].copy_from_slice(&flags.to_le_bytes()); i += 4;
+    bytes[i..i+4].copy_from_slice(&checksum.to_le_bytes()); i += 4;
+    // reserved
+    i += 4;
+    // end tag (type=0, size=8)
+    bytes[i..i+2].copy_from_slice(&0u16.to_le_bytes()); i += 2;
+    bytes[i..i+2].copy_from_slice(&8u16.to_le_bytes()); i += 2;
+    bytes[i..i+4].copy_from_slice(&0u32.to_le_bytes());
+    bytes
+};
+
+extern "C" {
+    fn __main__() -> u64;
+}
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub extern "C" fn _start() -> ! {
+    unsafe {
+        __main__();
+    }
+    loop {
+        unsafe { core::arch::asm!("hlt"); }
+    }
+}
+"#
+    .to_string()
+}
+
+/// Generate `build.rs` for kernel builds: links entry.o, multiboot.o, and linker script.
+fn gen_kernel_build_rs() -> String {
+    r#"fn main() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:rustc-link-arg-bins=-nostartfiles");
+    println!("cargo:rustc-link-arg-bins=-static");
+    println!("cargo:rustc-link-arg-bins=-n");
+    println!("cargo:rustc-link-arg-bins=-T{}/linker.ld", manifest_dir);
+    println!("cargo:rustc-link-arg-bins={}/entry.o", manifest_dir);
+    println!("cargo:rustc-link-arg-bins={}/multiboot.o", manifest_dir);
+    println!("cargo:rerun-if-changed=entry.o");
+    println!("cargo:rerun-if-changed=linker.ld");
+}
+"#
+    .to_string()
+}
+
+/// Write the multiboot header as a standalone .o file that gets linked first.
+fn write_multiboot_header(build_dir: &Path) {
+    // Write a minimal multiboot2 header as raw bytes and assemble it.
+    let header: [u8; 64] = {
+        // Multiboot2 header: magic=0xE85250D6, arch=i386=0, length, checksum
+        let magic: u32 = 0xE852_50D6;
+        let arch: u32 = 0;
+        let hdr_len: u32 = 64;
+        let checksum: u32 = 0u32.wrapping_sub(magic.wrapping_add(arch).wrapping_add(hdr_len));
+        let mut bytes = [0u8; 64];
+        let mut pos = 0;
+        bytes[pos..pos+4].copy_from_slice(&magic.to_le_bytes()); pos += 4;
+        bytes[pos..pos+4].copy_from_slice(&arch.to_le_bytes()); pos += 4;
+        bytes[pos..pos+4].copy_from_slice(&hdr_len.to_le_bytes()); pos += 4;
+        bytes[pos..pos+4].copy_from_slice(&checksum.to_le_bytes());
+        let end_offset = 56usize;
+        bytes[end_offset..end_offset+2].copy_from_slice(&0u16.to_le_bytes());
+        bytes[end_offset+2..end_offset+4].copy_from_slice(&8u16.to_le_bytes());
+        bytes
+    };
+
+    let header_path = build_dir.join("multiboot_header.bin");
+    let _ = std::fs::write(&header_path, &header);
+
+    // Create a simple assembly file that embeds the header
+    let asm_path = build_dir.join("multiboot.s");
+    let asm_content = r#".section .ling_multiboot, "a"
+.global ling_multiboot_header
+ling_multiboot_header:
+    .incbin "multiboot_header.bin"
+"#;
+    let _ = std::fs::write(&asm_path, asm_content);
+
+    // Try to assemble it with the system assembler, or write a Rust source instead
+    let rs_path = build_dir.join("multiboot.rs");
+    let rs_content = r#"#[used]
+#[link_section = ".ling_multiboot"]
+#[no_mangle]
+pub static LING_MULTIBOOT_HEADER: [u8; 64] = *include_bytes!("multiboot_header.bin");
+"#;
+    std::fs::write(&rs_path, rs_content).ok();
+}
+
+/// Linker script for x86_64 kernel with multiboot2 header.
+const KERNEL_LINKER_SCRIPT: &str = r#"OUTPUT_FORMAT(elf64-x86-64)
+ENTRY(_start)
+
+SECTIONS {
+    . = 1M;
+
+    .multiboot : ALIGN(8) {
+        KEEP(*(.ling_multiboot))
+    }
+
+    .text : ALIGN(4096) {
+        *(.text .text.*)
+    }
+
+    .rodata : ALIGN(4096) {
+        *(.rodata .rodata.*)
+    }
+
+    .data : ALIGN(4096) {
+        *(.data .data.*)
+    }
+
+    .bss : ALIGN(4096) {
+        *(.bss .bss.*)
+        *(COMMON)
+    }
+
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.comment)
+        *(.note.*)
+    }
+}
+"#;
 
 /// Pick the icon source: explicit `--icon` flag, else the manifest field, else
 /// the bundled default logo from the ling-lang repo. `None` if nothing is found.

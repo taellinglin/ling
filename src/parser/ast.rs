@@ -93,6 +93,8 @@ pub enum Expr {
     Index(Box<Expr>, Box<Expr>),
     /// Closure `|| expr` or `|args| expr`
     Closure(Vec<String>, Box<Expr>),
+    /// Inline assembly: `asm!("instruction")` or `asm!("指令")`
+    Asm(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

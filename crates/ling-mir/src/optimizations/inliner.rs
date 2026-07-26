@@ -267,6 +267,7 @@ impl Inliner {
                 self.remap_operand(b, offset);
                 self.remap_operand(c, offset);
             },
+            Rvalue::InlineAsm(_) => {},
         }
     }
 

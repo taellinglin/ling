@@ -41,6 +41,7 @@ fn rv_uses_local(rv: &Rvalue, local: &Local) -> bool {
         Rvalue::VectorFMA(a, b, c) => {
             op_uses_local(a, local) || op_uses_local(b, local) || op_uses_local(c, local)
         },
+        Rvalue::InlineAsm(_) => false,
     }
 }
 

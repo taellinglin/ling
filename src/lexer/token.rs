@@ -30,6 +30,9 @@ pub enum Token {
     Async,
     Wait,
 
+    // Assembly
+    Asm,
+
     // Other keywords
     Post,
     Give,

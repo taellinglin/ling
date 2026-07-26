@@ -410,6 +410,7 @@ fn rval_references(rval: &Rvalue, local: Local) -> bool {
         Rvalue::VectorFMA(a, b, c) => {
             operand_is(a, local) || operand_is(b, local) || operand_is(c, local)
         },
+        Rvalue::InlineAsm(_) => false,
     }
 }
 

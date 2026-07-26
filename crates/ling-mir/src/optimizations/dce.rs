@@ -42,7 +42,7 @@ impl Transform for DeadCodeElimination {
             let old_len = bb.statements.len();
             bb.statements.retain(|stmt| {
                 if let StatementKind::Assign(dest, rval) = &stmt.kind {
-                    if matches!(rval, Rvalue::Call { .. }) {
+                    if matches!(rval, Rvalue::Call { .. } | Rvalue::InlineAsm(_)) {
                         return true;
                     }
                     used.contains(dest)
@@ -92,6 +92,7 @@ impl DeadCodeElimination {
                 self.record_operand_usage(b, used);
                 self.record_operand_usage(c, used);
             },
+            Rvalue::InlineAsm(_) => {},
         }
     }
 

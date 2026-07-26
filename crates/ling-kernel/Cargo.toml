@@ -1,0 +1,17 @@
+[package]
+name = "ling-kernel"
+version = "2030.1.36"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Minimal kernel runtime for Ling — no_std CPU intrinsics, VGA, serial, and boot support"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"

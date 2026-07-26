@@ -272,34 +272,50 @@ pub(crate) fn translate_rvalue(
                 Operand::Constant(Constant::Function(n)) => n.clone(),
                 _ => String::new(),
             };
+            let is_kernel = callee_name.starts_with("ling_kernel_");
             let mut cal_args = Vec::new();
-            for arg in args {
-                cal_args.push(translate_op(arg, builder, ctx));
+            if is_kernel {
+                for arg in args {
+                    cal_args.push(translate_op_int(arg, builder, ctx));
+                }
+            } else {
+                for arg in args {
+                    cal_args.push(translate_op(arg, builder, ctx));
+                }
             }
-            let v = if let Some(&fr) = ctx.func_refs.get(&callee_name) {
-                // Ling calls are arity-flexible (the tree-walker pads missing
-                // args with unit and ignores extras); the direct cranelift call
-                // needs exactly the callee's parameter count, so reconcile here.
+            let v: (Value, Repr) = if let Some(&fr) = ctx.func_refs.get(&callee_name) {
                 if let Some(&arity) = ctx.func_arities.get(&callee_name) {
                     if cal_args.len() < arity {
-                        let unit = builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+                        let unit = if is_kernel {
+                            builder.ins().iconst(types::I64, 0)
+                        } else {
+                            builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64)
+                        };
                         cal_args.resize(arity, unit);
                     } else {
                         cal_args.truncate(arity);
                     }
                 }
                 let inst = builder.ins().call(fr, &cal_args);
-                builder.inst_results(inst)[0]
+                let raw = builder.inst_results(inst)[0];
+                if is_kernel {
+                    (int_to_boxed(builder, raw), Repr::Boxed)
+                } else {
+                    (raw, Repr::Boxed)
+                }
             } else {
-                emit_builtin_call(
-                    callee_name,
-                    cal_args,
-                    builder,
-                    ctx.builtin_gvs,
-                    ctx.runtime_refs,
+                (
+                    emit_builtin_call(
+                        callee_name,
+                        cal_args,
+                        builder,
+                        ctx.builtin_gvs,
+                        ctx.runtime_refs,
+                    ),
+                    Repr::Boxed,
                 )
             };
-            (v, Repr::Boxed)
+            v
         },
         Rvalue::Aggregate(_, ops) => {
             let mut list = emit_runtime_call0(builder, "__ling_list_new", ctx.runtime_refs);
@@ -320,6 +336,21 @@ pub(crate) fn translate_rvalue(
                 ctx.runtime_refs,
             );
             (v, Repr::Boxed)
+        },
+        Rvalue::InlineAsm(template) => {
+            if let Some(&gv) = ctx.string_gvs.get(template.as_str()) {
+                let ptr = builder.ins().symbol_value(types::I64, gv);
+                let len = builder.ins().iconst(types::I64, template.len() as i64);
+                if let Some(&fr) = ctx.func_refs.get("ling_kernel_asm_exec") {
+                    let inst = builder.ins().call(fr, &[ptr, len]);
+                    let raw = builder.inst_results(inst)[0];
+                    (int_to_boxed(builder, raw), Repr::Boxed)
+                } else {
+                    (int_zero(builder), Repr::Boxed)
+                }
+            } else {
+                (int_zero(builder), Repr::Boxed)
+            }
         },
         _ => (int_zero(builder), Repr::Boxed),
     }

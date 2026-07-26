@@ -131,6 +131,7 @@ impl Liveness {
                 Self::use_op(live, b);
                 Self::use_op(live, c);
             },
+            Rvalue::InlineAsm(_) => {},
         }
     }
 

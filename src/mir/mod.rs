@@ -437,6 +437,15 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             ));
             Operand::Copy(local)
         },
+        parser::ast::Expr::Asm(template) => {
+            let local = ctx.alloc_local(None, false);
+            ctx.emit(StatementKind::StorageLive(local));
+            ctx.emit(StatementKind::Assign(
+                local,
+                Rvalue::InlineAsm(template.clone()),
+            ));
+            Operand::Copy(local)
+        },
         parser::ast::Expr::Bool(b) => Operand::Constant(Constant::Bool(*b)),
         parser::ast::Expr::Unit => Operand::Constant(Constant::None),
         parser::ast::Expr::Ident(name) => {

@@ -603,6 +603,25 @@ impl Parser {
                 Ok(inner) // async is a hint; we just execute synchronously
             },
 
+            // Inline assembly: `asm!("hlt")` or `asm("hlt")`
+            Token::Asm => {
+                self.advance();
+                // Support both asm!("...") and asm("...") syntax
+                if matches!(self.peek(), Token::Not) {
+                    self.advance();
+                }
+                self.expect(&Token::LParen)?;
+                let template = match self.peek().clone() {
+                    Token::String(s) => {
+                        self.advance();
+                        s
+                    },
+                    other => return Err(format!("asm!() expects a string literal, got {:?}", other)),
+                };
+                self.expect(&Token::RParen)?;
+                Ok(Expr::Asm(template))
+            },
+
             // Identifier — could start a path
             Token::Ident(name) => {
                 self.advance();
@@ -792,6 +811,7 @@ fn token_to_name(tok: &Token) -> Option<&'static str> {
         Token::Maybe => Some("maybe"),
         Token::Pure => Some("pure"),
         Token::Spawn => Some("spawn"),
+        Token::Asm => Some("asm"),
         Token::Ok => Some("ok"),
         Token::Bad => Some("bad"),
         Token::None => Some("none"),

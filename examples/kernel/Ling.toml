@@ -1,0 +1,5 @@
+[project]
+name = "ling-kernel-example"
+version = "0.1.0"
+entry = "main.ling"
+kind = "kernel"

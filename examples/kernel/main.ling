@@ -1,0 +1,7 @@
+bind start = do {
+    ling_kernel_vga_clear()
+    ling_kernel_vga_write_str("Ling Kernel\n")
+    ling_kernel_vga_write_str("asm! example\n")
+    asm!("cli")
+    asm!("hlt")
+}

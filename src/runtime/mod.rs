@@ -2232,6 +2232,8 @@ impl Interpreter {
                 vec![Stmt::Expr(*body.clone())],
                 env.clone(),
             )),
+
+            Expr::Asm(_) => Ok(Value::Unit),
         }
     }
 

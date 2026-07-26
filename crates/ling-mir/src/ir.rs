@@ -102,6 +102,7 @@ pub enum Rvalue {
     VectorSplat(Operand, usize),
     VectorLoad(Operand, Operand, usize),
     VectorFMA(Operand, Operand, Operand),
+    InlineAsm(String),
 }
 
 impl Hash for Rvalue {
@@ -166,6 +167,10 @@ impl Hash for Rvalue {
                 a.hash(state);
                 b.hash(state);
                 c.hash(state);
+            },
+            Rvalue::InlineAsm(template) => {
+                12u8.hash(state);
+                template.hash(state);
             },
         }
     }

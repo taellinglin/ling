@@ -169,6 +169,7 @@ impl<'a> Lexer<'a> {
             "maybe" | "可能" | "或" => Token::Maybe,
             "pure" | "纯" => Token::Pure,
             "spawn" | "生成" | "启" => Token::Spawn,
+            "asm" => Token::Asm,
             "ok" | "好" | "可" => Token::Ok,
             "bad" | "坏" | "误" => Token::Bad,
             "none" | "无" => Token::None,

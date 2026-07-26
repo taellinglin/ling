@@ -53,6 +53,7 @@ members = [
     "crates/ling-gpu",
     "crates/ling-animation",
     "crates/ling-input",
+    "crates/ling-kernel",
 
 ]
 exclude = [

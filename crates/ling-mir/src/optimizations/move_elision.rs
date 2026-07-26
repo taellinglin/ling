@@ -116,6 +116,7 @@ impl MoveElision {
                 changed |= self.optimize_operand(c, live_after, locals);
                 changed
             },
+            Rvalue::InlineAsm(_) => false,
         }
     }
 
