@@ -61,6 +61,20 @@ impl Default for ShadeParams {
     }
 }
 
+impl ShadeParams {
+    /// Wind Waker stylized toon shading preset.
+    pub fn windwaker() -> Self {
+        Self {
+            bands: 3,
+            ambient: 0.35,
+            shadow: [0.22, 0.32, 0.52], // ocean sky shadow tint
+            rim: 0.85,
+            rim_color: [0.95, 0.98, 1.0], // crisp silhouette rim light
+            holo: false,
+        }
+    }
+}
+
 #[inline]
 fn norm3(v: [f32; 3]) -> [f32; 3] {
     let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
@@ -92,6 +106,22 @@ pub fn cel_ramp(d: f32) -> f32 {
         let t = (d - lo) / (hi - lo);
         let s = t * t * (3.0 - 2.0 * t);
         0.20 + s * 0.80
+    }
+}
+
+/// Wind Waker style 2-band toon diffuse step ramp with crisp shadow threshold.
+#[inline]
+pub fn windwaker_cel_ramp(d: f32) -> f32 {
+    let lo = 0.28;
+    let hi = 0.38;
+    if d < lo {
+        0.25
+    } else if d > hi {
+        1.0
+    } else {
+        let t = (d - lo) / (hi - lo);
+        let s = t * t * (3.0 - 2.0 * t);
+        0.25 + s * 0.75
     }
 }
 

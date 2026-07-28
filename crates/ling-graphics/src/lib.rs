@@ -23,7 +23,7 @@ pub use material::{AlphaMode, Material, TextureData};
 pub use math::{Aabb, Frustum, Mat3, Mat4, Mat5, Plane, Quat, Ray3, Vec2, Vec3, Vec4, Vec4H};
 pub use renderer::{FrameBuffer, Renderer, SoftwareRenderer};
 pub use scene::{NodeId, Scene, SceneNode, Transform};
-pub use shading::{lit_vertex, posterize, LightS, ShadeParams};
+pub use shading::{lit_vertex, posterize, windwaker_cel_ramp, LightS, ShadeParams};
 pub use vfont::{GlyphOutline, VectorFont};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
