@@ -948,6 +948,127 @@ pub fn radar3d(
     d
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Application UI rendering routines
+// ════════════════════════════════════════════════════════════════════════════
+
+use crate::dock::SplitDirection;
+use crate::menu::{MenuBar, MenuPopup};
+use crate::palette::CommandPalette;
+use crate::property::{Toggle, ValueDrag};
+
+/// Context menu popup container background and border outline.
+pub fn menu_popup_draw(popup: &MenuPopup, bg: Rgba, border: Rgba, accent: Rgba) -> Draw {
+    let mut d = Draw::new();
+    d.rect_fill(bg, popup.x, popup.y, popup.width, popup.height);
+    d.rect_outline(border, popup.x, popup.y, popup.width, popup.height);
+
+    if let Some(idx) = popup.hovered_index {
+        let item_y = popup.y + 8.0 + idx as f32 * 24.0;
+        d.rect_fill(
+            shade(accent, 0.4),
+            popup.x + 2.0,
+            item_y,
+            popup.width - 4.0,
+            22.0,
+        );
+    }
+    d
+}
+
+/// Top application menu bar background strip and active category highlight.
+pub fn menu_bar_draw(bar: &MenuBar, rect: [f32; 4], bg: Rgba, active_bg: Rgba, border: Rgba) -> Draw {
+    let mut d = Draw::new();
+    let [x, y, w, h] = rect;
+    d.rect_fill(bg, x, y, w, h);
+    d.stroke(border, vec![[x, y + h], [x + w, y + h]]);
+
+    if let Some(active) = bar.active_category {
+        let cat_x = x + active as f32 * 64.0 + 4.0;
+        d.rect_fill(active_bg, cat_x, y + 2.0, 60.0, h - 4.0);
+    }
+    d
+}
+
+/// Draggable splitter bar handle with grip indicators.
+pub fn splitter_draw(rect: [f32; 4], direction: SplitDirection, is_hovered: bool, color: Rgba) -> Draw {
+    let mut d = Draw::new();
+    let [x, y, w, h] = rect;
+    let col = if is_hovered { shade(color, 1.4) } else { color };
+    d.rect_fill(col, x, y, w, h);
+
+    if direction == SplitDirection::Horizontal {
+        let cx = x + w * 0.5;
+        let cy = y + h * 0.5;
+        d.stroke(shade(color, 0.5), vec![[cx, cy - 10.0], [cx, cy + 10.0]]);
+    } else {
+        let cx = x + w * 0.5;
+        let cy = y + h * 0.5;
+        d.stroke(shade(color, 0.5), vec![[cx - 10.0, cy], [cx + 10.0, cy]]);
+    }
+    d
+}
+
+/// Blender-style numeric scrubber box with value fill bar and outline.
+pub fn value_drag_draw(drag: &ValueDrag, x: f32, y: f32, w: f32, h: f32, primary: Rgba, bg: Rgba) -> Draw {
+    let mut d = Draw::new();
+    d.rect_fill(bg, x, y, w, h);
+
+    let norm = ((drag.value - drag.min) / (drag.max - drag.min).max(1e-5)).clamp(0.0, 1.0);
+    let fill_w = (w - 4.0) * norm;
+    if fill_w > 0.0 {
+        d.rect_fill(shade(primary, 0.4), x + 2.0, y + 2.0, fill_w, h - 4.0);
+    }
+
+    let border_col = if drag.is_dragging { primary } else { shade(primary, 0.6) };
+    d.rect_outline(border_col, x, y, w, h);
+    d
+}
+
+/// Toggle switch box (pill track + indicator knob).
+pub fn toggle_draw(toggle: &Toggle, x: f32, y: f32, w: f32, h: f32, active_color: Rgba, bg: Rgba) -> Draw {
+    let mut d = Draw::new();
+    let track_col = if toggle.value { active_color } else { bg };
+    d.rect_fill(track_col, x, y, w, h);
+    d.rect_outline(active_color, x, y, w, h);
+
+    let knob_w = h - 4.0;
+    let knob_x = if toggle.value { x + w - knob_w - 2.0 } else { x + 2.0 };
+    d.rect_fill(0xFFFFFF, knob_x, y + 2.0, knob_w, knob_w);
+    d
+}
+
+/// Command palette overlay launcher window geometry.
+pub fn command_palette_draw(palette: &CommandPalette, x: f32, y: f32, w: f32, h: f32, bg: Rgba, primary: Rgba) -> Draw {
+    let mut d = Draw::new();
+    if !palette.is_open {
+        return d;
+    }
+
+    d.rect_fill(bg, x, y, w, h);
+    d.rect_outline(primary, x, y, w, h);
+
+    // Search header box
+    d.rect_outline(shade(primary, 0.5), x + 8.0, y + 8.0, w - 16.0, 28.0);
+
+    // Highlight selected search result item
+    let filtered_count = palette.filtered_items().len();
+    if filtered_count > 0 && palette.selected_index < filtered_count {
+        let sel_y = y + 44.0 + palette.selected_index as f32 * 26.0;
+        d.rect_fill(shade(primary, 0.3), x + 8.0, sel_y, w - 16.0, 24.0);
+    }
+
+    d
+}
+
+/// Styled tooltip card background.
+pub fn tooltip_draw(x: f32, y: f32, w: f32, h: f32, bg: Rgba, border: Rgba) -> Draw {
+    let mut d = Draw::new();
+    d.rect_fill(bg, x, y, w, h);
+    d.rect_outline(border, x, y, w, h);
+    d
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
