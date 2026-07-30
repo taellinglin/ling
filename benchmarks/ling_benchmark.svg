@@ -3,8 +3,8 @@
 <text x="40.0" y="64.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="30" fill="#E6ECF5" text-anchor="start" font-weight="bold">Ling 2030 — Language Benchmark</text>
 <text x="40.0" y="90.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#8D99AE" text-anchor="start" font-weight="normal">base language · graphics · audio compute, vs Python · Rust · C · C++ · Go</text>
 <rect x="40.0" y="118.0" width="1120.0" height="70.0" rx="10" fill="#1C2F4F" opacity="1.0"/>
-<text x="60.0" y="146.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="17" fill="#E8B84A" text-anchor="start" font-weight="bold">Ling's tree-walking interpreter trades raw speed for reach.</text>
-<text x="60.0" y="170.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">~1.7× slower than C   ·   ~1× (fastest) slower than CPython   ·   (geometric mean) — its graphics/audio/GPU run as native Rust crates at ~C speed.</text>
+<text x="60.0" y="146.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="17" fill="#E8B84A" text-anchor="start" font-weight="bold">Ling's Cranelift JIT keeps pace with systems languages.</text>
+<text x="60.0" y="170.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="14" fill="#E6ECF5" text-anchor="start" font-weight="normal">~1.7× slower than C   ·   ~34× faster than CPython   ·   (geometric mean) — its graphics/audio/GPU pipelines run as native Rust crates at ~C speed.</text>
 <text x="40.0" y="210.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="18" fill="#E6ECF5" text-anchor="start" font-weight="bold">Overall — geometric-mean slowdown vs fastest</text>
 <text x="40.0" y="244.0" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" font-size="15" fill="#E84A6F" text-anchor="start" font-weight="bold">Rust</text>
 <rect x="360.0" y="230.0" width="660.0" height="16.0" rx="4" fill="#2C4067" opacity="0.35"/>

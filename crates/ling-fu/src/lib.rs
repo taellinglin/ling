@@ -3,7 +3,9 @@ use dialoguer::{Input, Select};
 use std::env;
 
 pub mod normalize;
+pub mod registry;
 pub mod scaffold;
+pub mod seed;
 use scaffold::{ProjectKind, ProjectScaffold, ScaffoldLang, dir_names};
 
 // ─── Invocation language detection ───────────────────────────────────────────
@@ -616,7 +618,7 @@ const MANIFEST_NAMES: &[&str] = &[
 ];
 
 /// Walk up the directory tree to find a Ling manifest file.
-fn find_manifest() -> Option<std::path::PathBuf> {
+pub(crate) fn find_manifest() -> Option<std::path::PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         for name in MANIFEST_NAMES {
@@ -714,6 +716,10 @@ pub fn run() -> anyhow::Result<()> {
             .status()
             .map_err(|e| anyhow::anyhow!("ling: {e}"))?;
         std::process::exit(status.code().unwrap_or(1));
+    } else if cmd == "seed" {
+        // Reconstructable encrypted integrity fingerprint of the project —
+        // see seed.rs's module doc for the full design.
+        seed::run(rest)?;
     } else if matches_cmd!(tr.new) {
         println!("{}", invocation_lang.welcome_message().cyan().bold());
         cmd_new(rest, &invocation_lang)?;
@@ -1868,19 +1874,12 @@ fn cmd_search(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> 
 fn cmd_publish(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     say(
         lang,
-        "Publishing to registry...",
+        &format!("Publishing to {}...", registry::active_registry()),
         "正在发布到注册处...",
         "レジストリに公開中...",
         "레지스트리에 게시 중...",
     );
-    let status = std::process::Command::new("cargo")
-        .arg("publish")
-        .args(args)
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("publish failed");
-    }
+    registry::publish(args)?;
     println!(
         "{}",
         t(
@@ -1903,19 +1902,12 @@ fn cmd_publish(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()>
 fn cmd_login(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     say(
         lang,
-        "Logging in to registry...",
+        &format!("Saving API key for {}...", registry::active_registry()),
         "正在登入注册处...",
         "レジストリにログイン中...",
         "레지스트리 로그인 중...",
     );
-    let status = std::process::Command::new("cargo")
-        .arg("login")
-        .args(args)
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("login failed");
-    }
+    registry::login(args)?;
     println!(
         "{}",
         t(
@@ -1941,13 +1933,7 @@ fn cmd_logout(lang: &InvocationLanguage) -> anyhow::Result<()> {
         "レジストリからログアウト中...",
         "레지스트리 로그아웃 중...",
     );
-    let status = std::process::Command::new("cargo")
-        .arg("logout")
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("logout failed");
-    }
+    registry::logout()?;
     println!(
         "{}",
         t(

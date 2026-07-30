@@ -273,9 +273,29 @@ pub(crate) fn translate_rvalue(
                 _ => String::new(),
             };
             let is_kernel = callee_name.starts_with("ling_kernel_");
+            // Only these two intrinsics scan their string argument for a NUL
+            // terminator (`ling_kernel_vga_write_str`/`ling_kernel_panic` in
+            // ling-kernel's lib.rs); every other kernel intrinsic reads the
+            // length-prefixed `ling_str_new` layout via `strings::bytes_of_ptr`.
+            // A `Constant::Str` argument must therefore be boxed through the
+            // normal `ling_str_new` path for those, exactly like any computed
+            // string already is — otherwise MIR constant-propagation folding a
+            // `bind`-then-call back into a direct literal call (which it does
+            // for any non-trivial `__main__`, since copy/const-prop aren't
+            // skipped there) silently reinterprets raw literal bytes as a
+            // length header.
+            let raw_cstr_kernel_fn =
+                matches!(callee_name.as_str(), "ling_kernel_vga_write_str" | "ling_kernel_panic");
             let mut cal_args = Vec::new();
             if is_kernel {
                 for arg in args {
+                    if !raw_cstr_kernel_fn {
+                        if let Operand::Constant(Constant::Str(_)) = arg {
+                            let boxed = translate_op(arg, builder, ctx);
+                            cal_args.push(dynamic_to_raw(builder, boxed));
+                            continue;
+                        }
+                    }
                     cal_args.push(translate_op_int(arg, builder, ctx));
                 }
             } else {
@@ -299,7 +319,7 @@ pub(crate) fn translate_rvalue(
                 let inst = builder.ins().call(fr, &cal_args);
                 let raw = builder.inst_results(inst)[0];
                 if is_kernel {
-                    (int_to_boxed(builder, raw), Repr::Boxed)
+                    (dynamic_from_raw(builder, raw), Repr::Boxed)
                 } else {
                     (raw, Repr::Boxed)
                 }
@@ -482,9 +502,22 @@ pub(crate) fn translate_op_int(
         Operand::Copy(l) | Operand::Move(l) if ctx.nt.local_is_int(ctx.fname, l.0) => {
             builder.use_var(ctx.vars[l])
         },
+        // Raw pointer to the (NUL-terminated) string data — not boxed via
+        // `ling_str_new`. Kernel intrinsics (`ling_kernel_vga_write_str` and
+        // friends) are the only raw-int callers that ever see a `Str`
+        // constant, and they all take a bare pointer, so this avoids
+        // depending on the boxed/managed-string runtime (`ling_str_new`,
+        // `ling_alloc`) that a `#![no_std]` kernel build doesn't provide.
+        Operand::Constant(Constant::Str(s)) => {
+            if let Some(&gv) = ctx.string_gvs.get(s.as_str()) {
+                builder.ins().symbol_value(types::I64, gv)
+            } else {
+                builder.ins().iconst(types::I64, 0)
+            }
+        },
         _ => {
             let boxed = translate_op(op, builder, ctx);
-            boxed_to_int(builder, boxed)
+            dynamic_to_raw(builder, boxed)
         },
     }
 }
@@ -719,6 +752,41 @@ pub(crate) fn int_to_boxed(builder: &mut FunctionBuilder, v: Value) -> Value {
 pub(crate) fn boxed_to_int(builder: &mut FunctionBuilder, v: Value) -> Value {
     let f = i64_as_f64(builder, v);
     builder.ins().fcvt_to_sint_sat(types::I64, f)
+}
+
+/// Unbox a NaN-boxed *value of unknown kind* to a raw `u64` — used for
+/// `ling_kernel_*` call arguments, which always want the raw payload (a
+/// pointer for a heap value, a truncated integer for a number), never the
+/// tagged bit pattern itself. `boxed_to_int` alone is wrong here: it always
+/// treats its input as a boxed float, so a tagged heap value (e.g. a real
+/// Ling string built via `ling_str_new`/concatenation) would have its tag
+/// bits reinterpreted as float bits and saturate to 0 — silently handing
+/// the kernel intrinsic a null pointer instead of the string's address.
+pub(crate) fn dynamic_to_raw(builder: &mut FunctionBuilder, v: Value) -> Value {
+    let is_num = emit_is_number(builder, v);
+    let f = i64_as_f64(builder, v);
+    let as_int = builder.ins().fcvt_to_sint_sat(types::I64, f);
+    let ptr_mask = builder.ins().iconst(types::I64, 0x0000_FFFF_FFFF_FFFFu64 as i64);
+    let as_ptr = builder.ins().band(v, ptr_mask);
+    builder.ins().select(is_num, as_int, as_ptr)
+}
+
+/// Box a `ling_kernel_*` call's raw `u64` return value — the mirror of
+/// `dynamic_to_raw` for arguments, needed for the same reason. Most kernel
+/// intrinsics return a plain small integer (a byte, a 0/1 flag) that wants
+/// `int_to_boxed`'s float-NaN-boxing, but a few (`ling_kernel_read_line`)
+/// return an *already-tagged* heap value built kernel-side via
+/// `ling_str_new` — reboxing that as if it were an integer would
+/// reinterpret its pointer bits as a signed integer and convert *that* to
+/// a float, corrupting it. Distinguished the same way `dynamic_to_raw`
+/// distinguishes its input: top byte `0x7F` marks an already-tagged value,
+/// and no kernel-returned plain integer is remotely large enough
+/// (~9.2 * 10^18) to collide with that by accident.
+pub(crate) fn dynamic_from_raw(builder: &mut FunctionBuilder, raw: Value) -> Value {
+    let shifted = builder.ins().ushr_imm(raw, 56);
+    let already_tagged = builder.ins().icmp_imm(IntCC::Equal, shifted, 0x7F);
+    let boxed_as_int = int_to_boxed(builder, raw);
+    builder.ins().select(already_tagged, raw, boxed_as_int)
 }
 
 pub(crate) fn emit_f64_or_runtime(

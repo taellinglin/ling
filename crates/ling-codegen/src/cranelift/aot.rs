@@ -133,6 +133,70 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_init", &[], types::I64),
         ("ling_kernel_cpuid", &[types::I64, types::I64, types::I64, types::I64], types::I64),
         ("ling_kernel_asm_exec", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_kbd_read_char", &[], types::I64),
+        ("ling_kernel_kbd_poll_char", &[], types::I64),
+        ("ling_kernel_vga_set_color", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_fs_selftest", &[], types::I64),
+        ("ling_kernel_read_line", &[], types::I64),
+        ("ling_kernel_print_lstr", &[types::I64], types::I64),
+        ("ling_kernel_fs_mount", &[], types::I64),
+        ("ling_kernel_fs_ls", &[types::I64], types::I64),
+        ("ling_kernel_fs_write", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_fs_read", &[types::I64], types::I64),
+        ("ling_kernel_str_cmd", &[types::I64], types::I64),
+        ("ling_kernel_str_arg", &[types::I64], types::I64),
+        ("ling_kernel_theme_dark", &[], types::I64),
+        ("ling_kernel_theme_light", &[], types::I64),
+        ("ling_kernel_fb_available", &[], types::I64),
+        ("ling_kernel_fb_width", &[], types::I64),
+        ("ling_kernel_fb_height", &[], types::I64),
+        ("ling_kernel_fb_set_pixel", &[types::I64, types::I64, types::I64], types::I64),
+        (
+            "ling_kernel_fb_fill_rect",
+            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        ("ling_kernel_fb_clear", &[types::I64], types::I64),
+        ("ling_kernel_fb_back_clear", &[types::I64], types::I64),
+        (
+            "ling_kernel_fb_back_fill_rect",
+            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        ("ling_kernel_fb_present", &[], types::I64),
+        ("ling_kernel_pkg_install", &[types::I64], types::I64),
+        ("ling_kernel_pkg_install_module", &[], types::I64),
+        ("ling_kernel_life_run", &[], types::I64),
+        ("ling_kernel_mouse_init", &[], types::I64),
+        ("ling_kernel_mouse_set_bounds", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_mouse_poll", &[], types::I64),
+        ("ling_kernel_mouse_x", &[], types::I64),
+        ("ling_kernel_mouse_y", &[], types::I64),
+        ("ling_kernel_mouse_buttons", &[], types::I64),
+        ("ling_kernel_bootmodule_addr", &[], types::I64),
+        ("ling_kernel_bootmodule_size", &[], types::I64),
+        (
+            "ling_kernel_disk_write_raw",
+            &[types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        (
+            "ling_kernel_user_create",
+            &[types::I64, types::I64, types::I64, types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        ("ling_kernel_user_login", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_user_set_password", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_user_set_group", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_whoami", &[], types::I64),
+        ("ling_kernel_cd", &[types::I64], types::I64),
+        ("ling_kernel_cwd", &[], types::I64),
+        ("ling_kernel_read_line_masked", &[], types::I64),
+        (
+            "ling_kernel_ed25519_verify",
+            &[types::I64, types::I64, types::I64],
+            types::I64,
+        ),
     ];
 
     for &(name, params, ret) in runtime_fns {
@@ -186,7 +250,14 @@ fn visit_operand_strings(
                 .declare_data(&name, Linkage::Local, true, false)
                 .unwrap();
             let mut desc = DataDescription::new();
-            desc.define(s.as_bytes().to_vec().into_boxed_slice());
+            // NUL-terminated even though the boxed `ling_str_new(ptr, len)`
+            // path only ever reads `len` bytes: kernel-mode calls pass this
+            // same pointer raw (see `translate_op_int`'s `Constant::Str` arm)
+            // to intrinsics like `ling_kernel_vga_write_str` that take a
+            // pointer only, no length, and scan for a NUL terminator.
+            let mut bytes = s.as_bytes().to_vec();
+            bytes.push(0);
+            desc.define(bytes.into_boxed_slice());
             desc.set_align(1);
             module.define_data(data_id, &desc).unwrap();
             string_ids.insert(s.clone(), data_id);
@@ -200,6 +271,16 @@ fn visit_rvalue_builtin_names(
     builtin_ids: &mut HashMap<String, DataId>,
 ) {
     if let Rvalue::Call { func: Operand::Constant(Constant::Function(n)), .. } = rval {
+        // `ling_kernel_*` calls must resolve through `runtime_decls` (a direct
+        // extern import, see `declare_runtime_functions`) — never through the
+        // generic `__ling_builtin` dispatch. Registering them here too would
+        // make the per-function `func_refs` loop's `builtin_ids` check match
+        // first (it runs before the `runtime_decls` check), silently routing
+        // every kernel-intrinsic call into `emit_builtin_call` instead, which
+        // needs a `ling_builtin` the `#![no_std]` kernel runtime never provides.
+        if n.starts_with("ling_kernel_") {
+            return;
+        }
         if !builtin_ids.contains_key(n) {
             let name = format!("__builtin_{}", builtin_ids.len());
             let data_id = module
@@ -335,13 +416,27 @@ fn collect_rvalue_refs(rval: &Rvalue, refs: &mut FuncRefs) {
 
 impl CraneliftBackend {
     pub fn new() -> Self {
+        let isa_builder = cranelift::native::builder()
+            .unwrap_or_else(|_| isa::lookup_by_name("aarch64").unwrap());
+        Self::from_isa_builder(isa_builder)
+    }
+
+    /// Cross-target constructor: emit for `arch` (e.g. `"aarch64"`) regardless
+    /// of the host the compiler itself is running on. Used for kernel targets
+    /// whose triple doesn't match the build host, like `aarch64-unknown-none`
+    /// (Raspberry Pi) compiled from an x86_64 dev machine.
+    pub fn new_for_arch(arch: &str) -> Self {
+        let isa_builder = isa::lookup_by_name(arch)
+            .unwrap_or_else(|e| panic!("cranelift: no codegen backend for arch '{arch}': {e}"));
+        Self::from_isa_builder(isa_builder)
+    }
+
+    fn from_isa_builder(isa_builder: isa::Builder) -> Self {
         let mut flag_builder = settings::builder();
         flag_builder.set("is_pic", "true").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
         flag_builder.set("enable_alias_analysis", "true").unwrap();
         flag_builder.set("enable_verifier", "false").unwrap();
-        let isa_builder = cranelift::native::builder()
-            .unwrap_or_else(|_| isa::lookup_by_name("aarch64").unwrap());
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .unwrap();

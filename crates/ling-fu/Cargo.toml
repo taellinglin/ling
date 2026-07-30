@@ -97,3 +97,13 @@ tempfile = "3.8"
 rayon = "1.10"
 unicode-normalization = "0.1"
 unicode-script = "0.5"
+# Registry client: `lingfu publish/login/logout` talk to fu.ling-lang.org.
+# ureq defaults to a pure-rustls TLS stack (no OpenSSL), so this builds on
+# Windows without a system TLS toolchain.
+ureq = { version = "2", features = ["json"] }
+flate2 = "1"
+tar = "0.4"
+base64 = "0.22"
+dirs = "5"
+# `lingfu seed`'s keyfile HKDF, AEAD, and Shamir-recovery shares.
+ling-crypto = { path = "../ling-crypto" }

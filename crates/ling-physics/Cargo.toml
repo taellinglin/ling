@@ -14,7 +14,7 @@ with-gltf = ["dep:gltf"]
 cuda = ["ling-gpu/cuda"]
 
 [dependencies]
-glam = "0.28"
+glam = "0.33"
 gltf = { version = "1.4", optional = true }
 ling-gpu = { path = "../ling-gpu", version = "2030.0.0" }
 rayon = "1.10"

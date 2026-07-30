@@ -36,6 +36,7 @@ members = [
     "crates/ling-crypto",
     "crates/ling-audio",
     "crates/ling-net",
+    "crates/ling-http",
     "crates/ling-mir",
     "crates/ling-fu",
     "crates/ling-graphics",
@@ -120,11 +121,24 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # vertex projection across every NVIDIA device (multi-GPU). Runtime-detected —
 # falls back to the parallel CPU backend when no CUDA device is present.
 cuda = ["ling-gpu/cuda", "ling-physics/cuda"]
+# HTTP server builtins (http_route/http_serve): axum/rustls/rusqlite via
+# ling-http. Off by default — the compiler/game/graphics build shouldn't
+# carry a web server stack unless a program actually uses it.
+# tower-http's ServeDir backs http_static (binary-safe static files); reqwest
+# backs http_post_async/http_job_poll (non-blocking outbound calls, e.g. to
+# a local Stable Diffusion API, so one slow request doesn't stall http_serve's
+# single-threaded dispatch loop for every other visitor); zip backs zip_files.
+# (Not ling-web: it declares its own `[workspace]`, so the root crate can't
+# path-depend on it — "multiple workspace roots" — reuse just the one type it
+# would have given us, tower_http::services::ServeDir, directly instead.)
+web = ["dep:ling-http", "dep:tower-http", "dep:reqwest", "dep:zip", "dep:hmac", "dep:sha1"]
 
 [dependencies]
-glam = "0.28"
+glam = "0.33"
 base64 = "0.22"
 flate2 = "1"
+rand = "0.8"   # random_hex builtin (session ids / nonces) — a real ling-crypto dep already, pinned here too for direct use in runtime/mod.rs
+sha2 = "0.10"   # sha256_hex builtin — ling-crypto has Blake3/SHA-3/SHAKE but not plain SHA-256, which is what browsers' native SubtleCrypto provides for client-side proof-of-work mining; server-side verification needs to match exactly
 ling-physics = { workspace = true, features = ["with-gltf"] }
 ling-gpu = { path = "crates/ling-gpu", version = "2030.0.1" }
 ling-graphics = { path = "crates/ling-graphics", version = "2030.0.1" }
@@ -135,6 +149,7 @@ ling-ast = { workspace = true }
 rustc-hash = "2.0"   # fast non-crypto hasher for the interpreter env/dispatch maps
 ling-core = { workspace = true }
 ling-codegen = { workspace = true }
+fontdue = "0.9"   # rasterizes a kernel project's idle-timeout font (font/*.otf) to a VGA bitmap at build time
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
@@ -149,6 +164,13 @@ ling-ui = { path = "crates/ling-ui", version = "2030.0.0" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
+ling-http = { workspace = true, optional = true }   # http_route/http_serve builtins (feature = "web")
+tower-http = { version = "0.6", features = ["fs"], optional = true }   # ServeDir backs http_static (feature = "web")
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }   # http_post_async/http_job_poll builtins (feature = "web")
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }   # zip_files builtin (feature = "web")
+hmac = { version = "0.12", optional = true }   # TOTP (2FA) builtins (feature = "web")
+sha1 = { version = "0.10", optional = true }   # TOTP HMAC-SHA1 (feature = "web")
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }   # qr_svg builtin — scannable otpauth:// codes for 2FA setup
 # Optional native GPU rasteriser backend (feature = "gpu").
 wgpu = { version = "22", optional = true }
 pollster = { version = "0.3", optional = true }
@@ -251,6 +273,7 @@ half       = "2"
 
 # Networking
 ling-net = { path = "crates/ling-net", version = "2030.0.0" }
+ling-http = { path = "crates/ling-http", version = "0.1.0" }
 tokio    = { version = "1.37", features = ["full"] }
 quinn    = "0.11"
 
@@ -266,7 +289,7 @@ wasm-bindgen = "0.2.95"
 
 # Physics & math
 ling-physics = { path = "crates/ling-physics", version = "2030.1.9" }
-glam         = "0.28"
+glam         = "0.33"
 
 # Shared
 serde = { version = "1.0", features = ["derive"] }

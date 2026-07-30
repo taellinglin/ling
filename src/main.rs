@@ -2,6 +2,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// True for any recognized Ling source-file extension — `.ling` plus the
+/// localized single-glyph aliases lingfu scaffolds (`灵符.toml`'s entry is
+/// `启.灵`, not `启.ling`). Keep in sync with `ling-fu/src/normalize.rs`'s
+/// own list.
+fn is_ling_source(name: &str) -> bool {
+    name.ends_with(".ling")
+        || name.ends_with(".灵")
+        || name.ends_with(".霊")
+        || name.ends_with(".령")
+        || name.ends_with(".ลิง")
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -31,7 +43,7 @@ fn main() {
             let file = args[2..]
                 .iter()
                 .map(|s| s.as_str())
-                .find(|a| a.ends_with(".ling"))
+                .find(|a| is_ling_source(a))
                 .unwrap_or_else(|| {
                     eprintln!("Usage: ling run [--wasm|--interp] <file.ling>");
                     std::process::exit(1);
@@ -41,7 +53,20 @@ fn main() {
             } else if use_interp {
                 run_file(file);
             } else {
-                run_file_jit(file);
+                // Server programs (http_serve) run on the tree-walker: their
+                // handlers are closures passed as call arguments, which the
+                // Cranelift JIT currently lowers to Unit (known bug — JIT
+                // closure-argument support). The interpreter is the semantic
+                // reference and handles them correctly, and a web service is
+                // I/O-bound anyway, so JIT throughput isn't the bottleneck.
+                let is_server = std::fs::read_to_string(file)
+                    .map(|s| s.contains("http_serve") || s.contains("เว็บเสิร์ฟ"))
+                    .unwrap_or(false);
+                if is_server {
+                    run_file(file);
+                } else {
+                    run_file_jit(file);
+                }
             }
         },
 
@@ -64,7 +89,7 @@ fn main() {
             let aot = args.iter().any(|a| a == "--aot");
             run_build(target, &out, &platforms, icon, pack, aot);
         },
-        Some(file) if file.ends_with(".ling") => run_file_jit(file),
+        Some(file) if is_ling_source(file) => run_file_jit(file),
         _ => {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
@@ -427,6 +452,12 @@ struct LingProject {
     build_dir: PathBuf,    // where the temp Rust build project lives
     icon: Option<PathBuf>, // app icon source from the manifest (svg/png/ico)
     includes: Vec<String>, // resource globs from the manifest [includes] block
+    /// `[project] graphics = true` (kernel targets only): request a
+    /// Multiboot2 linear framebuffer instead of leaving VGA in text mode
+    /// (see `ling-kernel`'s `request_framebuffer` Cargo feature). Off by
+    /// default — enabling it for a target with no framebuffer-based
+    /// renderer would blank the screen (confirmed the hard way once).
+    graphics: bool,
 }
 
 fn discover_project(target: &str) -> LingProject {
@@ -447,6 +478,7 @@ fn discover_project(target: &str) -> LingProject {
             build_dir,
             icon: None,
             includes: Vec::new(),
+            graphics: false,
         }
     } else if path.is_dir() {
         // ling-fu project: 灵符.toml
@@ -480,6 +512,7 @@ fn discover_project(target: &str) -> LingProject {
             build_dir,
             icon: None,
             includes: Vec::new(),
+            graphics: false,
         }
     } else {
         eprintln!("error: '{}' is not a .ling file or directory", target);
@@ -550,6 +583,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         build_dir,
         icon,
         includes,
+        graphics: false,
     }
 }
 
@@ -573,6 +607,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut entry_name = "main.ling".to_string();
     let mut kind = ProjKind::Bin;
     let mut icon: Option<PathBuf> = None;
+    let mut graphics = false;
 
     for line in text.lines() {
         let line = line.trim();
@@ -592,6 +627,11 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         if let Some(v) = toml_kv(line, "icon") {
             icon = Some(base.join(v));
         }
+        // graphics = true (kernel targets only) -- request a Multiboot2
+        // linear framebuffer instead of VGA text mode.
+        if let Some(v) = toml_kv(line, "graphics") {
+            graphics = v == "true";
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -610,6 +650,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         build_dir,
         icon,
         includes,
+        graphics,
     }
 }
 
@@ -721,8 +762,11 @@ fn run_build(
             "kernel" | "bare" => {
                 build_native(&project, out, NativePlatform::BareMetal, icon, pack, aot)
             },
+            "rpi" | "raspberrypi" => {
+                build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
+            },
             other => {
-                eprintln!("unknown platform '{}' — use web|win|lin|mac|kernel|all", other);
+                eprintln!("unknown platform '{}' — use web|win|lin|mac|kernel|rpi|all", other);
                 std::process::exit(1);
             },
         }
@@ -889,6 +933,8 @@ enum NativePlatform {
     Linux,
     Mac,
     BareMetal,
+    /// Raspberry Pi (aarch64), bare-metal — see `RPI_LINKER_SCRIPT`.
+    Rpi,
 }
 
 impl NativePlatform {
@@ -898,6 +944,7 @@ impl NativePlatform {
             Self::Linux => "linux",
             Self::Mac => "macos",
             Self::BareMetal => "kernel",
+            Self::Rpi => "rpi",
         }
     }
 
@@ -927,13 +974,14 @@ impl NativePlatform {
                 }
             },
             Self::BareMetal => "x86_64-unknown-none",
+            Self::Rpi => "aarch64-unknown-none",
         }
     }
 
     fn exe_suffix(self) -> &'static str {
         match self {
             Self::Windows => ".exe",
-            Self::BareMetal => "",
+            Self::BareMetal | Self::Rpi => "",
             _ => "",
         }
     }
@@ -943,7 +991,20 @@ impl NativePlatform {
             Self::Windows => cfg!(target_os = "windows"),
             Self::Linux => cfg!(target_os = "linux"),
             Self::Mac => cfg!(target_os = "macos"),
-            Self::BareMetal => false,
+            Self::BareMetal | Self::Rpi => false,
+        }
+    }
+
+    /// Bare architecture name (no OS/vendor) for `CraneliftBackend::new_for_arch`.
+    /// Using the bare arch — not the host's full triple — is what makes the
+    /// AOT object come out as ELF even when `ling` itself runs on Windows or
+    /// macOS (whose *native* triple would otherwise emit COFF/Mach-O, which
+    /// the bare-metal linker step can't read).
+    fn cranelift_arch(self) -> &'static str {
+        match self {
+            Self::BareMetal => "x86_64",
+            Self::Rpi => "aarch64",
+            _ => unreachable!("cranelift_arch only used for kernel targets"),
         }
     }
 }
@@ -957,7 +1018,8 @@ fn build_native(
     aot: bool,
 ) {
     let triple = platform.triple();
-    let is_kernel = matches!(platform, NativePlatform::BareMetal);
+    let is_kernel = matches!(platform, NativePlatform::BareMetal | NativePlatform::Rpi);
+    let is_rpi = matches!(platform, NativePlatform::Rpi);
     println!(
         "  [{}] building {} ({triple}){}…",
         platform.dir_name(),
@@ -1015,7 +1077,16 @@ fn build_native(
             "    compiling {} functions to native code…",
             mir_prog.mir.functions.len()
         );
-        let mut backend = ling_codegen::CraneliftBackend::new().with_progress(true);
+        // Cross-target explicitly by bare arch name (not `::new()`'s
+        // host-native triple): on Windows/macOS hosts, the "native" triple
+        // carries the host OS and makes cranelift-object emit COFF/Mach-O,
+        // which the bare-metal ELF linker step below can't read. The bare
+        // arch name resolves to an "unknown" OS/vendor, which cranelift-object
+        // maps to ELF — correct for every `*-unknown-none` kernel target
+        // regardless of which OS `ling` itself is running on.
+        let mut backend =
+            ling_codegen::CraneliftBackend::new_for_arch(platform.cranelift_arch())
+                .with_progress(true);
         let obj_path = build_dir.join("entry.o");
         use ling_codegen::CodegenBackend;
         backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
@@ -1028,25 +1099,42 @@ fn build_native(
         // Generate kernel-specific Cargo.toml with ling-kernel dependency
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_kernel_cargo_toml(&project.name, &project.version, &ling_root),
+            gen_kernel_cargo_toml(&project.name, &project.version, &ling_root, project.graphics),
         )
         .expect("write Cargo.toml");
 
-        std::fs::write(build_dir.join("src/main.rs"), gen_kernel_main_rs())
-            .expect("write src/main.rs");
+        // Idle-timeout VGA font (x86_64 only — a plain UART, aarch64's
+        // console, has no font/color concept for the connecting terminal to
+        // take direction from). Convention: walk up from the project dir
+        // looking for a `font/` folder with an .otf/.ttf in it (matches
+        // LingOS's own layout: kernel/x86_64/ finds ../../font/square.otf).
+        let idle_font_mod = if !is_rpi {
+            find_font_asset(&project.source_dir).and_then(|font_path| {
+                let bytes = std::fs::read(&font_path).ok()?;
+                let cjk_fallback = std::fs::read(ling_root.join("assets/fonts/NotoSansSC.ttf")).ok();
+                let atlas = rasterize_vga_font(&bytes, cjk_fallback.as_deref());
+                std::fs::write(build_dir.join("src/idle_font.rs"), gen_idle_font_rs(&atlas))
+                    .ok()?;
+                println!("    idle font: {} → src/idle_font.rs", font_path.display());
+                Some("idle_font")
+            })
+        } else {
+            None
+        };
+
+        let main_rs = if is_rpi {
+            gen_rpi_kernel_main_rs()
+        } else {
+            gen_kernel_main_rs(idle_font_mod)
+        };
+        std::fs::write(build_dir.join("src/main.rs"), main_rs).expect("write src/main.rs");
 
         std::fs::write(build_dir.join("build.rs"), gen_kernel_build_rs())
             .expect("write build.rs");
 
         // Write linker script
-        std::fs::write(
-            build_dir.join("linker.ld"),
-            KERNEL_LINKER_SCRIPT,
-        )
-        .expect("write linker.ld");
-
-        // Write multiboot header as a separate object
-        write_multiboot_header(build_dir);
+        let linker_script = if is_rpi { RPI_LINKER_SCRIPT } else { KERNEL_LINKER_SCRIPT };
+        std::fs::write(build_dir.join("linker.ld"), linker_script).expect("write linker.ld");
 
         println!("    kernel build files written to {}", build_dir.display());
     } else if use_aot {
@@ -1122,18 +1210,42 @@ fn build_native(
 
     // For no_std targets, we need nightly features
     if is_kernel {
-        // Write .cargo/config.toml to enable build-std
+        // Write .cargo/config.toml to enable build-std. The linker script and
+        // entry.o are wired in separately via build.rs's
+        // `cargo:rustc-link-arg-bins` (see `gen_kernel_build_rs`), so this
+        // only needs the build-std bit — it used to also duplicate the
+        // linker-script arg here under a hardcoded `[target.x86_64-unknown-none]`
+        // section (which silently never applied to any other kernel triple,
+        // e.g. `aarch64-unknown-none`) plus an invalid `-nostartfiles` raw
+        // linker arg (that flag is for a cc-frontend link line, not a direct
+        // ld/lld invocation, which is how rustc links `*-unknown-none`).
+        // `-C relocation-model=static`: without it, rustc's default PIC/PIE
+        // codegen for this target leaves runtime relocations in the ELF and
+        // adds `-pie` at link time. Nothing applies those relocations at
+        // boot (no dynamic linker), and GRUB's multiboot2 ELF64 loader
+        // refuses to load a PIE outright ("ELF files with relocs are not
+        // supported yet") — confirmed by an actual QEMU boot attempt.
+        // `--cfg curve25519_dalek_backend="serial"`: forces ed25519-dalek's
+        // portable (non-SIMD) backend. Its default x86_64 backend emits AVX2
+        // codegen that a freestanding target can't lower ("rustc-LLVM ERROR:
+        // Do not know how to split the result of this operator!", confirmed
+        // by an actual build attempt without this flag) — the same
+        // portable-over-fast tradeoff already made for blake3's `pure`
+        // feature above, and harmless on aarch64 too since "serial" is
+        // arch-generic, not x86-specific.
         let cargo_dir = build_dir.join(".cargo");
         std::fs::create_dir_all(&cargo_dir).expect("create .cargo dir");
         std::fs::write(
             cargo_dir.join("config.toml"),
-            r#"[unstable]
+            format!(
+                r#"[unstable]
 build-std = ["core", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
-[target.x86_64-unknown-none]
-rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=-nostartfiles"]
-"#,
+[target.{triple}]
+rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend=\"serial\""]
+"#
+            ),
         )
         .ok();
         // Use nightly for build-std support
@@ -1192,6 +1304,14 @@ rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=-nostartfiles"]
     });
     println!("  [{}] → {}", platform.dir_name(), dst.display());
 
+    // Raspberry Pi firmware boots a raw binary (`kernel8.img`), not an ELF —
+    // extract one from the ELF we just built and copied.
+    if is_rpi {
+        let img_path = platform_dir.join("kernel8.img");
+        objcopy_to_raw_binary(&dst, &img_path);
+        println!("  [{}] → {}", platform.dir_name(), img_path.display());
+    }
+
     // ── 6. Copy included resources next to the exe (unless packed inside it) ──
     if !do_pack && !resources.is_empty() {
         for (rel, abs) in &resources {
@@ -1212,6 +1332,156 @@ rustflags = ["-C", "link-arg=-Tlinker.ld", "-C", "link-arg=-nostartfiles"]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Extract a raw binary image from an ELF via `objcopy -O binary` — what
+/// Raspberry Pi firmware wants for `kernel8.img` (it has no ELF loader; it
+/// just copies file bytes to a fixed address). Tries `llvm-objcopy` first
+/// (ships with any LLVM install, handles cross-arch ELF happily), then falls
+/// back to a plain `objcopy` on PATH (e.g. a GNU binutils install, or the one
+/// inside WSL).
+fn objcopy_to_raw_binary(elf: &Path, out_img: &Path) {
+    for tool in ["llvm-objcopy", "objcopy"] {
+        let status = Command::new(tool)
+            .args(["-O", "binary"])
+            .arg(elf)
+            .arg(out_img)
+            .status();
+        match status {
+            Ok(s) if s.success() => return,
+            Ok(s) => {
+                eprintln!("  {tool} exited with {s}");
+                std::process::exit(1);
+            },
+            Err(_) => continue, // tool not found — try the next one
+        }
+    }
+    eprintln!(
+        "  error: neither llvm-objcopy nor objcopy found on PATH; can't produce {}",
+        out_img.display()
+    );
+    eprintln!("  install LLVM (provides llvm-objcopy) or GNU binutils (objcopy)");
+    std::process::exit(1);
+}
+
+/// Walk up from `dir` looking for a `font/` subdirectory containing an
+/// `.otf`/`.ttf` file — the convention a kernel project's idle-timeout font
+/// is found by (e.g. `LingOS/font/square.otf`, found from
+/// `LingOS/kernel/x86_64/`). Returns the first match (sorted, for
+/// determinism) in the nearest ancestor that has one; `None` if nothing is
+/// found within 6 levels up.
+fn find_font_asset(dir: &Path) -> Option<PathBuf> {
+    let mut cur = Some(dir);
+    for _ in 0..6 {
+        let d = cur?;
+        let font_dir = d.join("font");
+        if font_dir.is_dir() {
+            let mut candidates: Vec<PathBuf> = std::fs::read_dir(&font_dir)
+                .ok()?
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    matches!(
+                        p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()),
+                        Some(ref e) if e == "otf" || e == "ttf"
+                    )
+                })
+                .collect();
+            candidates.sort();
+            // Prefer a file literally named "square.*" — this project's
+            // chosen console font — over whatever else sorts first
+            // alphabetically (e.g. other font assets living alongside it).
+            if let Some(square) = candidates
+                .iter()
+                .find(|p| p.file_stem().and_then(|s| s.to_str()) == Some("square"))
+            {
+                return Some(square.clone());
+            }
+            if let Some(first) = candidates.into_iter().next() {
+                return Some(first);
+            }
+        }
+        cur = d.parent();
+    }
+    None
+}
+
+/// Byte slots reserved for glyphs beyond the primary font's own coverage —
+/// currently a couple of Chinese characters for the boot banner, sourced
+/// from a CJK-capable fallback font (most small/display fonts, like a
+/// project's chosen pixel/ASCII font, don't include CJK glyphs). 0x01/0x02/
+/// 0x03 are otherwise-unused control-character slots in a 256-glyph table.
+const SPECIAL_GLYPHS: &[(u8, char)] = &[
+    (0x01, '灵'), // líng — "spirit/soul", the project's namesake character
+    (0x02, '内'), // nèi  — "inner"
+    (0x03, '核'), // hé   — "core" (as in "kernel")
+];
+
+/// Rasterize `primary` (and, for `SPECIAL_GLYPHS`, `cjk_fallback` if given)
+/// into a 256-glyph, 8x16, 1bpp VGA font atlas (`ling_kernel::vga::load_font`'s
+/// expected layout). Printable ASCII (0x20..=0x7E) maps directly to the same
+/// Unicode codepoint; anything else is blank unless it's one of the special
+/// slots above. Missing glyphs (empty rasterized bitmap) are left blank
+/// rather than erroring — fonts commonly don't cover every codepoint.
+fn rasterize_vga_font(primary: &[u8], cjk_fallback: Option<&[u8]>) -> [u8; 4096] {
+    let mut out = [0u8; 4096];
+    let Ok(primary_font) = fontdue::Font::from_bytes(primary, fontdue::FontSettings::default())
+    else {
+        return out;
+    };
+    let cjk_font = cjk_fallback
+        .and_then(|b| fontdue::Font::from_bytes(b, fontdue::FontSettings::default()).ok());
+
+    for code in 0u32..256 {
+        if let Some(&(_, ch)) = SPECIAL_GLYPHS.iter().find(|(b, _)| *b as u32 == code) {
+            let font = cjk_font.as_ref().unwrap_or(&primary_font);
+            blit_glyph(&mut out, code as usize, font, ch);
+        } else if (0x20..=0x7E).contains(&code) {
+            let ch = char::from_u32(code).unwrap();
+            blit_glyph(&mut out, code as usize, &primary_font, ch);
+        }
+    }
+    out
+}
+
+/// Rasterize one glyph at a size tuned to mostly fill an 8x16 cell, centering
+/// it (both axes) within the cell before thresholding coverage to 1bpp.
+fn blit_glyph(out: &mut [u8; 4096], slot: usize, font: &fontdue::Font, ch: char) {
+    let (metrics, bitmap) = font.rasterize(ch, 15.0);
+    if metrics.width == 0 || metrics.height == 0 {
+        return; // glyph not covered by this font — leave the slot blank
+    }
+    let y_off = ((16i32 - metrics.height as i32) / 2).max(0) as usize;
+    let x_off = ((8i32 - metrics.width as i32) / 2).max(0) as usize;
+    for row in 0..metrics.height.min(16) {
+        let mut byte = 0u8;
+        for col in 0..metrics.width.min(8) {
+            if bitmap[row * metrics.width + col] > 128 {
+                byte |= 1 << (7usize.saturating_sub(x_off + col));
+            }
+        }
+        let out_row = y_off + row;
+        if out_row < 16 {
+            out[slot * 16 + out_row] |= byte;
+        }
+    }
+}
+
+/// Generate `src/idle_font.rs`: the rasterized VGA font atlas as a plain byte
+/// array, `include!`d (via `mod idle_font;`) by the generated kernel
+/// `main.rs` when a font asset was found.
+fn gen_idle_font_rs(atlas: &[u8; 4096]) -> String {
+    let mut out = String::with_capacity(4096 * 4 + 64);
+    out.push_str("pub static IDLE_FONT: [u8; 4096] = [\n");
+    for chunk in atlas.chunks(16) {
+        out.push_str("    ");
+        for b in chunk {
+            out.push_str(&format!("{b},"));
+        }
+        out.push('\n');
+    }
+    out.push_str("];\n");
+    out
+}
 
 /// Recursively collect all .ling files from `src` and copy them flat into `dst`.
 /// Also descends into 灵源/ and src/ sub-directories (ling-fu convention).
@@ -1258,8 +1528,13 @@ fn main() {
 }
 
 /// Generate Cargo.toml for kernel (no_std, no default features, links to ling-kernel).
-fn gen_kernel_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+fn gen_kernel_cargo_toml(name: &str, version: &str, ling_root: &Path, graphics: bool) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
+    let ling_kernel_dep = if graphics {
+        format!(r#"{{ path = "{root_str}/crates/ling-kernel", features = ["request_framebuffer"] }}"#)
+    } else {
+        format!(r#"{{ path = "{root_str}/crates/ling-kernel" }}"#)
+    };
     format!(
         r#"[workspace]
 [package]
@@ -1273,7 +1548,7 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-ling-kernel = {{ path = "{root_str}/crates/ling-kernel" }}
+ling-kernel = {ling_kernel_dep}
 
 [build-dependencies]
 cc = "1.0"
@@ -1288,33 +1563,43 @@ strip = true
     )
 }
 
-/// Generate `src/main.rs` for kernel builds: no_std, no_main, multiboot header.
-fn gen_kernel_main_rs() -> String {
-    r#"#![no_std]
+/// Generate `src/main.rs` for kernel builds: no_std, no_main. The multiboot2
+/// header and the real ELF entry point (`_start`) both live in
+/// `ling_kernel::boot32` now, not here — GRUB's Multiboot2 handoff lands in
+/// 32-bit protected mode with paging off even for a 64-bit ELF (confirmed by
+/// an actual QEMU boot: jumping straight into 64-bit-compiled code from
+/// there triple-faults immediately), so getting into a state where this
+/// file's 64-bit-compiled `kernel_entry` is safe to run at all takes a real
+/// assembly trampoline (page tables, PAE, EFER.LME, a 64-bit GDT) — see
+/// `boot32.rs`'s doc comment. `_start` there calls `kernel_entry` once that's
+/// done, mirroring the aarch64/Raspberry Pi boot path's own `kernel_entry`
+/// convention (see `gen_rpi_kernel_main_rs`) so both platforms' generated
+/// main.rs stay structurally identical.
+///
+/// `idle_font` is `Some` when a build-time-rasterized VGA font was found (see
+/// `find_font_asset`/`rasterize_vga_font`) — it names the generated module
+/// (`idle_font.rs`, written alongside this file) holding the byte array, and
+/// gets registered with `ling_kernel::vga::set_idle_font` before the kernel's
+/// own code runs, so `keyboard::read_char`'s idle timer can swap to it later.
+fn gen_kernel_main_rs(idle_font: Option<&str>) -> String {
+    // Plain string substitution (not `format!`) — the template below is full
+    // of literal Rust-code braces that `format!` would otherwise try to
+    // parse as placeholders.
+    let idle_font_mod = idle_font.map(|m| format!("mod {m};\n")).unwrap_or_default();
+    let idle_font_reg = idle_font
+        .map(|m| format!("        ling_kernel::vga::set_idle_font(&{m}::IDLE_FONT);\n"))
+        .unwrap_or_default();
+    let template = r#"#![no_std]
 #![no_main]
 
-use core::ptr;
+// Nothing below references `ling_kernel` by path — only `entry.o`'s compiled
+// code calls its `#[no_mangle] extern "C"` functions, which is invisible to
+// rustc's own "is this dependency used" tracking. Without this, rustc never
+// links ling-kernel's rlib in at all, and the link fails with "undefined
+// symbol: ling_kernel_vga_clear" (or whichever intrinsic is first referenced).
+extern crate ling_kernel;
 
-#[used]
-#[link_section = ".ling_multiboot"]
-static MULTIBOOT_HEADER: [u8; 64] = {
-    let magic: u32 = 0xE852_50D6;
-    let flags: u32 = 0;
-    let checksum: u32 = 0u32.wrapping_sub(magic.wrapping_add(flags));
-    let mut bytes = [0u8; 64];
-    let mut i = 0;
-    // Multiboot2 header
-    bytes[i..i+4].copy_from_slice(&magic.to_le_bytes()); i += 4;
-    bytes[i..i+4].copy_from_slice(&flags.to_le_bytes()); i += 4;
-    bytes[i..i+4].copy_from_slice(&checksum.to_le_bytes()); i += 4;
-    // reserved
-    i += 4;
-    // end tag (type=0, size=8)
-    bytes[i..i+2].copy_from_slice(&0u16.to_le_bytes()); i += 2;
-    bytes[i..i+2].copy_from_slice(&8u16.to_le_bytes()); i += 2;
-    bytes[i..i+4].copy_from_slice(&0u32.to_le_bytes());
-    bytes
-};
+/*IDLE_FONT_MOD*/
 
 extern "C" {
     fn __main__() -> u64;
@@ -1326,28 +1611,32 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 
 #[no_mangle]
-pub extern "C" fn _start() -> ! {
+pub extern "C" fn kernel_entry() -> ! {
     unsafe {
+/*IDLE_FONT_REG*/
         __main__();
     }
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
 }
-"#
-    .to_string()
+"#;
+    template
+        .replace("/*IDLE_FONT_MOD*/", &idle_font_mod)
+        .replace("/*IDLE_FONT_REG*/", &idle_font_reg)
 }
 
 /// Generate `build.rs` for kernel builds: links entry.o, multiboot.o, and linker script.
 fn gen_kernel_build_rs() -> String {
     r#"fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    println!("cargo:rustc-link-arg-bins=-nostartfiles");
+    // NOTE: no `-nostartfiles` here — that's a cc-frontend flag, not a raw
+    // ld/lld one, and rustc links `*-unknown-none` targets by invoking the
+    // linker directly (no cc frontend in between).
     println!("cargo:rustc-link-arg-bins=-static");
     println!("cargo:rustc-link-arg-bins=-n");
     println!("cargo:rustc-link-arg-bins=-T{}/linker.ld", manifest_dir);
     println!("cargo:rustc-link-arg-bins={}/entry.o", manifest_dir);
-    println!("cargo:rustc-link-arg-bins={}/multiboot.o", manifest_dir);
     println!("cargo:rerun-if-changed=entry.o");
     println!("cargo:rerun-if-changed=linker.ld");
 }
@@ -1355,47 +1644,44 @@ fn gen_kernel_build_rs() -> String {
     .to_string()
 }
 
-/// Write the multiboot header as a standalone .o file that gets linked first.
-fn write_multiboot_header(build_dir: &Path) {
-    // Write a minimal multiboot2 header as raw bytes and assemble it.
-    let header: [u8; 64] = {
-        // Multiboot2 header: magic=0xE85250D6, arch=i386=0, length, checksum
-        let magic: u32 = 0xE852_50D6;
-        let arch: u32 = 0;
-        let hdr_len: u32 = 64;
-        let checksum: u32 = 0u32.wrapping_sub(magic.wrapping_add(arch).wrapping_add(hdr_len));
-        let mut bytes = [0u8; 64];
-        let mut pos = 0;
-        bytes[pos..pos+4].copy_from_slice(&magic.to_le_bytes()); pos += 4;
-        bytes[pos..pos+4].copy_from_slice(&arch.to_le_bytes()); pos += 4;
-        bytes[pos..pos+4].copy_from_slice(&hdr_len.to_le_bytes()); pos += 4;
-        bytes[pos..pos+4].copy_from_slice(&checksum.to_le_bytes());
-        let end_offset = 56usize;
-        bytes[end_offset..end_offset+2].copy_from_slice(&0u16.to_le_bytes());
-        bytes[end_offset+2..end_offset+4].copy_from_slice(&8u16.to_le_bytes());
-        bytes
-    };
+/// Generate `src/main.rs` for Raspberry Pi (aarch64) kernel builds: no_std,
+/// no_main, no multiboot header (RPi firmware loads `kernel8.img` as a raw
+/// binary at a fixed address — there's no header/magic to look for). The
+/// actual `_start` — parking secondary cores, setting up the stack, zeroing
+/// .bss — lives in `ling_kernel::boot` since it needs real assembly before
+/// any Rust code (including this generated file) can safely run; this just
+/// supplies the `kernel_entry` that boot stub calls into.
+fn gen_rpi_kernel_main_rs() -> String {
+    r#"#![no_std]
+#![no_main]
 
-    let header_path = build_dir.join("multiboot_header.bin");
-    let _ = std::fs::write(&header_path, &header);
+// See the equivalent comment in `gen_kernel_main_rs` — forces ling-kernel's
+// rlib to actually be linked (the `zero_bss` call below would do this too,
+// but keep both: it's the correct idiom and doesn't depend on this function
+// body never changing).
+extern crate ling_kernel;
 
-    // Create a simple assembly file that embeds the header
-    let asm_path = build_dir.join("multiboot.s");
-    let asm_content = r#".section .ling_multiboot, "a"
-.global ling_multiboot_header
-ling_multiboot_header:
-    .incbin "multiboot_header.bin"
-"#;
-    let _ = std::fs::write(&asm_path, asm_content);
+extern "C" {
+    fn __main__() -> u64;
+}
 
-    // Try to assemble it with the system assembler, or write a Rust source instead
-    let rs_path = build_dir.join("multiboot.rs");
-    let rs_content = r#"#[used]
-#[link_section = ".ling_multiboot"]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+
 #[no_mangle]
-pub static LING_MULTIBOOT_HEADER: [u8; 64] = *include_bytes!("multiboot_header.bin");
-"#;
-    std::fs::write(&rs_path, rs_content).ok();
+pub extern "C" fn kernel_entry() -> ! {
+    unsafe {
+        ling_kernel::boot::zero_bss();
+        __main__();
+    }
+    loop {
+        unsafe { core::arch::asm!("wfi"); }
+    }
+}
+"#
+    .to_string()
 }
 
 /// Linker script for x86_64 kernel with multiboot2 header.
@@ -1425,6 +1711,50 @@ SECTIONS {
         *(.bss .bss.*)
         *(COMMON)
     }
+
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.comment)
+        *(.note.*)
+    }
+}
+"#;
+
+/// Linker script for the Raspberry Pi (aarch64) kernel. Entry at `0x80000` —
+/// the standard AArch64 no-devicetree load address RPi firmware jumps to.
+/// Defines `__bss_start`/`__bss_end` (zeroed by `ling_kernel::boot::zero_bss`
+/// before any Rust code runs — unlike the GRUB/Multiboot2 path, raw
+/// `kernel8.img` loading has no ELF program headers to zero .bss for us) and
+/// a `_stack_top` a few pages past the end of .bss for the boot stub's `sp`.
+const RPI_LINKER_SCRIPT: &str = r#"OUTPUT_FORMAT(elf64-littleaarch64)
+ENTRY(_start)
+
+SECTIONS {
+    . = 0x80000;
+
+    .text : ALIGN(4096) {
+        KEEP(*(.text.boot))
+        *(.text .text.*)
+    }
+
+    .rodata : ALIGN(4096) {
+        *(.rodata .rodata.*)
+    }
+
+    .data : ALIGN(4096) {
+        *(.data .data.*)
+    }
+
+    .bss (NOLOAD) : ALIGN(16) {
+        __bss_start = .;
+        *(.bss .bss.*)
+        *(COMMON)
+        __bss_end = .;
+    }
+
+    . = ALIGN(16);
+    . += 0x4000; /* 16KB boot stack */
+    _stack_top = .;
 
     /DISCARD/ : {
         *(.eh_frame)

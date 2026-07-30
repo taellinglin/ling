@@ -8,7 +8,40 @@ description = "Minimal kernel runtime for Ling — no_std CPU intrinsics, VGA, s
 [lib]
 crate-type = ["rlib"]
 
+[features]
+# Off by default: requesting a Multiboot2 linear framebuffer makes GRUB
+# switch out of VGA text mode, which would blank the screen for every
+# existing text-console kernel (vga.rs/term.rs only know how to draw into
+# the legacy 0xB8000 text plane, not a linear framebuffer — confirmed by an
+# actual QEMU screendump going solid black with this tag always on). Only a
+# kernel target that has its own framebuffer-based renderer should enable
+# this.
+request_framebuffer = []
+
 [dependencies]
+# no_std, no-alloc core hashing only (no `std`/`rayon`/mmap) — used by
+# lingfs for content-addressing. NOT the same as `ling-crypto`'s Blake3
+# wrapper, which assumes a heap/OS and can't be used directly in-kernel.
+# `pure`: disable all SIMD-via-C-shim paths (aarch64's NEON acceleration
+# needs a `cc` cross-compiler that doesn't exist for this bare-metal
+# target — confirmed by an actual failed RPi build). Slower, portably
+# correct on every architecture instead.
+blake3 = { version = "1.5", default-features = false, features = ["pure"] }
+
+# Ed25519 signature *verification* only (no `alloc`, no `rand_core`/`std`,
+# no `precomputed-tables`/`fast` — those need alloc for their lookup
+# tables): confirmed by an actual `build-std=core,compiler_builtins` probe
+# build that this default-features-off set needs neither `alloc` nor a
+# global allocator. Signing/keygen aren't exposed yet because they need a
+# real CSPRNG, which this kernel doesn't have (`users.rs` currently seeds
+# its salt from `rdtsc()`, explicitly flagged there as not good enough for
+# secret key material) — see `ed25519.rs`. Must be built with
+# `--cfg curve25519_dalek_backend="serial"` (see the kernel build's
+# rustflags in `src/main.rs`): the default backend on x86_64 emits AVX2
+# SIMD codegen that a freestanding `x86_64-unknown-none` target can't
+# lower (confirmed by an actual `rustc-LLVM ERROR: Do not know how to
+# split the result of this operator!` build failure without it).
+ed25519-dalek = { version = "2.2", default-features = false }
 
 [profile.release]
 lto = "fat"

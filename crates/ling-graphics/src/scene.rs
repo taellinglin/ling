@@ -60,7 +60,7 @@ impl Transform {
         if dir.length_squared() < 1e-8 {
             return;
         }
-        let mat = Mat4::look_at_rh(self.translation, target, world_up);
+        let mat = glam::camera::rh::view::look_at_mat4(self.translation, target, world_up);
         let (_, rot, _) = mat.inverse().to_scale_rotation_translation();
         self.rotation = rot;
     }

@@ -7,7 +7,7 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [dependencies]
-glam = "0.28"
+glam = "0.33"
 serde = { version = "1.0", features = ["derive"] }
 
 [dev-dependencies]

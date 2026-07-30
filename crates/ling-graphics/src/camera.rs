@@ -53,7 +53,7 @@ impl Camera3D {
         if dir.length_squared() < 1e-8 {
             return;
         }
-        let mat = Mat4::look_at_rh(self.position, target, world_up);
+        let mat = glam::camera::rh::view::look_at_mat4(self.position, target, world_up);
         let (_, rot, _) = mat.inverse().to_scale_rotation_translation();
         self.rotation = rot;
     }
@@ -65,11 +65,11 @@ impl Camera3D {
     pub fn projection_matrix(&self) -> Mat4 {
         match self.projection {
             Projection::Perspective { fov_y, near, far } => {
-                Mat4::perspective_rh(fov_y, self.aspect, near, far)
+                glam::camera::rh::proj::directx::perspective(fov_y, self.aspect, near, far)
             },
             Projection::Orthographic { half_width, near, far } => {
                 let h = half_width / self.aspect;
-                Mat4::orthographic_rh(-half_width, half_width, -h, h, near, far)
+                glam::camera::rh::proj::directx::orthographic(-half_width, half_width, -h, h, near, far)
             },
         }
     }

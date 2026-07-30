@@ -144,14 +144,24 @@ def build_svg(data):
 
     # ── headline callout ──────────────────────────────────────────────────────
     rect(pad, y, W - 2 * pad, 70, PANEL, rx=10)
-    hl = "Ling's tree-walking interpreter trades raw speed for reach."
+    hl = "Ling's Cranelift JIT keeps pace with systems languages."
     text(pad + 20, y + 28, hl, size=17, weight="bold", fill="#E8B84A")
+
+    def fmt_cmp(r):
+        if r is None:
+            return None
+        if 0.95 <= r <= 1.05:
+            return "on par with"
+        if r > 1:
+            return f"~{fmt_ratio(r)} slower than"
+        return f"~{fmt_ratio(1 / r)} faster than"
+
     sub = []
     if ling_vs_c:
-        sub.append(f"~{fmt_ratio(ling_vs_c)} slower than C")
+        sub.append(f"{fmt_cmp(ling_vs_c)} C")
     if ling_vs_py:
-        sub.append(f"~{fmt_ratio(ling_vs_py)} slower than CPython")
-    sub.append("(geometric mean) — its graphics/audio/GPU run as native Rust crates at ~C speed.")
+        sub.append(f"{fmt_cmp(ling_vs_py)} CPython")
+    sub.append("(geometric mean) — its graphics/audio/GPU pipelines run as native Rust crates at ~C speed.")
     text(pad + 20, y + 52, "   ·   ".join(sub), size=14, fill=TEXT)
     y += 92
 

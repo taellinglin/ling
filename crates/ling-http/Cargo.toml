@@ -1,0 +1,55 @@
+[package]
+name = "ling-http"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "灵网 — HTTPS/JSON/SQLite MVC framework for the Ling ecosystem (Flask-for-Ling)."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+keywords = ["http", "https", "web", "mvc", "framework"]
+categories = ["web-programming::http-server", "network-programming"]
+
+[features]
+default = []
+# Generates a throwaway self-signed cert at runtime for local dev — never use in production.
+dev-certs = ["dep:rcgen"]
+
+[dependencies]
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "sync"] }
+axum = { version = "0.8", features = ["json", "macros"] }
+# tls-rustls-no-provider (not tls-rustls): we install the `ring` crypto
+# provider ourselves below, so this doesn't pull in aws-lc-rs, which needs
+# cmake/NASM to build on Windows.
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# rusqlite (not sqlx-sqlite): the main `ling` binary already pulls rusqlite
+# 0.37 transitively via ling-ai -> burn-dataset. Two different sqlite-sys
+# crates both declaring `links = "sqlite3"` can't coexist in one Cargo.lock,
+# so this crate shares the same one rather than bringing its own.
+rusqlite = { version = "0.37", features = ["bundled"] }
+r2d2 = "0.8"
+async-trait = "0.1"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rcgen = { version = "0.13", optional = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+clap = { version = "4.4", features = ["derive"] }
+
+[lib]
+name = "ling_http"
+path = "src/lib.rs"
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+required-features = ["dev-certs"]

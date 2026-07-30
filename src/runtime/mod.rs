@@ -148,6 +148,8 @@ fn wasm_fetch_text(path: &str) -> Result<String, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+pub mod web;
 use crate::gfx::{GfxState, Light};
 use crate::parser::ast::*;
 #[cfg(target_arch = "wasm32")]
@@ -613,6 +615,161 @@ impl From<String> for EvalErr {
 
 type EvalResult = Result<Value, EvalErr>;
 
+/// RFC 4648 base32 encode (no padding) — used for TOTP secrets.
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn base32_encode(data: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let mut out = String::new();
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for &b in data {
+        buffer = (buffer << 8) | b as u32;
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(ALPHABET[((buffer >> bits) & 0x1f) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(ALPHABET[((buffer << (5 - bits)) & 0x1f) as usize] as char);
+    }
+    out
+}
+
+/// RFC 4648 base32 decode (case-insensitive, ignores padding/whitespace).
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn base32_decode(s: &str) -> Option<Vec<u8>> {
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    let mut out = Vec::new();
+    for c in s.chars() {
+        if c == '=' || c.is_whitespace() {
+            continue;
+        }
+        let v = match c.to_ascii_uppercase() {
+            'A'..='Z' => c.to_ascii_uppercase() as u32 - 'A' as u32,
+            '2'..='7' => c as u32 - '2' as u32 + 26,
+            _ => return None,
+        };
+        buffer = (buffer << 5) | v;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// One RFC 6238 TOTP code (HMAC-SHA1, 6 digits) for the given 30s time step.
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn totp_code(secret_b32: &str, step: u64) -> Option<String> {
+    let key = base32_decode(secret_b32)?;
+    let msg = step.to_be_bytes();
+    let mac = hmac_sha1(&key, &msg);
+    let offset = (mac[19] & 0x0f) as usize;
+    let bin = ((mac[offset] as u32 & 0x7f) << 24)
+        | ((mac[offset + 1] as u32) << 16)
+        | ((mac[offset + 2] as u32) << 8)
+        | (mac[offset + 3] as u32);
+    Some(format!("{:06}", bin % 1_000_000))
+}
+
+/// TOTP verify with a ±1 step window (tolerates minor clock skew).
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn totp_check(secret_b32: &str, code: &str) -> bool {
+    if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let now_step = (crate::runtime::now_secs() as u64) / 30;
+    for delta in [-1i64, 0, 1] {
+        let step = (now_step as i64 + delta) as u64;
+        if let Some(expected) = totp_code(secret_b32, step) {
+            // constant-time-ish compare (fixed 6-char length)
+            if expected.as_bytes().ct_eq_str(code.as_bytes()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// HMAC-SHA1 built on the `hmac`+`sha1` crates (both via the web feature).
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn hmac_sha1(key: &[u8], msg: &[u8]) -> [u8; 20] {
+    use hmac::{Mac, SimpleHmac};
+    let mut mac = SimpleHmac::<sha1::Sha1>::new_from_slice(key).expect("hmac key");
+    mac.update(msg);
+    let out = mac.finalize().into_bytes();
+    let mut arr = [0u8; 20];
+    arr.copy_from_slice(&out);
+    arr
+}
+
+/// Tiny fixed-length constant-time byte compare helper for TOTP codes.
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+trait CtEqStr {
+    fn ct_eq_str(&self, other: &[u8]) -> bool;
+}
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+impl CtEqStr for [u8] {
+    fn ct_eq_str(&self, other: &[u8]) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        let mut diff = 0u8;
+        for (a, b) in self.iter().zip(other.iter()) {
+            diff |= a ^ b;
+        }
+        diff == 0
+    }
+}
+
+/// Percent-decodes a URL query component (`+` → space, `%41` → `A`).
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            },
+            b'%' if i + 2 < bytes.len() => {
+                let hi = (bytes[i + 1] as char).to_digit(16);
+                let lo = (bytes[i + 2] as char).to_digit(16);
+                if let (Some(h), Some(l)) = (hi, lo) {
+                    out.push((h * 16 + l) as u8);
+                    i += 3;
+                } else {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            },
+            b => {
+                out.push(b);
+                i += 1;
+            },
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Maps Ling values to owned rusqlite parameter values for `db_exec`/`db_query`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn values_to_sql_params(args: &[Value]) -> Vec<ling_http::rusqlite::types::Value> {
+    use ling_http::rusqlite::types::Value as Sql;
+    args.iter()
+        .map(|v| match v {
+            Value::Number(n) if n.fract() == 0.0 && n.abs() < 9e15 => Sql::Integer(*n as i64),
+            Value::Number(n) => Sql::Real(*n),
+            Value::Bool(b) => Sql::Integer(*b as i64),
+            other => Sql::Text(other.to_string()),
+        })
+        .collect()
+}
+
 // GfxState is now defined in crate::gfx — see src/gfx/mod.rs.
 
 // ─── SVG writer ───────────────────────────────────────────────────────────────
@@ -848,6 +1005,90 @@ fn hex_to_32(s: &str) -> [u8; 32] {
     let n = v.len().min(32);
     out[..n].copy_from_slice(&v[..n]);
     out
+}
+
+/// Builds a minimal, valid PDF with one page per input image (decoded via
+/// `image`, page sized to the image's own pixel dimensions), backing the
+/// `pdf_from_images` builtin. No PDF crate: each page is three objects
+/// (Page / Contents / Image XObject) hand-written directly, with the image
+/// stream flate-compressed raw RGB8 (`/Filter /FlateDecode /ColorSpace
+/// /DeviceRGB /BitsPerComponent 8`) — no separate re-encoding step beyond
+/// what `flate2` (already a dependency) does for the stream itself.
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn build_pdf_from_images(paths: &[String], out_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write as _;
+
+    struct PageImg {
+        w: u32,
+        h: u32,
+        compressed: Vec<u8>,
+    }
+
+    let mut pages = Vec::with_capacity(paths.len());
+    for p in paths {
+        let img = image::open(p)?.to_rgb8();
+        let (w, h) = (img.width(), img.height());
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(img.as_raw())?;
+        pages.push(PageImg { w, h, compressed: enc.finish()? });
+    }
+
+    let n = pages.len();
+    // Object numbers: 1=Catalog, 2=Pages, then per page i (0-indexed):
+    // 3+3i=Page, 4+3i=Contents, 5+3i=Image XObject.
+    let page_nums: Vec<u32> = (0..n).map(|i| 3 + (i as u32) * 3).collect();
+    let total_objs = 2 + n * 3;
+    let mut off = vec![0usize; total_objs + 1]; // 1-based; off[0] unused
+
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+
+    off[1] = buf.len();
+    buf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+    off[2] = buf.len();
+    let kids = page_nums.iter().map(|n| format!("{n} 0 R")).collect::<Vec<_>>().join(" ");
+    buf.extend_from_slice(format!("2 0 obj\n<< /Type /Pages /Kids [{kids}] /Count {n} >>\nendobj\n").as_bytes());
+
+    for (i, page) in pages.iter().enumerate() {
+        let page_num = page_nums[i];
+        let content_num = page_num + 1;
+        let image_num = page_num + 2;
+        let (w, h) = (page.w, page.h);
+
+        off[page_num as usize] = buf.len();
+        buf.extend_from_slice(format!(
+            "{page_num} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << /XObject << /Im0 {image_num} 0 R >> >> /Contents {content_num} 0 R >>\nendobj\n"
+        ).as_bytes());
+
+        let content = format!("q {w} 0 0 {h} 0 0 cm /Im0 Do Q");
+        off[content_num as usize] = buf.len();
+        buf.extend_from_slice(format!(
+            "{content_num} 0 obj\n<< /Length {} >>\nstream\n{content}\nendstream\nendobj\n",
+            content.len()
+        ).as_bytes());
+
+        off[image_num as usize] = buf.len();
+        buf.extend_from_slice(format!(
+            "{image_num} 0 obj\n<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode /Length {} >>\nstream\n",
+            page.compressed.len()
+        ).as_bytes());
+        buf.extend_from_slice(&page.compressed);
+        buf.extend_from_slice(b"\nendstream\nendobj\n");
+    }
+
+    let xref_offset = buf.len();
+    buf.extend_from_slice(format!("xref\n0 {}\n", total_objs + 1).as_bytes());
+    buf.extend_from_slice(b"0000000000 65535 f \n");
+    for entry in off.iter().skip(1) {
+        buf.extend_from_slice(format!("{entry:010} 00000 n \n").as_bytes());
+    }
+    buf.extend_from_slice(
+        format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF", total_objs + 1).as_bytes(),
+    );
+
+    std::fs::write(out_path, buf)?;
+    Ok(())
 }
 
 fn tex_rgb(r: f32, g: f32, b: f32) -> u32 {
@@ -1183,6 +1424,9 @@ pub struct Interpreter {
     /// Persistent KEM keypairs (knot / hybrid identities), referenced by handle.
     #[cfg(not(target_arch = "wasm32"))]
     crypto_ids: Vec<ling_crypto::KnotIdentity>,
+    /// Persistent Ed25519 signing keypairs, referenced by handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    ed25519_ids: Vec<ling_crypto::Ed25519Keypair>,
     /// Editable text-input buffer (ling-ui text fields).
     text_buffer: String,
     /// Frame counter for record_frame().
@@ -1231,6 +1475,26 @@ pub struct Interpreter {
     /// `None` if no native input backend is available.
     #[cfg(not(target_arch = "wasm32"))]
     input: RefCell<Option<InputState>>,
+    /// Routes registered by `http_route(method, path, handler)`, consumed
+    /// by `http_serve`. Lives here (not a global, unlike `net`) because the
+    /// handler is a `Value::Fn` closure — `Value` holds `Rc` and so can't
+    /// safely live in a `static`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    http_routes: Vec<(String, String, Value)>,
+    /// SQLite handle opened by `db_open` — plain rusqlite Connection, no
+    /// pool: the interpreter is single-threaded, so one connection is both
+    /// sufficient and contention-free.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    db: Option<ling_http::rusqlite::Connection>,
+    /// `(url_prefix, disk_dir)` pairs registered by `http_static`, consumed by
+    /// `http_serve` — served as raw bytes, bypassing the String-only Value bridge.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    http_static_dirs: Vec<(String, String)>,
+    /// Background jobs started by `http_post_async`, polled by `http_job_poll`.
+    /// A plain `Arc<Mutex<..>>` handle (not `Value`), so it's fine to touch from
+    /// the background tokio task that fills in each job's result.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    async_jobs: web::AsyncJobs,
 }
 
 /// Live gamepad input state: a ling-input hub fed by the native `gilrs` backend.
@@ -1279,6 +1543,8 @@ impl Interpreter {
             mic: None,
             #[cfg(not(target_arch = "wasm32"))]
             crypto_ids: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            ed25519_ids: Vec::new(),
             text_buffer: String::new(),
             record_n: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1305,6 +1571,14 @@ impl Interpreter {
             error_trace: None,
             #[cfg(not(target_arch = "wasm32"))]
             input: RefCell::new(None),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            http_routes: Vec::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            db: None,
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            http_static_dirs: Vec::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            async_jobs: web::AsyncJobs::new(),
         }
     }
 
@@ -6400,6 +6674,244 @@ impl Interpreter {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 return Ok(Value::Str(net::test_bind(port)));
             },
+            // ── HTTP server (interpreter <-> async bridge, see runtime::web) ──
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_route" | "เว็บเส้นทาง" => {
+                let method = self.arg_str(&args, 0, "GET").to_uppercase();
+                let path = self.arg_str(&args, 1, "/");
+                let handler = args.get(2).cloned().unwrap_or(Value::Unit);
+                self.http_routes.push((method, path, handler));
+                return Ok(Value::Unit);
+            },
+            // Registers a directory to be served as raw bytes at `prefix` (fonts,
+            // images, generated zips/PDFs) — bypasses the String-only Request/
+            // Response bridge entirely, so binary files come through intact.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_static" | "เว็บสแตติก" => {
+                let prefix = self.arg_str(&args, 0, "/static");
+                let dir = self.arg_str(&args, 1, "static");
+                self.http_static_dirs.push((prefix, dir));
+                return Ok(Value::Unit);
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_serve" | "เว็บเสิร์ฟ" => {
+                let host = self.arg_str(&args, 0, "127.0.0.1");
+                let port = self.arg_num(&args, 1, 8080.0)? as u16;
+                let routes = std::mem::take(&mut self.http_routes);
+                let static_dirs = std::mem::take(&mut self.http_static_dirs);
+                // No premature "listening" print here: ling_http::serve_http
+                // (called from spawn_server's background thread) now prints
+                // its own banner, but only after the socket is actually
+                // bound — a more honest signal than printing right after
+                // requesting the background thread be spawned.
+                let rx = web::spawn_server(host.clone(), port, static_dirs);
+                for pending in rx {
+                    let matched = routes
+                        .iter()
+                        .find(|(m, p, _)| m == &pending.method && p == &pending.path);
+                    let response = match matched {
+                        Some((_, _, handler)) => {
+                            let req_value = Value::Struct {
+                                name: "Request".to_string(),
+                                fields: vec![
+                                    ("method".to_string(), Value::Str(pending.method.clone())),
+                                    ("path".to_string(), Value::Str(pending.path.clone())),
+                                    ("query".to_string(), Value::Str(pending.query.clone())),
+                                    ("body".to_string(), Value::Str(pending.body.clone())),
+                                    ("cookie".to_string(), Value::Str(pending.cookie.clone())),
+                                    (
+                                        "authorization".to_string(),
+                                        Value::Str(pending.authorization.clone()),
+                                    ),
+                                ],
+                            };
+                            match self.call_value(handler.clone(), vec![req_value]) {
+                                Ok(v) => web::value_to_response(&v),
+                                Err(e) => web::HttpResponse {
+                                    status: 500,
+                                    content_type: "text/plain; charset=utf-8".to_string(),
+                                    body: format!("handler error: {e:?}"),
+                                    set_cookie: None,
+                                    location: None,
+                                },
+                            }
+                        },
+                        None => web::HttpResponse {
+                            status: 404,
+                            content_type: "text/plain; charset=utf-8".to_string(),
+                            body: "not found".to_string(),
+                            set_cookie: None,
+                            location: None,
+                        },
+                    };
+                    let _ = pending.respond_to.send(response);
+                }
+                return Ok(Value::Unit);
+            },
+            // Fires a POST request on a background async runtime and returns a job
+            // id immediately — for slow external calls (e.g. local Stable Diffusion
+            // generation) that must not block http_serve's single-threaded loop.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_post_async" | "เว็บโพสต์ไม่บล็อก" => {
+                let url = self.arg_str(&args, 0, "");
+                let body = self.arg_str(&args, 1, "");
+                let content_type = self.arg_str(&args, 2, "application/json");
+                let id = self.async_jobs.start_post(url, content_type, body);
+                return Ok(Value::Str(id));
+            },
+            // Non-blocking poll: "" while the job named by http_post_async (or
+            // sdai_generate_start) is still running, the result once it
+            // completes — same job table, same builtin polls both.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_job_poll" | "เว็บงานสำรวจ" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(self.async_jobs.poll(&id).unwrap_or_default()));
+            },
+            // Starts an AUTOMATIC1111-compatible txt2img generation in the
+            // background against `base_url` (e.g. "http://127.0.0.1:1342").
+            // Poll with http_job_poll: the result is the plain base64 PNG
+            // once ready, or a string starting with "ERROR:" on failure —
+            // the JSON response itself is parsed in Rust (see
+            // AsyncJobs::start_sdai_txt2img), since `.ling` has no JSON parser.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "sdai_generate_start" | "เอสดีเอไอเริ่มสร้าง" => {
+                let base_url = self.arg_str(&args, 0, "http://127.0.0.1:1342");
+                let prompt = self.arg_str(&args, 1, "");
+                let width = self.arg_num(&args, 2, 512.0)? as u32;
+                let height = self.arg_num(&args, 3, 512.0)? as u32;
+                let id = self.async_jobs.start_sdai_txt2img(base_url, prompt, width, height);
+                return Ok(Value::Str(id));
+            },
+            // ── query_param("q=a&page=2", "q", "") → "a" (URL-decoded) ──
+            "query_param" | "พารามิเตอร์" => {
+                let qs = self.arg_str(&args, 0, "");
+                let name = self.arg_str(&args, 1, "");
+                let default = self.arg_str(&args, 2, "");
+                let mut found = default;
+                for pair in qs.split('&') {
+                    let mut it = pair.splitn(2, '=');
+                    if it.next().unwrap_or("") == name {
+                        found = url_decode(it.next().unwrap_or(""));
+                        break;
+                    }
+                }
+                return Ok(Value::Str(found));
+            },
+            // ── cookie_get("sid=abc; x=1", "sid", "") → "abc" ──
+            "cookie_get" | "รับคุกกี้" => {
+                let header = self.arg_str(&args, 0, "");
+                let name = self.arg_str(&args, 1, "");
+                let default = self.arg_str(&args, 2, "");
+                let mut found = default;
+                for pair in header.split(';') {
+                    let p = pair.trim();
+                    let mut it = p.splitn(2, '=');
+                    if it.next().unwrap_or("") == name {
+                        found = it.next().unwrap_or("").to_string();
+                        break;
+                    }
+                }
+                return Ok(Value::Str(found));
+            },
+            // ── html_escape(s) — & < > " ' → entities, for echoing user input ──
+            "html_escape" | "กันเอชทีเอ็มแอล" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(
+                    s.replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;")
+                        .replace('"', "&quot;")
+                        .replace('\'', "&#39;"),
+                ));
+            },
+            // ── CLI arguments: cli_arg("port", "8080") reads `--port 6688` ──
+            "cli_arg" | "อาร์กิวเมนต์" => {
+                let name = self.arg_str(&args, 0, "");
+                let default = self.arg_str(&args, 1, "");
+                let flag = format!("--{name}");
+                let argv: Vec<String> = std::env::args().collect();
+                let found = argv
+                    .iter()
+                    .position(|a| a == &flag)
+                    .and_then(|i| argv.get(i + 1))
+                    .cloned()
+                    .unwrap_or(default);
+                return Ok(Value::Str(found));
+            },
+            // ── SQLite (rusqlite, synchronous — matches the interpreter) ──
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "db_open" | "ฐานข้อมูลเปิด" => {
+                let path = self.arg_str(&args, 0, "app.db");
+                let conn = ling_http::rusqlite::Connection::open(&path)
+                    .map_err(|e| EvalErr::from(format!("db_open '{path}': {e}")))?;
+                let _ = conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+                self.db = Some(conn);
+                return Ok(Value::Unit);
+            },
+            // db_exec(sql, ...params) → rows affected. Params bind positionally
+            // (?1, ?2, ...): numbers as REAL, bools as 0/1, everything else TEXT.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "db_exec" | "ฐานข้อมูลรัน" => {
+                let sql = self.arg_str(&args, 0, "");
+                let params = values_to_sql_params(&args[1.min(args.len())..]);
+                let conn = self
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| EvalErr::from("db_exec: call db_open first".to_string()))?;
+                let n = conn
+                    .execute(
+                        &sql,
+                        ling_http::rusqlite::params_from_iter(params.iter()),
+                    )
+                    .map_err(|e| EvalErr::from(format!("db_exec: {e}\n  sql: {sql}")))?;
+                return Ok(Value::Number(n as f64));
+            },
+            // db_query(sql, ...params) → List of Row structs (row.column_name).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "db_query" | "ฐานข้อมูลถาม" => {
+                let sql = self.arg_str(&args, 0, "");
+                let params = values_to_sql_params(&args[1.min(args.len())..]);
+                let conn = self
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| EvalErr::from("db_query: call db_open first".to_string()))?;
+                let mut stmt = conn
+                    .prepare(&sql)
+                    .map_err(|e| EvalErr::from(format!("db_query: {e}\n  sql: {sql}")))?;
+                let col_names: Vec<String> =
+                    stmt.column_names().iter().map(|s| s.to_string()).collect();
+                let mut rows = stmt
+                    .query(ling_http::rusqlite::params_from_iter(params.iter()))
+                    .map_err(|e| EvalErr::from(format!("db_query: {e}")))?;
+                let mut out = Vec::new();
+                while let Some(row) = rows
+                    .next()
+                    .map_err(|e| EvalErr::from(format!("db_query row: {e}")))?
+                {
+                    let mut fields = Vec::with_capacity(col_names.len());
+                    for (i, col) in col_names.iter().enumerate() {
+                        use ling_http::rusqlite::types::ValueRef;
+                        let v = match row.get_ref(i) {
+                            Ok(ValueRef::Null) => Value::Str(String::new()),
+                            Ok(ValueRef::Integer(n)) => Value::Number(n as f64),
+                            Ok(ValueRef::Real(n)) => Value::Number(n),
+                            Ok(ValueRef::Text(t)) => {
+                                Value::Str(String::from_utf8_lossy(t).into_owned())
+                            },
+                            Ok(ValueRef::Blob(b)) =>
+
+                            {
+                                use base64::Engine as _;
+                                Value::Str(base64::engine::general_purpose::STANDARD.encode(b))
+                            },
+                            Err(_) => Value::Str(String::new()),
+                        };
+                        fields.push((col.clone(), v));
+                    }
+                    out.push(Value::Struct { name: "Row".to_string(), fields });
+                }
+                return Ok(Value::List(Rc::new(out)));
+            },
             // ── gamepad (gilrs) ──
             #[cfg(not(target_arch = "wasm32"))]
             "gamepad_poll" | "จอยโพล" => {
@@ -6608,6 +7120,55 @@ impl Interpreter {
                 return Ok(Value::Number(ai::dialog_load_model(&path) as f64));
             },
 
+            // Decodes `application/x-www-form-urlencoded` text: '+' -> space,
+            // '%XX' -> byte. Needed to read plain HTML `<form>` POST bodies.
+            "url_decode" | "网址解码" => {
+                let s = self.arg_str(&args, 0, "");
+                let bytes = s.as_bytes();
+                let mut out = Vec::with_capacity(bytes.len());
+                let mut i = 0;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'+' => {
+                            out.push(b' ');
+                            i += 1;
+                        },
+                        b'%' if i + 2 < bytes.len() => {
+                            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
+                            match u8::from_str_radix(hex, 16) {
+                                Ok(b) => {
+                                    out.push(b);
+                                    i += 3;
+                                },
+                                Err(_) => {
+                                    out.push(bytes[i]);
+                                    i += 1;
+                                },
+                            }
+                        },
+                        b => {
+                            out.push(b);
+                            i += 1;
+                        },
+                    }
+                }
+                return Ok(Value::Str(String::from_utf8_lossy(&out).into_owned()));
+            },
+            // Seconds since Unix epoch (float — sub-second precision). No ISO/date
+            // formatting builtin exists yet; `.ling` code that wants a display
+            // string currently just uses the raw number.
+            "now_unix" | "现在时间" => {
+                return Ok(Value::Number(now_secs()));
+            },
+            "file_exists" | "文件存在" => {
+                #[cfg(target_arch = "wasm32")]
+                return Ok(Value::Bool(false));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let path = self.arg_str(&args, 0, "");
+                    return Ok(Value::Bool(std::path::Path::new(&path).exists()));
+                }
+            },
             "write_file" | "เขียนไฟล์" => {
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Unit);
@@ -6710,6 +7271,86 @@ impl Interpreter {
                 let path = self.arg_str(&args, 0, "");
                 return Ok(Value::Bool(std::fs::create_dir_all(&path).is_ok()));
             },
+            // str_strip_prefix("Bearer x", "Bearer ") → "x" (unchanged if absent).
+            "str_strip_prefix" | "ตัดคำนำหน้า" => {
+                let s = self.arg_str(&args, 0, "");
+                let prefix = self.arg_str(&args, 1, "");
+                return Ok(Value::Str(
+                    s.strip_prefix(&prefix).unwrap_or(&s).to_string(),
+                ));
+            },
+            // Classify a file by magic bytes: "gzip" | "zip" | "other" | "missing".
+            // The build-verification gate: only real built archives may publish.
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_magic" | "มายาไฟล์" => {
+                let path = self.arg_str(&args, 0, "");
+                let kind = match std::fs::File::open(&path) {
+                    Ok(mut f) => {
+                        use std::io::Read;
+                        let mut buf = [0u8; 4];
+                        let n = f.read(&mut buf).unwrap_or(0);
+                        if n >= 2 && buf[0] == 0x1f && buf[1] == 0x8b {
+                            "gzip"
+                        } else if n >= 4 && &buf[0..2] == b"PK" {
+                            "zip"
+                        } else {
+                            "other"
+                        }
+                    },
+                    Err(_) => "missing",
+                };
+                return Ok(Value::Str(kind.to_string()));
+            },
+            // Binary-safe file copy (backups): copy_file(src, dst) → bool.
+            #[cfg(not(target_arch = "wasm32"))]
+            "copy_file" | "คัดลอกไฟล์" => {
+                let src = self.arg_str(&args, 0, "");
+                let dst = self.arg_str(&args, 1, "");
+                if let Some(parent) = std::path::Path::new(&dst).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                return Ok(Value::Bool(std::fs::copy(&src, &dst).is_ok()));
+            },
+            // ── TOTP (RFC 6238, HMAC-SHA1, 6 digits, 30s) for 2FA ──
+            // Base32 secret compatible with Google Authenticator / Authy etc.
+            // `base32_encode`/`totp_code`/`totp_check` only exist under this
+            // same `feature = "web"` gate (see their definitions above) — a
+            // build without it must skip these arms too, not just fail to
+            // link; matches how `file_hash` etc. gate their own arms below.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "totp_secret" | "โทเทนลับ" => {
+                let mut bytes = [0u8; 20];
+                rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+                return Ok(Value::Str(base32_encode(&bytes)));
+            },
+            // otpauth:// URI to paste into an authenticator app (or make a QR of).
+            // No cfg gate needed — pure string formatting, no dependency on
+            // the web-only TOTP helpers.
+            "totp_uri" | "โทเทนยูอาร์ไอ" => {
+                let secret = self.arg_str(&args, 0, "");
+                let account = self.arg_str(&args, 1, "user");
+                let issuer = self.arg_str(&args, 2, "lingfu");
+                return Ok(Value::Str(format!(
+                    "otpauth://totp/{issuer}:{account}?secret={secret}&issuer={issuer}&algorithm=SHA1&digits=6&period=30"
+                )));
+            },
+            // Verify a 6-digit code against the secret, allowing ±1 time step.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "totp_verify" | "โทเทนตรวจ" => {
+                let secret = self.arg_str(&args, 0, "");
+                let code = self.arg_str(&args, 1, "");
+                let ok = totp_check(&secret, code.trim());
+                return Ok(Value::Bool(ok));
+            },
+            // The current valid code, for tests/tools.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "totp_now" | "โทเทนตอนนี้" => {
+                let secret = self.arg_str(&args, 0, "");
+                let step = (crate::runtime::now_secs() as u64) / 30;
+                return Ok(Value::Str(
+                    totp_code(&secret, step).unwrap_or_default(),
+                ));
+            },
             // BLAKE3 hex of a file's bytes (binary-safe content fingerprint).
             #[cfg(not(target_arch = "wasm32"))]
             "file_hash" | "แฮชไฟล์" => {
@@ -6737,6 +7378,30 @@ impl Interpreter {
             },
 
             // ── String utilities ──────────────────────────────────────────────
+            // Parses a string to a number (0 on failure — degrades gracefully,
+            // like the other filesystem/parsing builtins in this file).
+            "to_number" | "转数字" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(s.trim().parse().unwrap_or(0.0)));
+            },
+            // Plain SHA-256 hex — matches the browser's native SubtleCrypto
+            // digest("SHA-256", ...), which is what proof-of-work mining uses
+            // client-side (Web Crypto has no Blake3/SHA-3, so this is the one
+            // hash both sides can compute natively and fast).
+            "sha256_hex" | "SHA256哈希" => {
+                use sha2::Digest;
+                let s = self.arg_str(&args, 0, "");
+                let mut h = sha2::Sha256::new();
+                h.update(s.as_bytes());
+                return Ok(Value::Str(hex_encode(&h.finalize())));
+            },
+            // Parses a hex string (no "0x" prefix) to a number — `to_number`
+            // uses Rust's plain f64 parser, which doesn't understand hex.
+            "hex_to_number" | "十六进制转数字" => {
+                let s = self.arg_str(&args, 0, "");
+                let v = u64::from_str_radix(s.trim(), 16).unwrap_or(0);
+                return Ok(Value::Number(v as f64));
+            },
             "split" | "str_split" | "แยก" => {
                 let s = self.arg_str(&args, 0, "");
                 let sep = self.arg_str(&args, 1, "\n");
@@ -6862,6 +7527,45 @@ impl Interpreter {
                 }
                 return Ok(Value::Str(String::new()));
             },
+            // list_max(numbers, default) / list_min(numbers, default) — `default`
+            // is returned for an empty list (there's no numeric identity element
+            // to fall back to otherwise).
+            "list_max" | "列表最大值" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let default = self.arg_num(&args, 1, 0.0)?;
+                if let Value::List(v) = lst {
+                    let mut best = default;
+                    let mut any = false;
+                    for item in v.iter() {
+                        if let Value::Number(n) = item {
+                            if !any || *n > best {
+                                best = *n;
+                                any = true;
+                            }
+                        }
+                    }
+                    return Ok(Value::Number(best));
+                }
+                return Ok(Value::Number(default));
+            },
+            "list_min" | "列表最小值" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let default = self.arg_num(&args, 1, 0.0)?;
+                if let Value::List(v) = lst {
+                    let mut best = default;
+                    let mut any = false;
+                    for item in v.iter() {
+                        if let Value::Number(n) = item {
+                            if !any || *n < best {
+                                best = *n;
+                                any = true;
+                            }
+                        }
+                    }
+                    return Ok(Value::Number(best));
+                }
+                return Ok(Value::Number(default));
+            },
             // list_set(lst, idx, val) → new list with index replaced. Engine builtin
             // (O(n) one copy) to replace the O(n²) ling `ตั้งรายการ` that looped
             // list_push + list_get (each of which copied the whole list).
@@ -6896,6 +7600,53 @@ impl Interpreter {
                     ));
                 }
                 return Ok(Value::Str(String::new()));
+            },
+            // list_map/list_filter/list_find — take a closure. Necessary as real
+            // builtins (not expressible in `.ling` itself): a bare-identifier call
+            // `f(x)` where `f` is a local variable always resolves through
+            // `call_named`, which only looks at top-level `fn` definitions by
+            // design ("call-site locals are intentionally NOT visible to fns") —
+            // so a closure held in a variable/parameter can't be invoked from
+            // `.ling` source directly. These call it from the Rust side instead,
+            // the same way `http_serve` already invokes route-handler closures.
+            "list_map" | "映射列表" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let f = args.get(1).cloned().unwrap_or(Value::Unit);
+                if let Value::List(v) = lst {
+                    let mut out = Vec::with_capacity(v.len());
+                    for item in v.iter() {
+                        out.push(self.call_value(f.clone(), vec![item.clone()])?);
+                    }
+                    return Ok(Value::List(Rc::new(out)));
+                }
+                return Ok(Value::List(Rc::new(vec![])));
+            },
+            "list_filter" | "过滤列表" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let f = args.get(1).cloned().unwrap_or(Value::Unit);
+                if let Value::List(v) = lst {
+                    let mut out = Vec::new();
+                    for item in v.iter() {
+                        if matches!(self.call_value(f.clone(), vec![item.clone()])?, Value::Bool(true)) {
+                            out.push(item.clone());
+                        }
+                    }
+                    return Ok(Value::List(Rc::new(out)));
+                }
+                return Ok(Value::List(Rc::new(vec![])));
+            },
+            // First element for which `f` returns true, or Unit if none match.
+            "list_find" | "查找列表" => {
+                let lst = args.first().cloned().unwrap_or(Value::List(Rc::new(vec![])));
+                let f = args.get(1).cloned().unwrap_or(Value::Unit);
+                if let Value::List(v) = lst {
+                    for item in v.iter() {
+                        if matches!(self.call_value(f.clone(), vec![item.clone()])?, Value::Bool(true)) {
+                            return Ok(item.clone());
+                        }
+                    }
+                }
+                return Ok(Value::Unit);
             },
             // blob_f32("<deflate+base64>") / blob_i32(...) — decode an embedded,
             // losslessly-compressed numeric blob into a list. Produced by
@@ -7651,6 +8402,188 @@ impl Interpreter {
                 return Ok(Value::Number(
                     ling_crypto::geo::scatter(s.as_bytes()).len() as f64
                 ));
+            },
+            // SHAKE-256 XOF, squeezed to an arbitrary output length in bytes
+            // (`shake_hex(s, 128)` = a 1024-bit seal digest).
+            #[cfg(not(target_arch = "wasm32"))]
+            "shake_hex" | "SHAKE哈希" => {
+                let s = self.arg_str(&args, 0, "");
+                let len = self.arg_num(&args, 1, 32.0)?.max(0.0) as usize;
+                return Ok(Value::Str(hex_encode(&ling_crypto::Shake256::hash(s.as_bytes(), len))));
+            },
+            // Ed25519 signing keypair (issuer identity) → integer handle.
+            #[cfg(not(target_arch = "wasm32"))]
+            "ed25519_keygen" | "생성서명키" => {
+                self.ed25519_ids.push(ling_crypto::Ed25519Keypair::generate());
+                return Ok(Value::Number((self.ed25519_ids.len() - 1) as f64));
+            },
+            // Deterministic keypair from a 32-byte hex seed — the same seed
+            // always yields the same keypair, so a program can persist just the
+            // seed (e.g. a bank's issuer identity) and rederive identical keys
+            // across restarts instead of every run minting a fresh, unrelated one.
+            #[cfg(not(target_arch = "wasm32"))]
+            "ed25519_keygen_from_seed" | "씨앗에서생성서명키" => {
+                let seed = hex_to_32(&self.arg_str(&args, 0, ""));
+                self.ed25519_ids.push(ling_crypto::Ed25519Keypair::from_seed(seed));
+                return Ok(Value::Number((self.ed25519_ids.len() - 1) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ed25519_public" | "서명공개키" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let pk = self
+                    .ed25519_ids
+                    .get(h)
+                    .map(|kp| hex_encode(&kp.public_key()))
+                    .unwrap_or_default();
+                return Ok(Value::Str(pk));
+            },
+            // ed25519_sign(handle, message) → signature hex (64 bytes)
+            #[cfg(not(target_arch = "wasm32"))]
+            "ed25519_sign" | "서명하다" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let msg = self.arg_str(&args, 1, "");
+                let sig = self
+                    .ed25519_ids
+                    .get(h)
+                    .map(|kp| hex_encode(&kp.sign(msg.as_bytes())))
+                    .unwrap_or_default();
+                return Ok(Value::Str(sig));
+            },
+            // ed25519_verify(pubkey_hex, message, signature_hex) → bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "ed25519_verify" | "서명확인" => {
+                let pk_hex = self.arg_str(&args, 0, "");
+                let msg = self.arg_str(&args, 1, "");
+                let sig_hex = self.arg_str(&args, 2, "");
+                let pk_bytes = hex_decode(&pk_hex);
+                let sig_bytes = hex_decode(&sig_hex);
+                let ok = (|| {
+                    let pk: [u8; 32] = pk_bytes.try_into().ok()?;
+                    let sig: [u8; 64] = sig_bytes.try_into().ok()?;
+                    Some(ling_crypto::Ed25519Keypair::verify(&pk, msg.as_bytes(), &sig).is_ok())
+                })()
+                .unwrap_or(false);
+                return Ok(Value::Bool(ok));
+            },
+            // Argon2id password hashing — password_hash(pw) → PHC string,
+            // password_verify(pw, phc_string) → bool.
+            #[cfg(not(target_arch = "wasm32"))]
+            "password_hash" | "비밀번호해시" => {
+                let pw = self.arg_str(&args, 0, "");
+                let hash = ling_crypto::Argon2idParams::default()
+                    .hash_password(pw.as_bytes())
+                    .unwrap_or_default();
+                return Ok(Value::Str(hash));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "password_verify" | "비밀번호확인" => {
+                let pw = self.arg_str(&args, 0, "");
+                let hash = self.arg_str(&args, 1, "");
+                let ok = ling_crypto::Argon2idParams::verify_password(pw.as_bytes(), &hash).is_ok();
+                return Ok(Value::Bool(ok));
+            },
+            // OS-CSPRNG random bytes as hex — session ids / nonces (not the
+            // xorshift `rand` builtin, which is for game logic, not security).
+            #[cfg(not(target_arch = "wasm32"))]
+            "random_hex" | "무작위16진수" => {
+                use rand::RngCore;
+                let n = self.arg_num(&args, 0, 16.0)?.max(0.0) as usize;
+                let mut buf = vec![0u8; n];
+                rand::rngs::OsRng.fill_bytes(&mut buf);
+                return Ok(Value::Str(hex_encode(&buf)));
+            },
+            // base64_encode(s) — text -> base64 (matches what canvas.toDataURL()
+            // already produces client-side, so PNG uploads never need a binary
+            // request body).
+            #[cfg(not(target_arch = "wasm32"))]
+            "base64_encode" | "base64인코딩" => {
+                use base64::Engine as _;
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(
+                    base64::engine::general_purpose::STANDARD.encode(s.as_bytes()),
+                ));
+            },
+            // base64_decode_to_file(b64, path) — writes decoded bytes straight to
+            // disk; returns true on success. The only way binary data (an
+            // uploaded/rendered PNG) reaches the filesystem from `.ling` source.
+            #[cfg(not(target_arch = "wasm32"))]
+            "base64_decode_to_file" | "base64파일로저장" => {
+                use base64::Engine as _;
+                let b64 = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 1, "");
+                let b64 = b64
+                    .split(',')
+                    .next_back()
+                    .unwrap_or(&b64); // tolerate a "data:image/png;base64,..." prefix
+                let ok = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .ok()
+                    .and_then(|bytes| std::fs::write(&path, bytes).ok())
+                    .is_some();
+                return Ok(Value::Bool(ok));
+            },
+            // qr_svg(text) — a scannable QR code as an inline <svg>...</svg>
+            // string (e.g. for an otpauth:// 2FA enrollment URI). Kept as SVG
+            // rather than a rasterized image so it fits the same "everything
+            // stays vector" theme as the banknote seal art.
+            #[cfg(not(target_arch = "wasm32"))]
+            "qr_svg" | "QR코드" => {
+                let text = self.arg_str(&args, 0, "");
+                let svg = qrcode::QrCode::new(text.as_bytes())
+                    .map(|code| {
+                        code.render::<qrcode::render::svg::Color>()
+                            .min_dimensions(240, 240)
+                            .dark_color(qrcode::render::svg::Color("#1a0f3d"))
+                            .light_color(qrcode::render::svg::Color("#ffffff"))
+                            .build()
+                    })
+                    .unwrap_or_default();
+                return Ok(Value::Str(svg));
+            },
+            // zip_files(paths_list, out_path) — bundles files into a zip archive
+            // (used by the "render" step to package a note's PNG/SVG/PDF).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "zip_files" | "압축파일" => {
+                let paths = match args.first() {
+                    Some(Value::List(l)) => l.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                let out_path = self.arg_str(&args, 1, "out.zip");
+                let ok = (|| -> std::io::Result<()> {
+                    let file = std::fs::File::create(&out_path)?;
+                    let mut writer = zip::ZipWriter::new(file);
+                    let options: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default()
+                        .compression_method(zip::CompressionMethod::Deflated);
+                    for p in &paths {
+                        let name = std::path::Path::new(p)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| p.clone());
+                        let bytes = std::fs::read(p)?;
+                        writer.start_file(name, options)?;
+                        std::io::Write::write_all(&mut writer, &bytes)?;
+                    }
+                    writer.finish()?;
+                    Ok(())
+                })()
+                .is_ok();
+                return Ok(Value::Bool(ok));
+            },
+            // pdf_from_images(png_paths_list, out_path) — one page per image,
+            // sized to its pixel dimensions. No PDF crate dependency: `image`
+            // (decode) and `flate2` (deflate the page's raw RGB stream) are
+            // already unconditional deps, so this hand-writes the handful of
+            // PDF objects (Catalog/Pages/Page/Contents/Image XObject) directly.
+            // `build_pdf_from_images` itself only exists under this same gate.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "pdf_from_images" | "PDF来自图片" => {
+                let paths = match args.first() {
+                    Some(Value::List(l)) => l.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                let out_path = self.arg_str(&args, 1, "out.pdf");
+                let ok = build_pdf_from_images(&paths, &out_path).is_ok();
+                return Ok(Value::Bool(ok));
             },
 
             // ══════════════════════════════════════════════════════════════════
@@ -10447,7 +11380,12 @@ impl Interpreter {
     fn call_method(&self, recv: Value, method: &str, args: Vec<Value>) -> EvalResult {
         match (&recv, method) {
             (Value::Str(s), "is_empty" | "是空") => Ok(Value::Bool(s.is_empty())),
-            (Value::Str(s), "len" | "长") => Ok(Value::Number(s.len() as f64)),
+            // "长度" ("length", the natural noun) alongside "长" ("long", the
+            // adjective originally used here) — `lingfu normalize` rewrites
+            // `.len()` calls to `.长度()`, matching the free-function `len`/
+            // `长度` alias (line ~7365) but not this method-call arm, which
+            // otherwise made `.len()` silently un-callable post-normalize.
+            (Value::Str(s), "len" | "长" | "长度") => Ok(Value::Number(s.len() as f64)),
             (Value::Str(s), "to_string" | "转文") => Ok(Value::Str(s.clone())),
             (Value::Str(s), "contains" | "包含") => {
                 if let Some(Value::Str(sub)) = args.first() {
@@ -10463,8 +11401,10 @@ impl Interpreter {
                 }
                 Ok(Value::Str(s2))
             },
-            (Value::List(v), "len" | "长") => Ok(Value::Number(v.len() as f64)),
-            (Value::List(v), "push" | "推") => {
+            (Value::List(v), "len" | "长" | "长度") => Ok(Value::Number(v.len() as f64)),
+            // "添加" ("add", the natural verb `lingfu normalize` rewrites
+            // `.push()` to) alongside "推" ("push/shove", the original alias).
+            (Value::List(v), "push" | "推" | "添加") => {
                 let mut v2: Vec<Value> = (**v).clone();
                 if let Some(a) = args.first() {
                     v2.push(a.clone());

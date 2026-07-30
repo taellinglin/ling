@@ -3,7 +3,7 @@
 A cross-language benchmark comparing **Ling** against **Python, Rust, C, C++,
 and Go** on the same workloads, plus a generated infographic.
 
-![infographic](ling_benchmark.png)
+![infographic](ling_benchmark.svg)
 
 ## What it measures
 
@@ -59,11 +59,14 @@ python make_infographic.py results.json ling_benchmark.svg
 
 ## Honest takeaways
 
-- Ling's **tree-walking interpreter** is currently ~hundreds× slower than C and
-  a few× slower than CPython — expected for an AST interpreter with no bytecode
-  VM or JIT (see `src/runtime/`).
-- The gap is **smallest** on heavy-`sin` work (`fm_synth`), where everyone is
-  bottlenecked on `libm` — and even shows mingw's `sin()` making C/C++ slower
-  than Rust/Go here.
-- The path to closing the gap is a **bytecode VM** or the existing
-  MIR→codegen/LLVM backend; the interpreter is the speed ceiling today.
+- These numbers are for `ling run --jit` (the default backend, Cranelift —
+  see `crates/ling-codegen/`), not the tree-walking interpreter (`ling run
+  --interp`, kept as the semantic reference/fallback in `src/runtime/`), which
+  is far slower and not what this suite measures.
+- On the JIT, Ling is ~1.7× slower than C and ~34× faster than CPython
+  (geometric mean) — competitive with Go and within reach of Rust/C++ on most
+  workloads.
+- The gap to C/Rust is **smallest** on heavy-`sin` work (`fm_synth`), where
+  everyone is bottlenecked on `libm` — and even shows mingw's `sin()` making
+  C/C++ slower than Rust/Go here. The gap is **largest** on `fib`, where
+  function-call overhead dominates and native inlining wins.
