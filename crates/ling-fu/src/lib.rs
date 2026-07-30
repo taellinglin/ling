@@ -2,6 +2,7 @@ use colored::*;
 use dialoguer::{Input, Select};
 use std::env;
 
+pub mod ignore;
 pub mod normalize;
 pub mod registry;
 pub mod scaffold;

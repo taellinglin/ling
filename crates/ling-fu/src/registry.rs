@@ -126,21 +126,34 @@ fn manifest_meta(manifest: &Path) -> Result<(String, String, String)> {
     Ok((name, version, description))
 }
 
-/// Gzip-tars `dir` (skipping build/VCS dirs) into memory, returns the bytes.
+/// Gzip-tars `dir` (skipping build/VCS dirs and anything matched by
+/// `ling.ignore`) into memory, returns the bytes.
+///
+/// Unlike `git ls-files`-backed operations, this walks the real filesystem —
+/// it has no `.gitignore` awareness at all, so a `ling.ignore` at the
+/// project root is the only way to keep something (an oversized local-only
+/// asset, a keyfile that ended up sitting in the project directory) out of
+/// an uploaded package short of physically moving it first.
 fn build_tarball(dir: &Path) -> Result<Vec<u8>> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
 
+    let ignore_patterns = crate::ignore::load(dir);
     let gz = GzEncoder::new(Vec::new(), Compression::default());
     let mut tar = tar::Builder::new(gz);
 
     for entry in walkdir::WalkDir::new(dir).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
         // Skip VCS, build output, and the shared target dir.
-        !matches!(
+        if matches!(
             name.as_ref(),
             ".git" | ".ling-build" | "target" | ".ling-shared-target" | "dist"
-        )
+        ) {
+            return false;
+        }
+        let Ok(rel) = e.path().strip_prefix(dir) else { return true };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        rel.is_empty() || !crate::ignore::is_ignored(&ignore_patterns, &rel)
     }) {
         let entry = entry?;
         let path = entry.path();

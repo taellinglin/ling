@@ -258,6 +258,7 @@ pub fn scaffold_in_dir(project: &ProjectScaffold, project_dir: &Path) -> anyhow:
     write_lexicons(project_dir, &slang, &dirs)?;
     write_test_file(project_dir, project, &slang, &dirs)?;
     write_gitignore(project_dir, &dirs)?;
+    write_ling_ignore(project_dir)?;
 
     match project.kind {
         ProjectKind::Game => write_game_files(project_dir, project, &slang, &dirs)?,
@@ -746,6 +747,26 @@ fn write_gitignore(dir: &Path, dirs: &DirNames) -> anyhow::Result<()> {
     fs::write(dir.join(".gitignore"), content)?;
     Ok(())
 }
+
+/// `ling.ignore` -- consulted by `lingfu seed` (on top of `git ls-files`)
+/// and `lingfu publish` (which otherwise isn't `.gitignore`-aware at all),
+/// so a keyfile, recovery share, or oversized local asset has one place to
+/// be excluded from every whole-project operation, not one per tool.
+fn write_ling_ignore(dir: &Path) -> anyhow::Result<()> {
+    let content = "\
+# Consulted by `lingfu seed` and `lingfu publish` -- keep keyfiles,
+# recovery shares, and other sensitive or oversized local-only files
+# out of both, in one place. One glob pattern per line.
+seed.wav
+*.share
+*.key
+*.pem
+";
+    fs::write(dir.join(IGNORE_FILE_NAME), content)?;
+    Ok(())
+}
+
+const IGNORE_FILE_NAME: &str = "ling.ignore";
 
 // ─── Type-specific extra files ────────────────────────────────────────────────
 

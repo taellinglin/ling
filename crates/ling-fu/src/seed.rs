@@ -33,7 +33,11 @@ type Manifest = BTreeMap<String, [u8; 32]>;
 /// Git-tracked files only: already respects `.gitignore`, needs no
 /// hand-maintained include/exclude list, and is exactly what "essential"
 /// means for a versioned project — build artefacts and scratch files were
-/// never tracked in the first place.
+/// never tracked in the first place. `ling.ignore` (see `crate::ignore`) is
+/// applied on top, for anything tracked-but-still-shouldn't-be-hashed —
+/// e.g. a `seed` keyfile or recovery share that later got `git add`ed by
+/// mistake, which would otherwise end up hashed into the very manifest it
+/// derives the encryption key for.
 fn essential_files(root: &Path) -> Result<Vec<PathBuf>> {
     let out = std::process::Command::new("git")
         .arg("ls-files")
@@ -43,9 +47,11 @@ fn essential_files(root: &Path) -> Result<Vec<PathBuf>> {
     if !out.status.success() {
         bail!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr));
     }
+    let ignore_patterns = crate::ignore::load(root);
     Ok(String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.is_empty())
+        .filter(|l| !crate::ignore::is_ignored(&ignore_patterns, l))
         .map(PathBuf::from)
         .collect())
 }
