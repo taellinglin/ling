@@ -94,18 +94,103 @@ pub fn logout() -> Result<()> {
     Ok(())
 }
 
+/// Quote non-ASCII bare words so the strict, spec-compliant `toml` crate
+/// accepts manifests written with CJK/Thai/Korean keys (`[灵符]`,
+/// `名 = "..."`, `灵林 = { 邮 = "..." }`) the way `ling`'s own build-time
+/// manifest reader (a tolerant hand-rolled line parser, see
+/// `parse_lingfu_toml` in `ling/src/main.rs`) already does — TOML restricts
+/// bare keys to `[A-Za-z0-9_-]+`, so `[灵符]` is technically invalid TOML
+/// even though every non-English `lingfu new`/`init` scaffold (and the
+/// project's own `hello_world/灵符.toml` example) generates exactly that.
+///
+/// Valid TOML has no non-ASCII bare *values* either (the only unquoted
+/// value types — bool/number/date — are all ASCII), so any non-ASCII run
+/// found outside a quoted string or comment must be an unquoted key, and is
+/// always safe to quote: a single left-to-right pass that tracks whether
+/// it's inside a string (so value text, including inside `"..."`, is never
+/// touched) rather than trying to special-case table headers vs. `key =
+/// value` lines vs. inline-table keys separately.
+fn quote_non_ascii_keys(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut chars = text.chars().peekable();
+    let mut in_string: Option<char> = None;
+    let mut word = String::new();
+
+    macro_rules! flush_word {
+        () => {
+            if !word.is_empty() {
+                if word.is_ascii() {
+                    out.push_str(&word);
+                } else {
+                    out.push_str(&format!("{word:?}"));
+                }
+                word.clear();
+            }
+        };
+    }
+
+    while let Some(c) = chars.next() {
+        if let Some(q) = in_string {
+            out.push(c);
+            if c == '\\' && q == '"' {
+                if let Some(next) = chars.next() {
+                    out.push(next);
+                }
+                continue;
+            }
+            if c == q {
+                in_string = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                flush_word!();
+                in_string = Some(c);
+                out.push(c);
+            },
+            '#' => {
+                flush_word!();
+                out.push(c);
+                for c2 in chars.by_ref() {
+                    out.push(c2);
+                    if c2 == '\n' {
+                        break;
+                    }
+                }
+            },
+            '=' | '.' | ',' | '{' | '}' | '[' | ']' | ' ' | '\t' | '\r' | '\n' => {
+                flush_word!();
+                out.push(c);
+            },
+            _ => word.push(c),
+        }
+    }
+    flush_word!();
+    out
+}
+
+/// Read and parse a manifest as TOML, tolerating non-ASCII bare keys.
+fn parse_manifest(manifest: &Path) -> Result<toml::Value> {
+    let text = std::fs::read_to_string(manifest)
+        .with_context(|| format!("reading manifest {}", manifest.display()))?;
+    quote_non_ascii_keys(&text).parse().context("parsing manifest TOML")
+}
+
 /// Reads `(name, version, description)` from the project manifest, trying
 /// every language's section/key spelling.
 fn manifest_meta(manifest: &Path) -> Result<(String, String, String)> {
-    let text = std::fs::read_to_string(manifest)
-        .with_context(|| format!("reading manifest {}", manifest.display()))?;
-    let value: toml::Value = text.parse().context("parsing manifest TOML")?;
+    let value = parse_manifest(manifest)?;
 
     // Section names that hold package metadata across the lexicons.
     let sections = ["spirit", "package", "灵符", "霊符", "영부", "ลิงฟู"];
     let name_keys = ["name", "名", "이름", "ชื่อ"];
-    let version_keys = ["version", "版", "버전", "รุ่น"];
-    let desc_keys = ["description", "desc", "描述", "説明", "설명", "คำอธิบาย"];
+    // "เวอร์ชัน" is what the Thai scaffolder actually emits; "รุ่น" is the
+    // native synonym — accept both. "版本" covers the zh scaffold too.
+    let version_keys = ["version", "版", "版本", "버전", "รุ่น", "เวอร์ชัน"];
+    let desc_keys = [
+        "description", "desc", "描述", "説明", "설명", "คำอธิบาย", "รายละเอียด",
+    ];
 
     let find = |keys: &[&str]| -> Option<String> {
         for sec in &sections {
@@ -124,6 +209,88 @@ fn manifest_meta(manifest: &Path) -> Result<(String, String, String)> {
     let version = find(&version_keys).unwrap_or_else(|| "0.0.0".to_string());
     let description = find(&desc_keys).unwrap_or_default();
     Ok((name, version, description))
+}
+
+/// Optional package metadata read from the manifest: keywords, homepage,
+/// repository, license, authors. All default to empty strings when absent.
+struct Extra {
+    keywords: String,
+    homepage: String,
+    repository: String,
+    license: String,
+    authors: String,
+}
+
+fn manifest_extra(manifest: &Path) -> Extra {
+    let empty = || Extra {
+        keywords: String::new(),
+        homepage: String::new(),
+        repository: String::new(),
+        license: String::new(),
+        authors: String::new(),
+    };
+    let Ok(value) = parse_manifest(manifest) else { return empty() };
+
+    let pkg_sections = ["spirit", "package", "灵符", "霊符", "영부", "ลิงฟู"];
+    let author_sections = ["author", "authors", "灵者", "作者", "저자", "ผู้สร้าง"];
+
+    // Look up a key (any of `keys`) across the package sections; a value may be
+    // a string or an array of strings (joined by ", ").
+    let find = |keys: &[&str]| -> String {
+        for sec in &pkg_sections {
+            if let Some(tbl) = value.get(sec).and_then(|v| v.as_table()) {
+                for k in keys {
+                    match tbl.get(*k) {
+                        Some(toml::Value::String(s)) => return s.clone(),
+                        Some(toml::Value::Array(a)) => {
+                            let parts: Vec<String> = a
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect();
+                            if !parts.is_empty() {
+                                return parts.join(", ");
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            }
+        }
+        String::new()
+    };
+
+    // Authors: an explicit key, else the display-name keys of an author section.
+    let mut authors = find(&["authors", "author", "ผู้เขียน"]);
+    if authors.is_empty() {
+        for sec in &author_sections {
+            if let Some(tbl) = value.get(sec).and_then(|v| v.as_table()) {
+                let names: Vec<String> = tbl.keys().cloned().collect();
+                if !names.is_empty() {
+                    authors = names.join(", ");
+                    break;
+                }
+            }
+        }
+    }
+
+    Extra {
+        keywords: find(&["keywords", "คำสำคัญ", "คีย์เวิร์ด", "关键词"]),
+        homepage: find(&["homepage", "หน้าหลัก", "โฮมเพจ", "主页"]),
+        repository: find(&["repository", "repo", "ที่เก็บ", "仓库"]),
+        license: find(&["license", "ใบอนุญาต", "สัญญาอนุญาต", "许可证"]),
+        authors,
+    }
+}
+
+/// Reads a README from the project root (first of a few common names),
+/// truncated to a sane size for a form field.
+fn read_readme(root: &Path) -> String {
+    for name in ["README.md", "README.ling", "README.txt", "README", "อ่านฉัน.md"] {
+        if let Ok(s) = std::fs::read_to_string(root.join(name)) {
+            return s.chars().take(20_000).collect();
+        }
+    }
+    String::new()
 }
 
 /// Gzip-tars `dir` (skipping build/VCS dirs and anything matched by
@@ -197,6 +364,9 @@ pub fn publish(args: &[String]) -> Result<()> {
         version = v.clone();
     }
 
+    let extra = manifest_extra(&manifest);
+    let readme = read_readme(&root);
+
     let tarball = build_tarball(&root)?;
     if tarball.len() < 3 || tarball[0] != 0x1f || tarball[1] != 0x8b {
         bail!("failed to build a valid gzip artifact");
@@ -211,6 +381,12 @@ pub fn publish(args: &[String]) -> Result<()> {
             ("name", name.as_str()),
             ("version", version.as_str()),
             ("description", description.as_str()),
+            ("keywords", extra.keywords.as_str()),
+            ("homepage", extra.homepage.as_str()),
+            ("repository", extra.repository.as_str()),
+            ("license", extra.license.as_str()),
+            ("authors", extra.authors.as_str()),
+            ("readme", readme.as_str()),
             ("artifact_b64", artifact_b64.as_str()),
         ]);
 
@@ -231,4 +407,52 @@ pub fn publish(args: &[String]) -> Result<()> {
 /// The active registry URL, for status messages.
 pub fn active_registry() -> String {
     registry_url()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotes_cjk_table_header() {
+        let out = quote_non_ascii_keys("[灵符]\n");
+        assert_eq!(out, "[\"灵符\"]\n");
+        out.parse::<toml::Value>().expect("should now parse");
+    }
+
+    #[test]
+    fn quotes_cjk_key_value() {
+        let out = quote_non_ascii_keys("名 = \"tensormap\"\n");
+        assert_eq!(out, "\"名\" = \"tensormap\"\n");
+    }
+
+    #[test]
+    fn quotes_nested_inline_table_key() {
+        let out = quote_non_ascii_keys("灵林 = { 邮 = \"a@b.com\" }\n");
+        assert_eq!(out, "\"灵林\" = { \"邮\" = \"a@b.com\" }\n");
+        out.parse::<toml::Value>().expect("should now parse");
+    }
+
+    #[test]
+    fn leaves_ascii_manifest_untouched() {
+        let text = "[spirit]\nname = \"x\"\nversion = \"1.0.0\"\n";
+        assert_eq!(quote_non_ascii_keys(text), text);
+    }
+
+    #[test]
+    fn leaves_string_values_untouched_even_with_non_ascii_content() {
+        let out = quote_non_ascii_keys("描述 = \"你好 = world\"\n");
+        assert_eq!(out, "\"描述\" = \"你好 = world\"\n");
+    }
+
+    #[test]
+    fn full_hello_world_style_manifest_parses() {
+        let text = "[灵符]\n名 = \"hello_world\"\n型 = \"独行\"\n版 = \"2030.0.0\"\n\n[灵者]\n灵林 = { 邮 = \"taellinglin@gmail.com\" }\n";
+        let quoted = quote_non_ascii_keys(text);
+        let value: toml::Value = quoted.parse().expect("should parse");
+        assert_eq!(
+            value["灵符"]["名"].as_str(),
+            Some("hello_world")
+        );
+    }
 }
