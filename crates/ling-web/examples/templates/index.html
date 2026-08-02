@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+<head><title>ling-web guestbook</title></head>
+<body>
+  <h1>ling-web guestbook</h1>
+  <p>You've visited {{ visits }} time(s) this session.</p>
+
+  {% for f in flashes %}
+    <p class="flash {{ f.category }}">{{ f.message }}</p>
+  {% endfor %}
+
+  <form method="post" action="/">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="text" name="name" placeholder="Your name" required>
+    <button type="submit">Sign the guestbook</button>
+  </form>
+
+  <ul>
+  {% for entry in entries %}
+    <li>{{ entry }}</li>
+  {% endfor %}
+  </ul>
+</body>
+</html>
