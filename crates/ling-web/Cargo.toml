@@ -1,0 +1,40 @@
+[package]
+name = "ling-web"
+version = "0.1.0"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
+description = "灵网站 — the Flask-flavored layer on ling-http: sessions, flash messages, templates, static files, blueprints, CSRF."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+keywords = ["web", "flask", "sessions", "templates", "mvc"]
+categories = ["web-programming::http-server"]
+
+[dependencies]
+ling-http = { workspace = true }
+
+axum = { version = "0.8", features = ["json", "macros"] }
+axum-extra = { version = "0.10", features = ["cookie"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+# Not tower-sessions-sqlx-store: it pins its own sqlx/sqlite driver, which
+# conflicts with the rusqlite already unified across the workspace (see
+# src/session_store.rs — a small hand-written SessionStore over ling-http's
+# Db instead).
+tower-sessions = { version = "0.13", default-features = false }
+async-trait = "0.1"
+
+minijinja = { version = "2", features = ["loader"] }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rand = "0.8"
+subtle = "2.6"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
+clap = { version = "4.4", features = ["derive"] }
