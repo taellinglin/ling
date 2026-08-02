@@ -1,6 +1,6 @@
 [package]
 name = "ling-core"
-version = "2030.0.1"
+version = "2030.0.2"
 edition = "2021"
 authors = ["Ling Lin <ling@ling-lang.org>"]
 description = "Core types, errors, and compiler infrastructure for Ling"
