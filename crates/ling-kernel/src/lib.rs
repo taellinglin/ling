@@ -38,6 +38,10 @@ pub mod packages;
 #[cfg(target_arch = "x86_64")]
 pub mod life;
 #[cfg(target_arch = "x86_64")]
+pub mod sched;
+#[cfg(target_arch = "x86_64")]
+pub mod timer;
+#[cfg(target_arch = "x86_64")]
 #[path = "cpu_x86_64.rs"]
 pub mod cpu;
 
@@ -77,6 +81,17 @@ pub fn init() {
             vga::Color::Black as u8,
         ));
         serial::write(b"ling-kernel initialized\n");
+        timer::calibrate();
+
+        // Milestone 0 of the cooperative scheduler: establish the shell as
+        // slot 0, spawn two temporary demo tasks that interleave serial
+        // output with it, and prove real concurrent progress via the serial
+        // log before anything real (a shell command, the ling interpreter)
+        // depends on this working. Remove these two spawns once Phase 1's
+        // shell-driven demo command replaces them.
+        sched::init_main_task();
+        sched::spawn(sched::demo_task_a as *const () as usize as u64);
+        sched::spawn(sched::demo_task_b as *const () as usize as u64);
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -205,6 +220,40 @@ pub unsafe extern "C" fn ling_kernel_serial_write(ptr: u64, len: u64) -> u64 {
     let slice = core::slice::from_raw_parts(ptr as *const u8, len as usize);
     console_write(slice);
     0
+}
+
+/// Spawn `entry` (a function pointer already linked into this same kernel
+/// image — see `sched`'s module doc) as a new cooperative task. Returns its
+/// slot index, or `u64::MAX` if every slot is taken.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_spawn(entry: u64) -> u64 {
+    sched::spawn(entry)
+}
+
+/// Voluntarily give up the CPU to the next `Ready` task, if any. This
+/// kernel has no timer interrupt, so nothing else ever runs unless
+/// something calls this (or `ling_kernel_exit`) — see `sched`'s module doc.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_yield() -> u64 {
+    sched::yield_now();
+    0
+}
+
+/// End the calling task and hand off to whatever's `Ready` next. Never
+/// returns.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_exit() -> u64 {
+    sched::exit()
+}
+
+/// The calling task's own slot index.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
+    sched::getpid()
 }
 
 /// Run `lingfs::self_test()` against the real disk (mount/format, put,

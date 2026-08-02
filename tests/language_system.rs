@@ -6,6 +6,7 @@
 //!
 //! Run with: `cargo test --test language_system`
 
+use ling::lexer::{Lexer, Token};
 use ling::run;
 
 /// A program that runs cleanly returns Ok(()).
@@ -322,6 +323,151 @@ fn detects_languages() {
     ] {
         let lang = ling::detect_language(src);
         assert!(!lang.is_empty(), "[{label}] detect_language returned empty");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyword coverage — every core keyword must resolve in en/zh/ja/ko/th.
+//
+// Most of these keywords (post/give/fit/can/change/stop/again/try/sure/maybe/
+// pure/ok/bad/none) have no dedicated grammar production yet — `parser::mod`
+// only ever consumes them via its "keyword usable as a bind name" fallback —
+// so a program using one still runs identically whether the word tokenized as
+// the intended keyword or fell through to a plain identifier. That makes
+// `assert_runs` unable to catch a missing/wrong mapping for them, so this
+// checks the lexer directly instead: the one thing that actually
+// distinguishes "recognized" from "silently became an Ident".
+fn assert_lexes_as(word: &str, expected: Token) {
+    let got = Lexer::new(word).next_token();
+    assert_eq!(
+        got,
+        Some(expected.clone()),
+        "{word:?} should lex as {expected:?}, got {got:?}"
+    );
+}
+
+#[test]
+fn keyword_coverage_all_five_languages() {
+    // (word, expected token) — one row per newly-completed language, for the
+    // keywords that were previously en/zh-only (or, for stop/again/try/spawn,
+    // missing only Thai).
+    let cases: &[(&str, Token)] = &[
+        // type
+        ("型", Token::Type),
+        ("타입", Token::Type),
+        ("ชนิด", Token::Type),
+        // own / lend / share / move / copy
+        ("所有", Token::Own),
+        ("소유", Token::Own),
+        ("เป็นเจ้าของ", Token::Own),
+        ("貸す", Token::Lend),
+        ("빌려", Token::Lend),
+        ("ให้ยืม", Token::Lend),
+        ("共有", Token::Share),
+        ("공유", Token::Share),
+        ("แบ่งปัน", Token::Share),
+        ("移動", Token::Move),
+        ("이동", Token::Move),
+        ("ย้าย", Token::Move),
+        ("複製", Token::Copy),
+        ("복사", Token::Copy),
+        ("คัดลอก", Token::Copy),
+        // as / where
+        ("として", Token::As),
+        ("로서", Token::As),
+        ("เป็น", Token::As),
+        ("但し", Token::Where),
+        ("단", Token::Where),
+        ("โดยที่", Token::Where),
+        // post / give / fit
+        ("投稿", Token::Post),
+        ("게시", Token::Post),
+        ("ส่ง", Token::Post),
+        ("渡す", Token::Give),
+        ("전달", Token::Give),
+        ("ให้", Token::Give),
+        ("適合", Token::Fit),
+        ("적합", Token::Fit),
+        ("เหมาะสม", Token::Fit),
+        // can / change
+        ("できる", Token::Can),
+        ("가능", Token::Can),
+        ("สามารถ", Token::Can),
+        ("変える", Token::Change),
+        ("변경", Token::Change),
+        ("เปลี่ยนแปลง", Token::Change),
+        // stop / again / try / spawn — only Thai was missing (ja/ko already existed)
+        ("หยุด", Token::Stop),
+        ("ทำอีก", Token::Again),
+        ("ลอง", Token::Try),
+        ("สร้าง", Token::Spawn),
+        // sure / maybe / pure
+        ("確か", Token::Sure),
+        ("확실", Token::Sure),
+        ("แน่นอน", Token::Sure),
+        ("多分", Token::Maybe),
+        ("아마도", Token::Maybe),
+        ("อาจจะ", Token::Maybe),
+        ("純粋", Token::Pure),
+        ("순수", Token::Pure),
+        ("บริสุทธิ์", Token::Pure),
+        // ok / bad / none
+        ("良い", Token::Ok),
+        ("좋아", Token::Ok),
+        ("ตกลง", Token::Ok),
+        ("悪い", Token::Bad),
+        ("나쁨", Token::Bad),
+        ("ผิดพลาด", Token::Bad),
+        ("なし", Token::None),
+        ("없음", Token::None),
+        ("ไม่มี", Token::None),
+    ];
+    for (word, expected) in cases {
+        assert_lexes_as(word, expected.clone());
+    }
+}
+
+/// Ownership-hint keywords (own/lend/share/move/copy) are the one part of this
+/// batch that *does* have a dedicated grammar rule (`parse_unary_expr`
+/// evaluates straight through them) — so unlike the rest of
+/// `keyword_coverage_all_five_languages`, this can be proven end-to-end: if
+/// the word didn't lex as the intended keyword, the leftover number token
+/// would break parsing inside the `print(...)` call.
+#[test]
+fn ownership_hints_japanese_korean_thai() {
+    assert_runs(
+        "own-ja",
+        r#"束縛 開始 = 実行 { 印刷(所有 1) 印刷(貸す 2) 印刷(共有 3) 印刷(移動 4) 印刷(複製 5) }"#,
+    );
+    assert_runs(
+        "own-ko",
+        r#"바인드 시작 = 실행 { 출력(소유 1) 출력(빌려 2) 출력(공유 3) 출력(이동 4) 출력(복사 5) }"#,
+    );
+    assert_runs(
+        "own-th",
+        r#"ผูก เริ่ม = ทำ { พิมพ์(เป็นเจ้าของ 1) พิมพ์(ให้ยืม 2) พิมพ์(แบ่งปัน 3) พิมพ์(ย้าย 4) พิมพ์(คัดลอก 5) }"#,
+    );
+}
+
+/// `type X as Y` exercises both the newly-added `type` and `as` keywords
+/// together, in the one grammar rule that actually consumes them
+/// (`parse_item`'s `Token::Type` branch expects `Token::As` right after the
+/// name). Checked via `parser::parse` rather than `assert_runs`/a second
+/// top-level item: `parse_type_str` only stops at `{`/`,`/`;`/`->`/EOF, so a
+/// standalone type alias followed by *anything* else greedily swallows it —
+/// a pre-existing limitation independent of language (confirmed: plain
+/// English `type Foo as num` followed by `bind start = do {...}` hits the
+/// exact same "unexpected token at top level: LBrace"), not something to
+/// paper over in a keyword-coverage test.
+#[test]
+fn type_alias_japanese_korean_thai() {
+    for (label, src) in [
+        ("type-ja", "型 数 として num"),
+        ("type-ko", "타입 숫자 로서 num"),
+        ("type-th", "ชนิด เลข เป็น num"),
+    ] {
+        ling::parser::parse(src)
+            .unwrap_or_else(|e| panic!("[{label}] expected `type ... as ...` to parse, got: {e}"));
     }
 }
 

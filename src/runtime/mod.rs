@@ -6723,6 +6723,10 @@ impl Interpreter {
                                         "authorization".to_string(),
                                         Value::Str(pending.authorization.clone()),
                                     ),
+                                    (
+                                        "client_ip".to_string(),
+                                        Value::Str(pending.client_ip.clone()),
+                                    ),
                                 ],
                             };
                             match self.call_value(handler.clone(), vec![req_value]) {
@@ -6823,6 +6827,28 @@ impl Interpreter {
                         .replace('"', "&quot;")
                         .replace('\'', "&#39;"),
                 ));
+            },
+            // json_escape(s) — escape a string for embedding inside a JSON
+            // string literal (", \, and control chars). Needed because the
+            // registry builds JSON API responses by concatenation; without
+            // this a value containing " or \ breaks or injects into the JSON.
+            "json_escape" | "หนีเจสัน" => {
+                let s = self.arg_str(&args, 0, "");
+                let mut out = String::with_capacity(s.len() + 8);
+                for c in s.chars() {
+                    match c {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        c if (c as u32) < 0x20 => {
+                            out.push_str(&format!("\\u{:04x}", c as u32))
+                        },
+                        c => out.push(c),
+                    }
+                }
+                return Ok(Value::Str(out));
             },
             // ── CLI arguments: cli_arg("port", "8080") reads `--port 6688` ──
             "cli_arg" | "อาร์กิวเมนต์" => {
@@ -7310,6 +7336,72 @@ impl Interpreter {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 return Ok(Value::Bool(std::fs::copy(&src, &dst).is_ok()));
+            },
+            // ── Read a .tgz (gzip tarball): list file entries / read one file ──
+            // Powers the GitHub-style "Code / Files" browser: tar_gz_list gives
+            // the file tree, tar_gz_read pulls one file's text for the viewer.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "tar_gz_list" | "รายการทาร์" => {
+                let path = self.arg_str(&args, 0, "");
+                let mut names: Vec<String> = Vec::new();
+                if let Ok(file) = std::fs::File::open(&path) {
+                    let gz = flate2::read::GzDecoder::new(file);
+                    let mut ar = tar::Archive::new(gz);
+                    if let Ok(entries) = ar.entries() {
+                        for entry in entries.flatten() {
+                            if entry.header().entry_type().is_file() {
+                                if let Ok(p) = entry.path() {
+                                    names.push(
+                                        p.to_string_lossy()
+                                            .trim_start_matches("./")
+                                            .replace('\\', "/"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                names.sort();
+                names.dedup();
+                let out: Vec<Value> = names.into_iter().map(Value::Str).collect();
+                return Ok(Value::List(Rc::new(out)));
+            },
+            // tar_gz_read(archive, entry) → that file's text (utf-8 lossy,
+            // capped at 256 KiB). Only reads entries that exist in the archive,
+            // so a caller can't traverse outside it. "" if not found/unreadable.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "tar_gz_read" | "อ่านทาร์" => {
+                let path = self.arg_str(&args, 0, "");
+                let want = self.arg_str(&args, 1, "");
+                let want = want.trim_start_matches("./").replace('\\', "/");
+                let mut content = String::new();
+                if let Ok(file) = std::fs::File::open(&path) {
+                    let gz = flate2::read::GzDecoder::new(file);
+                    let mut ar = tar::Archive::new(gz);
+                    if let Ok(entries) = ar.entries() {
+                        for entry in entries.flatten() {
+                            let mut entry = entry;
+                            let name = match entry.path() {
+                                Ok(p) => p
+                                    .to_string_lossy()
+                                    .trim_start_matches("./")
+                                    .replace('\\', "/"),
+                                Err(_) => continue,
+                            };
+                            if name == want {
+                                use std::io::Read;
+                                let mut buf = Vec::new();
+                                let cap = 256 * 1024;
+                                if entry.take(cap as u64 + 1).read_to_end(&mut buf).is_ok() {
+                                    let slice = if buf.len() > cap { &buf[..cap] } else { &buf[..] };
+                                    content = String::from_utf8_lossy(slice).into_owned();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                return Ok(Value::Str(content));
             },
             // ── TOTP (RFC 6238, HMAC-SHA1, 6 digits, 30s) for 2FA ──
             // Base32 secret compatible with Google Authenticator / Authy etc.
@@ -11380,12 +11472,13 @@ impl Interpreter {
     fn call_method(&self, recv: Value, method: &str, args: Vec<Value>) -> EvalResult {
         match (&recv, method) {
             (Value::Str(s), "is_empty" | "是空") => Ok(Value::Bool(s.is_empty())),
-            // "长度" ("length", the natural noun) alongside "长" ("long", the
-            // adjective originally used here) — `lingfu normalize` rewrites
-            // `.len()` calls to `.长度()`, matching the free-function `len`/
-            // `长度` alias (line ~7365) but not this method-call arm, which
-            // otherwise made `.len()` silently un-callable post-normalize.
-            (Value::Str(s), "len" | "长" | "长度") => Ok(Value::Number(s.len() as f64)),
+            // All of `lingfu normalize`'s per-language spellings of len/push
+            // (see ling-fu normalize.rs alias table), not just the Chinese
+            // ones — normalize rewrites method calls into whichever language
+            // the project is normalized to, and any spelling missing here
+            // makes those calls un-callable post-normalize (first hit with
+            // `.长度()`, then again with Thai `.ความยาว()`).
+            (Value::Str(s), "len" | "长" | "长度" | "長さ" | "길이" | "ความยาว") => Ok(Value::Number(s.len() as f64)),
             (Value::Str(s), "to_string" | "转文") => Ok(Value::Str(s.clone())),
             (Value::Str(s), "contains" | "包含") => {
                 if let Some(Value::Str(sub)) = args.first() {
@@ -11401,10 +11494,8 @@ impl Interpreter {
                 }
                 Ok(Value::Str(s2))
             },
-            (Value::List(v), "len" | "长" | "长度") => Ok(Value::Number(v.len() as f64)),
-            // "添加" ("add", the natural verb `lingfu normalize` rewrites
-            // `.push()` to) alongside "推" ("push/shove", the original alias).
-            (Value::List(v), "push" | "推" | "添加") => {
+            (Value::List(v), "len" | "长" | "长度" | "長さ" | "길이" | "ความยาว") => Ok(Value::Number(v.len() as f64)),
+            (Value::List(v), "push" | "推" | "添加" | "追加" | "추가" | "เพิ่ม") => {
                 let mut v2: Vec<Value> = (**v).clone();
                 if let Some(a) = args.first() {
                     v2.push(a.clone());

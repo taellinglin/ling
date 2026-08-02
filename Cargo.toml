@@ -131,7 +131,7 @@ cuda = ["ling-gpu/cuda", "ling-physics/cuda"]
 # (Not ling-web: it declares its own `[workspace]`, so the root crate can't
 # path-depend on it — "multiple workspace roots" — reuse just the one type it
 # would have given us, tower_http::services::ServeDir, directly instead.)
-web = ["dep:ling-http", "dep:tower-http", "dep:reqwest", "dep:zip", "dep:hmac", "dep:sha1"]
+web = ["dep:ling-http", "dep:tower-http", "dep:reqwest", "dep:zip", "dep:hmac", "dep:sha1", "dep:tar"]
 
 [dependencies]
 glam = "0.33"
@@ -168,6 +168,7 @@ ling-http = { workspace = true, optional = true }   # http_route/http_serve buil
 tower-http = { version = "0.6", features = ["fs"], optional = true }   # ServeDir backs http_static (feature = "web")
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }   # http_post_async/http_job_poll builtins (feature = "web")
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }   # zip_files builtin (feature = "web")
+tar = { version = "0.4", optional = true }   # tar_gz_list/tar_gz_read builtins — browse a package's uploaded tarball (feature = "web")
 hmac = { version = "0.12", optional = true }   # TOTP (2FA) builtins (feature = "web")
 sha1 = { version = "0.10", optional = true }   # TOTP HMAC-SHA1 (feature = "web")
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }   # qr_svg builtin — scannable otpauth:// codes for 2FA setup

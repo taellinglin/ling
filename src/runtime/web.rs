@@ -64,6 +64,11 @@ pub struct PendingRequest {
     /// Raw `Authorization` request header (empty if absent) — API-key auth for
     /// `lingfu publish` reads its bearer token from here.
     pub authorization: String,
+    /// Best-effort client IP for rate limiting: the first `X-Forwarded-For`
+    /// hop (set by a reverse proxy) or `X-Real-IP`, else "". Behind a proxy
+    /// the socket peer is the proxy, so these headers are the real source;
+    /// `.ling` code falls back to a username/key when this is empty.
+    pub client_ip: String,
     pub respond_to: tokio::sync::oneshot::Sender<HttpResponse>,
 }
 
@@ -88,6 +93,20 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let client_ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            req.headers()
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
 
     let body_bytes = match axum::body::to_bytes(req.into_body(), 32 * 1024 * 1024).await {
         Ok(b) => b,
@@ -103,6 +122,7 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         body,
         cookie,
         authorization,
+        client_ip,
         respond_to: resp_tx,
     });
     if sent.is_err() {
@@ -126,6 +146,18 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
                     r.headers_mut().insert(axum::http::header::LOCATION, value);
                 }
             }
+            // Anti-clickjacking: forbid this page from being embedded in any
+            // <iframe>/<frame>/<embed>. `X-Frame-Options: DENY` covers legacy
+            // browsers; CSP `frame-ancestors 'none'` is the modern equivalent
+            // (and the only one that reliably applies to `<embed>`/`<object>`).
+            r.headers_mut().insert(
+                axum::http::header::X_FRAME_OPTIONS,
+                axum::http::HeaderValue::from_static("DENY"),
+            );
+            r.headers_mut().insert(
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
+            );
             r
         },
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "handler dropped the response").into_response(),
