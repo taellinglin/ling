@@ -1,6 +1,6 @@
 # Glossary
 A language-switchable reference for every Ling **keyword**, **type**, **literal** and **builtin**. Pick a language from the selector in the top bar — the tables and the sidebar switch to show only that language's spelling.
-- **40** keywords · **6** types · **363** builtins across **12** crates.
+- **40** keywords · **6** types · **369** builtins across **12** crates.
 
 ## Builtins by crate
 - [ling (core runtime)](crate-core.md) — I/O, math, noise, time, colour helpers and collections — always available.

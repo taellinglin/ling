@@ -25,6 +25,7 @@
 - [Builtins — Vector Fonts](reference/fonts.md)
 - [Builtins — UI Toolkit](reference/ui.md)
 - [Builtins — Physics](reference/physics.md)
+- [Builtins — Toon Post-FX & Volumetric Light](reference/postfx.md)
 - [Builtins — Animation (Anima)](reference/animation.md)
 - [Builtins — Dialog](reference/dialog.md)
 - [Asset Conversion — ling convert](reference/convert.md)

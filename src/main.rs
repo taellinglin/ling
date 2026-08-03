@@ -1923,13 +1923,55 @@ fn collect_quoted(s: &str, out: &mut Vec<String>) {
     }
 }
 
+/// Load ignore patterns from `ling.ignore` (or `.lingignore`) at the project
+/// root. One pattern per line, `#` comments. Same glob syntax as `[includes]`;
+/// a plain path (with or without a trailing `/`) excludes that file or the
+/// whole subtree under a directory. Applied to `[includes]` expansion so junk
+/// (recordings, saves, editor litter) never gets packed into a build — the
+/// same file `lingfu publish` uses to filter the uploaded tarball.
+fn load_ignore_patterns(root: &Path) -> Vec<String> {
+    let mut pats = Vec::new();
+    for name in ["ling.ignore", ".lingignore"] {
+        if let Ok(text) = std::fs::read_to_string(root.join(name)) {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let line = line
+                    .trim_start_matches("./")
+                    .trim_start_matches('/')
+                    .trim_end_matches('/');
+                if !line.is_empty() {
+                    pats.push(line.replace('\\', "/"));
+                }
+            }
+        }
+    }
+    pats
+}
+
+/// True when `rel` (forward-slash relative path) matches an ignore pattern.
+fn is_ignored(pats: &[String], rel: &str) -> bool {
+    pats.iter().any(|p| {
+        if p.contains('*') || p.contains('?') {
+            glob_match(p, rel)
+        } else {
+            rel == p || rel.starts_with(&format!("{p}/"))
+        }
+    })
+}
+
 /// Expand the manifest's include patterns against the project root into a list of
-/// `(relative-path-with-forward-slashes, absolute-path)` files.
+/// `(relative-path-with-forward-slashes, absolute-path)` files. Files matching
+/// `ling.ignore` are excluded.
 fn expand_includes(project: &LingProject) -> Vec<(String, PathBuf)> {
     let root = &project.source_dir;
     let mut all: Vec<(String, PathBuf)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let files = walk_files(root); // (rel, abs) for the whole tree, once
+    let ignore = load_ignore_patterns(root);
+    let mut skipped = 0usize;
 
     for pat in &project.includes {
         let pat = pat.trim().trim_start_matches("./").trim_start_matches('/');
@@ -1943,13 +1985,21 @@ fn expand_includes(project: &LingProject) -> Vec<(String, PathBuf)> {
                 // A bare directory means "everything under it".
                 let prefix = format!("{}/", pat.replace('\\', "/"));
                 for (rel, abs) in &files {
-                    if rel.starts_with(&prefix) && seen.insert(rel.clone()) {
-                        all.push((rel.clone(), abs.clone()));
+                    if rel.starts_with(&prefix) {
+                        if is_ignored(&ignore, rel) {
+                            skipped += 1;
+                            continue;
+                        }
+                        if seen.insert(rel.clone()) {
+                            all.push((rel.clone(), abs.clone()));
+                        }
                     }
                 }
             } else if abs.is_file() {
                 let rel = pat.replace('\\', "/");
-                if seen.insert(rel.clone()) {
+                if is_ignored(&ignore, &rel) {
+                    skipped += 1;
+                } else if seen.insert(rel.clone()) {
                     all.push((rel, abs));
                 }
             } else {
@@ -1959,14 +2009,24 @@ fn expand_includes(project: &LingProject) -> Vec<(String, PathBuf)> {
         }
         let mut matched = false;
         for (rel, abs) in &files {
-            if glob_match(pat, rel) && seen.insert(rel.clone()) {
-                all.push((rel.clone(), abs.clone()));
-                matched = true;
+            if glob_match(pat, rel) {
+                if is_ignored(&ignore, rel) {
+                    skipped += 1;
+                    matched = true; // pattern did match; the file is just excluded
+                    continue;
+                }
+                if seen.insert(rel.clone()) {
+                    all.push((rel.clone(), abs.clone()));
+                    matched = true;
+                }
             }
         }
         if !matched {
             eprintln!("  [includes] no match for '{pat}'");
         }
+    }
+    if skipped > 0 {
+        println!("  ling.ignore: excluded {skipped} file(s)");
     }
     all
 }

@@ -338,6 +338,12 @@ set_shade_mode = "ตั้งการแรเงา"
 set_cel_bands = "ตั้งระดับสี"
 set_shadow_color = "ตั้งสีเงา"
 set_rim = "ตั้งขอบเรือง"
+tone_soft = "โทนขอบนุ่ม"
+set_ssao = "ตั้งเงาสัมผัส"
+set_fxaa = "ลบรอยหยัก"
+set_bloom = "ตั้งบลูม"
+light_pool = "แอ่งแสง"
+light_beam = "ลำแสงไฟ"
 
 # ── Geometric / post-quantum crypto ──
 crypto_hash = "แฮชเข้ารหัส"

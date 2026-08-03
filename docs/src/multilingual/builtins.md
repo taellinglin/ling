@@ -84,6 +84,31 @@ All names in a row are aliases for the same function.
 | `depth_triangle(x0,y0, x1,y1, x2,y2, z)` | `深度三角` | `深度三角形` | `깊이삼각` | `สามเหลี่ยมเรียงลึก` | Queue a depth-sorted triangle (drawn back-to-front at `present`) |
 | `depth_line(x0,y0, x1,y1, z)` | `深度线` | `深度線` | `깊이선` | `เส้นเรียงลึก` | Queue a depth-sorted line |
 
+## Toon shading & post-FX
+
+Holographic-cel shading controls, the unified tone ramp, and the screen-space
+post chain (ambient occlusion → outlines → tone ramp → bloom → FXAA), plus
+volumetric light volumes. All names in a row are aliases for the same function.
+
+| English | Chinese | Japanese | Korean | Thai | Description |
+|---------|---------|----------|--------|------|-------------|
+| `set_shade_mode(m)` | `设置着色` | `シェード設定` | `셰이드모드` | `ตั้งการแรเงา` | Mesh shading: 0 flat · 1 cel · 2 holo (default) |
+| `set_cel_bands(n)` | `设置色阶` | `セル段数` | `셀밴드` | `ตั้งระดับสี` | Posterisation band count (≥2) |
+| `set_shadow_color(r,g,b)` | `设置阴影色` | `影の色` | `그림자색` | `ตั้งสีเงา` | Coloured-shadow tint for unlit regions |
+| `set_rim(s, r,g,b)` | `设置边缘光` | `リム設定` | `림라이트` | `ตั้งขอบเรือง` | Fresnel rim glow strength + colour (0 = off) |
+| `tone_stop(t, value)` | `色调停止` | `トーンストップ` | `톤스톱` | `ตั้งจุดโทน` | Add a tone-ramp stop (luminance → brightness) |
+| `tone_smooth(on)` | `色调平滑` | `トーンスムーズ` | `톤스무스` | `ตั้งโทนนุ่ม` | 0 hard cel snap · 1 smooth gradient lerp |
+| `tone_bezier(y1, y2)` | `色调贝塞尔` | `トーンベジェ` | `톤베지어` | `ตั้งโทนเบซิเยร์` | Bézier remap of input luminance (S-curves) |
+| `tone_ramp_reset()` | `重置色调渐变` | `トーンランプリセット` | `톤램프리셋` | `รีเซ็ตการไล่โทน` | Restore the default 3-band cel ramp |
+| `tone_ramp_clear()` | `清除色调渐变` | `トーンランプクリア` | `톤램프클리어` | `ล้างการไล่โทน` | Clear all stops (build your own ramp) |
+| `tone_soft(soft, sheen)` | `色调柔边` | `トーンソフト` | `톤소프트` | `โทนขอบนุ่ม` | Soft band edges + smooth highlight sheen |
+| `set_ssao(strength, radius, zrange)` | `环境光遮蔽` | `アンビエントオクルージョン` | `앰비언트오클루전` | `ตั้งเงาสัมผัส` | Ambient occlusion from the z-buffer (needs `set_depth_test(1)`) |
+| `set_fxaa(on)` | `屏幕抗锯齿` | `画面アンチエイリアス` | `화면안티앨리어싱` | `ลบรอยหยัก` | Screen-space edge anti-aliasing (FXAA-lite) |
+| `set_bloom(strength, threshold)` | `泛光` | `ブルーム` | `블룸` | `ตั้งบลูม` | Soft HDR-style glow from bright pixels |
+| `depth_blur(focus, range, radius, oil)` `dof(...)` | `景深` | — | — | `เบลอความลึก` | Tilt-shift depth-of-field; `oil` adds an iridescent oil-slick shimmer |
+| `light_pool(x,y,z, radius, r,g,b, intensity)` | `光池` | `ライトプール` | `빛웅덩이` | `แอ่งแสง` | Volumetric light splash on a floor — soft additive radial gradient |
+| `light_beam(x,y,z, floor_y, radius, r,g,b, intensity)` | `光柱` | `ライトビーム` | `빛기둥` | `ลำแสงไฟ` | Volumetric god-ray cone from a light down to the floor |
+
 ## Vector geometry (vtex)
 
 All names in the same row are valid aliases for the same function.

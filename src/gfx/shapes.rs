@@ -1525,6 +1525,169 @@ impl GfxState {
             }
         }
     }
+
+    /// Scale an emissive intensity by the distance fog at a world point, so
+    /// additive light volumes fade out with draw distance instead of adding
+    /// fog-coloured light.
+    fn fog_intensity(&self, x: f32, y: f32, z: f32, intensity: f32) -> f32 {
+        if self.fog_end <= 0.0 {
+            return intensity;
+        }
+        let span = self.fog_end - self.fog_start;
+        if span <= 0.0 {
+            return intensity;
+        }
+        let d = self.camera.depth(x, y, z);
+        let f = ((d - self.fog_start) / span).clamp(0.0, 1.0);
+        intensity * (1.0 - f)
+    }
+
+    /// Push one world-space triangle with per-vertex linear-rgb colours through
+    /// near-plane clip + projection into the depth queue (smooth Gouraud, no
+    /// posterisation). Used by the volumetric light helpers.
+    fn emit_grad_tri_world(&mut self, v: [([f32; 3], [f32; 3]); 3]) {
+        let near = -self.camera.zdist + 0.05;
+        let d0 = self.camera.depth(v[0].0[0], v[0].0[1], v[0].0[2]);
+        let d1 = self.camera.depth(v[1].0[0], v[1].0[1], v[1].0[2]);
+        let d2 = self.camera.depth(v[2].0[0], v[2].0[1], v[2].0[2]);
+        if d0 <= near && d1 <= near && d2 <= near {
+            return;
+        }
+        let poly = near_clip_poly(
+            &[
+                (v[0].0, v[0].1, d0),
+                (v[1].0, v[1].1, d1),
+                (v[2].0, v[2].1, d2),
+            ],
+            near,
+        );
+        if poly.len() < 3 {
+            return;
+        }
+        let proj: Vec<(f32, f32, f32, u32)> = poly
+            .iter()
+            .map(|(p, col)| {
+                let (sx, sy, pz) = self.camera.project(p[0], p[1], p[2]);
+                (sx, sy, pz, ling_graphics::shading::pack(*col))
+            })
+            .collect();
+        let mut k = 1;
+        while k + 1 < proj.len() {
+            self.depth_queue.push_triangle_g_zv(
+                proj[0].0,
+                proj[0].1,
+                proj[0].2,
+                proj[0].3,
+                proj[k].0,
+                proj[k].1,
+                proj[k].2,
+                proj[k].3,
+                proj[k + 1].0,
+                proj[k + 1].1,
+                proj[k + 1].2,
+                proj[k + 1].3,
+                0,
+                false, // lit: light volumes tone-map with the scene
+            );
+            k += 1;
+        }
+    }
+
+    /// Volumetric light pool — the soft coloured splash a light throws on a
+    /// floor (the underwater-light look). An additive radial vector gradient:
+    /// centre = light colour × intensity, fading through a mid ring to fully
+    /// transparent at `radius` — additive black adds nothing, so the edge is
+    /// perfectly smooth with no polygon rim. Distance-fog fades the whole pool.
+    pub fn emit_light_pool(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        radius: f32,
+        col: [f32; 3],
+        intensity: f32,
+    ) {
+        let inten = self.fog_intensity(x, y, z, intensity);
+        if inten <= 0.004 || radius <= 0.01 {
+            return;
+        }
+        let y = y - 0.22; // hover just above the floor (+y down) — no z-fight
+        let cc = [
+            (col[0] * inten).min(1.0),
+            (col[1] * inten).min(1.0),
+            (col[2] * inten).min(1.0),
+        ];
+        let cm = [cc[0] * 0.35, cc[1] * 0.35, cc[2] * 0.35];
+        const ZERO: [f32; 3] = [0.0, 0.0, 0.0];
+        const SEG: usize = 20;
+        const TAU: f32 = std::f32::consts::TAU;
+        let rm = radius * 0.5;
+        // additive, full opacity for the gradient fan; restore pen state after
+        self.depth_queue.set_state(1, 1.0);
+        for s in 0..SEG {
+            let a0 = s as f32 / SEG as f32 * TAU;
+            let a1 = (s + 1) as f32 / SEG as f32 * TAU;
+            let (c0, s0) = (a0.cos(), a0.sin());
+            let (c1, s1) = (a1.cos(), a1.sin());
+            let m0 = [x + c0 * rm, y, z + s0 * rm];
+            let m1 = [x + c1 * rm, y, z + s1 * rm];
+            let o0 = [x + c0 * radius, y, z + s0 * radius];
+            let o1 = [x + c1 * radius, y, z + s1 * radius];
+            self.emit_grad_tri_world([([x, y, z], cc), (m0, cm), (m1, cm)]);
+            self.emit_grad_tri_world([(m0, cm), (o0, ZERO), (o1, ZERO)]);
+            self.emit_grad_tri_world([(m0, cm), (o1, ZERO), (m1, cm)]);
+        }
+        self.depth_queue.set_state(self.blend, self.alpha);
+    }
+
+    /// Volumetric light beam — a soft additive god-ray cone from the light
+    /// position `(x,y,z)` to the floor plane `fy`, spreading to `radius`.
+    /// Two nested shells (outer fades to transparent, half-radius core carries
+    /// a dim colour) read as a smooth volumetric shaft from every angle —
+    /// pair with `emit_light_pool` at the base for the underwater-light look.
+    pub fn emit_light_beam(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        fy: f32,
+        radius: f32,
+        col: [f32; 3],
+        intensity: f32,
+    ) {
+        let inten = self.fog_intensity(x, y, z, intensity);
+        if inten <= 0.004 || radius <= 0.01 {
+            return;
+        }
+        let apex = [x, y, z];
+        let ca = [
+            (col[0] * inten * 0.85).min(1.0),
+            (col[1] * inten * 0.85).min(1.0),
+            (col[2] * inten * 0.85).min(1.0),
+        ];
+        let cb = [ca[0] * 0.20, ca[1] * 0.20, ca[2] * 0.20];
+        const ZERO: [f32; 3] = [0.0, 0.0, 0.0];
+        const SEG: usize = 14;
+        const TAU: f32 = std::f32::consts::TAU;
+        let fy = fy - 0.20; // land just above the floor like the pool
+        let rc = radius * 0.45;
+        self.depth_queue.set_state(1, 1.0);
+        for s in 0..SEG {
+            let a0 = s as f32 / SEG as f32 * TAU;
+            let a1 = (s + 1) as f32 / SEG as f32 * TAU;
+            let (c0, s0) = (a0.cos(), a0.sin());
+            let (c1, s1) = (a1.cos(), a1.sin());
+            // outer shell: apex colour → transparent base ring
+            let o0 = [x + c0 * radius, fy, z + s0 * radius];
+            let o1 = [x + c1 * radius, fy, z + s1 * radius];
+            self.emit_grad_tri_world([(apex, ca), (o0, ZERO), (o1, ZERO)]);
+            // inner core: apex colour → dim base ring (keeps the shaft body lit)
+            let i0 = [x + c0 * rc, fy, z + s0 * rc];
+            let i1 = [x + c1 * rc, fy, z + s1 * rc];
+            self.emit_grad_tri_world([(apex, ca), (i0, cb), (i1, cb)]);
+        }
+        self.depth_queue.set_state(self.blend, self.alpha);
+    }
 }
 
 /// Near-plane clip of a convex polygon (Sutherland–Hodgman). Each input vertex is

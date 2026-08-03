@@ -126,6 +126,9 @@ pub struct GfxState {
     /// True ⇒ the next depth flush clears the z-buffer first (set by `เติม` /
     /// `clear_depth`). Lets the z-buffer span a frame's many `flush_3d` calls.
     pub zbuf_needs_clear: bool,
+    /// True ⇒ `flush_post` already ran the toon post-chain this frame, so
+    /// `present` must skip it (keeps UI drawn afterwards out of the post FX).
+    pub post_done: bool,
     /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
     /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -188,6 +191,7 @@ impl GfxState {
             depth_test: false,
             depth_buf: Vec::new(),
             zbuf_needs_clear: true,
+            post_done: false,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
@@ -361,6 +365,8 @@ pub struct GfxState {
     pub depth_buf: Vec<f32>,
     /// Mirrors native: next depth flush clears the z-buffer first.
     pub zbuf_needs_clear: bool,
+    /// Mirrors native: `flush_post` ran the post-chain; `present` skips it.
+    pub post_done: bool,
     /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
     /// to `fog_end`. `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -418,6 +424,7 @@ impl GfxState {
             depth_test: false,
             depth_buf: Vec::new(),
             zbuf_needs_clear: true,
+            post_done: false,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,

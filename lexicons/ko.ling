@@ -285,6 +285,12 @@ set_shade_mode = "셰이드모드"
 set_cel_bands = "셀밴드"
 set_shadow_color = "그림자색"
 set_rim = "림라이트"
+tone_soft = "톤소프트"
+set_ssao = "앰비언트오클루전"
+set_fxaa = "화면안티앨리어싱"
+set_bloom = "블룸"
+light_pool = "빛웅덩이"
+light_beam = "빛기둥"
 
 # ── 기하 / 양자내성 암호 ──
 crypto_hash = "기하해시"

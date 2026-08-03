@@ -1351,60 +1351,127 @@ pub fn depth_of_field(
     focus: f32,
     range: f32,
     rad: usize,
+    oil: f32,
 ) {
     let n = width * height;
-    if width == 0 || height == 0 || rad == 0 || zbuf.len() != n || buf.len() != n {
+    if width < 4 || height < 4 || rad == 0 || zbuf.len() != n || buf.len() != n {
         return;
     }
     let range = range.max(1e-3);
-    let inv_win = 1.0 / (2 * rad + 1) as f32;
-    let r_i = rad as i32;
-    let wi = width as i32;
-    let hi = height as i32;
+    let oil = oil.clamp(0.0, 1.0);
 
-    // Unpack channels to f32 planes.
-    let mut rc = vec![0f32; n];
-    let mut gc = vec![0f32; n];
-    let mut bc = vec![0f32; n];
-    for i in 0..n {
-        let p = buf[i];
-        rc[i] = ((p >> 16) & 0xFF) as f32;
-        gc[i] = ((p >> 8) & 0xFF) as f32;
-        bc[i] = (p & 0xFF) as f32;
+    // The blurred image is built at HALF resolution (the blur is low-frequency,
+    // so this is visually identical and ~4× cheaper), then sampled bilinearly
+    // during the full-res composite.
+    let hw = width.div_ceil(2);
+    let hh = height.div_ceil(2);
+    let hn = hw * hh;
+    let r_h = ((rad + 1) / 2).max(1) as i32; // blur radius in half-res pixels
+    let inv_win = 1.0 / (2 * r_h + 1) as f32;
+
+    // Downsample (2×2 average) into half-res f32 planes.
+    let mut rc = vec![0f32; hn];
+    let mut gc = vec![0f32; hn];
+    let mut bc = vec![0f32; hn];
+    {
+        let down_row = |hy: usize, rows: (&mut [f32], &mut [f32], &mut [f32])| {
+            let y0 = (hy * 2).min(height - 1);
+            let y1 = (hy * 2 + 1).min(height - 1);
+            for hx in 0..hw {
+                let x0 = (hx * 2).min(width - 1);
+                let x1 = (hx * 2 + 1).min(width - 1);
+                let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
+                for &i in &[
+                    y0 * width + x0,
+                    y0 * width + x1,
+                    y1 * width + x0,
+                    y1 * width + x1,
+                ] {
+                    let p = buf[i];
+                    r += ((p >> 16) & 0xFF) as f32;
+                    g += ((p >> 8) & 0xFF) as f32;
+                    b += (p & 0xFF) as f32;
+                }
+                rows.0[hx] = r * 0.25;
+                rows.1[hx] = g * 0.25;
+                rows.2[hx] = b * 0.25;
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            rc.par_chunks_mut(hw)
+                .zip(gc.par_chunks_mut(hw))
+                .zip(bc.par_chunks_mut(hw))
+                .enumerate()
+                .for_each(|(hy, ((r, g), b))| down_row(hy, (r, g, b)));
+        }
+        #[cfg(target_arch = "wasm32")]
+        for (hy, ((r, g), b)) in rc
+            .chunks_mut(hw)
+            .zip(gc.chunks_mut(hw))
+            .zip(bc.chunks_mut(hw))
+            .enumerate()
+        {
+            down_row(hy, (r, g, b));
+        }
     }
 
-    // Separable box blur with edge clamping (prime O(rad)/line, slide O(1)/px).
+    // Separable box blur on the half-res planes (H: sliding window; V: direct
+    // small-window sum — both row-parallel on native).
+    let hwi = hw as i32;
     let blur = |src: &[f32]| -> Vec<f32> {
-        let mut tmp = vec![0f32; n];
-        for y in 0..height {
-            let row = y * width;
+        let mut tmp = vec![0f32; hn];
+        let hpass = |y: usize, out_row: &mut [f32]| {
+            let row = y * hw;
             let mut acc = 0.0f32;
-            let mut k = -r_i;
-            while k <= r_i {
-                acc += src[row + k.clamp(0, wi - 1) as usize];
+            let mut k = -r_h;
+            while k <= r_h {
+                acc += src[row + k.clamp(0, hwi - 1) as usize];
                 k += 1;
             }
-            for x in 0..width {
-                tmp[row + x] = acc * inv_win;
-                let lo = (x as i32 - r_i).clamp(0, wi - 1) as usize;
-                let hi2 = (x as i32 + r_i + 1).clamp(0, wi - 1) as usize;
+            for x in 0..hw {
+                out_row[x] = acc * inv_win;
+                let lo = (x as i32 - r_h).clamp(0, hwi - 1) as usize;
+                let hi2 = (x as i32 + r_h + 1).clamp(0, hwi - 1) as usize;
                 acc += src[row + hi2] - src[row + lo];
             }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            tmp.par_chunks_mut(hw)
+                .enumerate()
+                .for_each(|(y, row)| hpass(y, row));
         }
-        let mut out = vec![0f32; n];
-        for x in 0..width {
-            let mut acc = 0.0f32;
-            let mut k = -r_i;
-            while k <= r_i {
-                acc += tmp[k.clamp(0, hi - 1) as usize * width + x];
-                k += 1;
+        #[cfg(target_arch = "wasm32")]
+        for (y, row) in tmp.chunks_mut(hw).enumerate() {
+            hpass(y, row);
+        }
+
+        let mut out = vec![0f32; hn];
+        let vpass = |y: usize, out_row: &mut [f32]| {
+            for (x, o) in out_row.iter_mut().enumerate() {
+                let mut acc = 0.0f32;
+                let mut k = -r_h;
+                while k <= r_h {
+                    let yy = (y as i32 + k).clamp(0, hh as i32 - 1) as usize;
+                    acc += tmp[yy * hw + x];
+                    k += 1;
+                }
+                *o = acc * inv_win;
             }
-            for y in 0..height {
-                out[y * width + x] = acc * inv_win;
-                let lo = (y as i32 - r_i).clamp(0, hi - 1) as usize;
-                let hi2 = (y as i32 + r_i + 1).clamp(0, hi - 1) as usize;
-                acc += tmp[hi2 * width + x] - tmp[lo * width + x];
-            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            out.par_chunks_mut(hw)
+                .enumerate()
+                .for_each(|(y, row)| vpass(y, row));
+        }
+        #[cfg(target_arch = "wasm32")]
+        for (y, row) in out.chunks_mut(hw).enumerate() {
+            vpass(y, row);
         }
         out
     };
@@ -1412,19 +1479,85 @@ pub fn depth_of_field(
     let rb = blur(&rc);
     let gb = blur(&gc);
     let bb = blur(&bc);
+    drop(rc);
+    drop(gc);
+    drop(bc);
 
-    for i in 0..n {
-        let z = zbuf[i];
-        let coc = if z.is_finite() {
-            ((z - focus).abs() / range).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        let s = 1.0 - coc;
-        let r = (rc[i] * s + rb[i] * coc).round().clamp(0.0, 255.0) as u32;
-        let g = (gc[i] * s + gb[i] * coc).round().clamp(0.0, 255.0) as u32;
-        let b = (bc[i] * s + bb[i] * coc).round().clamp(0.0, 255.0) as u32;
-        buf[i] = (r << 16) | (g << 8) | b;
+    // Bilinear sample of a half-res plane at full-res pixel coords.
+    let samp = |s: &[f32], fx: f32, fy: f32| -> f32 {
+        let gx = (fx * 0.5).min(hw as f32 - 1.0).max(0.0);
+        let gy = (fy * 0.5).min(hh as f32 - 1.0).max(0.0);
+        let x0 = gx as usize;
+        let y0 = gy as usize;
+        let x1 = (x0 + 1).min(hw - 1);
+        let y1 = (y0 + 1).min(hh - 1);
+        let tx = gx - x0 as f32;
+        let ty = gy - y0 as f32;
+        let a = s[y0 * hw + x0] * (1.0 - tx) + s[y0 * hw + x1] * tx;
+        let b = s[y1 * hw + x0] * (1.0 - tx) + s[y1 * hw + x1] * tx;
+        a * (1.0 - ty) + b * ty
+    };
+
+    // Composite: lerp sharp→blurred by circle-of-confusion, preserving any
+    // tag bits (UNLIT ink survives the blur untagged-quantisation). With
+    // `oil` > 0 the blurred zone gets an oil-slick treatment: the red/blue
+    // blurred planes are sampled with opposite horizontal offsets (iridescent
+    // chroma fringe) and the hue is swirled slightly — water / heat haze /
+    // far-field shimmer.
+    let comp_row = |y: usize, row: &mut [u32]| {
+        let fy = y as f32;
+        for (x, px) in row.iter_mut().enumerate() {
+            let i = y * width + x;
+            let z = zbuf[i];
+            let coc = if z.is_finite() {
+                ((z - focus).abs() / range).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            if coc <= 0.003 {
+                continue; // in focus — untouched
+            }
+            let s = 1.0 - coc;
+            let p = *px;
+            let tag = p & !crate::gfx::RGB_MASK;
+            let pr = ((p >> 16) & 0xFF) as f32;
+            let pg = ((p >> 8) & 0xFF) as f32;
+            let pb = (p & 0xFF) as f32;
+            let fx = x as f32;
+            let (mut r, mut g, mut b);
+            if oil > 0.0 {
+                let off = coc * oil * 3.0;
+                r = pr * s + samp(&rb, fx - off, fy) * coc;
+                g = pg * s + samp(&gb, fx, fy) * coc;
+                b = pb * s + samp(&bb, fx + off, fy) * coc;
+                // gentle hue swirl toward an iridescent film
+                let k = oil * coc * 0.22;
+                let (r0, g0, b0) = (r, g, b);
+                r = r0 * (1.0 - k) + b0 * k;
+                g = g0 * (1.0 - k) + r0 * k;
+                b = b0 * (1.0 - k) + g0 * k;
+            } else {
+                r = pr * s + samp(&rb, fx, fy) * coc;
+                g = pg * s + samp(&gb, fx, fy) * coc;
+                b = pb * s + samp(&bb, fx, fy) * coc;
+            }
+            let r = r.round().clamp(0.0, 255.0) as u32;
+            let g = g.round().clamp(0.0, 255.0) as u32;
+            let b = b.round().clamp(0.0, 255.0) as u32;
+            *px = (r << 16) | (g << 8) | b | tag;
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        buf[..n]
+            .par_chunks_mut(width)
+            .enumerate()
+            .for_each(|(y, row)| comp_row(y, row));
+    }
+    #[cfg(target_arch = "wasm32")]
+    for (y, row) in buf[..n].chunks_mut(width).enumerate() {
+        comp_row(y, row);
     }
 }
 

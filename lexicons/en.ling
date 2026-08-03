@@ -288,6 +288,12 @@ set_shade_mode = "set_shade_mode"
 set_cel_bands = "set_cel_bands"
 set_shadow_color = "set_shadow_color"
 set_rim = "set_rim"
+tone_soft = "tone_soft"
+set_ssao = "set_ssao"
+set_fxaa = "set_fxaa"
+set_bloom = "set_bloom"
+light_pool = "light_pool"
+light_beam = "light_beam"
 
 # ── Geometric / post-quantum crypto (ling-crypto geo suite) ──
 crypto_hash = "crypto_hash"

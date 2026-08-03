@@ -3392,6 +3392,9 @@ impl Interpreter {
                 let focus = self.arg_num(&args, 0, 30.0)? as f32;
                 let range = self.arg_num(&args, 1, 60.0)? as f32;
                 let radius = self.arg_num(&args, 2, 3.0)?.max(0.0) as usize;
+                // oil [0..1] — oil-slick treatment of the blurred zone:
+                // iridescent chroma fringe + hue swirl (water / heat haze).
+                let oil = self.arg_num(&args, 3, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
                 let w = gfx.width;
                 let h = gfx.height;
@@ -3405,8 +3408,51 @@ impl Interpreter {
                         focus,
                         range,
                         radius,
+                        oil,
                     );
                 }
+                return Ok(Value::Unit);
+            },
+
+            // light_pool(x, y, z, radius, r, g, b, intensity) / แอ่งแสง —
+            // volumetric light splash: a soft additive radial vector gradient on
+            // the floor at height y — the coloured pool a light throws on the
+            // ground (underwater-light look). Smooth transparent edge, distance-
+            // fog aware. Colours 0-255; intensity ~0.2-1.5.
+            "light_pool" | "แอ่งแสง" | "光池" | "ライトプール" | "빛웅덩이" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                let radius = self.arg_num(&args, 3, 20.0)? as f32;
+                let r = self.arg_num(&args, 4, 255.0)? as f32 / 255.0;
+                let g = self.arg_num(&args, 5, 255.0)? as f32 / 255.0;
+                let b = self.arg_num(&args, 6, 255.0)? as f32 / 255.0;
+                let inten = self.arg_num(&args, 7, 1.0)? as f32;
+                self.gfx
+                    .borrow_mut()
+                    .emit_light_pool(x, y, z, radius, [r, g, b], inten);
+                return Ok(Value::Unit);
+            },
+
+            // light_beam(x, y, z, floor_y, radius, r, g, b, intensity) / ลำแสงไฟ —
+            // volumetric god-ray shaft: a soft additive double-cone from the
+            // light position down to the floor plane, spreading to `radius`.
+            // Pair with light_pool at the base. Colours 0-255.
+            "light_beam" | "ลำแสงไฟ" | "光柱" | "ライトビーム" | "빛기둥" =>
+            {
+                let x = self.arg_num(&args, 0, 0.0)? as f32;
+                let y = self.arg_num(&args, 1, 0.0)? as f32;
+                let z = self.arg_num(&args, 2, 0.0)? as f32;
+                let fy = self.arg_num(&args, 3, 0.0)? as f32;
+                let radius = self.arg_num(&args, 4, 14.0)? as f32;
+                let r = self.arg_num(&args, 5, 255.0)? as f32 / 255.0;
+                let g = self.arg_num(&args, 6, 255.0)? as f32 / 255.0;
+                let b = self.arg_num(&args, 7, 255.0)? as f32 / 255.0;
+                let inten = self.arg_num(&args, 8, 1.0)? as f32;
+                self.gfx
+                    .borrow_mut()
+                    .emit_light_beam(x, y, z, fy, radius, [r, g, b], inten);
                 return Ok(Value::Unit);
             },
 
@@ -3859,7 +3905,10 @@ impl Interpreter {
                             gfx.zbuf_needs_clear = false;
                         }
                         let _t = std::time::Instant::now();
-                        gfx.toon_post_process();
+                        if !gfx.post_done {
+                            gfx.toon_post_process();
+                        }
+                        gfx.post_done = false;
                         ling_phase_add(phase::TOON, _t.elapsed().as_nanos());
                         let w = gfx.width;
                         let h = gfx.height;
@@ -3985,7 +4034,10 @@ impl Interpreter {
                             }
                             gfx.zbuf_needs_clear = false;
                         }
-                        gfx.toon_post_process();
+                        if !gfx.post_done {
+                            gfx.toon_post_process();
+                        }
+                        gfx.post_done = false;
                         crate::gfx::webgl::blit_rgb(&gfx.buffer, w, h);
                     }
                     self.wasm_pace_frame();
@@ -5181,6 +5233,62 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // ── tone_soft(soft, sheen) — band-edge softness + highlight sheen ──
+            //   soft  [0..1] — fraction of each band gap that blends smoothly
+            //                  across the boundary (0 = crisp cel, ~0.3 = soft
+            //                  Wind Waker shadow edges). Default 0.32.
+            //   sheen [0..1] — bright pixels keep their smooth gradient instead
+            //                  of being quantised (clean specular/rim sheen
+            //                  rather than scratchy banded highlights). 0.65.
+            "tone_soft" | "โทนขอบนุ่ม" | "色调柔边" | "トーンソフト" | "톤소프트" => {
+                let s = self.arg_num(&args, 0, 0.32)? as f32;
+                let sh = self.arg_num(&args, 1, 0.65)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.ramp.soft = s.clamp(0.0, 1.0);
+                gfx.toon.ramp.sheen = sh.clamp(0.0, 1.0);
+                return Ok(Value::Unit);
+            },
+
+            // ── set_ssao(strength, radius_px, zrange) — ambient occlusion ──
+            // Depth-buffer contact shading: soft darkening in corners/under
+            // objects, computed half-res + smoothed (no grain). Needs
+            // set_depth_test(1). strength 0 disables. Defaults (0.35, 6, 12).
+            "set_ssao" | "ตั้งเงาสัมผัส" | "环境光遮蔽" | "アンビエントオクルージョン"
+            | "앰비언트오클루전" => {
+                let s = self.arg_num(&args, 0, 0.35)? as f32;
+                let r = self.arg_num(&args, 1, 6.0)? as f32;
+                let z = self.arg_num(&args, 2, 12.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.ao_strength = s.clamp(0.0, 1.0);
+                gfx.toon.ao_radius = r.max(1.0);
+                gfx.toon.ao_range = z.max(0.01);
+                return Ok(Value::Unit);
+            },
+
+            // ── set_fxaa(on) — FXAA-lite screen-space edge anti-aliasing ──
+            // Softens polygon stair-steps and ink-line jaggies over the whole
+            // frame; flat fills are untouched. Applied last in the present
+            // post-chain. (set_antialias smooths wireframe STROKES; this pass
+            // smooths the composited IMAGE.)
+            "set_fxaa" | "ลบรอยหยัก" | "屏幕抗锯齿" | "画面アンチエイリアス" | "화면안티앨리어싱" => {
+                let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
+                self.gfx.borrow_mut().toon.fxaa = on;
+                return Ok(Value::Unit);
+            },
+
+            // ── set_bloom(strength, threshold) — soft HDR-style glow ──
+            // Bright pixels (rim sheen, emissive, additive FX) bleed a soft
+            // quarter-res glow — the "HDR material" feel for toon/vector art.
+            // strength 0 disables; threshold = luminance cutoff [0..1].
+            "set_bloom" | "ตั้งบลูม" | "泛光" | "ブルーム" | "블룸" => {
+                let s = self.arg_num(&args, 0, 0.45)? as f32;
+                let t = self.arg_num(&args, 1, 0.74)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.toon.bloom_strength = s.max(0.0);
+                gfx.toon.bloom_thresh = t.clamp(0.0, 0.99);
+                return Ok(Value::Unit);
+            },
+
             // ── shadow_smooth(softness) [compat] → tone_smooth + tone_bezier ──
             // Deprecated: use tone_smooth + tone_bezier instead.
             "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" =>
@@ -5399,6 +5507,27 @@ impl Interpreter {
                 }
 
                 let mut gfx = self.gfx.borrow_mut();
+
+                // Mesh capture: fan-triangulate and record raw local coords +
+                // pen colour, exactly like วาดสามเหลี่ยม3มิติ. Quads used to
+                // fall through here and bake EMPTY display lists — the 3-D
+                // glyph fonts (letter pickups) are built from draw_quad_3d,
+                // which made every baked glyph invisible.
+                if gfx.mesh_capture.is_some() {
+                    let col = gfx.color;
+                    let cap = gfx.mesh_capture.as_mut().unwrap();
+                    for i in 1..n_verts - 1 {
+                        cap.push((
+                            [
+                                wxs[0], wys[0], wzs[0],
+                                wxs[i], wys[i], wzs[i],
+                                wxs[i + 1], wys[i + 1], wzs[i + 1],
+                            ],
+                            col,
+                        ));
+                    }
+                    return Ok(Value::Unit);
+                }
 
                 // Face normal from first triangle of the fan
                 let normal = crate::gfx::poly::face_normal(
@@ -11350,6 +11479,37 @@ impl Interpreter {
                     gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba);
                 }
+                return Ok(Value::Unit);
+            },
+
+            // flush_post() — flush the 3-D queue like `flush_3d`, then run the
+            // toon post-chain (SSAO → outlines → tone ramp → bloom → FXAA) over
+            // the SCENE immediately. `present` skips the chain this frame, so
+            // 2-D UI drawn after this call stays exact — no bloom/blur on HUDs.
+            "flush_post" | "post_now" | "포스트플러시" | "后期冲刷" => {
+                let mut gfx = self.gfx.borrow_mut();
+                if !gfx.depth_queue.is_empty() {
+                    let w = gfx.width;
+                    let h = gfx.height;
+                    let dt = gfx.depth_test;
+                    let reset_z = gfx.zbuf_needs_clear;
+                    let (bm, ba) = (gfx.blend, gfx.alpha);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let aa = gfx.antialias;
+                    let queue = std::mem::take(&mut gfx.depth_queue);
+                    {
+                        let g = &mut *gfx;
+                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        #[cfg(not(target_arch = "wasm32"))]
+                        queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
+                        #[cfg(target_arch = "wasm32")]
+                        queue.flush(&mut g.buffer, z, reset_z, w, h);
+                    }
+                    gfx.zbuf_needs_clear = false;
+                    gfx.depth_queue.set_state(bm, ba);
+                }
+                gfx.toon_post_process();
+                gfx.post_done = true;
                 return Ok(Value::Unit);
             },
 
