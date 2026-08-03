@@ -30,7 +30,10 @@ struct SignForm {
 
 async fn index(State(state): State<AppState>, session: Session) -> Result<Html<String>, HttpError> {
     let visits: u32 = session.get::<u32>("visits").await.unwrap_or(None).unwrap_or(0) + 1;
-    session.insert("visits", visits).await.map_err(HttpError::Internal)?;
+    session
+        .insert("visits", visits)
+        .await
+        .map_err(|e| HttpError::Internal(e.into()))?;
 
     let token = ling_web::csrf::csrf_token(&session)
         .await

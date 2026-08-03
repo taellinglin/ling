@@ -20,8 +20,15 @@ tower-http = { version = "0.6", features = ["fs", "trace"] }
 # Not tower-sessions-sqlx-store: it pins its own sqlx/sqlite driver, which
 # conflicts with the rusqlite already unified across the workspace (see
 # src/session_store.rs — a small hand-written SessionStore over ling-http's
-# Db instead).
-tower-sessions = { version = "0.13", default-features = false }
+# Db instead). `default-features = false` opts out of the default
+# `memory-store` (unused — same reason) but that also silently opts out of
+# `axum-core`, which is what makes `Session` implement axum's
+# `FromRequestParts` at all — without it, every handler taking a `Session`
+# fails `Handler` trait bound checks. Needs >=0.14 specifically: 0.13's
+# `axum-core` feature pulls axum-core ^0.4 (axum 0.7's version), which is
+# incompatible with the axum 0.8 used here — confirmed via the crates.io
+# index that 0.14 is the version that moved to axum-core ^0.5.0.
+tower-sessions = { version = "0.14", default-features = false, features = ["axum-core"] }
 async-trait = "0.1"
 
 minijinja = { version = "2", features = ["loader"] }
