@@ -457,6 +457,7 @@ pub fn is_builtin(name: &str) -> bool {
         "net_clients" | "เน็ตผู้เล่น" => true,
         "net_client_count" | "เน็ตจำนวนผู้เล่น" => true,
         "net_events" | "เน็ตเหตุการณ์" => true,
+        "net_close" | "เน็ตปิด" => true,
         "net_announce" | "เน็ตประกาศ" => true,
         "net_announce_stop" | "เน็ตหยุดประกาศ" => true,
         "net_discover" | "เน็ตค้นหา" => true,

@@ -15,14 +15,15 @@
 //   net_client_count()      → number of connected peers
 //   net_events()            → drains "connect:id"/"disconnect:id" log, newline-joined
 //   net_status()            → 0 = idle/closed, 1 = waiting, 2 = >=1 peer connected
+//   net_close()             → tear down the current host/client role and reset to idle
 //
 // `net_recv` and `net_recv_from` drain the same inbound queue — pick one
 // style per program. Mixing them splits messages between the two arbitrarily.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::net::{Shutdown, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -35,11 +36,18 @@ type Events = Arc<Mutex<VecDeque<String>>>;
 
 struct ClientHandle {
     out_tx: Sender<String>,
+    // clone of the peer socket, kept only so `close()` can force it shut;
+    // ordinary I/O goes through `out_tx` / the reader thread, never this.
+    stream: Option<TcpStream>,
 }
 
 enum Role {
-    Host { next_id: AtomicU64, clients: Mutex<HashMap<u64, ClientHandle>> },
-    Client { out_tx: Sender<String> },
+    Host {
+        next_id: AtomicU64,
+        clients: Mutex<HashMap<u64, ClientHandle>>,
+        accept_stop: Arc<AtomicBool>,
+    },
+    Client { out_tx: Sender<String>, stream: Arc<Mutex<Option<TcpStream>>> },
 }
 
 struct Hub {
@@ -126,8 +134,12 @@ fn install(role: Role) -> (Arc<AtomicU8>, Inbound, Events) {
 }
 
 pub fn host(port: u16) {
-    let (status, inbound, events) =
-        install(Role::Host { next_id: AtomicU64::new(1), clients: Mutex::new(HashMap::new()) });
+    let accept_stop = Arc::new(AtomicBool::new(false));
+    let (status, inbound, events) = install(Role::Host {
+        next_id: AtomicU64::new(1),
+        clients: Mutex::new(HashMap::new()),
+        accept_stop: accept_stop.clone(),
+    });
     std::thread::spawn(move || {
         let listener = match TcpListener::bind(("0.0.0.0", port)) {
             Ok(l) => l,
@@ -136,15 +148,25 @@ pub fn host(port: u16) {
                 return;
             },
         };
-        for incoming in listener.incoming() {
-            let stream = match incoming {
-                Ok(s) => s,
+        // non-blocking + a stop flag, so close() can end this loop instead of
+        // leaving it parked in accept() forever
+        let _ = listener.set_nonblocking(true);
+        loop {
+            if accept_stop.load(Ordering::SeqCst) {
+                break;
+            }
+            let stream = match listener.accept() {
+                Ok((s, _)) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                },
                 Err(_) => continue,
             };
             let g = NET.lock().ok();
             let Some(guard) = g else { break };
             let Some(hub) = guard.as_ref() else { break };
-            let Role::Host { next_id, clients } = &hub.role else { break };
+            let Role::Host { next_id, clients, .. } = &hub.role else { break };
             let count = clients.lock().map(|m| m.len()).unwrap_or(0);
             if count >= MAX_CLIENTS {
                 drop(guard);
@@ -152,8 +174,9 @@ pub fn host(port: u16) {
             }
             let id = next_id.fetch_add(1, Ordering::SeqCst);
             let (tx, rx) = channel::<String>();
+            let shutdown_handle = stream.try_clone().ok();
             if let Ok(mut m) = clients.lock() {
-                m.insert(id, ClientHandle { out_tx: tx });
+                m.insert(id, ClientHandle { out_tx: tx, stream: shutdown_handle });
             }
             drop(guard);
 
@@ -186,16 +209,55 @@ pub fn host(port: u16) {
 
 pub fn join(ip: &str, port: u16) {
     let (tx, rx) = channel::<String>();
-    let (status, inbound, _events) = install(Role::Client { out_tx: tx });
+    let shutdown_slot: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
+    let (status, inbound, _events) =
+        install(Role::Client { out_tx: tx, stream: shutdown_slot.clone() });
     let addr = format!("{ip}:{port}");
     std::thread::spawn(move || match TcpStream::connect(&addr) {
         Ok(stream) => {
+            if let Ok(clone) = stream.try_clone() {
+                if let Ok(mut s) = shutdown_slot.lock() {
+                    *s = Some(clone);
+                }
+            }
             status.store(2, Ordering::SeqCst);
             let status2 = status.clone();
             run_peer(stream, 0, inbound, rx, move || status2.store(0, Ordering::SeqCst));
         },
         Err(_) => status.store(0, Ordering::SeqCst),
     });
+}
+
+/// Tear down the current role (host or client) and reset to idle. Sockets are
+/// shut down so the reader/writer threads they own unblock and exit; the
+/// registry itself is dropped by returning the `Hub` out of `NET` and letting
+/// it fall out of scope. A later `host`/`join` reinstalls a fresh one.
+pub fn close() {
+    let hub = match NET.lock() {
+        Ok(mut g) => g.take(),
+        Err(_) => None,
+    };
+    let Some(hub) = hub else { return };
+    hub.status.store(0, Ordering::SeqCst);
+    match &hub.role {
+        Role::Host { accept_stop, clients, .. } => {
+            accept_stop.store(true, Ordering::SeqCst);
+            if let Ok(m) = clients.lock() {
+                for c in m.values() {
+                    if let Some(s) = &c.stream {
+                        let _ = s.shutdown(Shutdown::Both);
+                    }
+                }
+            }
+        },
+        Role::Client { stream, .. } => {
+            if let Ok(s) = stream.lock() {
+                if let Some(s) = s.as_ref() {
+                    let _ = s.shutdown(Shutdown::Both);
+                }
+            }
+        },
+    }
 }
 
 pub fn send(s: &str) {
@@ -209,7 +271,7 @@ pub fn send(s: &str) {
                         }
                     }
                 },
-                Role::Client { out_tx } => {
+                Role::Client { out_tx, .. } => {
                     let _ = out_tx.send(s.to_string());
                 },
             }
@@ -575,5 +637,56 @@ mod tests {
         let rejected = peers.last_mut().unwrap();
         let mut buf = [0u8; 8];
         assert!(deadline_poll(|| matches!(rejected.read(&mut buf), Ok(0))));
+    }
+
+    #[test]
+    fn close_on_client_role_drops_the_socket_and_resets_status() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18906;
+        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            // hold the socket open; only our shutdown() should end this read
+            let mut reader = BufReader::new(s);
+            let mut line = String::new();
+            let n = reader.read_line(&mut line).unwrap_or(0);
+            n == 0
+        });
+
+        join("127.0.0.1", port);
+        assert!(deadline_poll(|| status() == 2));
+
+        close();
+        assert_eq!(status(), 0);
+        assert_eq!(recv(), "", "closed hub must not serve stale state");
+
+        let host_saw_eof = handle.join().unwrap();
+        assert!(host_saw_eof, "close() must shut the socket down, not just forget it");
+    }
+
+    #[test]
+    fn close_on_host_role_stops_accepting_and_drops_all_clients() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18907;
+        host(port);
+        let addr = format!("127.0.0.1:{port}");
+        let mut peers: Vec<TcpStream> = (0..3).map(|_| wait_connect(&addr)).collect();
+        assert!(deadline_poll(|| client_count() == 3));
+
+        close();
+        assert_eq!(status(), 0);
+        assert_eq!(client_count(), 0);
+
+        for p in peers.iter_mut() {
+            let mut buf = [0u8; 8];
+            assert!(deadline_poll(|| matches!(p.read(&mut buf), Ok(0))));
+        }
+
+        // the accept loop must actually have stopped, not just forgotten its
+        // registry: once the listener itself drops, new connects are refused
+        assert!(
+            deadline_poll(|| TcpStream::connect(&addr).is_err()),
+            "listener must be gone after close(), not still accepting"
+        );
     }
 }

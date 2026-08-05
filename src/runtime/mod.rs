@@ -6804,7 +6804,7 @@ impl Interpreter {
                         .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
                 }
             },
-            // ── networking (TCP, 2-peer co-op) ───────────────────────────────
+            // ── networking (TCP, N-client star topology) ─────────────────────
             #[cfg(not(target_arch = "wasm32"))]
             "net_host" | "เน็ตโฮสต์" => {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
@@ -6854,6 +6854,11 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "net_events" | "เน็ตเหตุการณ์" => {
                 return Ok(Value::Str(net::events()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_close" | "เน็ตปิด" => {
+                net::close();
+                return Ok(Value::Unit);
             },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
