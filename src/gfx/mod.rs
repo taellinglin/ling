@@ -107,6 +107,16 @@ pub struct GfxState {
     /// Set by `set_antialias`; default false = crisp, opaque, aliased pixels.
     /// When true, strokes use Xiaolin-Wu coverage blending for smooth edges.
     pub antialias: bool,
+    /// Hue rotation (radians) applied to baked per-tri colours in
+    /// `draw_color_mesh` (.lmesh). Set by `mesh_hue`; 0 = colours as-is.
+    pub mesh_hue: f32,
+    /// Brightness gain applied with the hue rotation (2nd arg of `mesh_hue`).
+    pub mesh_hue_gain: f32,
+    /// Frame accumulation (afterimage trails): blend of the previous presented
+    /// frame into the current one at present time. 0 = off. Set by `set_frame_blur`.
+    pub frame_blur: f32,
+    /// Previous presented frame for `frame_blur` (lazily sized).
+    pub prev_frame: Vec<u32>,
     /// Tunable height→size/opacity mapping for `cast_shadow`.
     pub shadow: ShadowParams,
     /// Gamma-correct compositing: blend alpha/gradients in linear light instead
@@ -185,6 +195,10 @@ impl GfxState {
             blend: 0,
             alpha: 1.0,
             antialias: false,
+            mesh_hue: 0.0,
+            mesh_hue_gain: 1.0,
+            frame_blur: 0.0,
+            prev_frame: Vec::new(),
             shadow: ShadowParams::default(),
             linear_blend: false,
             grad_oklab: true,
@@ -351,6 +365,14 @@ pub struct GfxState {
     pub blend: u8,
     /// Pen opacity [0..1] for the alpha-blended fills (mirrors native).
     pub alpha: f32,
+    /// Hue rotation (radians) for `draw_color_mesh` baked colours (mirrors native).
+    pub mesh_hue: f32,
+    /// Brightness gain applied with the hue rotation (mirrors native).
+    pub mesh_hue_gain: f32,
+    /// Frame accumulation amount (mirrors native; unused on wasm).
+    pub frame_blur: f32,
+    /// Previous frame buffer (mirrors native; unused on wasm).
+    pub prev_frame: Vec<u32>,
     /// Anti-alias wireframe strokes (mirrors native). Default false = aliased.
     pub antialias: bool,
     /// Tunable height→size/opacity mapping for `cast_shadow`.
@@ -418,6 +440,10 @@ impl GfxState {
             blend: 0,
             alpha: 1.0,
             antialias: false,
+            mesh_hue: 0.0,
+            mesh_hue_gain: 1.0,
+            frame_blur: 0.0,
+            prev_frame: Vec::new(),
             shadow: ShadowParams::default(),
             linear_blend: false,
             grad_oklab: true,

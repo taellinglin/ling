@@ -1101,6 +1101,14 @@ impl GfxState {
         let yc = -0.68 * h; // shoulder band centre
         let torso = 0.13 * h;
         let elbow = torso + 0.16 * h;
+        // Optional hue rotation of the baked colours (`mesh_hue` builtin):
+        // rotation about the grey axis — matrix built once per call.
+        let gain = self.mesh_hue_gain;
+        let hue_on = self.mesh_hue != 0.0 || gain != 1.0;
+        let (hs, hc) = (self.mesh_hue.sin(), self.mesh_hue.cos());
+        let k1 = (1.0 - hc) / 3.0;
+        let k2 = hs * 0.577_350_3;
+        let (h00, h01, h02) = ((hc + k1) * gain, (k1 - k2) * gain, (k1 + k2) * gain);
         let nt = m.col.len();
         let mut ti = 0usize;
         while ti < nt {
@@ -1116,7 +1124,10 @@ impl GfxState {
                 let side = if p[0] >= 0.0 { 1.0 } else { -1.0 };
                 // forward bend (running): upper body pitches forward (+z) above the waist,
                 // arms pulled back/tucked relative to the leaning torso.
-                let bw = (((p[1].abs() / h) - 0.40) / 0.60).clamp(0.0, 1.0); // 0 below waist → 1 head
+                // Saturates at the NECK (~85% height) so the whole head shears as one
+                // rigid unit and stays round when leaning (was /0.60 → kept ramping
+                // across the head itself = flat-head on strong lean).
+                let bw = (((p[1].abs() / h) - 0.40) / 0.45).clamp(0.0, 1.0); // 0 below waist → 1 at neck+
                 let zlean = lean * bw * bw * h - lean * aw * 0.6 * h;
                 // legs (lower body, not arms): swing fore/aft antiphase L/R; the forward
                 // foot lifts (knee bend). `tuck` raises both knees toward the chest (jump).
@@ -1172,7 +1183,15 @@ impl GfxState {
                 }
                 if cn >= 3 {
                     let col = m.col[ti];
-                    let packed = ((col[0] as u32) << 16) | ((col[1] as u32) << 8) | (col[2] as u32);
+                    let packed = if hue_on {
+                        let (r, g, b) = (col[0] as f32, col[1] as f32, col[2] as f32);
+                        let hr = (r * h00 + g * h01 + b * h02).clamp(0.0, 255.0) as u32;
+                        let hg = (r * h02 + g * h00 + b * h01).clamp(0.0, 255.0) as u32;
+                        let hb = (r * h01 + g * h02 + b * h00).clamp(0.0, 255.0) as u32;
+                        (hr << 16) | (hg << 8) | hb
+                    } else {
+                        ((col[0] as u32) << 16) | ((col[1] as u32) << 8) | (col[2] as u32)
+                    };
                     let mut proj: [(f32, f32, f32); 4] = [(0.0, 0.0, 0.0); 4];
                     let mut depth = 0.0f32;
                     let mut pi = 0;

@@ -3290,6 +3290,31 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // mesh_hue(radians) — hue-rotate the baked per-tri colours of every
+            // subsequent mesh_draw (.lmesh). 0 resets. Cheap: one matrix per call.
+            "mesh_hue" | "หมุนสีเมช" =>
+            {
+                let h = self.arg_num(&args, 0, 0.0)? as f32;
+                let g = self.arg_num(&args, 1, 1.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.mesh_hue = h;
+                gfx.mesh_hue_gain = g.max(0.0);
+                return Ok(Value::Unit);
+            },
+
+            // set_frame_blur(amount 0..0.95) — afterimage trails: blend the previous
+            // presented frame into each new one. 0 = off (also frees the ghost buffer).
+            "set_frame_blur" | "frame_blur" | "เบลอเฟรม" =>
+            {
+                let a = self.arg_num(&args, 0, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.frame_blur = a.clamp(0.0, 0.95);
+                if gfx.frame_blur <= 0.0 {
+                    gfx.prev_frame = Vec::new();
+                }
+                return Ok(Value::Unit);
+            },
+
             // set_line_hue_cycle(rate) — rapidly cycle the hue of ALL wireframe line
             // strokes (draw_line / draw_line_3d). `rate` in radians/sec; 0 = off.
             // Process-global so a single call covers every stroke, every frame.
@@ -3913,6 +3938,29 @@ impl Interpreter {
                         let w = gfx.width;
                         let h = gfx.height;
                         let g = &mut *gfx;
+                        if g.frame_blur > 0.0 {
+                            // Afterimage trails: previous frame decays by `frame_blur`
+                            // per frame and composites with MAX — fresh content stays
+                            // full-brightness, ghosts fade out over time.
+                            // retention 0.98 @60fps ≈ trails last ~2.6 s.
+                            let a = (g.frame_blur.clamp(0.0, 0.995) * 256.0) as u32;
+                            if g.prev_frame.len() != g.buffer.len() {
+                                g.prev_frame = g.buffer.clone();
+                            }
+                            for (dst, prev) in g.buffer.iter_mut().zip(g.prev_frame.iter_mut()) {
+                                let c = *dst;
+                                let pv = *prev;
+                                let pr = (((pv >> 16) & 0xFF) * a) >> 8;
+                                let pg = (((pv >> 8) & 0xFF) * a) >> 8;
+                                let pb = ((pv & 0xFF) * a) >> 8;
+                                let cr = (c >> 16) & 0xFF;
+                                let cg = (c >> 8) & 0xFF;
+                                let cb = c & 0xFF;
+                                let outp = (cr.max(pr) << 16) | (cg.max(pg) << 8) | cb.max(pb);
+                                *dst = outp;
+                                *prev = outp;
+                            }
+                        }
                         if let Some(win) = g.window.as_mut() {
                             let _b = std::time::Instant::now();
                             win.update_with_buffer(&g.buffer, w, h)
