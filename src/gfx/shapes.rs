@@ -1645,6 +1645,7 @@ impl GfxState {
     /// Two nested shells (outer fades to transparent, half-radius core carries
     /// a dim colour) read as a smooth volumetric shaft from every angle —
     /// pair with `emit_light_pool` at the base for the underwater-light look.
+    #[allow(clippy::too_many_arguments)]
     pub fn emit_light_beam(
         &mut self,
         x: f32,

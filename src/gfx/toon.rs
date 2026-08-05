@@ -623,7 +623,7 @@ pub fn apply_fxaa(buf: &mut [u32], width: usize, height: usize) {
             return;
         }
         let base = y * width;
-        for x in 1..width - 1 {
+        for (x, cell) in row.iter_mut().enumerate().take(width - 1).skip(1) {
             let i = base + x;
             let c = snap[i];
             let l = luma(c);
@@ -650,7 +650,7 @@ pub fn apply_fxaa(buf: &mut [u32], width: usize, height: usize) {
             let r = (((c >> 16) & 0xFF) * inv + avg(16, 0xFF) * ki) >> 8;
             let g = (((c >> 8) & 0xFF) * inv + avg(8, 0xFF) * ki) >> 8;
             let b = ((c & 0xFF) * inv + avg(0, 0xFF) * ki) >> 8;
-            row[x] = (r << 16) | (g << 8) | b;
+            *cell = (r << 16) | (g << 8) | b;
         }
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -790,8 +790,7 @@ mod tests {
 
     #[test]
     fn sample_ramp_smooth_lerps() {
-        let mut ramp = ToneRamp::default();
-        ramp.smooth = true;
+        let ramp = ToneRamp { smooth: true, ..Default::default() };
         // At t=0.125 (midpoint of shadow→mid segment [0.00, 0.25])
         // Expected: lerp(0.08, 0.50, 0.5) = 0.29
         let v = sample_ramp(&ramp, 0.125);

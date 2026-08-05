@@ -193,13 +193,37 @@ pub fn posterize(c: [f32; 3], bands: u32) -> [f32; 3] {
     if lum < 1e-5 {
         return c;
     }
-    // quantise luminance to the nearest band, then rescale chroma to it
-    let q = ((lum * bands).floor() + 0.5) / bands;
+    // quantise luminance to the nearest band, then rescale chroma to it.
+    // Clamp the band index so lum == 1.0 lands in the top band instead of
+    // one past it (which would rescale brighter than the source colour).
+    let band = (lum * bands).floor().min(bands - 1.0);
+    let q = (band + 0.5) / bands;
     let k = (q / lum).clamp(0.0, 4.0);
     [
         (c[0] * k).min(1.0),
         (c[1] * k).min(1.0),
         (c[2] * k).min(1.0),
+    ]
+}
+
+/// `posterize` with a crossfade back toward the raw colour: `softness = 0`
+/// is a crisp band edge, `softness = 1` is fully smooth (no banding). Lets a
+/// material soften its toon step without reintroducing the per-vertex
+/// quantisation that pins band edges to mesh vertices.
+#[inline]
+pub fn posterize_soft(c: [f32; 3], bands: u32, softness: f32) -> [f32; 3] {
+    if bands < 2 {
+        return c;
+    }
+    let s = softness.clamp(0.0, 1.0);
+    if s <= 0.0 {
+        return posterize(c, bands);
+    }
+    let hard = posterize(c, bands);
+    [
+        hard[0] + (c[0] - hard[0]) * s,
+        hard[1] + (c[1] - hard[1]) * s,
+        hard[2] + (c[2] - hard[2]) * s,
     ]
 }
 
@@ -220,4 +244,53 @@ pub fn unpack(rgb: u32) -> [f32; 3] {
         ((rgb >> 8) & 0xFF) as f32 / 255.0,
         (rgb & 0xFF) as f32 / 255.0,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn posterize_preserves_hue_ratio() {
+        // A warm orange (r > g > b) must stay warm after quantisation — only
+        // luminance should move, not the channel ratios.
+        let c = [0.9, 0.5, 0.1];
+        let q = posterize(c, 4);
+        assert!(q[0] > q[1] && q[1] > q[2], "hue order must survive posterisation: {q:?}");
+    }
+
+    #[test]
+    fn posterize_four_bands_has_four_or_fewer_levels() {
+        // Near-black inputs (lum close to 0) are deliberately exempt: lifting
+        // them to the first band's brightness would need a gain the function
+        // caps at 4x, so they ramp smoothly toward it instead of snapping —
+        // that avoids a jarring flash on near-black pixels. Sample away from
+        // that zone to check the actual banding.
+        let mut levels = std::collections::HashSet::new();
+        let mut t: f32 = 0.1;
+        while t <= 1.0 {
+            let q = posterize([t, t, t], 4);
+            levels.insert((q[0] * 1000.0).round() as i32);
+            t += 0.01;
+        }
+        assert!(levels.len() <= 4, "expected at most 4 distinct levels, got {}", levels.len());
+    }
+
+    #[test]
+    fn posterize_soft_zero_matches_hard_posterize() {
+        let c = [0.9, 0.5, 0.1];
+        assert_eq!(posterize_soft(c, 4, 0.0), posterize(c, 4));
+    }
+
+    #[test]
+    fn posterize_soft_one_matches_raw_color() {
+        let c = [0.9, 0.5, 0.1];
+        assert_eq!(posterize_soft(c, 4, 1.0), c);
+    }
+
+    #[test]
+    fn posterize_soft_bands_below_two_is_passthrough() {
+        let c = [0.31, 0.62, 0.83];
+        assert_eq!(posterize_soft(c, 1, 0.0), c);
+    }
 }

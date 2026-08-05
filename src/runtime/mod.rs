@@ -1340,7 +1340,7 @@ mod draw_tests {
         draw_circle_outline(&mut buf, 100, 100, 50, 50, 20, 0x00FF00, 0);
         assert_eq!(buf[50 * 100 + 50], 0, "outline must NOT fill the centre");
         assert!(
-            buf.iter().any(|&p| p == 0x00FF00),
+            buf.contains(&0x00FF00),
             "outline must draw a ring"
         );
     }
@@ -3373,6 +3373,27 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // set_vertex_normals(ax,ay,az, bx,by,bz, cx,cy,cz) - give the next
+            // submit_triangle (draw_triangle_3d / mesh_draw) an independent normal
+            // per vertex instead of one flat face normal. One-shot: consumed by
+            // that single triangle, so call again before every triangle that needs
+            // smooth shading (e.g. terrain sharing a normal field between quads).
+            "set_vertex_normals" | "顶点法线" | "頂点法線" | "정점법선" | "ตั้งเวกเตอร์ปกติจุดยอด" =>
+            {
+                let ax = self.arg_num(&args, 0, 0.0)? as f32;
+                let ay = self.arg_num(&args, 1, 1.0)? as f32;
+                let az = self.arg_num(&args, 2, 0.0)? as f32;
+                let bx = self.arg_num(&args, 3, 0.0)? as f32;
+                let by = self.arg_num(&args, 4, 1.0)? as f32;
+                let bz = self.arg_num(&args, 5, 0.0)? as f32;
+                let cx = self.arg_num(&args, 6, 0.0)? as f32;
+                let cy = self.arg_num(&args, 7, 1.0)? as f32;
+                let cz = self.arg_num(&args, 8, 0.0)? as f32;
+                self.gfx.borrow_mut().vertex_normals =
+                    Some([[ax, ay, az], [bx, by, bz], [cx, cy, cz]]);
+                return Ok(Value::Unit);
+            },
+
             // clear_depth() / ล้างความลึก — force the z-buffer to clear on the next
             // flush. `เติม` already does this; call explicitly to start a fresh
             // depth pass mid-frame (e.g. a separate overlay scene).
@@ -4048,6 +4069,10 @@ impl Interpreter {
                     let (_, _, down) = self.mouse_now();
                     self.mouse_was_down = down;
                 }
+                // Lights are frame-scoped: a scene that forgets to clear_lights
+                // (or that has one guarded call fewer than it thinks) cannot
+                // leak lights into the next frame or the next scene.
+                self.gfx.borrow_mut().end_frame_lights();
                 // Increment frame counter
                 self.frame_num += 1;
                 return Ok(Value::Unit);
@@ -5085,6 +5110,18 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
+            // ── keep_lights() — restore last frame's lights ──
+            // Lights are cleared automatically at the end of every `present`
+            // (frame-scoped, so a scene can never leak lights into the next
+            // one). Callers that update lighting at less than once per frame
+            // call this on the frames they skip, instead of relying on the
+            // renderer to hold stale state.
+            "keep_lights" | "แสงเฟรมก่อน" | "保灯" | "ライト保持" | "조명유지" =>
+            {
+                self.gfx.borrow_mut().keep_lights();
+                return Ok(Value::Unit);
+            },
+
             // ── set_material(key, value) — configure LingMaterial field ──
             // Activates the material BSDF for subsequent polygon/triangle draws.
             // Keys (string): "albedo" "roughness" "metallic" "emission"
@@ -5382,27 +5419,36 @@ impl Interpreter {
             // ── เมชแคชรับ(key) — keyed display-list cache lookup (-1 = miss) ──
             "เมชแคชรับ" | "mesh_cache_get" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
-                let h = self.gfx.borrow().mesh_cache.get(&key).copied();
+                let mut gfx = self.gfx.borrow_mut();
+                let h = gfx.mesh_cache.get(&key).copied();
+                if h.is_some() {
+                    gfx.touch_mesh_lru(key);
+                }
                 return Ok(Value::Number(h.map(|x| x as f64).unwrap_or(-1.0)));
             },
 
-            // ── เมชแคชตั้ง(key, handle) — store a baked mesh under key (bounded) ──
+            // ── เมชแคชตั้ง(key, handle) — store a baked mesh under key (bounded, LRU) ──
             "เมชแคชตั้ง" | "mesh_cache_put" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
                 let h = self.arg_num(&args, 1, 0.0)? as usize;
                 let mut gfx = self.gfx.borrow_mut();
                 const CAP: usize = 256;
-                if gfx.mesh_cache.len() >= CAP {
-                    let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
-                    gfx.mesh_cache.clear();
-                    for id in evict {
-                        if id < gfx.meshes.len() {
-                            gfx.meshes[id].clear();
-                            gfx.mesh_free.push(id);
+                if gfx.mesh_cache.len() >= CAP && !gfx.mesh_cache.contains_key(&key) {
+                    // Evict exactly the least-recently-used entry — walking a
+                    // proc-gen level shouldn't re-bake every visible room the
+                    // instant the cache fills once.
+                    while let Some(evict_key) = gfx.mesh_lru.pop_front() {
+                        if let Some(id) = gfx.mesh_cache.remove(&evict_key) {
+                            if id < gfx.meshes.len() {
+                                gfx.meshes[id].clear();
+                                gfx.mesh_free.push(id);
+                            }
+                            break;
                         }
                     }
                 }
                 gfx.mesh_cache.insert(key, h);
+                gfx.touch_mesh_lru(key);
                 return Ok(Value::Unit);
             },
 
@@ -5411,6 +5457,7 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
                 gfx.mesh_cache.clear();
+                gfx.mesh_lru.clear();
                 for id in evict {
                     if id < gfx.meshes.len() {
                         gfx.meshes[id].clear();
@@ -5534,8 +5581,11 @@ impl Interpreter {
                     wxs[0], wys[0], wzs[0], wxs[1], wys[1], wzs[1], wxs[2], wys[2], wzs[2],
                 );
 
-                // Per-vertex lit colours
+                // Per-vertex lit colours. Toon banding is a material opt-in —
+                // no material means smooth Gouraud, unchanged (bands = 0).
                 let mut wcs: [u32; 8] = [0; 8];
+                let mut bands: u32 = 0;
+                let mut softness: f32 = 0.0;
                 if gfx.flat_shade {
                     let c = gfx.color;
                     for wc in wcs.iter_mut().take(n_verts) {
@@ -5545,6 +5595,8 @@ impl Interpreter {
                     let cam = [gfx.camera.cx, gfx.camera.cy, gfx.camera.zdist];
                     let lights: Vec<_> = gfx.lights.clone();
                     let ambient = gfx.ambient;
+                    bands = mat.toon_bands;
+                    softness = mat.shadow_softness;
                     for i in 0..n_verts {
                         let v = [wxs[i], wys[i], wzs[i]];
                         let vd = [cam[0] - v[0], cam[1] - v[1], cam[2] - v[2]];
@@ -5597,8 +5649,8 @@ impl Interpreter {
                     &proj,
                     pn,
                     |x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2| {
-                        gfx.depth_queue.push_triangle_g_zv(
-                            x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, 3, unlit,
+                        gfx.depth_queue.push_triangle_g_zv_soft(
+                            x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands, softness, unlit,
                         );
                     },
                 );

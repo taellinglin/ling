@@ -80,8 +80,14 @@ pub struct GfxState {
     pub color: u32,
     /// 3-D camera — set once per frame with `set_camera`.
     pub camera: Camera3D,
-    /// Active point lights for this frame — cleared by `clear_lights`.
+    /// Active point lights for this frame — cleared by `clear_lights`, and
+    /// automatically at the end of every `present` so lights never leak
+    /// into the next frame/scene.
     pub lights: Vec<Light>,
+    /// Snapshot of `lights` from the last frame that ended with any lights
+    /// set — restored on demand by `keep_lights` for callers that update
+    /// lighting at less than once per frame.
+    pub prev_lights: Vec<Light>,
     /// Ambient fill level [0..1].  Default 0.15.
     pub ambient: f32,
     /// Depth-sorted draw queue — flushed by `แสดงผล` / `present`.
@@ -146,6 +152,10 @@ pub struct GfxState {
     pub material: Option<LingMaterial>,
     /// Optional world-space normal override for stylized surfaces.
     pub normal_override: Option<[f32; 3]>,
+    /// One-shot per-vertex normals for the next `submit_triangle` call, set via
+    /// `set_vertex_normals`. Consumed (reset to `None`) on use; falls back to
+    /// `normal_override` / the face normal when unset.
+    pub vertex_normals: Option<[[f32; 3]; 3]>,
     /// Toon post-processing configuration (outlines, shadow softness, highlight).
     pub toon: ToonConfig,
     /// Baked local-space triangle meshes (display lists) indexed by handle.
@@ -158,6 +168,9 @@ pub struct GfxState {
     pub mesh_free: Vec<usize>,
     /// Keyed display-list cache (e.g. world rooms): key → mesh handle, bounded.
     pub mesh_cache: std::collections::HashMap<i64, usize>,
+    /// LRU order for `mesh_cache`, most-recently-used at the back. Lets
+    /// overflow evict a single stale entry instead of clearing everything.
+    pub mesh_lru: std::collections::VecDeque<i64>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -173,6 +186,7 @@ impl GfxState {
             color: 0x00FF_FFFF,
             camera: Camera3D::default(),
             lights: Vec::new(),
+            prev_lights: Vec::new(),
             ambient: 0.15,
             depth_queue: DepthQueue::default(),
             mouse_dx: 0.0,
@@ -200,11 +214,13 @@ impl GfxState {
             edge_set: poly::EdgeSet::default(),
             material: None,
             normal_override: None,
+            vertex_normals: None,
             toon: ToonConfig::default(),
             meshes: Vec::new(),
             mesh_capture: None,
             mesh_free: Vec::new(),
             mesh_cache: std::collections::HashMap::new(),
+            mesh_lru: std::collections::VecDeque::new(),
         }
     }
 
@@ -337,6 +353,8 @@ pub struct GfxState {
     pub fill_b: f32,
     pub camera: Camera3D,
     pub lights: Vec<Light>,
+    /// See the native `GfxState::prev_lights` doc comment.
+    pub prev_lights: Vec<Light>,
     pub ambient: f32,
     /// Accumulates projected screen-space draw calls; flushed to WebGL by present().
     pub depth_queue: DepthQueue,
@@ -384,6 +402,8 @@ pub struct GfxState {
     pub material: Option<LingMaterial>,
     /// Optional world-space normal override (mirrors native).
     pub normal_override: Option<[f32; 3]>,
+    /// One-shot per-vertex normals for the next `submit_triangle` (mirrors native).
+    pub vertex_normals: Option<[[f32; 3]; 3]>,
     /// Toon post-processing configuration (mirrors native).
     pub toon: ToonConfig,
     /// Baked local-space triangle meshes (mirrors native).
@@ -394,6 +414,8 @@ pub struct GfxState {
     pub mesh_free: Vec<usize>,
     /// Keyed display-list cache (mirrors native).
     pub mesh_cache: std::collections::HashMap<i64, usize>,
+    /// LRU order for `mesh_cache` (mirrors native).
+    pub mesh_lru: std::collections::VecDeque<i64>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -409,6 +431,7 @@ impl GfxState {
             fill_b: 0.0,
             camera: Camera3D::default(),
             lights: Vec::new(),
+            prev_lights: Vec::new(),
             ambient: 0.15,
             depth_queue: DepthQueue::default(),
             shade_mode: 2,
@@ -434,11 +457,13 @@ impl GfxState {
             edge_set: poly::EdgeSet::default(),
             material: None,
             normal_override: None,
+            vertex_normals: None,
             toon: ToonConfig::default(),
             meshes: Vec::new(),
             mesh_capture: None,
             mesh_free: Vec::new(),
             mesh_cache: std::collections::HashMap::new(),
+            mesh_lru: std::collections::VecDeque::new(),
         }
     }
 
@@ -503,6 +528,36 @@ impl GfxState {
 // Mesh display lists + the shared world-space triangle pipeline. Field names
 // match on both the native and wasm `GfxState`, so one impl serves both targets.
 impl GfxState {
+    /// Snapshot the active lights into `prev_lights`, then clear `lights` for
+    /// the next frame. Called once per `present` so a scene that forgets to
+    /// call `clear_lights` cannot leak its lights into the next frame/scene.
+    #[inline]
+    pub fn end_frame_lights(&mut self) {
+        self.prev_lights.clear();
+        self.prev_lights.extend_from_slice(&self.lights);
+        self.lights.clear();
+    }
+
+    /// Restore the light set from the previous frame — for callers that
+    /// update lighting at less than once per frame and want the frame in
+    /// between to keep the same lights rather than draw unlit.
+    #[inline]
+    pub fn keep_lights(&mut self) {
+        self.lights.clear();
+        self.lights.extend_from_slice(&self.prev_lights);
+    }
+
+    /// Move `key` to the most-recently-used end of `mesh_lru`, inserting it
+    /// if new. `mesh_cache` is capped at a couple hundred entries, so an O(n)
+    /// linear scan here is cheap relative to a frame's triangle throughput.
+    #[inline]
+    pub fn touch_mesh_lru(&mut self, key: i64) {
+        if let Some(pos) = self.mesh_lru.iter().position(|&k| k == key) {
+            self.mesh_lru.remove(pos);
+        }
+        self.mesh_lru.push_back(key);
+    }
+
     /// Light, near-plane clip, project, and fan-push a world-space triangle to
     /// the depth queue. Shared by `draw_triangle_3d` and `mesh_draw`.
     #[inline]
@@ -525,12 +580,21 @@ impl GfxState {
         let vx = cx - ax;
         let vy = cy - ay;
         let vz = cz - az;
-        let normal = self
+        let face_normal = self
             .normal_override
             .unwrap_or([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
+        // Per-vertex normals (set_vertex_normals) are consumed once, here, and
+        // fall back to the shared face normal on any axis left unset.
+        let vn = self.vertex_normals.take();
+        let (na, nb, nc) = match vn {
+            Some([a, b, c]) => (a, b, c),
+            None => (face_normal, face_normal, face_normal),
+        };
 
-        let (c0, c1, c2) = if self.flat_shade {
-            (self.color, self.color, self.color)
+        // Toon banding is a material opt-in: geometry with no active material
+        // renders smooth Gouraud exactly as before (bands = 0 = passthrough).
+        let (c0, c1, c2, bands, softness) = if self.flat_shade {
+            (self.color, self.color, self.color, 0, 0.0)
         } else if let Some(mut m) = self.material.clone() {
             // Baked-mesh BSDF: keep each triangle's baked colour as the albedo so the
             // model's own palette survives, but shade it with the active Principled
@@ -542,7 +606,7 @@ impl GfxState {
             let amb = self.ambient;
             let s0 = crate::gfx::material::shade(
                 &m,
-                normal,
+                na,
                 [cam_x - ax, cam_y - ay, cam_z - az],
                 [ax, ay, az],
                 &self.lights,
@@ -550,7 +614,7 @@ impl GfxState {
             );
             let s1 = crate::gfx::material::shade(
                 &m,
-                normal,
+                nb,
                 [cam_x - bx, cam_y - by, cam_z - bz],
                 [bx, by, bz],
                 &self.lights,
@@ -558,23 +622,26 @@ impl GfxState {
             );
             let s2 = crate::gfx::material::shade(
                 &m,
-                normal,
+                nc,
                 [cam_x - cx, cam_y - cy, cam_z - cz],
                 [cx, cy, cz],
                 &self.lights,
                 amb,
             );
-            (s0, s1, s2)
+            (s0, s1, s2, m.toon_bands, m.shadow_softness)
         } else {
-            crate::gfx::light::compute_lit_color_vertices(
+            let (s0, s1, s2) = crate::gfx::light::compute_lit_color_vertices3(
                 self.color,
-                normal,
+                na,
+                nb,
+                nc,
                 [ax, ay, az],
                 [bx, by, bz],
                 [cx, cy, cz],
                 &self.lights,
                 self.ambient,
-            )
+            );
+            (s0, s1, s2, 0, 0.0)
         };
 
         let near = -self.camera.zdist + 0.05;
@@ -620,7 +687,7 @@ impl GfxState {
         }
         let mut fk = 1;
         while fk + 1 < pn {
-            self.depth_queue.push_triangle_g_zv(
+            self.depth_queue.push_triangle_g_zv_soft(
                 proj[0].0,
                 proj[0].1,
                 proj[0].2,
@@ -633,7 +700,8 @@ impl GfxState {
                 proj[fk + 1].1,
                 proj[fk + 1].2,
                 proj[fk + 1].3,
-                3,
+                bands,
+                softness,
                 self.flat_shade,
             );
             fk += 1;
@@ -698,5 +766,116 @@ impl GfxState {
         }
         self.color = pen;
         self.meshes[id] = mesh;
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod frame_light_tests {
+    use super::*;
+
+    fn light() -> Light {
+        Light { x: 0.0, y: 0.0, z: 0.0, r: 1.0, g: 1.0, b: 1.0, intensity: 1.0, radius: 0.0 }
+    }
+
+    #[test]
+    fn end_frame_lights_clears_and_snapshots() {
+        let mut gfx = GfxState::new();
+        gfx.lights.push(light());
+        gfx.lights.push(light());
+        gfx.end_frame_lights();
+        assert!(gfx.lights.is_empty(), "lights must not survive a frame boundary");
+        assert_eq!(gfx.prev_lights.len(), 2, "the frame's lights are snapshotted for keep_lights");
+    }
+
+    #[test]
+    fn keep_lights_restores_previous_frame() {
+        let mut gfx = GfxState::new();
+        gfx.lights.push(light());
+        gfx.end_frame_lights();
+        assert!(gfx.lights.is_empty());
+        gfx.keep_lights();
+        assert_eq!(gfx.lights.len(), 1, "keep_lights restores the last non-empty frame's lights");
+    }
+
+    #[test]
+    fn touch_mesh_lru_reorders_existing_key_to_the_back() {
+        let mut gfx = GfxState::new();
+        gfx.touch_mesh_lru(1);
+        gfx.touch_mesh_lru(2);
+        gfx.touch_mesh_lru(3);
+        gfx.touch_mesh_lru(1); // re-touch: 1 is now most-recently-used
+        assert_eq!(
+            gfx.mesh_lru.iter().copied().collect::<Vec<_>>(),
+            vec![2, 3, 1],
+            "re-touching a key must move it to the back, not duplicate it"
+        );
+    }
+
+    #[test]
+    fn mesh_cache_overflow_evicts_one_lru_entry_not_all() {
+        // Regression for the stall-spike bug: filling the cache past CAP
+        // used to clear() every entry and re-bake every visible mesh next
+        // frame. It must now evict exactly the least-recently-used one.
+        let mut gfx = GfxState::new();
+        const CAP: i64 = 256;
+        for key in 0..CAP {
+            let id = gfx.mesh_register(Vec::new());
+            gfx.mesh_cache.insert(key, id);
+            gfx.touch_mesh_lru(key);
+        }
+        assert_eq!(gfx.mesh_cache.len(), CAP as usize);
+
+        // Simulate the mesh_cache_put overflow path for one new key.
+        let new_id = gfx.mesh_register(Vec::new());
+        if let Some(evict_key) = gfx.mesh_lru.pop_front() {
+            if let Some(id) = gfx.mesh_cache.remove(&evict_key) {
+                gfx.meshes[id].clear();
+                gfx.mesh_free.push(id);
+            }
+        }
+        gfx.mesh_cache.insert(CAP, new_id);
+        gfx.touch_mesh_lru(CAP);
+
+        assert_eq!(gfx.mesh_cache.len(), CAP as usize, "cache must stay at capacity, not empty out");
+        assert!(!gfx.mesh_cache.contains_key(&0), "key 0 was least-recently-used and must be evicted");
+        assert!(gfx.mesh_cache.contains_key(&1), "every other key must survive a single-entry eviction");
+        assert!(gfx.mesh_cache.contains_key(&CAP), "the new key must be present");
+    }
+
+    #[test]
+    fn a_scene_that_forgets_clear_lights_cannot_leak_into_the_next_frame() {
+        // Regression for the bug this fixes: a scene pushes a light every frame
+        // without ever calling clear_lights. Without the frame-boundary reset
+        // this vector would grow without bound across hundreds of frames.
+        let mut gfx = GfxState::new();
+        for _ in 0..600 {
+            gfx.lights.push(light());
+            gfx.end_frame_lights();
+        }
+        assert!(gfx.lights.is_empty());
+        assert_eq!(gfx.prev_lights.len(), 1, "each frame starts from zero, not the last frame's leak");
+    }
+
+    #[test]
+    fn vertex_normals_are_consumed_once_and_produce_distinct_shading() {
+        let mut gfx = GfxState::new();
+        gfx.lights.push(Light { x: 5.0, y: 0.0, z: 0.0, r: 1.0, g: 1.0, b: 1.0, intensity: 1.0, radius: 20.0 });
+        gfx.color = 0x00FF_FFFF;
+        // Three very different normals should light this degenerate-ish flat
+        // triangle with three different vertex colours, unlike the flat-normal
+        // path where all three vertices share one face normal.
+        gfx.vertex_normals = Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]]);
+        gfx.submit_triangle(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+        assert!(gfx.vertex_normals.is_none(), "vertex_normals must be consumed by the triangle that uses them");
+        assert!(!gfx.depth_queue.is_empty(), "submit_triangle must push at least one draw call");
+    }
+
+    #[test]
+    fn unset_vertex_normals_fall_back_to_the_face_normal() {
+        let mut gfx = GfxState::new();
+        assert!(gfx.vertex_normals.is_none());
+        gfx.submit_triangle(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+        // No panic, no leftover state: the one-shot latch stays empty when unused.
+        assert!(gfx.vertex_normals.is_none());
     }
 }

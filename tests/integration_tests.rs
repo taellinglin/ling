@@ -37,14 +37,13 @@ fn test_run_hello_ling() {
 
 #[test]
 fn test_polyglot_chinese() {
-    let _source = r#"
-        令 启动 = 执行 {
+    let source = r#"
+        令 启动 = 执 {
             印("你好")
         }
     "#;
 
-    // Should compile to same binary as English version
-    assert!(true);
+    assert!(ling::run(source).is_ok(), "chinese-alias program failed to run");
 }
 
 // ── B1: user-defined data types (form / choose) ─────────────────────────────
@@ -120,7 +119,10 @@ fn test_data_types_multilingual_chinese() {
 
 #[test]
 fn test_borrow_checker() {
-    let _source = r#"
+    // The borrow checker (own/lend/move) is not implemented yet, so this only
+    // pins down that the parser accepts the syntax without panicking. Once the
+    // checker lands this should assert result.is_err() instead.
+    let source = r#"
         bind start = do {
             bind x = own 5
             bind y = lend x
@@ -128,6 +130,5 @@ fn test_borrow_checker() {
         }
     "#;
 
-    // Should fail with borrow error — checker is WIP
-    assert!(true);
+    let _ = ling::run(source);
 }
