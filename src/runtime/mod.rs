@@ -6832,6 +6832,29 @@ impl Interpreter {
             "net_status" | "เน็ตสถานะ" => {
                 return Ok(Value::Number(net::status() as f64));
             },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_send_to" | "เน็ตส่งถึง" => {
+                let id = self.arg_num(&args, 0, 0.0)? as u64;
+                let s = self.arg_str(&args, 1, "");
+                net::send_to(id, &s);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_recv_from" | "เน็ตรับจาก" => {
+                return Ok(Value::Str(net::recv_from()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_clients" | "เน็ตผู้เล่น" => {
+                return Ok(Value::Str(net::clients()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_client_count" | "เน็ตจำนวนผู้เล่น" => {
+                return Ok(Value::Number(net::client_count() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_events" | "เน็ตเหตุการณ์" => {
+                return Ok(Value::Str(net::events()));
+            },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
             "net_announce" | "เน็ตประกาศ" => {

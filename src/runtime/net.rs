@@ -1,63 +1,108 @@
-// src/runtime/net.rs — minimal line-oriented TCP transport for 2-peer co-op.
+// src/runtime/net.rs — line-oriented TCP transport, N-client star topology.
 //
-// One global connection per process. Socket I/O runs on background threads so
-// the game loop never blocks: `send` enqueues a line, `recv` returns the most
-// recent line received. Intended for LAN-latency state sync (positions etc.).
+// One process is either a host (accepts many clients) or a client (connects
+// to exactly one host). Socket I/O runs on background threads so the game
+// loop never blocks: `send`/`send_to` enqueue lines, `recv`/`recv_from`
+// dequeue them in arrival order. Intended for LAN-latency state sync.
 //
-//   net_host(port)        → listen, accept one peer
-//   net_join(ip, port)    → connect to a host
-//   net_send(str)         → queue a line to the peer
-//   net_recv()            → most recent line from the peer ("" if none)
-//   net_status()          → 0 = idle/closed, 1 = waiting, 2 = connected
+//   net_host(port)          → listen, accept up to MAX_CLIENTS peers
+//   net_join(ip, port)      → connect to a host
+//   net_send(str)           → host: broadcast to all clients. client: send to host.
+//   net_send_to(id, str)    → host only: unicast to one client
+//   net_recv()              → oldest queued line, message only ("" if none)
+//   net_recv_from()         → oldest queued line as "senderId|line" ("" if none)
+//   net_clients()           → host: connected client ids, comma-separated
+//   net_client_count()      → number of connected peers
+//   net_events()            → drains "connect:id"/"disconnect:id" log, newline-joined
+//   net_status()            → 0 = idle/closed, 1 = waiting, 2 = >=1 peer connected
+//
+// `net_recv` and `net_recv_from` drain the same inbound queue — pick one
+// style per program. Mixing them splits messages between the two arbitrarily.
 
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-struct NetInner {
-    status: Arc<AtomicU8>,
-    latest: Arc<Mutex<String>>,
+const MAX_CLIENTS: usize = 64;
+const MAX_QUEUE: usize = 4096;
+const MAX_EVENTS: usize = 256;
+
+type Inbound = Arc<Mutex<VecDeque<(u64, String)>>>;
+type Events = Arc<Mutex<VecDeque<String>>>;
+
+struct ClientHandle {
     out_tx: Sender<String>,
 }
 
-static NET: Mutex<Option<NetInner>> = Mutex::new(None);
+enum Role {
+    Host { next_id: AtomicU64, clients: Mutex<HashMap<u64, ClientHandle>> },
+    Client { out_tx: Sender<String> },
+}
 
-// Drive an established stream: spawn a reader thread (newest line → `latest`),
-// then drain the outgoing channel on this thread (writer).
-fn run_stream(
-    stream: TcpStream,
+struct Hub {
     status: Arc<AtomicU8>,
-    latest: Arc<Mutex<String>>,
+    inbound: Inbound,
+    events: Events,
+    role: Role,
+}
+
+static NET: Mutex<Option<Hub>> = Mutex::new(None);
+
+fn push_bounded<T>(q: &mut VecDeque<T>, cap: usize, item: T) {
+    if q.len() >= cap {
+        q.pop_front();
+    }
+    q.push_back(item);
+}
+
+fn push_event(events: &Events, line: String) {
+    if let Ok(mut g) = events.lock() {
+        push_bounded(&mut g, MAX_EVENTS, line);
+    }
+}
+
+// Drive one established connection: a reader thread pushes every line it
+// receives into `inbound` tagged with `id`, while this thread drains `rx`
+// and writes each queued outgoing line to the socket.
+//
+// `on_disconnect` runs from the reader thread the moment it sees EOF/error —
+// it is the only reliable disconnect signal, since the writer thread may be
+// parked on an empty `rx` indefinitely otherwise. It is expected to drop the
+// registry's `Sender<String>` for this peer, which closes `rx` and ends the
+// writer loop below.
+fn run_peer(
+    stream: TcpStream,
+    id: u64,
+    inbound: Inbound,
     rx: Receiver<String>,
+    on_disconnect: impl FnOnce() + Send + 'static,
 ) {
     let _ = stream.set_nodelay(true);
-    status.store(2, Ordering::SeqCst);
 
     if let Ok(read_stream) = stream.try_clone() {
-        let latest = latest.clone();
-        let rstat = status.clone();
+        let inbound = inbound.clone();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(read_stream);
             loop {
                 let mut line = String::new();
                 match reader.read_line(&mut line) {
-                    Ok(0) => {
-                        rstat.store(0, Ordering::SeqCst);
-                        break;
-                    },
+                    Ok(0) => break,
                     Ok(_) => {
-                        if let Ok(mut g) = latest.lock() {
-                            *g = line.trim_end_matches(['\r', '\n']).to_string();
+                        if let Ok(mut g) = inbound.lock() {
+                            push_bounded(
+                                &mut g,
+                                MAX_QUEUE,
+                                (id, line.trim_end_matches(['\r', '\n']).to_string()),
+                            );
                         }
                     },
-                    Err(_) => {
-                        rstat.store(0, Ordering::SeqCst);
-                        break;
-                    },
+                    Err(_) => break,
                 }
             }
+            on_disconnect();
         });
     }
 
@@ -68,52 +113,183 @@ fn run_stream(
         }
         let _ = w.flush();
     }
-    status.store(0, Ordering::SeqCst);
 }
 
-fn install() -> (Arc<AtomicU8>, Arc<Mutex<String>>, Receiver<String>) {
+fn install(role: Role) -> (Arc<AtomicU8>, Inbound, Events) {
     let status = Arc::new(AtomicU8::new(1));
-    let latest = Arc::new(Mutex::new(String::new()));
-    let (tx, rx) = channel::<String>();
+    let inbound = Arc::new(Mutex::new(VecDeque::new()));
+    let events = Arc::new(Mutex::new(VecDeque::new()));
     if let Ok(mut g) = NET.lock() {
-        *g = Some(NetInner { status: status.clone(), latest: latest.clone(), out_tx: tx });
+        *g = Some(Hub { status: status.clone(), inbound: inbound.clone(), events: events.clone(), role });
     }
-    (status, latest, rx)
+    (status, inbound, events)
 }
 
 pub fn host(port: u16) {
-    let (status, latest, rx) = install();
-    std::thread::spawn(move || match TcpListener::bind(("0.0.0.0", port)) {
-        Ok(listener) => match listener.accept() {
-            Ok((stream, _)) => run_stream(stream, status, latest, rx),
-            Err(_) => status.store(0, Ordering::SeqCst),
-        },
-        Err(_) => status.store(0, Ordering::SeqCst),
+    let (status, inbound, events) =
+        install(Role::Host { next_id: AtomicU64::new(1), clients: Mutex::new(HashMap::new()) });
+    std::thread::spawn(move || {
+        let listener = match TcpListener::bind(("0.0.0.0", port)) {
+            Ok(l) => l,
+            Err(_) => {
+                status.store(0, Ordering::SeqCst);
+                return;
+            },
+        };
+        for incoming in listener.incoming() {
+            let stream = match incoming {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let g = NET.lock().ok();
+            let Some(guard) = g else { break };
+            let Some(hub) = guard.as_ref() else { break };
+            let Role::Host { next_id, clients } = &hub.role else { break };
+            let count = clients.lock().map(|m| m.len()).unwrap_or(0);
+            if count >= MAX_CLIENTS {
+                drop(guard);
+                continue;
+            }
+            let id = next_id.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = channel::<String>();
+            if let Ok(mut m) = clients.lock() {
+                m.insert(id, ClientHandle { out_tx: tx });
+            }
+            drop(guard);
+
+            status.store(2, Ordering::SeqCst);
+            push_event(&events, format!("connect:{id}"));
+
+            let inbound2 = inbound.clone();
+            let events2 = events.clone();
+            std::thread::spawn(move || {
+                let events3 = events2.clone();
+                run_peer(stream, id, inbound2, rx, move || {
+                    if let Ok(g) = NET.lock() {
+                        if let Some(hub) = g.as_ref() {
+                            if let Role::Host { clients, .. } = &hub.role {
+                                if let Ok(mut m) = clients.lock() {
+                                    m.remove(&id);
+                                    if m.is_empty() {
+                                        hub.status.store(1, Ordering::SeqCst);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    push_event(&events3, format!("disconnect:{id}"));
+                });
+            });
+        }
     });
 }
 
 pub fn join(ip: &str, port: u16) {
-    let (status, latest, rx) = install();
+    let (tx, rx) = channel::<String>();
+    let (status, inbound, _events) = install(Role::Client { out_tx: tx });
     let addr = format!("{ip}:{port}");
     std::thread::spawn(move || match TcpStream::connect(&addr) {
-        Ok(stream) => run_stream(stream, status, latest, rx),
+        Ok(stream) => {
+            status.store(2, Ordering::SeqCst);
+            let status2 = status.clone();
+            run_peer(stream, 0, inbound, rx, move || status2.store(0, Ordering::SeqCst));
+        },
         Err(_) => status.store(0, Ordering::SeqCst),
     });
 }
 
 pub fn send(s: &str) {
     if let Ok(g) = NET.lock() {
-        if let Some(n) = g.as_ref() {
-            let _ = n.out_tx.send(s.to_string());
+        if let Some(hub) = g.as_ref() {
+            match &hub.role {
+                Role::Host { clients, .. } => {
+                    if let Ok(m) = clients.lock() {
+                        for c in m.values() {
+                            let _ = c.out_tx.send(s.to_string());
+                        }
+                    }
+                },
+                Role::Client { out_tx } => {
+                    let _ = out_tx.send(s.to_string());
+                },
+            }
+        }
+    }
+}
+
+pub fn send_to(id: u64, s: &str) {
+    if let Ok(g) = NET.lock() {
+        if let Some(hub) = g.as_ref() {
+            if let Role::Host { clients, .. } = &hub.role {
+                if let Ok(m) = clients.lock() {
+                    if let Some(c) = m.get(&id) {
+                        let _ = c.out_tx.send(s.to_string());
+                    }
+                }
+            }
         }
     }
 }
 
 pub fn recv() -> String {
     if let Ok(g) = NET.lock() {
-        if let Some(n) = g.as_ref() {
-            if let Ok(l) = n.latest.lock() {
-                return l.clone();
+        if let Some(hub) = g.as_ref() {
+            if let Ok(mut q) = hub.inbound.lock() {
+                if let Some((_, msg)) = q.pop_front() {
+                    return msg;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+pub fn recv_from() -> String {
+    if let Ok(g) = NET.lock() {
+        if let Some(hub) = g.as_ref() {
+            if let Ok(mut q) = hub.inbound.lock() {
+                if let Some((id, msg)) = q.pop_front() {
+                    return format!("{id}|{msg}");
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+pub fn clients() -> String {
+    if let Ok(g) = NET.lock() {
+        if let Some(hub) = g.as_ref() {
+            if let Role::Host { clients, .. } = &hub.role {
+                if let Ok(m) = clients.lock() {
+                    let mut ids: Vec<u64> = m.keys().copied().collect();
+                    ids.sort_unstable();
+                    return ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+pub fn client_count() -> usize {
+    if let Ok(g) = NET.lock() {
+        if let Some(hub) = g.as_ref() {
+            return match &hub.role {
+                Role::Host { clients, .. } => clients.lock().map(|m| m.len()).unwrap_or(0),
+                Role::Client { .. } => usize::from(hub.status.load(Ordering::SeqCst) == 2),
+            };
+        }
+    }
+    0
+}
+
+pub fn events() -> String {
+    if let Ok(g) = NET.lock() {
+        if let Some(hub) = g.as_ref() {
+            if let Ok(mut q) = hub.events.lock() {
+                let out: Vec<String> = q.drain(..).collect();
+                return out.join("\n");
             }
         }
     }
@@ -122,8 +298,8 @@ pub fn recv() -> String {
 
 pub fn status() -> u8 {
     if let Ok(g) = NET.lock() {
-        if let Some(n) = g.as_ref() {
-            return n.status.load(Ordering::SeqCst);
+        if let Some(hub) = g.as_ref() {
+            return hub.status.load(Ordering::SeqCst);
         }
     }
     0
@@ -134,7 +310,6 @@ pub fn status() -> u8 {
 // live server list. Info is opaque to the transport (the game encodes
 // name|stage|private|... into it).
 
-use std::collections::HashMap;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -251,4 +426,154 @@ pub fn discover(port: u16) -> String {
         }
     }
     out
+}
+
+// `NET` is one global slot per process, so these tests share it and must run
+// serially — take `TEST_LOCK` first in every test.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read as _;
+    use std::time::Duration;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn deadline_poll(mut cond: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(3) {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        false
+    }
+
+    fn wait_connect(addr: &str) -> TcpStream {
+        let start = Instant::now();
+        loop {
+            if let Ok(s) = TcpStream::connect(addr) {
+                return s;
+            }
+            assert!(start.elapsed() < Duration::from_secs(3), "could not connect to {addr}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn host_accepts_multiple_clients_and_broadcasts_to_all() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18901;
+        host(port);
+        let addr = format!("127.0.0.1:{port}");
+        let mut peers: Vec<TcpStream> = (0..3).map(|_| wait_connect(&addr)).collect();
+
+        assert!(deadline_poll(|| client_count() == 3), "expected 3 clients connected");
+        let ids: Vec<u64> = clients().split(',').map(|s| s.parse().unwrap()).collect();
+        assert_eq!(ids.len(), 3);
+
+        let ev = events();
+        assert_eq!(ev.matches("connect:").count(), 3);
+
+        send("hello");
+        for p in peers.iter_mut() {
+            let mut reader = BufReader::new(p.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line.trim_end(), "hello");
+        }
+    }
+
+    #[test]
+    fn recv_from_preserves_order_and_does_not_duplicate() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18902;
+        host(port);
+        let addr = format!("127.0.0.1:{port}");
+        let mut peer = wait_connect(&addr);
+        assert!(deadline_poll(|| client_count() == 1));
+
+        for i in 0..5 {
+            peer.write_all(format!("m{i}\n").as_bytes()).unwrap();
+        }
+        peer.flush().unwrap();
+
+        let mut got = Vec::new();
+        assert!(deadline_poll(|| {
+            loop {
+                let s = recv_from();
+                if s.is_empty() {
+                    break;
+                }
+                got.push(s);
+            }
+            got.len() == 5
+        }));
+
+        let expected_id = got[0].split('|').next().unwrap().to_string();
+        for (i, line) in got.iter().enumerate() {
+            assert_eq!(*line, format!("{expected_id}|m{i}"));
+        }
+        assert_eq!(recv_from(), "", "queue must be drained, not re-delivered");
+    }
+
+    #[test]
+    fn disconnect_is_observed_and_client_is_dropped_from_the_registry() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18903;
+        host(port);
+        let addr = format!("127.0.0.1:{port}");
+        let peer = wait_connect(&addr);
+        assert!(deadline_poll(|| client_count() == 1));
+
+        drop(peer);
+        assert!(deadline_poll(|| client_count() == 0), "disconnect must drop the client");
+        assert!(deadline_poll(|| events().contains("disconnect:")));
+    }
+
+    #[test]
+    fn join_reports_connected_status_and_exchanges_lines_with_a_bare_host() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18904;
+        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.write_all(b"from-host\n").unwrap();
+            let mut reader = BufReader::new(s.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            line
+        });
+
+        join("127.0.0.1", port);
+        assert!(deadline_poll(|| status() == 2), "client must report connected");
+
+        let mut got = String::new();
+        assert!(deadline_poll(|| {
+            got = recv();
+            !got.is_empty()
+        }));
+        assert_eq!(got, "from-host");
+
+        send("ping");
+        let echoed = handle.join().unwrap();
+        assert_eq!(echoed.trim_end(), "ping");
+    }
+
+    #[test]
+    fn client_cap_rejects_connections_past_the_limit() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let port = 18905;
+        host(port);
+        let addr = format!("127.0.0.1:{port}");
+        let mut peers: Vec<TcpStream> = (0..MAX_CLIENTS + 2).map(|_| wait_connect(&addr)).collect();
+
+        assert!(deadline_poll(|| client_count() == MAX_CLIENTS));
+
+        // The rejected sockets get dropped by the server without ever joining
+        // the registry, so a read on them observes EOF.
+        let rejected = peers.last_mut().unwrap();
+        let mut buf = [0u8; 8];
+        assert!(deadline_poll(|| matches!(rejected.read(&mut buf), Ok(0))));
+    }
 }
