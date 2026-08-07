@@ -28,7 +28,7 @@
 //   outline_color     — ink colour
 //   highlight_color   — colour of the brightest toon band (normally white)
 
-use crate::gfx::light::{cel_quantize, Light};
+use crate::gfx::light::Light;
 
 // ── Material struct ───────────────────────────────────────────────────────────
 
@@ -169,39 +169,6 @@ fn ggx_smooth(n_dot_h: f32, roughness: f32) -> f32 {
     (ggx * a2 * 3.0).clamp(0.0, 1.0)
 }
 
-/// Toon diffuse — maps n·l to discrete bands with optional smooth cross-fade.
-///
-/// When `softness < 1e-3` the brightness is snapped hard via `cel_quantize`.
-/// When `softness > 0` the same cel brightness levels are used, but transitions
-/// between adjacent bands are smoothed over a `softness`-wide window at each
-/// band boundary. `toon_bands` controls how many equal-width n·l slices are
-/// mapped through `cel_quantize`; for the default 3 bands the levels match the
-/// legacy `cel_quantize` table exactly.
-#[inline]
-pub fn toon_diffuse(n_dot_l: f32, bands: u32, softness: f32) -> f32 {
-    let t = n_dot_l.clamp(0.0, 1.0);
-    if softness < 1e-3 {
-        return cel_quantize(t);
-    }
-    // Smooth cross-fade at each band boundary using smoothstep.
-    // Brightness levels come from cel_quantize so both paths stay consistent.
-    let n = bands.max(2) as f32;
-    let scaled = t * n;
-    let frac = scaled.fract();
-    let edge_width = softness.clamp(0.0, 0.5);
-
-    if frac > 1.0 - edge_width {
-        // Near the top edge of a band: blend into the next band's brightness.
-        let lo = cel_quantize((scaled.floor() / n).clamp(0.0, 1.0));
-        let hi = cel_quantize(((scaled.floor() + 1.0) / n).clamp(0.0, 1.0));
-        let s = ((frac - (1.0 - edge_width)) / edge_width).clamp(0.0, 1.0);
-        let blend = s * s * (3.0 - 2.0 * s); // smoothstep
-        lo + (hi - lo) * blend
-    } else {
-        // Inside the band — return its quantised brightness directly.
-        cel_quantize((scaled.floor() / n).clamp(0.0, 1.0))
-    }
-}
 
 #[inline]
 fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -272,13 +239,13 @@ pub fn shade(
         let h = norm3([ld[0] + v[0], ld[1] + v[1], ld[2] + v[2]]);
         let n_dot_h = dot3(n, h).clamp(0.0, 1.0);
 
-        // ── Diffuse: toon (toon_bands ≥ 1) or smooth Lambertian (toon_bands 0) ─
+        // ── Diffuse: always raw Lambertian here — toon quantisation happens
+        // once, per pixel, on the interpolated Gouraud colour (see
+        // `raster::posterize_span`). Quantising per vertex as well as per
+        // pixel would double-band and, worse, lock band edges to shared
+        // vertices — the tile-corner popping this replaces.
         let smooth_mode = mat.toon_bands == 0;
-        let diff = if smooth_mode {
-            n_dot_l // raw Lambertian — no quantisation
-        } else {
-            toon_diffuse(n_dot_l, mat.toon_bands, mat.shadow_softness)
-        };
+        let diff = n_dot_l;
 
         // Subsurface: tint the shadow zone toward subsurface_color
         let (eff_r, eff_g, eff_b) = if mat.subsurface > 0.0 {
@@ -421,11 +388,13 @@ mod tests {
 
     #[test]
     fn metallic_tints_specular() {
-        let mut mat = LingMaterial::default();
-        mat.albedo = 0x00FF_0000; // red metal
-        mat.metallic = 1.0;
-        mat.specular_tint = 1.0;
-        mat.roughness = 0.1;
+        let mat = LingMaterial {
+            albedo: 0x00FF_0000, // red metal
+            metallic: 1.0,
+            specular_tint: 1.0,
+            roughness: 0.1,
+            ..Default::default()
+        };
 
         let light = crate::gfx::light::Light {
             x: 0.0,

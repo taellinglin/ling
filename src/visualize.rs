@@ -584,6 +584,7 @@ pub(crate) fn categorize(name: &str) -> Cat {
             | "render_3d"
             | "flush_3d"
             | "font_text_3d"
+            | "set_vertex_normals"
     ) {
         return Cat::Draw3D;
     }
@@ -754,7 +755,7 @@ pub(crate) fn categorize(name: &str) -> Cat {
     if matches!(name, "set_camera" | "set_camera_pos" | "move_camera") {
         return Cat::Camera;
     }
-    if matches!(name, "add_light" | "clear_lights") {
+    if matches!(name, "add_light" | "clear_lights" | "keep_lights") {
         return Cat::Light;
     }
 

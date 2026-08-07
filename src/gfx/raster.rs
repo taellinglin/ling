@@ -70,6 +70,22 @@ pub fn fill_triangle(
     }
 }
 
+/// Posterise one interpolated Gouraud pixel (0..255 channels) into `bands`
+/// discrete luminance levels, chroma preserved, softened by `softness`. Runs
+/// once per pixel on the smoothly interpolated colour, so band edges follow
+/// the shaded surface instead of being pinned to triangle/mesh vertices —
+/// see `ling_graphics::shading` for the underlying posterisation model.
+/// `bands < 2` skips the work entirely (smooth Gouraud, unchanged).
+#[inline]
+fn posterize_span(r: f32, g: f32, b: f32, bands: u32, softness: f32) -> (f32, f32, f32) {
+    if bands < 2 {
+        return (r, g, b);
+    }
+    let linear = [r / 255.0, g / 255.0, b / 255.0];
+    let out = ling_graphics::shading::posterize_soft(linear, bands, softness);
+    (out[0] * 255.0, out[1] * 255.0, out[2] * 255.0)
+}
+
 /// Gouraud-interpolated triangle with per-pixel cel-shade posterisation.
 ///
 /// Vertex colours are linearly interpolated with barycentric weights; the
@@ -95,6 +111,7 @@ pub fn fill_triangle_gouraud(
     y2: f32,
     c2: u32,
     bands: u32,
+    softness: f32,
     alpha: f32,
     mode: u8,
     tag_unlit: bool,
@@ -162,7 +179,7 @@ pub fn fill_triangle_gouraud(
                     let r = r0 * w0 + r1 * w1 + r2 * w2;
                     let g = g0 * w0 + g1 * w1 + g2 * w2;
                     let b = b0 * w0 + b1 * w1 + b2 * w2;
-                    let _ = bands; // tone ramp is applied as a post-process by ToonConfig
+                    let (r, g, b) = posterize_span(r, g, b, bands, softness);
                     let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
                         | ((g.clamp(0.0, 255.0) as u32) << 8)
                         | (b.clamp(0.0, 255.0) as u32);
@@ -608,6 +625,7 @@ pub fn fill_triangle_gouraud_z(
     z2: f32,
     c2: u32,
     bands: u32,
+    softness: f32,
     alpha: f32,
     mode: u8,
     tag_unlit: bool,
@@ -676,7 +694,7 @@ pub fn fill_triangle_gouraud_z(
                         let r = r0 * w0 + r1 * w1 + r2 * w2;
                         let g = g0 * w0 + g1 * w1 + g2 * w2;
                         let b = b0 * w0 + b1 * w1 + b2 * w2;
-                        let _ = bands; // tone ramp applied post-process by ToonConfig
+                        let (r, g, b) = posterize_span(r, g, b, bands, softness);
                         let packed = ((r.clamp(0.0, 255.0) as u32) << 16)
                             | ((g.clamp(0.0, 255.0) as u32) << 8)
                             | (b.clamp(0.0, 255.0) as u32);
@@ -1416,6 +1434,7 @@ fn add_span(cov: &mut [f32], x0: i32, xa: f32, xb: f32, weight: f32) {
 /// blur. Implementation: one separable box blur (sliding window, O(1)/px per
 /// pass) at the max radius, then a per-pixel mix by circle-of-confusion â€” cheap
 /// enough for a full-frame pass and the canonical z-buffer showcase effect.
+#[allow(clippy::too_many_arguments)]
 pub fn depth_of_field(
     buf: &mut [u32],
     zbuf: &[f32],
@@ -1439,7 +1458,7 @@ pub fn depth_of_field(
     let hw = width.div_ceil(2);
     let hh = height.div_ceil(2);
     let hn = hw * hh;
-    let r_h = ((rad + 1) / 2).max(1) as i32; // blur radius in half-res pixels
+    let r_h = rad.div_ceil(2).max(1) as i32; // blur radius in half-res pixels
     let inv_win = 1.0 / (2 * r_h + 1) as f32;
 
     // Downsample (2×2 average) into half-res f32 planes.
@@ -1503,8 +1522,8 @@ pub fn depth_of_field(
                 acc += src[row + k.clamp(0, hwi - 1) as usize];
                 k += 1;
             }
-            for x in 0..hw {
-                out_row[x] = acc * inv_win;
+            for (x, out) in out_row.iter_mut().enumerate() {
+                *out = acc * inv_win;
                 let lo = (x as i32 - r_h).clamp(0, hwi - 1) as usize;
                 let hi2 = (x as i32 + r_h + 1).clamp(0, hwi - 1) as usize;
                 acc += src[row + hi2] - src[row + lo];
@@ -1758,7 +1777,7 @@ mod fill_tests {
             [25.0, 15.0],
             [15.0, 15.0],
         ];
-        fill_contours_aa(&mut buf, w, h, 0xFFFFFF, false, &vec![outer, inner]);
+        fill_contours_aa(&mut buf, w, h, 0xFFFFFF, false, &[outer, inner]);
         let body = buf[10 * w + 20]; // in the ring body (top stroke)
         let hole = buf[20 * w + 20]; // center hole
         eprintln!("body=0x{body:06X} hole=0x{hole:06X}");
@@ -1832,11 +1851,13 @@ mod fill_tests {
 
     #[test]
     fn fill_triangle_gouraud_tags_when_unlit() {
+        // bands = 0: real callers always pass 0 for flat-shaded/unlit triangles
+        // (see gfx::mod submit_triangle), so posterisation never runs here.
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
-            0, true,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 0, 0.0,
+            1.0, 0, true,
         );
         let p = buf[10 * w + 5];
         assert_eq!(
@@ -1852,8 +1873,8 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
-            0, false,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 0.0,
+            1.0, 0, false,
         );
         let p = buf[10 * w + 5];
         assert_eq!(
@@ -1868,8 +1889,8 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut buf = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 1.0,
-            1, true,
+            &mut buf, w, h, 2.0, 2.0, 0x00FF00, 18.0, 2.0, 0x00FF00, 2.0, 18.0, 0x00FF00, 3, 0.0,
+            1.0, 1, true,
         );
         let p = buf[10 * w + 5];
         assert_eq!(
@@ -1886,7 +1907,7 @@ mod fill_tests {
         let mut z = vec![f32::INFINITY; w * h];
         fill_triangle_gouraud_z(
             &mut buf, &mut z, w, h, 2.0, 2.0, 1.0, 0x00FF00, 18.0, 2.0, 1.0, 0x00FF00, 2.0, 18.0,
-            1.0, 0x00FF00, 3, 1.0, 0, true,
+            1.0, 0x00FF00, 3, 0.0, 1.0, 0, true,
         );
         let p = buf[10 * w + 5];
         assert_eq!(
@@ -1999,5 +2020,83 @@ mod fill_tests {
             partial > 0,
             "AA arc must produce smoothed partial-coverage pixels"
         );
+    }
+
+    #[test]
+    fn gouraud_posterize_bands_zero_is_smooth_passthrough() {
+        // bands < 2 must not alter the interpolated colour at all — this is
+        // the path every non-material triangle takes, and it must render
+        // identically to before per-pixel posterisation existed.
+        let (w, h) = (20usize, 20usize);
+        let mut buf = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut buf, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000, 0,
+            0.0, 1.0, 0, false,
+        );
+        let mut smooth = vec![0u32; w * h];
+        // Same triangle, computed by hand: interior pixels should vary
+        // continuously (multiple distinct colours), not collapse to a few
+        // discrete bands.
+        fill_triangle_gouraud(
+            &mut smooth, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000,
+            0, 0.0, 1.0, 0, false,
+        );
+        assert_eq!(buf, smooth, "bands=0 must be deterministic passthrough");
+        let distinct: std::collections::HashSet<u32> =
+            buf.iter().filter(|&&p| p != 0).copied().collect();
+        assert!(
+            distinct.len() > 4,
+            "smooth Gouraud gradient must not collapse to a handful of bands"
+        );
+    }
+
+    #[test]
+    fn gouraud_posterize_bands_four_gives_few_distinct_levels() {
+        // With bands >= 2 the interior must posterise to a small, bounded
+        // number of luminance levels instead of a continuous gradient — the
+        // per-pixel fix for tile-corner popping (band edges follow the pixel
+        // gradient, not the triangle's vertices).
+        let (w, h) = (60usize, 60usize);
+        let mut buf = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut buf, w, h, 2.0, 2.0, 0x00202020, 58.0, 2.0, 0x00E0E0E0, 2.0, 58.0, 0x00202020, 4,
+            0.0, 1.0, 0, false,
+        );
+        let distinct: std::collections::HashSet<u32> =
+            buf.iter().filter(|&&p| p != 0).copied().collect();
+        assert!(
+            distinct.len() <= 4,
+            "4-band posterisation must not produce more than 4 distinct levels, got {}",
+            distinct.len()
+        );
+    }
+
+    #[test]
+    fn gouraud_posterize_softness_one_matches_unposterized() {
+        // softness = 1.0 fully crossfades back to the raw interpolated colour
+        // (see `ling_graphics::shading::posterize_soft`), so it must match the
+        // bands=0 render within float/rounding tolerance.
+        let (w, h) = (20usize, 20usize);
+        let mut hard_off = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut hard_off, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0,
+            0x00FF0000, 0, 0.0, 1.0, 0, false,
+        );
+        let mut soft = vec![0u32; w * h];
+        fill_triangle_gouraud(
+            &mut soft, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000,
+            4, 1.0, 1.0, 0, false,
+        );
+        for i in 0..hard_off.len() {
+            let (a, b) = (hard_off[i], soft[i]);
+            for shift in [16, 8, 0] {
+                let ca = (a >> shift) & 0xFF;
+                let cb = (b >> shift) & 0xFF;
+                assert!(
+                    (ca as i32 - cb as i32).abs() <= 1,
+                    "softness=1.0 must crossfade back to smooth Gouraud (pixel {i}, channel shift {shift}: {ca} vs {cb})"
+                );
+            }
+        }
     }
 }

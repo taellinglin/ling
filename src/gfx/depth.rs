@@ -115,7 +115,7 @@ fn rasterize_call(
                     );
                 }
             },
-            DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands } => {
+            DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands, softness } => {
                 raster::fill_triangle_gouraud_z(
                     buf,
                     z,
@@ -134,6 +134,7 @@ fn rasterize_call(
                     z2,
                     c2,
                     bands,
+                    softness,
                     call.alpha,
                     call.mode,
                     call.unlit,
@@ -202,7 +203,7 @@ fn rasterize_call(
                     );
                 }
             },
-            DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, .. } => {
+            DrawKind::TriangleG { x0, y0, c0, x1, y1, c1, x2, y2, c2, bands, softness, .. } => {
                 raster::fill_triangle_gouraud(
                     buf,
                     width,
@@ -217,6 +218,7 @@ fn rasterize_call(
                     y2 - ysh,
                     c2,
                     bands,
+                    softness,
                     call.alpha,
                     call.mode,
                     call.unlit,
@@ -297,6 +299,9 @@ pub enum DrawKind {
         z2: f32,
     },
     /// Gouraud-interpolated + per-pixel posterised triangle (smooth cel).
+    /// `bands < 2` disables posterisation (smooth Gouraud, unchanged look for
+    /// callers that never asked for toon bands). `softness` crossfades between
+    /// the posterised and raw interpolated colour (0 = crisp bands, 1 = smooth).
     TriangleG {
         x0: f32,
         y0: f32,
@@ -311,6 +316,7 @@ pub enum DrawKind {
         z2: f32,
         c2: u32,
         bands: u32,
+        softness: f32,
     },
     Line {
         x0: f32,
@@ -433,6 +439,7 @@ impl DepthQueue {
                 z2: depth,
                 c2,
                 bands,
+                softness: 0.0,
             },
         });
     }
@@ -456,6 +463,32 @@ impl DepthQueue {
         bands: u32,
         unlit: bool,
     ) {
+        self.push_triangle_g_zv_soft(
+            x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands, 0.0, unlit,
+        );
+    }
+
+    /// `push_triangle_g_zv` with an explicit band-crossfade `softness`
+    /// (0 = crisp bands, 1 = fully smooth). See `DrawKind::TriangleG`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_triangle_g_zv_soft(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        z0: f32,
+        c0: u32,
+        x1: f32,
+        y1: f32,
+        z1: f32,
+        c1: u32,
+        x2: f32,
+        y2: f32,
+        z2: f32,
+        c2: u32,
+        bands: u32,
+        softness: f32,
+        unlit: bool,
+    ) {
         let depth = (z0 + z1 + z2) / 3.0;
         self.calls.push(DrawCall {
             depth,
@@ -463,7 +496,9 @@ impl DepthQueue {
             mode: self.cur_mode,
             alpha: self.cur_alpha,
             unlit,
-            kind: DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands },
+            kind: DrawKind::TriangleG {
+                x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, bands, softness,
+            },
         });
     }
 
