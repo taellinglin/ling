@@ -107,6 +107,12 @@ pub struct GfxState {
     /// Set by `set_antialias`; default false = crisp, opaque, aliased pixels.
     /// When true, strokes use Xiaolin-Wu coverage blending for smooth edges.
     pub antialias: bool,
+    /// Anti-alias `font_text`/`font_text_fill` glyphs, independent of
+    /// `antialias` (a game may want crisp pixel-hinted UI text while still
+    /// smoothing wireframe strokes). Set by `set_font_antialias`; default
+    /// false = crisp, hard-edged glyphs, matching the engine-wide default of
+    /// aliased-unless-opted-in.
+    pub font_antialias: bool,
     /// Hue rotation (radians) applied to baked per-tri colours in
     /// `draw_color_mesh` (.lmesh). Set by `mesh_hue`; 0 = colours as-is.
     pub mesh_hue: f32,
@@ -168,6 +174,57 @@ pub struct GfxState {
     pub mesh_free: Vec<usize>,
     /// Keyed display-list cache (e.g. world rooms): key → mesh handle, bounded.
     pub mesh_cache: std::collections::HashMap<i64, usize>,
+    /// Was the window OS-focused as of last frame? Used to detect focus-loss/
+    /// regain transitions (alt-tab) — see `focus_grace_frames`.
+    pub was_active: bool,
+    /// Frames remaining to suppress raw input (`key_down`/`mouse_down_*`)
+    /// after regaining focus. minifb has no WM_KILLFOCUS handler, so a key
+    /// released while another window was focused can read as still "down"
+    /// for one stale frame right after alt-tabbing back; a short grace
+    /// window after refocus swallows that instead of jerking the camera.
+    pub focus_grace_frames: u8,
+    /// True when the current window is the borderless-fullscreen one
+    /// (`fullscreen()`/전체화면, which sets HWND_TOPMOST so it covers the
+    /// taskbar). Only that window needs its topmost style dropped on
+    /// alt-tab and restored on refocus — a plain `open_window()` window was
+    /// never topmost, so leave it alone.
+    pub topmost_window: bool,
+    /// Previous-frame down-state per Win32 virtual-key code (0-255), for
+    /// edge detection when reading keyboard state via `GetAsyncKeyState`
+    /// instead of minifb's message-queue-based (`WM_KEYDOWN`) tracking. The
+    /// borderless-fullscreen/topmost window can end up visually in front
+    /// without ever actually holding real Win32 keyboard focus (Windows'
+    /// foreground-lock), in which case `WM_KEYDOWN` never arrives and typing
+    /// silently does nothing even though the window is clearly on top —
+    /// `GetAsyncKeyState` reads the global key-state table directly and
+    /// doesn't require focus, so `key_down`/`key_pressed`/`text_poll` fall
+    /// back to it while `topmost_window` is set (see `runtime/mod.rs`).
+    #[cfg(windows)]
+    pub raw_keys_prev: [bool; 256],
+    /// Time (`now_secs()`) each Win32 VK code was first observed down, for
+    /// the `GetAsyncKeyState` fallback's key-repeat in `text_poll` — holding
+    /// a key should eventually start retyping its character, same as any
+    /// normal text field, not just fire once on the initial press.
+    #[cfg(windows)]
+    pub raw_keys_down_since: [f64; 256],
+    /// Time (`now_secs()`) each Win32 VK code last emitted a character
+    /// (initial press or a repeat), so repeats can be paced at a fixed rate
+    /// once the initial hold delay has passed. See `raw_keys_down_since`.
+    #[cfg(windows)]
+    pub raw_keys_last_fire: [f64; 256],
+    /// Native window handle (HWND on Windows) of the topmost/fullscreen
+    /// window, captured when it's created. `GetAsyncKeyState` reads the
+    /// OS-wide key table regardless of which window is actually focused, so
+    /// the `topmost_window` input fallback needs this to check whether we're
+    /// really the foreground app before trusting it — otherwise alt-tabbing
+    /// away to type in another window would still feed keystrokes into the
+    /// game sitting behind it. See `window_is_foreground`.
+    #[cfg(windows)]
+    pub hwnd: isize,
+    /// Set by `quit()`/`종료()` — makes `창열림()`/`is_open()` report closed
+    /// on the next check, so a script-drawn UI element (an exit button) can
+    /// close the window the same way pressing Escape already does.
+    pub want_quit: bool,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -195,6 +252,7 @@ impl GfxState {
             blend: 0,
             alpha: 1.0,
             antialias: false,
+            font_antialias: false,
             mesh_hue: 0.0,
             mesh_hue_gain: 1.0,
             frame_blur: 0.0,
@@ -219,7 +277,27 @@ impl GfxState {
             mesh_capture: None,
             mesh_free: Vec::new(),
             mesh_cache: std::collections::HashMap::new(),
+            was_active: true,
+            focus_grace_frames: 0,
+            topmost_window: false,
+            #[cfg(windows)]
+            raw_keys_prev: [false; 256],
+            #[cfg(windows)]
+            raw_keys_down_since: [0.0; 256],
+            #[cfg(windows)]
+            raw_keys_last_fire: [0.0; 256],
+            #[cfg(windows)]
+            hwnd: 0,
+            want_quit: false,
         }
+    }
+
+    /// True while raw input (key_down/mouse_down*) should read as released:
+    /// the window is unfocused (alt-tabbed away), or we're in the short
+    /// grace window right after regaining focus (see `focus_grace_frames`).
+    #[inline]
+    pub fn input_suppressed(&mut self) -> bool {
+        self.focus_grace_frames > 0 || !self.window.as_mut().map(|w| w.is_active()).unwrap_or(true)
     }
 
     /// Blend a colour toward the fog colour by camera-space `depth`.
@@ -315,6 +393,100 @@ pub fn wasm_clear_frame_keys() {
 pub fn wasm_is_key_pressed(key: &str) -> bool {
     let key = normalize_key(key);
     WASM_KEYS_PRESSED.with(|keys| keys.borrow().contains(&key))
+}
+
+/// Check if a key is currently held down
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_is_key_down(key: &str) -> bool {
+    let key = normalize_key(key);
+    WASM_KEYS_DOWN.with(|keys| keys.borrow().contains(&key))
+}
+
+// ─── WASM mouse state (thread-local, accessed from JS via wasm_bindgen) ───────
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_MOUSE_X: std::cell::Cell<f32> = std::cell::Cell::new(0.0);
+    static WASM_MOUSE_Y: std::cell::Cell<f32> = std::cell::Cell::new(0.0);
+    static WASM_MOUSE_DX: std::cell::Cell<f32> = std::cell::Cell::new(0.0);
+    static WASM_MOUSE_DY: std::cell::Cell<f32> = std::cell::Cell::new(0.0);
+    static WASM_MOUSE_LEFT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static WASM_MOUSE_RIGHT: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static WASM_MOUSE_MIDDLE: std::cell::Cell<bool> = std::cell::Cell::new(false);
+}
+
+/// Called from JavaScript on pointer move; `x`/`y` are canvas-relative pixels.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_move(x: f32, y: f32) {
+    let dx = WASM_MOUSE_X.with(|c| x - c.replace(x));
+    let dy = WASM_MOUSE_Y.with(|c| y - c.replace(y));
+    WASM_MOUSE_DX.with(|c| c.set(c.get() + dx));
+    WASM_MOUSE_DY.with(|c| c.set(c.get() + dy));
+}
+
+/// Called from JavaScript on mousedown/mouseup. `button` follows the DOM
+/// MouseEvent.button convention: 0 = left, 1 = middle, 2 = right.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_button(button: u32, pressed: bool, x: f32, y: f32) {
+    wasm_mouse_move(x, y);
+    match button {
+        0 => WASM_MOUSE_LEFT.with(|c| c.set(pressed)),
+        1 => WASM_MOUSE_MIDDLE.with(|c| c.set(pressed)),
+        2 => WASM_MOUSE_RIGHT.with(|c| c.set(pressed)),
+        _ => {},
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_x() -> f32 {
+    WASM_MOUSE_X.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_y() -> f32 {
+    WASM_MOUSE_Y.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_dx() -> f32 {
+    WASM_MOUSE_DX.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_dy() -> f32 {
+    WASM_MOUSE_DY.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_down() -> bool {
+    WASM_MOUSE_LEFT.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_down_right() -> bool {
+    WASM_MOUSE_RIGHT.with(|c| c.get())
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_mouse_down_middle() -> bool {
+    WASM_MOUSE_MIDDLE.with(|c| c.get())
+}
+
+/// Clear the per-frame mouse delta (call at the start of each frame,
+/// alongside `wasm_clear_frame_keys`).
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_clear_frame_mouse_delta() {
+    WASM_MOUSE_DX.with(|c| c.set(0.0));
+    WASM_MOUSE_DY.with(|c| c.set(0.0));
+}
+
+/// Queue a decoded mono PCM buffer for one-shot playback through Web Audio.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_play_audio_buffer(pcm_data: &[f32], sample_rate: u32) {
+    let id = audio_web::add_sample(pcm_data, 1, sample_rate);
+    if id >= 0 {
+        audio_web::play_sample(id as usize, 0.0, 0.0, 0.0, 1.0, false);
+    }
+}
+
+/// Set master output volume (0.0 to 1.0) for the Web Audio engine.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_set_master_volume(volume: f32) {
+    audio_web::set_master_volume(volume);
 }
 
 /// Normalize browser key names to match Ling's key naming convention

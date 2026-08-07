@@ -1207,6 +1207,79 @@ pub fn draw_arc(
     }
 }
 
+/// Hard-edged scanline fill of closed `polylines` (screen space, y-down) using
+/// the non-zero winding rule — same geometry as `fill_contours_aa` but a
+/// single center-point sample per pixel row/column instead of 4× supersampled
+/// coverage, so edges snap to whole pixels with no partial-alpha blending.
+pub fn fill_contours(
+    buf: &mut [u32],
+    w: usize,
+    h: usize,
+    color: u32,
+    additive: bool,
+    polylines: &[Vec<[f32; 2]>],
+) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    struct Edge {
+        y_lo: f32,
+        y_hi: f32,
+        x_at_lo: f32,
+        dxdy: f32,
+        dir: i32,
+    }
+    let mut edges: Vec<Edge> = Vec::new();
+    let (mut ymin, mut ymax) = (f32::MAX, f32::MIN);
+    for pl in polylines {
+        for seg in pl.windows(2) {
+            let (a, b) = (seg[0], seg[1]);
+            if !a[0].is_finite() || !a[1].is_finite() || !b[0].is_finite() || !b[1].is_finite() {
+                continue;
+            }
+            ymin = ymin.min(a[1]).min(b[1]);
+            ymax = ymax.max(a[1]).max(b[1]);
+            if (a[1] - b[1]).abs() < 1e-9 {
+                continue;
+            }
+            let dir = if b[1] > a[1] { 1 } else { -1 };
+            let (lo, hi) = if a[1] < b[1] { (a, b) } else { (b, a) };
+            let dxdy = (hi[0] - lo[0]) / (hi[1] - lo[1]);
+            edges.push(Edge { y_lo: lo[1], y_hi: hi[1], x_at_lo: lo[0], dxdy, dir });
+        }
+    }
+    if edges.is_empty() {
+        return;
+    }
+    let y_start = (ymin.floor().max(0.0)) as i32;
+    let y_end = (ymax.ceil().min(h as f32)) as i32;
+    let mut xs: Vec<(f32, i32)> = Vec::with_capacity(16);
+    for py in y_start..y_end {
+        let sy = py as f32 + 0.5;
+        xs.clear();
+        for e in &edges {
+            if sy >= e.y_lo && sy < e.y_hi {
+                xs.push((e.x_at_lo + (sy - e.y_lo) * e.dxdy, e.dir));
+            }
+        }
+        if xs.len() < 2 {
+            continue;
+        }
+        xs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut wind = 0;
+        for i in 0..xs.len() - 1 {
+            wind += xs[i].1;
+            if wind != 0 {
+                let xa = xs[i].0.round().max(0.0) as i32;
+                let xb = (xs[i + 1].0.round() as i32).min(w as i32);
+                for px in xa..xb {
+                    blend_pixel(buf, w, h, px, py, color, 1.0, additive);
+                }
+            }
+        }
+    }
+}
+
 /// Coverage-based scanline fill of closed `polylines` (screen space, y-down)
 /// using the non-zero winding rule, with 4Ã— vertical supersampling and analytic
 /// horizontal span coverage â€” smooth filled glyph interiors without aliasing.

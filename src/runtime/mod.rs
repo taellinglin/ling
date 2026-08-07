@@ -388,7 +388,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "音乐频谱"
         | "音楽スペクトル"
         | "음악스펙트럼"
-        | "สเปกตรัมเพลง" => Value::List(Vec::new()),
+        | "สเปกตรัมเพลง" => Value::List(Vec::new().into()),
 
         "music_play"
         | "播放音乐"
@@ -491,7 +491,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "신경망불러오기"
         | "โหลดโครงข่าย" => Value::Number(-1.0),
         "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
-            Value::List(Vec::new())
+            Value::List(Vec::new().into())
         },
         "nn_train"
         | "训练网"
@@ -579,7 +579,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "연결상태"
         | "สถานะการเชื่อม" => Value::Str(String::new()),
         "net_discover" | "发现" | "探索" | "검색" | "ค้นหาเครือข่าย" => {
-            Value::List(Vec::new())
+            Value::List(Vec::new().into())
         },
         "net_close"
         | "断开"
@@ -918,9 +918,14 @@ fn tex_palette(name: &str, t: f32) -> [f32; 3] {
 
 /// Map a physical key to a typed character for ling-ui text input (lowercase).
 #[cfg(not(target_arch = "wasm32"))]
-fn key_char(k: minifb::Key) -> Option<char> {
+// Full US-QWERTY keyboard → char, shift-aware. `key_char` only ever emits
+// printable ASCII (never Tab/Enter/control bytes — those keys have no case
+// here at all) so anything read through `text_poll` is safe by construction
+// to drop straight into the game's tab/comma/semicolon/pipe-framed wire
+// protocols without needing per-keystroke sanitization.
+fn key_char(k: minifb::Key, shift: bool) -> Option<char> {
     use minifb::Key::*;
-    Some(match k {
+    let base = match k {
         A => 'a',
         B => 'b',
         C => 'c',
@@ -959,7 +964,257 @@ fn key_char(k: minifb::Key) -> Option<char> {
         Key9 => '9',
         Space => ' ',
         Minus => '-',
+        Equal => '=',
         Period => '.',
+        Comma => ',',
+        Slash => '/',
+        Backslash => '\\',
+        Semicolon => ';',
+        Apostrophe => '\'',
+        LeftBracket => '[',
+        RightBracket => ']',
+        Backquote => '`',
+        _ => return None,
+    };
+    if !shift {
+        return Some(base);
+    }
+    Some(match base {
+        'a'..='z' => base.to_ascii_uppercase(),
+        '0' => ')',
+        '1' => '!',
+        '2' => '@',
+        '3' => '#',
+        '4' => '$',
+        '5' => '%',
+        '6' => '^',
+        '7' => '&',
+        '8' => '*',
+        '9' => '(',
+        '-' => '_',
+        '=' => '+',
+        '.' => '>',
+        ',' => '<',
+        '/' => '?',
+        '\\' => '|',
+        ';' => ':',
+        '\'' => '"',
+        '[' => '{',
+        ']' => '}',
+        '`' => '~',
+        other => other,
+    })
+}
+
+/// Win32 virtual-key code → char, mirroring `key_char` exactly but keyed by
+/// VK code instead of `minifb::Key` — used by the `GetAsyncKeyState` input
+/// path (see `os_key_down` / the `topmost_window` fallback in `text_poll`).
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn vk_char(vk: i32, shift: bool) -> Option<char> {
+    let base = match vk {
+        0x41..=0x5A => (b'a' + (vk - 0x41) as u8) as char, // 'A'..'Z'
+        0x30..=0x39 => (b'0' + (vk - 0x30) as u8) as char, // '0'..'9'
+        0x20 => ' ',  // VK_SPACE
+        0xBD => '-',  // VK_OEM_MINUS
+        0xBB => '=',  // VK_OEM_PLUS (unshifted '=')
+        0xBE => '.',  // VK_OEM_PERIOD
+        0xBC => ',',  // VK_OEM_COMMA
+        0xBF => '/',  // VK_OEM_2
+        0xDC => '\\', // VK_OEM_5
+        0xBA => ';',  // VK_OEM_1
+        0xDE => '\'', // VK_OEM_7
+        0xDB => '[',  // VK_OEM_4
+        0xDD => ']',  // VK_OEM_6
+        0xC0 => '`',  // VK_OEM_3
+        _ => return None,
+    };
+    if !shift {
+        return Some(base);
+    }
+    Some(match base {
+        'a'..='z' => base.to_ascii_uppercase(),
+        '0' => ')',
+        '1' => '!',
+        '2' => '@',
+        '3' => '#',
+        '4' => '$',
+        '5' => '%',
+        '6' => '^',
+        '7' => '&',
+        '8' => '*',
+        '9' => '(',
+        '-' => '_',
+        '=' => '+',
+        '.' => '>',
+        ',' => '<',
+        '/' => '?',
+        '\\' => '|',
+        ';' => ':',
+        '\'' => '"',
+        '[' => '{',
+        ']' => '}',
+        '`' => '~',
+        other => other,
+    })
+}
+
+/// The VK codes `text_poll`'s `GetAsyncKeyState` fallback scans each frame —
+/// every key `vk_char` can turn into a character.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+const TEXT_POLL_VKS: &[i32] = &[
+    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x30, 0x31, 0x32, 0x33,
+    0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x20, 0xBD, 0xBB, 0xBE, 0xBC, 0xBF, 0xDC, 0xBA, 0xDE,
+    0xDB, 0xDD, 0xC0,
+];
+/// VK_BACK — polled separately from `TEXT_POLL_VKS` since it edits (pops)
+/// rather than appends.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+const VK_BACK: i32 = 0x08;
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+const VK_SHIFT: i32 = 0x10;
+
+/// Read the OS's live key-state table directly — unlike minifb's
+/// `is_key_down`/`get_keys_pressed` (populated from `WM_KEYDOWN`, which only
+/// arrives at a window holding real Win32 keyboard focus), this works even
+/// when the borderless-fullscreen window is topmost/visually in front but
+/// didn't actually win the OS focus fight (Windows' foreground-lock — see
+/// `force_window_focus`). High bit of `GetAsyncKeyState` = currently down.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn os_key_down(vk: i32) -> bool {
+    unsafe {
+        extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+        }
+        (GetAsyncKeyState(vk) as u16 & 0x8000) != 0
+    }
+}
+
+/// True when `hwnd` is the actual OS foreground window. `GetAsyncKeyState`
+/// (see `os_key_down`) reads the global key-state table regardless of which
+/// window is focused, so the `topmost_window` input fallback must check this
+/// before trusting it — otherwise alt-tabbing away from the topmost/
+/// fullscreen window to type in some other app would still feed keystrokes
+/// into the game sitting behind it, since nothing about GetAsyncKeyState
+/// itself would notice the window lost focus.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn window_is_foreground(hwnd: isize) -> bool {
+    unsafe {
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+        }
+        hwnd != 0 && GetForegroundWindow() == hwnd
+    }
+}
+
+/// Delay (seconds) a key must stay held before it starts auto-repeating —
+/// matches the initial "hesitation" of a normal OS text field.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+const KEY_REPEAT_DELAY: f64 = 0.45;
+/// Interval (seconds) between repeats once a held key is auto-repeating.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+const KEY_REPEAT_RATE: f64 = 0.045;
+
+/// Edge/repeat detector for the `GetAsyncKeyState` text-input fallback:
+/// fires true on the initial press, then again every `KEY_REPEAT_RATE`
+/// seconds once the key has been held past `KEY_REPEAT_DELAY` — the same
+/// press-then-hold-to-repeat behavior minifb's `KeyRepeat::Yes` gives the
+/// normal (focused-window) path, which this fallback otherwise lacks since
+/// it does its own from-scratch edge detection per VK code.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn key_repeat_fire(now: f64, down: bool, was_down: bool, down_since: &mut f64, last_fire: &mut f64) -> bool {
+    if !down {
+        return false;
+    }
+    if !was_down {
+        *down_since = now;
+        *last_fire = now;
+        return true;
+    }
+    if now - *down_since >= KEY_REPEAT_DELAY && now - *last_fire >= KEY_REPEAT_RATE {
+        *last_fire = now;
+        return true;
+    }
+    false
+}
+
+/// Map the same key-name strings `key_down`/`key_pressed` already accept
+/// (see `str_to_minifb_key`) to Win32 virtual-key codes, for the
+/// `GetAsyncKeyState` fallback path.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn str_to_vk(name: &str) -> Option<i32> {
+    Some(match name {
+        "numpad0" | "kp0" => 0x60,
+        "numpad1" | "kp1" => 0x61,
+        "numpad2" | "kp2" => 0x62,
+        "numpad3" | "kp3" => 0x63,
+        "numpad4" | "kp4" => 0x64,
+        "numpad5" | "kp5" => 0x65,
+        "numpad6" | "kp6" => 0x66,
+        "numpad7" | "kp7" => 0x67,
+        "numpad8" | "kp8" => 0x68,
+        "numpad9" | "kp9" => 0x69,
+        "numpad+" | "kp+" => 0x6B,
+        "numpad-" | "kp-" => 0x6D,
+        "numpad*" | "kp*" => 0x6A,
+        "numpad/" | "kp/" => 0x6F,
+        "left" => 0x25,
+        "up" => 0x26,
+        "right" => 0x27,
+        "down" => 0x28,
+        "space" => 0x20,
+        "enter" => 0x0D,
+        "escape" => 0x1B,
+        "pageup" => 0x21,
+        "pagedown" => 0x22,
+        "lshift" | "leftshift" => 0xA0,
+        "rshift" | "rightshift" => 0xA1,
+        "lctrl" | "leftctrl" => 0xA2,
+        "rctrl" | "rightctrl" => 0xA3,
+        "lalt" | "leftalt" => 0xA4,
+        "ralt" | "rightalt" => 0xA5,
+        "tab" => 0x09,
+        "backspace" => VK_BACK,
+        "delete" => 0x2E,
+        "insert" => 0x2D,
+        "home" => 0x24,
+        "end" => 0x23,
+        "a" => 0x41,
+        "b" => 0x42,
+        "c" => 0x43,
+        "d" => 0x44,
+        "e" => 0x45,
+        "f" => 0x46,
+        "g" => 0x47,
+        "h" => 0x48,
+        "i" => 0x49,
+        "j" => 0x4A,
+        "k" => 0x4B,
+        "l" => 0x4C,
+        "m" => 0x4D,
+        "n" => 0x4E,
+        "o" => 0x4F,
+        "p" => 0x50,
+        "q" => 0x51,
+        "r" => 0x52,
+        "s" => 0x53,
+        "t" => 0x54,
+        "u" => 0x55,
+        "v" => 0x56,
+        "w" => 0x57,
+        "x" => 0x58,
+        "y" => 0x59,
+        "z" => 0x5A,
+        "0" => 0x30,
+        "1" => 0x31,
+        "2" => 0x32,
+        "3" => 0x33,
+        "4" => 0x34,
+        "5" => 0x35,
+        "6" => 0x36,
+        "7" => 0x37,
+        "8" => 0x38,
+        "9" => 0x39,
         _ => return None,
     })
 }
@@ -1891,7 +2146,7 @@ impl Interpreter {
                     .map(|t| ling_music::analysis::onsets(&t.mono, t.rate))
                     .unwrap_or_default();
                 return Ok(Some(Value::List(
-                    v.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                    v.into_iter().map(|x| Value::Number(x as f64)).collect::<Vec<_>>().into(),
                 )));
             },
             "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
@@ -1906,7 +2161,7 @@ impl Interpreter {
                     })
                     .unwrap_or_default();
                 return Ok(Some(Value::List(
-                    beats.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                    beats.into_iter().map(|x| Value::Number(x as f64)).collect::<Vec<_>>().into(),
                 )));
             },
             "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" =>
@@ -1974,7 +2229,7 @@ impl Interpreter {
                         out.push(Value::Number(n.midi as f64));
                     }
                 }
-                return Ok(Some(Value::List(out)));
+                return Ok(Some(Value::List(out.into())));
             },
             "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" =>
             {
@@ -1987,7 +2242,7 @@ impl Interpreter {
                         out.push(Value::Number(n.dur as f64));
                     }
                 }
-                return Ok(Some(Value::List(out)));
+                return Ok(Some(Value::List(out.into())));
             },
             "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" =>
             {
@@ -2082,7 +2337,7 @@ impl Interpreter {
                     vec![0.0f32; nbands]
                 };
                 return Ok(Some(Value::List(
-                    bands.into_iter().map(|x| Value::Number(x as f64)).collect(),
+                    bands.into_iter().map(|x| Value::Number(x as f64)).collect::<Vec<_>>().into(),
                 )));
             },
 
@@ -3143,7 +3398,7 @@ impl Interpreter {
                     return Ok(Value::List(Rc::new(result)));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::List(vec![]));
+                return Ok(Value::List(Vec::new().into()));
             },
 
             // ── Step 5: Additive Blend Mode ──
@@ -3173,6 +3428,19 @@ impl Interpreter {
             | "アンチエイリアス取得"
             | "안티에일리어싱상태" => {
                 return Ok(Value::Bool(self.gfx.borrow().antialias));
+            },
+
+            // set_font_antialias(on) — smooth `font_text`/`font_text_fill` glyph
+            // edges, independent of `set_antialias` (which only covers wireframe
+            // strokes). Default OFF = crisp, hard-edged text; pass 1 to opt in.
+            "set_font_antialias" | "글꼴안티에일리어싱" => {
+                let on = self.arg_num(&args, 0, 1.0)? > 0.5;
+                self.gfx.borrow_mut().font_antialias = on;
+                return Ok(Value::Unit);
+            },
+            // get_font_antialias() -> bool — current font anti-aliasing state.
+            "get_font_antialias" | "글꼴안티에일리어싱상태" => {
+                return Ok(Value::Bool(self.gfx.borrow().font_antialias));
             },
 
             // ── Step 6: Circle Primitives ──
@@ -3741,6 +4009,7 @@ impl Interpreter {
                     gfx.width = w;
                     gfx.height = h;
                     gfx.window = Some(win);
+                    gfx.topmost_window = false;
                     gfx.sync_projection();
                     hide_console_window();
                 }
@@ -3906,6 +4175,26 @@ impl Interpreter {
             // ── แสดงผล() — flush depth queue, then present frame to screen ──
             "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" =>
             {
+                // Click-edge widgets (ui_button etc.) compare THIS frame's
+                // mouse_now() against `mouse_was_down` to detect a fresh
+                // press. That comparison only works if mouse_was_down
+                // reflects what the script itself observed this frame — i.e.
+                // the state from BEFORE update_with_buffer below pulls in new
+                // OS events. Capturing it after (as the "freshest" read)
+                // would mean a just-arrived click is already baked into
+                // mouse_was_down by the time next frame's ui_button compares
+                // against it, so `down && !mouse_was_down` is never true and
+                // clicks never register at all. Declared at the top of the
+                // match arm (not inside the block below) so it survives past
+                // the wasm32/non-wasm32 split further down.
+                #[cfg(not(target_arch = "wasm32"))]
+                let pre_update_mouse_down = self
+                    .gfx
+                    .borrow()
+                    .window
+                    .as_ref()
+                    .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
+                    .unwrap_or(false);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     ling_fps_tick();
@@ -4057,6 +4346,42 @@ impl Interpreter {
                         gfx.mouse_dx = 0.0;
                         gfx.mouse_dy = 0.0;
                     }
+
+                    // Alt-tab support: minifb has no WM_KILLFOCUS handler on Windows,
+                    // so a key/button released while another window was focused can
+                    // still read as "down" for one stale frame right after the user
+                    // alt-tabs back. Detect the unfocused→focused transition and
+                    // swallow raw input for a short grace window afterward instead of
+                    // letting a phantom held key jerk the camera. See key_down /
+                    // mouse_down* below (they early-out on gfx.input_suppressed()).
+                    let is_active = gfx.window.as_mut().map(|w| w.is_active()).unwrap_or(true);
+                    if is_active && !gfx.was_active {
+                        gfx.focus_grace_frames = 5;
+                        // Regained focus: restore HWND_TOPMOST so the borderless-
+                        // fullscreen window covers the taskbar again.
+                        #[cfg(windows)]
+                        if gfx.topmost_window {
+                            if let Some(w) = gfx.window.as_ref() {
+                                set_window_topmost(w.get_window_handle() as isize, true);
+                            }
+                        }
+                    } else if !is_active && gfx.was_active {
+                        // Lost focus (alt-tab): drop topmost so the game stops
+                        // covering whatever window the user just switched to —
+                        // otherwise a topmost borderless window visually "wins"
+                        // even though it's no longer focused, making alt-tab
+                        // look broken.
+                        #[cfg(windows)]
+                        if gfx.topmost_window {
+                            if let Some(w) = gfx.window.as_ref() {
+                                set_window_topmost(w.get_window_handle() as isize, false);
+                            }
+                        }
+                    }
+                    gfx.was_active = is_active;
+                    if gfx.focus_grace_frames > 0 {
+                        gfx.focus_grace_frames -= 1;
+                    }
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -4090,11 +4415,12 @@ impl Interpreter {
                     }
                     self.wasm_pace_frame();
                 }
-                // Update the click-edge latch for interactive UI widgets.
+                // Update the click-edge latch for interactive UI widgets —
+                // using the PRE-update_with_buffer snapshot captured at the
+                // top of this function (see the comment there for why).
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let (_, _, down) = self.mouse_now();
-                    self.mouse_was_down = down;
+                    self.mouse_was_down = pre_update_mouse_down;
                 }
                 // Increment frame counter
                 self.frame_num += 1;
@@ -4163,11 +4489,24 @@ impl Interpreter {
                     gfx.width = w;
                     gfx.height = h;
                     gfx.window = Some(win);
+                    gfx.topmost_window = true;
+                    #[cfg(windows)]
+                    {
+                        gfx.hwnd = hwnd;
+                    }
                     gfx.sync_projection();
                     // Strip all chrome and cover the full screen, above the taskbar.
                     #[cfg(windows)]
                     make_borderless_fullscreen(hwnd, w as i32, h as i32);
                     hide_console_window();
+                    // hide_console_window() can itself reassign the OS foreground
+                    // window (hiding whatever previously had it, e.g. the terminal
+                    // that ran `ling run`, can hand focus to something other than
+                    // this window) — so the focus claim has to be the LAST word,
+                    // after every other window-visibility change, not just inside
+                    // make_borderless_fullscreen further up.
+                    #[cfg(windows)]
+                    force_window_focus(hwnd);
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -4278,15 +4617,45 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let gfx = self.gfx.borrow();
-                    let open = gfx
+                    if gfx.want_quit {
+                        return Ok(Value::Bool(false));
+                    }
+                    // Escape-to-quit needs the same GetAsyncKeyState fallback
+                    // as key_down/key_pressed/text_poll (see those) — raw
+                    // w.is_key_down(Escape) is WM_KEYDOWN-based and silently
+                    // never fires if this topmost window didn't actually win
+                    // real Win32 keyboard focus.
+                    #[cfg(windows)]
+                    let escape_down = if gfx.topmost_window {
+                        window_is_foreground(gfx.hwnd) && os_key_down(0x1B) // VK_ESCAPE
+                    } else {
+                        gfx.window
+                            .as_ref()
+                            .map(|w| w.is_key_down(minifb::Key::Escape))
+                            .unwrap_or(false)
+                    };
+                    #[cfg(not(windows))]
+                    let escape_down = gfx
                         .window
                         .as_ref()
-                        .map(|w| w.is_open() && !w.is_key_down(minifb::Key::Escape))
+                        .map(|w| w.is_key_down(minifb::Key::Escape))
                         .unwrap_or(false);
+                    let open = gfx.window.as_ref().map(|w| w.is_open()).unwrap_or(false)
+                        && !escape_down;
                     return Ok(Value::Bool(open));
                 }
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Bool(true));
+            },
+
+            // quit() — close the window the same way Escape does, for a
+            // script-drawn UI element (an exit button) to call.
+            "quit" | "exit_game" | "close_window" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.gfx.borrow_mut().want_quit = true;
+                }
+                return Ok(Value::Unit);
             },
 
             // ── key_down(name) → bool — is a key held? ──
@@ -4294,7 +4663,26 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
-                    let gfx = self.gfx.borrow();
+                    let mut gfx = self.gfx.borrow_mut();
+                    // The borderless-fullscreen/topmost window can be
+                    // visually in front without ever winning real Win32
+                    // keyboard focus (Windows' foreground-lock) — minifb's
+                    // is_key_down is populated from WM_KEYDOWN, which then
+                    // never arrives. GetAsyncKeyState reads the OS key-state
+                    // table directly and doesn't need focus, so use it
+                    // whenever this is that window (see force_window_focus).
+                    #[cfg(windows)]
+                    if gfx.topmost_window {
+                        if !window_is_foreground(gfx.hwnd) {
+                            return Ok(Value::Bool(false));
+                        }
+                        return Ok(Value::Bool(
+                            str_to_vk(&name).map(os_key_down).unwrap_or(false),
+                        ));
+                    }
+                    if gfx.input_suppressed() {
+                        return Ok(Value::Bool(false));
+                    }
                     let down = gfx
                         .window
                         .as_ref()
@@ -4303,7 +4691,10 @@ impl Interpreter {
                     return Ok(Value::Bool(down));
                 }
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Bool(false));
+                {
+                    let name = self.arg_str(&args, 0, "");
+                    return Ok(Value::Bool(crate::gfx::wasm_is_key_down(&name)));
+                }
             },
 
             // ── key_pressed(name) → bool — was a key pressed this frame? ──
@@ -4312,14 +4703,44 @@ impl Interpreter {
                 {
                     let name = self.arg_str(&args, 0, "");
                     let pressed = {
-                        let gfx = self.gfx.borrow();
-                        gfx.window
-                            .as_ref()
-                            .and_then(|w| {
-                                str_to_minifb_key(&name)
-                                    .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No))
-                            })
-                            .unwrap_or(false)
+                        let mut gfx = self.gfx.borrow_mut();
+                        #[cfg(windows)]
+                        let topmost = gfx.topmost_window;
+                        #[cfg(not(windows))]
+                        let topmost = false;
+                        if topmost {
+                            #[cfg(windows)]
+                            {
+                                if !window_is_foreground(gfx.hwnd) {
+                                    false
+                                } else {
+                                    match str_to_vk(&name) {
+                                        Some(vk) => {
+                                            let idx = (vk as usize) & 0xFF;
+                                            let down = os_key_down(vk);
+                                            let was = gfx.raw_keys_prev[idx];
+                                            gfx.raw_keys_prev[idx] = down;
+                                            down && !was
+                                        },
+                                        None => false,
+                                    }
+                                }
+                            }
+                            #[cfg(not(windows))]
+                            {
+                                false
+                            }
+                        } else if gfx.input_suppressed() {
+                            false
+                        } else {
+                            gfx.window
+                                .as_ref()
+                                .and_then(|w| {
+                                    str_to_minifb_key(&name)
+                                        .map(|k| w.is_key_pressed(k, minifb::KeyRepeat::No))
+                                })
+                                .unwrap_or(false)
+                        }
                     };
                     // gamepad Start behaves like Enter everywhere
                     let pressed =
@@ -4339,7 +4760,7 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(crate::gfx::wasm_mouse_dx() as f64));
             },
             // ── mouse_scroll() → f64 — vertical scroll-wheel delta this frame ──
             #[cfg(not(target_arch = "wasm32"))]
@@ -4363,7 +4784,7 @@ impl Interpreter {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
                 #[cfg(target_arch = "wasm32")]
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(crate::gfx::wasm_mouse_dy() as f64));
             },
 
             // ── Gamepad / joystick input (ling-input "Sensorium" + gilrs) ──
@@ -4626,6 +5047,26 @@ impl Interpreter {
                         }
                         ClipCursor(std::ptr::null());
                     }
+                }
+                return Ok(Value::Unit);
+            },
+
+            // ── cursor_hide() / cursor_show() — just the OS cursor's visibility,
+            // no warp-to-centre or clip region (unlike capture_mouse/release_mouse,
+            // which are for FPS-style look-around). For point-and-click play where
+            // the cursor still needs to move freely and mouse_x()/mouse_y() still
+            // need to track real position, just hide the system pointer glyph.
+            "cursor_hide" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(win) = self.gfx.borrow_mut().window.as_mut() {
+                    win.set_cursor_visibility(false);
+                }
+                return Ok(Value::Unit);
+            },
+            "cursor_show" => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(win) = self.gfx.borrow_mut().window.as_mut() {
+                    win.set_cursor_visibility(true);
                 }
                 return Ok(Value::Unit);
             },
@@ -5908,6 +6349,72 @@ impl Interpreter {
                     Value::Number(depth as f64),
                 ])));
             },
+
+            // mouse_ray() -> [ox,oy,oz, dx,dy,dz] — world-space ray from the eye
+            // through the actual mouse cursor pixel, exact inverse of project_3d's
+            // pipeline (translate → Y-rotate → X-rotate → perspective divide by
+            // rz+zdist). Scripts previously marched a ray along the CENTRE-SCREEN
+            // forward vector regardless of where the cursor was — accurate only by
+            // coincidence when the cursor happened to sit near the crosshair.
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_ray" => {
+                let gfx = self.gfx.borrow();
+                let (mx, my) = gfx
+                    .window
+                    .as_ref()
+                    .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+                    .unwrap_or((gfx.camera.cx, gfx.camera.cy));
+                let cam = &gfx.camera;
+                // Eye-relative pinhole direction for this pixel, in rotation-space
+                // (before undoing the Y-then-X rotation project() applied).
+                let dcx = (mx - cam.cx) / cam.focal;
+                let dcy = (my - cam.cy) / cam.focal;
+                // Undo the X-rotation, then the Y-rotation (reverse of project()'s
+                // forward order), on the direction vector (dcx, dcy, 1.0).
+                let a_x = dcx;
+                let a_y = cam.crx * dcy + cam.srx * 1.0;
+                let a_z = 0.0 - cam.srx * dcy + cam.crx * 1.0;
+                let dir_x = cam.cry * a_x + cam.sry * a_z;
+                let dir_y = a_y;
+                let dir_z = 0.0 - cam.sry * a_x + cam.cry * a_z;
+                let dlen = (dir_x * dir_x + dir_y * dir_y + dir_z * dir_z)
+                    .sqrt()
+                    .max(1e-6);
+                let (dir_x, dir_y, dir_z) = (dir_x / dlen, dir_y / dlen, dir_z / dlen);
+                // Origin: the camera's rotation pivot (tx,ty,tz) — i.e. wherever
+                // the script last put it with set_camera_pos, NOT the "true"
+                // pinhole eye zdist further back. The pivot is what scripts
+                // already keep clear of the ground (a ground-collision pull-in
+                // loop is standard practice for orbit cameras); the true eye
+                // would need its own separate ground clearance since zdist is
+                // often large relative to a close-in camera distance, and
+                // starting a ray underground makes it hit "ground" instantly
+                // regardless of aim. The zdist offset only matters for the
+                // near-field parallax, which a click-to-move ray (aimed at
+                // terrain many units out) doesn't need.
+                let ox = cam.tx;
+                let oy = cam.ty;
+                let oz = cam.tz;
+                return Ok(Value::List(Rc::new(vec![
+                    Value::Number(ox as f64),
+                    Value::Number(oy as f64),
+                    Value::Number(oz as f64),
+                    Value::Number(dir_x as f64),
+                    Value::Number(dir_y as f64),
+                    Value::Number(dir_z as f64),
+                ])));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_ray" => {
+                return Ok(Value::List(Rc::new(vec![
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(1.0),
+                ])));
+            },
             // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
             // honouring the blend mode (additive → translucent glow). Auto-closes.
             #[cfg(not(target_arch = "wasm32"))]
@@ -6827,6 +7334,22 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "net_status" | "เน็ตสถานะ" => {
                 return Ok(Value::Number(net::status() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_recv_from" => {
+                return Ok(Value::Str(net::recv_from()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_send_to" => {
+                let id = self.arg_num(&args, 0, 0.0)? as u32;
+                let s = self.arg_str(&args, 1, "");
+                net::send_to(id, &s);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_close" | "연결종료" => {
+                net::close();
+                return Ok(Value::Unit);
             },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
@@ -8127,7 +8650,7 @@ impl Interpreter {
             "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" =>
             {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
-                return Ok(Value::List(vec![Value::Number(0.0); n]));
+                return Ok(Value::List(vec![Value::Number(0.0); n].into()));
             },
             #[cfg(target_arch = "wasm32")]
             "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" =>
@@ -8554,7 +9077,7 @@ impl Interpreter {
                     out.push(Value::Number(p[1] as f64));
                     out.push(Value::Number(p[2] as f64));
                 }
-                return Ok(Value::List(out));
+                return Ok(Value::List(out.into()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
@@ -9021,7 +9544,7 @@ impl Interpreter {
             },
             #[cfg(target_arch = "wasm32")]
             "mouse_x" => {
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(crate::gfx::wasm_mouse_x() as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_y" => {
@@ -9036,49 +9559,52 @@ impl Interpreter {
             },
             #[cfg(target_arch = "wasm32")]
             "mouse_y" => {
-                return Ok(Value::Number(0.0));
+                return Ok(Value::Number(crate::gfx::wasm_mouse_y() as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down" => {
-                let gfx = self.gfx.borrow();
-                let d = gfx
-                    .window
-                    .as_ref()
-                    .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
-                    .unwrap_or(false);
+                let mut gfx = self.gfx.borrow_mut();
+                let d = !gfx.input_suppressed()
+                    && gfx
+                        .window
+                        .as_ref()
+                        .map(|w| w.get_mouse_down(minifb::MouseButton::Left))
+                        .unwrap_or(false);
                 return Ok(Value::Bool(d));
             },
             #[cfg(target_arch = "wasm32")]
             "mouse_down" => {
-                return Ok(Value::Bool(false));
+                return Ok(Value::Bool(crate::gfx::wasm_mouse_down()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_right" | "เมาส์ขวา" => {
-                let gfx = self.gfx.borrow();
-                let d = gfx
-                    .window
-                    .as_ref()
-                    .map(|w| w.get_mouse_down(minifb::MouseButton::Right))
-                    .unwrap_or(false);
+                let mut gfx = self.gfx.borrow_mut();
+                let d = !gfx.input_suppressed()
+                    && gfx
+                        .window
+                        .as_ref()
+                        .map(|w| w.get_mouse_down(minifb::MouseButton::Right))
+                        .unwrap_or(false);
                 return Ok(Value::Bool(d));
             },
             #[cfg(target_arch = "wasm32")]
             "mouse_down_right" | "เมาส์ขวา" => {
-                return Ok(Value::Bool(false));
+                return Ok(Value::Bool(crate::gfx::wasm_mouse_down_right()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "mouse_down_middle" | "เมาส์กลาง" => {
-                let gfx = self.gfx.borrow();
-                let d = gfx
-                    .window
-                    .as_ref()
-                    .map(|w| w.get_mouse_down(minifb::MouseButton::Middle))
-                    .unwrap_or(false);
+                let mut gfx = self.gfx.borrow_mut();
+                let d = !gfx.input_suppressed()
+                    && gfx
+                        .window
+                        .as_ref()
+                        .map(|w| w.get_mouse_down(minifb::MouseButton::Middle))
+                        .unwrap_or(false);
                 return Ok(Value::Bool(d));
             },
             #[cfg(target_arch = "wasm32")]
             "mouse_down_middle" | "เมาส์กลาง" => {
-                return Ok(Value::Bool(false));
+                return Ok(Value::Bool(crate::gfx::wasm_mouse_down_middle()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
@@ -9169,20 +9695,34 @@ impl Interpreter {
                 if id >= 0 && (id as usize) < self.fonts.len() && px > 0.0 {
                     let strokes = self.font_layout_2d(id as usize, x, y, px, &s);
                     let mut gfx = self.gfx.borrow_mut();
-                    let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
+                    let (w, h, color, add, aa) =
+                        (gfx.width, gfx.height, gfx.color, gfx.blend == 1, gfx.font_antialias);
                     for pl in &strokes {
                         for seg in pl.windows(2) {
-                            crate::gfx::raster::draw_line_aa(
-                                &mut gfx.buffer,
-                                w,
-                                h,
-                                color,
-                                add,
-                                seg[0][0],
-                                seg[0][1],
-                                seg[1][0],
-                                seg[1][1],
-                            );
+                            if aa {
+                                crate::gfx::raster::draw_line_aa(
+                                    &mut gfx.buffer,
+                                    w,
+                                    h,
+                                    color,
+                                    add,
+                                    seg[0][0],
+                                    seg[0][1],
+                                    seg[1][0],
+                                    seg[1][1],
+                                );
+                            } else {
+                                crate::gfx::raster::draw_line(
+                                    &mut gfx.buffer,
+                                    w,
+                                    h,
+                                    color,
+                                    seg[0][0],
+                                    seg[0][1],
+                                    seg[1][0],
+                                    seg[1][1],
+                                );
+                            }
                         }
                     }
                 }
@@ -9193,7 +9733,8 @@ impl Interpreter {
             {
                 return Ok(Value::Unit);
             },
-            // font_text_fill(handle, x, y, px, "string") — anti-aliased *filled* vector glyphs.
+            // font_text_fill(handle, x, y, px, "string") — filled vector glyphs;
+            // anti-aliased when `set_font_antialias(1)` is on (default off = crisp).
             #[cfg(not(target_arch = "wasm32"))]
             "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
             {
@@ -9206,16 +9747,28 @@ impl Interpreter {
                     // fill each glyph independently so interior holes (winding) stay correct
                     let glyphs = self.font_layout_2d_glyphs(id as usize, x, y, px, &s);
                     let mut gfx = self.gfx.borrow_mut();
-                    let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
+                    let (w, h, color, add, aa) =
+                        (gfx.width, gfx.height, gfx.color, gfx.blend == 1, gfx.font_antialias);
                     for contours in &glyphs {
-                        crate::gfx::raster::fill_contours_aa(
-                            &mut gfx.buffer,
-                            w,
-                            h,
-                            color,
-                            add,
-                            contours,
-                        );
+                        if aa {
+                            crate::gfx::raster::fill_contours_aa(
+                                &mut gfx.buffer,
+                                w,
+                                h,
+                                color,
+                                add,
+                                contours,
+                            );
+                        } else {
+                            crate::gfx::raster::fill_contours(
+                                &mut gfx.buffer,
+                                w,
+                                h,
+                                color,
+                                add,
+                                contours,
+                            );
+                        }
                     }
                 }
                 return Ok(Value::Unit);
@@ -9472,6 +10025,22 @@ impl Interpreter {
                 let bg = self.color_at(&args, 15, cur.bg);
                 self.ui_theme = UiTheme { primary, accent, track, warn, text, bg };
                 return Ok(Value::Unit);
+            },
+
+            // ui_theme_colors() -> [pr,pg,pb, ar,ag,ab, tr,tg,tb, wr,wg,wb,
+            // xr,xg,xb, br,bg,bb] — the live theme every ui_* widget already
+            // draws from (primary/accent/track/warn/text/bg, each 0-255),
+            // so script-drawn UI (e.g. a hand-rolled text field) can match it
+            // instead of guessing its own colours.
+            "ui_theme_colors" | "인터페이스테마색상" => {
+                let th = self.ui_theme;
+                let mut out = Vec::with_capacity(18);
+                for c in [th.primary, th.accent, th.track, th.warn, th.text, th.bg] {
+                    out.push(Value::Number(((c >> 16) & 0xFF) as f64));
+                    out.push(Value::Number(((c >> 8) & 0xFF) as f64));
+                    out.push(Value::Number((c & 0xFF) as f64));
+                }
+                return Ok(Value::List(Rc::new(out)));
             },
 
             // ── HUD ──────────────────────────────────────────────────────────
@@ -11372,21 +11941,82 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            // text_poll() — fold newly-typed keys into the input buffer, return it
+            // text_poll() — fold newly-typed keys into the input buffer, return it.
+            // Repeat is enabled (KeyRepeat::Yes) so holding a key/Backspace behaves
+            // like a normal text field; length is capped so a stuck key or a runaway
+            // script can't grow the buffer without bound.
             #[cfg(not(target_arch = "wasm32"))]
             "text_poll" => {
-                let keys = {
+                const TEXT_BUFFER_MAX: usize = 240;
+                // See key_down/key_pressed: our topmost fullscreen window can
+                // be visually in front without real Win32 keyboard focus, so
+                // WM_KEYDOWN/WM_CHAR (what minifb's get_keys_pressed reads)
+                // never arrive. Poll the OS key-state table directly instead
+                // — no focus required — with our own repeat-aware edge
+                // detection (key_repeat_fire) so holding a key behaves like
+                // the KeyRepeat::Yes path below: one char on press, then
+                // repeats after a short hold delay.
+                #[cfg(windows)]
+                {
+                    let topmost = self.gfx.borrow().topmost_window;
+                    if topmost {
+                        if !window_is_foreground(self.gfx.borrow().hwnd) {
+                            return Ok(Value::Str(self.text_buffer.clone()));
+                        }
+                        let shift = os_key_down(VK_SHIFT);
+                        let now = crate::runtime::now_secs();
+                        let mut gfx = self.gfx.borrow_mut();
+                        let back_idx = VK_BACK as usize;
+                        let back_down = os_key_down(VK_BACK);
+                        let back_was = gfx.raw_keys_prev[back_idx];
+                        let (mut back_since, mut back_fire) = (
+                            gfx.raw_keys_down_since[back_idx],
+                            gfx.raw_keys_last_fire[back_idx],
+                        );
+                        if key_repeat_fire(now, back_down, back_was, &mut back_since, &mut back_fire) {
+                            self.text_buffer.pop();
+                        }
+                        gfx.raw_keys_down_since[back_idx] = back_since;
+                        gfx.raw_keys_last_fire[back_idx] = back_fire;
+                        gfx.raw_keys_prev[back_idx] = back_down;
+                        for &vk in TEXT_POLL_VKS {
+                            let idx = (vk as usize) & 0xFF;
+                            let down = os_key_down(vk);
+                            let was = gfx.raw_keys_prev[idx];
+                            let (mut since, mut fire) =
+                                (gfx.raw_keys_down_since[idx], gfx.raw_keys_last_fire[idx]);
+                            if key_repeat_fire(now, down, was, &mut since, &mut fire) {
+                                if let Some(c) = vk_char(vk, shift) {
+                                    if self.text_buffer.chars().count() < TEXT_BUFFER_MAX {
+                                        self.text_buffer.push(c);
+                                    }
+                                }
+                            }
+                            gfx.raw_keys_down_since[idx] = since;
+                            gfx.raw_keys_last_fire[idx] = fire;
+                            gfx.raw_keys_prev[idx] = down;
+                        }
+                        return Ok(Value::Str(self.text_buffer.clone()));
+                    }
+                }
+                let (keys, shift) = {
                     let gfx = self.gfx.borrow();
-                    gfx.window
-                        .as_ref()
-                        .map(|w| w.get_keys_pressed(minifb::KeyRepeat::No))
-                        .unwrap_or_default()
+                    match gfx.window.as_ref() {
+                        Some(w) => (
+                            w.get_keys_pressed(minifb::KeyRepeat::Yes),
+                            w.is_key_down(minifb::Key::LeftShift)
+                                || w.is_key_down(minifb::Key::RightShift),
+                        ),
+                        None => (Vec::new(), false),
+                    }
                 };
                 for k in keys {
                     if k == minifb::Key::Backspace {
                         self.text_buffer.pop();
-                    } else if let Some(c) = key_char(k) {
-                        self.text_buffer.push(c);
+                    } else if let Some(c) = key_char(k, shift) {
+                        if self.text_buffer.chars().count() < TEXT_BUFFER_MAX {
+                            self.text_buffer.push(c);
+                        }
                     }
                 }
                 return Ok(Value::Str(self.text_buffer.clone()));
@@ -11518,11 +12148,12 @@ impl Interpreter {
                     let dt = gfx.depth_test;
                     let reset_z = gfx.zbuf_needs_clear;
                     let (bm, ba) = (gfx.blend, gfx.alpha);
+                    let aa = gfx.antialias;
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
                         let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        queue.flush(&mut g.buffer, z, reset_z, w, h);
+                        queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                     }
                     gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba);
@@ -11542,16 +12173,12 @@ impl Interpreter {
                     let dt = gfx.depth_test;
                     let reset_z = gfx.zbuf_needs_clear;
                     let (bm, ba) = (gfx.blend, gfx.alpha);
-                    #[cfg(not(target_arch = "wasm32"))]
                     let aa = gfx.antialias;
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
                         let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        #[cfg(not(target_arch = "wasm32"))]
                         queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
-                        #[cfg(target_arch = "wasm32")]
-                        queue.flush(&mut g.buffer, z, reset_z, w, h);
                     }
                     gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba);
@@ -12185,6 +12812,85 @@ fn make_borderless_fullscreen(hwnd: isize, screen_w: i32, screen_h: i32) {
         // HWND_TOPMOST = -1; SWP_FRAMECHANGED (0x0020) | SWP_SHOWWINDOW (0x0040).
         SetWindowPos(hwnd, -1isize, 0, 0, screen_w, screen_h, 0x0020 | 0x0040);
         ShowWindow(hwnd, 3); // SW_MAXIMIZE-equivalent paint; 3 = SW_SHOWMAXIMIZED
+    }
+}
+
+/// Force real OS keyboard focus onto `hwnd`, not just Z-order prominence.
+/// Windows' foreground-lock can leave a freshly-created window topmost — so
+/// VISUALLY it covers everything — without actually handing it keyboard
+/// focus, e.g. when launched from a terminal that still holds real focus:
+/// clicks can nudge focus over (a more "user-driven" event) but typed keys
+/// silently keep going to whatever app really has it, which looks exactly
+/// like "clicking a text field doesn't focus it". AttachThreadInput is the
+/// standard documented workaround — it lets SetForegroundWindow succeed even
+/// under the lock by sharing input state with whichever thread currently
+/// owns the foreground window. Call this LAST, after every other
+/// window-visibility change for this launch (anything that shows/hides a
+/// window afterward — e.g. hiding the launching console — can itself
+/// reassign the foreground window and undo an earlier focus claim).
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn force_window_focus(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    unsafe {
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+            fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
+            fn GetCurrentThreadId() -> u32;
+            fn AttachThreadInput(id_attach: u32, id_attach_to: u32, attach: i32) -> i32;
+            fn SetForegroundWindow(hwnd: isize) -> i32;
+            fn BringWindowToTop(hwnd: isize) -> i32;
+            fn SetFocus(hwnd: isize) -> isize;
+            fn SetActiveWindow(hwnd: isize) -> isize;
+        }
+        let fg = GetForegroundWindow();
+        if fg != 0 && fg != hwnd {
+            let mut fg_pid: u32 = 0;
+            let fg_tid = GetWindowThreadProcessId(fg, &mut fg_pid);
+            let my_tid = GetCurrentThreadId();
+            if fg_tid != 0 && fg_tid != my_tid {
+                AttachThreadInput(my_tid, fg_tid, 1);
+                SetForegroundWindow(hwnd);
+                BringWindowToTop(hwnd);
+                SetFocus(hwnd);
+                SetActiveWindow(hwnd);
+                AttachThreadInput(my_tid, fg_tid, 0);
+                return;
+            }
+        }
+        SetForegroundWindow(hwnd);
+        BringWindowToTop(hwnd);
+        SetFocus(hwnd);
+        SetActiveWindow(hwnd);
+    }
+}
+
+/// Toggle `hwnd`'s HWND_TOPMOST z-order style without moving/resizing/
+/// activating it — used to drop the borderless-fullscreen window's topmost
+/// flag on alt-tab (so it stops covering whatever the user switched to) and
+/// restore it when the user switches back.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn set_window_topmost(hwnd: isize, topmost: bool) {
+    if hwnd == 0 {
+        return;
+    }
+    unsafe {
+        extern "system" {
+            fn SetWindowPos(
+                hwnd: isize,
+                insert_after: isize,
+                x: i32,
+                y: i32,
+                cx: i32,
+                cy: i32,
+                flags: u32,
+            ) -> i32;
+        }
+        let insert_after: isize = if topmost { -1 } else { -2 }; // HWND_TOPMOST / HWND_NOTOPMOST
+        // SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE — pure z-order change,
+        // must not steal focus back when restoring topmost on refocus.
+        SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010);
     }
 }
 

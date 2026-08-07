@@ -12,7 +12,7 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -81,15 +81,129 @@ fn install() -> (Arc<AtomicU8>, Arc<Mutex<String>>, Receiver<String>) {
     (status, latest, rx)
 }
 
+// ── multi-client host (net_host / net_recv_from / net_send_to) ─────────────
+// Up to 64 concurrent connections, each with its own id (assigned on accept)
+// and its own outbound queue. Inbound lines from every connection land in one
+// shared FIFO `inbox`, drained via recv_from() as "<id>|<line>".
+struct HostState {
+    next_id: AtomicU32,
+    clients: Mutex<HashMap<u32, Sender<String>>>,
+    inbox: Mutex<VecDeque<(u32, String)>>,
+}
+
+static HOST: Mutex<Option<Arc<HostState>>> = Mutex::new(None);
+
+fn run_client_conn(id: u32, stream: TcpStream, host: Arc<HostState>, rx: Receiver<String>) {
+    let _ = stream.set_nodelay(true);
+
+    if let Ok(read_stream) = stream.try_clone() {
+        let host = host.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(read_stream);
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        let line = line.trim_end_matches(['\r', '\n']).to_string();
+                        if let Ok(mut q) = host.inbox.lock() {
+                            q.push_back((id, line));
+                        }
+                    },
+                }
+            }
+            if let Ok(mut m) = host.clients.lock() {
+                m.remove(&id);
+            }
+        });
+    }
+
+    let mut w = stream;
+    for msg in rx {
+        if w.write_all(msg.as_bytes()).is_err() || w.write_all(b"\n").is_err() {
+            break;
+        }
+        let _ = w.flush();
+    }
+}
+
 pub fn host(port: u16) {
-    let (status, latest, rx) = install();
-    std::thread::spawn(move || match TcpListener::bind(("0.0.0.0", port)) {
-        Ok(listener) => match listener.accept() {
-            Ok((stream, _)) => run_stream(stream, status, latest, rx),
-            Err(_) => status.store(0, Ordering::SeqCst),
-        },
-        Err(_) => status.store(0, Ordering::SeqCst),
+    let state = Arc::new(HostState {
+        next_id: AtomicU32::new(1),
+        clients: Mutex::new(HashMap::new()),
+        inbox: Mutex::new(VecDeque::new()),
     });
+    if let Ok(mut g) = HOST.lock() {
+        *g = Some(state.clone());
+    }
+    std::thread::spawn(move || {
+        let listener = match TcpListener::bind(("0.0.0.0", port)) {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        for incoming in listener.incoming() {
+            let stream = match incoming {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if let Ok(m) = state.clients.lock() {
+                if m.len() >= 64 {
+                    continue;
+                }
+            }
+            let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+            let (tx, rx) = channel::<String>();
+            if let Ok(mut m) = state.clients.lock() {
+                m.insert(id, tx);
+            }
+            let state2 = state.clone();
+            std::thread::spawn(move || run_client_conn(id, stream, state2, rx));
+        }
+    });
+}
+
+/// Pop the next queued inbound line from any connected client, formatted
+/// "<id>|<line>" ("" if nothing queued).
+pub fn recv_from() -> String {
+    if let Ok(g) = HOST.lock() {
+        if let Some(h) = g.as_ref() {
+            if let Ok(mut q) = h.inbox.lock() {
+                if let Some((id, line)) = q.pop_front() {
+                    return format!("{id}|{line}");
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Send a line to one specific client id (no-op if that client already
+/// disconnected).
+pub fn send_to(id: u32, s: &str) {
+    if let Ok(g) = HOST.lock() {
+        if let Some(h) = g.as_ref() {
+            if let Ok(m) = h.clients.lock() {
+                if let Some(tx) = m.get(&id) {
+                    let _ = tx.send(s.to_string());
+                }
+            }
+        }
+    }
+}
+
+/// Tear down whichever networking role is active: a multi-client host, or a
+/// joined (client) connection. Actually drops the socket rather than just
+/// forgetting it, so a fresh host/join afterward starts clean.
+pub fn close() {
+    if let Ok(mut g) = HOST.lock() {
+        *g = None;
+    }
+    if let Ok(mut g) = NET.lock() {
+        if let Some(n) = g.take() {
+            n.status.store(0, Ordering::SeqCst);
+            drop(n.out_tx);
+        }
+    }
 }
 
 pub fn join(ip: &str, port: u16) {
@@ -134,7 +248,7 @@ pub fn status() -> u8 {
 // live server list. Info is opaque to the transport (the game encodes
 // name|stage|private|... into it).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
