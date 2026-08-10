@@ -22,13 +22,8 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
-<<<<<<< HEAD
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
-=======
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
->>>>>>> 62181afeca9d38ee98962b8a3ed057bb75e6ae4a
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -139,58 +134,7 @@ fn install(role: Role) -> (Arc<AtomicU8>, Inbound, Events) {
 }
 
 // ── multi-client host (net_host / net_recv_from / net_send_to) ─────────────
-// Up to 64 concurrent connections, each with its own id (assigned on accept)
-// and its own outbound queue. Inbound lines from every connection land in one
-// shared FIFO `inbox`, drained via recv_from() as "<id>|<line>".
-struct HostState {
-    next_id: AtomicU32,
-    clients: Mutex<HashMap<u32, Sender<String>>>,
-    inbox: Mutex<VecDeque<(u32, String)>>,
-}
-
-static HOST: Mutex<Option<Arc<HostState>>> = Mutex::new(None);
-
-fn run_client_conn(id: u32, stream: TcpStream, host: Arc<HostState>, rx: Receiver<String>) {
-    let _ = stream.set_nodelay(true);
-
-    if let Ok(read_stream) = stream.try_clone() {
-        let host = host.clone();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(read_stream);
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        let line = line.trim_end_matches(['\r', '\n']).to_string();
-                        if let Ok(mut q) = host.inbox.lock() {
-                            q.push_back((id, line));
-                        }
-                    },
-                }
-            }
-            if let Ok(mut m) = host.clients.lock() {
-                m.remove(&id);
-            }
-        });
-    }
-
-    let mut w = stream;
-    for msg in rx {
-        if w.write_all(msg.as_bytes()).is_err() || w.write_all(b"\n").is_err() {
-            break;
-        }
-        let _ = w.flush();
-    }
-}
-
 pub fn host(port: u16) {
-<<<<<<< HEAD
-    let state = Arc::new(HostState {
-        next_id: AtomicU32::new(1),
-        clients: Mutex::new(HashMap::new()),
-        inbox: Mutex::new(VecDeque::new()),
-=======
     let accept_stop = Arc::new(AtomicBool::new(false));
     let (status, inbound, events) = install(Role::Host {
         next_id: AtomicU64::new(1),
@@ -205,8 +149,6 @@ pub fn host(port: u16) {
                 return;
             },
         };
-        // non-blocking + a stop flag, so close() can end this loop instead of
-        // leaving it parked in accept() forever
         let _ = listener.set_nonblocking(true);
         loop {
             if accept_stop.load(Ordering::SeqCst) {
@@ -267,95 +209,33 @@ pub fn host(port: u16) {
 pub fn join(ip: &str, port: u16) {
     let (tx, rx) = channel::<String>();
     let shutdown_slot: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
-    let (status, inbound, _events) =
-        install(Role::Client { out_tx: tx, stream: shutdown_slot.clone() });
-    let addr = format!("{ip}:{port}");
-    std::thread::spawn(move || match TcpStream::connect(&addr) {
-        Ok(stream) => {
-            if let Ok(clone) = stream.try_clone() {
-                if let Ok(mut s) = shutdown_slot.lock() {
-                    *s = Some(clone);
-                }
-            }
-            status.store(2, Ordering::SeqCst);
-            let status2 = status.clone();
-            run_peer(stream, 0, inbound, rx, move || status2.store(0, Ordering::SeqCst));
-        },
-        Err(_) => status.store(0, Ordering::SeqCst),
->>>>>>> 62181afeca9d38ee98962b8a3ed057bb75e6ae4a
-    });
-    if let Ok(mut g) = HOST.lock() {
-        *g = Some(state.clone());
-    }
+    let (status, inbound, _events) = install(Role::Client { out_tx: tx, stream: shutdown_slot.clone() });
+    let ip = ip.to_string();
     std::thread::spawn(move || {
-        let listener = match TcpListener::bind(("0.0.0.0", port)) {
-            Ok(l) => l,
-            Err(_) => return,
+        let stream = match TcpStream::connect((ip.as_str(), port)) {
+            Ok(s) => s,
+            Err(_) => {
+                status.store(0, Ordering::SeqCst);
+                return;
+            },
         };
-        for incoming in listener.incoming() {
-            let stream = match incoming {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            if let Ok(m) = state.clients.lock() {
-                if m.len() >= 64 {
-                    continue;
+        if let Ok(mut g) = shutdown_slot.lock() {
+            *g = stream.try_clone().ok();
+        }
+        status.store(2, Ordering::SeqCst);
+        run_peer(stream, 0, inbound, rx, move || {
+            if let Ok(g) = NET.lock() {
+                if let Some(hub) = g.as_ref() {
+                    hub.status.store(0, Ordering::SeqCst);
                 }
             }
-            let id = state.next_id.fetch_add(1, Ordering::SeqCst);
-            let (tx, rx) = channel::<String>();
-            if let Ok(mut m) = state.clients.lock() {
-                m.insert(id, tx);
-            }
-            let state2 = state.clone();
-            std::thread::spawn(move || run_client_conn(id, stream, state2, rx));
-        }
+        });
     });
 }
+// Up to 64 concurrent connections, each with its own id (assigned on accept)
+// and its own outbound queue. Inbound lines from every connection land in one
+// shared FIFO `inbox`, drained via recv_from() as "<id>|<line>".
 
-/// Pop the next queued inbound line from any connected client, formatted
-/// "<id>|<line>" ("" if nothing queued).
-pub fn recv_from() -> String {
-    if let Ok(g) = HOST.lock() {
-        if let Some(h) = g.as_ref() {
-            if let Ok(mut q) = h.inbox.lock() {
-                if let Some((id, line)) = q.pop_front() {
-                    return format!("{id}|{line}");
-                }
-            }
-        }
-    }
-    String::new()
-}
-
-/// Send a line to one specific client id (no-op if that client already
-/// disconnected).
-pub fn send_to(id: u32, s: &str) {
-    if let Ok(g) = HOST.lock() {
-        if let Some(h) = g.as_ref() {
-            if let Ok(m) = h.clients.lock() {
-                if let Some(tx) = m.get(&id) {
-                    let _ = tx.send(s.to_string());
-                }
-            }
-        }
-    }
-}
-
-/// Tear down whichever networking role is active: a multi-client host, or a
-/// joined (client) connection. Actually drops the socket rather than just
-/// forgetting it, so a fresh host/join afterward starts clean.
-pub fn close() {
-    if let Ok(mut g) = HOST.lock() {
-        *g = None;
-    }
-    if let Ok(mut g) = NET.lock() {
-        if let Some(n) = g.take() {
-            n.status.store(0, Ordering::SeqCst);
-            drop(n.out_tx);
-        }
-    }
-}
 
 /// Tear down the current role (host or client) and reset to idle. Sockets are
 /// shut down so the reader/writer threads they own unblock and exit; the
@@ -501,10 +381,6 @@ pub fn status() -> u8 {
 // live server list. Info is opaque to the transport (the game encodes
 // name|stage|private|... into it).
 
-<<<<<<< HEAD
-use std::collections::{HashMap, VecDeque};
-=======
->>>>>>> 62181afeca9d38ee98962b8a3ed057bb75e6ae4a
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
