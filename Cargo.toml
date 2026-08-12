@@ -142,7 +142,7 @@ rand = "0.8"   # random_hex builtin (session ids / nonces) — a real ling-crypt
 sha2 = "0.10"   # sha256_hex builtin — ling-crypto has Blake3/SHA-3/SHAKE but not plain SHA-256, which is what browsers' native SubtleCrypto provides for client-side proof-of-work mining; server-side verification needs to match exactly
 ling-physics = { workspace = true, features = ["with-gltf"] }
 ling-gpu = { path = "crates/ling-gpu", version = "2030.0.3" }
-ling-graphics = { path = "crates/ling-graphics", version = "2030.0.5" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.6" }
 ling-game = { path = "crates/ling-game", version = "2030.1" }
 ling-animation = { workspace = true }
 ling-mir = { workspace = true }
@@ -250,7 +250,7 @@ ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.1" }
 ling-macro    = { path = "crates/ling-macro", version = "2030.0.1" }
 
 # Graphics & Game
-ling-graphics = { path = "crates/ling-graphics", version = "2030.0.5" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.6" }
 ling-ui       = { path = "crates/ling-ui", version = "2030.0.2" }
 ling-game     = { path = "crates/ling-game", version = "2030.1.2" }
 ling-animation = { path = "crates/ling-animation", version = "2030.0.1" }
