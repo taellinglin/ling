@@ -1692,6 +1692,9 @@ pub struct Interpreter {
     /// Loaded vector UI fonts, referenced by handle (index) from `font_load`.
     #[cfg(not(target_arch = "wasm32"))]
     fonts: Vec<ling_graphics::VectorFont>,
+    /// Loaded raster images (PNG/etc.), referenced by handle (index) from
+    /// `image_load` — read pixel-by-pixel via `image_pixel_r/g/b/a`.
+    images: Vec<image::RgbaImage>,
     /// Customizable UI colour palette (set via `ui_theme`).
     ui_theme: UiTheme,
     /// Left-mouse state on the previous frame — for widget click-edge detection.
@@ -1806,6 +1809,7 @@ impl Interpreter {
             mic_buffer: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             fonts: Vec::new(),
+            images: Vec::new(),
             ui_theme: UiTheme::default(),
             mouse_was_down: false,
             #[cfg(not(target_arch = "wasm32"))]
@@ -9699,6 +9703,141 @@ impl Interpreter {
             {
                 // Web runtime does not load host TTF/OTF files yet.
                 // Return -1 so scripts can fall back to ui_text.
+                return Ok(Value::Number(-1.0));
+            },
+            // image_load("path.png") — decode a raster image (via the `image` crate)
+            // for pixel sampling (image_width/image_height/image_pixel_r/g/b/a) —
+            // used by the coin-stamp mosaic tool to read a source photo's
+            // colour/darkness. Returns a handle, or -1 on failure.
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_load" =>
+            {
+                let path = self.arg_str(&args, 0, "");
+                let mut loaded = image::open(&path);
+                if loaded.is_err() {
+                    if let Some(dir) = &self.source_dir {
+                        let joined = dir.join(&path);
+                        loaded = image::open(&joined);
+                    }
+                }
+                match loaded {
+                    Ok(img) => {
+                        let id = self.images.len();
+                        self.images.push(img.to_rgba8());
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(e) => {
+                        eprintln!("image_load failed ({path}): {e}");
+                        return Ok(Value::Number(-1.0));
+                    },
+                }
+            },
+            #[cfg(target_arch = "wasm32")]
+            "image_load" =>
+            {
+                // Web runtime does not load host image files yet.
+                return Ok(Value::Number(-1.0));
+            },
+            "image_width" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                if id >= 0 && (id as usize) < self.images.len() {
+                    return Ok(Value::Number(self.images[id as usize].width() as f64));
+                }
+                return Ok(Value::Number(0.0));
+            },
+            "image_height" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                if id >= 0 && (id as usize) < self.images.len() {
+                    return Ok(Value::Number(self.images[id as usize].height() as f64));
+                }
+                return Ok(Value::Number(0.0));
+            },
+            "image_pixel_r" | "image_pixel_g" | "image_pixel_b" | "image_pixel_a" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let px = self.arg_num(&args, 1, 0.0)? as i64;
+                let py = self.arg_num(&args, 2, 0.0)? as i64;
+                if id >= 0 && (id as usize) < self.images.len() {
+                    let img = &self.images[id as usize];
+                    if px >= 0 && py >= 0 && (px as u32) < img.width() && (py as u32) < img.height() {
+                        let p = img.get_pixel(px as u32, py as u32);
+                        let ch = match name {
+                            "image_pixel_r" => p[0],
+                            "image_pixel_g" => p[1],
+                            "image_pixel_b" => p[2],
+                            _ => p[3],
+                        };
+                        return Ok(Value::Number(ch as f64));
+                    }
+                }
+                return Ok(Value::Number(0.0));
+            },
+            // image_new(w, h) — a new blank (fully transparent) RGBA image the
+            // script can paint into with image_set_pixel and write out with
+            // image_save. Lives in the same self.images table as image_load,
+            // so image_width/image_height/image_pixel_* all work on it too.
+            // Used by the coin-stamp tool to build cropped, physically-sized
+            // (mm x DPI) PNG exports — something a raw window screenshot()
+            // can't do, since it always captures the whole on-screen
+            // framebuffer at whatever size the window happens to be.
+            "image_new" =>
+            {
+                let w = self.arg_num(&args, 0, 1.0)?.max(1.0) as u32;
+                let h = self.arg_num(&args, 1, 1.0)?.max(1.0) as u32;
+                let id = self.images.len();
+                self.images.push(image::RgbaImage::new(w, h));
+                return Ok(Value::Number(id as f64));
+            },
+            // image_set_pixel(id, x, y, r, g, b, a) — paint one pixel of an
+            // image created with image_new (0..255 channels; out-of-bounds is
+            // a silent no-op, matching image_pixel_*'s own out-of-bounds
+            // behaviour).
+            "image_set_pixel" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let px = self.arg_num(&args, 1, 0.0)? as i64;
+                let py = self.arg_num(&args, 2, 0.0)? as i64;
+                let r = self.arg_num(&args, 3, 0.0)?.clamp(0.0, 255.0) as u8;
+                let g = self.arg_num(&args, 4, 0.0)?.clamp(0.0, 255.0) as u8;
+                let b = self.arg_num(&args, 5, 0.0)?.clamp(0.0, 255.0) as u8;
+                let a = self.arg_num(&args, 6, 255.0)?.clamp(0.0, 255.0) as u8;
+                if id >= 0 && (id as usize) < self.images.len() {
+                    let img = &mut self.images[id as usize];
+                    if px >= 0 && py >= 0 && (px as u32) < img.width() && (py as u32) < img.height() {
+                        img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, a]));
+                    }
+                }
+                return Ok(Value::Unit);
+            },
+            // image_save(id, "path.png") — encode an image (from image_new or
+            // image_load) to disk, alpha preserved. Returns 1 on success, -1
+            // on failure (bad id or write error), mirroring image_load's own
+            // -1-on-failure convention. Path resolves the same way
+            // write_file/copy_file's outputs do: relative to the script's own
+            // working directory (typically the app dir the launcher cd's
+            // into), not source_dir.
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_save" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let path = self.arg_str(&args, 1, "");
+                if id >= 0 && (id as usize) < self.images.len() {
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        if !parent.as_os_str().is_empty() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                    }
+                    if self.images[id as usize].save(&path).is_ok() {
+                        return Ok(Value::Number(1.0));
+                    }
+                }
+                return Ok(Value::Number(-1.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "image_save" =>
+            {
                 return Ok(Value::Number(-1.0));
             },
             // font_text(handle, x, y, px, "string") — anti-aliased *stroked* vector outline

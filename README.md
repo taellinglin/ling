@@ -10,6 +10,7 @@
 [![docs.rs](https://img.shields.io/docsrs/ling-lang?style=flat-square&color=00c4cc&label=docs.rs)](https://docs.rs/ling-lang)
 [![Website](https://img.shields.io/badge/website-ling--lang.org-00c4cc?style=flat-square)](https://ling-lang.org)
 [![Docs](https://img.shields.io/badge/docs-docs.ling--lang.org-0070ff?style=flat-square)](https://docs.ling-lang.org)
+[![Discord](https://img.shields.io/discord/1536894129932472421?style=flat-square&color=5865f2&label=discord&logo=discord&logoColor=white)](https://discord.gg/MDSb96Qcge)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-60e000?style=flat-square)](LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/taellinglin/ling?style=flat-square&color=ffb000)](https://github.com/taellinglin/ling)
 
@@ -282,6 +283,7 @@ mdbook build docs && mdbook serve docs             # local docs
 | vtex builtin reference | [docs.ling-lang.org/reference/vtex.html](https://docs.ling-lang.org/reference/vtex.html) |
 | Multilingual builtins | [docs.ling-lang.org/multilingual/builtins.html](https://docs.ling-lang.org/multilingual/builtins.html) |
 | Source code | [github.com/taellinglin/ling](https://github.com/taellinglin/ling) |
+| Community chat | [discord.gg/MDSb96Qcge](https://discord.gg/MDSb96Qcge) |
 
 ---
 
@@ -295,6 +297,7 @@ at your option.
 
 [![ling-lang.org](https://img.shields.io/badge/ling--lang.org-00e0cc?style=flat-square)](https://ling-lang.org)
 [![docs.ling-lang.org](https://img.shields.io/badge/docs.ling--lang.org-0070ff?style=flat-square)](https://docs.ling-lang.org)
+[![Discord](https://img.shields.io/discord/1536894129932472421?style=flat-square&color=5865f2&label=discord&logo=discord&logoColor=white)](https://discord.gg/MDSb96Qcge)
 
 *灵语 · 霊語 · 령어 · ภาษาลิง · Ling Language*
 
