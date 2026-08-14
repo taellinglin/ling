@@ -278,7 +278,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "停止音效"
         | "効果音停止"
         | "효과음정지"
-        | "หยุดเอฟเฟกต์ทั้งหมด" => Value::Unit,
+        | "หยุดเอฟเฟกต์ทั้งหมด" | "بوق_کوتاه" | "نغمة_قصيرة" | "ביפ" | "بلپ_آواز" => Value::Unit,
 
         // music loading / analysis / playback / midi (native-only today)
         "music_load"
@@ -300,7 +300,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "载入MIDI"
         | "MIDI読込"
         | "미디로드"
-        | "โหลดมิดี" => Value::Number(-1.0),
+        | "โหลดมิดี" | "بارگذاری_موسیقی" | "تحميل_الموسيقى" | "טעינת_מוזיקה" | "موسیقی_لوڈ" => Value::Number(-1.0),
 
         "music_duration"
         | "音乐时长"
@@ -341,7 +341,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "MIDI数量"
         | "MIDI数"
         | "미디수"
-        | "จำนวนมิดี" => Value::Number(0.0),
+        | "จำนวนมิดี" | "مدت_موسیقی" | "مدة_الموسيقى" | "משך_מוזיקה" | "موسیقی_دورانیہ" => Value::Number(0.0),
 
         "music_key"
         | "调性"
@@ -362,7 +362,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "判定名"
         | "判定名称"
         | "판정이름"
-        | "ชื่อการตัดสิน" => Value::Str(String::new()),
+        | "ชื่อการตัดสิน" | "گام_موسیقی" | "مقام_الموسيقى" | "סולם_מוזיקלי" | "موسیقی_کلید" => Value::Str(String::new()),
 
         "music_onsets"
         | "音符起点"
@@ -388,7 +388,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "音乐频谱"
         | "音楽スペクトル"
         | "음악스펙트럼"
-        | "สเปกตรัมเพลง" => Value::List(Vec::new().into()),
+        | "สเปกตรัมเพลง" | "آغازهای_نت" | "بدايات_النغمات" | "התחלות_תווים" | "نوٹ_شروعات" => Value::List(Vec::new().into()),
 
         "music_play"
         | "播放音乐"
@@ -429,13 +429,13 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "音符结束"
         | "音符オフ"
         | "음표끄기"
-        | "โน้ตจบ" => Value::Unit,
+        | "โน้ตจบ" | "پخش_موسیقی" | "شغّل_الموسيقى" | "נגן_מוזיקה" | "موسیقی_چلاؤ" => Value::Unit,
 
         // liquid sim — return handle 0 for new, Unit for everything else
-        "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" => {
+        "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" | "مایع_جدید" | "سائل_جديد" | "נוזל_חדש" | "نیا_مائع" => {
             Value::Number(0.0)
         },
-        "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" => {
+        "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" | "ترکیب_مایع" | "مزج_سائل" | "ערבוב_נוזל" | "مائع_ملاؤ" => {
             Value::Number(0.0)
         },
         "liquid_set_colors"
@@ -477,7 +477,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "液体贴面"
         | "液体曲面"
         | "액체곡면"
-        | "ของเหลวบนพื้นผิว" => Value::Unit,
+        | "ของเหลวบนพื้นผิว" | "تنظیم_رنگ_مایع" | "عيّن_ألوان_السائل" | "קבע_צבעי_נוזל" | "مائع_رنگ_مقرر_کرو" => Value::Unit,
 
         // ── game AI: neural networks ─────────────────────────────────────────
         "nn_new"
@@ -489,8 +489,8 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "载入网"
         | "網読込"
         | "신경망불러오기"
-        | "โหลดโครงข่าย" => Value::Number(-1.0),
-        "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" => {
+        | "โหลดโครงข่าย" | "شبکه_جدید" | "شبكة_جديدة" | "רשת_חדשה" | "نئی_نیورل_نیٹ" => Value::Number(-1.0),
+        "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" | "پیش‌روی_شبکه" | "تمرير_أمامي" | "העברה_קדימה" | "فارورڈ_پاس" => {
             Value::List(Vec::new().into())
         },
         "nn_train"
@@ -502,22 +502,22 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "密集层"
         | "密層追加"
         | "밀집층"
-        | "ชั้นหนาแน่น" => Value::Number(0.0),
-        "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" => {
+        | "ชั้นหนาแน่น" | "آموزش_شبکه" | "درّب_الشبكة" | "אמן_רשת" | "نیٹ_ٹریننگ" => Value::Number(0.0),
+        "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" | "ذخیره_شبکه" | "احفظ_الشبكة" | "שמור_רשת" | "نیٹ_محفوظ_کرو" => {
             Value::Bool(false)
         },
 
         // ── game AI: behavior trees ─────────────────────────────────────────
-        "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" => {
+        "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" | "ساخت_درخت_رفتار" | "ابنِ_شجرة_السلوك" | "בנה_עץ_התנהגות" | "بی_ٹی_تعمیر" => {
             Value::Number(-1.0)
         },
-        "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" => {
+        "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" | "تیک_درخت_رفتار" | "نبضة_شجرة_السلوك" | "טיק_עץ_התנהגות" | "بی_ٹی_ٹک" => {
             Value::Str(String::new())
         },
-        "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" => {
+        "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" | "وضعیت_درخت_رفتار" | "حالة_شجرة_السلوك" | "סטטוס_עץ_התנהגות" | "بی_ٹی_حالت" => {
             Value::Number(0.0)
         },
-        "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" => {
+        "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" | "تنظیم_واقعیت" | "عيّن_حقيقة" | "קבע_עובדה" | "بی_ٹی_سیٹ" => {
             Value::Unit
         },
 
@@ -541,14 +541,14 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "对话载入"
         | "対話読込"
         | "대화불러오기"
-        | "โหลดชุดสนทนา" => Value::Number(-1.0),
-        "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" => {
+        | "โหลดชุดสนทนา" | "مدل_گفتگوی_جدید" | "نموذج_حوار_جديد" | "מודל_דיאלוג_חדש" | "نیا_مکالمہ_ماڈل" => Value::Number(-1.0),
+        "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" | "بگو" | "قل" | "אמור" | "کہو" => {
             Value::Str(String::new())
         },
-        "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" => {
+        "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" | "ذخیره_مدل_گفتگو" | "احفظ_نموذج_الحوار" | "שמור_מודל_דיאלוג" | "مکالمہ_ماڈل_محفوظ" => {
             Value::Bool(false)
         },
-        "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" => {
+        "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" | "یادگیری_گفتگو" | "تعلّم_الحوار" | "למד_דיאלוג" | "مکالمہ_سیکھو" => {
             Value::Unit
         },
 
@@ -567,7 +567,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "发送"
         | "送信"
         | "전송"
-        | "ส่ง" => Value::Number(-1.0),
+        | "ส่ง" | "اتصال_شبکه" | "اتصل_بالشبكة" | "התחבר_לרשת" | "نیٹ_کنیکٹ" => Value::Number(-1.0),
         "net_recv"
         | "接收"
         | "受信"
@@ -577,8 +577,8 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "连接状态"
         | "接続状態"
         | "연결상태"
-        | "สถานะการเชื่อม" => Value::Str(String::new()),
-        "net_discover" | "发现" | "探索" | "검색" | "ค้นหาเครือข่าย" => {
+        | "สถานะการเชื่อม" | "دریافت_شبکه" | "استقبل_من_الشبكة" | "קבל_מרשת" | "نیٹ_وصول" => Value::Str(String::new()),
+        "net_discover" | "发现" | "探索" | "검색" | "ค้นหาเครือข่าย" | "کشف_شبکه" | "اكتشف_الشبكة" | "גלה_רשת" | "نیٹ_دریافت" => {
             Value::List(Vec::new().into())
         },
         "net_close"
@@ -590,7 +590,7 @@ fn wasm_unsupported_builtin(name: &str) -> Option<Value> {
         | "测连接"
         | "接続テスト"
         | "연결테스트"
-        | "ทดสอบเน็ต" => Value::Number(0.0),
+        | "ทดสอบเน็ต" | "بستن_شبکه" | "أغلق_الشبكة" | "סגור_רשת" | "نیٹ_بند" => Value::Number(0.0),
 
         // catch-all: any other native-only builtin silently no-ops on wasm32
         _ => Value::Unit,
@@ -2094,7 +2094,7 @@ impl Interpreter {
     fn wasm_music_builtin(&mut self, name: &str, args: &[Value]) -> Result<Option<Value>, EvalErr> {
         match name {
             // music_load(path) -> track handle (decode from fetched bytes)
-            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" =>
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" | "بارگذاری_موسیقی" | "تحميل_الموسيقى" | "טעינת_מוזיקה" | "موسیقی_لوڈ" | "charger_musique" | "musik_laden" | "загрузить_музыку" =>
             {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
@@ -2112,7 +2112,7 @@ impl Interpreter {
                     },
                 }
             },
-            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" =>
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" | "مدت_موسیقی" | "مدة_الموسيقى" | "משך_מוזיקה" | "موسیقی_دورانیہ" | "durée_musique" | "musik_dauer" | "длительность_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let d = self
@@ -2122,7 +2122,7 @@ impl Interpreter {
                     .unwrap_or(0.0);
                 return Ok(Some(Value::Number(d as f64)));
             },
-            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" =>
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" | "ضربان_در_دقیقه" | "نبضات_بالدقيقة" | "פעימות_לדקה" | "بی_پی_ایم" | "bpm_musique" | "musik_bpm" | "музыка_bpm" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let b = self
@@ -2132,7 +2132,7 @@ impl Interpreter {
                     .unwrap_or(0.0);
                 return Ok(Some(Value::Number(b as f64)));
             },
-            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" => {
+            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" | "گام_موسیقی" | "مقام_الموسيقى" | "סולם_מוזיקלי" | "موسیقی_کلید" | "tonalité_musique" | "musik_tonart" | "тональность_музыки" => {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let k = self
                     .tracks
@@ -2141,7 +2141,7 @@ impl Interpreter {
                     .unwrap_or_default();
                 return Ok(Some(Value::Str(k)));
             },
-            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" =>
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" | "آغازهای_نت" | "بدايات_النغمات" | "התחלות_תווים" | "نوٹ_شروعات" | "attaques_musique" | "musik_einsätze" | "атаки_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let v = self
@@ -2153,7 +2153,7 @@ impl Interpreter {
                     v.into_iter().map(|x| Value::Number(x as f64)).collect::<Vec<_>>().into(),
                 )));
             },
-            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" | "شبکه_ضرب" | "شبكة_الإيقاع" | "רשת_פעימות" | "بیٹ_گرڈ" | "grille_temps_musique" | "musik_taktraster" | "сетка_ритма_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let beats = self
@@ -2168,7 +2168,7 @@ impl Interpreter {
                     beats.into_iter().map(|x| Value::Number(x as f64)).collect::<Vec<_>>().into(),
                 )));
             },
-            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" =>
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" | "بارگذاری_متن_ترانه" | "تحميل_كلمات_الأغنية" | "טעינת_מילות_שיר" | "گیت_متن_لوڈ" | "lrc_musique" | "musik_lrc" | "lrc_музыки" =>
             {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
@@ -2184,7 +2184,7 @@ impl Interpreter {
                     },
                 }
             },
-            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" =>
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" | "متن_ترانه_فعلی" | "كلمات_الأغنية_الحالية" | "מילות_שיר_נוכחיות" | "موجودہ_گیت_متن" | "paroles_musique" | "musik_liedtext" | "текст_песни" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let t = self.arg_num(args, 1, 0.0)? as f32;
@@ -2195,7 +2195,7 @@ impl Interpreter {
                     .unwrap_or_default();
                 return Ok(Some(Value::Str(line)));
             },
-            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" =>
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" | "بارگذاری_MIDI" | "تحميل_MIDI" | "טעינת_MIDI" | "MIDI_لوڈ" | "charger_midi_musique" | "musik_midi_laden" | "загрузить_midi_музыки" =>
             {
                 let path = self.arg_str(args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
@@ -2213,7 +2213,7 @@ impl Interpreter {
                     },
                 }
             },
-            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" =>
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" | "تعداد_MIDI" | "عدد_MIDI" | "מספר_MIDI" | "MIDI_تعداد" | "nombre_midi_musique" | "musik_midi_anzahl" | "число_midi_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let n = self
@@ -2223,7 +2223,7 @@ impl Interpreter {
                     .unwrap_or(0);
                 return Ok(Some(Value::Number(n as f64)));
             },
-            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" =>
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" | "نت‌های_MIDI" | "نغمات_MIDI" | "תווי_MIDI" | "MIDI_نوٹس" | "notes_midi_musique" | "musik_midi_noten" | "ноты_midi_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
@@ -2235,7 +2235,7 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::List(out.into())));
             },
-            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" =>
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" | "میله‌های_MIDI" | "أعمدة_MIDI" | "עמודות_MIDI" | "MIDI_بارز" | "mesures_midi_musique" | "musik_midi_takte" | "такты_midi_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
@@ -2248,26 +2248,26 @@ impl Interpreter {
                 }
                 return Ok(Some(Value::List(out.into())));
             },
-            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" =>
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" | "داوری_ضرب" | "حكم_الإيقاع" | "שיפוט_קצב" | "بیٹ_فیصلہ" | "juger_musique" | "musik_bewerten" | "оценить_музыку" =>
             {
                 let delta_ms = self.arg_num(args, 0, 9999.0)? as f32;
                 return Ok(Some(Value::Number(
                     ling_music::Grade::judge(delta_ms).index() as f64,
                 )));
             },
-            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" =>
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" | "نام_رتبه" | "اسم_التقييم" | "שם_דירוג" | "گریڈ_نام" | "nom_grade_musique" | "musik_bewertungsname" | "имя_оценки_музыки" =>
             {
                 let idx = self.arg_num(args, 0, 4.0)? as i32;
                 return Ok(Some(Value::Str(
                     ling_music::Grade::from_index(idx).name().to_string(),
                 )));
             },
-            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" =>
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" | "نام_نت" | "اسم_النغمة" | "שם_תו" | "نوٹ_نام" | "nom_note_musique" | "musik_notenname" | "имя_ноты_музыки" =>
             {
                 let hz = self.arg_num(args, 0, 0.0)? as f32;
                 return Ok(Some(Value::Str(ling_music::note::hz_to_name(hz))));
             },
-            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" =>
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" | "فرکانس_نت" | "تردد_النغمة" | "תדר_תו" | "نوٹ_ہرٹز" | "hz_musique" | "musik_hz" | "музыка_гц" =>
             {
                 let midi = match args.get(0) {
                     Some(Value::Str(s)) => ling_music::note::parse_pitch(s).unwrap_or(69),
@@ -2278,7 +2278,7 @@ impl Interpreter {
                     ling_music::note::midi_to_hz(midi as f32) as f64,
                 )));
             },
-            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" =>
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" | "امتیاز_زیروبمی" | "درجة_طبقة_الصوت" | "ציון_גובה_צליל" | "پچ_اسکور" | "score_hauteur_musique" | "musik_tonhöhen_punktzahl" | "счёт_высоты_тона" =>
             {
                 let hz = self.arg_num(args, 0, 0.0)? as f32;
                 let target = self.arg_num(args, 1, 0.0)? as f32;
@@ -2288,7 +2288,7 @@ impl Interpreter {
             },
 
             // ── Playback ──────────────────────────────────────────────────────
-            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" =>
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" | "پخش_موسیقی" | "شغّل_الموسيقى" | "נגן_מוזיקה" | "موسیقی_چلاؤ" | "jouer_musique" | "musik_abspielen" | "играть_музыку" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 if let Some(t) = self.tracks.get(id) {
@@ -2305,23 +2305,23 @@ impl Interpreter {
             | "停止音乐"
             | "音楽停止"
             | "음악정지"
-            | "หยุดเพลง" => {
+            | "หยุดเพลง" | "مکث_موسیقی" | "ألبث_الموسيقى" | "השהה_מוזיקה" | "موسیقی_روکو_مؤقت" | "pause_musique" | "musik_pausieren" | "пауза_музыки" => {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 crate::gfx::audio_web::stop_music(id);
                 return Ok(Some(Value::Unit));
             },
-            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" =>
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" | "جستجوی_موسیقی" | "ابحث_في_الموسيقى" | "חפש_במוזיקה" | "موسیقی_تلاش" | "chercher_musique" | "musik_suchen" | "перемотать_музыку" =>
             {
                 // Seek is not straightforward on AudioBufferSourceNode; no-op for now.
                 return Ok(Some(Value::Unit));
             },
-            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" =>
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" | "موقعیت_موسیقی" | "موضع_الموسيقى" | "מיקום_מוזיקה" | "موسیقی_مقام" | "position_musique" | "musik_position" | "позиция_музыки" =>
             {
                 return Ok(Some(Value::Number(
                     crate::gfx::audio_web::current_music_position(),
                 )));
             },
-            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" =>
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" | "بلندی_موسیقی" | "مستوى_الموسيقى" | "עוצמת_מוזיקה" | "موسیقی_شدت" | "volume_musique" | "musik_lautstärke" | "громкость_музыки" =>
             {
                 let vol = self.arg_num(args, 0, 0.8)? as f32;
                 // Apply to the most-recently started slot (slot 0 is typical).
@@ -2330,7 +2330,7 @@ impl Interpreter {
             },
 
             // ── FFT bands at current playback position ─────────────────────
-            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" =>
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" | "طیف_موسیقی" | "طيف_الموسيقى" | "ספקטרום_מוזיקה" | "میوزک_اسپیکٹرم" | "fft_musique" | "musik_fft" | "fft_музыки" =>
             {
                 let id = self.arg_num(args, 0, 0.0)? as usize;
                 let nbands = self.arg_num(args, 1, 16.0)? as usize;
@@ -2895,10 +2895,10 @@ impl Interpreter {
         }
         // Math constants usable as plain identifiers (e.g. `sin(pi)`)
         match name {
-            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => {
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" | "پی" | "باي" | "פאי" | "پائی" | "пи" => {
                 return Ok(Value::Number(std::f64::consts::PI))
             },
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" => {
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
                 return Ok(Value::Number(std::f64::consts::TAU))
             },
             _ => {},
@@ -2962,7 +2962,7 @@ impl Interpreter {
             },
             // ── Print ──
             "print" | "println" | "印" | "打印" | "印刷" | "พิมพ์" | "출력" | "вывести"
-            | "imprimir" | "afficher" => {
+            | "imprimir" | "afficher" | "چاپ" | "اطبع" | "הדפס" | "چھاپو" | "drucken" | "печать" => {
                 let s = args
                     .iter()
                     .map(|v| v.to_string())
@@ -2973,7 +2973,7 @@ impl Interpreter {
             },
             // print_color(colorIdx, text...) — ANSI-coloured console line.
             //   colorIdx 0..7 → bright fg (90+idx): 1=red 2=green 3=yellow 4=blue 6=cyan 7=white.
-            "print_color" | "พิมพ์สี" => {
+            "print_color" | "พิมพ์สี" | "چاپ_رنگی" | "اطبع_بلون" | "הדפס_בצבע" | "رنگین_چھاپو" => {
                 #[cfg(windows)]
                 {
                     use std::sync::Once;
@@ -3012,7 +3012,7 @@ impl Interpreter {
             | "รูปแบบ"
             | "форматировать"
             | "formatear"
-            | "formater" => {
+            | "formater" | "قالب‌بندی" | "نسّق" | "פרמט" | "فارمیٹ" | "formatieren" => {
                 return Ok(Value::Str(self.builtin_format(&args)?));
             },
             // ── String join / concatenation ──
@@ -3023,11 +3023,11 @@ impl Interpreter {
                 _ => return Ok(Value::Str(self.builtin_format(&args)?)),
             },
             // ── Result constructors ──
-            "ok" | "好" | "良し" | "좋아" | "โอเค" => {
+            "ok" | "好" | "良し" | "좋아" | "โอเค" | "تایید" | "تمام" | "בסדר" | "ٹھیک" | "bon" | "gut" | "хорошо" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Ok(Box::new(val)));
             },
-            "bad" | "坏" | "err" | "悪い" | "나쁨" | "ผิด" => {
+            "bad" | "坏" | "err" | "悪い" | "나쁨" | "ผิด" | "بد" | "سيء" | "רע" | "برا" | "mauvais" | "schlecht" | "плохо" => {
                 let val = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Err(Box::new(val)));
             },
@@ -3046,7 +3046,7 @@ impl Interpreter {
             "计时::现在" | "Timer::now" => return Ok(Value::Number(1000.0)),
             // ── Sleep ──
             "sleep" | "หยุด" | "นอน" | "sleep_ms" | "睡眠" | "眠る" | "スリープ" | "잠자기"
-            | "잠" | "流水::睡眠" | "Flow::sleep" => {
+            | "잠" | "流水::睡眠" | "Flow::sleep" | "خواب" | "نم" | "שינה" | "سو_جاؤ" | "dormir" | "schlafen" | "спать" => {
                 if let Some(ms_val) = args.first() {
                     if let Ok(ms) = self.to_number(ms_val) {
                         #[cfg(target_arch = "wasm32")]
@@ -3079,10 +3079,10 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── Trigonometry (input in radians) ──
-            "sin" | "ไซน์" | "正弦" | "サイン" | "사인" => {
+            "sin" | "ไซน์" | "正弦" | "サイン" | "사인" | "سینوس" | "جا" | "סינוס" | "سائن" | "sinus" | "синус" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sin()));
             },
-            "cos" | "โคไซน์" | "余弦" | "コサイン" | "코사인" => {
+            "cos" | "โคไซน์" | "余弦" | "コサイン" | "코사인" | "کسینوس" | "جتا" | "קוסינוס" | "کوسائن" | "cosinus" | "kosinus" | "косинус" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cos()));
             },
 
@@ -3092,18 +3092,18 @@ impl Interpreter {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tanh()));
             },
 
-            "tan" | "แทนเจนต์" | "正切" | "タンジェント" | "탄젠트" => {
+            "tan" | "แทนเจนต์" | "正切" | "タンジェント" | "탄젠트" | "تانژانت" | "ظا" | "טנגנס" | "ٹینجنٹ" | "tangente" | "tangens" | "тангенс" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.tan()));
             },
-            "asin" | "arcsin" | "反正弦" | "アークサイン" | "아크사인" | "อาร์กไซน์" =>
+            "asin" | "arcsin" | "反正弦" | "アークサイン" | "아크사인" | "อาร์กไซน์" | "آرک‌سینوس" | "قوس_جا" | "ארקסינוס" | "آرک_سائن" | "arcsinus" | "arkussinus" | "арксинус" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.asin()));
             },
-            "acos" | "arccos" | "反余弦" | "アークコサイン" | "아크코사인" | "อาร์กโคไซน์" =>
+            "acos" | "arccos" | "反余弦" | "アークコサイン" | "아크코사인" | "อาร์กโคไซน์" | "آرک‌کسینوس" | "قوس_جتا" | "ארקוקוסינוס" | "آرک_کوسائن" | "arccosinus" | "arkuskosinus" | "арккосинус" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.acos()));
             },
-            "atan" | "arctan" | "反正切" | "アークタンジェント" | "아크탄젠트" | "อาร์กแทนเจนต์" =>
+            "atan" | "arctan" | "反正切" | "アークタンジェント" | "아크탄젠트" | "อาร์กแทนเจนต์" | "آرک‌تانژانت" | "قوس_ظا" | "ארקטנגנס" | "آرک_ٹینجنٹ" | "arctangente" | "arkustangens" | "арктангенс" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.atan()));
             },
@@ -3115,13 +3115,13 @@ impl Interpreter {
             },
 
             // ── Roots / powers ──
-            "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" => {
+            "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" | "جذر" | "جذر" | "שורש" | "جذر" | "racine_carrée" | "quadratwurzel" | "корень" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sqrt()));
             },
-            "cbrt" | "立方根" | "세제곱근" | "รากที่สาม" => {
+            "cbrt" | "立方根" | "세제곱근" | "รากที่สาม" | "ریشه_سوم" | "جذر_تكعيبي" | "שורש_שלישי" | "مکعب_جذر" | "racine_cubique" | "kubikwurzel" | "кубический_корень" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.cbrt()));
             },
-            "pow" | "ยกกำลัง" | "幂" | "べき乗" | "거듭제곱" => {
+            "pow" | "ยกกำลัง" | "幂" | "べき乗" | "거듭제곱" | "توان" | "أس" | "חזקה" | "قوت" | "puissance" | "potenz" | "степень" => {
                 let base = self.arg_num(&args, 0, 0.0)?;
                 let exp = self.arg_num(&args, 1, 1.0)?;
                 return Ok(Value::Number(base.powf(exp)));
@@ -3136,7 +3136,7 @@ impl Interpreter {
             },
 
             // ── Logarithms ──
-            "ln" | "log" | "ลอการิทึม" | "对数" | "対数" | "로그" => {
+            "ln" | "log" | "ลอการิทึม" | "对数" | "対数" | "로그" | "لگاریتم_طبیعی" | "لوغاريتم_طبيعي" | "לוגריתם_טבעי" | "فطری_لوگ" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 1.0)?.ln()));
             },
             "log2" | "对数2" | "対数2" | "로그2" => {
@@ -3147,18 +3147,18 @@ impl Interpreter {
             },
 
             // ── Rounding / truncation ──
-            "abs" | "ค่าสัมบูรณ์" | "绝对值" | "绝对" | "絶対値" | "절댓값" | "절대값" =>
+            "abs" | "ค่าสัมบูรณ์" | "绝对值" | "绝对" | "絶対値" | "절댓값" | "절대값" | "قدرمطلق" | "مطلق" | "ערך_מוחלט" | "مطلق_قدر" | "valeur_absolue" | "betrag" | "модуль_числа" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.abs()));
             },
-            "floor" | "ปัดลง" | "向下取整" | "下整" | "床関数" | "내림" => {
+            "floor" | "ปัดลง" | "向下取整" | "下整" | "床関数" | "내림" | "کف" | "أرضية" | "רצפה" | "فرش" | "plancher" | "abrunden" | "вниз" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.floor()));
             },
-            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" =>
+            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" | "سقف" | "سقف" | "תקרה" | "چھت" | "plafond" | "aufrunden" | "вверх" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.ceil()));
             },
-            "round" | "ปัดเศษ" | "四舍五入" | "四舍" | "四捨五入" | "반올림" =>
+            "round" | "ปัดเศษ" | "四舍五入" | "四舍" | "四捨五入" | "반올림" | "گرد_کردن" | "تقريب" | "עיגול" | "گول" | "arrondir" | "runden" | "округлить" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.round()));
             },
@@ -3172,7 +3172,7 @@ impl Interpreter {
             | "정수화"
             | "정수"
             | "切り捨て"
-            | "버림" => {
+            | "버림" | "برش" | "اقتطاع" | "קיטום" | "کٹائی" | "tronquer" | "abschneiden" | "усечь" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.trunc()));
             },
             "fract" | "小数部分" | "小数部" | "소수부" => {
@@ -3180,17 +3180,17 @@ impl Interpreter {
             },
 
             // ── min / max / clamp ──
-            "min" | "ต่ำสุด" | "最小" | "최솟값" => {
+            "min" | "ต่ำสุด" | "最小" | "최솟값" | "کمینه" | "أصغر" | "מינימום" | "کم_ترین" | "minimum" | "минимум" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.min(b)));
             },
-            "max" | "สูงสุด" | "最大" | "최댓값" => {
+            "max" | "สูงสุด" | "最大" | "최댓값" | "بیشینه" | "أكبر" | "מקסימום" | "زیادہ_ترین" | "maximum" | "максимум" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.max(b)));
             },
-            "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" => {
+            "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" | "محدود" | "قيّد" | "הגבל" | "محدود" | "limiter" | "begrenzen" | "ограничить" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let lo = self.arg_num(&args, 1, 0.0)?;
                 let hi = self.arg_num(&args, 2, 1.0)?;
@@ -3198,10 +3198,10 @@ impl Interpreter {
             },
 
             // ── Constants (also accessible as plain identifiers via lookup) ──
-            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" => {
+            "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" | "پی" | "باي" | "פאי" | "پائی" | "пи" => {
                 return Ok(Value::Number(std::f64::consts::PI))
             },
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" => {
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
                 return Ok(Value::Number(std::f64::consts::TAU))
             },
 
@@ -3210,7 +3210,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── Step 1: Noise Functions ──
-            "vnoise" | "noise2" | "นอยส์2ดี" | "柏林噪声2D" | "バリューノイズ2D" | "값노이즈2D" =>
+            "vnoise" | "noise2" | "นอยส์2ดี" | "柏林噪声2D" | "バリューノイズ2D" | "값노이즈2D" | "نویز_برداری" | "ضجيج_متجه" | "רעש_וקטורי" | "ویکٹر_نوائز" | "bruit_v" | "v_rauschen" | "шум_v" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3218,7 +3218,7 @@ impl Interpreter {
                 return Ok(Value::Number(tex_vnoise(x, y, seed) as f64));
             },
 
-            "fbm" | "นอยส์ออร์แกนิก" | "分形噪声" | "フラクタルノイズ" | "프랙탈노이즈" =>
+            "fbm" | "นอยส์ออร์แกนิก" | "分形噪声" | "フラクタルノイズ" | "프랙탈노이즈" | "نویز_فراکتالی" | "ضجيج_عضوي" | "רעש_פרקטלי" | "فریکٹل_نوائز" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3232,7 +3232,7 @@ impl Interpreter {
             | "เพอร์ลิน3ดี"
             | "柏林噪声3D"
             | "パーリンノイズ3D"
-            | "펄린노이즈3D" => {
+            | "펄린노이즈3D" | "نویز_پرلین" | "بيرلين" | "רעש_פרלין" | "پرلن_نوائز" | "перлин" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
@@ -3240,7 +3240,7 @@ impl Interpreter {
             },
 
             // ── Step 2: Math Ergonomics ──
-            "lerp" | "ค่าระหว่าง" | "线性插值" | "線形補間" | "선형보간" =>
+            "lerp" | "ค่าระหว่าง" | "线性插值" | "線形補間" | "선형보간" | "میان‌یابی" | "استيفاء" | "אינטרפולציה" | "درمیانی_قدر" | "interpoler" | "interpolieren" | "интерполировать" =>
             {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 1.0)?;
@@ -3248,7 +3248,7 @@ impl Interpreter {
                 return Ok(Value::Number(a + (b - a) * t));
             },
 
-            "smoothstep" | "เปลี่ยนแบบนุ่ม" | "平滑步进" | "スムーズステップ" | "스무스스텝" =>
+            "smoothstep" | "เปลี่ยนแบบนุ่ม" | "平滑步进" | "スムーズステップ" | "스무스스텝" | "گام_نرم" | "تدرج_ناعم" | "מדרגה_חלקה" | "ہموار_قدم" | "lissage" | "glättung" | "сглаживание" =>
             {
                 let lo = self.arg_num(&args, 0, 0.0)?;
                 let hi = self.arg_num(&args, 1, 1.0)?;
@@ -3257,17 +3257,17 @@ impl Interpreter {
                 return Ok(Value::Number(t * t * (3.0 - 2.0 * t)));
             },
 
-            "rand" | "สุ่ม" | "随机" | "乱数" | "난수" => {
+            "rand" | "สุ่ม" | "随机" | "乱数" | "난수" | "تصادفی" | "عشوائي" | "אקראי" | "بے_ترتیب" | "aléatoire" | "zufall" | "случайное" => {
                 let val = fast_rand_f64(&mut self.rand_state);
                 return Ok(Value::Number(val));
             },
 
-            "sign" | "เครื่องหมาย" | "符号" | "符号関数" | "부호" => {
+            "sign" | "เครื่องหมาย" | "符号" | "符号関数" | "부호" | "علامت" | "إشارة" | "סימן" | "نشان" | "signe" | "vorzeichen" | "знак" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 return Ok(Value::Number(x.signum()));
             },
 
-            "hsv_to_rgb" | "เอชเอสวีเป็นRGB" | "HSV转RGB" | "HSV変換RGB" | "HSV변환RGB" =>
+            "hsv_to_rgb" | "เอชเอสวีเป็นRGB" | "HSV转RGB" | "HSV変換RGB" | "HSV변환RGB" | "HSV_به_RGB" | "HSV_إلى_RGB" | "HSV_ל_RGB" | "HSV_سے_RGB" | "hsv_vers_rgb" | "hsv_zu_rgb" | "hsv_в_rgb" =>
             {
                 let h = self.arg_num(&args, 0, 0.0)?; // 0-360
                 let s = self.arg_num(&args, 1, 1.0)?; // 0-1
@@ -3298,7 +3298,7 @@ impl Interpreter {
                 ])));
             },
 
-            "lerp_color" | "ไล่สี" | "颜色插值" | "色補間" | "색보간" => {
+            "lerp_color" | "ไล่สี" | "颜色插值" | "色補間" | "색보간" | "میان‌یابی_رنگ" | "استيفاء_اللون" | "אינטרפולציית_צבע" | "رنگ_درمیانی_قدر" | "interpoler_couleur" | "farbe_interpolieren" | "интерполировать_цвет" => {
                 let r1 = self.arg_num(&args, 0, 0.0)?;
                 let g1 = self.arg_num(&args, 1, 0.0)?;
                 let b1 = self.arg_num(&args, 2, 0.0)?;
@@ -3315,7 +3315,7 @@ impl Interpreter {
             },
 
             // ── Step 3: Real-Time Clock ──
-            "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
+            "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" | "زمان_اکنون" | "الوقت_الآن" | "הזמן_עכשיו" | "ابھی_کا_وقت" | "temps_actuel" | "aktuelle_zeit" | "текущее_время" =>
             {
                 return Ok(Value::Number(
                     crate::runtime::now_secs() - self.start_time_secs,
@@ -3325,17 +3325,17 @@ impl Interpreter {
             // Wall-clock seconds since the Unix epoch (real date/time). Lets a
             // program defer deterministic-yet-evolving generation to the actual
             // datetime — same clock → same world, advancing as real time passes.
-            "epoch_now" | "เวลาโลก" | "datetime" | "现在时刻" | "現在時刻" | "현재시각" =>
+            "epoch_now" | "เวลาโลก" | "datetime" | "现在时刻" | "現在時刻" | "현재시각" | "مهر_زمانی_اکنون" | "طابع_الوقت_الآن" | "חותמת_זמן_עכשיו" | "ایپاک_وقت" =>
             {
                 return Ok(Value::Number(crate::runtime::now_secs()));
             },
 
-            "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" => {
+            "frame_count" | "เฟรม" | "帧数" | "フレーム数" | "프레임수" | "شمار_فریم" | "عدد_الإطارات" | "ספירת_פריימים" | "فریم_شمار" | "nombre_images" | "bildanzahl" | "число_кадров" => {
                 return Ok(Value::Number(self.frame_num as f64));
             },
 
             // ── Step 4: Microphone Input ──
-            "mic_open" | "เปิดไมค์" | "开麦克风" | "マイク開く" | "마이크열기" =>
+            "mic_open" | "เปิดไมค์" | "开麦克风" | "マイク開く" | "마이크열기" | "باز_کردن_میکروفون" | "افتح_الميكروفون" | "פתח_מיקרופון" | "مائیکروفون_کھولو" | "ouvrir_micro" | "mikrofon_öffnen" | "открыть_микрофон" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -3357,7 +3357,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "mic_rms" | "เสียงRMS" | "麦克风音量" | "マイクRMS" | "마이크RMS" =>
+            "mic_rms" | "เสียงRMS" | "麦克风音量" | "マイクRMS" | "마이크RMS" | "RMS_میکروفون" | "RMS_الميكروفون" | "RMS_מיקרופון" | "مائیکروفون_RMS" | "rms_micro" | "mikrofon_rms" | "rms_микрофона" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -3372,7 +3372,7 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             },
 
-            "mic_peak" | "เสียงพีค" | "麦克风峰值" | "マイクピーク" | "마이크피크" =>
+            "mic_peak" | "เสียงพีค" | "麦克风峰值" | "マイクピーク" | "마이크피크" | "اوج_میکروفون" | "ذروة_الميكروفون" | "שיא_מיקרופון" | "مائیکروفون_چوٹی" | "crête_micro" | "mikrofon_spitze" | "пик_микрофона" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -3387,7 +3387,7 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             },
 
-            "mic_fft" | "วิเคราะห์เสียงสด" | "实时频谱" | "リアルタイムFFT" | "실시간FFT" =>
+            "mic_fft" | "วิเคราะห์เสียงสด" | "实时频谱" | "リアルタイムFFT" | "실시간FFT" | "FFT_میکروفون" | "FFT_الميكروفون" | "FFT_מיקרופון" | "مائیکروفون_FFT" | "fft_micro" | "mikrofon_fft" | "fft_микрофона" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -3406,7 +3406,7 @@ impl Interpreter {
             },
 
             // ── Step 5: Additive Blend Mode ──
-            "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" =>
+            "set_blend" | "โหมดผสม" | "混合模式" | "ブレンドモード" | "블렌드모드" | "تنظیم_ترکیب" | "عيّن_المزج" | "קבע_מיזוג" | "بلینڈ_مقرر_کرو" | "définir_mélange" | "mischmodus_setzen" | "задать_смешивание" =>
             {
                 let mode = self.arg_num(&args, 0, 0.0)? as u8;
                 let mut gfx = self.gfx.borrow_mut();
@@ -3419,7 +3419,7 @@ impl Interpreter {
             // set_antialias(on) — smooth wireframe strokes (lines / edges / arcs /
             // circle outlines) via Xiaolin-Wu coverage. Default OFF = crisp,
             // opaque, aliased pixels; pass 1 to opt into smooth edges.
-            "set_antialias" | "ตั้งลบรอยหยัก" | "抗锯齿" | "アンチエイリアス" | "안티에일리어싱" =>
+            "set_antialias" | "ตั้งลบรอยหยัก" | "抗锯齿" | "アンチエイリアス" | "안티에일리어싱" | "تنظیم_ضدلبه‌دندانه" | "عيّن_مضاد_التسنن" | "קבע_החלקת_קצוות" | "اینٹی_الائیسنگ_مقرر_کرو" =>
             {
                 let on = self.arg_num(&args, 0, 1.0)? > 0.5;
                 self.gfx.borrow_mut().antialias = on;
@@ -3430,7 +3430,7 @@ impl Interpreter {
             | "อ่านลบรอยหยัก"
             | "读取抗锯齿"
             | "アンチエイリアス取得"
-            | "안티에일리어싱상태" => {
+            | "안티에일리어싱상태" | "خواندن_ضدلبه‌دندانه" | "اقرأ_مضاد_التسنن" | "קרא_החלקת_קצוות" | "اینٹی_الائیسنگ_پڑھو" => {
                 return Ok(Value::Bool(self.gfx.borrow().antialias));
             },
 
@@ -3448,7 +3448,7 @@ impl Interpreter {
             },
 
             // ── Step 6: Circle Primitives ──
-            "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" =>
+            "draw_circle" | "วาดวงกลม" | "画圆" | "円描画" | "원그리기" | "رسم_دایره" | "ارسم_دائرة" | "צייר_עיגול" | "دائرہ_کھینچو" | "dessiner_cercle" | "kreis_zeichnen" | "рисовать_круг" =>
             {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
@@ -3484,7 +3484,7 @@ impl Interpreter {
             | "วาดวงกลมทึบ"
             | "画实心圆"
             | "塗りつぶし円"
-            | "원채우기" => {
+            | "원채우기" | "رسم_دایره_توپر" | "ارسم_دائرة_ممتلئة" | "צייר_עיגול_מלא" | "بھرا_دائرہ_کھینچو" => {
                 let cx = self.arg_num(&args, 0, 0.0)? as i32;
                 let cy = self.arg_num(&args, 1, 0.0)? as i32;
                 let r = self.arg_num(&args, 2, 10.0)? as i32;
@@ -3498,7 +3498,7 @@ impl Interpreter {
             // draw_arc(cx, cy, r, a0, a1 [, segments]) — stroke a circular arc in
             // the pen colour (full circle when a1-a0 = TAU). Honors the antialias
             // flag; opaque by default (additive when blend = 1).
-            "draw_arc" | "arc" | "วาดส่วนโค้ง" | "画弧" | "円弧描画" | "호그리기" =>
+            "draw_arc" | "arc" | "วาดส่วนโค้ง" | "画弧" | "円弧描画" | "호그리기" | "رسم_کمان" | "ارسم_قوسا" | "צייר_קשת" | "آرک_کھینچو" =>
             {
                 let cx = self.arg_num(&args, 0, 0.0)? as f32;
                 let cy = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3552,7 +3552,7 @@ impl Interpreter {
             // on both native and web, so no target gating is needed.
 
             // set_alpha(a) — pen opacity 0..1 for the alpha-blended fills below.
-            "set_alpha" | "ตั้งความโปร่งใส" | "设透明" | "アルファ設定" | "투명도설정" =>
+            "set_alpha" | "ตั้งความโปร่งใส" | "设透明" | "アルファ設定" | "투명도설정" | "تنظیم_شفافیت" | "عيّن_الشفافية" | "קבע_שקיפות" | "شفافیت_مقرر_کرو" | "définir_alpha" | "alpha_setzen" | "задать_альфа" =>
             {
                 let a = self.arg_num(&args, 0, 1.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
@@ -3564,7 +3564,7 @@ impl Interpreter {
 
             // mesh_hue(radians) — hue-rotate the baked per-tri colours of every
             // subsequent mesh_draw (.lmesh). 0 resets. Cheap: one matrix per call.
-            "mesh_hue" | "หมุนสีเมช" =>
+            "mesh_hue" | "หมุนสีเมช" | "فام_مش" | "صبغة_الشبكة" | "גוון_רשת" | "میش_ہیو" =>
             {
                 let h = self.arg_num(&args, 0, 0.0)? as f32;
                 let g = self.arg_num(&args, 1, 1.0)? as f32;
@@ -3576,7 +3576,7 @@ impl Interpreter {
 
             // set_frame_blur(amount 0..0.95) — afterimage trails: blend the previous
             // presented frame into each new one. 0 = off (also frees the ghost buffer).
-            "set_frame_blur" | "frame_blur" | "เบลอเฟรม" =>
+            "set_frame_blur" | "frame_blur" | "เบลอเฟรม" | "تنظیم_تاری_فریم" | "عيّن_ضبابية_الإطار" | "קבע_טשטוש_פריים" | "فریم_بلر_مقرر_کرو" =>
             {
                 let a = self.arg_num(&args, 0, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
@@ -3590,7 +3590,7 @@ impl Interpreter {
             // set_line_hue_cycle(rate) — rapidly cycle the hue of ALL wireframe line
             // strokes (draw_line / draw_line_3d). `rate` in radians/sec; 0 = off.
             // Process-global so a single call covers every stroke, every frame.
-            "set_line_hue_cycle" | "ตั้งวนสีเส้น" => {
+            "set_line_hue_cycle" | "ตั้งวนสีเส้น" | "تنظیم_چرخه_فام_خط" | "عيّن_دورة_صبغة_الخط" | "קבע_מחזור_גוון_קו" | "لائن_ہیو_سائیکل_مقرر_کرو" => {
                 let rate = self.arg_num(&args, 0, 0.0)?;
                 crate::runtime::set_line_hue_rate(rate);
                 return Ok(Value::Unit);
@@ -3599,7 +3599,7 @@ impl Interpreter {
             // set_color_space(mode) — 0 = legacy sRGB compositing (default),
             // 1 = gamma-correct linear-light compositing (blend in linear, store
             // sRGB) so alpha and gradients don't darken/shift hue.
-            "set_color_space" | "ปริภูมิสี" | "色彩空间" | "色空間" | "색공간" =>
+            "set_color_space" | "ปริภูมิสี" | "色彩空间" | "色空間" | "색공간" | "تنظیم_فضای_رنگ" | "عيّن_فضاء_اللون" | "קבע_מרחב_צבע" | "کلر_اسپیس_مقرر_کرو" | "définir_espace_couleur" | "farbraum_setzen" | "задать_цветовое_пространство" =>
             {
                 let m = self.arg_num(&args, 0, 0.0)? as i64;
                 self.gfx.borrow_mut().linear_blend = m != 0;
@@ -3608,7 +3608,7 @@ impl Interpreter {
 
             // set_gradient_space(mode) — 1 = perceptual OkLab gradient interp
             // (default), 0 = legacy sRGB. Affects grad_triangle / grad_rect.
-            "set_gradient_space" | "ปริภูมิไล่สี" | "渐变空间" | "グラデ空間" | "그라데이션공간" =>
+            "set_gradient_space" | "ปริภูมิไล่สี" | "渐变空间" | "グラデ空間" | "그라데이션공간" | "تنظیم_فضای_گرادیان" | "عيّن_فضاء_التدرج" | "קבע_מרחב_גרדיאנט" | "گریڈینٹ_اسپیس_مقرر_کرو" | "définir_espace_dégradé" | "verlaufsraum_setzen" | "задать_пространство_градиента" =>
             {
                 let m = self.arg_num(&args, 0, 1.0)? as i64;
                 self.gfx.borrow_mut().grad_oklab = m != 0;
@@ -3618,7 +3618,7 @@ impl Interpreter {
             // mix_color(r0,g0,b0, r1,g1,b1, t) — set the pen colour to the
             // perceptual OkLab blend of two colours (t in 0..1). Far nicer
             // mid-tones than a raw RGB lerp.
-            "mix_color" | "ผสมสี" | "混合颜色" | "色混合" | "색혼합" => {
+            "mix_color" | "ผสมสี" | "混合颜色" | "色混合" | "색혼합" | "ترکیب_رنگ" | "امزج_اللون" | "ערבב_צבע" | "رنگ_ملاؤ" | "mélanger_couleur" | "farbe_mischen" | "смешать_цвет" => {
                 let c0 = rgb(
                     self.arg_num(&args, 0, 0.0)?,
                     self.arg_num(&args, 1, 0.0)?,
@@ -3637,7 +3637,7 @@ impl Interpreter {
             // set_depth_test(on) — enable the per-pixel z-buffer for the deferred
             // 3-D/queued draws (correct interpenetration) instead of painter's-
             // only sort. 0 = off (default), non-zero = on.
-            "set_depth_test" | "ทดสอบความลึก" | "深度测试" | "深度テスト" | "깊이테스트" =>
+            "set_depth_test" | "ทดสอบความลึก" | "深度测试" | "深度テスト" | "깊이테스트" | "تنظیم_آزمون_عمق" | "عيّن_اختبار_العمق" | "קבע_בדיקת_עומק" | "ڈیپتھ_ٹیسٹ_مقرر_کرو" | "définir_test_profondeur" | "tiefentest_setzen" | "задать_тест_глубины" =>
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().depth_test = on;
@@ -3646,7 +3646,7 @@ impl Interpreter {
 
             // set_flat_shade(on) / ตั้งแฟลตเชด — perf test: skip all per-triangle/mesh
             // lighting (compute_lit_color) and draw with the raw pen colour.
-            "set_flat_shade" | "ตั้งแฟลตเชด" | "平面着色" | "フラット着色" | "평면음영" =>
+            "set_flat_shade" | "ตั้งแฟลตเชด" | "平面着色" | "フラット着色" | "평면음영" | "تنظیم_سایه‌پردازی_تخت" | "عيّن_تظليلا_مسطحا" | "קבע_הצללה_שטוחה" | "فلیٹ_شیڈ_مقرر_کرو" =>
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().flat_shade = on;
@@ -3673,7 +3673,7 @@ impl Interpreter {
             // clear_depth() / ล้างความลึก — force the z-buffer to clear on the next
             // flush. `เติม` already does this; call explicitly to start a fresh
             // depth pass mid-frame (e.g. a separate overlay scene).
-            "clear_depth" | "ล้างความลึก" | "清深度" | "深度クリア" | "깊이지우기" =>
+            "clear_depth" | "ล้างความลึก" | "清深度" | "深度クリア" | "깊이지우기" | "پاک‌کردن_عمق" | "امسح_العمق" | "נקה_עומק" | "گہرائی_صاف_کرو" =>
             {
                 self.gfx.borrow_mut().zbuf_needs_clear = true;
                 return Ok(Value::Unit);
@@ -3684,7 +3684,7 @@ impl Interpreter {
             // depth `focus`, blurred up to `radius` px as depth departs by `range`.
             // Background (no geometry) blurs fully. Call AFTER `flush_3d` (so the
             // z-buffer is populated) and BEFORE `present`. Needs `set_depth_test(1)`.
-            "depth_blur" | "เบลอความลึก" | "dof" | "depth_of_field" | "景深" =>
+            "depth_blur" | "เบลอความลึก" | "dof" | "depth_of_field" | "景深" | "تاری_عمق" | "ضبابية_العمق" | "טשטוש_עומק" | "ڈیپتھ_بلر" =>
             {
                 let focus = self.arg_num(&args, 0, 30.0)? as f32;
                 let range = self.arg_num(&args, 1, 60.0)? as f32;
@@ -3716,7 +3716,7 @@ impl Interpreter {
             // the floor at height y — the coloured pool a light throws on the
             // ground (underwater-light look). Smooth transparent edge, distance-
             // fog aware. Colours 0-255; intensity ~0.2-1.5.
-            "light_pool" | "แอ่งแสง" | "光池" | "ライトプール" | "빛웅덩이" =>
+            "light_pool" | "แอ่งแสง" | "光池" | "ライトプール" | "빛웅덩이" | "برکه_نور" | "بركة_ضوء" | "בריכת_אור" | "روشنی_تالاب" | "bassin_lumière" | "lichtpfütze" | "лужа_света" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3736,7 +3736,7 @@ impl Interpreter {
             // volumetric god-ray shaft: a soft additive double-cone from the
             // light position down to the floor plane, spreading to `radius`.
             // Pair with light_pool at the base. Colours 0-255.
-            "light_beam" | "ลำแสงไฟ" | "光柱" | "ライトビーム" | "빛기둥" =>
+            "light_beam" | "ลำแสงไฟ" | "光柱" | "ライトビーム" | "빛기둥" | "پرتو_نور" | "شعاع_ضوء" | "קרן_אור" | "روشنی_شعاع" | "faisceau_lumière" | "lichtstrahl" | "луч_света" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3756,7 +3756,7 @@ impl Interpreter {
             // grad_triangle(x0,y0,r0,g0,b0, x1,y1,r1,g1,b1, x2,y2,r2,g2,b2)
             // Smooth per-vertex gradient triangle — a cheap lit surface: put the
             // bright colour on the vertex facing the light. Honours set_alpha.
-            "grad_triangle" | "สามเหลี่ยมไล่สี" | "渐变三角" | "グラデ三角" | "그라데삼각" =>
+            "grad_triangle" | "สามเหลี่ยมไล่สี" | "渐变三角" | "グラデ三角" | "그라데삼각" | "مثلث_گرادیان" | "مثلث_متدرج" | "משולש_גרדיאנט" | "گریڈینٹ_مثلث" | "triangle_dégradé" | "dreieck_verlauf" | "градиент_треугольник" =>
             {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3811,7 +3811,7 @@ impl Interpreter {
 
             // grad_rect(x,y,w,h, r0,g0,b0, r1,g1,b1, dir) — linear-gradient rect.
             // dir 0 = horizontal (left→right), else vertical (top→bottom).
-            "grad_rect" | "สี่เหลี่ยมไล่สี" | "渐变矩形" | "グラデ矩形" | "그라데사각" =>
+            "grad_rect" | "สี่เหลี่ยมไล่สี" | "渐变矩形" | "グラデ矩形" | "그라데사각" | "مستطیل_گرادیان" | "مستطيل_متدرج" | "מלבן_גרדיאנט" | "گریڈینٹ_مستطیل" | "rectangle_dégradé" | "rechteck_verlauf" | "градиент_прямоугольник" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3859,7 +3859,7 @@ impl Interpreter {
             // shadow_blob(cx,cy, rx,ry, alpha) — soft colored shadow ellipse in
             // the current pen colour. Dark colour = normal shadow; any hue = a
             // tinted/coloured shadow. Edge softness comes from shadow_params.
-            "shadow_blob" | "เงาวงรี" | "阴影斑" | "影ブロブ" | "그림자블롭" =>
+            "shadow_blob" | "เงาวงรี" | "阴影斑" | "影ブロブ" | "그림자블롭" | "لکه_سایه" | "بقعة_ظل" | "כתם_צל" | "سایہ_دھبہ" | "tache_ombre" | "schattenklecks" | "пятно_тени" =>
             {
                 let cx = self.arg_num(&args, 0, 0.0)? as f32;
                 let cy = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3896,7 +3896,7 @@ impl Interpreter {
             // current pen colour. Closer to the surface (small height) = smaller,
             // darker, sharper; farther (large height) = bigger, fainter, softer.
             // Tune the ramp with shadow_params.
-            "cast_shadow" | "ทอดเงา" | "投射阴影" | "影を落とす" | "그림자드리우기" =>
+            "cast_shadow" | "ทอดเงา" | "投射阴影" | "影を落とす" | "그림자드리우기" | "افکندن_سایه" | "ألقِ_ظلا" | "הטל_צל" | "سایہ_ڈالو" | "projeter_ombre" | "schatten_werfen" | "отбросить_тень" =>
             {
                 let cx = self.arg_num(&args, 0, 0.0)? as f32;
                 let cy = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3932,7 +3932,7 @@ impl Interpreter {
 
             // shadow_params(base, grow, alpha, fade, soft) — tune cast_shadow.
             // Each arg defaults to the current value, so you can set just one.
-            "shadow_params" | "ตั้งค่าเงา" | "阴影参数" | "影設定" | "그림자설정" =>
+            "shadow_params" | "ตั้งค่าเงา" | "阴影参数" | "影設定" | "그림자설정" | "پارامترهای_سایه" | "معاملات_الظل" | "פרמטרי_צל" | "سایہ_پیرامیٹرز" | "paramètres_ombre" | "schattenparameter" | "параметры_тени" =>
             {
                 let cur = self.gfx.borrow().shadow;
                 let base = self.arg_num(&args, 0, cur.base as f64)? as f32;
@@ -3949,7 +3949,7 @@ impl Interpreter {
             // the current colour. Drawn back-to-front (painter's algorithm) at
             // present(); larger z = farther away. Lets 2-D sprites/quads sort by
             // depth the same way 3-D faces do.
-            "depth_triangle" | "สามเหลี่ยมเรียงลึก" | "深度三角" | "深度三角形" | "깊이삼각" =>
+            "depth_triangle" | "สามเหลี่ยมเรียงลึก" | "深度三角" | "深度三角形" | "깊이삼각" | "مثلث_عمق" | "مثلث_العمق" | "משולש_עומק" | "گہرائی_مثلث" | "triangle_profondeur" | "tiefendreieck" | "глубина_треугольник" =>
             {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3967,7 +3967,7 @@ impl Interpreter {
 
             // depth_line(x0,y0, x1,y1, z) — queue a depth-sorted line in the
             // current colour (same painter's queue as depth_triangle).
-            "depth_line" | "เส้นเรียงลึก" | "深度线" | "深度線" | "깊이선" =>
+            "depth_line" | "เส้นเรียงลึก" | "深度线" | "深度線" | "깊이선" | "خط_عمق" | "خط_العمق" | "קו_עומק" | "گہرائی_لکیر" | "ligne_profondeur" | "tiefenlinie" | "глубина_линия" =>
             {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
@@ -3986,7 +3986,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // ── เปิดหน้าต่าง(width, height, title) — open_window ──
-            "เปิดหน้าต่าง" | "open_window" | "gfx_window" | "开窗" | "ウィンドウ開く" | "창열기" =>
+            "เปิดหน้าต่าง" | "open_window" | "gfx_window" | "开窗" | "ウィンドウ開く" | "창열기" | "باز_کردن_پنجره" | "افتح_نافذة" | "פתח_חלון" | "ونڈو_کھولو" =>
             {
                 let w = self.arg_num(&args, 0, 800.0)? as usize;
                 let h = self.arg_num(&args, 1, 600.0)? as usize;
@@ -4031,7 +4031,7 @@ impl Interpreter {
 
             // ── เติม(r, g, b) — fill / clear screen with colour ──
             "เติม" | "fill" | "gfx_fill" | "clear" | "填" | "塗り潰し" | "채우기" | "清"
-            | "消去" | "지우기" => {
+            | "消去" | "지우기" | "پر_کن" | "املأ" | "מלא" | "بھرو" => {
                 let r = self.arg_num(&args, 0, 0.0)? as u32;
                 let g = self.arg_num(&args, 1, 0.0)? as u32;
                 let b = self.arg_num(&args, 2, 0.0)? as u32;
@@ -4059,7 +4059,7 @@ impl Interpreter {
 
             // ── set_color_hsl(h, s, l) — set drawing colour from HSL ──
             // h: 0–360 degrees, s: 0–100 saturation, l: 0–100 lightness
-            "set_color_hsl" | "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" =>
+            "set_color_hsl" | "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" | "تنظیم_رنگ_HSL" | "عيّن_اللون_HSL" | "קבע_צבע_HSL" | "HSL_رنگ_مقرر_کرو" | "définir_couleur_hsl" | "farbe_hsl_setzen" | "задать_цвет_hsl" =>
             {
                 let h = self.arg_num(&args, 0, 0.0)?;
                 let s = self.arg_num(&args, 1, 70.0)?;
@@ -4073,7 +4073,7 @@ impl Interpreter {
             },
 
             // ── สีดินสอ(r, g, b) — set drawing colour ──
-            "สีดินสอ" | "set_color" | "gfx_color" | "color" | "设色" | "色設定" | "색설정" =>
+            "สีดินสอ" | "set_color" | "gfx_color" | "color" | "设色" | "色設定" | "색설정" | "تنظیم_رنگ" | "عيّن_اللون" | "קבע_צבע" | "رنگ_مقرر_کرو" =>
             {
                 let r = self.arg_num(&args, 0, 255.0)? as u32;
                 let g = self.arg_num(&args, 1, 255.0)? as u32;
@@ -4089,7 +4089,7 @@ impl Interpreter {
             | "triangle"
             | "画三角"
             | "三角形描画"
-            | "삼각형그리기" => {
+            | "삼각형그리기" | "رسم_مثلث" | "ارسم_مثلثا" | "צייר_משולש" | "مثلث_کھینچو" => {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
                 let x1 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -4111,7 +4111,7 @@ impl Interpreter {
             },
 
             // ── วาดเส้น(x1,y1, x2,y2) — draw line ──
-            "วาดเส้น" | "draw_line" | "gfx_line" | "line" | "画线" | "線描く" | "선그리기" =>
+            "วาดเส้น" | "draw_line" | "gfx_line" | "line" | "画线" | "線描く" | "선그리기" | "رسم_خط" | "ارسم_خط" | "צייר_קו" | "لکیر_کھینچو" =>
             {
                 let x0 = self.arg_num(&args, 0, 0.0)? as f32;
                 let y0 = self.arg_num(&args, 1, 0.0)? as f32;
@@ -4147,7 +4147,7 @@ impl Interpreter {
             },
 
             // ── วาดจุด(x, y) — plot a single pixel ──
-            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" | "画点" | "点描く" | "점그리기" =>
+            "วาดจุด" | "draw_pixel" | "gfx_pixel" | "pixel" | "画点" | "点描く" | "점그리기" | "رسم_نقطه" | "ارسم_نقطة" | "צייר_פיקסל" | "پکسل_کھینچو" =>
             {
                 let px = self.arg_num(&args, 0, 0.0)? as i32;
                 let py = self.arg_num(&args, 1, 0.0)? as i32;
@@ -4177,7 +4177,7 @@ impl Interpreter {
             },
 
             // ── แสดงผล() — flush depth queue, then present frame to screen ──
-            "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" =>
+            "แสดงผล" | "present" | "gfx_present" | "show" | "显" | "呈现" | "表示" | "표시" | "نمایش" | "اعرض" | "הצג" | "دکھاؤ" =>
             {
                 // Click-edge widgets (ui_button etc.) compare THIS frame's
                 // mouse_now() against `mouse_was_down` to detect a fresh
@@ -4437,7 +4437,7 @@ impl Interpreter {
             | "fullscreen"
             | "全屏"
             | "全画面"
-            | "전체화면" => {
+            | "전체화면" | "باز_کردن_تمام‌صفحه" | "افتح_ملء_الشاشة" | "פתח_מסך_מלא" | "فل_سکرین_کھولو" => {
                 // In WASM the canvas defines the viewport; use its current size
                 // as the default so the projection matches what's actually visible.
                 #[cfg(target_arch = "wasm32")]
@@ -4525,21 +4525,21 @@ impl Interpreter {
             },
 
             // ── ความกว้าง() / ความสูง() — current framebuffer size ──
-            "get_width" | "ความกว้าง" | "宽" | "幅取得" | "너비" => {
+            "get_width" | "ความกว้าง" | "宽" | "幅取得" | "너비" | "عرض" | "العرض" | "רוחב" | "چوڑائی" | "obtenir_largeur" | "breite_abrufen" | "получить_ширину" => {
                 return Ok(Value::Number(self.gfx.borrow().width as f64));
             },
-            "get_height" | "ความสูง" | "高" | "高取得" | "높이" => {
+            "get_height" | "ความสูง" | "高" | "高取得" | "높이" | "ارتفاع" | "الارتفاع" | "גובה" | "اونچائی" | "obtenir_hauteur" | "höhe_abrufen" | "получить_высоту" => {
                 return Ok(Value::Number(self.gfx.borrow().height as f64));
             },
 
             // ── monitor detection: physical display, not the framebuffer ──────
             // monitor_width() → primary-monitor pixel width
-            "monitor_width" | "screen_width" | "屏宽" | "画面幅" | "화면너비" | "ความกว้างจอ" =>
+            "monitor_width" | "screen_width" | "屏宽" | "画面幅" | "화면너비" | "ความกว้างจอ" | "عرض_مانیتور" | "عرض_الشاشة" | "רוחב_צג" | "مانیٹر_چوڑائی" | "largeur_moniteur" | "monitor_breite" | "ширина_монитора" =>
             {
                 return Ok(Value::Number(monitor_info().0 as f64));
             },
             // monitor_height() → primary-monitor pixel height
-            "monitor_height" | "screen_height" | "屏高" | "画面高" | "화면높이" | "ความสูงจอ" =>
+            "monitor_height" | "screen_height" | "屏高" | "画面高" | "화면높이" | "ความสูงจอ" | "ارتفاع_مانیتور" | "ارتفاع_الشاشة" | "גובה_צג" | "مانیٹر_اونچائی" | "hauteur_moniteur" | "monitor_höhe" | "высота_монитора" =>
             {
                 return Ok(Value::Number(monitor_info().1 as f64));
             },
@@ -4551,11 +4551,11 @@ impl Interpreter {
             | "刷新率"
             | "リフレッシュレート"
             | "주사율"
-            | "อัตรารีเฟรช" => {
+            | "อัตรารีเฟรช" | "نرخ_بروزرسانی_مانیتور" | "معدل_تحديث_الشاشة" | "קצב_רענון_צג" | "مانیٹر_ریفریش_ریٹ" | "fréquence_moniteur" | "monitor_bildwiederholrate" | "частота_монитора" => {
                 return Ok(Value::Number(monitor_info().2 as f64));
             },
             // monitor_info() → [width, height, refresh_hz]
-            "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" =>
+            "monitor_info" | "screen_info" | "屏幕信息" | "画面情報" | "화면정보" | "ข้อมูลจอ" | "اطلاعات_مانیتور" | "معلومات_الشاشة" | "מידע_צג" | "مانیٹر_معلومات" | "info_moniteur" | "bildschirminfo" | "инфо_монитора" =>
             {
                 let (w, h, hz) = monitor_info();
                 return Ok(Value::List(Rc::new(vec![
@@ -4571,7 +4571,7 @@ impl Interpreter {
             | "设帧率"
             | "フレームレート設定"
             | "프레임설정"
-            | "ตั้งเฟรมเรต" => {
+            | "ตั้งเฟรมเรต" | "تنظیم_نرخ_فریم" | "عيّن_معدل_الإطارات" | "קבע_קצב_פריימים" | "ایف_پی_ایس_مقرر_کرو" | "définir_fps" | "fps_setzen" | "задать_fps" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let fps = self.arg_num(&args, 0, 60.0)?.max(1.0) as usize;
@@ -4591,7 +4591,7 @@ impl Interpreter {
             // set_vsync(on) → pace the window to the monitor's refresh rate.
             // Frame-rate pacing (minifb has no swap-interval), not tear-free
             // vsync; `LING_FPS_CAP` and an explicit `set_fps` call still win.
-            "set_vsync" | "vsync" | "垂直同步" | "垂直同期" | "수직동기" | "ตั้งวีซิงก์" =>
+            "set_vsync" | "vsync" | "垂直同步" | "垂直同期" | "수직동기" | "ตั้งวีซิงก์" | "تنظیم_وی‌سینک" | "عيّن_تزامن_رأسي" | "קבע_וי_סינק" | "وی_سینک_مقرر_کرو" | "définir_vsync" | "vsync_setzen" | "задать_vsync" =>
             {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 #[cfg(not(target_arch = "wasm32"))]
@@ -4617,7 +4617,7 @@ impl Interpreter {
             | "is_open"
             | "窗开"
             | "開いている"
-            | "창열림" => {
+            | "창열림" | "پنجره_باز_است" | "النافذة_مفتوحة" | "החלון_פתוח" | "ونڈو_کھلی_ہے" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let gfx = self.gfx.borrow();
@@ -4663,7 +4663,7 @@ impl Interpreter {
             },
 
             // ── key_down(name) → bool — is a key held? ──
-            "key_down" | "กดค้าง" | "按键" | "キー押す" | "키누름" => {
+            "key_down" | "กดค้าง" | "按键" | "キー押す" | "키누름" | "کلید_فشرده" | "المفتاح_مضغوط" | "מקש_לחוץ" | "بٹن_دبا_ہوا" | "touche_enfoncée" | "taste_gedrückt" | "клавиша_нажата" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
@@ -4702,7 +4702,7 @@ impl Interpreter {
             },
 
             // ── key_pressed(name) → bool — was a key pressed this frame? ──
-            "key_pressed" | "กดปุ่ม" | "键按" | "キー押した" | "키눌림" => {
+            "key_pressed" | "กดปุ่ม" | "键按" | "キー押した" | "키눌림" | "فشردن_کلید" | "ضغط_المفتاح" | "לחיצת_מקש" | "بٹن_دبانا" | "touche_appuyée" | "taste_getippt" | "клавиша_нажатие" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let name = self.arg_str(&args, 0, "");
@@ -4760,7 +4760,7 @@ impl Interpreter {
             },
 
             // ── mouse_dx() / mouse_dy() → f64 — delta since last frame ──
-            "mouse_dx" | "เมาส์X" | "鼠ΔX" | "マウスΔX" | "마우스ΔX" => {
+            "mouse_dx" | "เมาส์X" | "鼠ΔX" | "マウスΔX" | "마우스ΔX" | "دلتا_ماوس_ایکس" | "فارق_الفأرة_س" | "דלתא_עכבר_X" | "ماؤس_ڈیلٹا_ایکس" | "souris_dx" | "maus_dx" | "мышь_dx" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
                 #[cfg(target_arch = "wasm32")]
@@ -4768,7 +4768,7 @@ impl Interpreter {
             },
             // ── mouse_scroll() → f64 — vertical scroll-wheel delta this frame ──
             #[cfg(not(target_arch = "wasm32"))]
-            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" =>
+            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" | "غلتک_ماوس" | "عجلة_الفأرة" | "גלגלת_עכבר" | "ماؤس_اسکرول" =>
             {
                 let gfx = self.gfx.borrow();
                 let s = gfx
@@ -4780,11 +4780,11 @@ impl Interpreter {
                 return Ok(Value::Number(s));
             },
             #[cfg(target_arch = "wasm32")]
-            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" =>
+            "mouse_scroll" | "ล้อเมาส์" | "滚轮" | "ホイール" | "스크롤" | "غلتک_ماوس" | "عجلة_الفأرة" | "גלגלת_עכבר" | "ماؤس_اسکرول" =>
             {
                 return Ok(Value::Number(0.0));
             },
-            "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" => {
+            "mouse_dy" | "เมาส์Y" | "鼠ΔY" | "マウスΔY" | "마우스ΔY" | "دلتا_ماوس_ایگرگ" | "فارق_الفأرة_ص" | "דלתא_עכבר_Y" | "ماؤس_ڈیلٹا_وائی" | "souris_dy" | "maus_dy" | "мышь_dy" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.gfx.borrow().mouse_dy as f64));
                 #[cfg(target_arch = "wasm32")]
@@ -4793,7 +4793,7 @@ impl Interpreter {
 
             // ── Gamepad / joystick input (ling-input "Sensorium" + gilrs) ──
             // pad_poll() → number — advance input one frame; returns # connected pads.
-            "pad_poll" | "手柄轮询" | "パッド更新" | "패드폴링" | "อัปเดตแพด" =>
+            "pad_poll" | "手柄轮询" | "パッド更新" | "패드폴링" | "อัปเดตแพด" | "بررسی_دسته" | "استطلع_اليد" | "בדוק_בקר" | "گیم_پیڈ_پول" | "interroger_manette" | "gamepad_abfragen" | "опросить_геймпад" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 return Ok(Value::Number(self.pad_poll() as f64));
@@ -4801,7 +4801,7 @@ impl Interpreter {
                 return Ok(Value::Number(input_web::poll() as f64));
             },
             // pad_count() → number — connected gamepads.
-            "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" =>
+            "pad_count" | "手柄数" | "パッド数" | "패드수" | "จำนวนแพด" | "تعداد_دسته" | "عدد_أيدي_التحكم" | "מספר_בקרים" | "گیم_پیڈ_تعداد" | "nombre_manettes" | "gamepad_anzahl" | "число_геймпадов" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4813,7 +4813,7 @@ impl Interpreter {
                 return Ok(Value::Number(input_web::count() as f64));
             },
             // pad_connected(i) → bool.
-            "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" =>
+            "pad_connected" | "手柄连接" | "パッド接続" | "패드연결" | "แพดเชื่อม" | "دسته_متصل" | "يد_التحكم_متصلة" | "בקר_מחובר" | "گیم_پیڈ_منسلک" | "manette_connectée" | "gamepad_verbunden" | "геймпад_подключён" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4831,7 +4831,7 @@ impl Interpreter {
                 }
             },
             // pad_button(i, name) → bool — is the button held?
-            "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" =>
+            "pad_button" | "手柄按键" | "パッドボタン" | "패드버튼" | "ปุ่มแพด" | "دکمه_دسته" | "زر_اليد" | "כפתור_בקר" | "گیم_پیڈ_بٹن" | "bouton_manette" | "gamepad_taste" | "кнопка_геймпада" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4850,7 +4850,7 @@ impl Interpreter {
             },
             // pad_pressed(i, name) → bool — pressed this frame?
             // On WASM we only have the current snapshot, so treat as button_down.
-            "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" =>
+            "pad_pressed" | "手柄按下" | "パッド押下" | "패드눌림" | "แพดกด" | "دکمه_دسته_فشرده" | "زر_اليد_مضغوط" | "כפתור_בקר_לחוץ" | "گیم_پیڈ_دبایا" | "manette_appuyée" | "gamepad_gedrückt" | "геймпад_нажат" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4868,7 +4868,7 @@ impl Interpreter {
                 }
             },
             // pad_lx(i)/pad_ly(i)/pad_rx(i)/pad_ry(i) → number — stick axes (−1..=1).
-            "pad_lx" | "手柄左X" | "パッド左X" | "패드왼X" | "แพดซ้ายX" => {
+            "pad_lx" | "手柄左X" | "パッド左X" | "패드왼X" | "แพดซ้ายX" | "آنالوگ_چپ_ایکس" | "عصا_اليسرى_س" | "ג'ויסטיק_שמאל_X" | "بائیں_اسٹک_ایکس" | "manette_axe_gauche_x" | "gamepad_lx" | "геймпад_ось_лево_x" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -4882,7 +4882,7 @@ impl Interpreter {
                     return Ok(Value::Number(input_web::axis_lx(i) as f64));
                 }
             },
-            "pad_ly" | "手柄左Y" | "パッド左Y" | "패드왼Y" | "แพดซ้ายY" => {
+            "pad_ly" | "手柄左Y" | "パッド左Y" | "패드왼Y" | "แพดซ้ายY" | "آنالوگ_چپ_ایگرگ" | "عصا_اليسرى_ص" | "ג'ויסטיק_שמאל_Y" | "بائیں_اسٹک_وائی" | "manette_axe_gauche_y" | "gamepad_ly" | "геймпад_ось_лево_y" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -4896,7 +4896,7 @@ impl Interpreter {
                     return Ok(Value::Number(input_web::axis_ly(i) as f64));
                 }
             },
-            "pad_rx" | "手柄右X" | "パッド右X" | "패드오X" | "แพดขวาX" => {
+            "pad_rx" | "手柄右X" | "パッド右X" | "패드오X" | "แพดขวาX" | "آنالوگ_راست_ایکس" | "عصا_اليمنى_س" | "ג'ויסטיק_ימין_X" | "دائیں_اسٹک_ایکس" | "manette_axe_droit_x" | "gamepad_rx" | "геймпад_ось_право_x" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -4910,7 +4910,7 @@ impl Interpreter {
                     return Ok(Value::Number(input_web::axis_rx(i) as f64));
                 }
             },
-            "pad_ry" | "手柄右Y" | "パッド右Y" | "패드오Y" | "แพดขวาY" => {
+            "pad_ry" | "手柄右Y" | "パッド右Y" | "패드오Y" | "แพดขวาY" | "آنالوگ_راست_ایگرگ" | "عصا_اليمنى_ص" | "ג'ויסטיק_ימין_Y" | "دائیں_اسٹک_وائی" | "manette_axe_droit_y" | "gamepad_ry" | "геймпад_ось_право_y" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     let i = self.arg_num(&args, 0, 0.0)? as usize;
@@ -4925,7 +4925,7 @@ impl Interpreter {
                 }
             },
             // pad_lt(i)/pad_rt(i) → number — analog triggers (0..=1).
-            "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" =>
+            "pad_lt" | "手柄左扳机" | "パッド左トリガー" | "패드왼트리거" | "ไกแพดซ้าย" | "ماشه_چپ" | "زناد_اليسار" | "הדק_שמאל" | "بائیں_ٹریگر" | "manette_gâchette_gauche" | "gamepad_lt" | "геймпад_триггер_лево" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4940,7 +4940,7 @@ impl Interpreter {
                     return Ok(Value::Number(input_web::trigger_lt(i) as f64));
                 }
             },
-            "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" =>
+            "pad_rt" | "手柄右扳机" | "パッド右トリガー" | "패드오트리거" | "ไกแพดขวา" | "ماشه_راست" | "زناد_اليمين" | "הדק_ימין" | "دائیں_ٹریگر" | "manette_gâchette_droite" | "gamepad_rt" | "геймпад_триггер_право" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4956,7 +4956,7 @@ impl Interpreter {
                 }
             },
             // pad_rumble(i, lo, hi) → unit — set rumble motor amplitudes (0..=1).
-            "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" =>
+            "pad_rumble" | "手柄震动" | "パッド振動" | "패드진동" | "แพดสั่น" | "لرزش_دسته" | "اهتزاز_اليد" | "רטט_בקר" | "گیم_پیڈ_تھرتھراہٹ" | "vibration_manette" | "gamepad_vibration" | "вибрация_геймпада" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -4980,7 +4980,7 @@ impl Interpreter {
             },
 
             // ── set_camera_pos(x, y, z) — move camera to world position ──
-            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" =>
+            "set_camera_pos" | "ตั้งตำแหน่งกล้อง" | "镜坐标" | "カメラ座標" | "카메라좌표" | "تنظیم_موقعیت_دوربین" | "عيّن_موضع_الكاميرا" | "קבע_מיקום_מצלמה" | "کیمرہ_مقام_مقرر_کرو" | "définir_position_caméra" | "kameraposition_setzen" | "задать_позицию_камеры" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -5011,7 +5011,7 @@ impl Interpreter {
             },
 
             // ── set_zdist(d) — set perspective z-offset (field-of-view taper) ──
-            "set_zdist" | "ตั้งระยะห่าง" | "镜距" | "Z距離設定" | "Z거리설정" =>
+            "set_zdist" | "ตั้งระยะห่าง" | "镜距" | "Z距離設定" | "Z거리설정" | "تنظیم_فاصله_عمق" | "عيّن_مسافة_العمق" | "קבע_מרחק_עומק" | "گہرائی_فاصلہ_مقرر_کرو" | "définir_distance_z" | "z_abstand_setzen" | "задать_дистанцию_z" =>
             {
                 let d = self.arg_num(&args, 0, 5.0)? as f32;
                 self.gfx.borrow_mut().camera.zdist = d;
@@ -5019,7 +5019,7 @@ impl Interpreter {
             },
 
             // ── capture_mouse() — hide cursor and warp to centre each frame ──
-            "capture_mouse" | "จับเมาส์" | "捕鼠" | "マウス捕捉" | "마우스잡기" =>
+            "capture_mouse" | "จับเมาส์" | "捕鼠" | "マウス捕捉" | "마우스잡기" | "ضبط_ماوس" | "امسك_الفأرة" | "לכוד_עכבר" | "ماؤس_پکڑو" | "capturer_souris" | "maus_erfassen" | "захватить_мышь" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -5081,7 +5081,7 @@ impl Interpreter {
 
             // ── set_camera(cry, sry, crx, srx) — store precomputed camera trig ──
             // Call once per frame after computing cos/sin of your rotation angles.
-            "set_camera" | "ตั้งกล้อง" | "设镜" | "设置摄像机" | "カメラ設定" | "카메라설정" =>
+            "set_camera" | "ตั้งกล้อง" | "设镜" | "设置摄像机" | "カメラ設定" | "카메라설정" | "تنظیم_دوربین" | "عيّن_الكاميرا" | "קבע_מצלמה" | "کیمرہ_مقرر_کرو" | "définir_caméra" | "kamera_setzen" | "задать_камеру" =>
             {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
@@ -5097,7 +5097,7 @@ impl Interpreter {
 
             // ── set_projection(cx, cy, focal, zdist) — override projection params ──
             // Automatically set when the window opens; override only if needed.
-            "set_projection" | "ตั้งโปรเจกชัน" | "投影" | "投影設定" | "투영설정" =>
+            "set_projection" | "ตั้งโปรเจกชัน" | "投影" | "投影設定" | "투영설정" | "تنظیم_فرافکنی" | "عيّن_الإسقاط" | "קבע_הטלה" | "پروجیکشن_مقرر_کرو" | "définir_projection" | "projektion_setzen" | "задать_проекцию" =>
             {
                 let cx = self.arg_num(&args, 0, 960.0)? as f32;
                 let cy = self.arg_num(&args, 1, 540.0)? as f32;
@@ -5433,7 +5433,7 @@ impl Interpreter {
             //   Vertices are batch-projected via ling-gpu (CPU fallback, or CUDA when the
             //   `cuda` feature is on); the per-triangle loop runs natively (not in the
             //   interpreter) so dense meshes (imported glTF, grids) stay fast.
-            "draw_mesh" | "วาดเมช" => {
+            "draw_mesh" | "วาดเมช" | "رسم_مش" | "ارسم_شبكة" | "צייר_רשת" | "میش_کھینچو" | "dessiner_maillage" | "netz_zeichnen" | "рисовать_меш" => {
                 let pos = match args.first() {
                     Some(Value::List(v)) => v,
                     _ => return Ok(Value::Unit),
@@ -5547,7 +5547,7 @@ impl Interpreter {
             // ── add_light(x, y, z, r, g, b, intensity, radius) ──
             // Adds a point light in world space.  r/g/b in [0..1].
             // radius == 0 → no distance falloff.
-            "add_light" | "เพิ่มแสง" | "加灯" | "ライト追加" | "조명추가" =>
+            "add_light" | "เพิ่มแสง" | "加灯" | "ライト追加" | "조명추가" | "افزودن_نور" | "أضف_ضوء" | "הוסף_אור" | "روشنی_شامل_کرو" | "ajouter_lumière" | "licht_hinzufügen" | "добавить_свет" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, -3.0)? as f32;
@@ -5572,7 +5572,7 @@ impl Interpreter {
             },
 
             // ── clear_lights() — remove all lights ──
-            "clear_lights" | "ล้างแสง" | "清灯" | "ライト消去" | "조명초기화" =>
+            "clear_lights" | "ล้างแสง" | "清灯" | "ライト消去" | "조명초기화" | "پاک‌کردن_نورها" | "امسح_الأضواء" | "נקה_אורות" | "روشنیاں_صاف_کرو" | "effacer_lumières" | "lichter_löschen" | "очистить_свет" =>
             {
                 self.gfx.borrow_mut().lights.clear();
                 return Ok(Value::Unit);
@@ -5587,7 +5587,7 @@ impl Interpreter {
             //   "anisotropy_angle" "toon_bands" "shadow_softness"
             //   "outline_px" "outline_color" "highlight_color"
             // Value: number (or packed 0xRRGGBB for colour fields)
-            "set_material" | "ตั้งวัสดุ" | "设置材质" | "マテリアル設定" | "재질설정" =>
+            "set_material" | "ตั้งวัสดุ" | "设置材质" | "マテリアル設定" | "재질설정" | "تنظیم_متریال" | "عيّن_المادة" | "קבע_חומר" | "میٹریل_مقرر_کرو" =>
             {
                 let key = self.arg_str(&args, 0, "");
                 let val = self.arg_num(&args, 1, 0.0)?;
@@ -5625,7 +5625,7 @@ impl Interpreter {
 
             // ── reset_material() — disable material override ──
             // After this call, draws use the legacy compute_lit_color_linear path.
-            "reset_material" | "รีเซ็ตวัสดุ" | "重置材质" | "マテリアルリセット" | "재질초기화" =>
+            "reset_material" | "รีเซ็ตวัสดุ" | "重置材质" | "マテリアルリセット" | "재질초기화" | "بازنشانی_متریال" | "أعد_ضبط_المادة" | "אפס_חומר" | "میٹریل_ری_سیٹ" =>
             {
                 self.gfx.borrow_mut().material = None;
                 return Ok(Value::Unit);
@@ -5640,7 +5640,7 @@ impl Interpreter {
             | "ตั้งเส้นขอบการ์ตูน"
             | "卡通轮廓"
             | "トゥーンアウトライン"
-            | "툰아웃라인" => {
+            | "툰아웃라인" | "خطوط_کارتونی" | "حدود_كرتونية" | "קווי_מתאר_מצוירים" | "ٹون_آؤٹ_لائنز" => {
                 let px = self.arg_num(&args, 0, 0.0)? as f32;
                 let color = self.arg_num(&args, 1, 0.0)? as u32;
                 let thresh = self.arg_num(&args, 2, 0.05)? as f32;
@@ -5656,7 +5656,7 @@ impl Interpreter {
             //   t      — input luminance position [0..1]
             //   value  — output brightness [0..1]
             // Stops are automatically sorted; call tone_ramp_reset() first to clear.
-            "tone_stop" | "ตั้งจุดโทน" | "色调停止" | "トーンストップ" | "톤스톱" =>
+            "tone_stop" | "ตั้งจุดโทน" | "色调停止" | "トーンストップ" | "톤스톱" | "نقطه_توقف_تن_رنگ" | "نقطة_توقف_اللون" | "נקודת_עצירת_גוון" | "ٹون_اسٹاپ" =>
             {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let val = self.arg_num(&args, 1, 1.0)? as f32;
@@ -5674,7 +5674,7 @@ impl Interpreter {
 
             // ── tone_smooth(enabled) ──
             // 0 = hard cel snap between stops (default); 1 = smooth gradient lerp.
-            "tone_smooth" | "ตั้งโทนนุ่ม" | "色调平滑" | "トーンスムーズ" | "톤스무스" =>
+            "tone_smooth" | "ตั้งโทนนุ่ม" | "色调平滑" | "トーンスムーズ" | "톤스무스" | "تن_رنگ_نرم" | "تدرج_لون_ناعم" | "גוון_חלק" | "ٹون_ہموار" =>
             {
                 let v = self.arg_num(&args, 0, 0.0)? as f32;
                 self.gfx.borrow_mut().toon.ramp.smooth = v > 0.5;
@@ -5688,7 +5688,7 @@ impl Interpreter {
             //   tone_bezier(1, 1)            → ease-out (highlight-heavy)
             //   tone_bezier(0.1, 0.9)        → S-curve (smooth both ends)
             //   tone_bezier_off()            → disable (back to linear)
-            "tone_bezier" | "ตั้งโทนเบซิเยร์" | "色调贝塞尔" | "トーンベジェ" | "톤베지어" =>
+            "tone_bezier" | "ตั้งโทนเบซิเยร์" | "色调贝塞尔" | "トーンベジェ" | "톤베지어" | "تن_رنگ_بزیه" | "تدرج_لون_بيزيه" | "גוון_בזייה" | "بیزیئر_ٹون" =>
             {
                 let y1 = self.arg_num(&args, 0, 1.0 / 3.0)? as f32;
                 let y2 = self.arg_num(&args, 1, 2.0 / 3.0)? as f32;
@@ -5701,7 +5701,7 @@ impl Interpreter {
             | "ปิดโทนเบซิเยร์"
             | "关闭色调贝塞尔"
             | "トーンベジェオフ"
-            | "톤베지어끄기" => {
+            | "톤베지어끄기" | "خاموش‌کردن_بزیه" | "إيقاف_تدرج_بيزيه" | "כבה_גוון_בזייה" | "بیزیئر_ٹون_بند" => {
                 self.gfx.borrow_mut().toon.ramp.bezier = None;
                 return Ok(Value::Unit);
             },
@@ -5711,7 +5711,7 @@ impl Interpreter {
             | "รีเซ็ตการไล่โทน"
             | "重置色调渐变"
             | "トーンランプリセット"
-            | "톤램프리셋" => {
+            | "톤램프리셋" | "بازنشانی_شیب_تن_رنگ" | "أعد_ضبط_تدرج_اللون" | "אפס_שיפוע_גוון" | "ٹون_ریمپ_ری_سیٹ" => {
                 self.gfx.borrow_mut().toon.ramp = crate::gfx::toon::ToneRamp::default();
                 return Ok(Value::Unit);
             },
@@ -5721,7 +5721,7 @@ impl Interpreter {
             | "ล้างการไล่โทน"
             | "清除色调渐变"
             | "トーンランプクリア"
-            | "톤램프클리어" => {
+            | "톤램프클리어" | "پاک‌کردن_شیب_تن_رنگ" | "امسح_تدرج_اللون" | "נקה_שיפוע_גוון" | "ٹون_ریمپ_صاف" => {
                 self.gfx.borrow_mut().toon.ramp.stops.clear();
                 return Ok(Value::Unit);
             },
@@ -5733,7 +5733,7 @@ impl Interpreter {
             //   sheen [0..1] — bright pixels keep their smooth gradient instead
             //                  of being quantised (clean specular/rim sheen
             //                  rather than scratchy banded highlights). 0.65.
-            "tone_soft" | "โทนขอบนุ่ม" | "色调柔边" | "トーンソフト" | "톤소프트" => {
+            "tone_soft" | "โทนขอบนุ่ม" | "色调柔边" | "トーンソフト" | "톤소프트" | "تن_رنگ_لبه‌نرم" | "تدرج_ناعم_الحواف" | "גוון_קצה_רך" | "نرم_کنارہ_ٹون" | "tonalité_douce" | "weicher_ton" | "мягкий_тон" => {
                 let s = self.arg_num(&args, 0, 0.32)? as f32;
                 let sh = self.arg_num(&args, 1, 0.65)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
@@ -5747,7 +5747,7 @@ impl Interpreter {
             // objects, computed half-res + smoothed (no grain). Needs
             // set_depth_test(1). strength 0 disables. Defaults (0.35, 6, 12).
             "set_ssao" | "ตั้งเงาสัมผัส" | "环境光遮蔽" | "アンビエントオクルージョン"
-            | "앰비언트오클루전" => {
+            | "앰비언트오클루전" | "تنظیم_انسداد_محیطی" | "عيّن_تظليل_محيطي" | "קבע_הצללה_סביבתית" | "ایس_ایس_اے_او_مقرر_کرو" | "définir_ssao" | "ssao_setzen" | "задать_ssao" => {
                 let s = self.arg_num(&args, 0, 0.35)? as f32;
                 let r = self.arg_num(&args, 1, 6.0)? as f32;
                 let z = self.arg_num(&args, 2, 12.0)? as f32;
@@ -5763,7 +5763,7 @@ impl Interpreter {
             // frame; flat fills are untouched. Applied last in the present
             // post-chain. (set_antialias smooths wireframe STROKES; this pass
             // smooths the composited IMAGE.)
-            "set_fxaa" | "ลบรอยหยัก" | "屏幕抗锯齿" | "画面アンチエイリアス" | "화면안티앨리어싱" => {
+            "set_fxaa" | "ลบรอยหยัก" | "屏幕抗锯齿" | "画面アンチエイリアス" | "화면안티앨리어싱" | "تنظیم_ضدلبه‌دندانه_سریع" | "عيّن_مضاد_التسنن_السريع" | "קבע_החלקת_מסך" | "ایف_ایکس_اے_اے_مقرر_کرو" | "définir_fxaa" | "fxaa_setzen" | "задать_fxaa" => {
                 let on = self.arg_num(&args, 0, 1.0)? as i64 != 0;
                 self.gfx.borrow_mut().toon.fxaa = on;
                 return Ok(Value::Unit);
@@ -5773,7 +5773,7 @@ impl Interpreter {
             // Bright pixels (rim sheen, emissive, additive FX) bleed a soft
             // quarter-res glow — the "HDR material" feel for toon/vector art.
             // strength 0 disables; threshold = luminance cutoff [0..1].
-            "set_bloom" | "ตั้งบลูม" | "泛光" | "ブルーム" | "블룸" => {
+            "set_bloom" | "ตั้งบลูม" | "泛光" | "ブルーム" | "블룸" | "تنظیم_درخشش" | "عيّن_التوهج" | "קבע_זוהר" | "بلوم_مقرر_کرو" | "définir_bloom" | "bloom_setzen" | "задать_блум" => {
                 let s = self.arg_num(&args, 0, 0.45)? as f32;
                 let t = self.arg_num(&args, 1, 0.74)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
@@ -5784,7 +5784,7 @@ impl Interpreter {
 
             // ── shadow_smooth(softness) [compat] → tone_smooth + tone_bezier ──
             // Deprecated: use tone_smooth + tone_bezier instead.
-            "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" =>
+            "shadow_smooth" | "ตั้งเงานุ่ม" | "柔化阴影" | "影ソフト" | "그림자부드럽게" | "سایه_نرم" | "ظل_ناعم" | "צל_חלק" | "نرم_سایہ" =>
             {
                 let s = self.arg_num(&args, 0, 0.0)? as f32;
                 let mut gfx = self.gfx.borrow_mut();
@@ -5804,7 +5804,7 @@ impl Interpreter {
             | "ตั้งไฮไลท์การ์ตูน"
             | "卡通高光"
             | "トゥーンハイライト"
-            | "툰하이라이트" => {
+            | "툰하이라이트" | "هایلایت_کارتونی" | "إبراز_كرتوني" | "הדגשה_מצוירת" | "ٹون_ہائی_لائٹ" => {
                 // Remap as a lit-band brightness boost: adds a stop near the highlight threshold.
                 let _strength = self.arg_num(&args, 0, 0.0)? as f32;
                 let _thresh = self.arg_num(&args, 2, 0.78)? as f32;
@@ -5813,7 +5813,7 @@ impl Interpreter {
             },
 
             // ── set_ambient(v) — ambient light level [0..1] ──
-            "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" =>
+            "set_ambient" | "ตั้งแสงรอบข้าง" | "环境光" | "環境光設定" | "환경광설정" | "تنظیم_نور_محیطی" | "عيّن_الإضاءة_المحيطة" | "קבע_תאורה_סביבתית" | "ماحولیاتی_روشنی_مقرر_کرو" | "définir_ambiante" | "umgebungslicht_setzen" | "задать_фон" =>
             {
                 let v = self.arg_num(&args, 0, 0.15)? as f32;
                 self.gfx.borrow_mut().ambient = v;
@@ -5822,7 +5822,7 @@ impl Interpreter {
 
             // ── set_fog(r,g,b, start, end) — distance fog toward (r,g,b).
             //    triangles/lines fade from `start`..`end` camera depth. end<=0 = off.
-            "set_fog" | "ตั้งหมอก" | "雾" | "霧設定" | "안개설정" => {
+            "set_fog" | "ตั้งหมอก" | "雾" | "霧設定" | "안개설정" | "تنظیم_مه" | "عيّن_الضباب" | "קבע_ערפל" | "دھند_مقرر_کرو" => {
                 let r = self.arg_num(&args, 0, 0.0)?.clamp(0.0, 255.0) as u32;
                 let g = self.arg_num(&args, 1, 0.0)?.clamp(0.0, 255.0) as u32;
                 let b = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 255.0) as u32;
@@ -5838,7 +5838,7 @@ impl Interpreter {
             // ── วาดสามเหลี่ยม3มิติ(ax,ay,az, bx,by,bz, cx,cy,cz) ──
             // Computes lighting from world-space normal + active lights (cel shading),
             // projects via the stored camera, and pushes to the depth queue.
-            "วาดสามเหลี่ยม3มิติ" | "draw_triangle_3d" | "triangle3d" =>
+            "วาดสามเหลี่ยม3มิติ" | "draw_triangle_3d" | "triangle3d" | "رسم_مثلث_سه‌بعدی" | "ارسم_مثلثا_ثلاثي_الأبعاد" | "צייר_משולש_תלת_ממדי" | "تھری_ڈی_مثلث_کھینچو" =>
             {
                 let ax = self.arg_num(&args, 0, 0.0)? as f32;
                 let ay = self.arg_num(&args, 1, 0.0)? as f32;
@@ -5867,20 +5867,20 @@ impl Interpreter {
             },
 
             // ── เริ่มอบเมช() — begin capturing 3-D triangles into a display list ──
-            "เริ่มอบเมช" | "mesh_bake_begin" => {
+            "เริ่มอบเมช" | "mesh_bake_begin" | "شروع_پخت_مش" | "ابدأ_خبز_الشبكة" | "התחל_אפיית_רשת" | "میش_بیک_شروع" => {
                 self.gfx.borrow_mut().mesh_capture = Some(Vec::new());
                 return Ok(Value::Unit);
             },
 
             // ── เมชแคชรับ(key) — keyed display-list cache lookup (-1 = miss) ──
-            "เมชแคชรับ" | "mesh_cache_get" => {
+            "เมชแคชรับ" | "mesh_cache_get" | "دریافت_کش_مش" | "اجلب_مخبأ_الشبكة" | "קבל_מטמון_רשת" | "میش_کیش_حاصل_کرو" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
                 let h = self.gfx.borrow().mesh_cache.get(&key).copied();
                 return Ok(Value::Number(h.map(|x| x as f64).unwrap_or(-1.0)));
             },
 
             // ── เมชแคชตั้ง(key, handle) — store a baked mesh under key (bounded) ──
-            "เมชแคชตั้ง" | "mesh_cache_put" => {
+            "เมชแคชตั้ง" | "mesh_cache_put" | "ذخیره_در_کش_مش" | "ضع_في_مخبأ_الشبكة" | "שמור_במטמון_רשת" | "میش_کیش_رکھو" => {
                 let key = self.arg_num(&args, 0, 0.0)? as i64;
                 let h = self.arg_num(&args, 1, 0.0)? as usize;
                 let mut gfx = self.gfx.borrow_mut();
@@ -5900,7 +5900,7 @@ impl Interpreter {
             },
 
             // ── เมชแคชล้าง() — drop the keyed cache (e.g. on level change) ──
-            "เมชแคชล้าง" | "mesh_cache_clear" => {
+            "เมชแคชล้าง" | "mesh_cache_clear" | "پاک‌کردن_کش_مش" | "امسح_مخبأ_الشبكة" | "נקה_מטמון_רשת" | "میش_کیش_صاف" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let evict: Vec<usize> = gfx.mesh_cache.values().copied().collect();
                 gfx.mesh_cache.clear();
@@ -5914,7 +5914,7 @@ impl Interpreter {
             },
 
             // ── จบอบเมช() — bake captured triangles, return mesh handle ──
-            "จบอบเมช" | "mesh_bake_end" => {
+            "จบอบเมช" | "mesh_bake_end" | "پایان_پخت_مش" | "أنهِ_خبز_الشبكة" | "סיים_אפיית_רשת" | "میش_بیک_ختم" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let tris = gfx.mesh_capture.take().unwrap_or_default();
                 let id = gfx.mesh_register(tris);
@@ -5924,7 +5924,7 @@ impl Interpreter {
             // ── วาดอบเมช[สี](id, ox,oy,oz, rx,ry,rz, ux,uy,uz, s) — draw a baked mesh ──
             //   วาดอบเมช: current pen colour (tinted glyphs)
             //   วาดอบเมชสี: per-triangle baked colour (multi-colour models)
-            "วาดอบเมช" | "mesh_bake_draw" | "วาดอบเมชสี" | "mesh_bake_draw_col" =>
+            "วาดอบเมช" | "mesh_bake_draw" | "วาดอบเมชสี" | "mesh_bake_draw_col" | "رسم_مش_پخته" | "ارسم_شبكة_مخبوزة" | "צייר_רשת_אפויה" | "بیکڈ_میش_کھینچو" =>
             {
                 let baked_col = matches!(name, "วาดอบเมชสี" | "mesh_bake_draw_col");
                 let id = self.arg_num(&args, 0, 0.0)? as usize;
@@ -5958,7 +5958,7 @@ impl Interpreter {
             | "วาดหกเหลี่ยม3มิติ"
             | "draw_polygon_3d"
             | "polygon3d"
-            | "วาดรูปหลายเหลี่ยม3มิติ" => {
+            | "วาดรูปหลายเหลี่ยม3มิติ" | "رسم_چهارضلعی_سه‌بعدی" | "ارسم_رباعيا_ثلاثي_الأبعاد" | "צייר_מרובע_תלת_ממדי" | "تھری_ڈی_چوکور_کھینچو" => {
                 // Collect (wx, wy, wz) triples from args or list
                 let mut wxs: [f32; 8] = [0.0; 8];
                 let mut wys: [f32; 8] = [0.0; 8];
@@ -6101,7 +6101,7 @@ impl Interpreter {
             // ── วาดเส้น3มิติ(ax,ay,az, bx,by,bz) ──
             // Projects two world-space points via the stored camera and pushes
             // a line to the depth queue.
-            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" | "画3D线" | "3D線描く" | "3D선그리기" =>
+            "วาดเส้น3มิติ" | "draw_line_3d" | "line3d" | "画3D线" | "3D線描く" | "3D선그리기" | "رسم_خط_سه‌بعدی" | "ارسم_خطا_ثلاثي_الأبعاد" | "צייר_קו_תלת_ממדי" | "تھری_ڈی_لکیر_کھینچو" =>
             {
                 let ax = self.arg_num(&args, 0, 0.0)? as f32;
                 let ay = self.arg_num(&args, 1, 0.0)? as f32;
@@ -6158,7 +6158,7 @@ impl Interpreter {
             //   the orb; `density` = spirals per winding direction. r,g,b tint it
             //   (pass a gray like 230,230,230 for pure grayscale).
             #[cfg(not(target_arch = "wasm32"))]
-            "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" =>
+            "orb_shell" | "球壳" | "オーブ殻" | "오브껍질" | "เปลือกทรงกลม" | "پوسته_کروی" | "قشرة_كروية" | "קליפת_כדור" | "کروی_خول" | "coque_orbe" | "orb_hülle" | "оболочка_сферы" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6257,7 +6257,7 @@ impl Interpreter {
             //   far = dim) so the cloud has real volume. Additive, so it layers under
             //   a shell / over a liquid marble.
             #[cfg(not(target_arch = "wasm32"))]
-            "orb_particles" | "球内粒子" | "オーブ粒子" | "오브입자" | "อนุภาคทรงกลม" =>
+            "orb_particles" | "球内粒子" | "オーブ粒子" | "오브입자" | "อนุภาคทรงกลม" | "ذرات_کروی" | "جسيمات_كروية" | "חלקיקי_כדור" | "کروی_ذرات" | "particules_orbe" | "orb_partikel" | "частицы_сферы" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6332,7 +6332,7 @@ impl Interpreter {
             // project_3d(x,y,z) -> [screen_x, screen_y, depth]; behind the camera
             // returns a sentinel ([-99999,-99999, depth]) so scripts can skip it.
             // Lets scripts place 2-D overlays (e.g. filled teardrop flames) onto 3-D points.
-            "project_3d" | "投影3D" | "3D投影" | "3D투영" | "ฉาย3มิติ" => {
+            "project_3d" | "投影3D" | "3D投影" | "3D투영" | "ฉาย3มิติ" | "فرافکنی_سه‌بعدی" | "إسقاط_ثلاثي_الأبعاد" | "הטלה_תלת_ממדית" | "تھری_ڈی_پروجیکشن" | "projeter_3d" | "projizieren_3d" | "проекция_3d" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let z = self.arg_num(&args, 2, 0.0)? as f32;
@@ -6441,7 +6441,7 @@ impl Interpreter {
             // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
             // honouring the blend mode (additive → translucent glow). Auto-closes.
             #[cfg(not(target_arch = "wasm32"))]
-            "draw_poly" | "填充多边形" | "ポリゴン塗り" | "다각형채우기" | "เติมรูปหลายเหลี่ยม" =>
+            "draw_poly" | "填充多边形" | "ポリゴン塗り" | "다각형채우기" | "เติมรูปหลายเหลี่ยม" | "رسم_چندضلعی" | "ارسم_مضلع" | "צייר_מצולע" | "کثیر_الاضلاع_کھینچو" | "dessiner_polygone" | "polygon_zeichnen" | "рисовать_полигон" =>
             {
                 let mut pts: Vec<[f32; 2]> = Vec::new();
                 if let Some(Value::List(v)) = args.first() {
@@ -6480,7 +6480,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // vtex_grid(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cw,ch, fr,hue)
-            "vtex_grid" | "ลายตาราง" | "纹格" | "格子模様" | "격자무늬" =>
+            "vtex_grid" | "ลายตาราง" | "纹格" | "格子模様" | "격자무늬" | "الگوی_شبکه" | "نقش_شبكة" | "דוגמת_רשת" | "نقش_جالی" | "motif_grille" | "muster_gitter" | "узор_сетка" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6522,7 +6522,7 @@ impl Interpreter {
             },
 
             // vtex_rings(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_rings,n_sides, max_r,twist, fr,hue)
-            "vtex_rings" | "ลายวงซ้อน" | "纹环" | "同心円" | "동심원" => {
+            "vtex_rings" | "ลายวงซ้อน" | "纹环" | "同心円" | "동심원" | "الگوی_حلقه" | "نقش_حلقات" | "דוגמת_טבעות" | "نقش_حلقے" | "motif_anneaux" | "muster_ringe" | "узор_кольца" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6563,7 +6563,7 @@ impl Interpreter {
             },
 
             // vtex_star(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_pts,r_out,r_in, rot_speed, fr,hue)
-            "vtex_star" | "ลายดาว" | "纹星" | "星模様" | "별무늬" => {
+            "vtex_star" | "ลายดาว" | "纹星" | "星模様" | "별무늬" | "الگوی_ستاره" | "نقش_نجمة" | "דוגמת_כוכב" | "نقش_ستارہ" | "motif_étoile" | "muster_stern" | "узор_звезда" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6604,7 +6604,7 @@ impl Interpreter {
             },
 
             // vtex_spiral(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_turns,max_r,steps, fr,hue)
-            "vtex_spiral" | "ลายเกลียว" | "纹螺" | "螺旋" | "나선" => {
+            "vtex_spiral" | "ลายเกลียว" | "纹螺" | "螺旋" | "나선" | "الگوی_مارپیچ" | "نقش_حلزوني" | "דוגמת_ספירלה" | "نقش_سرپیچ" | "motif_spirale" | "muster_spirale" | "узор_спираль" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6643,7 +6643,7 @@ impl Interpreter {
             },
 
             // vtex_flower(cx,cy,cz, ux,uy,uz, vx,vy,vz, radius,n_sides, fr,hue)
-            "vtex_flower" | "ลายดอก" | "纹花" | "花模様" | "꽃무늬" => {
+            "vtex_flower" | "ลายดอก" | "纹花" | "花模様" | "꽃무늬" | "الگوی_گل" | "نقش_زهرة" | "דוגמת_פרח" | "نقش_پھول" | "motif_fleur" | "muster_blume" | "узор_цветок" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6680,7 +6680,7 @@ impl Interpreter {
             },
 
             // vtex_letter_rain(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_cols,n_vis, col_w,row_h, speed, fr,hue)
-            "vtex_letter_rain" | "ลายอักษรไหล" | "纹字雨" | "文字雨" | "글자비" =>
+            "vtex_letter_rain" | "ลายอักษรไหล" | "纹字雨" | "文字雨" | "글자비" | "الگوی_باران_حروف" | "نقش_مطر_الحروف" | "דוגמת_גשם_אותיות" | "نقش_حروف_بارش" | "motif_pluie_lettres" | "muster_buchstabenregen" | "узор_дождь_букв" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6724,7 +6724,7 @@ impl Interpreter {
             },
 
             // vtex_hyperbolic_uv(cx,cy,cz, ux,uy,uz, vx,vy,vz, max_r,n_circles,n_rays, fr,hue)
-            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" | "纹曲面" | "双曲線" | "쌍곡선" =>
+            "vtex_hyperbolic_uv" | "ลายไฮเพอร์โบลิก" | "纹曲面" | "双曲線" | "쌍곡선" | "الگوی_هذلولی" | "نقش_زائدي" | "דוגמת_היפרבולית" | "نقش_ہائپربولک" | "motif_uv_hyperbolique" | "muster_hyperbolische_uv" | "узор_гиперболический_uv" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6764,7 +6764,7 @@ impl Interpreter {
             },
 
             // vtex_halftone(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell_w,cell_h, density, fr,hue)
-            "vtex_halftone" | "ลายจุด" | "纹半调" | "網点模様" | "망점" => {
+            "vtex_halftone" | "ลายจุด" | "纹半调" | "網点模様" | "망점" | "الگوی_نیم‌تن" | "نقش_نصفي" | "דוגמת_חצי_גוון" | "نقش_ہاف_ٹون" | "motif_demi_ton" | "muster_halbton" | "узор_растр" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6807,7 +6807,7 @@ impl Interpreter {
             },
 
             // vtex_tessellated(cx,cy,cz, ux,uy,uz, vx,vy,vz, cols,rows, cell, amplitude,freq, fr,hue)
-            "vtex_tessellated" | "ลายตาข่าย" | "纹镶嵌" | "網目模様" | "격자망" =>
+            "vtex_tessellated" | "ลายตาข่าย" | "纹镶嵌" | "網目模様" | "격자망" | "الگوی_کاشی‌کاری" | "نقش_مرصوف_متكرر" | "דוגמת_ריצוף_חוזר" | "نقش_ٹائلنگ" | "motif_tesselle" | "muster_tessellation" | "узор_мозаика" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6851,7 +6851,7 @@ impl Interpreter {
             },
 
             // vtex_lotus(cx,cy,cz, ux,uy,uz, vx,vy,vz, r_inner,r_outer,n_petals, fr,hue)
-            "vtex_lotus" | "ลายดอกบัว" | "纹莲" | "蓮模様" | "연꽃무늬" =>
+            "vtex_lotus" | "ลายดอกบัว" | "纹莲" | "蓮模様" | "연꽃무늬" | "الگوی_لوتوس" | "نقش_لوتس" | "דוגמת_לוטוס" | "نقش_کنول" | "motif_lotus" | "muster_lotus" | "узор_лотос" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6891,7 +6891,7 @@ impl Interpreter {
             },
 
             // vtex_chakra(cx,cy,cz, ux,uy,uz, vx,vy,vz, r,n_spokes, fr,hue)
-            "vtex_chakra" | "ลายจักร" | "纹轮" | "輪模様" | "바퀴무늬" => {
+            "vtex_chakra" | "ลายจักร" | "纹轮" | "輪模様" | "바퀴무늬" | "الگوی_چاکرا" | "نقش_تشاكرا" | "דוגמת_צ'אקרה" | "نقش_چکر" | "motif_chakra" | "muster_chakra" | "узор_чакра" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -6928,7 +6928,7 @@ impl Interpreter {
             },
 
             // vtex_yantra(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_layers,max_r, fr,hue)
-            "vtex_yantra" | "ลายยันต์" | "纹咒" | "護符模様" | "부적무늬" =>
+            "vtex_yantra" | "ลายยันต์" | "纹咒" | "護符模様" | "부적무늬" | "الگوی_یانترا" | "نقش_يانترا" | "דוגמת_יאנטרה" | "نقش_ینترا" | "motif_yantra" | "muster_yantra" | "узор_янтра" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -6966,7 +6966,7 @@ impl Interpreter {
             },
 
             // vtex_spiked_cog(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_teeth,r_body,r_spike,r_hub,n_spokes, fr,hue)
-            "vtex_spiked_cog" | "ฟันเฟืองหนาม" | "纹棘轮" | "歯車模様" | "톱니바퀴" =>
+            "vtex_spiked_cog" | "ฟันเฟืองหนาม" | "纹棘轮" | "歯車模様" | "톱니바퀴" | "الگوی_چرخ‌دنده_خاردار" | "نقش_ترس_شائك" | "דוגמת_גלגל_קוצני" | "نقش_خاردار_گیئر" | "motif_engrenage_pointes" | "muster_stachelzahnrad" | "узор_шестерня_шипы" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -7010,7 +7010,7 @@ impl Interpreter {
             },
 
             // vtex_torii(cx,cy,cz, ux,uy,uz, vx,vy,vz, width,height, fr,hue)
-            "vtex_torii" | "ประตูโทริอิ" | "纹鸟居" | "鳥居" | "도리이" =>
+            "vtex_torii" | "ประตูโทริอิ" | "纹鸟居" | "鳥居" | "도리이" | "الگوی_توری_ژاپنی" | "نقش_توري" | "דוגמת_טוריי" | "نقش_توری_گیٹ" | "motif_torii" | "muster_torii" | "узор_тории" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -7048,7 +7048,7 @@ impl Interpreter {
             },
 
             // vtex_pagoda(cx,cy,cz, ux,uy,uz, vx,vy,vz, n_tiers,base_w,tier_h,taper,eave_out, fr,hue)
-            "vtex_pagoda" | "เจดีย์" | "纹塔" | "塔" | "탑" => {
+            "vtex_pagoda" | "เจดีย์" | "纹塔" | "塔" | "탑" | "الگوی_پاگودا" | "نقش_باغودا" | "דוגמת_פגודה" | "نقش_پگوڈا" | "motif_pagode" | "muster_pagode" | "узор_пагода" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let cz = self.arg_num(&args, 2, 0.)? as f32;
@@ -7103,7 +7103,7 @@ impl Interpreter {
             | "음조"
             | "空间音"
             | "空間音"
-            | "공간음" => {
+            | "공간음" | "تن_صدا" | "نغمة" | "צליל" | "آواز_کا_سر" | "tonalité_audio" | "audioton" | "звук_тон" => {
                 let idx = self.arg_num(&args, 0, 0.0)? as usize;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
                 let y = self.arg_num(&args, 2, 0.0)? as f32;
@@ -7123,7 +7123,7 @@ impl Interpreter {
             },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" =>
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" | "شنونده_صدا" | "مستمع_الصوت" | "מאזין_קול" | "آواز_سننے_والا" | "auditeur_audio" | "audiohörer" | "звук_слушатель" =>
             {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
@@ -7136,7 +7136,7 @@ impl Interpreter {
             },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" =>
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" | "موسیقی_پس‌زمینه" | "موسيقى_خلفية" | "מוזיקת_רקע" | "پس_منظر_موسیقی" | "musique_fond" | "hintergrundmusik" | "фоновая_музыка" =>
             {
                 let path = match args.first() {
                     Some(Value::Str(s)) => s.clone(),
@@ -7155,7 +7155,7 @@ impl Interpreter {
             | "ระดับเพลงประกอบ"
             | "背景乐音量"
             | "BGM音量"
-            | "배경음악음량" => {
+            | "배경음악음량" | "بلندی_موسیقی_پس‌زمینه" | "مستوى_موسيقى_الخلفية" | "עוצמת_מוזיקת_רקע" | "پس_منظر_موسیقی_شدت" | "volume_musique_fond" | "hintergrundmusiklautstärke" | "громкость_фоновой_музыки" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 if let Some(audio) = &self.audio {
                     audio.set_bgm_volume(vol);
@@ -7164,7 +7164,7 @@ impl Interpreter {
             },
 
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
+            "audio_volume" | "ระดับเสียง" | "音量" | "음량" | "بلندی_صدا" | "مستوى_الصوت" | "עוצמת_קול" | "آواز_کی_شدت" | "volume_audio" | "audiolautstärke" | "звук_громкость" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 if let Some(audio) = &self.audio {
                     audio.set_master_volume(vol);
@@ -7181,7 +7181,7 @@ impl Interpreter {
             | "음조"
             | "空间音"
             | "空間音"
-            | "공간음" => {
+            | "공간음" | "تن_صدا" | "نغمة" | "צליל" | "آواز_کا_سر" | "tonalité_audio" | "audioton" | "звук_тон" => {
                 let idx = self.arg_num(&args, 0, 0.0)? as usize;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
                 let y = self.arg_num(&args, 2, 0.0)? as f32;
@@ -7196,7 +7196,7 @@ impl Interpreter {
             },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" =>
+            "audio_listener" | "ผู้ฟัง" | "音频监听" | "音声リスナー" | "오디오리스너" | "شنونده_صدا" | "مستمع_الصوت" | "מאזין_קול" | "آواز_سننے_والا" | "auditeur_audio" | "audiohörer" | "звук_слушатель" =>
             {
                 let cry = self.arg_num(&args, 0, 1.0)? as f32;
                 let sry = self.arg_num(&args, 1, 0.0)? as f32;
@@ -7207,7 +7207,7 @@ impl Interpreter {
             },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" =>
+            "audio_bgm" | "เพลงพื้นหลัง" | "เพลงประกอบ" | "背景乐" | "BGM" | "배경음악" | "موسیقی_پس‌زمینه" | "موسيقى_خلفية" | "מוזיקת_רקע" | "پس_منظر_موسیقی" | "musique_fond" | "hintergrundmusik" | "фоновая_музыка" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let vol = self.arg_num(&args, 1, 0.5)? as f32;
@@ -7221,14 +7221,14 @@ impl Interpreter {
             | "ระดับเพลงประกอบ"
             | "背景乐音量"
             | "BGM音量"
-            | "배경음악음량" => {
+            | "배경음악음량" | "بلندی_موسیقی_پس‌زمینه" | "مستوى_موسيقى_الخلفية" | "עוצמת_מוזיקת_רקע" | "پس_منظر_موسیقی_شدت" | "volume_musique_fond" | "hintergrundmusiklautstärke" | "громкость_фоновой_музыки" => {
                 let vol = self.arg_num(&args, 0, 0.5)? as f32;
                 crate::gfx::audio_web::set_bgm_volume(vol);
                 return Ok(Value::Unit);
             },
 
             #[cfg(target_arch = "wasm32")]
-            "audio_volume" | "ระดับเสียง" | "音量" | "음량" => {
+            "audio_volume" | "ระดับเสียง" | "音量" | "음량" | "بلندی_صدا" | "مستوى_الصوت" | "עוצמת_קול" | "آواز_کی_شدت" | "volume_audio" | "audiolautstärke" | "звук_громкость" => {
                 let vol = self.arg_num(&args, 0, 0.7)? as f32;
                 crate::gfx::audio_web::set_master_volume(vol);
                 return Ok(Value::Unit);
@@ -7236,7 +7236,7 @@ impl Interpreter {
 
             // ── WASM sample load / play / stop / FX (Web Audio pool) ─────────
             #[cfg(target_arch = "wasm32")]
-            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" =>
+            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" | "بارگذاری_نمونه_صدا" | "تحميل_عينة_صوتية" | "טעינת_דגימת_קול" | "آواز_نمونہ_لوڈ" | "charger_échantillon" | "sample_laden" | "загрузить_семпл" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = self.wasm_resolve_source_path(&path);
@@ -7254,7 +7254,7 @@ impl Interpreter {
                 }
             },
             #[cfg(target_arch = "wasm32")]
-            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" =>
+            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" | "پخش_نمونه_صدا" | "تشغيل_عينة_صوتية" | "נגינת_דגימת_קול" | "آواز_نمونہ_چلاؤ" | "jouer_échantillon" | "sample_abspielen" | "играть_семпл" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as usize;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
@@ -7286,12 +7286,12 @@ impl Interpreter {
             | "低通滤波"
             | "ローパス"
             | "저역통과"
-            | "กรองความถี่ต่ำ" => {
+            | "กรองความถี่ต่ำ" | "توقف_نمونه_صدا" | "إيقاف_عينة_صوتية" | "עצירת_דגימת_קול" | "آواز_نمونہ_روکو" | "arrêter_échantillon" | "sample_stoppen" | "остановить_семпл" => {
                 return Ok(Value::Unit);
             },
 
             // ── รอหน้าต่าง() — block until window closed / Escape ──
-            "รอหน้าต่าง" | "wait_window" | "gfx_wait" => {
+            "รอหน้าต่าง" | "wait_window" | "gfx_wait" | "انتظار_پنجره" | "انتظر_النافذة" | "המתן_לחלון" | "ونڈو_انتظار" => {
                 #[cfg(not(target_arch = "wasm32"))]
                 loop {
                     let still_open = {
@@ -7319,7 +7319,7 @@ impl Interpreter {
             },
 
             // ── File I/O ──────────────────────────────────────────────────────
-            "read_file" | "อ่านไฟล์" => {
+            "read_file" | "อ่านไฟล์" | "خواندن_فایل" | "اقرأ_الملف" | "קרא_קובץ" | "فائل_پڑھو" => {
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Str(String::new()));
                 #[cfg(not(target_arch = "wasm32"))]
@@ -7332,30 +7332,30 @@ impl Interpreter {
             },
             // ── networking (TCP, 2-peer co-op) ───────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "net_host" | "เน็ตโฮสต์" => {
+            "net_host" | "เน็ตโฮสต์" | "میزبانی_شبکه" | "استضف_الشبكة" | "ארח_רשת" | "نیٹ_ہوسٹ" => {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 net::host(port);
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_join" | "เน็ตจอย" => {
+            "net_join" | "เน็ตจอย" | "پیوستن_شبکه" | "انضم_للشبكة" | "הצטרף_לרשת" | "نیٹ_شمولیت" => {
                 let ip = self.arg_str(&args, 0, "127.0.0.1");
                 let port = self.arg_num(&args, 1, 7777.0)? as u16;
                 net::join(&ip, port);
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_send" | "เน็ตส่ง" => {
+            "net_send" | "เน็ตส่ง" | "ارسال_شبکه" | "أرسل_عبر_الشبكة" | "שלח_ברשת" | "نیٹ_بھیجو" => {
                 let s = self.arg_str(&args, 0, "");
                 net::send(&s);
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_recv" | "เน็ตรับ" => {
+            "net_recv" | "เน็ตรับ" | "دریافت_شبکه" | "استقبل_من_الشبكة" | "קבל_מרשת" | "نیٹ_وصول" => {
                 return Ok(Value::Str(net::recv()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_status" | "เน็ตสถานะ" => {
+            "net_status" | "เน็ตสถานะ" | "وضعیت_شبکه" | "حالة_الشبكة" | "סטטוס_רשת" | "نیٹ_حالت" => {
                 return Ok(Value::Number(net::status() as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
@@ -7376,30 +7376,30 @@ impl Interpreter {
             },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "net_announce" | "เน็ตประกาศ" => {
+            "net_announce" | "เน็ตประกาศ" | "اعلام_شبکه" | "أعلن_في_الشبكة" | "הכרז_ברשת" | "نیٹ_اعلان" => {
                 let port = self.arg_num(&args, 0, 7778.0)? as u16;
                 let info = self.arg_str(&args, 1, "");
                 net::announce(port, &info);
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_announce_stop" | "เน็ตหยุดประกาศ" => {
+            "net_announce_stop" | "เน็ตหยุดประกาศ" | "توقف_اعلام" | "أوقف_الإعلان" | "עצור_הכרזה" | "اعلان_روکو" => {
                 net::announce_stop();
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_discover" | "เน็ตค้นหา" => {
+            "net_discover" | "เน็ตค้นหา" | "کشف_شبکه" | "اكتشف_الشبكة" | "גלה_רשת" | "نیٹ_دریافت" => {
                 let port = self.arg_num(&args, 0, 7778.0)? as u16;
                 return Ok(Value::Str(net::discover(port)));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "net_test" | "เน็ตทดสอบ" => {
+            "net_test" | "เน็ตทดสอบ" | "آزمون_شبکه" | "اختبر_الشبكة" | "בדוק_רשת" | "نیٹ_ٹیسٹ" => {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 return Ok(Value::Str(net::test_bind(port)));
             },
             // ── HTTP server (interpreter <-> async bridge, see runtime::web) ──
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "http_route" | "เว็บเส้นทาง" => {
+            "http_route" | "เว็บเส้นทาง" | "مسیر_HTTP" | "مسار_HTTP" | "נתיב_HTTP" | "HTTP_روٹ" => {
                 let method = self.arg_str(&args, 0, "GET").to_uppercase();
                 let path = self.arg_str(&args, 1, "/");
                 let handler = args.get(2).cloned().unwrap_or(Value::Unit);
@@ -7410,14 +7410,14 @@ impl Interpreter {
             // images, generated zips/PDFs) — bypasses the String-only Request/
             // Response bridge entirely, so binary files come through intact.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "http_static" | "เว็บสแตติก" => {
+            "http_static" | "เว็บสแตติก" | "فایل_ایستای_HTTP" | "ملفات_HTTP_ثابتة" | "קבצים_סטטיים_HTTP" | "HTTP_مستقل_فائل" => {
                 let prefix = self.arg_str(&args, 0, "/static");
                 let dir = self.arg_str(&args, 1, "static");
                 self.http_static_dirs.push((prefix, dir));
                 return Ok(Value::Unit);
             },
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "http_serve" | "เว็บเสิร์ฟ" => {
+            "http_serve" | "เว็บเสิร์ฟ" | "سرویس_HTTP" | "قدّم_HTTP" | "הגש_HTTP" | "HTTP_سرو" => {
                 let host = self.arg_str(&args, 0, "127.0.0.1");
                 let port = self.arg_num(&args, 1, 8080.0)? as u16;
                 let routes = std::mem::take(&mut self.http_routes);
@@ -7479,7 +7479,7 @@ impl Interpreter {
             // id immediately — for slow external calls (e.g. local Stable Diffusion
             // generation) that must not block http_serve's single-threaded loop.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "http_post_async" | "เว็บโพสต์ไม่บล็อก" => {
+            "http_post_async" | "เว็บโพสต์ไม่บล็อก" | "ارسال_ناهمگام_HTTP" | "أرسل_HTTP_غير_متزامن" | "שלח_HTTP_אסינכרוני" | "HTTP_غیر_ہمزمان_بھیجو" => {
                 let url = self.arg_str(&args, 0, "");
                 let body = self.arg_str(&args, 1, "");
                 let content_type = self.arg_str(&args, 2, "application/json");
@@ -7490,7 +7490,7 @@ impl Interpreter {
             // sdai_generate_start) is still running, the result once it
             // completes — same job table, same builtin polls both.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "http_job_poll" | "เว็บงานสำรวจ" => {
+            "http_job_poll" | "เว็บงานสำรวจ" | "بررسی_وظیفه_HTTP" | "استطلع_مهمة_HTTP" | "בדוק_משימת_HTTP" | "HTTP_کام_پول" => {
                 let id = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(self.async_jobs.poll(&id).unwrap_or_default()));
             },
@@ -7501,7 +7501,7 @@ impl Interpreter {
             // the JSON response itself is parsed in Rust (see
             // AsyncJobs::start_sdai_txt2img), since `.ling` has no JSON parser.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "sdai_generate_start" | "เอสดีเอไอเริ่มสร้าง" => {
+            "sdai_generate_start" | "เอสดีเอไอเริ่มสร้าง" | "شروع_تولید_هوش" | "ابدأ_توليد_الذكاء" | "התחל_יצירת_בינה" | "اے_آئی_تخلیق_شروع" => {
                 let base_url = self.arg_str(&args, 0, "http://127.0.0.1:1342");
                 let prompt = self.arg_str(&args, 1, "");
                 let width = self.arg_num(&args, 2, 512.0)? as u32;
@@ -7510,7 +7510,7 @@ impl Interpreter {
                 return Ok(Value::Str(id));
             },
             // ── query_param("q=a&page=2", "q", "") → "a" (URL-decoded) ──
-            "query_param" | "พารามิเตอร์" => {
+            "query_param" | "พารามิเตอร์" | "پارامتر_پرسوجو" | "معامل_الاستعلام" | "פרמטר_שאילתה" | "کوئری_پیرامیٹر" => {
                 let qs = self.arg_str(&args, 0, "");
                 let name = self.arg_str(&args, 1, "");
                 let default = self.arg_str(&args, 2, "");
@@ -7525,7 +7525,7 @@ impl Interpreter {
                 return Ok(Value::Str(found));
             },
             // ── cookie_get("sid=abc; x=1", "sid", "") → "abc" ──
-            "cookie_get" | "รับคุกกี้" => {
+            "cookie_get" | "รับคุกกี้" | "دریافت_کوکی" | "اجلب_الكعكة" | "קבל_עוגייה" | "کوکی_حاصل_کرو" => {
                 let header = self.arg_str(&args, 0, "");
                 let name = self.arg_str(&args, 1, "");
                 let default = self.arg_str(&args, 2, "");
@@ -7541,7 +7541,7 @@ impl Interpreter {
                 return Ok(Value::Str(found));
             },
             // ── html_escape(s) — & < > " ' → entities, for echoing user input ──
-            "html_escape" | "กันเอชทีเอ็มแอล" => {
+            "html_escape" | "กันเอชทีเอ็มแอล" | "فرار_HTML" | "أفلت_HTML" | "בריחת_HTML" | "HTML_ایسکیپ" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(
                     s.replace('&', "&amp;")
@@ -7555,7 +7555,7 @@ impl Interpreter {
             // string literal (", \, and control chars). Needed because the
             // registry builds JSON API responses by concatenation; without
             // this a value containing " or \ breaks or injects into the JSON.
-            "json_escape" | "หนีเจสัน" => {
+            "json_escape" | "หนีเจสัน" | "فرار_JSON" | "أفلت_JSON" | "בריחת_JSON" | "JSON_ایسکیپ" => {
                 let s = self.arg_str(&args, 0, "");
                 let mut out = String::with_capacity(s.len() + 8);
                 for c in s.chars() {
@@ -7574,7 +7574,7 @@ impl Interpreter {
                 return Ok(Value::Str(out));
             },
             // ── CLI arguments: cli_arg("port", "8080") reads `--port 6688` ──
-            "cli_arg" | "อาร์กิวเมนต์" => {
+            "cli_arg" | "อาร์กิวเมนต์" | "آرگومان_خط‌فرمان" | "معامل_سطر_الأوامر" | "ארגומנט_שורת_פקודה" | "سی_ایل_آئی_دلیل" => {
                 let name = self.arg_str(&args, 0, "");
                 let default = self.arg_str(&args, 1, "");
                 let flag = format!("--{name}");
@@ -7589,7 +7589,7 @@ impl Interpreter {
             },
             // ── SQLite (rusqlite, synchronous — matches the interpreter) ──
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "db_open" | "ฐานข้อมูลเปิด" => {
+            "db_open" | "ฐานข้อมูลเปิด" | "باز_کردن_پایگاه_داده" | "افتح_قاعدة_البيانات" | "פתח_מסד_נתונים" | "ڈیٹا_بیس_کھولو" => {
                 let path = self.arg_str(&args, 0, "app.db");
                 let conn = ling_http::rusqlite::Connection::open(&path)
                     .map_err(|e| EvalErr::from(format!("db_open '{path}': {e}")))?;
@@ -7600,7 +7600,7 @@ impl Interpreter {
             // db_exec(sql, ...params) → rows affected. Params bind positionally
             // (?1, ?2, ...): numbers as REAL, bools as 0/1, everything else TEXT.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "db_exec" | "ฐานข้อมูลรัน" => {
+            "db_exec" | "ฐานข้อมูลรัน" | "اجرای_پایگاه_داده" | "نفّذ_في_قاعدة_البيانات" | "בצע_במסד_נתונים" | "ڈیٹا_بیس_عمل" => {
                 let sql = self.arg_str(&args, 0, "");
                 let params = values_to_sql_params(&args[1.min(args.len())..]);
                 let conn = self
@@ -7617,7 +7617,7 @@ impl Interpreter {
             },
             // db_query(sql, ...params) → List of Row structs (row.column_name).
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "db_query" | "ฐานข้อมูลถาม" => {
+            "db_query" | "ฐานข้อมูลถาม" | "پرسوجوی_پایگاه_داده" | "استعلم_قاعدة_البيانات" | "שאילתת_מסד_נתונים" | "ڈیٹا_بیس_سوال" => {
                 let sql = self.arg_str(&args, 0, "");
                 let params = values_to_sql_params(&args[1.min(args.len())..]);
                 let conn = self
@@ -7663,12 +7663,12 @@ impl Interpreter {
             },
             // ── gamepad (gilrs) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_poll" | "จอยโพล" => {
+            "gamepad_poll" | "จอยโพล" | "بررسی_دسته_بازی" | "استطلع_يد_اللعب" | "בדוק_בקר_משחק" | "گیم_پیڈ_پول_کرو" => {
                 gamepad::poll();
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_button" | "จอยปุ่ม" => {
+            "gamepad_button" | "จอยปุ่ม" | "دکمه_دسته_بازی" | "زر_يد_اللعب" | "כפתור_בקר_משחק" | "گیم_پیڈ_بٹن" => {
                 let name = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(if gamepad::button(&name) {
                     1.0
@@ -7677,12 +7677,12 @@ impl Interpreter {
                 }));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_axis" | "จอยแกน" => {
+            "gamepad_axis" | "จอยแกน" | "محور_دسته_بازی" | "محور_يد_اللعب" | "ציר_בקר_משחק" | "گیم_پیڈ_محور" => {
                 let name = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(gamepad::axis(&name) as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_rumble" | "จอยสั่น" => {
+            "gamepad_rumble" | "จอยสั่น" | "لرزش_دسته_بازی" | "اهتزاز_يد_اللعب" | "רטט_בקר_משחק" | "گیم_پیڈ_تھرتھراہٹ" => {
                 let low = self.arg_num(&args, 0, 0.0)? as f32;
                 let high = self.arg_num(&args, 1, 0.0)? as f32;
                 let ms = self.arg_num(&args, 2, 200.0)? as u32;
@@ -7690,32 +7690,32 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_list" | "จอยรายการ" => {
+            "gamepad_list" | "จอยรายการ" | "فهرست_دسته‌های_بازی" | "قائمة_أيدي_اللعب" | "רשימת_בקרי_משחק" | "گیم_پیڈ_فہرست" => {
                 return Ok(Value::Str(gamepad::list()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_any" | "จอยใดๆ" => {
+            "gamepad_any" | "จอยใดๆ" | "هر_دسته_بازی" | "أي_يد_لعب" | "בקר_כלשהו" | "کوئی_بھی_گیم_پیڈ" => {
                 return Ok(Value::Number(if gamepad::any_button() { 1.0 } else { 0.0 }));
             },
             // wasm32: gamepad not available — return safe no-op values
             #[cfg(target_arch = "wasm32")]
-            "gamepad_poll" | "จอยโพล" | "gamepad_rumble" | "จอยสั่น" => {
+            "gamepad_poll" | "จอยโพล" | "gamepad_rumble" | "จอยสั่น" | "بررسی_دسته_بازی" | "استطلع_يد_اللعب" | "בדוק_בקר_משחק" | "گیم_پیڈ_پول_کرو" => {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "gamepad_button" | "จอยปุ่ม" | "gamepad_axis" | "จอยแกน" | "gamepad_any" | "จอยใดๆ" =>
+            "gamepad_button" | "จอยปุ่ม" | "gamepad_axis" | "จอยแกน" | "gamepad_any" | "จอยใดๆ" | "دکمه_دسته_بازی" | "زر_يد_اللعب" | "כפתור_בקר_משחק" | "گیم_پیڈ_بٹن" =>
             {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "gamepad_list" | "จอยรายการ" => {
+            "gamepad_list" | "จอยรายการ" | "فهرست_دسته‌های_بازی" | "قائمة_أيدي_اللعب" | "רשימת_בקרי_משחק" | "گیم_پیڈ_فہرست" => {
                 return Ok(Value::Str(String::new()));
             },
 
             // ── game AI: neural networks ─────────────────────────────────────
             // nn_new(inputs[, seed]) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" =>
+            "nn_new" | "建神经网" | "ニューラル作成" | "신경망생성" | "สร้างโครงข่าย" | "شبکه_جدید" | "شبكة_جديدة" | "רשת_חדשה" | "نئی_نیورل_نیٹ" | "nouveau_réseau" | "neues_netz" | "новая_сеть" =>
             {
                 let n_in = self.arg_num(&args, 0, 1.0)?.max(0.0) as usize;
                 let seed = self.arg_num(&args, 1, 1.0)? as u64;
@@ -7723,7 +7723,7 @@ impl Interpreter {
             },
             // nn_dense(handle, units[, activation]) — append a layer
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" =>
+            "nn_dense" | "密集层" | "密層追加" | "밀집층" | "ชั้นหนาแน่น" | "لایه_متراکم" | "طبقة_كثيفة" | "שכבה_צפופה" | "ڈینس_لیئر" | "réseau_dense" | "netz_dicht" | "плотная_сеть" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let units = self.arg_num(&args, 1, 1.0)?.max(1.0) as usize;
@@ -7733,7 +7733,7 @@ impl Interpreter {
             },
             // nn_forward(handle, [inputs]) → [outputs]
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" =>
+            "nn_forward" | "神经前向" | "順伝播" | "순전파" | "ส่งต่อโครงข่าย" | "پیش‌روی_شبکه" | "تمرير_أمامي" | "העברה_קדימה" | "فارورڈ_پاس" | "propager_réseau" | "netz_vorwärts" | "прямой_проход_сети" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let input = self.arg_list_f32(&args, 1);
@@ -7744,7 +7744,7 @@ impl Interpreter {
             },
             // nn_train(handle, [inputs], [targets][, lr]) → loss
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย" =>
+            "nn_train" | "训练网" | "ニューラル学習" | "신경망학습" | "ฝึกโครงข่าย" | "آموزش_شبکه" | "درّب_الشبكة" | "אמן_רשת" | "نیٹ_ٹریننگ" | "entraîner_réseau" | "netz_trainieren" | "обучить_сеть" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let input = self.arg_list_f32(&args, 1);
@@ -7754,7 +7754,7 @@ impl Interpreter {
             },
             // nn_save(handle, path) → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" =>
+            "nn_save" | "保存网" | "網保存" | "신경망저장" | "บันทึกโครงข่าย" | "ذخیره_شبکه" | "احفظ_الشبكة" | "שמור_רשת" | "نیٹ_محفوظ_کرو" | "sauvegarder_réseau" | "netz_speichern" | "сохранить_сеть" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "model.lnn");
@@ -7762,7 +7762,7 @@ impl Interpreter {
             },
             // nn_load(path) → handle (-1 on failure)
             #[cfg(not(target_arch = "wasm32"))]
-            "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" =>
+            "nn_load" | "载入网" | "網読込" | "신경망불러오기" | "โหลดโครงข่าย" | "بارگذاری_شبکه" | "حمّل_الشبكة" | "טען_רשת" | "نیٹ_لوڈ" | "charger_réseau" | "netz_laden" | "загрузить_сеть" =>
             {
                 let path = self.arg_str(&args, 0, "model.lnn");
                 return Ok(Value::Number(ai::nn_load(&path) as f64));
@@ -7771,14 +7771,14 @@ impl Interpreter {
             // ── game AI: behavior trees ──────────────────────────────────────
             // bt_build(dsl_string) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" =>
+            "bt_build" | "建行为树" | "行動木構築" | "행동트리구성" | "สร้างต้นไม้พฤติกรรม" | "ساخت_درخت_رفتار" | "ابنِ_شجرة_السلوك" | "בנה_עץ_התנהגות" | "بی_ٹی_تعمیر" | "construire_arbre_comportement" | "verhaltensbaum_bauen" | "построить_дерево_поведения" =>
             {
                 let spec = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(ai::bt_build(&spec) as f64));
             },
             // bt_set(handle, key, value) — set a blackboard fact
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" =>
+            "bt_set" | "设事实" | "事実設定" | "사실설정" | "ตั้งข้อเท็จจริง" | "تنظیم_واقعیت" | "عيّن_حقيقة" | "קבע_עובדה" | "بی_ٹی_سیٹ" | "définir_arbre_comportement" | "verhaltensbaum_setzen" | "задать_дерево_поведения" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let key = self.arg_str(&args, 1, "");
@@ -7788,14 +7788,14 @@ impl Interpreter {
             },
             // bt_tick(handle) → chosen action name ("" if none)
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" =>
+            "bt_tick" | "行为树滴答" | "行動木更新" | "행동트리틱" | "เดินต้นไม้พฤติกรรม" | "تیک_درخت_رفتار" | "نبضة_شجرة_السلوك" | "טיק_עץ_התנהגות" | "بی_ٹی_ٹک" | "tick_arbre_comportement" | "verhaltensbaum_tick" | "тик_дерева_поведения" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 return Ok(Value::Str(ai::bt_tick(id)));
             },
             // bt_status(handle) → 0 fail / 1 success / 2 running
             #[cfg(not(target_arch = "wasm32"))]
-            "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" =>
+            "bt_status" | "行为树状态" | "行動木状態" | "행동트리상태" | "สถานะต้นไม้พฤติกรรม" | "وضعیت_درخت_رفتار" | "حالة_شجرة_السلوك" | "סטטוס_עץ_התנהגות" | "بی_ٹی_حالت" | "statut_arbre_comportement" | "verhaltensbaum_status" | "статус_дерева_поведения" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 return Ok(Value::Number(ai::bt_status(id) as f64));
@@ -7804,7 +7804,7 @@ impl Interpreter {
             // ── game AI: miniature dialog LLM ────────────────────────────────
             // dialog_new([ctx, embed, hidden, seed]) → handle
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา" =>
+            "dialog_new" | "建对话模型" | "対話モデル作成" | "대화모델생성" | "สร้างโมเดลสนทนา" | "مدل_گفتگوی_جدید" | "نموذج_حوار_جديد" | "מודל_דיאלוג_חדש" | "نیا_مکالمہ_ماڈل" | "nouveau_dialogue" | "neuer_dialog" | "новый_диалог" =>
             {
                 let ctx = self.arg_num(&args, 0, 3.0)?.max(1.0) as usize;
                 let embed = self.arg_num(&args, 1, 32.0)?.max(1.0) as usize;
@@ -7816,7 +7816,7 @@ impl Interpreter {
             },
             // dialog_learn(handle, text) — add one utterance to the corpus
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" =>
+            "dialog_learn" | "对话学习" | "対話学習" | "대화학습" | "เรียนรู้สนทนา" | "یادگیری_گفتگو" | "تعلّم_الحوار" | "למד_דיאלוג" | "مکالمہ_سیکھو" | "apprendre_dialogue" | "dialog_lernen" | "обучить_диалог" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let text = self.arg_str(&args, 1, "");
@@ -7825,7 +7825,7 @@ impl Interpreter {
             },
             // dialog_load(handle, path) → lines added (-1 on error)
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" =>
+            "dialog_load" | "对话载入" | "対話読込" | "대화불러오기" | "โหลดชุดสนทนา" | "بارگذاری_مجموعه_گفتگو" | "حمّل_مجموعة_الحوار" | "טען_מערך_דיאלוג" | "مکالمہ_مجموعہ_لوڈ" | "charger_dialogue" | "dialog_laden" | "загрузить_диалог" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "");
@@ -7833,7 +7833,7 @@ impl Interpreter {
             },
             // dialog_train(handle[, epochs, lr]) → loss
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา" =>
+            "dialog_train" | "对话训练" | "対話訓練" | "대화훈련" | "ฝึกสนทนา" | "آموزش_گفتگو" | "درّب_الحوار" | "אמן_דיאלוג" | "مکالمہ_ٹریننگ" | "entraîner_dialogue" | "dialog_trainieren" | "тренировать_диалог" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let epochs = self.arg_num(&args, 1, 20.0)?.max(1.0) as usize;
@@ -7842,7 +7842,7 @@ impl Interpreter {
             },
             // dialog_say(handle, prompt[, max_tokens, temperature]) → reply text
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" =>
+            "dialog_say" | "对话生成" | "対話生成" | "대화생성" | "พูดสนทนา" | "بگو" | "قل" | "אמור" | "کہو" | "dire_dialogue" | "dialog_sagen" | "сказать_диалог" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let prompt = self.arg_str(&args, 1, "");
@@ -7852,7 +7852,7 @@ impl Interpreter {
             },
             // dialog_save(handle, path) → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" =>
+            "dialog_save" | "对话存模" | "対話モデル保存" | "대화모델저장" | "บันทึกโมเดลสนทนา" | "ذخیره_مدل_گفتگو" | "احفظ_نموذج_الحوار" | "שמור_מודל_דיאלוג" | "مکالمہ_ماڈل_محفوظ" | "sauvegarder_dialogue" | "dialog_speichern" | "сохранить_диалог" =>
             {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let path = self.arg_str(&args, 1, "model.llm");
@@ -7864,7 +7864,7 @@ impl Interpreter {
             | "对话载模"
             | "対話モデル読込"
             | "대화모델불러오기"
-            | "โหลดโมเดลสนทนา" => {
+            | "โหลดโมเดลสนทนา" | "بارگذاری_مدل_گفتگو" | "حمّل_نموذج_الحوار" | "טען_מודל_דיאלוג" | "مکالمہ_ماڈل_لوڈ" | "charger_modèle_dialogue" | "dialog_modell_laden" | "загрузить_модель_диалога" => {
                 let path = self.arg_str(&args, 0, "model.llm");
                 return Ok(Value::Number(ai::dialog_load_model(&path) as f64));
             },
@@ -7918,7 +7918,7 @@ impl Interpreter {
                     return Ok(Value::Bool(std::path::Path::new(&path).exists()));
                 }
             },
-            "write_file" | "เขียนไฟล์" => {
+            "write_file" | "เขียนไฟล์" | "نوشتن_فایل" | "اكتب_الملف" | "כתוב_קובץ" | "فائل_لکھو" => {
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Unit);
                 #[cfg(not(target_arch = "wasm32"))]
@@ -7930,14 +7930,14 @@ impl Interpreter {
                     return Ok(Value::Unit);
                 }
             },
-            "print_file" | "พิมพ์ไฟล์" => {
+            "print_file" | "พิมพ์ไฟล์" | "چاپ_فایل" | "اطبع_الملف" | "הדפס_קובץ" | "فائل_چھاپو" => {
                 let content = self.arg_str(&args, 0, "");
                 print!("{content}");
                 return Ok(Value::Unit);
             },
 
             // ── CLI arguments ─────────────────────────────────────────────────
-            "get_args" | "รับอาร์กิวเมนต์" => {
+            "get_args" | "รับอาร์กิวเมนต์" | "دریافت_آرگومان‌ها" | "اجلب_المعاملات" | "קבל_ארגומנטים" | "دلائل_حاصل_کرو" => {
                 let v: Vec<Value> = std::env::args().map(Value::Str).collect();
                 return Ok(Value::List(Rc::new(v)));
             },
@@ -7947,7 +7947,7 @@ impl Interpreter {
             // degrade gracefully (empty list / 0 / "") so a walk never aborts on one
             // unreadable entry.
             #[cfg(not(target_arch = "wasm32"))]
-            "list_dir" | "รายการไดเรกทอรี" => {
+            "list_dir" | "รายการไดเรกทอรี" | "فهرست_پوشه" | "اسرد_المجلد" | "רשום_תיקייה" | "فولڈر_فہرست" => {
                 let path = self.arg_str(&args, 0, ".");
                 let mut paths: Vec<String> = Vec::new();
                 if let Ok(rd) = std::fs::read_dir(&path) {
@@ -7960,17 +7960,17 @@ impl Interpreter {
                 return Ok(Value::List(Rc::new(out)));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "is_dir" | "เป็นไดเรกทอรี" => {
+            "is_dir" | "เป็นไดเรกทอรี" | "آیا_پوشه_است" | "هل_مجلد" | "האם_תיקייה" | "کیا_فولڈر_ہے" => {
                 let path = self.arg_str(&args, 0, "");
                 return Ok(Value::Bool(std::path::Path::new(&path).is_dir()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "is_file" | "เป็นไฟล์" => {
+            "is_file" | "เป็นไฟล์" | "آیا_فایل_است" | "هل_ملف" | "האם_קובץ" | "کیا_فائل_ہے" => {
                 let path = self.arg_str(&args, 0, "");
                 return Ok(Value::Bool(std::path::Path::new(&path).is_file()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "path_name" | "ชื่อไฟล์" => {
+            "path_name" | "ชื่อไฟล์" | "نام_مسیر" | "اسم_المسار" | "שם_נתיב" | "پاتھ_نام" => {
                 let path = self.arg_str(&args, 0, "");
                 let name = std::path::Path::new(&path)
                     .file_name()
@@ -7979,7 +7979,7 @@ impl Interpreter {
                 return Ok(Value::Str(name));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "path_ext" | "นามสกุลไฟล์" => {
+            "path_ext" | "นามสกุลไฟล์" | "پسوند_مسیر" | "امتداد_المسار" | "סיומת_נתיב" | "پاتھ_ایکسٹینشن" => {
                 let path = self.arg_str(&args, 0, "");
                 let ext = std::path::Path::new(&path)
                     .extension()
@@ -7988,13 +7988,13 @@ impl Interpreter {
                 return Ok(Value::Str(ext));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "file_size" | "ขนาดไฟล์" => {
+            "file_size" | "ขนาดไฟล์" | "اندازه_فایل" | "حجم_الملف" | "גודל_קובץ" | "فائل_سائز" => {
                 let path = self.arg_str(&args, 0, "");
                 let sz = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                 return Ok(Value::Number(sz as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "file_modified" | "เวลาที่แก้ไข" => {
+            "file_modified" | "เวลาที่แก้ไข" | "زمان_تغییر_فایل" | "وقت_تعديل_الملف" | "זמן_עדכון_קובץ" | "فائل_ترمیم_وقت" => {
                 let path = self.arg_str(&args, 0, "");
                 let secs = std::fs::metadata(&path)
                     .and_then(|m| m.modified())
@@ -8005,7 +8005,7 @@ impl Interpreter {
                 return Ok(Value::Number(secs));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "file_created" | "เวลาที่สร้าง" => {
+            "file_created" | "เวลาที่สร้าง" | "زمان_ایجاد_فایل" | "وقت_إنشاء_الملف" | "זמן_יצירת_קובץ" | "فائل_تخلیق_وقت" => {
                 let path = self.arg_str(&args, 0, "");
                 let secs = std::fs::metadata(&path)
                     .ok()
@@ -8016,12 +8016,12 @@ impl Interpreter {
                 return Ok(Value::Number(secs));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "make_dir" | "สร้างไดเรกทอรี" => {
+            "make_dir" | "สร้างไดเรกทอรี" | "ساخت_پوشه" | "أنشئ_مجلدا" | "צור_תיקייה" | "فولڈر_بناؤ" => {
                 let path = self.arg_str(&args, 0, "");
                 return Ok(Value::Bool(std::fs::create_dir_all(&path).is_ok()));
             },
             // str_strip_prefix("Bearer x", "Bearer ") → "x" (unchanged if absent).
-            "str_strip_prefix" | "ตัดคำนำหน้า" => {
+            "str_strip_prefix" | "ตัดคำนำหน้า" | "حذف_پیشوند" | "أزل_البادئة" | "הסר_קידומת" | "سابقہ_ہٹاؤ" => {
                 let s = self.arg_str(&args, 0, "");
                 let prefix = self.arg_str(&args, 1, "");
                 return Ok(Value::Str(
@@ -8031,7 +8031,7 @@ impl Interpreter {
             // Classify a file by magic bytes: "gzip" | "zip" | "other" | "missing".
             // The build-verification gate: only real built archives may publish.
             #[cfg(not(target_arch = "wasm32"))]
-            "file_magic" | "มายาไฟล์" => {
+            "file_magic" | "มายาไฟล์" | "امضای_فایل" | "توقيع_الملف" | "חתימת_קובץ" | "فائل_میجک" => {
                 let path = self.arg_str(&args, 0, "");
                 let kind = match std::fs::File::open(&path) {
                     Ok(mut f) => {
@@ -8052,7 +8052,7 @@ impl Interpreter {
             },
             // Binary-safe file copy (backups): copy_file(src, dst) → bool.
             #[cfg(not(target_arch = "wasm32"))]
-            "copy_file" | "คัดลอกไฟล์" => {
+            "copy_file" | "คัดลอกไฟล์" | "کپی_فایل" | "انسخ_الملف" | "העתק_קובץ" | "فائل_کاپی" => {
                 let src = self.arg_str(&args, 0, "");
                 let dst = self.arg_str(&args, 1, "");
                 if let Some(parent) = std::path::Path::new(&dst).parent() {
@@ -8064,7 +8064,7 @@ impl Interpreter {
             // Powers the GitHub-style "Code / Files" browser: tar_gz_list gives
             // the file tree, tar_gz_read pulls one file's text for the viewer.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "tar_gz_list" | "รายการทาร์" => {
+            "tar_gz_list" | "รายการทาร์" | "فهرست_TAR_GZ" | "اسرد_TAR_GZ" | "רשום_TAR_GZ" | "TAR_GZ_فہرست" => {
                 let path = self.arg_str(&args, 0, "");
                 let mut names: Vec<String> = Vec::new();
                 if let Ok(file) = std::fs::File::open(&path) {
@@ -8093,7 +8093,7 @@ impl Interpreter {
             // capped at 256 KiB). Only reads entries that exist in the archive,
             // so a caller can't traverse outside it. "" if not found/unreadable.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "tar_gz_read" | "อ่านทาร์" => {
+            "tar_gz_read" | "อ่านทาร์" | "خواندن_TAR_GZ" | "اقرأ_TAR_GZ" | "קרא_TAR_GZ" | "TAR_GZ_پڑھو" => {
                 let path = self.arg_str(&args, 0, "");
                 let want = self.arg_str(&args, 1, "");
                 let want = want.trim_start_matches("./").replace('\\', "/");
@@ -8133,7 +8133,7 @@ impl Interpreter {
             // build without it must skip these arms too, not just fail to
             // link; matches how `file_hash` etc. gate their own arms below.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "totp_secret" | "โทเทนลับ" => {
+            "totp_secret" | "โทเทนลับ" | "راز_TOTP" | "سر_TOTP" | "סוד_TOTP" | "TOTP_راز" => {
                 let mut bytes = [0u8; 20];
                 rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
                 return Ok(Value::Str(base32_encode(&bytes)));
@@ -8141,7 +8141,7 @@ impl Interpreter {
             // otpauth:// URI to paste into an authenticator app (or make a QR of).
             // No cfg gate needed — pure string formatting, no dependency on
             // the web-only TOTP helpers.
-            "totp_uri" | "โทเทนยูอาร์ไอ" => {
+            "totp_uri" | "โทเทนยูอาร์ไอ" | "آدرس_TOTP" | "رابط_TOTP" | "כתובת_TOTP" | "TOTP_یو_آر_آئی" => {
                 let secret = self.arg_str(&args, 0, "");
                 let account = self.arg_str(&args, 1, "user");
                 let issuer = self.arg_str(&args, 2, "lingfu");
@@ -8151,7 +8151,7 @@ impl Interpreter {
             },
             // Verify a 6-digit code against the secret, allowing ±1 time step.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "totp_verify" | "โทเทนตรวจ" => {
+            "totp_verify" | "โทเทนตรวจ" | "تایید_TOTP" | "تحقق_TOTP" | "אמת_TOTP" | "TOTP_تصدیق" => {
                 let secret = self.arg_str(&args, 0, "");
                 let code = self.arg_str(&args, 1, "");
                 let ok = totp_check(&secret, code.trim());
@@ -8159,7 +8159,7 @@ impl Interpreter {
             },
             // The current valid code, for tests/tools.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
-            "totp_now" | "โทเทนตอนนี้" => {
+            "totp_now" | "โทเทนตอนนี้" | "TOTP_اکنون" | "TOTP_الآن" | "TOTP_עכשיו" | "TOTP_ابھی" => {
                 let secret = self.arg_str(&args, 0, "");
                 let step = (crate::runtime::now_secs() as u64) / 30;
                 return Ok(Value::Str(
@@ -8168,7 +8168,7 @@ impl Interpreter {
             },
             // BLAKE3 hex of a file's bytes (binary-safe content fingerprint).
             #[cfg(not(target_arch = "wasm32"))]
-            "file_hash" | "แฮชไฟล์" => {
+            "file_hash" | "แฮชไฟล์" | "درهم_فایل" | "بصمة_الملف" | "גיבוב_קובץ" | "فائل_ہیش" => {
                 let path = self.arg_str(&args, 0, "");
                 match std::fs::read(&path) {
                     Ok(bytes) => {
@@ -8178,7 +8178,7 @@ impl Interpreter {
                 }
             },
             // BLAKE3 hex of an arbitrary string (deterministic id/colour/role seed).
-            "hash_hex" | "แฮชสตริง" => {
+            "hash_hex" | "แฮชสตริง" | "درهم_هگزادسیمال" | "بصمة_سداسية" | "גיבוב_הקסדצימלי" | "ہیکس_ہیش" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(hex_encode(&ling_crypto::Blake3::hash(
                     s.as_bytes(),
@@ -8186,7 +8186,7 @@ impl Interpreter {
             },
             // Read an environment variable, falling back to a default.
             #[cfg(not(target_arch = "wasm32"))]
-            "env_get" | "รับตัวแปรแวดล้อม" => {
+            "env_get" | "รับตัวแปรแวดล้อม" | "دریافت_متغیر_محیطی" | "اجلب_متغير_البيئة" | "קבל_משתנה_סביבה" | "ماحولیاتی_متغیر_حاصل_کرو" => {
                 let name = self.arg_str(&args, 0, "");
                 let dflt = self.arg_str(&args, 1, "");
                 return Ok(Value::Str(std::env::var(&name).unwrap_or(dflt)));
@@ -8217,7 +8217,7 @@ impl Interpreter {
                 let v = u64::from_str_radix(s.trim(), 16).unwrap_or(0);
                 return Ok(Value::Number(v as f64));
             },
-            "split" | "str_split" | "แยก" => {
+            "split" | "str_split" | "แยก" | "جداسازی" | "قسّم" | "פצל" | "تقسیم_کرو" => {
                 let s = self.arg_str(&args, 0, "");
                 let sep = self.arg_str(&args, 1, "\n");
                 let sep = if sep.is_empty() { "\n".into() } else { sep };
@@ -8227,27 +8227,27 @@ impl Interpreter {
                     .collect();
                 return Ok(Value::List(Rc::new(parts)));
             },
-            "trim" | "str_trim" | "ตัดช่องว่าง" => {
+            "trim" | "str_trim" | "ตัดช่องว่าง" | "حذف_فاصله" | "اقتطع_الفراغات" | "חתוך_רווחים" | "خالی_جگہ_کاٹو" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.trim().to_string()));
             },
-            "starts_with" | "str_starts_with" | "เริ่มด้วย" => {
+            "starts_with" | "str_starts_with" | "เริ่มด้วย" | "شروع_می‌شود_با" | "يبدأ_بـ" | "מתחיל_ב" | "شروع_ہوتا_ہے" => {
                 let s = self.arg_str(&args, 0, "");
                 let prefix = self.arg_str(&args, 1, "");
                 return Ok(Value::Bool(s.starts_with(prefix.as_str())));
             },
-            "ends_with" | "str_ends_with" | "ลงท้ายด้วย" => {
+            "ends_with" | "str_ends_with" | "ลงท้ายด้วย" | "پایان_می‌یابد_با" | "ينتهي_بـ" | "מסתיים_ב" | "ختم_ہوتا_ہے" => {
                 let s = self.arg_str(&args, 0, "");
                 let suffix = self.arg_str(&args, 1, "");
                 return Ok(Value::Bool(s.ends_with(suffix.as_str())));
             },
-            "str_replace" | "แทนสตริง" => {
+            "str_replace" | "แทนสตริง" | "جایگزینی_رشته" | "استبدل_النص" | "החלף_מחרוזת" | "اسٹرنگ_تبدیل" => {
                 let s = self.arg_str(&args, 0, "");
                 let from = self.arg_str(&args, 1, "");
                 let to = self.arg_str(&args, 2, "");
                 return Ok(Value::Str(s.replace(from.as_str(), to.as_str())));
             },
-            "str_find" | "หาในสตริง" => {
+            "str_find" | "หาในสตริง" | "جستجوی_رشته" | "ابحث_في_النص" | "חפש_מחרוזת" | "اسٹرنگ_تلاش" => {
                 let s = self.arg_str(&args, 0, "");
                 let needle = self.arg_str(&args, 1, "");
                 // Return char index (not byte index) for consistency with substr
@@ -8257,7 +8257,7 @@ impl Interpreter {
                     .unwrap_or(-1.0);
                 return Ok(Value::Number(pos));
             },
-            "substr" | "str_slice" | "ส่วนสตริง" => {
+            "substr" | "str_slice" | "ส่วนสตริง" | "زیررشته" | "جزء_النص" | "תת_מחרוזת" | "ذیلی_اسٹرنگ" => {
                 let s = self.arg_str(&args, 0, "");
                 let start = self.arg_num(&args, 1, 0.0)? as usize;
                 let len = args
@@ -8269,11 +8269,11 @@ impl Interpreter {
                 let slice: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
                 return Ok(Value::Str(slice));
             },
-            "to_str" | "str" | "num_str" | "แปลงสตริง" => {
+            "to_str" | "str" | "num_str" | "แปลงสตริง" | "تبدیل_به_رشته" | "حوّل_لنص" | "המר_למחרוזת" | "اسٹرنگ_میں_بدلو" => {
                 let v = args.into_iter().next().unwrap_or(Value::Unit);
                 return Ok(Value::Str(v.to_string()));
             },
-            "str_repeat" | "ทำซ้ำสตริง" => {
+            "str_repeat" | "ทำซ้ำสตริง" | "تکرار_رشته" | "كرّر_النص" | "חזור_על_מחרוזת" | "اسٹرنگ_دہراؤ" => {
                 let s = self.arg_str(&args, 0, "");
                 let n = self.arg_num(&args, 1, 1.0)? as usize;
                 return Ok(Value::Str(s.repeat(n)));
@@ -8286,7 +8286,7 @@ impl Interpreter {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(s.to_lowercase()));
             },
-            "str_len" | "len" | "ความยาว" | "长度" | "長さ" | "길이" => {
+            "str_len" | "len" | "ความยาว" | "长度" | "長さ" | "길이" | "طول_رشته" | "طول_النص" | "אורך_מחרוזת" | "اسٹرنگ_لمبائی" => {
                 match args.first() {
                     Some(Value::Str(s)) => return Ok(Value::Number(s.chars().count() as f64)),
                     Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
@@ -8295,7 +8295,7 @@ impl Interpreter {
             },
 
             // ── FNV-1a hash (deterministic, normalized 0.0–1.0) ──────────────
-            "hash_str" | "แฮช" => {
+            "hash_str" | "แฮช" | "درهم_رشته" | "بصمة_نص" | "גיבוב_מחרוזת" | "اسٹرنگ_ہیش" => {
                 let s = self.arg_str(&args, 0, "");
                 let mut h: u64 = 14695981039346656037_u64;
                 for b in s.bytes() {
@@ -8304,7 +8304,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Number((h & 0xFFFFFF) as f64 / 16777215.0));
             },
-            "hash_int" | "แฮชจำนวน" => {
+            "hash_int" | "แฮชจำนวน" | "درهم_عدد" | "بصمة_عدد" | "גיבוב_מספר" | "نمبر_ہیش" => {
                 let s = self.arg_str(&args, 0, "");
                 let n = self.arg_num(&args, 1, 100.0)? as u64;
                 let mut h: u64 = 14695981039346656037_u64;
@@ -8316,11 +8316,11 @@ impl Interpreter {
             },
 
             // ── List utilities ────────────────────────────────────────────────
-            "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" =>
+            "list_new" | "รายการใหม่" | "新建列表" | "新規リスト" | "새목록" | "فهرست_جدید" | "قائمة_جديدة" | "רשימה_חדשה" | "نئی_فہرست" | "nouvelle_liste" | "neue_liste" | "новый_список" =>
             {
                 return Ok(Value::List(Rc::new(Vec::new())));
             },
-            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" =>
+            "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" | "افزودن_به_فهرست" | "أضف_للقائمة" | "הוסף_לרשימה" | "فہرست_میں_شامل_کرو" | "ajouter_liste" | "liste_anhängen" | "добавить_в_список" =>
             {
                 let lst = args
                     .first()
@@ -8333,7 +8333,7 @@ impl Interpreter {
                 }
                 return Ok(Value::List(Rc::new(vec![val])));
             },
-            "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" =>
+            "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" | "دریافت_از_فهرست" | "اجلب_من_القائمة" | "קבל_מרשימה" | "فہرست_سے_حاصل_کرو" | "obtenir_liste" | "liste_abrufen" | "получить_из_списка" =>
             {
                 // Borrow the list; clone only the element (was cloning the whole list).
                 let i = self.arg_num(&args, 1, 0.0)? as usize;
@@ -8384,7 +8384,7 @@ impl Interpreter {
             // list_set(lst, idx, val) → new list with index replaced. Engine builtin
             // (O(n) one copy) to replace the O(n²) ling `ตั้งรายการ` that looped
             // list_push + list_get (each of which copied the whole list).
-            "list_set" | "ตั้งรายการ" | "设元素" | "要素設定" | "요소설정" =>
+            "list_set" | "ตั้งรายการ" | "设元素" | "要素設定" | "요소설정" | "تنظیم_عنصر_فهرست" | "عيّن_عنصر_القائمة" | "קבע_איבר_רשימה" | "فہرست_سیٹ" =>
             {
                 let idx = self.arg_num(&args, 1, 0.0)? as usize;
                 let mut ai = args.into_iter();
@@ -8399,7 +8399,7 @@ impl Interpreter {
                 }
                 return Ok(Value::List(Rc::new(vec![])));
             },
-            "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" =>
+            "list_join" | "join" | "รวมรายการ" | "连接" | "連結" | "연결" | "پیوستن_فهرست" | "اربط_القائمة" | "חבר_רשימה" | "فہرست_جوڑو" =>
             {
                 let lst = args
                     .first()
@@ -8497,7 +8497,7 @@ impl Interpreter {
             // Chinese aliases: 开始SVG 结束SVG SVG矩形 SVG圆形 SVG线段 SVG折线 SVG文本 HSL颜色
             // Thai aliases:    เริ่มSVG จบSVG SVGสี่เหลี่ยม SVGวงกลม SVGเส้น SVGเส้นหัก SVGข้อความ สีHSL
             // ══════════════════════════════════════════════════════════════════
-            "svg_begin" | "开始SVG" | "เริ่มSVG" => {
+            "svg_begin" | "开始SVG" | "เริ่มSVG" | "شروع_SVG" | "ابدأ_SVG" | "התחל_SVG" | "SVG_شروع" | "commencer_svg" | "svg_beginnen" | "начать_svg" => {
                 let path = self.arg_str(&args, 0, "output.svg");
                 let width = self.arg_num(&args, 1, 800.0)?;
                 let height = self.arg_num(&args, 2, 600.0)?;
@@ -8505,7 +8505,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_rect" | "SVG矩形" | "SVGสี่เหลี่ยม" => {
+            "svg_rect" | "SVG矩形" | "SVGสี่เหลี่ยม" | "مستطیل_SVG" | "مستطيل_SVG" | "מלבן_SVG" | "SVG_مستطیل" | "rectangle_svg" | "svg_rechteck" | "прямоугольник_svg" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let y = self.arg_num(&args, 1, 0.0)?;
                 let w = self.arg_num(&args, 2, 10.0)?;
@@ -8520,7 +8520,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_circle" | "SVG圆形" | "SVGวงกลม" => {
+            "svg_circle" | "SVG圆形" | "SVGวงกลม" | "دایره_SVG" | "دائرة_SVG" | "עיגול_SVG" | "SVG_دائرہ" | "cercle_svg" | "svg_kreis" | "круг_svg" => {
                 let cx = self.arg_num(&args, 0, 0.0)?;
                 let cy = self.arg_num(&args, 1, 0.0)?;
                 let r = self.arg_num(&args, 2, 5.0)?;
@@ -8533,7 +8533,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_line" | "SVG线段" | "SVGเส้น" => {
+            "svg_line" | "SVG线段" | "SVGเส้น" | "خط_SVG" | "خط_SVG" | "קו_SVG" | "SVG_لکیر" | "ligne_svg" | "svg_linie" | "линия_svg" => {
                 let x1 = self.arg_num(&args, 0, 0.0)?;
                 let y1 = self.arg_num(&args, 1, 0.0)?;
                 let x2 = self.arg_num(&args, 2, 0.0)?;
@@ -8549,7 +8549,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_polyline" | "SVG折线" | "SVGเส้นหัก" => {
+            "svg_polyline" | "SVG折线" | "SVGเส้นหัก" | "چندخطی_SVG" | "خط_متعدد_SVG" | "קו_שבור_SVG" | "SVG_پولی_لائن" | "polyligne_svg" | "svg_polylinie" | "ломаная_svg" => {
                 let pts = self.arg_str(&args, 0, "");
                 let stroke = self.arg_str(&args, 1, "#ffffff");
                 let sw = self.arg_num(&args, 2, 1.0)?;
@@ -8562,7 +8562,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_text" | "SVG文本" | "SVGข้อความ" => {
+            "svg_text" | "SVG文本" | "SVGข้อความ" | "متن_SVG" | "نص_SVG" | "טקסט_SVG" | "SVG_متن" | "texte_svg" | "текст_svg" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let y = self.arg_num(&args, 1, 0.0)?;
                 let text = self.arg_str(&args, 2, "");
@@ -8581,7 +8581,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_end" | "结束SVG" | "จบSVG" => {
+            "svg_end" | "结束SVG" | "จบSVG" | "پایان_SVG" | "أنهِ_SVG" | "סיים_SVG" | "SVG_ختم" | "terminer_svg" | "svg_beenden" | "закончить_svg" => {
                 {
                     let borrow = self.svg.borrow();
                     if let Some(svg) = borrow.as_ref() {
@@ -8593,7 +8593,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "hsl_color" | "HSL颜色" | "สีHSL" => {
+            "hsl_color" | "HSL颜色" | "สีHSL" | "رنگ_HSL" | "لون_HSL" | "צבע_HSL" | "HSL_رنگ" | "couleur_hsl" | "hsl_farbe" | "цвет_hsl" => {
                 let h = self.arg_num(&args, 0, 0.0)?;
                 let s = self.arg_num(&args, 1, 70.0)?;
                 let l = self.arg_num(&args, 2, 50.0)?;
@@ -8606,7 +8606,7 @@ impl Interpreter {
 
             // fft_push(samples_list) — feed raw audio samples and run FFT
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" =>
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" | "ورودی_FFT" | "أدخل_FFT" | "הזנת_FFT" | "FFT_ان_پٹ" | "fft_entrée" | "fft_eingabe" | "fft_вход" =>
             {
                 if let Some(Value::List(v)) = args.first() {
                     let samples: Vec<f32> = v
@@ -8626,7 +8626,7 @@ impl Interpreter {
 
             // fft_bands(n) → list of n log-spaced magnitude bands (0..1)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" =>
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" | "باندهای_FFT" | "نطاقات_FFT" | "פסי_FFT" | "FFT_بینڈز" | "fft_bandes" | "fft_bänder" | "fft_полосы" =>
             {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 let bands = self.fft.borrow().freq_bands(n);
@@ -8638,59 +8638,59 @@ impl Interpreter {
 
             // fft_beat() → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" =>
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" | "ضرب_FFT" | "نبضة_FFT" | "פעימת_FFT" | "FFT_دھڑکن" | "fft_battement" | "fft_takt" | "fft_удар" =>
             {
                 return Ok(Value::Bool(self.fft.borrow().is_beat()));
             },
 
             // fft_beat_ratio() → f64  (1.0 = at threshold, >1 = strong beat)
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" =>
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" | "نسبت_ضرب_FFT" | "نسبة_نبضة_FFT" | "יחס_פעימת_FFT" | "FFT_بیٹ_تناسب" =>
             {
                 return Ok(Value::Number(self.fft.borrow().beat_ratio() as f64));
             },
 
             // fft_rms() → f64
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => {
+            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" | "RMS_صدا" | "جذر_متوسط_مربع_FFT" | "RMS_של_FFT" | "FFT_RMS" => {
                 return Ok(Value::Number(self.fft.borrow().rms() as f64));
             },
 
             // fft_dominant_freq() → f64  in Hz
             #[cfg(not(target_arch = "wasm32"))]
-            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" =>
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" | "فرکانس_غالب" | "التردد_السائد" | "תדר_דומיננטי" | "غالب_فریکوئنسی" | "fft_fréquence_dominante" | "fft_dominante_frequenz" | "fft_доминирующая_частота" =>
             {
                 return Ok(Value::Number(self.fft.borrow().dominant_freq() as f64));
             },
 
             // ── wasm32 stubs: fft builtins are no-ops on web ───────────────
             #[cfg(target_arch = "wasm32")]
-            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" =>
+            "fft_push" | "วิเคราะห์เสียง" | "频谱输入" | "FFT入力" | "FFT입력" | "ورودی_FFT" | "أدخل_FFT" | "הזנת_FFT" | "FFT_ان_پٹ" | "fft_entrée" | "fft_eingabe" | "fft_вход" =>
             {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" =>
+            "fft_bands" | "แถบความถี่" | "频段" | "周波数帯" | "주파수대" | "باندهای_FFT" | "نطاقات_FFT" | "פסי_FFT" | "FFT_بینڈز" | "fft_bandes" | "fft_bänder" | "fft_полосы" =>
             {
                 let n = self.arg_num(&args, 0, 32.0)? as usize;
                 return Ok(Value::List(vec![Value::Number(0.0); n].into()));
             },
             #[cfg(target_arch = "wasm32")]
-            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" =>
+            "fft_beat" | "จังหวะเสียง" | "节拍检测" | "ビート検出" | "비트" | "ضرب_FFT" | "نبضة_FFT" | "פעימת_FFT" | "FFT_دھڑکن" | "fft_battement" | "fft_takt" | "fft_удар" =>
             {
                 return Ok(Value::Bool(false));
             },
             #[cfg(target_arch = "wasm32")]
-            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" =>
+            "fft_beat_ratio" | "อัตราจังหวะ" | "节拍比" | "ビート比" | "비트비율" | "نسبت_ضرب_FFT" | "نسبة_نبضة_FFT" | "יחס_פעימת_FFT" | "FFT_بیٹ_تناسب" =>
             {
                 return Ok(Value::Number(1.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" => {
+            "fft_rms" | "ระดับRMS" | "均方根" | "二乗平均" | "RMS레벨" | "RMS_صدا" | "جذر_متوسط_مربع_FFT" | "RMS_של_FFT" | "FFT_RMS" => {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" =>
+            "fft_dominant_freq" | "ความถี่หลัก" | "主频" | "主要周波数" | "주파수" | "فرکانس_غالب" | "التردد_السائد" | "תדר_דומיננטי" | "غالب_فریکوئنسی" | "fft_fréquence_dominante" | "fft_dominante_frequenz" | "fft_доминирующая_частота" =>
             {
                 return Ok(Value::Number(0.0));
             },
@@ -8702,7 +8702,7 @@ impl Interpreter {
             // ══════════════════════════════════════════════════════════════════
 
             // tex_checkerboard(x, y, w, h, tiles, r1,g1,b1, r2,g2,b2)
-            "tex_checkerboard" | "ลายตารางหมากรุก" => {
+            "tex_checkerboard" | "ลายตารางหมากรุก" | "بافت_شطرنجی" | "نسيج_رقعة_الشطرنج" | "מרקם_שחמט" | "شطرنج_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let tiles = self.arg_num(&args, 4, 8.0)? as u32;
                 let (r1, g1, b1) = (
@@ -8733,7 +8733,7 @@ impl Interpreter {
             },
 
             // tex_gradient(x, y, w, h, angle_deg, r1,g1,b1, r2,g2,b2)
-            "tex_gradient" | "ลายไล่สี" => {
+            "tex_gradient" | "ลายไล่สี" | "بافت_گرادیان" | "نسيج_متدرج" | "מרקם_גרדיאנט" | "گریڈینٹ_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let angle = self.arg_num(&args, 4, 0.0)? as f32;
                 let (r1, g1, b1) = (
@@ -8765,7 +8765,7 @@ impl Interpreter {
             },
 
             // tex_noise(x, y, w, h, scale, octaves, seed, palette)
-            "tex_noise" | "ลายนอยส์" => {
+            "tex_noise" | "ลายนอยส์" | "بافت_نویز" | "نسيج_ضجيج" | "מרקם_רעש" | "نوائز_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let scale = self.arg_num(&args, 4, 4.0)? as f32;
                 let octaves = self.arg_num(&args, 5, 4.0)? as u32;
@@ -8793,7 +8793,7 @@ impl Interpreter {
 
             // tex_freq_map(x, y, w, h, time, speed, palette)
             // Uses bands written by the last fft_bands() call.
-            "tex_freq_map" | "ลายความถี่" => {
+            "tex_freq_map" | "ลายความถี่" | "نقشه_فرکانس_بافت" | "خريطة_تردد_النسيج" | "מפת_תדר_מרקם" | "فریکوئنسی_میپ_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let time = self.arg_num(&args, 4, 0.0)? as f32;
                 let speed = self.arg_num(&args, 5, 0.3)? as f32;
@@ -8830,7 +8830,7 @@ impl Interpreter {
             },
 
             // tex_spiral(x, y, w, h, freq, bands, time, palette)
-            "tex_spiral" | "ลายเกลียวหมุน" => {
+            "tex_spiral" | "ลายเกลียวหมุน" | "بافت_مارپیچ" | "نسيج_حلزوني" | "מרקם_ספירלה" | "سرپیچ_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let freq = self.arg_num(&args, 4, 5.0)? as f32;
                 let n_bands = self.arg_num(&args, 5, 8.0)? as f32;
@@ -8858,7 +8858,7 @@ impl Interpreter {
             },
 
             // tex_ripple(x, y, w, h, freq, cx, cy, time, palette)
-            "tex_ripple" | "ลายระลอก" => {
+            "tex_ripple" | "ลายระลอก" | "بافت_موج" | "نسيج_تموج" | "מרקם_אדווה" | "ریپل_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let freq = self.arg_num(&args, 4, 10.0)? as f32;
                 let rcx = self.arg_num(&args, 5, 0.5)? as f32;
@@ -8884,7 +8884,7 @@ impl Interpreter {
             },
 
             // tex_mandelbrot(x, y, w, h, zoom, cx, cy, max_iter, palette)
-            "tex_mandelbrot" | "ลายแมนเดลบรอต" => {
+            "tex_mandelbrot" | "ลายแมนเดลบรอต" | "بافت_ماندلبرو" | "نسيج_مانديلبروت" | "מרקם_מנדלברוט" | "مینڈل_بروٹ_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let zoom = self.arg_num(&args, 4, 1.0)?;
                 let mcx = self.arg_num(&args, 5, -0.5)?;
@@ -8925,7 +8925,7 @@ impl Interpreter {
             },
 
             // tex_julia(x, y, w, h, c_re, c_im, max_iter, palette)
-            "tex_julia" | "ลายจูเลีย" => {
+            "tex_julia" | "ลายจูเลีย" | "بافت_ژولیا" | "نسيج_جوليا" | "מרקם_ג'וליה" | "جولیا_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let c_re = self.arg_num(&args, 4, -0.7)?;
                 let c_im = self.arg_num(&args, 5, 0.27)?;
@@ -8956,7 +8956,7 @@ impl Interpreter {
             },
 
             // tex_voronoi(x, y, w, h, cells, seed, palette)
-            "tex_voronoi" | "ลายโวโรนอย" => {
+            "tex_voronoi" | "ลายโวโรนอย" | "بافت_ورونوی" | "نسيج_فورونوي" | "מרקם_וורונוי" | "ورونوئی_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let cells = self.arg_num(&args, 4, 16.0)? as u32;
                 let seed = self.arg_num(&args, 5, 42.0)? as u32;
@@ -8997,7 +8997,7 @@ impl Interpreter {
             },
 
             // tex_halftone(x, y, w, h, dot_size, time, palette)
-            "tex_halftone" | "ลายฮาล์ฟโทน" => {
+            "tex_halftone" | "ลายฮาล์ฟโทน" | "بافت_نیم‌تن" | "نسيج_نصفي" | "מרקם_חצי_גוון" | "ہاف_ٹون_ٹیکسچر" => {
                 let (tx, ty, tw, th) = self.tex_rect(&args)?;
                 let dot_size = self.arg_num(&args, 4, 0.05)? as f32;
                 let time = self.arg_num(&args, 5, 0.0)? as f32;
@@ -9034,21 +9034,21 @@ impl Interpreter {
             // RENDER / LIGHTING MODES  (holographic cel shading)
             // ══════════════════════════════════════════════════════════════════
             // set_shade_mode(m) — 0 flat · 1 cel · 2 holo (default)
-            "set_shade_mode" | "设置着色" | "シェード設定" | "셰이드모드" | "ตั้งการแรเงา" =>
+            "set_shade_mode" | "设置着色" | "シェード設定" | "셰이드모드" | "ตั้งการแรเงา" | "تنظیم_حالت_سایه‌پردازی" | "عيّن_نمط_التظليل" | "קבע_מצב_הצללה" | "شیڈ_موڈ_مقرر_کرو" | "définir_mode_ombrage" | "schattierungsmodus_setzen" | "задать_режим_затенения" =>
             {
                 let m = self.arg_num(&args, 0, 2.0)? as u8;
                 self.gfx.borrow_mut().shade_mode = m;
                 return Ok(Value::Unit);
             },
             // set_cel_bands(n) — number of posterisation bands (>=2)
-            "set_cel_bands" | "设置色阶" | "セル段数" | "셀밴드" | "ตั้งระดับสี" =>
+            "set_cel_bands" | "设置色阶" | "セル段数" | "셀밴드" | "ตั้งระดับสี" | "تنظیم_باندهای_سل" | "عيّن_نطاقات_التظليل" | "קבע_רצועות_הצללה" | "سیل_بینڈز_مقرر_کرو" | "définir_bandes_cel" | "cel_bänder_setzen" | "задать_полосы_cel" =>
             {
                 let n = (self.arg_num(&args, 0, 4.0)? as u32).max(2);
                 self.gfx.borrow_mut().shade.bands = n;
                 return Ok(Value::Unit);
             },
             // set_shadow_color(r,g,b) — coloured-shadow tint, 0-255
-            "set_shadow_color" | "设置阴影色" | "影の色" | "그림자색" | "ตั้งสีเงา" =>
+            "set_shadow_color" | "设置阴影色" | "影の色" | "그림자색" | "ตั้งสีเงา" | "تنظیم_رنگ_سایه" | "عيّن_لون_الظل" | "קבע_צבע_צל" | "سایہ_رنگ_مقرر_کرو" | "définir_couleur_ombre" | "schattenfarbe_setzen" | "задать_цвет_тени" =>
             {
                 let r = self.arg_num(&args, 0, 26.)? as f32 / 255.0;
                 let g = self.arg_num(&args, 1, 33.)? as f32 / 255.0;
@@ -9062,7 +9062,7 @@ impl Interpreter {
             // Bytes cross the language boundary as lowercase hex strings.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" =>
+            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" | "درهم_رمزنگاری" | "بصمة_تشفير" | "גיבוב_הצפנה" | "خفیہ_ہیش" | "hachage_crypto" | "krypto_hash" | "крипто_хеш" =>
             {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(
@@ -9070,7 +9070,7 @@ impl Interpreter {
                 ))));
             },
             #[cfg(target_arch = "wasm32")]
-            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" =>
+            "crypto_hash" | "แฮชเข้ารหัส" | "几何哈希" | "幾何ハッシュ" | "기하해시" | "درهم_رمزنگاری" | "بصمة_تشفير" | "גיבוב_הצפנה" | "خفیہ_ہیش" | "hachage_crypto" | "krypto_hash" | "крипто_хеш" =>
             {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(hex_encode(&ling_crypto::geo::holo_hash(
@@ -9079,7 +9079,7 @@ impl Interpreter {
             },
             // 3-D torus-knot fingerprint of any text/key → flat [x,y,z, x,y,z, …]
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
+            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" | "نقاط_گره" | "نقاط_العقدة" | "נקודות_קשר" | "گرہ_پوائنٹس" | "points_nœud" | "knotenpunkte" | "точки_узла" => {
                 let s = self.arg_str(&args, 0, "");
                 let shape = ling_crypto::geo::KnotShape::from_bytes(s.as_bytes());
                 let mut out = Vec::with_capacity(shape.points.len() * 3);
@@ -9091,7 +9091,7 @@ impl Interpreter {
                 return Ok(Value::List(Rc::new(out)));
             },
             #[cfg(target_arch = "wasm32")]
-            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" => {
+            "knot_points" | "จุดปม" | "结点坐标" | "結び目点" | "매듭점" | "نقاط_گره" | "نقاط_العقدة" | "נקודות_קשר" | "گرہ_پوائنٹس" | "points_nœud" | "knotenpunkte" | "точки_узла" => {
                 let s = self.arg_str(&args, 0, "");
                 let shape = ling_crypto::geo::KnotShape::from_bytes(s.as_bytes());
                 let mut out = Vec::with_capacity(shape.points.len() * 3);
@@ -9103,7 +9103,7 @@ impl Interpreter {
                 return Ok(Value::List(out.into()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
+            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" | "برچسب_گره" | "تسمية_العقدة" | "תווית_קשר" | "گرہ_لیبل" | "étiquette_nœud" | "knotenbezeichnung" | "метка_узла" =>
             {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(
@@ -9111,7 +9111,7 @@ impl Interpreter {
                 ));
             },
             #[cfg(target_arch = "wasm32")]
-            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" =>
+            "knot_label" | "ป้ายปม" | "结点标签" | "結び目ラベル" | "매듭라벨" | "برچسب_گره" | "تسمية_العقدة" | "תווית_קשר" | "گرہ_لیبل" | "étiquette_nœud" | "knotenbezeichnung" | "метка_узла" =>
             {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Str(
@@ -9120,13 +9120,13 @@ impl Interpreter {
             },
             // KEM keypair (hybrid X25519+ML-KEM-768) → integer handle
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_keygen" | "hybrid_keygen" | "สร้างกุญแจปม" | "生成密钥" | "鍵生成" | "키생성" =>
+            "knot_keygen" | "hybrid_keygen" | "สร้างกุญแจปม" | "生成密钥" | "鍵生成" | "키생성" | "تولید_کلید_گره" | "توليد_مفتاح_العقدة" | "יצירת_מפתח_קשר" | "گرہ_کلید_تخلیق" | "génération_clé_nœud" | "knotenschlüsselerzeugung" | "генерация_ключа_узла" =>
             {
                 self.crypto_ids.push(ling_crypto::KnotIdentity::generate());
                 return Ok(Value::Number((self.crypto_ids.len() - 1) as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "knot_public" | "hybrid_public" | "กุญแจสาธารณะปม" | "公钥" | "公開鍵" | "공개키" =>
+            "knot_public" | "hybrid_public" | "กุญแจสาธารณะปม" | "公钥" | "公開鍵" | "공개키" | "کلید_عمومی_گره" | "مفتاح_العقدة_العام" | "מפתח_ציבורי_קשר" | "گرہ_عوامی_کلید" | "clé_publique_nœud" | "knoten_öffentlicher_schlüssel" | "публичный_ключ_узла" =>
             {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
                 let pk = self
@@ -9143,7 +9143,7 @@ impl Interpreter {
             | "ห่อกุญแจปม"
             | "封装密钥"
             | "カプセル化"
-            | "캡슐화" => {
+            | "캡슐화" | "کپسوله‌سازی_گره" | "تغليف_مفتاح_العقدة" | "עטיפת_קשר" | "گرہ_احاطہ" | "encapsuler_nœud" | "knoten_kapseln" | "инкапсулировать_узел" => {
                 let pk = hex_decode(&self.arg_str(&args, 0, ""));
                 match ling_crypto::geo::knot_encapsulate(&pk) {
                     Ok((ct, ss)) => {
@@ -9162,7 +9162,7 @@ impl Interpreter {
             | "แกะกุญแจปม"
             | "解封装密钥"
             | "カプセル解除"
-            | "캡슐해제" => {
+            | "캡슐해제" | "بازکردن_کپسوله_گره" | "فك_تغليف_مفتاح_العقدة" | "פתיחת_עטיפת_קשר" | "گرہ_احاطہ_کھولو" | "décapsuler_nœud" | "knoten_entkapseln" | "декапсулировать_узел" => {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
                 let ct = hex_decode(&self.arg_str(&args, 1, ""));
                 let ss = self
@@ -9175,7 +9175,7 @@ impl Interpreter {
             },
             // Authenticated encryption (XChaCha20-Poly1305) — seal(key_hex, text) → ct_hex
             #[cfg(not(target_arch = "wasm32"))]
-            "crypto_seal" | "ผนึก" | "封印" | "封印する" | "봉인" => {
+            "crypto_seal" | "ผนึก" | "封印" | "封印する" | "봉인" | "مهر_رمزنگاری" | "ختم_تشفير" | "חתימת_הצפנה" | "خفیہ_مہر" | "sceller_crypto" | "krypto_versiegeln" | "запечатать_крипто" => {
                 let key = hex_to_32(&self.arg_str(&args, 0, ""));
                 let pt = self.arg_str(&args, 1, "");
                 match ling_crypto::geo::holo_seal(key, pt.as_bytes()) {
@@ -9184,7 +9184,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "crypto_open" | "เปิดผนึก" | "解封" | "封印解除" | "봉인해제" =>
+            "crypto_open" | "เปิดผนึก" | "解封" | "封印解除" | "봉인해제" | "بازکردن_مهر" | "فتح_الختم" | "פתיחת_חתימה" | "مہر_کھولو" | "ouvrir_crypto" | "krypto_öffnen" | "открыть_крипто" =>
             {
                 let key = hex_to_32(&self.arg_str(&args, 0, ""));
                 let ct = hex_decode(&self.arg_str(&args, 1, ""));
@@ -9195,7 +9195,7 @@ impl Interpreter {
             },
             // Holographic all-or-nothing transform — 4-D fragment coords [a,b,c,d, …]
             #[cfg(not(target_arch = "wasm32"))]
-            "holo_points" | "จุดโฮโลแกรม" | "全息点" | "ホログラム点" | "홀로그램점" =>
+            "holo_points" | "จุดโฮโลแกรม" | "全息点" | "ホログラム点" | "홀로그램점" | "نقاط_هولوگرام" | "نقاط_الهولوغرام" | "נקודות_הולוגרמה" | "ہولوگرام_پوائنٹس" | "points_holo" | "holo_punkte" | "точки_голо" =>
             {
                 let s = self.arg_str(&args, 0, "");
                 let frags = ling_crypto::geo::scatter(s.as_bytes());
@@ -9212,7 +9212,7 @@ impl Interpreter {
             | "จำนวนชิ้นโฮโลแกรม"
             | "全息碎片数"
             | "ホログラム断片数"
-            | "홀로그램조각수" => {
+            | "홀로그램조각수" | "تعداد_قطعات_هولوگرام" | "عدد_شظايا_الهولوغرام" | "מספר_שברי_הולוגרמה" | "ہولوگرام_ٹکڑے_تعداد" | "nombre_fragments_holo" | "holo_fragmentanzahl" | "число_фрагментов_голо" => {
                 let s = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(
                     ling_crypto::geo::scatter(s.as_bytes()).len() as f64
@@ -9416,13 +9416,13 @@ impl Interpreter {
             // Anima — unified animation drivers (ling-animation). Organic 灵 +
             // mechanical 机 scalar drivers, callable per frame from a script.
             // ══════════════════════════════════════════════════════════════════
-            "tween" | "补间" | "補間" | "트윈" | "แทรกค่า" => {
+            "tween" | "补间" | "補間" | "트윈" | "แทรกค่า" | "میان‌فریم" | "تدرج_حركي" | "טווין" | "ٹوئین" | "твин" => {
                 let a = self.arg_num(&args, 0, 0.0)?;
                 let b = self.arg_num(&args, 1, 0.0)?;
                 let t = self.arg_num(&args, 2, 0.0)?.clamp(0.0, 1.0);
                 return Ok(Value::Number(a + (b - a) * t));
             },
-            "tween_ease" | "缓动补间" | "緩和補間" | "이징트윈" | "แทรกนุ่ม" =>
+            "tween_ease" | "缓动补间" | "緩和補間" | "이징트윈" | "แทรกนุ่ม" | "میان‌فریم_نرم" | "تدرج_ناعم_حركي" | "טווין_חלק" | "ٹوئین_ایز" | "tween_lisse" | "tween_glättung" | "твин_плавность" =>
             {
                 let a = self.arg_num(&args, 0, 0.0)? as f32;
                 let b = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9434,7 +9434,7 @@ impl Interpreter {
                 ));
             },
             // ── Organic 灵 ──
-            "breathe" | "呼吸" | "호흡" | "หายใจ" => {
+            "breathe" | "呼吸" | "호흡" | "หายใจ" | "تنفس" | "تنفس" | "נשימה" | "سانس" | "respirer" | "atmen" | "дышать" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let rate = self.arg_num(&args, 1, 1.0)? as f32;
                 let depth = self.arg_num(&args, 2, 0.1)? as f32;
@@ -9442,7 +9442,7 @@ impl Interpreter {
                     ling_animation::scalar::breathe(t, rate, depth) as f64,
                 ));
             },
-            "wobble" | "摆动" | "揺れ" | "흔들림" | "โยก" => {
+            "wobble" | "摆动" | "揺れ" | "흔들림" | "โยก" | "نوسان" | "تذبذب" | "תנודה" | "لرزش" | "osciller" | "wackeln" | "покачивание" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let freq = self.arg_num(&args, 1, 1.0)? as f32;
                 let amp = self.arg_num(&args, 2, 1.0)? as f32;
@@ -9451,14 +9451,14 @@ impl Interpreter {
                     ling_animation::scalar::wobble(t, freq, amp, phase) as f64,
                 ));
             },
-            "gait_phase" | "步相" | "歩相" | "걸음위상" | "เฟสก้าว" => {
+            "gait_phase" | "步相" | "歩相" | "걸음위상" | "เฟสก้าว" | "فاز_گام" | "طور_المشية" | "שלב_הליכה" | "چال_مرحلہ" | "phase_démarche" | "gangphase" | "фаза_походки" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
                 return Ok(Value::Number(
                     ling_animation::scalar::gait_phase(t, speed) as f64
                 ));
             },
-            "gait_swing" | "步摆" | "歩振り" | "걸음흔들" | "ก้าวแกว่ง" =>
+            "gait_swing" | "步摆" | "歩振り" | "걸음흔들" | "ก้าวแกว่ง" | "نوسان_گام" | "أرجحة_المشية" | "נדנוד_הליכה" | "چال_جھولا" | "balancement_démarche" | "gangschwung" | "мах_походки" =>
             {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
@@ -9467,7 +9467,7 @@ impl Interpreter {
                     ling_animation::scalar::gait_swing(t, speed, stride) as f64,
                 ));
             },
-            "gait_lift" | "抬脚" | "足上げ" | "발들기" | "ยกเท้า" => {
+            "gait_lift" | "抬脚" | "足上げ" | "발들기" | "ยกเท้า" | "بلندشدن_گام" | "رفع_المشية" | "הרמת_הליכה" | "چال_اٹھاؤ" | "levée_démarche" | "ganghub" | "подъём_походки" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let speed = self.arg_num(&args, 1, 1.0)? as f32;
                 let height = self.arg_num(&args, 2, 1.0)? as f32;
@@ -9475,7 +9475,7 @@ impl Interpreter {
                     ling_animation::scalar::gait_lift(t, speed, height) as f64,
                 ));
             },
-            "spring_to" | "弹向" | "バネ寄せ" | "스프링이동" | "สปริงไป" =>
+            "spring_to" | "弹向" | "バネ寄せ" | "스프링이동" | "สปริงไป" | "فنر_به‌سوی" | "نابض_إلى" | "קפיץ_אל" | "اسپرنگ_تک" | "ressort_vers" | "feder_zu" | "пружина_к" =>
             {
                 let pos = self.arg_num(&args, 0, 0.0)? as f32;
                 let vel = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9490,7 +9490,7 @@ impl Interpreter {
                     Value::Number(nv as f64),
                 ])));
             },
-            "ik2" | "反解" | "逆運動" | "역운동" | "ไอเค2" => {
+            "ik2" | "反解" | "逆運動" | "역운동" | "ไอเค2" | "سینماتیک_معکوس2" | "حركية_عكسية2" | "קינמטיקה_הפוכה2" | "آئی_کے2" | "cinématique_inverse2" | "inverse_kinematik2" | "обратная_кинематика2" => {
                 let l1 = self.arg_num(&args, 0, 1.0)? as f32;
                 let l2 = self.arg_num(&args, 1, 1.0)? as f32;
                 let tx = self.arg_num(&args, 2, 0.0)? as f32;
@@ -9502,7 +9502,7 @@ impl Interpreter {
                 ])));
             },
             // ── Mechanical 机 ──
-            "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" =>
+            "gear_couple" | "齿轮联动" | "歯車連動" | "기어연동" | "เฟืองทด" | "جفت_چرخ‌دنده" | "اقتران_التروس" | "צימוד_גלגלי_שיניים" | "گیئر_جوڑا" | "accoupler_engrenage" | "zahnrad_koppeln" | "сцепить_шестерни" =>
             {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let ti = self.arg_num(&args, 1, 1.0)? as f32;
@@ -9511,7 +9511,7 @@ impl Interpreter {
                     ling_animation::scalar::gear(angle, ti, to) as f64
                 ));
             },
-            "gear_train" | "齿轮组" | "歯車列" | "기어열" | "ชุดเฟือง" => {
+            "gear_train" | "齿轮组" | "歯車列" | "기어열" | "ชุดเฟือง" | "مجموعه_چرخ‌دنده" | "قطار_التروس" | "שרשרת_גלגלי_שיניים" | "گیئر_ٹرین" | "train_engrenages" | "zahnradgetriebe" | "передача_шестерён" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let teeth: Vec<f32> = match args.get(1) {
                     Some(Value::List(items)) => items
@@ -9531,7 +9531,7 @@ impl Interpreter {
                     out.into_iter().map(|a| Value::Number(a as f64)).collect(),
                 )));
             },
-            "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" =>
+            "cam_lift" | "凸轮升程" | "カム揚程" | "캠리프트" | "ยกลูกเบี้ยว" | "بلندشدن_بادامک" | "رفع_الكامة" | "הרמת_קאם" | "کیم_اٹھاؤ" | "levée_came" | "nockenhub" | "подъём_кулачка" =>
             {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let lift = self.arg_num(&args, 1, 1.0)? as f32;
@@ -9539,7 +9539,7 @@ impl Interpreter {
                     ling_animation::scalar::cam_lift(angle, lift) as f64
                 ));
             },
-            "piston" | "活塞" | "ピストン" | "피스톤" | "ลูกสูบ" => {
+            "piston" | "活塞" | "ピストン" | "피스톤" | "ลูกสูบ" | "پیستون" | "مكبس" | "בוכנה" | "پسٹن" | "kolben" | "поршень" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let crank = self.arg_num(&args, 1, 1.0)? as f32;
                 let rod = self.arg_num(&args, 2, 2.0)? as f32;
@@ -9547,7 +9547,7 @@ impl Interpreter {
                     ling_animation::scalar::piston(angle, crank, rod) as f64,
                 ));
             },
-            "rack" | "齿条" | "ラック" | "랙" | "แร็ค" => {
+            "rack" | "齿条" | "ラック" | "랙" | "แร็ค" | "زبانه‌دنده" | "سكة_مسننة" | "מוט_שיניים" | "ریک" | "crémaillère" | "zahnstange" | "рейка" => {
                 let angle = self.arg_num(&args, 0, 0.0)? as f32;
                 let radius = self.arg_num(&args, 1, 1.0)? as f32;
                 return Ok(Value::Number(
@@ -9600,7 +9600,7 @@ impl Interpreter {
                 return Ok(Value::Bool(crate::gfx::wasm_mouse_down()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "mouse_down_right" | "เมาส์ขวา" => {
+            "mouse_down_right" | "เมาส์ขวา" | "ماوس_راست_فشرده" | "الفأرة_اليمنى_مضغوطة" | "עכבר_ימני_לחוץ" | "دایاں_ماؤس_دبا_ہوا" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let d = !gfx.input_suppressed()
                     && gfx
@@ -9611,11 +9611,11 @@ impl Interpreter {
                 return Ok(Value::Bool(d));
             },
             #[cfg(target_arch = "wasm32")]
-            "mouse_down_right" | "เมาส์ขวา" => {
+            "mouse_down_right" | "เมาส์ขวา" | "ماوس_راست_فشرده" | "الفأرة_اليمنى_مضغوطة" | "עכבר_ימני_לחוץ" | "دایاں_ماؤس_دبا_ہوا" => {
                 return Ok(Value::Bool(crate::gfx::wasm_mouse_down_right()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "mouse_down_middle" | "เมาส์กลาง" => {
+            "mouse_down_middle" | "เมาส์กลาง" | "ماوس_وسط_فشرده" | "الفأرة_الوسطى_مضغوطة" | "עכבר_אמצעי_לחוץ" | "درمیانی_ماؤس_دبا_ہوا" => {
                 let mut gfx = self.gfx.borrow_mut();
                 let d = !gfx.input_suppressed()
                     && gfx
@@ -9626,11 +9626,11 @@ impl Interpreter {
                 return Ok(Value::Bool(d));
             },
             #[cfg(target_arch = "wasm32")]
-            "mouse_down_middle" | "เมาส์กลาง" => {
+            "mouse_down_middle" | "เมาส์กลาง" | "ماوس_وسط_فشرده" | "الفأرة_الوسطى_مضغوطة" | "עכבר_אמצעי_לחוץ" | "درمیانی_ماؤس_دبا_ہوا" => {
                 return Ok(Value::Bool(crate::gfx::wasm_mouse_down_middle()));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
+            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" | "ناحیه_فعال" | "منطقة_ساخنة" | "אזור_חם" | "ہاٹ_زون" | "survol_ui" | "ui_hover" | "ui_наведение" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9645,12 +9645,12 @@ impl Interpreter {
                 return Ok(Value::Bool(ling_ui::holo::hit_rect(mx, my, x, y, w, h)));
             },
             #[cfg(target_arch = "wasm32")]
-            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" =>
+            "ui_hot" | "热区" | "ホットエリア" | "핫존" | "พื้นที่สัมผัส" | "ناحیه_فعال" | "منطقة_ساخنة" | "אזור_חם" | "ہاٹ_زون" | "survol_ui" | "ui_hover" | "ui_наведение" =>
             {
                 return Ok(Value::Bool(false));
             },
             // ui_text(x, y, scale, "string") — holographic vector text
-            "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" =>
+            "ui_text" | "界面文字" | "UI文字" | "UI텍스트" | "ข้อความหน้าจอ" | "متن_رابط" | "نص_الواجهة" | "טקסט_ממשק" | "یو_آئی_متن" | "texte_ui" | "ui_beschriftung" | "ui_текст" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9667,7 +9667,7 @@ impl Interpreter {
             // font_load("path.ttf") — load a vector font (outlines cached lazily as
             // cache/fonts/<stem>/<codepoint>.ling). Returns a handle, or -1 on failure.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" =>
+            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" | "بارگذاری_فونت" | "تحميل_الخط" | "טעינת_גופן" | "فونٹ_لوڈ" | "charger_police" | "schriftart_laden" | "загрузить_шрифт" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 // Optional 2nd arg: variable-font weight (e.g. 600 for a solid, bold UI).
@@ -9699,7 +9699,7 @@ impl Interpreter {
                 }
             },
             #[cfg(target_arch = "wasm32")]
-            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" =>
+            "font_load" | "โหลดฟอนต์" | "加载字体" | "フォント読込" | "글꼴로드" | "بارگذاری_فونت" | "تحميل_الخط" | "טעינת_גופן" | "فونٹ_لوڈ" | "charger_police" | "schriftart_laden" | "загрузить_шрифт" =>
             {
                 // Web runtime does not load host TTF/OTF files yet.
                 // Return -1 so scripts can fall back to ui_text.
@@ -9840,10 +9840,76 @@ impl Interpreter {
             {
                 return Ok(Value::Number(-1.0));
             },
+            // image_draw(id, x, y, w, h) — blit an image (nearest-neighbour
+            // scaled to w x h, alpha-blended against whatever's already in
+            // the framebuffer) into the current frame. A native pixel loop,
+            // not a .ling-level per-pixel image_pixel_*+pixel() loop: doing
+            // this from script for even a modest thumbnail grid re-incurs
+            // the exact per-frame interpreted-call-volume cost that made
+            // small mosaic tiles hang the UI (see mosaic.ling's
+            // xform_glyph_pts_fit fix) — this is the "read the framebuffer
+            // out" direction's counterpart to screenshot().
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_draw" =>
+            {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let dx = self.arg_num(&args, 1, 0.0)? as i32;
+                let dy = self.arg_num(&args, 2, 0.0)? as i32;
+                let dw = self.arg_num(&args, 3, 0.0)?.max(0.0) as i32;
+                let dh = self.arg_num(&args, 4, 0.0)?.max(0.0) as i32;
+                if id >= 0 && (id as usize) < self.images.len() && dw > 0 && dh > 0 {
+                    let img = &self.images[id as usize];
+                    let sw = img.width() as i32;
+                    let sh = img.height() as i32;
+                    if sw > 0 && sh > 0 {
+                        let mut gfx = self.gfx.borrow_mut();
+                        let (fw, fh) = (gfx.width as i32, gfx.height as i32);
+                        for py in 0..dh {
+                            let ty = dy + py;
+                            if ty < 0 || ty >= fh {
+                                continue;
+                            }
+                            let sy = (py * sh / dh).clamp(0, sh - 1) as u32;
+                            for px in 0..dw {
+                                let tx = dx + px;
+                                if tx < 0 || tx >= fw {
+                                    continue;
+                                }
+                                let sx = (px * sw / dw).clamp(0, sw - 1) as u32;
+                                let p = img.get_pixel(sx, sy);
+                                let a = p[3] as u32;
+                                if a == 0 {
+                                    continue;
+                                }
+                                let idx = ty as usize * gfx.width + tx as usize;
+                                if a >= 255 {
+                                    gfx.buffer[idx] =
+                                        ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | (p[2] as u32);
+                                } else {
+                                    let bg = gfx.buffer[idx];
+                                    let br = (bg >> 16) & 0xff;
+                                    let bg_g = (bg >> 8) & 0xff;
+                                    let bb = bg & 0xff;
+                                    let r = (p[0] as u32 * a + br * (255 - a)) / 255;
+                                    let g = (p[1] as u32 * a + bg_g * (255 - a)) / 255;
+                                    let b = (p[2] as u32 * a + bb * (255 - a)) / 255;
+                                    gfx.buffer[idx] = (r << 16) | (g << 8) | b;
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(Value::Unit);
+            },
+            #[cfg(target_arch = "wasm32")]
+            "image_draw" =>
+            {
+                return Ok(Value::Unit);
+            },
             // font_text(handle, x, y, px, "string") — anti-aliased *stroked* vector outline
             // in the current set_color / set_blend. (x,y) is the text box top-left.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" =>
+            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" | "متن_فونت" | "نص_الخط" | "טקסט_גופן" | "فونٹ_متن" | "texte_police" | "schriftart_text" | "текст_шрифт" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9887,14 +9953,14 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" =>
+            "font_text" | "ข้อความฟอนต์" | "字体文本" | "フォント文字" | "글꼴텍스트" | "متن_فونت" | "نص_الخط" | "טקסט_גופן" | "فونٹ_متن" | "texte_police" | "schriftart_text" | "текст_шрифт" =>
             {
                 return Ok(Value::Unit);
             },
             // font_text_fill(handle, x, y, px, "string") — filled vector glyphs;
             // anti-aliased when `set_font_antialias(1)` is on (default off = crisp).
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
+            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" | "پرکردن_متن_فونت" | "تعبئة_نص_الخط" | "מילוי_טקסט_גופן" | "فونٹ_متن_بھرو" | "remplir_texte_police" | "schriftart_text_füllen" | "заполнить_текст_шрифт" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
@@ -9932,7 +9998,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" =>
+            "font_text_fill" | "เติมฟอนต์" | "填充字体" | "フォント塗り" | "글꼴채움" | "پرکردن_متن_فونت" | "تعبئة_نص_الخط" | "מילוי_טקסט_גופן" | "فونٹ_متن_بھرو" | "remplir_texte_police" | "schriftart_text_füllen" | "заполнить_текст_шрифт" =>
             {
                 return Ok(Value::Unit);
             },
@@ -9940,7 +10006,7 @@ impl Interpreter {
             // — stroked vector text on a 3D plane: u = advance dir, v = up dir, size = world/em.
             //   Flows through the depth-sorted line pipeline, so it rotates with the camera (and 4D).
             #[cfg(not(target_arch = "wasm32"))]
-            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" =>
+            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" | "متن_فونت_سه‌بعدی" | "نص_خط_ثلاثي_الأبعاد" | "טקסט_גופן_תלת_ממדי" | "تھری_ڈی_فونٹ_متن" | "texte_police_3d" | "schriftart_text_3d" | "текст_шрифт_3d" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let cx = self.arg_num(&args, 1, 0.0)? as f32;
@@ -10065,13 +10131,13 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" =>
+            "font_text_3d" | "ข้อความฟอนต์3มิติ" | "字体3D" | "フォント3D" | "글꼴3D" | "متن_فونت_سه‌بعدی" | "نص_خط_ثلاثي_الأبعاد" | "טקסט_גופן_תלת_ממדי" | "تھری_ڈی_فونٹ_متن" | "texte_police_3d" | "schriftart_text_3d" | "текст_шрифт_3d" =>
             {
                 return Ok(Value::Unit);
             },
             // font_width(handle, px, "string") — pixel width of a string in a loaded font.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" =>
+            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" | "عرض_فونت" | "عرض_الخط" | "רוחב_גופן" | "فونٹ_چوڑائی" | "largeur_police" | "schriftart_breite" | "ширина_шрифта" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let px = self.arg_num(&args, 1, 16.0)? as f32;
@@ -10082,7 +10148,7 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" =>
+            "font_width" | "ความกว้างฟอนต์" | "字体宽度" | "フォント幅" | "글꼴너비" | "عرض_فونت" | "عرض_الخط" | "רוחב_גופן" | "فونٹ_چوڑائی" | "largeur_police" | "schriftart_breite" | "ширина_шрифта" =>
             {
                 return Ok(Value::Number(0.0));
             },
@@ -10092,7 +10158,7 @@ impl Interpreter {
             // subdivided so deviation stays under tol_em (default 0.01). Empty on failure.
             #[cfg(not(target_arch = "wasm32"))]
             "font_glyph_outline" | "font_outline" | "เส้นขอบฟอนต์" | "字体轮廓"
-            | "フォント輪郭" | "글꼴윤곽" => {
+            | "フォント輪郭" | "글꼴윤곽" | "خط‌دور_نویسه_فونت" | "حدود_حرف_الخط" | "קו_מתאר_גליף" | "فونٹ_گلف_آؤٹ_لائن" => {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let s = self.arg_str(&args, 1, "");
                 let tol = self.arg_num(&args, 2, 0.01)? as f32;
@@ -10114,13 +10180,13 @@ impl Interpreter {
             },
             #[cfg(target_arch = "wasm32")]
             "font_glyph_outline" | "font_outline" | "เส้นขอบฟอนต์" | "字体轮廓"
-            | "フォント輪郭" | "글꼴윤곽" => {
+            | "フォント輪郭" | "글꼴윤곽" | "خط‌دور_نویسه_فونت" | "حدود_حرف_الخط" | "קו_מתאר_גליף" | "فونٹ_گلف_آؤٹ_لائن" => {
                 return Ok(Value::List(Rc::new(vec![])));
             },
             // font_advance(handle, "char") — normalized em advance width of ONE glyph
             // (baseline metric, ignores side bearings). Multiply by px for pixels.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" => {
+            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" | "پیشروی_فونت" | "تقدم_الخط" | "קידום_גופן" | "فونٹ_ایڈوانس" => {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let s = self.arg_str(&args, 1, "");
                 let ch = s.chars().next().unwrap_or(' ');
@@ -10130,12 +10196,12 @@ impl Interpreter {
                 return Ok(Value::Number(0.0));
             },
             #[cfg(target_arch = "wasm32")]
-            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" => {
+            "font_advance" | "ระยะฟอนต์" | "字体步进" | "フォント送り" | "글꼴전진" | "پیشروی_فونت" | "تقدم_الخط" | "קידום_גופן" | "فونٹ_ایڈوانس" => {
                 return Ok(Value::Number(0.0));
             },
 
             // ui_frame(x,y,w,h, bracketLen) — sci-fi corner brackets
-            "ui_frame" | "边框" | "フレーム枠" | "프레임틀" | "กรอบ" => {
+            "ui_frame" | "边框" | "フレーム枠" | "프레임틀" | "กรอบ" | "قاب_رابط" | "إطار_الواجهة" | "מסגרת_ממשק" | "یو_آئی_فریم" | "cadre_ui" | "ui_rahmen" | "ui_рамка" => {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
                 let w0 = self.arg_num(&args, 2, 0.0)? as f32;
@@ -10150,7 +10216,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             // ui_bevel(x,y,w,h, bevel) — beveled holographic panel outline
-            "ui_bevel" | "斜角框" | "ベベル枠" | "베벨틀" | "กรอบเฉียง" =>
+            "ui_bevel" | "斜角框" | "ベベル枠" | "베벨틀" | "กรอบเฉียง" | "لبه_شیبدار" | "حافة_مشطوفة" | "מסגרת_משופעת" | "یو_آئی_بیول" | "biseau_ui" | "ui_fase" | "ui_фаска" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -10172,7 +10238,7 @@ impl Interpreter {
             // r,g,b override; interactive ones read the mouse and return state.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_theme" | "界面主题" | "UIテーマ" | "인터페이스테마" | "ธีมส่วนติดต่อ" =>
+            "ui_theme" | "界面主题" | "UIテーマ" | "인터페이스테마" | "ธีมส่วนติดต่อ" | "پوسته_رابط" | "سمة_الواجهة" | "ערכת_נושא" | "یو_آئی_تھیم" | "thème_ui" | "ui_thema" | "ui_тема" =>
             {
                 let cur = self.ui_theme;
                 let primary = self.color_at(&args, 0, cur.primary);
@@ -10203,7 +10269,7 @@ impl Interpreter {
 
             // ── HUD ──────────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_radar" | "雷达" | "レーダー" | "레이더" | "เรดาร์" => {
+            "ui_radar" | "雷达" | "レーダー" | "레이더" | "เรดาร์" | "رادار_رابط" | "رادار_الواجهة" | "מכ״ם_ממשק" | "یو_آئی_ریڈار" | "radar_ui" | "ui_радар" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let r = self.arg_num(&args, 2, 60.)? as f32;
@@ -10216,7 +10282,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_compass" | "罗盘" | "コンパス" | "나침반" | "เข็มทิศ" => {
+            "ui_compass" | "罗盘" | "コンパス" | "나침반" | "เข็มทิศ" | "قطب‌نمای_رابط" | "بوصلة_الواجهة" | "מצפן_ממשק" | "یو_آئی_قطب_نما" | "boussole_ui" | "ui_kompass" | "ui_компас" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 300.)? as f32;
@@ -10230,7 +10296,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_reticle" | "准星" | "照準" | "조준선" | "เป้าเล็ง" => {
+            "ui_reticle" | "准星" | "照準" | "조준선" | "เป้าเล็ง" | "نشانه_رابط" | "علامة_تصويب" | "כוונת" | "نشانہ" | "réticule_ui" | "ui_fadenkreuz" | "ui_прицел" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let r = self.arg_num(&args, 2, 30.)? as f32;
@@ -10241,7 +10307,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_target" | "锁定框" | "ターゲット" | "표적" | "กรอบเป้า" =>
+            "ui_target" | "锁定框" | "ターゲット" | "표적" | "กรอบเป้า" | "قاب_هدف" | "إطار_الهدف" | "מסגרת_מטרה" | "ہدف_فریم" | "cible_ui" | "ui_ziel" | "ui_цель" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10256,7 +10322,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_panel" | "面板" | "パネル" | "패널" | "แผง" => {
+            "ui_panel" | "面板" | "パネル" | "패널" | "แผง" | "پنل_رابط" | "لوحة_الواجهة" | "לוח_ממשק" | "یو_آئی_پینل" | "panneau_ui" | "ui_feld" | "ui_панель" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 200.)? as f32;
@@ -10268,7 +10334,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_scanlines" | "扫描线" | "走査線" | "스캔라인" | "เส้นสแกน" =>
+            "ui_scanlines" | "扫描线" | "走査線" | "스캔라인" | "เส้นสแกน" | "خطوط_اسکن" | "خطوط_المسح" | "קווי_סריקה" | "اسکین_لائنز" | "lignes_balayage_ui" | "ui_abtastzeilen" | "ui_линии_развёртки" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10283,7 +10349,7 @@ impl Interpreter {
 
             // ── Meters ───────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_bar" | "进度条" | "バー" | "막대" | "แถบ" => {
+            "ui_bar" | "进度条" | "バー" | "막대" | "แถบ" | "نوار_رابط" | "شريط_الواجهة" | "סרגל_ממשק" | "یو_آئی_بار" | "barre_ui" | "ui_leiste" | "ui_полоса" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 160.)? as f32;
@@ -10304,7 +10370,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_segbar" | "分段条" | "分割バー" | "분할막대" | "แถบแบ่ง" =>
+            "ui_segbar" | "分段条" | "分割バー" | "분할막대" | "แถบแบ่ง" | "نوار_قطعه‌ای" | "شريط_مقسم" | "סרגל_מקוטע" | "سیگمنٹ_بار" | "barre_segmentée_ui" | "ui_segmentleiste" | "ui_сегментная_полоса" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10328,7 +10394,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_gauge" | "仪表" | "ゲージ" | "게이지" | "มาตรวัด" => {
+            "ui_gauge" | "仪表" | "ゲージ" | "게이지" | "มาตรวัด" | "گیج_رابط" | "مقياس_الواجهة" | "מד_ממשק" | "یو_آئی_گیج" | "jauge_ui" | "ui_anzeige" | "ui_индикатор" => {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
                 let r = self.arg_num(&args, 2, 50.)? as f32;
@@ -10348,7 +10414,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_ring" | "环表" | "リングメーター" | "링미터" | "วงแหวนวัด" =>
+            "ui_ring" | "环表" | "リングメーター" | "링미터" | "วงแหวนวัด" | "حلقه_گیج" | "حلقة_قياس" | "טבעת_מד" | "رنگ_گیج" | "anneau_ui" | "ui_кольцо" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -10368,7 +10434,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_vu" | "音量条" | "VUメーター" | "음량막대" | "มาตรเสียง" =>
+            "ui_vu" | "音量条" | "VUメーター" | "음량막대" | "มาตรเสียง" | "گیج_صدا" | "مقياس_مستوى_الصوت" | "מד_עוצמה" | "وی_یو_میٹر" | "vumètre_ui" | "ui_vumeter" | "ui_вю_метр" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10381,7 +10447,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_spark" | "迷你图" | "スパークライン" | "스파크라인" | "กราฟจิ๋ว" =>
+            "ui_spark" | "迷你图" | "スパークライン" | "스파크라인" | "กราฟจิ๋ว" | "نمودار_ریز" | "رسم_مصغر" | "גרף_זעיר" | "اسپارک_لائن" | "mini_graphe_ui" | "ui_sparkline" | "ui_мини_график" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10394,7 +10460,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_battery" | "电池" | "バッテリー" | "배터리" | "แบตเตอรี่" =>
+            "ui_battery" | "电池" | "バッテリー" | "배터리" | "แบตเตอรี่" | "نشانگر_باتری" | "مؤشر_البطارية" | "מחוון_סוללה" | "بیٹری_انڈیکیٹر" | "batterie_ui" | "ui_batterie" | "ui_батарея" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10419,7 +10485,7 @@ impl Interpreter {
 
             // ── Interface controls (interactive → return state) ──────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_button" | "按钮" | "ボタン" | "버튼" | "ปุ่ม" => {
+            "ui_button" | "按钮" | "ボタン" | "버튼" | "ปุ่ม" | "دکمه_رابط" | "زر_الواجهة" | "כפתור_ממשק" | "یو_آئی_بٹن" | "bouton_ui" | "ui_knopf" | "ui_кнопка" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 120.)? as f32;
@@ -10442,7 +10508,7 @@ impl Interpreter {
                 return Ok(Value::Number(if clicked { 1.0 } else { 0.0 }));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_toggle" | "开关" | "トグル" | "토글" | "สวิตช์" => {
+            "ui_toggle" | "开关" | "トグル" | "토글" | "สวิตช์" | "کلید_ضامن" | "مفتاح_تبديل" | "מתג" | "ٹوگل" | "bascule_ui" | "ui_schalter" | "ui_переключатель" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 52.)? as f32;
@@ -10459,7 +10525,7 @@ impl Interpreter {
                 return Ok(Value::Number(if state { 1.0 } else { 0.0 }));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_slider" | "滑块" | "スライダー" | "슬라이더" | "แถบเลื่อน" =>
+            "ui_slider" | "滑块" | "スライダー" | "슬라이더" | "แถบเลื่อน" | "لغزنده" | "شريط_انزلاق" | "מחוון_החלקה" | "سلائیڈر" | "curseur_ui" | "ui_schieberegler" | "ui_ползунок" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10482,7 +10548,7 @@ impl Interpreter {
                 return Ok(Value::Number(val as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_checkbox" | "复选框" | "チェックボックス" | "체크박스" | "ช่องเลือก" =>
+            "ui_checkbox" | "复选框" | "チェックボックス" | "체크박스" | "ช่องเลือก" | "جعبه_علامت" | "مربع_اختيار" | "תיבת_סימון" | "چیک_باکس" | "case_cocher_ui" | "ui_kontrollkästchen" | "ui_флажок" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10501,7 +10567,7 @@ impl Interpreter {
                 return Ok(Value::Number(if checked { 1.0 } else { 0.0 }));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_tabs" | "标签页" | "タブ" | "탭" | "แท็บ" => {
+            "ui_tabs" | "标签页" | "タブ" | "탭" | "แท็บ" | "برگه‌ها" | "ألسنة_الواجهة" | "לשוניות" | "ٹیبز" | "onglets_ui" | "ui_reiter" | "ui_вкладки" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let w0 = self.arg_num(&args, 2, 240.)? as f32;
@@ -10534,7 +10600,7 @@ impl Interpreter {
                 return Ok(Value::Number(active as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_progress" | "进度" | "プログレス" | "진행바" | "ความคืบหน้า" =>
+            "ui_progress" | "进度" | "プログレス" | "진행바" | "ความคืบหน้า" | "نوار_پیشرفت" | "شريط_التقدم" | "פס_התקדמות" | "پیش_رفت_بار" | "progression_ui" | "ui_fortschritt" | "ui_прогресс" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10549,7 +10615,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_tooltip" | "提示框" | "ツールチップ" | "툴팁" | "คำแนะนำ" =>
+            "ui_tooltip" | "提示框" | "ツールチップ" | "툴팁" | "คำแนะนำ" | "راهنمای_شناور" | "تلميح_الواجهة" | "חלונית_עזרה" | "ٹول_ٹپ" | "infobulle_ui" | "ui_подсказка" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10561,7 +10627,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_stepper" | "步进器" | "ステッパー" | "스테퍼" | "ตัวปรับค่า" =>
+            "ui_stepper" | "步进器" | "ステッパー" | "스테퍼" | "ตัวปรับค่า" | "پله‌گر" | "زر_خطوات" | "בורר_מדורג" | "اسٹیپر" | "pas_à_pas_ui" | "ui_schrittsteuerung" | "ui_степпер" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10590,7 +10656,7 @@ impl Interpreter {
 
             // ── Game UI ──────────────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_healthbar" | "血条" | "体力バー" | "체력바" | "แถบพลังชีวิต" =>
+            "ui_healthbar" | "血条" | "体力バー" | "체력바" | "แถบพลังชีวิต" | "نوار_سلامتی" | "شريط_الصحة" | "פס_בריאות" | "ہیلتھ_بار" | "barre_vie_ui" | "ui_lebensbalken" | "ui_полоса_здоровья" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10615,7 +10681,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_cooldown" | "冷却" | "クールダウン" | "쿨다운" | "คูลดาวน์" =>
+            "ui_cooldown" | "冷却" | "クールダウン" | "쿨다운" | "คูลดาวน์" | "زمان_خنک‌سازی" | "مؤقت_التهدئة" | "זמן_קירור" | "کول_ڈاؤن" | "recharge_ui" | "ui_abklingzeit" | "ui_перезарядка" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -10627,7 +10693,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_counter" | "计数器" | "カウンター" | "카운터" | "ตัวนับ" => {
+            "ui_counter" | "计数器" | "カウンター" | "카운터" | "ตัวนับ" | "شمارشگر" | "عداد_الواجهة" | "מונה_ממשק" | "کاؤنٹر" | "compteur_ui" | "ui_zähler" | "ui_счётчик" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let dw = self.arg_num(&args, 2, 14.)? as f32;
@@ -10643,7 +10709,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_minimap" | "小地图" | "ミニマップ" | "미니맵" | "แผนที่ย่อ" =>
+            "ui_minimap" | "小地图" | "ミニマップ" | "미니맵" | "แผนที่ย่อ" | "نقشه_کوچک" | "خريطة_مصغرة" | "מפה_מוקטנת" | "منی_میپ" | "minicarte_ui" | "ui_minikarte" | "ui_миникарта" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10655,7 +10721,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_dpad" | "方向键" | "方向パッド" | "방향패드" | "ปุ่มทิศทาง" =>
+            "ui_dpad" | "方向键" | "方向パッド" | "방향패드" | "ปุ่มทิศทาง" | "دسته_جهت‌دار" | "لوحة_الاتجاهات" | "לוח_כיוונים" | "ڈی_پیڈ" | "croix_direction_ui" | "ui_steuerkreuz" | "ui_крестовина" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -10678,7 +10744,7 @@ impl Interpreter {
                 return Ok(Value::Number(dir as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_slotgrid" | "物品格" | "スロットグリッド" | "슬롯격자" | "ช่องไอเทม" =>
+            "ui_slotgrid" | "物品格" | "スロットグリッド" | "슬롯격자" | "ช่องไอเทม" | "شبکه_شیار" | "شبكة_الفتحات" | "רשת_חריצים" | "سلاٹ_گرڈ" | "grille_emplacements_ui" | "ui_slotraster" | "ui_сетка_слотов" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10694,7 +10760,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_vignette" | "暗角" | "ビネット" | "비네트" | "ขอบมืด" => {
+            "ui_vignette" | "暗角" | "ビネット" | "비네트" | "ขอบมืด" | "سایه‌گرد_کادر" | "تظليل_الحواف" | "הצללת_מסגרת" | "ویگنیٹ" | "vignette_ui" | "ui_виньетка" => {
                 let intensity = self.arg_num(&args, 0, 0.5)? as f32;
                 let (w, h) = {
                     let g = self.gfx.borrow();
@@ -10708,7 +10774,7 @@ impl Interpreter {
 
             // ── Faux-3D in 2D space ──────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_gauge3d" | "立体仪表" | "立体ゲージ" | "입체게이지" | "มาตรวัด3มิติ" =>
+            "ui_gauge3d" | "立体仪表" | "立体ゲージ" | "입체게이지" | "มาตรวัด3มิติ" | "گیج_سه‌بعدی" | "مقياس_ثلاثي_الأبعاد" | "מד_תלת_ממדי" | "تھری_ڈی_گیج" | "jauge_3d_ui" | "ui_anzeige_3d" | "ui_индикатор_3d" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -10730,7 +10796,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_panel3d" | "立体面板" | "立体パネル" | "입체패널" | "แผง3มิติ" =>
+            "ui_panel3d" | "立体面板" | "立体パネル" | "입체패널" | "แผง3มิติ" | "پنل_سه‌بعدی" | "لوحة_ثلاثية_الأبعاد" | "לוח_תלת_ממדי" | "تھری_ڈی_پینل" | "panneau_3d_ui" | "ui_feld_3d" | "ui_панель_3d" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -10743,7 +10809,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_radar3d" | "立体雷达" | "立体レーダー" | "입체레이더" | "เรดาร์3มิติ" =>
+            "ui_radar3d" | "立体雷达" | "立体レーダー" | "입체레이더" | "เรดาร์3มิติ" | "رادار_سه‌بعدی" | "رادار_ثلاثي_الأبعاد" | "מכ״ם_תלת_ממדי" | "تھری_ڈی_ریڈار" | "radar_3d_ui" | "ui_radar_3d" | "ui_радар_3d" =>
             {
                 let cx = self.arg_num(&args, 0, 0.)? as f32;
                 let cy = self.arg_num(&args, 1, 0.)? as f32;
@@ -10760,7 +10826,7 @@ impl Interpreter {
 
             // ── Interface sounds ─────────────────────────────────────────────
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ" =>
+            "audio_blip" | "提示音" | "ビープ音" | "효과음" | "เสียงบี๊บ" | "بوق_کوتاه" | "نغمة_قصيرة" | "ביפ" | "بلپ_آواز" | "bip_audio" | "звук_бип" =>
             {
                 let freq = self.arg_num(&args, 0, 660.)? as f32;
                 let dur = self.arg_num(&args, 1, 0.08)? as f32;
@@ -10772,7 +10838,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม" =>
+            "ui_sound" | "界面音" | "UI音" | "인터페이스음" | "เสียงปุ่ม" | "صدای_رابط" | "صوت_الواجهة" | "צליל_ממשק" | "یو_آئی_آواز" | "son_ui" | "ui_klang" | "ui_звук" =>
             {
                 let name = self.arg_str(&args, 0, "click");
                 if let Some(audio) = &self.audio {
@@ -10802,7 +10868,7 @@ impl Interpreter {
 
             // music_load(path) -> track handle (decodes WAV/FLAC/OGG/MP3/AAC)
             #[cfg(not(target_arch = "wasm32"))]
-            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" =>
+            "music_load" | "载入音乐" | "音楽読込" | "음악로드" | "โหลดเพลง" | "بارگذاری_موسیقی" | "تحميل_الموسيقى" | "טעינת_מוזיקה" | "موسیقی_لوڈ" | "charger_musique" | "musik_laden" | "загрузить_музыку" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -10825,7 +10891,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" =>
+            "music_duration" | "音乐时长" | "音楽長さ" | "음악길이" | "ความยาวเพลง" | "مدت_موسیقی" | "مدة_الموسيقى" | "משך_מוזיקה" | "موسیقی_دورانیہ" | "durée_musique" | "musik_dauer" | "длительность_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let d = self
@@ -10836,7 +10902,7 @@ impl Interpreter {
                 return Ok(Value::Number(d as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" =>
+            "music_bpm" | "节拍速度" | "テンポ" | "템포" | "จังหวะต่อนาที" | "ضربان_در_دقیقه" | "نبضات_بالدقيقة" | "פעימות_לדקה" | "بی_پی_ایم" | "bpm_musique" | "musik_bpm" | "музыка_bpm" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let b = self
@@ -10847,7 +10913,7 @@ impl Interpreter {
                 return Ok(Value::Number(b as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" => {
+            "music_key" | "调性" | "調性" | "조성" | "คีย์เพลง" | "گام_موسیقی" | "مقام_الموسيقى" | "סולם_מוזיקלי" | "موسیقی_کلید" | "tonalité_musique" | "musik_tonart" | "тональность_музыки" => {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let k = self
                     .tracks
@@ -10857,7 +10923,7 @@ impl Interpreter {
                 return Ok(Value::Str(k));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" =>
+            "music_onsets" | "音符起点" | "オンセット" | "온셋" | "จุดเริ่มเสียง" | "آغازهای_نت" | "بدايات_النغمات" | "התחלות_תווים" | "نوٹ_شروعات" | "attaques_musique" | "musik_einsätze" | "атаки_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let v = self
@@ -10870,7 +10936,7 @@ impl Interpreter {
                 )));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" =>
+            "music_beat_grid" | "节拍网格" | "ビートグリッド" | "비트그리드" | "กริดจังหวะ" | "شبکه_ضرب" | "شبكة_الإيقاع" | "רשת_פעימות" | "بیٹ_گرڈ" | "grille_temps_musique" | "musik_taktraster" | "сетка_ритма_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let beats = self
@@ -10888,7 +10954,7 @@ impl Interpreter {
 
             // ── playback ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" =>
+            "music_play" | "播放音乐" | "音楽再生" | "음악재생" | "เล่นเพลง" | "پخش_موسیقی" | "شغّل_الموسيقى" | "נגן_מוזיקה" | "موسیقی_چلاؤ" | "jouer_musique" | "musik_abspielen" | "играть_музыку" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 if self.ensure_music() {
@@ -10906,7 +10972,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว" =>
+            "music_pause" | "暂停音乐" | "音楽一時停止" | "음악일시정지" | "หยุดเพลงชั่วคราว" | "مکث_موسیقی" | "ألبث_الموسيقى" | "השהה_מוזיקה" | "موسیقی_روکو_مؤقت" | "pause_musique" | "musik_pausieren" | "пауза_музыки" =>
             {
                 if let Some(m) = &self.music {
                     m.pause();
@@ -10914,7 +10980,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" =>
+            "music_stop" | "停止音乐" | "音楽停止" | "음악정지" | "หยุดเพลง" | "توقف_موسیقی" | "أوقف_الموسيقى" | "עצור_מוזיקה" | "موسیقی_روکو" | "arrêter_musique" | "musik_stoppen" | "остановить_музыку" =>
             {
                 if let Some(m) = &self.music {
                     m.stop();
@@ -10922,7 +10988,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" =>
+            "music_seek" | "定位音乐" | "音楽シーク" | "음악탐색" | "ค้นหาเพลง" | "جستجوی_موسیقی" | "ابحث_في_الموسيقى" | "חפש_במוזיקה" | "موسیقی_تلاش" | "chercher_musique" | "musik_suchen" | "перемотать_музыку" =>
             {
                 let sec = self.arg_num(&args, 0, 0.0)? as f32;
                 if let Some(m) = &self.music {
@@ -10931,13 +10997,13 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" =>
+            "music_pos" | "音乐位置" | "音楽位置" | "음악위치" | "ตำแหน่งเพลง" | "موقعیت_موسیقی" | "موضع_الموسيقى" | "מיקום_מוזיקה" | "موسیقی_مقام" | "position_musique" | "musik_position" | "позиция_музыки" =>
             {
                 let p = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
                 return Ok(Value::Number(p as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" =>
+            "music_volume" | "音乐音量" | "音楽音量" | "음악음량" | "ระดับเพลง" | "بلندی_موسیقی" | "مستوى_الموسيقى" | "עוצמת_מוזיקה" | "موسیقی_شدت" | "volume_musique" | "musik_lautstärke" | "громкость_музыки" =>
             {
                 let v = self.arg_num(&args, 0, 0.8)? as f32;
                 if self.ensure_music() {
@@ -10950,7 +11016,7 @@ impl Interpreter {
 
             // ── synthesis (GM-capable, patches from .ling files) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี" =>
+            "music_patch" | "乐器音色" | "音色読込" | "악기패치" | "แพตช์เครื่องดนตรี" | "پچ_موسیقی" | "آلة_الموسيقى" | "תיקון_כלי_נגינה" | "میوزک_پیچ" | "patch_musique" | "musik_patch" | "патч_музыки" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -10975,7 +11041,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต" =>
+            "music_note" | "弹音符" | "音符演奏" | "음표연주" | "เล่นโน้ต" | "نواختن_نت" | "عزف_نغمة" | "נגן_תו" | "نوٹ_بجاؤ" | "note_musique" | "musik_note" | "нота_музыки" =>
             {
                 let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
@@ -10989,7 +11055,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม" =>
+            "music_note_on" | "音符开始" | "音符オン" | "음표켜기" | "โน้ตเริ่ม" | "شروع_نت" | "بدء_النغمة" | "התחלת_תו" | "نوٹ_شروع" | "note_musique_on" | "musik_note_an" | "нота_музыки_вкл" =>
             {
                 let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
@@ -11002,7 +11068,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" =>
+            "music_note_off" | "音符结束" | "音符オフ" | "음표끄기" | "โน้ตจบ" | "پایان_نت" | "إيقاف_النغمة" | "סיום_תו" | "نوٹ_ختم" | "note_musique_off" | "musik_note_aus" | "нота_музыки_выкл" =>
             {
                 let inst = self.arg_num(&args, 0, 0.0)? as usize;
                 let midi = self.pitch_arg(&args, 1, 60);
@@ -11014,7 +11080,7 @@ impl Interpreter {
 
             // ── rhythm-game judging ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" =>
+            "music_judge" | "判定" | "判定する" | "판정" | "ตัดสินจังหวะ" | "داوری_ضرب" | "حكم_الإيقاع" | "שיפוט_קצב" | "بیٹ_فیصلہ" | "juger_musique" | "musik_bewerten" | "оценить_музыку" =>
             {
                 let delta_ms = self.arg_num(&args, 0, 9999.0)? as f32;
                 return Ok(Value::Number(
@@ -11022,7 +11088,7 @@ impl Interpreter {
                 ));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" =>
+            "music_grade_name" | "判定名" | "判定名称" | "판정이름" | "ชื่อการตัดสิน" | "نام_رتبه" | "اسم_التقييم" | "שם_דירוג" | "گریڈ_نام" | "nom_grade_musique" | "musik_bewertungsname" | "имя_оценки_музыки" =>
             {
                 let idx = self.arg_num(&args, 0, 4.0)? as i32;
                 return Ok(Value::Str(
@@ -11032,7 +11098,7 @@ impl Interpreter {
 
             // ── karaoke ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" =>
+            "music_lrc" | "载入歌词" | "歌詞読込" | "가사로드" | "โหลดเนื้อเพลง" | "بارگذاری_متن_ترانه" | "تحميل_كلمات_الأغنية" | "טעינת_מילות_שיר" | "گیت_متن_لوڈ" | "lrc_musique" | "musik_lrc" | "lrc_музыки" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -11055,7 +11121,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" =>
+            "music_lyric" | "当前歌词" | "現在歌詞" | "현재가사" | "เนื้อเพลงปัจจุบัน" | "متن_ترانه_فعلی" | "كلمات_الأغنية_الحالية" | "מילות_שיר_נוכחיות" | "موجودہ_گیت_متن" | "paroles_musique" | "musik_liedtext" | "текст_песни" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
@@ -11067,7 +11133,7 @@ impl Interpreter {
                 return Ok(Value::Str(line));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์" =>
+            "music_mic_pitch" | "麦克风音高" | "マイク音程" | "마이크음정" | "ระดับเสียงไมค์" | "زیروبمی_میکروفون" | "طبقة_صوت_الميكروفون" | "גובה_צליל_מיקרופון" | "مائیکروفون_پچ" | "hauteur_micro_musique" | "musik_mikrofon_tonhöhe" | "высота_тона_микрофона" =>
             {
                 let hz = if let Some(mic) = self.mic.as_ref() {
                     let s = mic.latest_samples();
@@ -11079,13 +11145,13 @@ impl Interpreter {
                 return Ok(Value::Number(hz as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" =>
+            "music_note_name" | "音名" | "音名称" | "음이름" | "ชื่อโน้ต" | "نام_نت" | "اسم_النغمة" | "שם_תו" | "نوٹ_نام" | "nom_note_musique" | "musik_notenname" | "имя_ноты_музыки" =>
             {
                 let hz = self.arg_num(&args, 0, 0.0)? as f32;
                 return Ok(Value::Str(ling_music::note::hz_to_name(hz)));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" =>
+            "music_hz" | "音符频率" | "音符周波数" | "음표주파수" | "ความถี่โน้ต" | "فرکانس_نت" | "تردد_النغمة" | "תדר_תו" | "نوٹ_ہرٹز" | "hz_musique" | "musik_hz" | "музыка_гц" =>
             {
                 let midi = self.pitch_arg(&args, 0, 69);
                 return Ok(Value::Number(
@@ -11093,7 +11159,7 @@ impl Interpreter {
                 ));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" =>
+            "music_pitch_score" | "音准评分" | "音程スコア" | "음정점수" | "คะแนนเสียง" | "امتیاز_زیروبمی" | "درجة_طبقة_الصوت" | "ציון_גובה_צליל" | "پچ_اسکور" | "score_hauteur_musique" | "musik_tonhöhen_punktzahl" | "счёт_высоты_тона" =>
             {
                 let hz = self.arg_num(&args, 0, 0.0)? as f32;
                 let target = self.arg_num(&args, 1, 0.0)? as f32;
@@ -11104,7 +11170,7 @@ impl Interpreter {
 
             // ── MIDI (inaudible note source: drive coins, cues, etc.) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" =>
+            "music_midi_load" | "载入MIDI" | "MIDI読込" | "미디로드" | "โหลดมิดี" | "بارگذاری_MIDI" | "تحميل_MIDI" | "טעינת_MIDI" | "MIDI_لوڈ" | "charger_midi_musique" | "musik_midi_laden" | "загрузить_midi_музыки" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -11127,7 +11193,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" =>
+            "music_midi_count" | "MIDI数量" | "MIDI数" | "미디수" | "จำนวนมิดี" | "تعداد_MIDI" | "عدد_MIDI" | "מספר_MIDI" | "MIDI_تعداد" | "nombre_midi_musique" | "musik_midi_anzahl" | "число_midi_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let n = self
@@ -11139,7 +11205,7 @@ impl Interpreter {
             },
             // music_midi_notes(id) -> flat [time, midi, time, midi, …]
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" =>
+            "music_midi_notes" | "MIDI音符" | "MIDIノート" | "미디음표" | "โน้ตมิดี" | "نت‌های_MIDI" | "نغمات_MIDI" | "תווי_MIDI" | "MIDI_نوٹس" | "notes_midi_musique" | "musik_midi_noten" | "ноты_midi_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
@@ -11153,7 +11219,7 @@ impl Interpreter {
             },
             // music_midi_bars(id) -> flat [time, midi, dur, …] (for karaoke note bars)
             #[cfg(not(target_arch = "wasm32"))]
-            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" =>
+            "music_midi_bars" | "MIDI音条" | "MIDIバー" | "미디바" | "แท่งมิดี" | "میله‌های_MIDI" | "أعمدة_MIDI" | "עמודות_MIDI" | "MIDI_بارز" | "mesures_midi_musique" | "musik_midi_takte" | "такты_midi_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let mut out = Vec::new();
@@ -11169,7 +11235,7 @@ impl Interpreter {
 
             // music_fft(track_id, nbands) -> spectrum at the current playback position
             #[cfg(not(target_arch = "wasm32"))]
-            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" =>
+            "music_fft" | "音乐频谱" | "音楽スペクトル" | "음악스펙트럼" | "สเปกตรัมเพลง" | "طیف_موسیقی" | "طيف_الموسيقى" | "ספקטרום_מוזיקה" | "میوزک_اسپیکٹرم" | "fft_musique" | "musik_fft" | "fft_музыки" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as i64;
                 let nbands = self.arg_num(&args, 1, 16.0)? as usize;
@@ -11189,7 +11255,7 @@ impl Interpreter {
 
             // ── stop every one-shot SFX/morph/sample voice (scene cleanup) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_stop_sfx" | "停止音效" | "効果音停止" | "효과음정지" | "หยุดเอฟเฟกต์ทั้งหมด" =>
+            "audio_stop_sfx" | "停止音效" | "効果音停止" | "효과음정지" | "หยุดเอฟเฟกต์ทั้งหมด" | "توقف_همه_جلوه‌ها" | "أوقف_كل_المؤثرات" | "עצור_כל_האפקטים" | "تمام_ایفیکٹ_روکو" =>
             {
                 if let Some(a) = &self.audio {
                     a.stop_all_sfx();
@@ -11198,7 +11264,7 @@ impl Interpreter {
             },
             // ── spatial (2D/3D/4D) one-shot SFX ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" =>
+            "audio_sfx" | "音效" | "空間効果音" | "공간효과음" | "เสียงเอฟเฟกต์" | "جلوه_صوتی" | "مؤثرات_صوتية" | "אפקט_קול" | "آواز_ایفیکٹ" | "effet_sonore" | "klangeffekt" | "звуковой_эффект" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -11218,7 +11284,7 @@ impl Interpreter {
             //   material: 0 bowed-string · 1 plucked · 2 blown · 3 struck-metal
             //   morph:    0.0 light/acoustic .. 1.0 dark/digital
             #[cfg(not(target_arch = "wasm32"))]
-            "morph_note" | "โน้ตมอร์ฟ" | "变形音" | "モーフ音" | "모프음" =>
+            "morph_note" | "โน้ตมอร์ฟ" | "变形音" | "モーフ音" | "모프음" | "نت_مورف" | "نغمة_متحولة" | "תו_מורף" | "مورف_نوٹ" =>
             {
                 let x = self.arg_num(&args, 0, 0.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -11236,7 +11302,7 @@ impl Interpreter {
             },
             // ── sample load / positional play / loop / stop ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" =>
+            "audio_sample_load" | "载入采样" | "サンプル読込" | "샘플로드" | "โหลดตัวอย่างเสียง" | "بارگذاری_نمونه_صدا" | "تحميل_عينة_صوتية" | "טעינת_דגימת_קול" | "آواز_نمونہ_لوڈ" | "charger_échantillon" | "sample_laden" | "загрузить_семпл" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -11260,7 +11326,7 @@ impl Interpreter {
                 }
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" =>
+            "audio_sample_play" | "播放采样" | "サンプル再生" | "샘플재생" | "เล่นตัวอย่างเสียง" | "پخش_نمونه_صدا" | "تشغيل_عينة_صوتية" | "נגינת_דגימת_קול" | "آواز_نمونہ_چلاؤ" | "jouer_échantillon" | "sample_abspielen" | "играть_семпл" =>
             {
                 let id = self.arg_num(&args, 0, 0.0)? as usize;
                 let x = self.arg_num(&args, 1, 0.0)? as f32;
@@ -11277,7 +11343,7 @@ impl Interpreter {
                 return Ok(Value::Number(v as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" =>
+            "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" | "توقف_نمونه_صدا" | "إيقاف_عينة_صوتية" | "עצירת_דגימת_קול" | "آواز_نمونہ_روکو" | "arrêter_échantillon" | "sample_stoppen" | "остановить_семпл" =>
             {
                 let v = self.arg_num(&args, 0, 0.0)? as u32;
                 if let Some(a) = &self.audio {
@@ -11287,7 +11353,7 @@ impl Interpreter {
             },
             // ── master FX: delay / reverb / low-pass (underwater) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน" =>
+            "audio_fx_delay" | "回声" | "ディレイ効果" | "딜레이" | "เสียงสะท้อน" | "افکت_تاخیر" | "صدى_تأخير" | "אפקט_עיכוב" | "تاخیر_ایفیکٹ" | "délai_audio" | "audio_verzögerung" | "звук_задержка" =>
             {
                 let time = self.arg_num(&args, 0, 0.3)? as f32;
                 let fb = self.arg_num(&args, 1, 0.3)? as f32;
@@ -11298,7 +11364,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง" =>
+            "audio_fx_reverb" | "混响" | "リバーブ" | "리버브" | "เสียงก้อง" | "افکت_پژواک" | "صدى_ارتداد" | "אפקט_הדהוד" | "بازگشت_آواز_ایفیکٹ" | "réverbération_audio" | "audio_nachhall" | "звук_реверберация" =>
             {
                 let mix = self.arg_num(&args, 0, 0.3)? as f32;
                 if let Some(a) = &self.audio {
@@ -11307,7 +11373,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" =>
+            "audio_fx_lowpass" | "低通滤波" | "ローパス" | "저역통과" | "กรองความถี่ต่ำ" | "فیلتر_پایین‌گذر" | "مرشح_تمرير_منخفض" | "מסנן_תדר_נמוך" | "لو_پاس_فلٹر" | "passe_bas_audio" | "audio_tiefpass" | "звук_фнч" =>
             {
                 let cutoff = self.arg_num(&args, 0, 1.0)? as f32;
                 if let Some(a) = &self.audio {
@@ -11323,7 +11389,7 @@ impl Interpreter {
 
             // ── soft bodies (deformable bouncy balls) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_ball" | "软球" | "ソフトボール" | "소프트볼" | "ลูกบอลนุ่ม" =>
+            "soft_ball" | "软球" | "ソフトボール" | "소프트볼" | "ลูกบอลนุ่ม" | "توپ_نرم" | "كرة_ناعمة" | "כדור_רך" | "نرم_گیند" | "balle_molle" | "weicher_ball" | "мягкий_шар" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -11341,7 +11407,7 @@ impl Interpreter {
                 return Ok(Value::Number(id as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_step" | "软体步进" | "ソフト更新" | "소프트스텝" | "ก้าวนุ่ม" =>
+            "soft_step" | "软体步进" | "ソフト更新" | "소프트스텝" | "ก้าวนุ่ม" | "گام_نرم_جسم" | "خطوة_ناعمة" | "צעד_רך" | "نرم_قدم" | "pas_mou" | "weicher_schritt" | "мягкий_шаг" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let dt = self.arg_num(&args, 1, 0.016)? as f32;
@@ -11352,7 +11418,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_bounce" | "软体落地" | "ソフト着地" | "소프트바운스" | "เด้งนุ่ม" =>
+            "soft_bounce" | "软体落地" | "ソフト着地" | "소프트바운스" | "เด้งนุ่ม" | "جهش_نرم" | "ارتداد_ناعم" | "קפיצה_רכה" | "نرم_اچھال" | "rebond_mou" | "weicher_abprall" | "мягкий_отскок" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let fy = self.arg_num(&args, 1, 0.)? as f32;
@@ -11363,7 +11429,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_contain" | "软体边界" | "ソフト箱" | "소프트경계" | "กล่องนุ่ม" =>
+            "soft_contain" | "软体边界" | "ソフト箱" | "소프트경계" | "กล่องนุ่ม" | "محفظه_نرم" | "احتواء_ناعم" | "הכלה_רכה" | "نرم_احاطہ" | "contenir_mou" | "weiche_eindämmung" | "мягкое_сдерживание" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let nx = self.arg_num(&args, 1, -5.)? as f32;
@@ -11383,7 +11449,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_kick" | "软体踢" | "ソフト衝撃" | "소프트킥" | "เตะนุ่ม" =>
+            "soft_kick" | "软体踢" | "ソフト衝撃" | "소프트킥" | "เตะนุ่ม" | "ضربه_نرم" | "ركلة_ناعمة" | "בעיטה_רכה" | "نرم_ٹھوکر" | "coup_mou" | "weicher_stoß" | "мягкий_удар" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let dx = self.arg_num(&args, 1, 0.)? as f32;
@@ -11398,7 +11464,7 @@ impl Interpreter {
             // soft_spin(id, ax, ay, az, rate) — add angular velocity about the axis
             // through the centroid (rate = rad/step; ≈ surface_speed / radius to roll)
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_spin" | "软体自旋" | "ソフト回転" | "소프트회전" | "หมุนนุ่ม" =>
+            "soft_spin" | "软体自旋" | "ソフト回転" | "소프트회전" | "หมุนนุ่ม" | "چرخش_نرم" | "دوران_ناعم" | "סיבוב_רך" | "نرم_گھماؤ" | "rotation_molle" | "weicher_spin" | "мягкое_вращение" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let ax = self.arg_num(&args, 1, 0.)? as f32;
@@ -11411,7 +11477,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_deform" | "形变量" | "変形量" | "변형량" | "ความบิดเบี้ยว" =>
+            "soft_deform" | "形变量" | "変形量" | "변형량" | "ความบิดเบี้ยว" | "تغییرشکل_نرم" | "تشوه_ناعم" | "עיוות_רך" | "نرم_بگاڑ" | "déformer_mou" | "weiches_verformen" | "мягкая_деформация" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let d = self
@@ -11428,7 +11494,7 @@ impl Interpreter {
             | "软体角速"
             | "ソフト角速度"
             | "소프트각속도"
-            | "ความเร็วเชิงมุมนุ่ม" => {
+            | "ความเร็วเชิงมุมนุ่ม" | "سرعت_زاویه‌ای_نرم" | "سرعة_زاوية_ناعمة" | "מהירות_זוויתית_רכה" | "نرم_زاویائی_رفتار" | "vitesse_angulaire_molle" | "weiche_winkelgeschwindigkeit" | "мягкая_угловая_скорость" => {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let w = self
                     .soft_bodies
@@ -11438,7 +11504,7 @@ impl Interpreter {
                 return Ok(Value::Number(w as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" =>
+            "soft_centroid" | "软体质心" | "ソフト重心" | "소프트중심" | "จุดศูนย์กลางนุ่ม" | "مرکز_جرم_نرم" | "مركز_ثقل_ناعم" | "מרכז_כובד_רך" | "نرم_مرکز_ثقل" | "centroïde_mou" | "weicher_schwerpunkt" | "мягкий_центроид" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let c = self
@@ -11454,7 +11520,7 @@ impl Interpreter {
             },
             // soft_nodes(id) -> flat [x,y,z, x,y,z, …] for rendering the deformed mesh
             #[cfg(not(target_arch = "wasm32"))]
-            "soft_nodes" | "软体节点" | "ソフト節点" | "소프트노드" | "จุดนุ่ม" =>
+            "soft_nodes" | "软体节点" | "ソフト節点" | "소프트노드" | "จุดนุ่ม" | "گره‌های_نرم" | "عقد_ناعمة" | "צמתי_רך" | "نرم_نوڈز" | "nœuds_mous" | "weiche_knoten" | "мягкие_узлы" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let mut out = Vec::new();
@@ -11470,7 +11536,7 @@ impl Interpreter {
 
             // ── rigid bodies with angular dynamics ──
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_add" | "刚体添加" | "剛体追加" | "강체추가" | "เพิ่มวัตถุแข็ง" =>
+            "rb_add" | "刚体添加" | "剛体追加" | "강체추가" | "เพิ่มวัตถุแข็ง" | "افزودن_جسم_صلب" | "أضف_جسما_صلبا" | "הוסף_גוף_קשיח" | "سخت_جسم_شامل_کرو" | "ajouter_corps_rigide" | "starrkörper_hinzufügen" | "добавить_твёрдое_тело" =>
             {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
@@ -11482,7 +11548,7 @@ impl Interpreter {
                 return Ok(Value::Number(self.rigid_world.add(b) as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_torque" | "扭矩" | "トルク" | "토크" | "แรงบิด" => {
+            "rb_torque" | "扭矩" | "トルク" | "토크" | "แรงบิด" | "گشتاور" | "عزم_دوران" | "מומנט" | "ٹارک" | "couple_corps_rigide" | "starrkörper_drehmoment" | "крутящий_момент_твёрдого_тела" => {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let tx = self.arg_num(&args, 1, 0.)? as f32;
                 let ty = self.arg_num(&args, 2, 0.)? as f32;
@@ -11493,7 +11559,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_spin" | "自旋" | "スピン" | "스핀" | "หมุน" => {
+            "rb_spin" | "自旋" | "スピン" | "스핀" | "หมุน" | "چرخش_جسم_صلب" | "دوران_جسم_صلب" | "סיבוב_גוף_קשיח" | "سخت_جسم_گھماؤ" | "spin_corps_rigide" | "starrkörper_spin" | "вращение_твёрдого_тела" => {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let wx = self.arg_num(&args, 1, 0.)? as f32;
                 let wy = self.arg_num(&args, 2, 0.)? as f32;
@@ -11504,7 +11570,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_impulse" | "刚体冲量" | "剛体インパルス" | "강체충격" | "แรงดลแข็ง" =>
+            "rb_impulse" | "刚体冲量" | "剛体インパルス" | "강체충격" | "แรงดลแข็ง" | "ضربه_جسم_صلب" | "دفعة_جسم_صلب" | "דחף_גוף_קשיח" | "سخت_جسم_دھکا" | "impulsion_corps_rigide" | "starrkörper_impuls" | "импульс_твёрдого_тела" =>
             {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let ix = self.arg_num(&args, 1, 0.)? as f32;
@@ -11516,7 +11582,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_floor" | "刚体落地" | "剛体着地" | "강체바닥" | "พื้นแข็ง" =>
+            "rb_floor" | "刚体落地" | "剛体着地" | "강체바닥" | "พื้นแข็ง" | "کف_جسم_صلب" | "أرضية_جسم_صلب" | "רצפת_גוף_קשיח" | "سخت_جسم_فرش" | "sol_corps_rigide" | "starrkörper_boden" | "пол_твёрдого_тела" =>
             {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let fy = self.arg_num(&args, 1, 0.)? as f32;
@@ -11528,7 +11594,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_gravity" | "刚体重力" | "剛体重力" | "강체중력" | "แรงโน้มถ่วงแข็ง" =>
+            "rb_gravity" | "刚体重力" | "剛体重力" | "강체중력" | "แรงโน้มถ่วงแข็ง" | "گرانش_جسم_صلب" | "جاذبية_جسم_صلب" | "כבידת_גוף_קשיח" | "سخت_جسم_کشش_ثقل" | "gravité_corps_rigide" | "starrkörper_schwerkraft" | "гравитация_твёрдого_тела" =>
             {
                 let gx = self.arg_num(&args, 0, 0.)? as f32;
                 let gy = self.arg_num(&args, 1, 9.81)? as f32;
@@ -11537,14 +11603,14 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_step" | "刚体步进" | "剛体更新" | "강체스텝" | "ก้าวแข็ง" =>
+            "rb_step" | "刚体步进" | "剛体更新" | "강체스텝" | "ก้าวแข็ง" | "گام_جسم_صلب" | "خطوة_جسم_صلب" | "צעד_גוף_קשיח" | "سخت_جسم_قدم" | "pas_corps_rigide" | "starrkörper_schritt" | "шаг_твёрдого_тела" =>
             {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
                 self.rigid_world.step(dt);
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_pos" | "刚体位置" | "剛体位置" | "강체위치" | "ตำแหน่งแข็ง" =>
+            "rb_pos" | "刚体位置" | "剛体位置" | "강체위치" | "ตำแหน่งแข็ง" | "موقعیت_جسم_صلب" | "موضع_جسم_صلب" | "מיקום_גוף_קשיח" | "سخت_جسم_مقام" | "position_corps_rigide" | "starrkörper_position" | "позиция_твёрдого_тела" =>
             {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let p = self
@@ -11560,7 +11626,7 @@ impl Interpreter {
                 ])));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" =>
+            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" | "چرخش_جسم_صلب" | "دوران_وضعية_جسم_صلب" | "סיבוב_גוף_קשיח" | "سخت_جسم_گردش" | "rotation_corps_rigide" | "starrkörper_rotation" | "поворот_твёрдого_тела" =>
             {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let q = self
@@ -11579,7 +11645,7 @@ impl Interpreter {
 
             // ── native-res mesh (.lmesh): load once, draw fast (unlit, per-tri colour) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" =>
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" | "بارگذاری_مش" | "حمّل_شبكة" | "טען_רשת" | "میش_لوڈ" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {
@@ -11630,14 +11696,14 @@ impl Interpreter {
                 return Ok(Value::Number(id as f64));
             },
             #[cfg(target_arch = "wasm32")]
-            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" =>
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" | "بارگذاری_مش" | "حمّل_شبكة" | "טען_רשת" | "میش_لوڈ" =>
             {
                 // Native .lmesh loading is file-system based and not wired for wasm yet.
                 // Return an invalid handle so scripts can choose a fallback path.
                 return Ok(Value::Number(-1.0));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" =>
+            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" | "رسم_مش_رنگی" | "ارسم_شبكة_ملونة" | "צייר_רשת_צבעונית" | "رنگین_میش_کھینچو" =>
             {
                 // ('วาดเมช' is taken by draw_mesh — use a distinct Thai alias)
                 let id = self.arg_num(&args, 0, 0.)? as usize;
@@ -11659,13 +11725,13 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(target_arch = "wasm32")]
-            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" =>
+            "mesh_draw" | "วาดเมชสี" | "绘制网格" | "メッシュ描画" | "메시그리기" | "رسم_مش_رنگی" | "ارسم_شبكة_ملونة" | "צייר_רשת_צבעונית" | "رنگین_میش_کھینچو" =>
             {
                 return Ok(Value::Unit);
             },
 
             // ── liquid sim (water + oil, immiscible) ──
-            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" =>
+            "liquid_new" | "新建液体" | "液体新規" | "액체생성" | "สร้างของเหลว" | "مایع_جدید" | "سائل_جديد" | "נוזל_חדש" | "نیا_مائع" | "nouveau_liquide" | "neue_flüssigkeit" | "новая_жидкость" =>
             {
                 let w = self.arg_num(&args, 0, 64.)? as usize;
                 let h = self.arg_num(&args, 1, 64.)? as usize;
@@ -11674,7 +11740,7 @@ impl Interpreter {
                     .push(ling_physics::liquid::LiquidGrid::new(w, h));
                 return Ok(Value::Number(id as f64));
             },
-            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" =>
+            "liquid_set_colors" | "液体颜色" | "液体配色" | "액체색상" | "สีของเหลว" | "تنظیم_رنگ_مایع" | "عيّن_ألوان_السائل" | "קבע_צבעי_נוזל" | "مائع_رنگ_مقرر_کرو" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let wr = self.arg_num(&args, 1, 40.)? as f32;
@@ -11688,7 +11754,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" =>
+            "liquid_splat" | "液体注入" | "液体追加" | "액체분사" | "หยดของเหลว" | "پاشش_مایع" | "بقعة_سائل" | "התזת_נוזל" | "مائع_چھینٹا" | "éclaboussure_liquide" | "flüssigkeit_spritzer" | "брызги_жидкости" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let x = self.arg_num(&args, 1, 0.)? as f32;
@@ -11701,7 +11767,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" =>
+            "liquid_gravity" | "液体重力" | "液体重力ベクトル" | "액체중력" | "แรงโน้มถ่วงเหลว" | "گرانش_مایع" | "جاذبية_السائل" | "כבידת_נוזל" | "مائع_کشش_ثقل" | "gravité_liquide" | "flüssigkeit_schwerkraft" | "гравитация_жидкости" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let gx = self.arg_num(&args, 1, 0.)? as f32;
@@ -11711,7 +11777,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
-            "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" =>
+            "liquid_step" | "液体步进" | "液体更新" | "액체스텝" | "ก้าวของเหลว" | "گام_مایع" | "خطوة_السائل" | "צעד_נוזל" | "مائع_قدم" | "pas_liquide" | "flüssigkeit_schritt" | "шаг_жидкости" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let dt = self.arg_num(&args, 1, 0.016)? as f32;
@@ -11729,13 +11795,13 @@ impl Interpreter {
             | "液体全步进"
             | "液体全更新"
             | "전체액체스텝"
-            | "ก้าวของเหลวทั้งหมด" => {
+            | "ก้าวของเหลวทั้งหมด" | "گام_همه_مایعات" | "خطوة_كل_السوائل" | "צעד_כל_הנוזלים" | "تمام_مائع_قدم" => {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
                 ling_physics::liquid::step_all(&mut self.liquids, dt);
                 return Ok(Value::Unit);
             },
             // liquid_rainbow(id, on) — colour the fluid as a flowing ROYGBIV marble
-            "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" =>
+            "liquid_rainbow" | "液体彩虹" | "液体虹" | "액체무지개" | "ของเหลวสายรุ้ง" | "مایع_رنگین‌کمان" | "سائل_قوس_قزح" | "נוזל_קשת" | "قوس_قزح_مائع" | "arc_en_ciel_liquide" | "flüssigkeit_regenbogen" | "радуга_жидкости" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let on = self.arg_num(&args, 1, 1.0)? > 0.5;
@@ -11745,7 +11811,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             // liquid_mix(id) -> 0 (oil/water separated) .. 1 (fully intermixed)
-            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" =>
+            "liquid_mix" | "液体混合" | "液体混合度" | "액체혼합" | "การผสมของเหลว" | "ترکیب_مایع" | "مزج_سائل" | "ערבוב_נוזל" | "مائع_ملاؤ" | "mélanger_liquide" | "flüssigkeit_mischen" | "смешать_жидкость" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let m = self.liquids.get(id).map(|g| g.mix_amount()).unwrap_or(0.0);
@@ -11753,7 +11819,7 @@ impl Interpreter {
             },
             // liquid_draw(id, sx, sy, scale) — fast flat 2-D blit of the colour field
             #[cfg(not(target_arch = "wasm32"))]
-            "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" =>
+            "liquid_draw" | "绘制液体" | "液体描画" | "액체그리기" | "วาดของเหลว" | "رسم_مایع" | "ارسم_سائلا" | "צייר_נוזל" | "مائع_کھینچو" | "dessiner_liquide" | "flüssigkeit_zeichnen" | "рисовать_жидкость" =>
             {
                 let id = self.arg_num(&args, 0, 0.)? as usize;
                 let sx = self.arg_num(&args, 1, 0.)? as i32;
@@ -11788,7 +11854,7 @@ impl Interpreter {
             },
             // liquid_draw_surface(id, kind, cx,cy,cz, radius, height)
             //   kind: 0 plane · 1 sphere · 2 cylinder · 3 cone · 4 dome
-            "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" =>
+            "liquid_draw_surface" | "液体贴面" | "液体曲面" | "액체곡면" | "ของเหลวบนพื้นผิว" | "رسم_سطح_مایع" | "ارسم_سطح_السائل" | "צייר_משטח_נוזל" | "مائع_سطح_کھینچو" | "dessiner_surface_liquide" | "flüssigkeit_oberfläche_zeichnen" | "рисовать_поверхность_жидкости" =>
             {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
@@ -11939,7 +12005,7 @@ impl Interpreter {
             // sparkle(x, y, w, h, count [, t]) — scatter twinkling vector star-sparkles
             // in a rect (snowglobe effect) in the current colour + blend mode.
             #[cfg(not(target_arch = "wasm32"))]
-            "sparkle" | "闪光" | "きらめき" | "반짝임" | "ประกาย" => {
+            "sparkle" | "闪光" | "きらめき" | "반짝임" | "ประกาย" | "درخشش" | "بريق" | "נצנוץ" | "چمک" | "scintillement" | "funkeln" | "искриться" => {
                 let x = self.arg_num(&args, 0, 0.)? as f32;
                 let y = self.arg_num(&args, 1, 0.)? as f32;
                 let ww = self.arg_num(&args, 2, 200.)? as f32;
@@ -12022,7 +12088,7 @@ impl Interpreter {
             // {i}item{/}, \n newline, || page break.
             // ══════════════════════════════════════════════════════════════════
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_show" | "对话显示" | "会話表示" | "대화표시" | "แสดงบทสนทนา" =>
+            "dialog_show" | "对话显示" | "会話表示" | "대화표시" | "แสดงบทสนทนา" | "نمایش_گفتگو" | "اعرض_الحوار" | "הצג_דיאלוג" | "مکالمہ_دکھاؤ" | "afficher_dialogue" | "dialog_anzeigen" | "показать_диалог" =>
             {
                 let text = self.arg_str(&args, 0, "");
                 let cps = self.arg_num(&args, 1, 32.0)? as f32;
@@ -12030,7 +12096,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_step" | "对话步进" | "会話更新" | "대화스텝" | "ก้าวบทสนทนา" =>
+            "dialog_step" | "对话步进" | "会話更新" | "대화스텝" | "ก้าวบทสนทนา" | "گام_گفتگو" | "خطوة_الحوار" | "צעד_דיאלוג" | "مکالمہ_قدم" | "pas_dialogue" | "dialog_schritt" | "шаг_диалога" =>
             {
                 let dt = self.arg_num(&args, 0, 0.016)? as f32;
                 if let Some(d) = self.dialog.as_mut() {
@@ -12039,7 +12105,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_advance" | "对话推进" | "会話送り" | "대화진행" | "เลื่อนบทสนทนา" =>
+            "dialog_advance" | "对话推进" | "会話送り" | "대화진행" | "เลื่อนบทสนทนา" | "پیشروی_گفتگو" | "تقدّم_الحوار" | "קדם_דיאלוג" | "مکالمہ_آگے_بڑھاؤ" | "avancer_dialogue" | "dialog_weiter" | "продолжить_диалог" =>
             {
                 if let Some(d) = self.dialog.as_mut() {
                     d.advance();
@@ -12047,7 +12113,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_active" | "对话激活" | "会話中" | "대화중" | "บทสนทนาทำงาน" =>
+            "dialog_active" | "对话激活" | "会話中" | "대화중" | "บทสนทนาทำงาน" | "گفتگو_فعال" | "الحوار_نشط" | "דיאלוג_פעיל" | "مکالمہ_فعال" | "dialogue_actif" | "dialog_aktiv" | "диалог_активен" =>
             {
                 let a = self
                     .dialog
@@ -12057,7 +12123,7 @@ impl Interpreter {
                 return Ok(Value::Bool(a));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" =>
+            "dialog_typing" | "对话打字" | "会話タイプ中" | "대화타이핑" | "กำลังพิมพ์บทสนทนา" | "گفتگو_در_حال_تایپ" | "الحوار_يكتب" | "דיאלוג_מקליד" | "مکالمہ_ٹائپنگ" | "dialogue_frappe" | "dialog_tippen" | "диалог_печатает" =>
             {
                 use ling_game::dialog::Dialog;
 
@@ -12069,14 +12135,14 @@ impl Interpreter {
                 return Ok(Value::Bool(a));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" =>
+            "dialog_close" | "对话关闭" | "会話閉じる" | "대화닫기" | "ปิดบทสนทนา" | "بستن_گفتگو" | "أغلق_الحوار" | "סגור_דיאלוג" | "مکالمہ_بند" | "fermer_dialogue" | "dialog_schließen" | "закрыть_диалог" =>
             {
                 self.dialog = None;
                 return Ok(Value::Unit);
             },
             // dialog_color(role, r, g, b) — role: 0 text · 1 name · 2 place · 3 item
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_color" | "对话颜色" | "会話色" | "대화색" | "สีบทสนทนา" =>
+            "dialog_color" | "对话颜色" | "会話色" | "대화색" | "สีบทสนทนา" | "رنگ_گفتگو" | "لون_الحوار" | "צבע_דיאלוג" | "مکالمہ_رنگ" | "couleur_dialogue" | "dialog_farbe" | "цвет_диалога" =>
             {
                 let role = (self.arg_num(&args, 0, 0.0)? as usize).min(3);
                 let r = self.arg_num(&args, 1, 255.0)? as u32 & 0xFF;
@@ -12087,7 +12153,7 @@ impl Interpreter {
             },
             // dialog_draw(x, y, w, h [, font_handle]) — draw the box + typed text
             #[cfg(not(target_arch = "wasm32"))]
-            "dialog_draw" | "对话绘制" | "会話描画" | "대화그리기" | "วาดบทสนทนา" =>
+            "dialog_draw" | "对话绘制" | "会話描画" | "대화그리기" | "วาดบทสนทนา" | "رسم_گفتگو" | "ارسم_الحوار" | "צייר_דיאלוג" | "مکالمہ_کھینچو" | "dessiner_dialogue" | "dialog_zeichnen" | "рисовать_диалог" =>
             {
                 let x = self.arg_num(&args, 0, 40.0)? as f32;
                 let y = self.arg_num(&args, 1, 0.0)? as f32;
@@ -12216,7 +12282,7 @@ impl Interpreter {
             "record_count" => return Ok(Value::Number(self.record_n as f64)),
             // ── screenshot(mode) → PNG in ./screenshots/ with timestamp + mode + size ──
             #[cfg(not(target_arch = "wasm32"))]
-            "screenshot" | "บันทึกภาพ" => {
+            "screenshot" | "บันทึกภาพ" | "عکس‌صفحه" | "لقطة_شاشة" | "צילום_מסך" | "اسکرین_شاٹ" => {
                 let mode = self.arg_str(&args, 0, "game");
                 let (buf, w, h) = {
                     let gfx = self.gfx.borrow();
@@ -12349,7 +12415,7 @@ impl Interpreter {
             // Viscous full-screen distortion (warp/pucker/bloat, edge-wrapped). Call
             // after the 3-D flush and before the UI so only the world layer warps.
             #[cfg(not(target_arch = "wasm32"))]
-            "screen_distort" | "บิดจอ" | "屏幕扭曲" | "画面歪み" | "화면왜곡" =>
+            "screen_distort" | "บิดจอ" | "屏幕扭曲" | "画面歪み" | "화면왜곡" | "اعوجاج_صفحه" | "شوّه_الشاشة" | "עוות_מסך" | "اسکرین_ڈسٹورٹ" =>
             {
                 let amount = self.arg_num(&args, 0, 8.0)? as f32;
                 let t = self.arg_num(&args, 1, 0.0)? as f32;
@@ -12362,7 +12428,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" =>
+            "set_rim" | "设置边缘光" | "リム設定" | "림라이트" | "ตั้งขอบเรือง" | "تنظیم_نور_لبه" | "عيّن_إضاءة_الحافة" | "קבע_תאורת_קצה" | "رم_لائٹ_مقرر_کرو" | "définir_contour_lumineux" | "rimlicht_setzen" | "задать_контурный_свет" =>
             {
                 let s = self.arg_num(&args, 0, 0.6)? as f32;
                 let r = self.arg_num(&args, 1, 115.)? as f32 / 255.0;
@@ -12814,7 +12880,7 @@ fn parse_pad_button(name: &str) -> Option<ling_input::GamepadButton> {
         "rb" | "r1" | "right_shoulder" => B::RightShoulder,
         "lt" | "l2" | "left_trigger" => B::LeftTrigger,
         "rt" | "r2" | "right_trigger" => B::RightTrigger,
-        "start" | "menu" | "options" => B::Start,
+        "start" | "menu" | "options" | "démarrer" | "начать" => B::Start,
         "select" | "back" | "share" | "view" => B::Select,
         "guide" | "home" => B::Guide,
         "l3" | "left_stick" => B::LeftStick,

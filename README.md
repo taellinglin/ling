@@ -214,11 +214,27 @@ These rooms are real `.ling` programs rendered live by Ling's built-in renderer:
 
 | The Matrix Cathedral | East Asian Chan Temple | Eno-Ji Meditation Hall |
 |---|---|---|
-| ![Matrix Cathedral](ling-lang.org/images/gallery/r3d-room.jpg) | ![Chinese Room](ling-lang.org/images/gallery/r3d-chinese-room.jpg) | ![Japanese Room](ling-lang.org/images/gallery/r3d-japanese-room.jpg) |
+| ![Matrix Cathedral](https://ling-lang.org/images/gallery/r3d-room.jpg) | ![Chinese Room](https://ling-lang.org/images/gallery/r3d-chinese-room.jpg) | ![Japanese Room](https://ling-lang.org/images/gallery/r3d-japanese-room.jpg) |
 
 | Mirror Garden | Thai-Japanese Clocktown | The Synthetic Garden |
 |---|---|---|
-| ![Mirror Garden](ling-lang.org/images/gallery/mirror-garden.jpg) | ![Clocktown](ling-lang.org/images/gallery/r3d-clocktown.jpg) | ![Garden](ling-lang.org/images/gallery/garden.jpg) |
+| ![Mirror Garden](https://ling-lang.org/images/gallery/mirror-garden.jpg) | ![Clocktown](https://ling-lang.org/images/gallery/r3d-clocktown.jpg) | ![Garden](https://ling-lang.org/images/gallery/garden.jpg) |
+
+| Crypto Donut |
+|---|
+| ![Crypto Donut](https://ling-lang.org/images/gallery/crypto-donut.jpg) |
+| A string (or your voice) is SHA3-256 hashed into a torus-knot's shape, bounce, spin, and colour — `examples/crypto/crypto_donut_physics.ling` |
+
+---
+
+## Made with Ling
+
+Real, independent projects built on the Ling runtime:
+
+| [Soul Symphony](https://github.com/taellinglin/soul-symphony-ling-edition) | LingForFun | [LingSoul](https://github.com/taellinglin/LingSoul) |
+|---|---|---|
+| ![Soul Symphony](https://ling-lang.org/images/gallery/soul-symphony-title.jpg) | ![LingForFun](https://ling-lang.org/images/gallery/lingforfun-login.jpg) | ![LingSoul](https://ling-lang.org/images/gallery/lingsoul-monolith.jpg) |
+| An RPG arcade physics game — roll an orb across 9 procedural levels with boss fights after each one. Arcade Vs, networking, and co-op, multilingual in 5 languages. | A Flyff-style action demo — articulated character rig, flight, sword combat, and a full online login/world-join flow, written entirely in Chinese-keyword Ling. *(in development)* | An atmospheric soul-balance sim in Ling's wireframe style, with a custom constructed glyph alphabet for its in-world HUD. |
 
 ---
 

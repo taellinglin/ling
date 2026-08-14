@@ -15,11 +15,14 @@ pub const ENTRY_NAMES: &[&str] = &[
     "comenzar",
     "début",
     "commencer",
+    "démarrer",
     "anfang",
     "starten",
     "início",
     "शुरू",
     "ابدأ",
+    "شروع", // Persian "start" — also used natively in Urdu
+    "התחל", // Hebrew "start"
 ];
 
 /// Resolve the entry binding among top-level items: a bind named after a known

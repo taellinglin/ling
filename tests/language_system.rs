@@ -88,6 +88,50 @@ fn hello_world_thai() {
     assert_runs("th", r#"ผูก เริ่ม = ทำ { พิมพ์("สวัสดี") }"#);
 }
 
+// RTL languages (Arabic, Persian, Hebrew, Urdu) — grammar keywords are fully
+// wired (lexer `classify_word`); builtin-function-name aliases (print, math,
+// ...) land in a later batch, so these use the native entry-point/bind/do
+// keywords with the English `print` builtin, proving the RTL keyword set
+// itself lexes and parses identically to every other language.
+#[test]
+fn hello_world_arabic() {
+    assert_runs("ar", r#"ربط ابدأ = افعل { print("أهلا") }"#);
+}
+
+#[test]
+fn hello_world_persian() {
+    assert_runs("fa", r#"پیوند شروع = انجام { print("سلام") }"#);
+}
+
+#[test]
+fn hello_world_hebrew() {
+    assert_runs("he", r#"קשר התחל = בצע { print("שלום") }"#);
+}
+
+#[test]
+fn hello_world_urdu() {
+    assert_runs("ur", r#"باندھو شروع = کرو { print("سلام") }"#);
+}
+
+// French and German — full peers of en/zh/ja/ko/th: grammar keywords AND
+// builtin-function-name aliases are both wired (lexer + normalize.rs +
+// runtime dispatch), so these get the same full for-loop/math coverage as
+// the top-5 languages below, not the print-only RTL treatment above.
+#[test]
+fn hello_world_french() {
+    assert_runs("fr", r#"lier début = faire { afficher("bonjour") }"#);
+}
+
+#[test]
+fn hello_world_german() {
+    assert_runs("de", r#"binden anfang = machen { drucken("hallo") }"#);
+}
+
+#[test]
+fn hello_world_russian() {
+    assert_runs("ru", r#"связать начать = сделать { печать("привет") }"#);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Multilingual control flow — for/in + if/else + fn must parse in every
 // language. (Regression guard: the Korean `for` alias was once mis-mapped to
@@ -122,6 +166,34 @@ fn for_loop_korean() {
 #[test]
 fn for_loop_thai() {
     assert_runs("for-th", r#"ผูก เริ่ม = ทำ { สำหรับ i ใน 0..3 { พิมพ์(i) } }"#);
+}
+#[test]
+fn for_loop_arabic() {
+    assert_runs("for-ar", r#"ربط ابدأ = افعل { لأجل i في 0..3 { print(i) } }"#);
+}
+#[test]
+fn for_loop_persian() {
+    assert_runs("for-fa", r#"پیوند شروع = انجام { برای i در 0..3 { print(i) } }"#);
+}
+#[test]
+fn for_loop_hebrew() {
+    assert_runs("for-he", r#"קשר התחל = בצע { עבור i בתוך 0..3 { print(i) } }"#);
+}
+#[test]
+fn for_loop_urdu() {
+    assert_runs("for-ur", r#"باندھو شروع = کرو { کے_لیے i میں 0..3 { print(i) } }"#);
+}
+#[test]
+fn for_loop_french() {
+    assert_runs("for-fr", r#"lier début = faire { pour i dans 0..3 { afficher(i) } }"#);
+}
+#[test]
+fn for_loop_german() {
+    assert_runs("for-de", r#"binden anfang = machen { für i in 0..3 { drucken(i) } }"#);
+}
+#[test]
+fn for_loop_russian() {
+    assert_runs("for-ru", r#"связать начать = сделать { для i в 0..3 { печать(i) } }"#);
 }
 
 /// Recursive `fn` + if/else implicit-return — the canonical fib, in Korean.
@@ -186,6 +258,24 @@ const MATH_TH: &str = r#"ผูก เริ่ม = ทำ {
     พิมพ์(ปัดเศษ(2.5)) พิมพ์(จำกัด(5.0, 0.0, 1.0)) พิมพ์(ยกกำลัง(2.0, 8.0))
 }"#;
 
+const MATH_FR: &str = r#"lier début = faire {
+    afficher(sinus(0.0)) afficher(cosinus(0.0)) afficher(racine_carrée(16.0))
+    afficher(maximum(3.0, 7.0)) afficher(minimum(3.0, 7.0)) afficher(plancher(3.9))
+    afficher(arrondir(2.5)) afficher(limiter(5.0, 0.0, 1.0)) afficher(puissance(2.0, 8.0))
+}"#;
+
+const MATH_DE: &str = r#"binden anfang = machen {
+    drucken(sinus(0.0)) drucken(kosinus(0.0)) drucken(quadratwurzel(16.0))
+    drucken(maximum(3.0, 7.0)) drucken(minimum(3.0, 7.0)) drucken(abrunden(3.9))
+    drucken(runden(2.5)) drucken(begrenzen(5.0, 0.0, 1.0)) drucken(potenz(2.0, 8.0))
+}"#;
+
+const MATH_RU: &str = r#"связать начать = сделать {
+    печать(синус(0.0)) печать(косинус(0.0)) печать(корень(16.0))
+    печать(максимум(3.0, 7.0)) печать(минимум(3.0, 7.0)) печать(вниз(3.9))
+    печать(округлить(2.5)) печать(ограничить(5.0, 0.0, 1.0)) печать(степень(2.0, 8.0))
+}"#;
+
 #[test]
 fn math_builtins_english() {
     assert_runs("math-en", MATH_EN);
@@ -205,6 +295,18 @@ fn math_builtins_korean() {
 #[test]
 fn math_builtins_thai() {
     assert_runs("math-th", MATH_TH);
+}
+#[test]
+fn math_builtins_french() {
+    assert_runs("math-fr", MATH_FR);
+}
+#[test]
+fn math_builtins_german() {
+    assert_runs("math-de", MATH_DE);
+}
+#[test]
+fn math_builtins_russian() {
+    assert_runs("math-ru", MATH_RU);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -427,6 +529,197 @@ fn keyword_coverage_all_five_languages() {
     }
 }
 
+/// Keyword coverage for the RTL languages (Arabic, Persian, Hebrew, Urdu),
+/// added as full peers of en/zh/ja/ko/th. Mirrors
+/// `keyword_coverage_all_five_languages` above: only a handful of these
+/// tokens (own/lend/share/move/copy, type+as) have dedicated grammar
+/// productions, so the rest are checked at the lexer level directly.
+#[test]
+fn keyword_coverage_rtl_languages() {
+    let cases: &[(&str, Token)] = &[
+        // Arabic
+        ("دالة", Token::Fn),
+        ("وحدة", Token::Mod),
+        ("نوع", Token::Type),
+        ("استخدم", Token::Use),
+        ("طابق", Token::Match),
+        ("امتلك", Token::Own),
+        ("أقرض", Token::Lend),
+        ("شارك", Token::Share),
+        ("انقل", Token::Move),
+        ("انسخ", Token::Copy),
+        ("غير_متزامن", Token::Async),
+        ("انتظر", Token::Wait),
+        ("بصفة", Token::As),
+        ("حيث", Token::Where),
+        ("توقف", Token::Stop),
+        ("حاول", Token::Try),
+        ("أنشئ", Token::Spawn),
+        ("تمام", Token::Ok),
+        ("سيء", Token::Bad),
+        ("لا_شيء", Token::None,),
+        // Persian
+        ("تابع", Token::Fn),
+        ("ماژول", Token::Mod),
+        ("استفاده", Token::Use),
+        ("اگر", Token::If),
+        ("تطبیق", Token::Match),
+        ("مالک", Token::Own),
+        ("قرض", Token::Lend),
+        ("اشتراک", Token::Share),
+        ("انتقال", Token::Move),
+        ("کپی", Token::Copy),
+        ("ناهمگام", Token::Async),
+        ("انتظار", Token::Wait),
+        ("به_عنوان", Token::As),
+        ("تلاش", Token::Try),
+        ("ایجاد", Token::Spawn),
+        ("تایید", Token::Ok),
+        ("هیچ", Token::None),
+        ("درست", Token::Bool(true)),
+        ("نادرست", Token::Bool(false)),
+        // Hebrew
+        ("פונקציה", Token::Fn),
+        ("מודול", Token::Mod),
+        ("סוג", Token::Type),
+        ("השתמש", Token::Use),
+        ("התאמה", Token::Match),
+        ("בעל", Token::Own),
+        ("השאלה", Token::Lend),
+        ("שתף", Token::Share),
+        ("הזז", Token::Move),
+        ("העתק", Token::Copy),
+        ("אסינכרוני", Token::Async),
+        ("המתן", Token::Wait),
+        ("בתור", Token::As),
+        ("עצור", Token::Stop),
+        ("נסה", Token::Try),
+        ("צור", Token::Spawn),
+        ("בסדר", Token::Ok),
+        ("רע", Token::Bad),
+        ("כלום", Token::None),
+        ("אמת", Token::Bool(true)),
+        ("שקר", Token::Bool(false)),
+        // Urdu
+        ("تفاعل", Token::Fn),
+        ("ماڈیول", Token::Mod),
+        ("قسم", Token::Type),
+        ("استعمال", Token::Use),
+        ("مطابقت", Token::Match),
+        ("ادھار", Token::Lend),
+        ("شراکت", Token::Share),
+        ("منتقل", Token::Move),
+        ("نقل", Token::Copy),
+        ("غیر_ہمزمان", Token::Async),
+        ("بطور", Token::As),
+        ("رکو", Token::Stop),
+        ("کوشش", Token::Try),
+        ("پیدا", Token::Spawn),
+        ("ٹھیک", Token::Ok),
+        ("برا", Token::Bad),
+        ("کچھ_نہیں", Token::None),
+        ("سچ", Token::Bool(true)),
+        ("جھوٹ", Token::Bool(false)),
+    ];
+    for (word, expected) in cases {
+        assert_lexes_as(word, expected.clone());
+    }
+}
+
+/// Keyword coverage for French and German — full peers of en/zh/ja/ko/th.
+/// Mirrors `keyword_coverage_all_five_languages`: only a handful of these
+/// tokens have dedicated grammar productions, so the rest are checked at the
+/// lexer level directly.
+#[test]
+fn keyword_coverage_french_german() {
+    let cases: &[(&str, Token)] = &[
+        // French
+        ("fonction", Token::Fn),
+        ("module", Token::Mod),
+        ("type", Token::Type),
+        ("utiliser", Token::Use),
+        ("si", Token::If),
+        ("correspondre", Token::Match),
+        ("posséder", Token::Own),
+        ("prêter", Token::Lend),
+        ("partager", Token::Share),
+        ("déplacer", Token::Move),
+        ("copier", Token::Copy),
+        ("asynchrone", Token::Async),
+        ("attendre", Token::Wait),
+        ("comme", Token::As),
+        ("où", Token::Where),
+        ("arrêter", Token::Stop),
+        ("essayer", Token::Try),
+        ("engendrer", Token::Spawn),
+        ("bon", Token::Ok),
+        ("mauvais", Token::Bad),
+        ("rien", Token::None),
+        ("vrai", Token::Bool(true)),
+        ("faux", Token::Bool(false)),
+        // German
+        ("funktion", Token::Fn),
+        ("modul", Token::Mod),
+        ("typ", Token::Type),
+        ("verwenden", Token::Use),
+        ("wenn", Token::If),
+        ("abgleichen", Token::Match),
+        ("besitzen", Token::Own),
+        ("leihen", Token::Lend),
+        ("teilen", Token::Share),
+        ("bewegen", Token::Move),
+        ("kopieren", Token::Copy),
+        ("asynchron", Token::Async),
+        ("warten", Token::Wait),
+        ("als", Token::As),
+        ("wobei", Token::Where),
+        ("stoppen", Token::Stop),
+        ("versuchen", Token::Try),
+        ("erzeugen", Token::Spawn),
+        ("gut", Token::Ok),
+        ("schlecht", Token::Bad),
+        ("nichts", Token::None),
+        ("wahr", Token::Bool(true)),
+        ("falsch", Token::Bool(false)),
+    ];
+    for (word, expected) in cases {
+        assert_lexes_as(word, expected.clone());
+    }
+}
+
+/// Keyword coverage for Russian — full peer of en/zh/ja/ko/th/fr/de.
+#[test]
+fn keyword_coverage_russian() {
+    let cases: &[(&str, Token)] = &[
+        ("функция", Token::Fn),
+        ("модуль", Token::Mod),
+        ("тип", Token::Type),
+        ("использовать", Token::Use),
+        ("в", Token::In),
+        ("сопоставить", Token::Match),
+        ("владеть", Token::Own),
+        ("одолжить", Token::Lend),
+        ("делиться", Token::Share),
+        ("переместить", Token::Move),
+        ("копировать", Token::Copy),
+        ("асинхронно", Token::Async),
+        ("ждать", Token::Wait),
+        ("как", Token::As),
+        ("где", Token::Where),
+        ("стоп", Token::Stop),
+        ("пробовать", Token::Try),
+        ("создать", Token::Spawn),
+        ("хорошо", Token::Ok),
+        ("плохо", Token::Bad),
+        ("ничего", Token::None),
+        ("истина", Token::Bool(true)),
+        ("ложь", Token::Bool(false)),
+    ];
+    for (word, expected) in cases {
+        assert_lexes_as(word, expected.clone());
+    }
+}
+
 /// Ownership-hint keywords (own/lend/share/move/copy) are the one part of this
 /// batch that *does* have a dedicated grammar rule (`parse_unary_expr`
 /// evaluates straight through them) — so unlike the rest of
@@ -446,6 +739,18 @@ fn ownership_hints_japanese_korean_thai() {
     assert_runs(
         "own-th",
         r#"ผูก เริ่ม = ทำ { พิมพ์(เป็นเจ้าของ 1) พิมพ์(ให้ยืม 2) พิมพ์(แบ่งปัน 3) พิมพ์(ย้าย 4) พิมพ์(คัดลอก 5) }"#,
+    );
+    assert_runs(
+        "own-fr",
+        r#"lier début = faire { afficher(posséder 1) afficher(prêter 2) afficher(partager 3) afficher(déplacer 4) afficher(copier 5) }"#,
+    );
+    assert_runs(
+        "own-de",
+        r#"binden anfang = machen { drucken(besitzen 1) drucken(leihen 2) drucken(teilen 3) drucken(bewegen 4) drucken(kopieren 5) }"#,
+    );
+    assert_runs(
+        "own-ru",
+        r#"связать начать = сделать { печать(владеть 1) печать(одолжить 2) печать(делиться 3) печать(переместить 4) печать(копировать 5) }"#,
     );
 }
 

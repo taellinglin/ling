@@ -25,6 +25,10 @@ pub enum OutputLang {
     Korean,
     Japanese,
     Chinese,
+    Persian,
+    Arabic,
+    Hebrew,
+    Urdu,
 }
 
 impl OutputLang {
@@ -40,6 +44,10 @@ impl OutputLang {
             "ko" | "korean" | "한국어" => OutputLang::Korean,
             "ja" | "japanese" | "日本語" => OutputLang::Japanese,
             "zh" | "chinese" | "中文" => OutputLang::Chinese,
+            "fa" | "persian" | "farsi" | "فارسی" => OutputLang::Persian,
+            "ar" | "arabic" | "العربية" => OutputLang::Arabic,
+            "he" | "hebrew" | "עברית" => OutputLang::Hebrew,
+            "ur" | "urdu" | "اردو" => OutputLang::Urdu,
             _ => OutputLang::English,
         }
     }
@@ -54,36 +62,60 @@ fn t(lang: OutputLang, key: &str) -> &'static str {
         ("error", Korean) => "오류",
         ("error", Japanese) => "エラー",
         ("error", Chinese) => "错误",
+        ("error", Persian) => "خطا",
+        ("error", Arabic) => "خطأ",
+        ("error", Hebrew) => "שגיאה",
+        ("error", Urdu) => "خرابی",
 
         ("parse", English) => "parse",
         ("parse", Thai) => "แยกวิเคราะห์",
         ("parse", Korean) => "구문",
         ("parse", Japanese) => "構文",
         ("parse", Chinese) => "解析",
+        ("parse", Persian) => "تجزیه",
+        ("parse", Arabic) => "تحليل",
+        ("parse", Hebrew) => "ניתוח",
+        ("parse", Urdu) => "تجزیہ",
 
         ("runtime", English) => "runtime",
         ("runtime", Thai) => "ขณะทำงาน",
         ("runtime", Korean) => "런타임",
         ("runtime", Japanese) => "実行時",
         ("runtime", Chinese) => "运行时",
+        ("runtime", Persian) => "زمان اجرا",
+        ("runtime", Arabic) => "وقت التشغيل",
+        ("runtime", Hebrew) => "זמן ריצה",
+        ("runtime", Urdu) => "دورانِ عمل",
 
         ("traceback", English) => "traceback (deepest call last)",
         ("traceback", Thai) => "การย้อนรอย (เรียกล่าสุดอยู่ท้าย)",
         ("traceback", Korean) => "역추적 (최근 호출이 마지막)",
         ("traceback", Japanese) => "トレースバック (最新の呼び出しが最後)",
         ("traceback", Chinese) => "回溯（最近的调用在最后）",
+        ("traceback", Persian) => "ردیابی (آخرین فراخوانی در پایان)",
+        ("traceback", Arabic) => "تتبع الاستدعاءات (آخر استدعاء في النهاية)",
+        ("traceback", Hebrew) => "מעקב קריאות (הקריאה האחרונה בסוף)",
+        ("traceback", Urdu) => "سراغ (آخری کال آخر میں)",
 
         ("in", English) => "in",
         ("in", Thai) => "ใน",
         ("in", Korean) => "위치",
         ("in", Japanese) => "内",
         ("in", Chinese) => "于",
+        ("in", Persian) => "در",
+        ("in", Arabic) => "في",
+        ("in", Hebrew) => "ב",
+        ("in", Urdu) => "میں",
 
         ("hint", English) => "hint",
         ("hint", Thai) => "คำแนะนำ",
         ("hint", Korean) => "힌트",
         ("hint", Japanese) => "ヒント",
         ("hint", Chinese) => "提示",
+        ("hint", Persian) => "راهنمایی",
+        ("hint", Arabic) => "تلميح",
+        ("hint", Hebrew) => "רמז",
+        ("hint", Urdu) => "اشارہ",
 
         // Fallback to English for any unmapped key.
         (_, _) => "error",
@@ -232,6 +264,10 @@ fn hint_for(message: &str, lang: OutputLang) -> Option<String> {
                 Korean => "철자를 확인하거나, 정의한 모듈을 `use` 하세요",
                 Japanese => "綴りを確認するか、定義しているモジュールを `use` してください",
                 Chinese => "检查拼写，或 `use` 定义它的模块",
+                Persian => "املا را بررسی کنید، یا ماژولی که آن را تعریف می‌کند `use` کنید",
+                Arabic => "تحقق من الإملاء، أو `use` الوحدة التي تعرّفه",
+                Hebrew => "בדוק את האיות, או `use` את המודול שמגדיר אותו",
+                Urdu => "ہجے چیک کریں، یا اسے ڈیفائن کرنے والے ماڈیول کو `use` کریں",
             }
             .to_string(),
         )
@@ -243,6 +279,10 @@ fn hint_for(message: &str, lang: OutputLang) -> Option<String> {
                 Korean => "`bind start = do { ... }` 를 추가하세요",
                 Japanese => "`bind start = do { ... }` を追加してください",
                 Chinese => "添加 `bind start = do { ... }`",
+                Persian => "`bind start = do { ... }` را اضافه کنید",
+                Arabic => "أضف `bind start = do { ... }`",
+                Hebrew => "הוסף `bind start = do { ... }`",
+                Urdu => "`bind start = do { ... }` شامل کریں",
             }
             .to_string(),
         )
@@ -261,8 +301,8 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
         return msg.to_string();
     }
 
-    // (english_prefix, [th, ko, ja, zh])
-    let prefixes: &[(&str, [&str; 4])] = &[
+    // (english_prefix, [th, ko, ja, zh, fa, ar, he, ur])
+    let prefixes: &[(&str, [&str; 8])] = &[
         (
             "unknown function ",
             [
@@ -270,11 +310,24 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
                 "알 수 없는 함수 ",
                 "不明な関数 ",
                 "未知函数 ",
+                "تابع ناشناخته ",
+                "دالة غير معروفة ",
+                "פונקציה לא ידועה ",
+                "نامعلوم تفاعل ",
             ],
         ),
         (
             "undefined: ",
-            ["ไม่ได้กำหนด: ", "정의되지 않음: ", "未定義: ", "未定义： "],
+            [
+                "ไม่ได้กำหนด: ",
+                "정의되지 않음: ",
+                "未定義: ",
+                "未定义： ",
+                "تعریف‌نشده: ",
+                "غير معرف: ",
+                "לא מוגדר: ",
+                "غیر متعین: ",
+            ],
         ),
         (
             "cannot call ",
@@ -283,11 +336,24 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
                 "호출할 수 없음 ",
                 "呼び出せません ",
                 "无法调用 ",
+                "نمی‌توان فراخوانی کرد ",
+                "لا يمكن استدعاء ",
+                "לא ניתן לקרוא ל־ ",
+                "کال نہیں کیا جا سکتا ",
             ],
         ),
         (
             "division by zero",
-            ["หารด้วยศูนย์", "0으로 나눔", "ゼロ除算", "除以零"],
+            [
+                "หารด้วยศูนย์",
+                "0으로 나눔",
+                "ゼロ除算",
+                "除以零",
+                "تقسیم بر صفر",
+                "القسمة على صفر",
+                "חלוקה באפס",
+                "صفر سے تقسیم",
+            ],
         ),
         (
             "index out of",
@@ -296,6 +362,10 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
                 "인덱스 범위 초과",
                 "範囲外インデックス",
                 "索引越界",
+                "شاخص خارج از محدوده",
+                "الفهرس خارج النطاق",
+                "אינדקס מחוץ לטווח",
+                "انڈیکس حد سے باہر",
             ],
         ),
     ];
@@ -304,6 +374,10 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
         Korean => 1,
         Japanese => 2,
         Chinese => 3,
+        Persian => 4,
+        Arabic => 5,
+        Hebrew => 6,
+        Urdu => 7,
         English => return msg.to_string(),
     };
     for (en, tr) in prefixes {
@@ -318,6 +392,10 @@ fn localize_message(msg: &str, lang: OutputLang) -> String {
             Korean => "진입점 없음 — `bind 시작 = do {...}` 가 필요합니다",
             Japanese => "エントリポイントがありません — `bind 始め = do {...}` が必要です",
             Chinese => "没有入口点 — 需要 `bind 始 = do {...}`",
+            Persian => "نقطهٔ ورود یافت نشد — نیاز به `bind شروع = do {...}` است",
+            Arabic => "لا توجد نقطة دخول — يلزم `bind ابدأ = do {...}`",
+            Hebrew => "אין נקודת כניסה — נדרש `bind התחל = do {...}`",
+            Urdu => "انٹری پوائنٹ نہیں ملا — `bind شروع = do {...}` درکار ہے",
             English => msg,
         }
         .to_string();
