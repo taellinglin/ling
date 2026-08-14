@@ -370,16 +370,38 @@ function activate(context) {
       provideDocumentSymbols(document) {
         const symbols = [];
         // `bind <name> = ...` — function if it binds a lambda/do-block, else variable.
-        const re = /^\s*(?:bind|令|灵符|束縛|바인드|enlazar|lier|binden|ligar)\s+([\p{L}_][\p{L}\p{N}_]*)\s*=(.*)$/u;
+        // One `bind` word per lexicon (lexicons/*.ling [keywords] bind = "..."):
+        // en bind, zh 令, ja 束縛, ko 바인드, th ผูก, ar ربط, fa پیوند, he קשר,
+        // ur باندھو, fr lier, de binden, ru связать.
+        const bindRe = /^\s*(?:bind|令|束縛|바인드|ผูก|ربط|پیوند|קשר|باندھو|lier|binden|связать)\s+([\p{L}_][\p{L}\p{N}_]*)\s*=(.*)$/u;
+        // `fn <name>(...)` / `دالة name(...)` — a plain function declaration
+        // (not a `bind name = ...`). One `fn` word per lexicon:
+        // en fn, zh 函, ja 関数, ko 함수, th ฟังก์ชัน, ar دالة, fa تابع, he פונקציה,
+        // ur تفاعل, fr fonction, de funktion, ru функция.
+        const fnDeclRe = /^\s*(?:fn|函|関数|함수|ฟังก์ชัน|دالة|تابع|פונקציה|تفاعل|fonction|funktion|функция)\s+([\p{L}_][\p{L}\p{N}_]*)\s*\(/u;
+        // `do` word per lexicon, used below to spot `bind x = do { ... }` /
+        // `bind x = افعل { ... }` entry points as functions, not variables.
+        // NOTE: `\b` only recognizes ASCII word characters in JS regex even
+        // with the `u` flag — it silently never matches around Arabic,
+        // Hebrew, Thai, CJK, or Cyrillic text (verified: /\bافعل\b/u.test
+        // ("x افعل y") is false). Latin words keep `\b` for safety (so "do"
+        // doesn't match inside "document"); every other script matches
+        // unguarded, same as the rest of this file's i18n patterns.
+        const doWordRe = /\b(?:do|faire|machen)\b|执|実行|실행|ทำ|افعل|انجام|בצע|کرو|сделать/u;
         for (let i = 0; i < document.lineCount; i++) {
           const text = document.lineAt(i).text;
-          const m = re.exec(text);
+          const range = document.lineAt(i).range;
+          const fm = fnDeclRe.exec(text);
+          if (fm) {
+            symbols.push(new vscode.DocumentSymbol(fm[1], "fn", vscode.SymbolKind.Function, range, range));
+            continue;
+          }
+          const m = bindRe.exec(text);
           if (!m) continue;
           const name = m[1];
           const rhs = m[2];
-          const isFn = /(\(|->|\bdo\b|\bfn\b|\b执\b|\b函\b)/u.test(rhs);
+          const isFn = /(\(|->)/.test(rhs) || doWordRe.test(rhs);
           const kind = isFn ? vscode.SymbolKind.Function : vscode.SymbolKind.Variable;
-          const range = document.lineAt(i).range;
           symbols.push(new vscode.DocumentSymbol(name, isFn ? "fn" : "bind", kind, range, range));
         }
         return symbols;

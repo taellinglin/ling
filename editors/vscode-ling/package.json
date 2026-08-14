@@ -1,9 +1,9 @@
 {
   "name": "ling-lang",
-  "displayName": "Ling Language",
+  "displayName": "ling-lang[灵言]",
   "description": "Syntax highlighting for the Ling (灵言) polyglot programming language.",
-  "version": "0.1.0",
-  "publisher": "ling-lang",
+  "version": "0.1.4",
+  "publisher": "ling-langorg",
   "license": "SEE LICENSE IN LICENSE",
   "icon": "images/icon.png",
   "galleryBanner": {

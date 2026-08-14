@@ -3,31 +3,31 @@
   "type": "dark",
   "semanticHighlighting": true,
   "colors": {
-    "editor.background": "#14233D",
+    "editor.background": "#05070D",
     "editor.foreground": "#CDD6E5",
-    "editorLineNumber.foreground": "#3D5172",
-    "editorLineNumber.activeForeground": "#8899BB",
-    "editorCursor.foreground": "#FFD700",
-    "editor.selectionBackground": "#FFD70033",
-    "editor.lineHighlightBackground": "#1B2E4F",
-    "editorWhitespace.foreground": "#26324d",
-    "editorIndentGuide.background1": "#26324d",
-    "editorBracketMatch.border": "#FFD700",
-    "editorBracketMatch.background": "#FFD70022",
-    "editorError.foreground": "#FF4444",
-    "editorWarning.foreground": "#FFD700",
-    "editorInfo.foreground": "#00bbff",
-    "editorGutter.background": "#14233D",
-    "sideBar.background": "#101D33",
-    "activityBar.background": "#101D33",
-    "statusBar.background": "#101D33",
-    "titleBar.activeBackground": "#101D33"
+    "editorLineNumber.foreground": "#2B3A57",
+    "editorLineNumber.activeForeground": "#96A6C7",
+    "editorCursor.foreground": "#FFE034",
+    "editor.selectionBackground": "#FFE03433",
+    "editor.lineHighlightBackground": "#0D121F",
+    "editorWhitespace.foreground": "#1A2338",
+    "editorIndentGuide.background1": "#1A2338",
+    "editorBracketMatch.border": "#FFE034",
+    "editorBracketMatch.background": "#FFE03422",
+    "editorError.foreground": "#FF1744",
+    "editorWarning.foreground": "#FFE034",
+    "editorInfo.foreground": "#00D4FF",
+    "editorGutter.background": "#05070D",
+    "sideBar.background": "#030509",
+    "activityBar.background": "#030509",
+    "statusBar.background": "#030509",
+    "titleBar.activeBackground": "#030509"
   },
   "tokenColors": [
     {
       "name": "Comments",
       "scope": ["comment", "comment.line", "punctuation.definition.comment"],
-      "settings": { "foreground": "#8899BB", "fontStyle": "italic" }
+      "settings": { "foreground": "#96A6C7", "fontStyle": "italic" }
     },
     {
       "name": "Keywords (control & storage)",
@@ -37,12 +37,12 @@
         "storage.type.ling",
         "storage.type.i18n.ling"
       ],
-      "settings": { "foreground": "#FFD700", "fontStyle": "bold" }
+      "settings": { "foreground": "#FFE034", "fontStyle": "bold" }
     },
     {
       "name": "Types",
       "scope": ["support.type.ling", "support.type.i18n.ling", "entity.name.type"],
-      "settings": { "foreground": "#FFD700" }
+      "settings": { "foreground": "#FFE034" }
     },
     {
       "name": "Builtins & function names & calls",
@@ -51,17 +51,17 @@
         "entity.name.function.ling",
         "entity.name.function.call.ling"
       ],
-      "settings": { "foreground": "#FF4444" }
+      "settings": { "foreground": "#FF1744" }
     },
     {
       "name": "Strings",
       "scope": ["string", "string.quoted.double.ling"],
-      "settings": { "foreground": "#00bbff" }
+      "settings": { "foreground": "#00D4FF" }
     },
     {
       "name": "Escapes",
       "scope": ["constant.character.escape.ling"],
-      "settings": { "foreground": "#FFD700" }
+      "settings": { "foreground": "#FFE034" }
     },
     {
       "name": "Numbers & language constants",
@@ -70,7 +70,7 @@
         "constant.language.ling",
         "constant.language.boolean.ling"
       ],
-      "settings": { "foreground": "#0080ff" }
+      "settings": { "foreground": "#2F8CFF" }
     },
     {
       "name": "Operators",
@@ -84,12 +84,12 @@
         "keyword.operator.range.ling",
         "keyword.operator.path.ling"
       ],
-      "settings": { "foreground": "#8899BB" }
+      "settings": { "foreground": "#96A6C7" }
     },
     {
       "name": "Variables / identifiers",
       "scope": ["variable", "variable.other"],
-      "settings": { "foreground": "#007204" }
+      "settings": { "foreground": "#3ECF4A" }
     }
   ]
 }

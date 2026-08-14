@@ -1,0 +1,256 @@
+# ════════════════════════════════════════════════════════════════════════════
+# 3d-arabic-ink-room.ling — غرفة الحبر النفسية  (Psychedelic Ink Chamber)
+#
+#  Written almost entirely in Arabic: keywords (ربط/دالة/إذا/بينما) and every
+#  builtin that has an Arabic name in lexicons/ar.ling or the runtime's own
+#  alias table. A handful of builtins with no Arabic alias yet (tanh,
+#  key_down) fall back to English — same convention every other localized
+#  room example in this repo already uses.
+#
+#  BIG, and secretly not a box:
+#
+#    Floor    — a real 2-fluid sim (ling-physics liquid.rs), sapphire and
+#                molten-gold ink that never stops swirling under a slowly
+#                rotating gravity vector, rendered as a flat surface.
+#    Ceiling  — the same fluid sim in full ROYGBIV rainbow mode, plus a
+#                Poincaré-disc hyperbolic ring pattern overlaid on top —
+#                everything above your head is non-Euclidean.
+#    Walls    — five of them, not four. Front/left/right meet at ordinary
+#                90° corners. The far wall LOOKS like one flat panel but is
+#                secretly two panels meeting at a ~178° crease (BULGE is
+#                tiny relative to the room). That's the classic hyperbolic-
+#                room trick: a true hyperbolic room can fit five 90°-cornered
+#                walls where Euclidean space only allows four — here we fake
+#                the illusion by hiding the fifth seam in plain sight.
+#                Each wall carries a different Islamic-geometric motif
+#                (star / zellige tessellation / rings+spiral / yantra
+#                medallion), and the hidden crease wall alone carries a
+#                slow, oversized, sparse letter-rain — deliberately NOT the
+#                fast dense Matrix-style rain other room examples use, so it
+#                reads as a carved inscription rather than falling static.
+#    Centre   — a slender pillar of a flower, a star, and a spiral, stacked
+#                and slowly turning.
+#
+#  Camera: auto-tours with a hyperbolic-tangent-eased breathing zoom (a
+#  second, smaller nod to "hyperbolic"). Touch WASD/mouse and it hands you
+#  free-look + fly movement, clamped so you can never fly through a wall,
+#  the floor, or the ceiling.
+#
+#  Run:   ling run examples/3d-rooms/3d-arabic-ink-room.ling
+#  Quit:  Escape or close window
+# ════════════════════════════════════════════════════════════════════════════
+
+ربط W     = 18.0     # نصف العرض  (half-width:  side walls at x = ±W)
+ربط D     = 18.0     # نصف العمق  (half-depth:  front wall z=-D, back seam z≈+D)
+ربط H     = 8.0      # نصف الارتفاع (half-height: floor y=-H, ceiling y=+H)
+ربط BULGE = 1.0      # مدى انحناء الثنية الخفية — how far the hidden 5th-wall
+                      # crease pokes past a flat back wall (tiny next to 2D)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# الأرض والسقف — FLOOR & CEILING LIQUID INK
+# ════════════════════════════════════════════════════════════════════════════
+
+دالة seed_liquid(id, GW) {
+    ربط sx = 0.0
+    بينما sx < GW {
+        بقعة_سائل(id, sx, GW * 0.30 + جا(sx * 0.15) * 10.0,  1.0, 0.9, 3.5)
+        بقعة_سائل(id, sx, GW * 0.70 + جتا(sx * 0.15) * 10.0, 0.0, 0.9, 3.5)
+        ربط sx = sx + 5.0
+    }
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# الجدران الخمسة — FIVE WALLS, FIVE MOTIFS
+# ════════════════════════════════════════════════════════════════════════════
+
+دالة draw_walls(FR) {
+    # هندسة الثنية الخفية — computed locally so the wall-drawing calls below
+    # never depend on a derived top-level binding (see file history / commit
+    # notes: sqrt-derived module-scope binds weren't visible inside a
+    # function body, so every wall now derives its own crease geometry from
+    # the plain top-level W / D / BULGE, which are visible everywhere).
+    ربط br_dx = 0 - W
+    ربط br_dz = BULGE
+    ربط br_len = جذر(br_dx * br_dx + br_dz * br_dz)
+    ربط br_ux = br_dx / br_len
+    ربط br_uz = br_dz / br_len
+    ربط br_cx = W / 2.0
+    ربط br_cz = D + BULGE / 2.0
+
+    ربط bl_dx = 0 - W
+    ربط bl_dz = 0 - BULGE
+    ربط bl_len = جذر(bl_dx * bl_dx + bl_dz * bl_dz)
+    ربط bl_ux = bl_dx / bl_len
+    ربط bl_uz = bl_dz / bl_len
+    ربط bl_cx = 0 - W / 2.0
+    ربط bl_cz = D + BULGE / 2.0
+
+    # الحائط الأمامي — نجمة إسلامية ثمانية كبيرة
+    نقش_نجمة(0, 0, 0 - D,  1,0,0,  0,1,0,  10, 7.0, 3.2, 0.01,  FR, 0.0)
+
+    # الحائط الأيمن — تطعيم زخرفي متكرر (زليج)
+    نقش_مرصوف_متكرر(W, 0, 0,  0,0,1,  0,1,0,  32, 14,  1.1, 0.3, 5.0,  FR, 2.0)
+
+    # الحائط الأيسر — حلقات متداخلة وحلزون
+    نقش_حلقات(0 - W, 0, 0,  0,0,-1,  0,1,0,  6, 10,  6.5, 0.15,  FR, 4.0)
+    نقش_حلزوني(0 - W, 0, 0,  0,0,-1,  0,1,0,  4.0, 6.5, 140,  FR, 4.6)
+
+    # نصف الحائط الخلفي الأيمن — يانترا ضخمة (الوجه الظاهر من الثنية)
+    نقش_يانترا(br_cx, 0, br_cz,  br_ux,0,br_uz,  0,1,0,  6, 6.0,  FR, 1.0)
+
+    # نصف الحائط الخلفي الأيسر — الحائط الخامس السرّي: مطر حروف بطيء ومتفرق،
+    # أكبر حجماً وأبطأ من أي مطر حروف عادي — نقش محفور، لا مطر رقمي متدفق
+    نقش_مطر_الحروف(bl_cx, 0, bl_cz,  bl_ux,0,bl_uz,  0,1,0,  10, 8,  1.3, 1.1,  0.006,  FR, 5.5)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# عمود المركز — CENTRE PILLAR
+# ════════════════════════════════════════════════════════════════════════════
+
+دالة draw_centre(FR) {
+    نقش_زهرة(0, 0 - 3.0, 0,  1,0,0,  0,0,1,  3.2, 20,  FR, 0.0)
+    نقش_نجمة(0, 0, 0,        1,0,0,  0,0,1,  12, 4.5, 2.0, 0.02,  FR, 2.3)
+    نقش_حلزوني(0, 3.0, 0,    1,0,0,  0,0,1,  5.0, 4.0, 160,  FR, 4.6)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# الإضاءة — LIGHTING (زمردي / ياقوتي أزرق / ذهبي / جمشتي)
+# ════════════════════════════════════════════════════════════════════════════
+
+دالة setup_lights(FR) {
+    امسح_الأضواء()
+    أضف_ضوء(جا(FR * 0.008) * 10.0, 5.0, جتا(FR * 0.008) * 10.0,  0.15,0.85,0.55,  1.6, 20.0)  # زمردي
+    أضف_ضوء(0 - 10.0, 3.0, 0,   0.25,0.55,1.0,  1.4, 16.0)                                     # ياقوتي أزرق
+    أضف_ضوء(10.0, 3.0, 0,       1.0,0.75,0.15,  1.4, 16.0)                                     # ذهبي
+    أضف_ضوء(0, 0 - 6.0, 0,      0.75,0.15,0.85, 1.2, 14.0)                                     # جمشتي (توهج سفلي)
+}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# البداية — MAIN
+# ════════════════════════════════════════════════════════════════════════════
+ربط ابدأ = افعل {
+    افتح_ملء_الشاشة("غرفة الحبر النفسية — Psychedelic Ink Chamber")
+    امسك_الفأرة()
+    عيّن_الإضاءة_المحيطة(0.05)
+
+    ربط GW = 72.0
+    ربط floor_liq = سائل_جديد(GW, GW)
+    ربط ceil_liq = سائل_جديد(GW, GW)
+    seed_liquid(floor_liq, GW)
+    seed_liquid(ceil_liq, GW)
+    عيّن_ألوان_السائل(floor_liq, 30, 60, 200, 255, 195, 60)   # محيط: ياقوت أزرق ضد ذهب مذاب
+    سائل_قوس_قزح(ceil_liq, 1)                                 # سقف: قوس قزح نفسي كامل
+
+    ربط FR = 0
+
+    ربط cam_px = 0.0
+    ربط cam_py = 0.0
+    ربط cam_pz = 0.0
+    ربط cam_zdist = 9.0
+    ربط cam_ry_off = 0.0
+    ربط cam_rx_off = 0.0
+    ربط cam_idle = 0
+    ربط cam_manual = 0
+    ربط cam_ry_snap = 0.0
+    ربط cam_rx_snap = 0.0
+
+    ربط max_x = W - 2.0   # حدود WASD — stay inside the walls
+    ربط max_z = D - 2.0
+    ربط max_y = H - 2.0
+
+    بينما النافذة_مفتوحة() {
+        املأ(2, 0, 8)    # نيلي غامق شبه أسود
+
+        # ── جولة تلقائية على مسار ليساجو ─────────────────────────────────
+        ربط ry = جا(FR * 0.00190) * 0.46 + جا(FR * 0.00081) * 0.16
+        ربط rx = جا(FR * 0.00150) * 0.34 + جا(FR * 0.00070) * 0.14
+        ربط mdx = فارق_الفأرة_س()
+        ربط mdy = فارق_الفأرة_ص()
+        ربط any_input = 0
+        إذا key_down("w")      { ربط any_input = 1 }
+        إذا key_down("s")      { ربط any_input = 1 }
+        إذا key_down("a")      { ربط any_input = 1 }
+        إذا key_down("d")      { ربط any_input = 1 }
+        إذا key_down("space")  { ربط any_input = 1 }
+        إذا key_down("lshift") { ربط any_input = 1 }
+        إذا key_down("left")   { ربط any_input = 1 }
+        إذا key_down("right")  { ربط any_input = 1 }
+        إذا key_down("up")     { ربط any_input = 1 }
+        إذا key_down("down")   { ربط any_input = 1 }
+        إذا mdx * mdx + mdy * mdy > 0.25 { ربط any_input = 1 }
+        إذا any_input == 1 { ربط cam_manual = 1; ربط cam_idle = 0 }
+        إذا cam_manual == 1 {
+            ربط cam_idle = cam_idle + 1
+            إذا cam_idle > 300 { ربط cam_manual = 0; ربط cam_idle = 0 }
+        }
+        إذا cam_manual == 1 {
+            ربط cam_ry_off = cam_ry_off + mdx * 0.0022
+            ربط cam_rx_off = cam_rx_off + mdy * 0.0022
+            إذا cam_rx_off > 1.5   { ربط cam_rx_off = 1.5 }
+            إذا cam_rx_off < 0-1.5 { ربط cam_rx_off = 0-1.5 }
+            إذا key_down("left")  { ربط cam_ry_off = cam_ry_off - 0.020 }
+            إذا key_down("right") { ربط cam_ry_off = cam_ry_off + 0.020 }
+            إذا key_down("up")    { ربط cam_rx_off = cam_rx_off - 0.020 }
+            إذا key_down("down")  { ربط cam_rx_off = cam_rx_off + 0.020 }
+            ربط fwd_x = جا(cam_ry_snap + cam_ry_off)
+            ربط fwd_z = جتا(cam_ry_snap + cam_ry_off)
+            ربط rgt_x = جتا(cam_ry_snap + cam_ry_off)
+            ربط rgt_z = 0.0 - جا(cam_ry_snap + cam_ry_off)
+            ربط spd = 0.30
+            إذا key_down("w") { ربط cam_px = cam_px + fwd_x * spd; ربط cam_pz = cam_pz + fwd_z * spd }
+            إذا key_down("s") { ربط cam_px = cam_px - fwd_x * spd; ربط cam_pz = cam_pz - fwd_z * spd }
+            إذا key_down("a") { ربط cam_px = cam_px - rgt_x * spd; ربط cam_pz = cam_pz - rgt_z * spd }
+            إذا key_down("d") { ربط cam_px = cam_px + rgt_x * spd; ربط cam_pz = cam_pz + rgt_z * spd }
+            إذا key_down("space")  { ربط cam_py = cam_py + spd }
+            إذا key_down("lshift") { ربط cam_py = cam_py - spd }
+
+            # البقاء داخل الحدود — clamp so WASD/fly can never cross a
+            # wall, poke through the floor, or bump the ceiling.
+            إذا cam_px > max_x   { ربط cam_px = max_x }
+            إذا cam_px < 0-max_x { ربط cam_px = 0-max_x }
+            إذا cam_pz > max_z   { ربط cam_pz = max_z }
+            إذا cam_pz < 0-max_z { ربط cam_pz = 0-max_z }
+            إذا cam_py > max_y   { ربط cam_py = max_y }
+            إذا cam_py < 0-max_y { ربط cam_py = 0-max_y }
+        }
+        إذا cam_manual == 0 {
+            ربط cam_ry_snap = ry
+            ربط cam_rx_snap = rx
+            ربط cam_ry_off = cam_ry_off * 0.97
+            ربط cam_rx_off = cam_rx_off * 0.97
+            ربط cam_px = cam_px * 0.97
+            ربط cam_py = cam_py * 0.97
+            ربط cam_pz = cam_pz * 0.97
+        }
+        ربط cry = جتا(cam_ry_snap + cam_ry_off)   ربط sry = جا(cam_ry_snap + cam_ry_off)
+        ربط crx = جتا(cam_rx_snap + cam_rx_off)   ربط srx = جا(cam_rx_snap + cam_rx_off)
+        عيّن_الكاميرا(cry, sry, crx, srx)
+        عيّن_موضع_الكاميرا(cam_px, cam_py, cam_pz)
+
+        # كاميرا هذلولية — hyperbolic-tangent-eased breathing zoom
+        ربط hyp = tanh(جا(FR * 0.006)) * 3.0
+        عيّن_مسافة_العمق(cam_zdist + hyp)
+
+        setup_lights(FR)
+
+        # ── تحريك الحبر السائل — swirl the ink, then draw it ──────────────
+        ربط gt = FR * 0.010
+        جاذبية_السائل(floor_liq, جا(gt) * 55.0, جتا(gt) * 55.0)
+        جاذبية_السائل(ceil_liq, جتا(gt * 0.8) * 55.0, جا(gt * 0.8) * 55.0)
+        خطوة_كل_السوائل(0.016)
+        ارسم_سطح_السائل(floor_liq, 0, 0, 0 - H, 0,  13.0, 3.0)
+        ارسم_سطح_السائل(ceil_liq, 0, 0, H, 0,  13.0, 3.0)
+        نقش_زائدي(0, H, 0,  1,0,0,  0,0,1,  15.0, 12, 18,  FR, 3.0)
+
+        draw_walls(FR)
+        draw_centre(FR)
+
+        اعرض()
+        ربط FR = FR + 1
+    }
+}

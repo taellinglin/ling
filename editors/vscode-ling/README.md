@@ -1,4 +1,4 @@
-# Ling Language — VS Code extension
+# ling-lang[灵言] — VS Code extension
 
 Editor support for the Ling (灵言) polyglot programming language (`.ling` files).
 
