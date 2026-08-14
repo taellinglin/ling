@@ -4015,7 +4015,6 @@ impl Interpreter {
                     gfx.window = Some(win);
                     gfx.topmost_window = false;
                     gfx.sync_projection();
-                    hide_console_window();
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -4502,13 +4501,6 @@ impl Interpreter {
                     // Strip all chrome and cover the full screen, above the taskbar.
                     #[cfg(windows)]
                     make_borderless_fullscreen(hwnd, w as i32, h as i32);
-                    hide_console_window();
-                    // hide_console_window() can itself reassign the OS foreground
-                    // window (hiding whatever previously had it, e.g. the terminal
-                    // that ran `ling run`, can hand focus to something other than
-                    // this window) — so the focus claim has to be the LAST word,
-                    // after every other window-visibility change, not just inside
-                    // make_borderless_fullscreen further up.
                     #[cfg(windows)]
                     force_window_focus(hwnd);
                 }
@@ -12985,23 +12977,6 @@ pub(crate) fn values_equal(a: &Value, b: &Value) -> bool {
 // Rasteriser functions live in crate::gfx::raster — imported at top of file.
 
 // ── Window platform helpers ────────────────────────────────────────────────────
-
-/// Hide the console window that the OS auto-attaches to console-subsystem
-/// processes. No-op on non-Windows and when no console is present.
-#[cfg(not(target_arch = "wasm32"))]
-fn hide_console_window() {
-    #[cfg(windows)]
-    unsafe {
-        extern "system" {
-            fn GetConsoleWindow() -> isize;
-            fn ShowWindow(hwnd: isize, nCmdShow: i32) -> i32;
-        }
-        let hwnd = GetConsoleWindow();
-        if hwnd != 0 {
-            ShowWindow(hwnd, 0); // SW_HIDE = 0
-        }
-    }
-}
 
 /// Strip *all* window chrome from `hwnd` and make it cover the whole primary
 /// monitor (0,0 → screen_w × screen_h), above the taskbar. This turns the
