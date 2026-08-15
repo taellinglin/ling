@@ -1861,7 +1861,7 @@ fn main() {{
     if lang != "English" {{
         eprintln!("[language: {{}}]", lang);
     }}
-    if let Err(e) = ling::run(SOURCE) {{
+    if let Err(e) = ling::run_jit(SOURCE, None, None) {{
         eprintln!("{{e}}");
         std::process::exit(1);
     }}
