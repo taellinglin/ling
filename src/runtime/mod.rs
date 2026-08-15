@@ -7917,6 +7917,11 @@ impl Interpreter {
                 {
                     let path = self.arg_str(&args, 0, "").replace('\\', "/");
                     let content = self.arg_str(&args, 1, "");
+                    if let Some(parent) = std::path::Path::new(&path).parent() {
+                        if !parent.as_os_str().is_empty() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                    }
                     std::fs::write(&path, content.as_bytes())
                         .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
                     return Ok(Value::Unit);

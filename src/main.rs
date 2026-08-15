@@ -357,13 +357,15 @@ fn parse_one(path: &Path) -> Option<ling::parser::ast::Program> {
 fn collect_ling_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_symlink() { continue; }
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if path.is_dir() {
-            if matches!(
+        if file_type.is_dir() {
+            if name.starts_with('.') || matches!(
                 name.as_ref(),
-                ".ling-build" | "灵碑" | "target" | "dist" | ".git" | "node_modules" | "AST"
+                "灵碑" | "target" | "dist" | "node_modules" | "AST"
             ) {
                 continue;
             }
@@ -481,10 +483,14 @@ fn discover_project(target: &str) -> LingProject {
             graphics: false,
         }
     } else if path.is_dir() {
-        // ling-fu project: 灵符.toml
+        // ling-fu project: 灵符.toml or ลิงฟู.toml
         let lf = path.join("灵符.toml");
+        let lf_th = path.join("ลิงฟู.toml");
         if lf.exists() {
             return parse_lingfu_toml(&lf, &path);
+        }
+        if lf_th.exists() {
+            return parse_lingfu_toml(&lf_th, &path);
         }
 
         // Simple project: Ling.toml
@@ -558,8 +564,8 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         }
     }
 
-    // Entry point: 灵源/启.灵  (ling-fu convention)
-    let entry = ["灵源/启.灵", "灵源/main.ling", "main.ling"]
+    // Entry point: 灵源/启.灵 or ต้นกำเนิด/เริ่ม.ลิง (ling-fu convention)
+    let entry = ["ต้นกำเนิด/เริ่ม.ลิง", "เริ่ม.ลิง", "灵源/启.灵", "灵源/main.ling", "main.ling"]
         .iter()
         .map(|p| base.join(p))
         .find(|p| p.exists())
@@ -655,17 +661,19 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
 }
 
 fn auto_entry(dir: &Path) -> Option<PathBuf> {
-    for name in &["main.ling", "start.ling", "启.灵"] {
+    for name in &["main.ling", "start.ling", "启.灵", "เริ่ม.ลิง"] {
         let p = dir.join(name);
         if p.exists() {
             return Some(p);
         }
     }
-    // Try source sub-directory (ling-fu: 灵源/)
-    for subdir in &["灵源", "src"] {
+    // Try source sub-directory (ling-fu: 灵源/ or ต้นกำเนิด/)
+    for subdir in &["ต้นกำเนิด", "灵源", "src"] {
         let sub = dir.join(subdir);
-        if let Some(e) = auto_entry(&sub) {
-            return Some(e);
+        if sub.is_dir() {
+            if let Some(e) = auto_entry(&sub) {
+                return Some(e);
+            }
         }
     }
     // Fall back to any .ling file
@@ -1162,11 +1170,24 @@ fn build_native(
 
         println!("    AOT object written to {}", obj_path.display());
 
-        std::fs::write(build_dir.join("src/main.rs"), gen_aot_main_rs(do_pack))
-            .expect("write src/main.rs");
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_app_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
+        std::fs::write(
+            build_dir.join("src/main.rs"),
+            gen_aot_main_rs(do_pack),
+        )
+        .expect("write src/main.rs");
         std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
     } else {
         // ── Standard path: embed interpreter ────────────────────────────────
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_app_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
         std::fs::write(
             build_dir.join("src/main.rs"),
             gen_main_rs(&entry_filename, do_pack),
@@ -1488,13 +1509,18 @@ fn gen_idle_font_rs(atlas: &[u8; 4096]) -> String {
 fn copy_ling_sources(src: &Path, dst: &Path) {
     let Ok(entries) = std::fs::read_dir(src) else { return };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_symlink() { continue; }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             let dname = path.file_name().unwrap_or_default().to_string_lossy();
-            if dname == "灵源" || dname == "src" {
+            if !dname.starts_with('.') && !matches!(dname.as_ref(), "灵碑" | "target" | "dist" | "node_modules" | "AST") {
                 copy_ling_sources(&path, dst);
             }
-        } else if path.extension().is_some_and(|e| e == "ling") {
+        } else if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("ling" | "灵" | "霊" | "령" | "ลิง")
+        ) {
             if let Some(name) = path.file_name() {
                 let _ = std::fs::copy(&path, dst.join(name));
             }
@@ -1517,7 +1543,7 @@ fn main() {
         return;
     }
     println!("cargo:rerun-if-changed=app.ico");
-    let mut res = winresource::WindowsResource::new();
+    let mut res = winres::WindowsResource::new();
     res.set_icon("app.ico");
     if let Err(e) = res.compile() {
         println!("cargo:warning=icon embed skipped ({e})");
@@ -1525,6 +1551,37 @@ fn main() {
 }
 "#
     .to_string()
+}
+
+/// Generate Cargo.toml for standard app builds.
+fn gen_app_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+    let root_str = ling_root.display().to_string().replace('\\', "/");
+    format!(
+        r#"[workspace]
+[package]
+name = "{name}"
+version = "{version}"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "{name}"
+path = "src/main.rs"
+
+[dependencies]
+ling = {{ path = "{root_str}", package = "ling-lang" }}
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true
+"#
+    )
 }
 
 /// Generate Cargo.toml for kernel (no_std, no default features, links to ling-kernel).
