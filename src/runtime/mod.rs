@@ -2898,7 +2898,7 @@ impl Interpreter {
             "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" | "پی" | "باي" | "פאי" | "پائی" | "пи" => {
                 return Ok(Value::Number(std::f64::consts::PI))
             },
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
                 return Ok(Value::Number(std::f64::consts::TAU))
             },
             _ => {},
@@ -3115,7 +3115,7 @@ impl Interpreter {
             },
 
             // ── Roots / powers ──
-            "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" | "جذر" | "جذر" | "שורש" | "جذر" | "racine_carrée" | "quadratwurzel" | "корень" => {
+            "sqrt" | "รากที่สอง" | "平方根" | "根" | "제곱근" | "جذر" | "שורש" | "racine_carrée" | "quadratwurzel" | "корень" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.sqrt()));
             },
             "cbrt" | "立方根" | "세제곱근" | "รากที่สาม" | "ریشه_سوم" | "جذر_تكعيبي" | "שורש_שלישי" | "مکعب_جذر" | "racine_cubique" | "kubikwurzel" | "кубический_корень" => {
@@ -3154,7 +3154,7 @@ impl Interpreter {
             "floor" | "ปัดลง" | "向下取整" | "下整" | "床関数" | "내림" | "کف" | "أرضية" | "רצפה" | "فرش" | "plancher" | "abrunden" | "вниз" => {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.floor()));
             },
-            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" | "سقف" | "سقف" | "תקרה" | "چھت" | "plafond" | "aufrunden" | "вверх" =>
+            "ceil" | "ปัดขึ้น" | "向上取整" | "上整" | "天井関数" | "올림" | "سقف" | "תקרה" | "چھت" | "plafond" | "aufrunden" | "вверх" =>
             {
                 return Ok(Value::Number(self.arg_num(&args, 0, 0.0)?.ceil()));
             },
@@ -3190,7 +3190,7 @@ impl Interpreter {
                 let b = self.arg_num(&args, 1, 0.0)?;
                 return Ok(Value::Number(a.max(b)));
             },
-            "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" | "محدود" | "قيّد" | "הגבל" | "محدود" | "limiter" | "begrenzen" | "ограничить" => {
+            "clamp" | "จำกัด" | "截取" | "範囲制限" | "범위제한" | "محدود" | "قيّد" | "הגבל" | "limiter" | "begrenzen" | "ограничить" => {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let lo = self.arg_num(&args, 1, 0.0)?;
                 let hi = self.arg_num(&args, 2, 1.0)?;
@@ -3201,7 +3201,7 @@ impl Interpreter {
             "pi" | "π" | "พาย" | "圆周率" | "円周率" | "파이" | "پی" | "باي" | "פאי" | "پائی" | "пи" => {
                 return Ok(Value::Number(std::f64::consts::PI))
             },
-            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
+            "tau" | "τ" | "双周率" | "タウ" | "타우" | "ทาว" | "تاو" | "טאו" | "ٹاؤ" | "тау" => {
                 return Ok(Value::Number(std::f64::consts::TAU))
             },
 
@@ -7660,7 +7660,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_button" | "จอยปุ่ม" | "دکمه_دسته_بازی" | "زر_يد_اللعب" | "כפתור_בקר_משחק" | "گیم_پیڈ_بٹن" => {
+            "gamepad_button" | "จอยปุ่ม" | "دکمه_دسته_بازی" | "زر_يد_اللعب" | "כפתור_בקר_משחק" | "گیم_پیڈ_بٹن_دبایا" => {
                 let name = self.arg_str(&args, 0, "");
                 return Ok(Value::Number(if gamepad::button(&name) {
                     1.0
@@ -7674,7 +7674,7 @@ impl Interpreter {
                 return Ok(Value::Number(gamepad::axis(&name) as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "gamepad_rumble" | "จอยสั่น" | "لرزش_دسته_بازی" | "اهتزاز_يد_اللعب" | "רטט_בקר_משחק" | "گیم_پیڈ_تھرتھراہٹ" => {
+            "gamepad_rumble" | "จอยสั่น" | "لرزش_دسته_بازی" | "اهتزاز_يد_اللعب" | "רטט_בקר_משחק" | "گیم_پیڈ_لرزش" => {
                 let low = self.arg_num(&args, 0, 0.0)? as f32;
                 let high = self.arg_num(&args, 1, 0.0)? as f32;
                 let ms = self.arg_num(&args, 2, 200.0)? as u32;
@@ -8525,7 +8525,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
             },
 
-            "svg_line" | "SVG线段" | "SVGเส้น" | "خط_SVG" | "خط_SVG" | "קו_SVG" | "SVG_لکیر" | "ligne_svg" | "svg_linie" | "линия_svg" => {
+            "svg_line" | "SVG线段" | "SVGเส้น" | "خط_SVG" | "קו_SVG" | "SVG_لکیر" | "ligne_svg" | "svg_linie" | "линия_svg" => {
                 let x1 = self.arg_num(&args, 0, 0.0)?;
                 let y1 = self.arg_num(&args, 1, 0.0)?;
                 let x2 = self.arg_num(&args, 2, 0.0)?;
@@ -9426,7 +9426,7 @@ impl Interpreter {
                 ));
             },
             // ── Organic 灵 ──
-            "breathe" | "呼吸" | "호흡" | "หายใจ" | "تنفس" | "تنفس" | "נשימה" | "سانس" | "respirer" | "atmen" | "дышать" => {
+            "breathe" | "呼吸" | "호흡" | "หายใจ" | "تنفس" | "נשימה" | "سانس" | "respirer" | "atmen" | "дышать" => {
                 let t = self.arg_num(&args, 0, 0.0)? as f32;
                 let rate = self.arg_num(&args, 1, 1.0)? as f32;
                 let depth = self.arg_num(&args, 2, 0.1)? as f32;
@@ -11618,7 +11618,7 @@ impl Interpreter {
                 ])));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" | "چرخش_جسم_صلب" | "دوران_وضعية_جسم_صلب" | "סיבוב_גוף_קשיח" | "سخت_جسم_گردش" | "rotation_corps_rigide" | "starrkörper_rotation" | "поворот_твёрдого_тела" =>
+            "rb_rot" | "刚体旋转" | "剛体回転" | "강체회전" | "การหมุนแข็ง" | "چرخش_وضعية_جسم_صلب" | "دوران_وضعية_جسم_صلب" | "סיבוב_זווית_גוף_קשיח" | "سخت_جسم_گردش" | "rotation_corps_rigide" | "starrkörper_rotation" | "поворот_твёрдого_тела" =>
             {
                 let i = self.arg_num(&args, 0, 0.)? as usize;
                 let q = self
@@ -11637,7 +11637,7 @@ impl Interpreter {
 
             // ── native-res mesh (.lmesh): load once, draw fast (unlit, per-tri colour) ──
             #[cfg(not(target_arch = "wasm32"))]
-            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" | "بارگذاری_مش" | "حمّل_شبكة" | "טען_רשת" | "میش_لوڈ" =>
+            "mesh_load" | "โหลดเมช" | "载入网格" | "メッシュ読込" | "메시로드" | "بارگذاری_مش" | "حمّل_شبكة" | "טען_מש" | "میش_لوڈ" =>
             {
                 let path = self.arg_str(&args, 0, "");
                 let resolved = if std::path::Path::new(&path).exists() {

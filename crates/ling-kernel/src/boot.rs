@@ -4,6 +4,7 @@
 //! handing off to the per-project generated `kernel_entry`.
 use core::arch::global_asm;
 
+#[cfg(not(test))]
 global_asm!(
     ".section .text.boot",
     ".global _start",

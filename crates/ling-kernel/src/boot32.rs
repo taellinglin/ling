@@ -22,7 +22,7 @@ use core::arch::global_asm;
 // `request_framebuffer` feature so only a kernel target with its own
 // framebuffer-based renderer opts into it (see the Cargo.toml feature doc
 // comment for why this must not be on by default).
-#[cfg(not(feature = "request_framebuffer"))]
+#[cfg(all(not(test), not(feature = "request_framebuffer")))]
 global_asm!(
     r#"
 .section .ling_multiboot, "a"
@@ -40,7 +40,7 @@ multiboot_header_end:
 "#
 );
 
-#[cfg(feature = "request_framebuffer")]
+#[cfg(all(not(test), feature = "request_framebuffer"))]
 global_asm!(
     r#"
 .section .ling_multiboot, "a"
@@ -69,6 +69,7 @@ multiboot_header_end:
 "#
 );
 
+#[cfg(not(test))]
 global_asm!(
     r#"
 .section .text.boot, "ax"
