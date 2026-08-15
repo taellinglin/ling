@@ -7316,7 +7316,7 @@ impl Interpreter {
                 return Ok(Value::Str(String::new()));
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path = self.arg_str(&args, 0, "");
+                    let path = self.arg_str(&args, 0, "").replace('\\', "/");
                     return std::fs::read_to_string(&path)
                         .map(Value::Str)
                         .map_err(|e| EvalErr::from(format!("read_file '{path}': {e}")));
@@ -7906,7 +7906,7 @@ impl Interpreter {
                 return Ok(Value::Bool(false));
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path = self.arg_str(&args, 0, "");
+                    let path = self.arg_str(&args, 0, "").replace('\\', "/");
                     return Ok(Value::Bool(std::path::Path::new(&path).exists()));
                 }
             },
@@ -7915,7 +7915,7 @@ impl Interpreter {
                 return Ok(Value::Unit);
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let path = self.arg_str(&args, 0, "");
+                    let path = self.arg_str(&args, 0, "").replace('\\', "/");
                     let content = self.arg_str(&args, 1, "");
                     std::fs::write(&path, content.as_bytes())
                         .map_err(|e| EvalErr::from(format!("write_file '{path}': {e}")))?;
@@ -7940,11 +7940,11 @@ impl Interpreter {
             // unreadable entry.
             #[cfg(not(target_arch = "wasm32"))]
             "list_dir" | "รายการไดเรกทอรี" | "فهرست_پوشه" | "اسرد_المجلد" | "רשום_תיקייה" | "فولڈر_فہرست" => {
-                let path = self.arg_str(&args, 0, ".");
+                let path = self.arg_str(&args, 0, ".").replace('\\', "/");
                 let mut paths: Vec<String> = Vec::new();
                 if let Ok(rd) = std::fs::read_dir(&path) {
                     for e in rd.flatten() {
-                        paths.push(e.path().to_string_lossy().into_owned());
+                        paths.push(e.path().to_string_lossy().replace('\\', "/"));
                     }
                 }
                 paths.sort();
@@ -7953,17 +7953,17 @@ impl Interpreter {
             },
             #[cfg(not(target_arch = "wasm32"))]
             "is_dir" | "เป็นไดเรกทอรี" | "آیا_پوشه_است" | "هل_مجلد" | "האם_תיקייה" | "کیا_فولڈر_ہے" => {
-                let path = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
                 return Ok(Value::Bool(std::path::Path::new(&path).is_dir()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "is_file" | "เป็นไฟล์" | "آیا_فایل_است" | "هل_ملف" | "האם_קובץ" | "کیا_فائل_ہے" => {
-                let path = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
                 return Ok(Value::Bool(std::path::Path::new(&path).is_file()));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "path_name" | "ชื่อไฟล์" | "نام_مسیر" | "اسم_المسار" | "שם_נתיב" | "پاتھ_نام" => {
-                let path = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
                 let name = std::path::Path::new(&path)
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -7972,7 +7972,7 @@ impl Interpreter {
             },
             #[cfg(not(target_arch = "wasm32"))]
             "path_ext" | "นามสกุลไฟล์" | "پسوند_مسیر" | "امتداد_المسار" | "סיומת_נתיב" | "پاتھ_ایکسٹینشن" => {
-                let path = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
                 let ext = std::path::Path::new(&path)
                     .extension()
                     .map(|s| s.to_string_lossy().to_lowercase())
@@ -9704,7 +9704,7 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "image_load" =>
             {
-                let path = self.arg_str(&args, 0, "");
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
                 let mut loaded = image::open(&path);
                 if loaded.is_err() {
                     if let Some(dir) = &self.source_dir {
