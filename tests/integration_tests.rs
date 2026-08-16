@@ -132,3 +132,17 @@ fn test_borrow_checker() {
 
     let _ = ling::run(source);
 }
+
+#[test]
+fn test_deduplicated_math_aliases() {
+    let source = r#"
+        bind start = do {
+            print(sqrt(16))
+            print(ceil(3.2))
+            print(clamp(15, 0, 10))
+            print(tau)
+        }
+    "#;
+    assert!(ling::run(source).is_ok(), "deduplicated math aliases failed");
+}
+
