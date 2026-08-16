@@ -1682,6 +1682,9 @@ pub struct Interpreter {
     /// Persistent Ed25519 signing keypairs, referenced by handle.
     #[cfg(not(target_arch = "wasm32"))]
     ed25519_ids: Vec<ling_crypto::Ed25519Keypair>,
+    /// Persistent ML-DSA-65 (post-quantum) signing keypairs, referenced by handle.
+    #[cfg(not(target_arch = "wasm32"))]
+    mldsa_ids: Vec<ling_crypto::MlDsa65Keypair>,
     /// Editable text-input buffer (ling-ui text fields).
     text_buffer: String,
     /// Frame counter for record_frame().
@@ -1803,6 +1806,8 @@ impl Interpreter {
             crypto_ids: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             ed25519_ids: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            mldsa_ids: Vec::new(),
             text_buffer: String::new(),
             record_n: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -9220,7 +9225,18 @@ impl Interpreter {
             },
             // Ed25519 signing keypair (issuer identity) → integer handle.
             #[cfg(not(target_arch = "wasm32"))]
-            "ed25519_keygen" | "생성서명키" => {
+            "ed25519_keygen"
+            | "생성서명키"
+            | "สร้างกุญแจลายเซ็น"
+            | "生成签名密钥"
+            | "署名鍵生成"
+            | "تولید_کلید_امضا"
+            | "توليد_مفتاح_التوقيع"
+            | "יצירת_מפתח_חתימה"
+            | "دستخط_کلید_تخلیق"
+            | "génération_clé_signature"
+            | "signaturschlüsselerzeugung"
+            | "генерация_ключа_подписи" => {
                 self.ed25519_ids.push(ling_crypto::Ed25519Keypair::generate());
                 return Ok(Value::Number((self.ed25519_ids.len() - 1) as f64));
             },
@@ -9229,13 +9245,35 @@ impl Interpreter {
             // seed (e.g. a bank's issuer identity) and rederive identical keys
             // across restarts instead of every run minting a fresh, unrelated one.
             #[cfg(not(target_arch = "wasm32"))]
-            "ed25519_keygen_from_seed" | "씨앗에서생성서명키" => {
+            "ed25519_keygen_from_seed"
+            | "씨앗에서생성서명키"
+            | "สร้างกุญแจลายเซ็นจากเมล็ด"
+            | "从种子生成签名密钥"
+            | "シードから署名鍵生成"
+            | "تولید_کلید_امضا_از_دانه"
+            | "توليد_مفتاح_التوقيع_من_البذرة"
+            | "יצירת_מפתח_חתימה_מזרע"
+            | "بیج_سے_دستخط_کلید_تخلیق"
+            | "génération_clé_signature_depuis_graine"
+            | "signaturschlüsselerzeugung_aus_saat"
+            | "генерация_ключа_подписи_из_семени" => {
                 let seed = hex_to_32(&self.arg_str(&args, 0, ""));
                 self.ed25519_ids.push(ling_crypto::Ed25519Keypair::from_seed(seed));
                 return Ok(Value::Number((self.ed25519_ids.len() - 1) as f64));
             },
             #[cfg(not(target_arch = "wasm32"))]
-            "ed25519_public" | "서명공개키" => {
+            "ed25519_public"
+            | "서명공개키"
+            | "กุญแจสาธารณะลายเซ็น"
+            | "签名公钥"
+            | "署名公開鍵"
+            | "کلید_عمومی_امضا"
+            | "مفتاح_التوقيع_العام"
+            | "מפתח_חתימה_ציבורי"
+            | "دستخط_عوامی_کلید"
+            | "clé_publique_signature"
+            | "signatur_öffentlicher_schlüssel"
+            | "публичный_ключ_подписи" => {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
                 let pk = self
                     .ed25519_ids
@@ -9246,7 +9284,18 @@ impl Interpreter {
             },
             // ed25519_sign(handle, message) → signature hex (64 bytes)
             #[cfg(not(target_arch = "wasm32"))]
-            "ed25519_sign" | "서명하다" => {
+            "ed25519_sign"
+            | "서명하다"
+            | "เซ็นชื่อ"
+            | "签名"
+            | "署名する"
+            | "امضا_کردن"
+            | "توقيع"
+            | "לחתום"
+            | "دستخط_کریں"
+            | "signer"
+            | "signieren"
+            | "подписать" => {
                 let h = self.arg_num(&args, 0, 0.0)? as usize;
                 let msg = self.arg_str(&args, 1, "");
                 let sig = self
@@ -9258,7 +9307,18 @@ impl Interpreter {
             },
             // ed25519_verify(pubkey_hex, message, signature_hex) → bool
             #[cfg(not(target_arch = "wasm32"))]
-            "ed25519_verify" | "서명확인" => {
+            "ed25519_verify"
+            | "서명확인"
+            | "ยืนยันลายเซ็น"
+            | "验证签名"
+            | "署名検証"
+            | "تایید_امضا"
+            | "التحقق_من_التوقيع"
+            | "אימות_חתימה"
+            | "دستخط_تصدیق"
+            | "vérifier_signature"
+            | "signatur_verifizieren"
+            | "проверить_подпись" => {
                 let pk_hex = self.arg_str(&args, 0, "");
                 let msg = self.arg_str(&args, 1, "");
                 let sig_hex = self.arg_str(&args, 2, "");
@@ -9270,6 +9330,114 @@ impl Interpreter {
                     Some(ling_crypto::Ed25519Keypair::verify(&pk, msg.as_bytes(), &sig).is_ok())
                 })()
                 .unwrap_or(false);
+                return Ok(Value::Bool(ok));
+            },
+            // ML-DSA-65 (FIPS 204, post-quantum) signing keypair → integer
+            // handle. Meant to be composed with ed25519_* by application code
+            // into a hybrid signature (verify passes only if both check out),
+            // not as a replacement for Ed25519 on its own. Aliases below mirror
+            // the ed25519_* ones with each language's word for "quantum" folded
+            // in, the same way knot_keygen/hybrid_keygen distinguish themselves.
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa_keygen"
+            | "양자서명키생성"
+            | "สร้างกุญแจลายเซ็นควอนตัม"
+            | "生成量子签名密钥"
+            | "量子署名鍵生成"
+            | "تولید_کلید_امضای_کوانتومی"
+            | "توليد_مفتاح_التوقيع_الكمي"
+            | "יצירת_מפתח_חתימה_קוונטי"
+            | "کوانٹم_دستخط_کلید_تخلیق"
+            | "génération_clé_signature_quantique"
+            | "quantensignaturschlüsselerzeugung"
+            | "генерация_ключа_квантовой_подписи" => {
+                self.mldsa_ids.push(ling_crypto::MlDsa65Keypair::generate());
+                return Ok(Value::Number((self.mldsa_ids.len() - 1) as f64));
+            },
+            // Deterministic keypair from a 32-byte hex seed — same rederive-
+            // from-seed contract as ed25519_keygen_from_seed.
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa_keygen_from_seed"
+            | "씨앗에서양자서명키생성"
+            | "สร้างกุญแจลายเซ็นควอนตัมจากเมล็ด"
+            | "从种子生成量子签名密钥"
+            | "シードから量子署名鍵生成"
+            | "تولید_کلید_امضای_کوانتومی_از_دانه"
+            | "توليد_مفتاح_التوقيع_الكمي_من_البذرة"
+            | "יצירת_מפתח_חתימה_קוונטי_מזרע"
+            | "بیج_سے_کوانٹم_دستخط_کلید_تخلیق"
+            | "génération_clé_signature_quantique_depuis_graine"
+            | "quantensignaturschlüsselerzeugung_aus_saat"
+            | "генерация_ключа_квантовой_подписи_из_семени" => {
+                let seed = hex_to_32(&self.arg_str(&args, 0, ""));
+                self.mldsa_ids.push(ling_crypto::MlDsa65Keypair::from_seed(seed));
+                return Ok(Value::Number((self.mldsa_ids.len() - 1) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa_public"
+            | "양자서명공개키"
+            | "กุญแจสาธารณะลายเซ็นควอนตัม"
+            | "量子签名公钥"
+            | "量子署名公開鍵"
+            | "کلید_عمومی_امضای_کوانتومی"
+            | "مفتاح_التوقيع_الكمي_العام"
+            | "מפתח_חתימה_קוונטי_ציבורי"
+            | "کوانٹم_دستخط_عوامی_کلید"
+            | "clé_publique_signature_quantique"
+            | "quantensignatur_öffentlicher_schlüssel"
+            | "публичный_ключ_квантовой_подписи" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let pk = self
+                    .mldsa_ids
+                    .get(h)
+                    .map(|kp| hex_encode(&kp.public_key()))
+                    .unwrap_or_default();
+                return Ok(Value::Str(pk));
+            },
+            // mldsa_sign(handle, message) → signature hex (~3309 bytes)
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa_sign"
+            | "양자서명하다"
+            | "เซ็นชื่อควอนตัม"
+            | "量子签名"
+            | "量子署名する"
+            | "امضای_کوانتومی_کردن"
+            | "توقيع_كمي"
+            | "לחתום_קוונטית"
+            | "کوانٹم_دستخط_کریں"
+            | "signer_quantique"
+            | "quantensignieren"
+            | "подписать_квантово" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let msg = self.arg_str(&args, 1, "");
+                let sig = self
+                    .mldsa_ids
+                    .get(h)
+                    .map(|kp| hex_encode(&kp.sign(msg.as_bytes())))
+                    .unwrap_or_default();
+                return Ok(Value::Str(sig));
+            },
+            // mldsa_verify(pubkey_hex, message, signature_hex) → bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa_verify"
+            | "양자서명확인"
+            | "ยืนยันลายเซ็นควอนตัม"
+            | "验证量子签名"
+            | "量子署名検証"
+            | "تایید_امضای_کوانتومی"
+            | "التحقق_من_التوقيع_الكمي"
+            | "אימות_חתימה_קוונטית"
+            | "کوانٹم_دستخط_تصدیق"
+            | "vérifier_signature_quantique"
+            | "quantensignatur_verifizieren"
+            | "проверить_квантовую_подпись" => {
+                let pk_hex = self.arg_str(&args, 0, "");
+                let msg = self.arg_str(&args, 1, "");
+                let sig_hex = self.arg_str(&args, 2, "");
+                let pk_bytes = hex_decode(&pk_hex);
+                let sig_bytes = hex_decode(&sig_hex);
+                let ok = ling_crypto::MlDsa65Keypair::verify(&pk_bytes, msg.as_bytes(), &sig_bytes)
+                    .is_ok();
                 return Ok(Value::Bool(ok));
             },
             // Argon2id password hashing — password_hash(pw) → PHC string,

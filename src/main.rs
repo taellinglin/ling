@@ -1165,6 +1165,11 @@ fn build_native(
         std::fs::write(build_dir.join("src/main.rs"), gen_aot_main_rs(do_pack))
             .expect("write src/main.rs");
         std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
     } else {
         // ── Standard path: embed interpreter ────────────────────────────────
         std::fs::write(
@@ -1173,6 +1178,11 @@ fn build_native(
         )
         .expect("write src/main.rs");
         std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
     }
 
     // Pack resources into the executable (both backends self-extract them).
@@ -1310,6 +1320,24 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
         let img_path = platform_dir.join("kernel8.img");
         objcopy_to_raw_binary(&dst, &img_path);
         println!("  [{}] → {}", platform.dir_name(), img_path.display());
+    }
+
+    // ── 5b. Copy sibling .ling modules next to the exe (non-kernel only) ──────
+    // The standard/AOT `src/main.rs` only `include_str!`s the ENTRY file
+    // (see gen_main_rs) — every other `.ling` file the project `use`s (e.g.
+    // `use "./geo"`) is resolved at RUNTIME via `source_dir`, which
+    // `ling::run`'s embedded-source callers never set (`run_named(source,
+    // None, None)`), falling back to the process's OWN current directory
+    // (see runtime/mod.rs's `load_module`). copy_ling_sources() already
+    // copies these into build_dir so the *build* step 1 above can compile
+    // fine standalone, but nothing previously copied them onward into the
+    // actual dist folder — a multi-file project's built exe would run, then
+    // silently fail to find any sibling module the moment it hit a `use`,
+    // since the compiled binary ends up in `target/<triple>/release/`, not
+    // next to the sources copy_ling_sources placed in build_dir itself.
+    // Harmless for single-file projects (nothing to copy beyond the exe).
+    if !is_kernel {
+        copy_ling_sources(&project.source_dir, &platform_dir);
     }
 
     // ── 6. Copy included resources next to the exe (unless packed inside it) ──
@@ -1558,6 +1586,47 @@ lto = "fat"
 codegen-units = 1
 opt-level = 3
 panic = "abort"
+strip = true
+"#
+    )
+}
+
+/// Generate Cargo.toml for the standard (embedded-interpreter) and `--aot`
+/// native build paths — win/lin/mac, as opposed to `gen_kernel_cargo_toml`'s
+/// no_std kernel targets. Both generated `src/main.rs` variants (`gen_main_rs`,
+/// `gen_aot_main_rs`) call into the `ling` library crate (`ling::run`,
+/// `ling::runtime::init_aot_runtime`, `ling::unpack_resources`) and both
+/// generated `build.rs` variants (`gen_build_rs`, `gen_aot_build_rs`) embed
+/// the Windows icon via `winresource` — this is the one Cargo.toml both
+/// share. `package = "ling-lang"` remaps the path-dependency's crate name to
+/// match: the workspace's `[lib] name = "ling"` already makes it *available*
+/// as `ling`, but the dependency's own TOML key doesn't have to agree with
+/// that without this, so this makes it explicit rather than relying on the
+/// default matching by coincidence.
+fn gen_native_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+    let root_str = ling_root.display().to_string().replace('\\', "/");
+    format!(
+        r#"[workspace]
+[package]
+name = "{name}"
+version = "{version}"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "{name}"
+path = "src/main.rs"
+
+[dependencies]
+ling = {{ path = "{root_str}", package = "ling-lang" }}
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
 strip = true
 "#
     )

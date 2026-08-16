@@ -37,6 +37,8 @@ hmac    = "0.12"
 
 # Post-quantum (pure Rust, FIPS 203 ML-KEM)
 ml-kem  = { version = "0.3", features = ["getrandom"] }
+# Post-quantum (pure Rust, FIPS 204 ML-DSA / ex-Dilithium)
+ml-dsa  = { version = "0.1", features = ["getrandom"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Enable browser-compatible entropy source for wasm32-unknown-unknown.

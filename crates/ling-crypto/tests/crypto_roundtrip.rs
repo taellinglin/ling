@@ -5,6 +5,7 @@
 use ling_crypto::hash::Blake3;
 use ling_crypto::hybrid::HybridKeypair;
 use ling_crypto::pq::MlKem768Keypair;
+use ling_crypto::pq_sig::MlDsa65Keypair;
 use ling_crypto::symmetric::AesGcm256;
 
 #[test]
@@ -56,6 +57,60 @@ fn hybrid_x25519_mlkem_establishes_shared_secret() {
     // The hybrid secret must not equal either component trivially; just assert
     // it's 32 bytes of established key material.
     assert_eq!(ss_sender.len(), 32);
+}
+
+#[test]
+fn ml_dsa_65_signs_and_verifies() {
+    let kp = MlDsa65Keypair::generate();
+    let pk = kp.public_key();
+    let msg = b"LC-2026-000123 issued to Anita Bevill";
+    let sig = kp.sign(msg);
+    assert!(
+        MlDsa65Keypair::verify(&pk, msg, &sig).is_ok(),
+        "a genuine signature must verify"
+    );
+}
+
+#[test]
+fn ml_dsa_65_rejects_tampered_message_and_signature() {
+    let kp = MlDsa65Keypair::generate();
+    let pk = kp.public_key();
+    let msg = b"original message";
+    let sig = kp.sign(msg);
+
+    assert!(
+        MlDsa65Keypair::verify(&pk, b"tampered message", &sig).is_err(),
+        "signature must not verify against a different message"
+    );
+
+    let mut bad_sig = sig.clone();
+    let last = bad_sig.len() - 1;
+    bad_sig[last] ^= 0xFF;
+    assert!(
+        MlDsa65Keypair::verify(&pk, msg, &bad_sig).is_err(),
+        "tampered signature must not verify"
+    );
+}
+
+#[test]
+fn ml_dsa_65_seed_is_deterministic() {
+    let seed = [7u8; 32];
+    let kp_a = MlDsa65Keypair::from_seed(seed);
+    let kp_b = MlDsa65Keypair::from_seed(seed);
+    assert_eq!(
+        kp_a.public_key(),
+        kp_b.public_key(),
+        "same seed must rederive the same public key across restarts"
+    );
+
+    let msg = b"issuer identity persisted as a 32-byte seed";
+    let sig = kp_a.sign(msg);
+    assert!(
+        MlDsa65Keypair::verify(&kp_b.public_key(), msg, &sig).is_ok(),
+        "a signature from one seed-derived keypair must verify against the other's public key"
+    );
+
+    assert_eq!(&*kp_a.to_bytes(), &seed, "to_bytes() must round-trip the original seed");
 }
 
 #[test]
