@@ -1,6 +1,6 @@
 [package]
 name = "ling-mir"
-version = "2030.0.4"
+version = "2030.0.5"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
 description = "Ling MIR - Mid-level Intermediate Representation for codegen backends"
@@ -8,8 +8,8 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [dependencies]
-ling-core = { path = "../ling-core", version = "2030.0.2" }
-ling-ast  = { path = "../ling-ast", version = "2030.0.1" }
+ling-core = { path = "../ling-core", version = "2030.0.3" }
+ling-ast  = { path = "../ling-ast", version = "2030.0.2" }
 anyhow = "1.0"
 rustc-hash = "2.0"
 

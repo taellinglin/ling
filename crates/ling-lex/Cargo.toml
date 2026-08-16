@@ -1,6 +1,6 @@
 [package]
 name = "ling-lex"
-version = "2030.0.1"
+version = "2030.0.2"
 edition = "2021"
 authors = ["Ling Lin <ling@ling-lang.org>"]
 description = "Lexical analysis and polyglot tokenization for Ling"
@@ -8,7 +8,7 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
 
 [dependencies]
-ling-core = { path = "../ling-core", version = "2030.0.2" }
+ling-core = { path = "../ling-core", version = "2030.0.3" }
 unicode-script = "0.5"
 unicode-normalization = "0.1"
 logos = "0.13"
