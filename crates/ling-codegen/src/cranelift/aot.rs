@@ -198,6 +198,8 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             types::I64,
         ),
         ("ling_kernel_proc_selftest", &[], types::I64),
+        ("ling_kernel_proc_pairtest", &[], types::I64),
+        ("ling_kernel_proc_ps", &[], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {

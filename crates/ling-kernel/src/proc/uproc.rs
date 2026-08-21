@@ -32,7 +32,16 @@ enum State {
     Unused,
     Ready,
     Blocked(u64),
+    WaitingChild(usize),
     Exited(i32),
+}
+
+/// Result of starting a `waitpid` — mirrors the same "resolve now or block
+/// and let a later scheduling point fill in `rax`" split as `sleep_ms`.
+pub enum WaitOutcome {
+    Invalid,
+    Immediate(i32),
+    Blocked,
 }
 
 #[derive(Copy, Clone)]
@@ -117,6 +126,15 @@ pub fn spawn(elf: &[u8]) -> Result<usize, &'static str> {
 /// processes instead.
 pub fn run_to_completion(pid: usize) -> i32 {
     unsafe {
+        // Concurrent preemption can already have drained `pid` by the time
+        // some earlier `run_to_completion` call for a different process
+        // returns (both were `Ready` and timesliced together) — relaunching
+        // its stale saved frame would resume execution right after its
+        // last `syscall`, into whatever unreachable code follows. Reading
+        // the already-recorded exit code is always correct here instead.
+        if let State::Exited(code) = TABLE[pid].state {
+            return code;
+        }
         switch_to(pid);
         trap::launch_first_process(frame_addr_of(&TABLE[pid]));
         match TABLE[pid].state {
@@ -147,8 +165,8 @@ fn wake_blocked() {
     let now = trap::ticks();
     for i in 0..MAX_PROCESSES {
         unsafe {
-            if let State::Blocked(wake_at) = TABLE[i].state {
-                if now >= wake_at {
+            match TABLE[i].state {
+                State::Blocked(wake_at) if now >= wake_at => {
                     // The frame's `rax` still holds the syscall number
                     // (whatever was in `rax` at entry) since the syscall
                     // that blocked never set a return value — set it now,
@@ -158,9 +176,58 @@ fn wake_blocked() {
                     (*frame).rax = 0;
                     TABLE[i].state = State::Ready;
                 }
+                State::WaitingChild(target) => {
+                    if let State::Exited(code) = TABLE[target].state {
+                        let frame = frame_addr_of(&TABLE[i]) as *mut TrapFrame;
+                        (*frame).rax = code as u64;
+                        TABLE[i].state = State::Ready;
+                    }
+                }
+                _ => {}
             }
         }
     }
+}
+
+/// Start (or immediately resolve) a `waitpid` on `target`. A process slot
+/// is never reused after `Exited` — this fixed 8-slot table has no `fork`
+/// and no pid-reuse hazard to guard against, so a child's exit code just
+/// stays readable in its slot for as many `waitpid` calls as care to ask.
+pub fn waitpid_start(target: usize) -> WaitOutcome {
+    if target >= MAX_PROCESSES {
+        return WaitOutcome::Invalid;
+    }
+    unsafe {
+        match TABLE[target].state {
+            State::Unused => WaitOutcome::Invalid,
+            State::Exited(code) => WaitOutcome::Immediate(code),
+            _ => {
+                TABLE[CURRENT].state = State::WaitingChild(target);
+                WaitOutcome::Blocked
+            }
+        }
+    }
+}
+
+/// One-letter state tag and pid for the `ps` shell command — `(pid, tag,
+/// exit_code_or_0)`.
+pub fn snapshot(out: &mut [(usize, u8, i32); MAX_PROCESSES]) -> usize {
+    let mut n = 0;
+    for i in 0..MAX_PROCESSES {
+        let (tag, code) = unsafe {
+            match TABLE[i].state {
+                State::Unused => continue,
+                State::Ready if i == CURRENT => (b'R', 0),
+                State::Ready => (b'r', 0),
+                State::Blocked(_) => (b'S', 0),
+                State::WaitingChild(_) => (b'W', 0),
+                State::Exited(c) => (b'Z', c),
+            }
+        };
+        out[n] = (i, tag, code);
+        n += 1;
+    }
+    n
 }
 
 /// Called from `timer_trap_rust` when the interrupted context was ring 3.
@@ -205,6 +272,24 @@ pub fn on_syscall_return(frame_addr: u64) -> u64 {
             frame_addr_of(&TABLE[next])
         },
         None => trap::resume_to_kernel(),
+    }
+}
+
+/// Exit code of a process that has already finished — `None` if it hasn't
+/// exited (yet, or ever, if `pid` is invalid/unused). Safe to call any
+/// number of times after the process is known-done; unlike
+/// [`run_to_completion`], it never touches scheduling state, so it's the
+/// right way to read a *second* (or later) process's result once a single
+/// `run_to_completion` call has already drained every `Ready` process in
+/// the table — calling `run_to_completion` again on an already-exited pid
+/// would re-launch its last saved frame instead of doing nothing.
+pub fn exit_code(pid: usize) -> Option<i32> {
+    if pid >= MAX_PROCESSES {
+        return None;
+    }
+    match unsafe { TABLE[pid].state } {
+        State::Exited(code) => Some(code),
+        _ => None,
     }
 }
 

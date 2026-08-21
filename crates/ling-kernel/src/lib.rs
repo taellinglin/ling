@@ -350,6 +350,73 @@ pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
     (code == 42) as u64
 }
 
+/// Spawn two independent copies of `testbins/loop_selftest.elf` — each
+/// prints its own pid-derived letter six times with a busy-spin between
+/// prints, *never* calling `yield` or `sleep_ms` — and run both to
+/// completion. Both are `Ready` before either runs, so the timer's
+/// preemptive scheduler (`uproc::on_timer_preempt`) is the only thing that
+/// interleaves them; genuine concurrent progress shows up as an interleaved
+/// mix of both processes' letters in the serial log rather than one
+/// process's six lines followed by the other's. Returns 1 if both exited
+/// with the expected code 7, 0 otherwise.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_pairtest() -> u64 {
+    static TEST_ELF: &[u8] = include_bytes!("../testbins/loop_selftest.elf");
+    let pid_a = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"pairtest: spawn a failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    let pid_b = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"pairtest: spawn b failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    console_write(b"pairtest: running two processes under the preemptive timer\n");
+    // A single `run_to_completion` call blocks until every `Ready` process
+    // in the table is done, which by construction includes `pid_b` too
+    // (spawned before this call) — calling it a second time here would
+    // re-launch `pid_b`'s already-exited frame straight into a fault.
+    let code_a = proc::uproc::run_to_completion(pid_a);
+    let code_b = proc::uproc::exit_code(pid_b).unwrap_or(-1);
+    console_write(b"pairtest: exit codes = ");
+    print_decimal(code_a as u64);
+    console_write(b", ");
+    print_decimal(code_b as u64);
+    console_write(b"\n");
+    (code_a == 7 && code_b == 7) as u64
+}
+
+/// Print pid/state/exit-code for every live process slot — the `ps` shell
+/// command's backing intrinsic.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_ps() -> u64 {
+    let mut rows = [(0usize, 0u8, 0i32); proc::uproc::MAX_PROCESSES];
+    let n = proc::uproc::snapshot(&mut rows);
+    console_write(b"PID STATE EXIT\n");
+    for &(pid, tag, code) in &rows[..n] {
+        print_decimal(pid as u64);
+        console_write(b"   ");
+        console_write(&[tag]);
+        console_write(b"     ");
+        if tag == b'Z' {
+            print_decimal(code as u64);
+        }
+        console_write(b"\n");
+    }
+    n as u64
+}
+
 /// Mount (or format, if blank) the filesystem without running the
 /// mutating self-test — what actually runs at every boot. Returns 1 on
 /// success, 0 on failure.
