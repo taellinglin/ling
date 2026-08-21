@@ -1,6 +1,6 @@
 [package]
 name = "ling-ast"
-version = "2030.0.2"
+version = "2030.0.3"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
 description = "Abstract Syntax Tree types for the Ling language"
