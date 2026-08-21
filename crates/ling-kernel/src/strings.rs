@@ -1,10 +1,17 @@
-//! Ling's generic string runtime (`ling_str_*`), backed by the bump
-//! allocator (`alloc.rs`). Layout: a length-prefixed buffer — 4-byte LE
-//! length, then that many content bytes — addressed by a NaN-boxed heap
-//! value. Encoding matches `ling_codegen::cranelift::runtime` exactly
-//! (there's no way to share that module directly across the no_std
-//! boundary, so the tag constants are duplicated here — keep in sync with
+//! Ling's generic string runtime (`ling_str_*`), backed by `mm::heap`'s
+//! slab allocator. Layout: a length-prefixed buffer — 4-byte LE length,
+//! then that many content bytes — addressed by a NaN-boxed heap value.
+//! Encoding matches `ling_codegen::cranelift::runtime` exactly (there's no
+//! way to share that module directly across the no_std boundary, so the
+//! tag constants are duplicated here — keep in sync with
 //! `crates/ling-codegen/src/cranelift/runtime.rs` if that ever changes).
+//!
+//! Nothing here ever calls `mm::heap::free`: the Ling compiler doesn't emit
+//! drop/refcount calls for kernel-target code, so every string this runtime
+//! allocates is intentionally leaked for the process's lifetime, same as
+//! before this module moved off the old bump allocator — a real fix needs
+//! ownership tracking at the language/compiler level, not an allocator
+//! change, and is out of scope here.
 use core::ptr;
 
 const TAG_PATTERN: u64 = 0x7F00_0000_0000_0000;
@@ -41,15 +48,18 @@ pub(crate) unsafe fn bytes_of(val: u64) -> &'static [u8] {
 /// `ling_kernel_*` intrinsic's argument is by the time it arrives (the
 /// compiler's `dynamic_to_raw` strips the tag bits at the call site, since
 /// kernel intrinsics always want a raw pointer, never the NaN-boxed bit
-/// pattern). The bump allocator never frees, so this is safe to hand back
-/// as `'static`.
+/// pattern). Nothing here ever frees a string (see the module doc), so
+/// this is safe to hand back as `'static`.
 pub(crate) unsafe fn bytes_of_ptr(p: *mut u8) -> &'static [u8] {
     let len = header_len(p);
     core::slice::from_raw_parts(data_ptr(p), len)
 }
 
 fn alloc_string(len: usize) -> *mut u8 {
-    let buf = crate::alloc::alloc(4 + len);
+    let buf = crate::mm::heap::alloc(4 + len);
+    if buf.is_null() {
+        crate::kernel_panic("out of memory (heap allocator exhausted)");
+    }
     let len_bytes = (len as u32).to_le_bytes();
     unsafe { ptr::copy_nonoverlapping(len_bytes.as_ptr(), buf, 4) };
     buf

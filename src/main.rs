@@ -1385,11 +1385,26 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
 /// Extract a raw binary image from an ELF via `objcopy -O binary` — what
 /// Raspberry Pi firmware wants for `kernel8.img` (it has no ELF loader; it
 /// just copies file bytes to a fixed address). Tries `llvm-objcopy` first
-/// (ships with any LLVM install, handles cross-arch ELF happily), then falls
-/// back to a plain `objcopy` on PATH (e.g. a GNU binutils install, or the one
-/// inside WSL).
+/// (ships with any LLVM install, handles cross-arch ELF happily), then a
+/// plain `objcopy` on PATH, then arch-specific cross-binutils objcopy names
+/// — a distro's default `binutils` package is commonly single-target
+/// (confirmed: Arch's `objcopy` handles x86_64 ELF but rejects an aarch64
+/// one with "Unable to recognise the architecture of the input file", which
+/// needs the separate `aarch64-linux-gnu-binutils` package instead). Each
+/// candidate that's actually found on PATH but fails (wrong target, not
+/// just "command not found") is still worth reporting, but must not abort
+/// the search — the next candidate might be the one that handles this ELF's
+/// architecture.
 fn objcopy_to_raw_binary(elf: &Path, out_img: &Path) {
-    for tool in ["llvm-objcopy", "objcopy"] {
+    const CANDIDATES: &[&str] = &[
+        "llvm-objcopy",
+        "objcopy",
+        "aarch64-linux-gnu-objcopy",
+        "aarch64-none-elf-objcopy",
+        "aarch64-elf-objcopy",
+    ];
+    let mut tried = Vec::new();
+    for tool in CANDIDATES {
         let status = Command::new(tool)
             .args(["-O", "binary"])
             .arg(elf)
@@ -1397,18 +1412,27 @@ fn objcopy_to_raw_binary(elf: &Path, out_img: &Path) {
             .status();
         match status {
             Ok(s) if s.success() => return,
-            Ok(s) => {
-                eprintln!("  {tool} exited with {s}");
-                std::process::exit(1);
-            },
-            Err(_) => continue, // tool not found — try the next one
+            Ok(s) => tried.push(format!("{tool} (exited {s})")),
+            Err(_) => continue, // tool not found on PATH — try the next one
         }
     }
-    eprintln!(
-        "  error: neither llvm-objcopy nor objcopy found on PATH; can't produce {}",
-        out_img.display()
-    );
-    eprintln!("  install LLVM (provides llvm-objcopy) or GNU binutils (objcopy)");
+    if tried.is_empty() {
+        eprintln!(
+            "  error: none of {} found on PATH; can't produce {}",
+            CANDIDATES.join(", "),
+            out_img.display()
+        );
+        eprintln!("  install LLVM (provides llvm-objcopy) or a matching-arch GNU binutils");
+    } else {
+        eprintln!(
+            "  error: every objcopy on PATH failed to produce {}:",
+            out_img.display()
+        );
+        for t in &tried {
+            eprintln!("    {t}");
+        }
+        eprintln!("  install LLVM (provides llvm-objcopy) or a matching-arch GNU binutils");
+    }
     std::process::exit(1);
 }
 
@@ -1466,7 +1490,7 @@ const SPECIAL_GLYPHS: &[(u8, char)] = &[
 ];
 
 /// Rasterize `primary` (and, for `SPECIAL_GLYPHS`, `cjk_fallback` if given)
-/// into a 256-glyph, 8x16, 1bpp VGA font atlas (`ling_kernel::vga::load_font`'s
+/// into a 256-glyph, 8x16, 1bpp VGA font atlas (`ling_kernel::drivers::vga::load_font`'s
 /// expected layout). Printable ASCII (0x20..=0x7E) maps directly to the same
 /// Unicode codepoint; anything else is blank unless it's one of the special
 /// slots above. Missing glyphs (empty rasterized bitmap) are left blank
@@ -1691,7 +1715,7 @@ strip = true
 
 /// Generate `src/main.rs` for kernel builds: no_std, no_main. The multiboot2
 /// header and the real ELF entry point (`_start`) both live in
-/// `ling_kernel::boot32` now, not here — GRUB's Multiboot2 handoff lands in
+/// `ling_kernel::arch::boot` now, not here — GRUB's Multiboot2 handoff lands in
 /// 32-bit protected mode with paging off even for a 64-bit ELF (confirmed by
 /// an actual QEMU boot: jumping straight into 64-bit-compiled code from
 /// there triple-faults immediately), so getting into a state where this
@@ -1705,7 +1729,7 @@ strip = true
 /// `idle_font` is `Some` when a build-time-rasterized VGA font was found (see
 /// `find_font_asset`/`rasterize_vga_font`) — it names the generated module
 /// (`idle_font.rs`, written alongside this file) holding the byte array, and
-/// gets registered with `ling_kernel::vga::set_idle_font` before the kernel's
+/// gets registered with `ling_kernel::drivers::vga::set_idle_font` before the kernel's
 /// own code runs, so `keyboard::read_char`'s idle timer can swap to it later.
 fn gen_kernel_main_rs(idle_font: Option<&str>) -> String {
     // Plain string substitution (not `format!`) — the template below is full
@@ -1713,7 +1737,7 @@ fn gen_kernel_main_rs(idle_font: Option<&str>) -> String {
     // parse as placeholders.
     let idle_font_mod = idle_font.map(|m| format!("mod {m};\n")).unwrap_or_default();
     let idle_font_reg = idle_font
-        .map(|m| format!("        ling_kernel::vga::set_idle_font(&{m}::IDLE_FONT);\n"))
+        .map(|m| format!("        ling_kernel::drivers::vga::set_idle_font(&{m}::IDLE_FONT);\n"))
         .unwrap_or_default();
     let template = r#"#![no_std]
 #![no_main]
@@ -1774,7 +1798,7 @@ fn gen_kernel_build_rs() -> String {
 /// no_main, no multiboot header (RPi firmware loads `kernel8.img` as a raw
 /// binary at a fixed address — there's no header/magic to look for). The
 /// actual `_start` — parking secondary cores, setting up the stack, zeroing
-/// .bss — lives in `ling_kernel::boot` since it needs real assembly before
+/// .bss — lives in `ling_kernel::arch::boot` since it needs real assembly before
 /// any Rust code (including this generated file) can safely run; this just
 /// supplies the `kernel_entry` that boot stub calls into.
 fn gen_rpi_kernel_main_rs() -> String {
@@ -1799,7 +1823,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 #[no_mangle]
 pub extern "C" fn kernel_entry() -> ! {
     unsafe {
-        ling_kernel::boot::zero_bss();
+        ling_kernel::arch::boot::zero_bss();
         __main__();
     }
     loop {
@@ -1838,6 +1862,9 @@ SECTIONS {
         *(COMMON)
     }
 
+    . = ALIGN(4096);
+    _kernel_end = .;
+
     /DISCARD/ : {
         *(.eh_frame)
         *(.comment)
@@ -1848,7 +1875,7 @@ SECTIONS {
 
 /// Linker script for the Raspberry Pi (aarch64) kernel. Entry at `0x80000` —
 /// the standard AArch64 no-devicetree load address RPi firmware jumps to.
-/// Defines `__bss_start`/`__bss_end` (zeroed by `ling_kernel::boot::zero_bss`
+/// Defines `__bss_start`/`__bss_end` (zeroed by `ling_kernel::arch::boot::zero_bss`
 /// before any Rust code runs — unlike the GRUB/Multiboot2 path, raw
 /// `kernel8.img` loading has no ELF program headers to zero .bss for us) and
 /// a `_stack_top` a few pages past the end of .bss for the boot stub's `sp`.
@@ -1881,6 +1908,9 @@ SECTIONS {
     . = ALIGN(16);
     . += 0x4000; /* 16KB boot stack */
     _stack_top = .;
+
+    . = ALIGN(4096);
+    _kernel_end = .;
 
     /DISCARD/ : {
         *(.eh_frame)

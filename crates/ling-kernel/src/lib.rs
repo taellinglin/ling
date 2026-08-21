@@ -1,68 +1,50 @@
 #![no_std]
+#![cfg_attr(target_arch = "x86_64", feature(abi_x86_interrupt))]
 
-// ─── x86_64 HAL: VGA text buffer, COM1 serial, port I/O, PS/2 keyboard ──────
-#[cfg(target_arch = "x86_64")]
-pub mod vga;
-#[cfg(target_arch = "x86_64")]
-pub mod serial;
-#[cfg(target_arch = "x86_64")]
-pub mod io;
-#[cfg(target_arch = "x86_64")]
-pub mod keyboard;
-#[cfg(target_arch = "x86_64")]
-pub mod term;
-#[cfg(target_arch = "x86_64")]
-pub mod boot32;
-#[cfg(target_arch = "x86_64")]
-pub mod ata;
-#[cfg(target_arch = "x86_64")]
-pub mod pci;
-#[cfg(target_arch = "x86_64")]
-pub mod ahci;
-#[cfg(target_arch = "x86_64")]
-pub mod blockdev;
-#[cfg(target_arch = "x86_64")]
-pub mod lingfs;
-#[cfg(target_arch = "x86_64")]
-pub mod framebuffer;
-#[cfg(target_arch = "x86_64")]
-pub mod mouse;
-#[cfg(target_arch = "x86_64")]
-pub mod bootmodule;
-#[cfg(target_arch = "x86_64")]
-pub mod users;
-#[cfg(target_arch = "x86_64")]
-pub mod history;
-#[cfg(target_arch = "x86_64")]
-pub mod packages;
-#[cfg(target_arch = "x86_64")]
-pub mod life;
-#[cfg(target_arch = "x86_64")]
-pub mod sched;
-#[cfg(target_arch = "x86_64")]
-pub mod timer;
-#[cfg(target_arch = "x86_64")]
-#[path = "cpu_x86_64.rs"]
-pub mod cpu;
+// ─── Per-architecture backend (CPU intrinsics, boot stub, port/MMIO I/O) ────
+pub mod arch;
 
+// ─── Device drivers (console, input, storage, framebuffer) ─────────────────
+pub mod drivers;
+
+// ─── lingfs and everything built on it (block device, users, packages) ─────
+pub mod fs;
+
+// ─── Task scheduling ─────────────────────────────────────────────────────
+pub mod proc;
+
+// ─── Physical memory management (frame allocator; paging/heap follow) ──────
+pub mod mm;
+
+// ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
 pub mod hash;
 pub mod runtime;
-pub mod alloc;
 pub mod strings;
 pub mod ed25519;
 
-// ─── aarch64 HAL: PL011 UART console, MMIO, Raspberry Pi boot stub ──────────
-#[cfg(target_arch = "aarch64")]
-pub mod mmio;
-#[cfg(target_arch = "aarch64")]
-pub mod uart;
-#[cfg(target_arch = "aarch64")]
-pub mod boot;
-#[cfg(target_arch = "aarch64")]
-#[path = "cpu_aarch64.rs"]
-pub mod cpu;
+#[cfg(target_arch = "x86_64")]
+pub mod history;
+#[cfg(target_arch = "x86_64")]
+pub mod life;
 
 use core::ptr;
+
+// Bring the moved-under-`arch`/`drivers`/`fs`/`proc` modules back into scope
+// under their original bare names — this file is the crate root, so before
+// the Phase 1 restructure every one of these was a direct child module,
+// nameable without qualification; now that they're nested, that only still
+// holds with an explicit `use`.
+use crate::arch::cpu;
+#[cfg(target_arch = "x86_64")]
+use crate::arch::{bootmodule, io, timer};
+#[cfg(target_arch = "x86_64")]
+use crate::drivers::{framebuffer, keyboard, mouse, serial, term, vga};
+#[cfg(target_arch = "x86_64")]
+use crate::fs::{blockdev, lingfs, packages, users};
+#[cfg(target_arch = "x86_64")]
+use crate::proc::sched;
+#[cfg(target_arch = "aarch64")]
+use crate::drivers::uart;
 
 /// Initialize the kernel: bring up the console (VGA+serial on x86_64, PL011
 /// UART on aarch64/Raspberry Pi) and print a ready banner.
@@ -83,20 +65,53 @@ pub fn init() {
         serial::write(b"ling-kernel initialized\n");
         timer::calibrate();
 
-        // Milestone 0 of the cooperative scheduler: establish the shell as
-        // slot 0, spawn two temporary demo tasks that interleave serial
-        // output with it, and prove real concurrent progress via the serial
-        // log before anything real (a shell command, the ling interpreter)
-        // depends on this working. Remove these two spawns once Phase 1's
-        // shell-driven demo command replaces them.
+        // Real interrupts from here on: GDT+TSS (IST1 double-fault stack)
+        // before the IDT (whose gates reference the GDT's kernel code
+        // selector), the IDT before the PIC remap (a stray IRQ landing on an
+        // unmapped vector before this would triple-fault instead of hitting
+        // `isr_spurious`), and the mouse's synchronous 8042 handshake before
+        // IRQ12 is unmasked (see `mouse::init`'s doc comment for why the
+        // order matters there specifically).
+        arch::gdt::init(arch::boot::boot_stack_top());
+        arch::idt::init();
+        arch::pic::init();
+        mouse::init();
+        arch::pic::unmask(0); // PIT heartbeat
+        arch::pic::unmask(1); // keyboard
+        arch::pic::unmask(12); // mouse
+        timer::start_periodic(100);
+        unsafe { cpu::sti() };
+        serial::write(b"interrupts enabled (IDT+PIC, 100Hz heartbeat)\n");
+
+        mm::init_physical_memory();
+        console_write(b"mm: ");
+        print_decimal((mm::frame::free_frame_count() * 4) as u64);
+        console_write(b" KiB free (frame allocator)\n");
+
+        // Establish the shell as slot 0 of the cooperative scheduler before
+        // anything (a shell command, `ling_kernel_spawn`) can depend on it.
         sched::init_main_task();
-        sched::spawn(sched::demo_task_a as *const () as usize as u64);
-        sched::spawn(sched::demo_task_b as *const () as usize as u64);
     }
     #[cfg(target_arch = "aarch64")]
     {
         uart::init();
         uart::write(b"ling-kernel initialized\n");
+
+        // Same ordering discipline as the x86_64 side: install the vector
+        // table before anything can be routed to it (`arch::intc::init`),
+        // and finish every one-time setup before the first `cpu::sti`
+        // (`daifclr`) actually lets an IRQ land.
+        arch::vectors::init();
+        arch::intc::init();
+        arch::timer::calibrate();
+        arch::timer::start_periodic(100);
+        unsafe { cpu::sti() };
+        uart::write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
+
+        mm::init_physical_memory();
+        console_write(b"mm: ");
+        print_decimal((mm::frame::free_frame_count() * 4) as u64);
+        console_write(b" KiB free (frame allocator)\n");
     }
 }
 
@@ -116,6 +131,25 @@ pub(crate) fn console_write(bytes: &[u8]) {
     {
         uart::write(bytes);
     }
+}
+
+/// Print `n` as decimal ASCII to the console — same shape as the
+/// x86_64-only `timer.rs`'s private `print_decimal`, kept separate since
+/// this one needs to work on both architectures.
+fn print_decimal(n: u64) {
+    if n == 0 {
+        console_write(b"0");
+        return;
+    }
+    let mut digits = [0u8; 20];
+    let mut i = digits.len();
+    let mut v = n;
+    while v > 0 {
+        i -= 1;
+        digits[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    console_write(&digits[i..]);
 }
 
 fn console_clear() {
@@ -497,13 +531,16 @@ pub unsafe extern "C" fn ling_kernel_mouse_set_bounds(w: u64, h: u64) -> u64 {
     0
 }
 
-/// Drain any waiting mouse bytes and update position/buttons. No interrupts
-/// wired up in this kernel yet, so a caller's event loop must call this
-/// itself, regularly, for the mouse to appear to move at all.
+/// No-op: mouse position/buttons are now updated directly by the IRQ12
+/// handler (`arch::x86_64::idt`), so there is nothing left to drain. Kept as
+/// a real ABI entry point (not removed) because it's part of the frozen
+/// `ling_kernel_*` intrinsic surface `.ling` kernel source calls by name —
+/// existing/compiled callers that still call it between reading
+/// `ling_kernel_mouse_x/y/buttons` keep working, just reading already-fresh
+/// state instead of triggering a drain.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_mouse_poll() -> u64 {
-    mouse::poll();
     0
 }
 
@@ -543,6 +580,7 @@ pub unsafe extern "C" fn ling_kernel_bootmodule_size() -> u64 {
     bootmodule::first_module().map(|(s, e)| (e - s) as u64).unwrap_or(0)
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe fn arg_str(v: u64) -> &'static str {
     if v == 0 {
         ""
@@ -670,12 +708,14 @@ pub unsafe extern "C" fn ling_kernel_disk_write_raw(lba: u64, src_ptr: u64, coun
     1
 }
 
+#[cfg(target_arch = "x86_64")]
 const MAX_LINE: usize = 256;
 
 /// Erase `n` already-echoed characters from the current input line —
 /// backspace `write_char_active` already knows how to blank a cell, this
 /// just repeats it, used when arrow-key history recall replaces the whole
 /// line being typed.
+#[cfg(target_arch = "x86_64")]
 fn erase_chars(n: usize) {
     for _ in 0..n {
         console_write(&[0x08]);

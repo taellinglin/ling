@@ -6,7 +6,7 @@
 //! regardless of the rules so it keeps moving indefinitely instead of
 //! settling into stable/dead patterns the way unmodified Life usually
 //! does. Runs until a key is pressed or the mouse moves/clicks.
-use crate::{keyboard, mouse, term, vga};
+use crate::drivers::{keyboard, mouse, term, vga};
 
 const WIDTH: usize = 80;
 const HEIGHT: usize = 25;
@@ -37,7 +37,7 @@ static mut RNG_STATE: u32 = 1;
 
 fn seed_rng() {
     unsafe {
-        let t = crate::cpu::rdtsc();
+        let t = crate::arch::cpu::rdtsc();
         RNG_STATE = (t as u32) | 1;
     }
 }
@@ -173,11 +173,10 @@ pub fn run() {
         step();
         draw();
         for _ in 0..GEN_PACE {
-            unsafe { crate::cpu::pause() };
+            unsafe { crate::arch::cpu::pause() };
         }
 
         let key = keyboard::poll_char();
-        mouse::poll();
         if key != 0
             || mouse::x() != start_x
             || mouse::y() != start_y

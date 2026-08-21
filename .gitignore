@@ -72,6 +72,12 @@ cache/
 # Large user-provided audio media (exceed GitHub 100MB/file limit) — keep .mid (small)
 assets/music/*.wav
 assets/music/*.flac
+
+# Reference/demo audio (examples-web/tensormap, moved here from
+# ling-os/packages/tensormap) — 174MB/99MB, over or right at GitHub's 100MB
+# hard file-size limit. Not source; keep locally.
+examples-web/tensormap/x.wav
+examples-web/tensormap/y.wav
 # mdbook build output + ling example build dirs
 docs/book/
 **/.ling-build/
