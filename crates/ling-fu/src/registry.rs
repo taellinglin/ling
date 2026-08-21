@@ -2,12 +2,16 @@
 //!
 //! Talks to a Ling package registry (fu.ling-lang.org by default) over the
 //! same HTTP API the `.ling` server implements: an API-key bearer token
-//! authorizes a multipart-free form POST carrying the built, gzip-tarred
-//! project as base64. Credentials live in `~/.lingfu/credentials.toml`,
-//! mirroring how cargo stores registry tokens.
+//! authorizes a real `multipart/form-data` POST carrying the built,
+//! gzip-tarred project as a raw (non-base64) file part, streamed straight off
+//! disk with chunked transfer encoding — no full-project buffering, no ~33%
+//! base64 bloat, so multi-gigabyte game projects (assets, audio) publish the
+//! same way a one-file script does. Credentials live in
+//! `~/.lingfu/credentials.toml`, mirroring how cargo stores registry tokens.
 
 use anyhow::{bail, Context, Result};
-use std::io::Write;
+use indicatif::{ProgressBar, ProgressStyle};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_REGISTRY: &str = "https://fu.ling-lang.org";
@@ -293,21 +297,40 @@ fn read_readme(root: &Path) -> String {
     String::new()
 }
 
+/// A `tqdm`-style progress bar style shared by the packaging spinner and the
+/// upload bar — bytes, rate, and ETA, the way every other publish tool shows it.
+fn upload_bar_style() -> ProgressStyle {
+    ProgressStyle::with_template(
+        "{spinner:.cyan} uploading [{bar:32.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})",
+    )
+    .expect("valid indicatif template")
+    .progress_chars("=>-")
+}
+
 /// Gzip-tars `dir` (skipping build/VCS dirs and anything matched by
-/// `ling.ignore`) into memory, returns the bytes.
+/// `ling.ignore`) straight to a temp file on disk — never holds the built
+/// package in memory, so a multi-gigabyte asset-heavy project (audio, game
+/// data) packages the same way a one-file script does. Returns the temp
+/// file (rewound to the start, ready to read) and its final size in bytes.
 ///
 /// Unlike `git ls-files`-backed operations, this walks the real filesystem —
 /// it has no `.gitignore` awareness at all, so a `ling.ignore` at the
 /// project root is the only way to keep something (an oversized local-only
 /// asset, a keyfile that ended up sitting in the project directory) out of
 /// an uploaded package short of physically moving it first.
-fn build_tarball(dir: &Path) -> Result<Vec<u8>> {
+fn build_tarball(dir: &Path) -> Result<(tempfile::NamedTempFile, u64)> {
     use flate2::write::GzEncoder;
     use flate2::Compression;
 
     let ignore_patterns = crate::ignore::load(dir);
-    let gz = GzEncoder::new(Vec::new(), Compression::default());
+    let tmp = tempfile::NamedTempFile::new().context("creating temp file for package artifact")?;
+    let gz = GzEncoder::new(tmp, Compression::default());
     let mut tar = tar::Builder::new(gz);
+
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(ProgressStyle::with_template("{spinner:.cyan} packaging… {msg}").expect("valid indicatif template"));
+    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+    let mut file_count: u64 = 0;
 
     for entry in walkdir::WalkDir::new(dir).into_iter().filter_entry(|e| {
         let name = e.file_name().to_string_lossy();
@@ -327,12 +350,62 @@ fn build_tarball(dir: &Path) -> Result<Vec<u8>> {
         if path.is_file() {
             let rel = path.strip_prefix(dir).unwrap_or(path);
             tar.append_path_with_name(path, rel)?;
+            file_count += 1;
+            spinner.set_message(format!("{file_count} files"));
         }
     }
 
-    let gz = tar.into_inner()?;
-    let bytes = gz.finish()?;
-    Ok(bytes)
+    let gz = tar.into_inner().context("finishing tar stream")?;
+    let mut tmp = gz.finish().context("finishing gzip stream")?;
+    spinner.finish_with_message(format!("packaged {file_count} files"));
+
+    let size = tmp
+        .as_file()
+        .metadata()
+        .context("reading packaged artifact size")?
+        .len();
+    tmp.seek(SeekFrom::Start(0)).context("rewinding packaged artifact")?;
+    Ok((tmp, size))
+}
+
+/// A `Read` wrapper that advances a progress bar by however many bytes each
+/// `read()` call actually yields — the standard way to get upload progress
+/// out of a synchronous streaming HTTP client (ureq reads the body through
+/// this exact `Read` impl as it sends the request).
+struct ProgressRead<R> {
+    inner: R,
+    bar: ProgressBar,
+}
+
+impl<R: Read> Read for ProgressRead<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bar.inc(n as u64);
+        Ok(n)
+    }
+}
+
+/// Builds the `multipart/form-data` preamble (every text field plus the file
+/// part's own header) and epilogue (closing boundary) around `boundary`. The
+/// large file body itself is streamed separately — see `publish` — so this
+/// never touches the artifact bytes.
+fn multipart_wrap(boundary: &str, fields: &[(&str, &str)]) -> (Vec<u8>, Vec<u8>) {
+    let mut preamble = Vec::new();
+    for (name, value) in fields {
+        preamble.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        preamble.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n").as_bytes(),
+        );
+        preamble.extend_from_slice(value.as_bytes());
+        preamble.extend_from_slice(b"\r\n");
+    }
+    preamble.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    preamble.extend_from_slice(
+        b"Content-Disposition: form-data; name=\"artifact\"; filename=\"package.tar.gz\"\r\n\
+          Content-Type: application/gzip\r\n\r\n",
+    );
+    let epilogue = format!("\r\n--{boundary}--\r\n").into_bytes();
+    (preamble, epilogue)
 }
 
 /// `lingfu publish` — build a tarball of the current project and upload it to
@@ -367,28 +440,52 @@ pub fn publish(args: &[String]) -> Result<()> {
     let extra = manifest_extra(&manifest);
     let readme = read_readme(&root);
 
-    let tarball = build_tarball(&root)?;
-    if tarball.len() < 3 || tarball[0] != 0x1f || tarball[1] != 0x8b {
+    let (mut tarball_file, tarball_size) = build_tarball(&root)?;
+    let mut magic = [0u8; 2];
+    tarball_file
+        .read_exact(&mut magic)
+        .context("reading packaged artifact")?;
+    if magic != [0x1f, 0x8b] {
         bail!("failed to build a valid gzip artifact");
     }
-    use base64::Engine as _;
-    let artifact_b64 = base64::engine::general_purpose::STANDARD.encode(&tarball);
+    tarball_file
+        .seek(SeekFrom::Start(0))
+        .context("rewinding packaged artifact")?;
+
+    // Real multipart/form-data — the file part is the raw gzip bytes
+    // (streamed off disk, never base64'd), not a giant base64 text field.
+    let boundary = format!(
+        "LingFuBoundary{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let (preamble, epilogue) = multipart_wrap(&boundary, &[
+        ("name", name.as_str()),
+        ("version", version.as_str()),
+        ("description", description.as_str()),
+        ("keywords", extra.keywords.as_str()),
+        ("homepage", extra.homepage.as_str()),
+        ("repository", extra.repository.as_str()),
+        ("license", extra.license.as_str()),
+        ("authors", extra.authors.as_str()),
+        ("readme", readme.as_str()),
+    ]);
+
+    let bar = ProgressBar::new(tarball_size);
+    bar.set_style(upload_bar_style());
+    let progress_file = ProgressRead { inner: tarball_file, bar: bar.clone() };
+    let body = std::io::Cursor::new(preamble)
+        .chain(progress_file)
+        .chain(std::io::Cursor::new(epilogue));
 
     let url = format!("{registry}/api/v1/packages/publish");
     let resp = ureq::post(&url)
         .set("Authorization", &format!("Bearer {token}"))
-        .send_form(&[
-            ("name", name.as_str()),
-            ("version", version.as_str()),
-            ("description", description.as_str()),
-            ("keywords", extra.keywords.as_str()),
-            ("homepage", extra.homepage.as_str()),
-            ("repository", extra.repository.as_str()),
-            ("license", extra.license.as_str()),
-            ("authors", extra.authors.as_str()),
-            ("readme", readme.as_str()),
-            ("artifact_b64", artifact_b64.as_str()),
-        ]);
+        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .send(body);
+    bar.finish_and_clear();
 
     match resp {
         Ok(r) => {
