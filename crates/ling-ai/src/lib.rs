@@ -21,6 +21,12 @@ pub mod dataset;
 pub mod dialog_lm;
 pub mod nn;
 
+#[cfg(feature = "llm")]
+pub mod llm;
+
+#[cfg(feature = "vision")]
+pub mod vision;
+
 pub use model::{InferenceEngine, ModelConfig};
 pub use prompt::{ChatHistory, Message, Role};
 pub use tensor::{Shape, Tensor};
@@ -30,5 +36,8 @@ pub use bt::{Status, Tree};
 pub use dataset::{Conversation, Dataset, Turn};
 pub use dialog_lm::{DialogLM, LmConfig};
 pub use nn::{Activation, Dense, Net, Rng};
+
+#[cfg(feature = "llm")]
+pub use llm::LoadedModel;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

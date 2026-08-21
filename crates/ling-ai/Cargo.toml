@@ -9,11 +9,21 @@ repository = "https://github.com/taellinglin/ling"
 
 [features]
 default = []
-cpu = ["candle-core", "burn"]
-cuda = ["candle-core/cuda", "dfdx/cuda"]
+cpu = ["dep:candle-core", "burn"]
+cuda = ["candle-core/cuda", "candle-transformers/cuda", "dfdx/cuda"]
+# CUDA for the chat-completion engine only — decoupled from `cuda` above
+# because that one also builds dfdx's CUDA kernels, which need a full MSVC
+# dev-prompt environment (cl.exe on PATH + INCLUDE/LIB) that a plain build
+# shell may not have. This needs only candle's own CUDA backend.
+llm-cuda = ["llm", "candle-core/cuda", "candle-transformers/cuda"]
 metal = ["candle-core/metal"]
 tensorrt = []
-llm = [ ]
+llm = ["dep:candle-transformers", "dep:tokenizers", "dep:candle-core", "dep:candle-nn"]
+# Image understanding (Moondream2, quantized) for chat.ling-lang.org's
+# attach-an-image flow — UI screenshots and 3D/game screenshots. Shares the
+# same candle-transformers/tokenizers stack as `llm`; adds only image
+# decoding (the `image` crate) on top.
+vision = ["llm", "dep:image"]
 nlp = ["dep:rust-bert"]
 cnn = ["dep:dfdx"]
 rnn = []
@@ -23,16 +33,21 @@ training = []
 ling-core = { workspace = true }
 
 # Tensor computation
-candle-core = { version = "0.6", optional = true, default-features = false }
+candle-core = { version = "0.11", optional = true, default-features = false }
 burn = { version = "0.14", optional = true, default-features = false }
 tract = { version = "0.21", optional = true }  # ONNX runtime
 dfdx = { version = "0.13", optional = true }
 
 # Neural network layers
-candle-nn = { version = "0.6", optional = true }
+candle-nn = { version = "0.11", optional = true }
 burn-nn = { version = "0.21.0-pre.5", optional = true }
 
-# LLM inference
+# LLM inference — in-process chat completion engine (Milestone 2). Loads a
+# GGUF checkpoint via candle-transformers' quantized model implementations
+# (CUDA-capable) and a HF `tokenizers` vocab; no external server involved.
+candle-transformers = { version = "0.11", optional = true, default-features = false }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["fancy-regex"] }
+image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 # llama-cpp-rs = { version = "0.1", optional = true, features = ["cuda"] }
 # mistralrs currently disabled to prevent pulling reqwest/web-sys on non-wasm builds
 # (unblocks workspace compilation for the `ling` binary)

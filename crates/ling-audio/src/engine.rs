@@ -253,6 +253,12 @@ struct SampleVoice {
     vol: f32,
     looping: bool,
     active: bool,
+    /// false ⇒ skip `spatial_gains` entirely and mix at flat `vol` (both
+    /// channels) regardless of listener distance/orientation — for VO/
+    /// narration, which should read at a consistent level no matter where
+    /// the cutscene camera happens to be, not fall off like a diegetic
+    /// world-space sound effect. true = existing positional behaviour.
+    positional: bool,
 }
 
 /// YIN-YANG morph voice — one voice that spans the acoustic↔digital continuum.
@@ -753,7 +759,11 @@ impl AudioState {
                 } else {
                     buf[idx.min(n - 1)]
                 };
-                let (lg, rg) = spatial_gains(cry, sry, crx, srx, lx, ly, lz, room_w, v.x, v.y, v.z);
+                let (lg, rg) = if v.positional {
+                    spatial_gains(cry, sry, crx, srx, lx, ly, lz, room_w, v.x, v.y, v.z)
+                } else {
+                    (1.0, 1.0)
+                };
                 l += s * v.vol * lg;
                 r += s * v.vol * rg;
                 v.pos += *src_rate as f64 / out_rate;
@@ -974,6 +984,40 @@ impl AudioEngine {
                 vol,
                 looping,
                 active: true,
+                positional: true,
+            });
+            vid
+        } else {
+            0
+        }
+    }
+
+    /// Play a loaded sample at a flat, non-positional volume (no distance
+    /// falloff, no stereo pan) — for VO/narration/UI cues that should read at
+    /// a consistent level regardless of where the camera/listener currently
+    /// is, unlike `play_sample`'s world-space sound effects. Returns a voice id.
+    pub fn play_sample_flat(&self, id: usize, vol: f32, looping: bool) -> u32 {
+        if let Ok(mut s) = self.state.lock() {
+            if id >= s.samples.len() {
+                return 0;
+            }
+            let vid = s.next_voice_id;
+            s.next_voice_id += 1;
+            if s.sample_voices.len() >= 64 {
+                s.sample_voices.remove(0);
+            }
+            s.sample_voices.push(SampleVoice {
+                id: vid,
+                sample: id,
+                pos: 0.0,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+                vol,
+                looping,
+                active: true,
+                positional: false,
             });
             vid
         } else {
@@ -988,6 +1032,21 @@ impl AudioEngine {
                 v.active = false;
             }
         }
+    }
+
+    /// Duration in seconds of a loaded sample (mono buffer length / its own
+    /// source rate — independent of the device's output rate). 0.0 if `id`
+    /// is out of range. Lets a script pace a cutscene line to the ACTUAL
+    /// length of whichever language's VO clip is loaded, instead of a
+    /// hand-measured constant that only covers one language and goes stale
+    /// the moment a new recording is dropped in.
+    pub fn sample_duration(&self, id: usize) -> f32 {
+        if let Ok(s) = self.state.lock() {
+            if let Some((buf, src_rate)) = s.samples.get(id) {
+                return buf.len() as f32 / (*src_rate).max(1) as f32;
+            }
+        }
+        0.0
     }
 
     // ── master FX ─────────────────────────────────────────────────────────────
@@ -1250,6 +1309,7 @@ mod tests {
             vol: 1.0,
             looping: true,
             active: true,
+            positional: true,
         });
         for _ in 0..500 {
             let _ = st.next_sample();
@@ -1271,6 +1331,7 @@ mod tests {
             vol: 1.0,
             looping: false,
             active: true,
+            positional: true,
         });
         for _ in 0..500 {
             let _ = st.next_sample();
@@ -1363,6 +1424,7 @@ mod tests {
             vol: 0.6,
             looping: true,
             active: true,
+            positional: true,
         });
         let mut energy = 0.0f64;
         for _ in 0..2000 {

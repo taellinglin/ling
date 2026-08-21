@@ -121,7 +121,22 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # Enable the CUDA compute backend (ling-gpu): GPU-accelerated N-body and batch
 # vertex projection across every NVIDIA device (multi-GPU). Runtime-detected —
 # falls back to the parallel CPU backend when no CUDA device is present.
-cuda = ["ling-gpu/cuda", "ling-physics/cuda"]
+cuda = ["ling-gpu/cuda", "ling-physics/cuda", "ling-ai/cuda"]
+# Image understanding (vision_load/vision_analyze_start/poll) for
+# chat.ling-lang.org's attach-an-image flow — Moondream2, CUDA-capable.
+# Separate from `llm` so a build can have chat without vision or vice versa.
+vision = ["ling-ai/vision"]
+# In-process chat-completion builtins (llm_load/llm_generate_start/poll):
+# candle-transformers loads a GGUF checkpoint and runs generation on a
+# background thread so it never blocks http_serve's single-threaded dispatch
+# loop (same reasoning as `web`'s http_post_async, above) — this process IS
+# the model server, nothing is shelled out to. Off by default: pulls in
+# candle-core/candle-nn/candle-transformers/tokenizers, a heavy addition
+# irrelevant to builds that don't need local LLM inference. Pair with `cuda`
+# for GPU acceleration.
+llm = ["ling-ai/llm"]
+# See ling-ai's Cargo.toml for why this is separate from `cuda` above.
+llm-cuda = ["ling-ai/llm-cuda"]
 # HTTP server builtins (http_route/http_serve): axum/rustls/rusqlite via
 # ling-http. Off by default — the compiler/game/graphics build shouldn't
 # carry a web server stack unless a program actually uses it.

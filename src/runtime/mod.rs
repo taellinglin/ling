@@ -1,6 +1,10 @@
 // src/runtime/mod.rs — tree-walking interpreter with graphics support
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
+#[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+mod llm;
+#[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+mod vision;
 #[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
 #[cfg(target_arch = "wasm32")]
@@ -1756,6 +1760,11 @@ pub struct Interpreter {
     /// the background tokio task that fills in each job's result.
     #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
     async_jobs: web::AsyncJobs,
+    /// Google sign-in exchanges started by `oauth_google_start`, polled by
+    /// `oauth_google_done`/`_error`/`_sub`/`_email`/`_name`. Separate from
+    /// `async_jobs` because a login result has three fields, not one string.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    oauth_jobs: web::OAuthJobs,
 }
 
 /// Live gamepad input state: a ling-input hub fed by the native `gilrs` backend.
@@ -1843,6 +1852,8 @@ impl Interpreter {
             http_static_dirs: Vec::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
             async_jobs: web::AsyncJobs::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            oauth_jobs: web::OAuthJobs::new(),
         }
     }
 
@@ -7866,6 +7877,156 @@ impl Interpreter {
                 return Ok(Value::Number(ai::dialog_load_model(&path) as f64));
             },
 
+            // ── in-process chat-completion (chat.ling-lang.org, Milestone 2) ──
+            // Real transformer inference (candle-transformers, GGUF, CUDA) —
+            // distinct from the miniature dialog_* LM above. Generation runs
+            // on a background thread; these builtins only ever start/poll a
+            // job, never block http_serve's single-threaded dispatch loop.
+            // llm_load(gguf_path, tokenizer_path[, device_index]) → handle (-1 on failure)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_load" => {
+                let gguf_path = self.arg_str(&args, 0, "");
+                let tokenizer_path = self.arg_str(&args, 1, "");
+                let device_index = self.arg_num(&args, 2, 0.0)? as i64;
+                return Ok(Value::Number(
+                    llm::llm_load(&gguf_path, &tokenizer_path, device_index) as f64
+                ));
+            },
+            // llm_generate_start(handle, system_prompt, history[, max_tokens, temperature, top_p]) → job_id ("" on failure)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_generate_start" => {
+                let handle = self.arg_num(&args, 0, -1.0)? as i64;
+                let system_prompt = self.arg_str(&args, 1, "");
+                let history = self.arg_str(&args, 2, "");
+                let max_tokens = self.arg_num(&args, 3, 512.0)? as i64;
+                let temperature = self.arg_num(&args, 4, 0.7)?;
+                let top_p = self.arg_num(&args, 5, 0.9)?;
+                return Ok(Value::Str(llm::llm_generate_start(
+                    handle, &system_prompt, &history, max_tokens, temperature, top_p,
+                )));
+            },
+            // llm_generate_poll(job_id) → text generated so far
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_generate_poll" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(llm::llm_generate_poll(&job_id)));
+            },
+            // llm_generate_done(job_id) → bool
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_generate_done" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(llm::llm_generate_done(&job_id)));
+            },
+            // llm_job_status(job_id) → "pending" | "tool_call" | "done"
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_job_status" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(llm::llm_job_status(&job_id)));
+            },
+            // llm_job_tool_name(job_id) → "" until Milestone 5 lands
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_job_tool_name" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(llm::llm_job_tool_name(&job_id)));
+            },
+            // llm_job_provide_tool_result(job_id, result_text) → bool (always false until Milestone 5)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_job_provide_tool_result" => {
+                let job_id = self.arg_str(&args, 0, "");
+                let result_text = self.arg_str(&args, 1, "");
+                return Ok(Value::Bool(llm::llm_job_provide_tool_result(&job_id, &result_text)));
+            },
+            // llm_job_cancel(job_id)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
+            "llm_job_cancel" => {
+                let job_id = self.arg_str(&args, 0, "");
+                llm::llm_job_cancel(&job_id);
+                return Ok(Value::Unit);
+            },
+
+            // ── Google OAuth sign-in (chat.ling-lang.org) ──────────────────
+            // Exchanging a code for a token and fetching the profile are both
+            // outbound HTTPS calls, so this runs on a background thread and
+            // is polled the same non-blocking way as http_post_async, above.
+            // oauth_google_start(code, client_id, client_secret, redirect_uri) → job_id
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_start" => {
+                let code = self.arg_str(&args, 0, "");
+                let client_id = self.arg_str(&args, 1, "");
+                let client_secret = self.arg_str(&args, 2, "");
+                let redirect_uri = self.arg_str(&args, 3, "");
+                let id = self.oauth_jobs.start_google_login(code, client_id, client_secret, redirect_uri);
+                return Ok(Value::Str(id));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_done" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(self.oauth_jobs.done(&id)));
+            },
+            // "" while pending or on success; the error message on failure.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_error" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(self.oauth_jobs.error(&id)));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_sub" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(self.oauth_jobs.sub(&id)));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_email" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(self.oauth_jobs.email(&id)));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "oauth_google_name" => {
+                let id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(self.oauth_jobs.name(&id)));
+            },
+
+            // ── image understanding (chat.ling-lang.org attach-an-image) ──
+            // Moondream2 (quantized). Same background-job pattern as llm_*.
+            // vision_load(gguf_path, tokenizer_path[, device_index]) → handle (-1 on failure)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+            "vision_load" => {
+                let gguf_path = self.arg_str(&args, 0, "");
+                let tokenizer_path = self.arg_str(&args, 1, "");
+                let device_index = self.arg_num(&args, 2, 0.0)? as i64;
+                return Ok(Value::Number(
+                    vision::vision_load(&gguf_path, &tokenizer_path, device_index) as f64
+                ));
+            },
+            // vision_analyze_start(handle, image_base64, question[, max_tokens, temperature, top_p]) → job_id ("" on failure)
+            #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+            "vision_analyze_start" => {
+                let handle = self.arg_num(&args, 0, -1.0)? as i64;
+                let image_base64 = self.arg_str(&args, 1, "");
+                let question = self.arg_str(&args, 2, "Describe this image.");
+                let max_tokens = self.arg_num(&args, 3, 256.0)? as i64;
+                let temperature = self.arg_num(&args, 4, 0.7)?;
+                let top_p = self.arg_num(&args, 5, 0.9)?;
+                return Ok(Value::Str(vision::vision_analyze_start(
+                    handle, &image_base64, &question, max_tokens, temperature, top_p,
+                )));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+            "vision_analyze_poll" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(vision::vision_analyze_poll(&job_id)));
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+            "vision_analyze_done" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(vision::vision_analyze_done(&job_id)));
+            },
+            // "" unless analysis failed (bad image data, decode error, etc).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
+            "vision_analyze_error" => {
+                let job_id = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(vision::vision_analyze_error(&job_id)));
+            },
+
             // Decodes `application/x-www-form-urlencoded` text: '+' -> space,
             // '%XX' -> byte. Needed to read plain HTML `<form>` POST bodies.
             "url_decode" | "网址解码" => {
@@ -11507,6 +11668,23 @@ impl Interpreter {
                     .unwrap_or(0);
                 return Ok(Value::Number(v as f64));
             },
+            // Flat/non-positional sample playback — no distance falloff, no
+            // stereo pan, same level regardless of listener position. For
+            // VO/narration/UI cues, as opposed to audio_sample_play's
+            // world-space sound effects (which fall off with camera distance).
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sample_play_flat" | "播放采样平" | "サンプル再生平" | "샘플재생평" | "เล่นตัวอย่างเสียงเรียบ" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as usize;
+                let vol = self.arg_num(&args, 1, 1.0)? as f32;
+                let looping = self.arg_num(&args, 2, 0.0)? > 0.5;
+                let v = self
+                    .audio
+                    .as_ref()
+                    .map(|a| a.play_sample_flat(id, vol, looping))
+                    .unwrap_or(0);
+                return Ok(Value::Number(v as f64));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "audio_sample_stop" | "停止采样" | "サンプル停止" | "샘플정지" | "หยุดตัวอย่างเสียง" | "توقف_نمونه_صدا" | "إيقاف_عينة_صوتية" | "עצירת_דגימת_קול" | "آواز_نمونہ_روکو" | "arrêter_échantillon" | "sample_stoppen" | "остановить_семпл" =>
             {
@@ -11515,6 +11693,17 @@ impl Interpreter {
                     a.stop_sample(v);
                 }
                 return Ok(Value::Unit);
+            },
+            // Duration (seconds) of an already-loaded sample. 0.0 if the id
+            // is invalid. Lets a cutscene pace itself off the real length of
+            // whichever language's VO clip actually got loaded, instead of a
+            // hand-measured constant that only covers one language.
+            #[cfg(not(target_arch = "wasm32"))]
+            "audio_sample_duration" | "采样时长" | "サンプル長さ" | "샘플길이" | "ความยาวตัวอย่างเสียง" =>
+            {
+                let id = self.arg_num(&args, 0, 0.0)? as usize;
+                let dur = self.audio.as_ref().map(|a| a.sample_duration(id)).unwrap_or(0.0);
+                return Ok(Value::Number(dur as f64));
             },
             // ── master FX: delay / reverb / low-pass (underwater) ──
             #[cfg(not(target_arch = "wasm32"))]

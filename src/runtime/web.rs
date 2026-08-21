@@ -381,6 +381,139 @@ impl AsyncJobs {
     }
 }
 
+/// One Google OAuth sign-in outcome: the three profile fields chat.ling-lang.org
+/// needs, or an error. Kept as its own small struct (rather than reusing
+/// `AsyncJobs`' single-`String` `JobMap`) because a login result has three
+/// fields, not one — same "keep the JSON-specific bit in Rust" reasoning as
+/// `start_sdai_txt2img`, just with more fields to hand back.
+#[derive(Clone, Default)]
+struct OAuthResult {
+    error: String,
+    sub: String,
+    email: String,
+    name: String,
+}
+
+type OAuthMap = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Option<OAuthResult>>>>;
+
+#[derive(Clone, Default)]
+pub struct OAuthJobs(OAuthMap);
+
+impl OAuthJobs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Exchanges an authorization `code` for Google's token, then fetches the
+    /// signed-in user's profile — both are outbound HTTPS calls, so this runs
+    /// in the background exactly like `AsyncJobs::start_post` and is polled
+    /// the same non-blocking way. `client_secret` never leaves this function;
+    /// it's read from a `.env` file by `.ling` code and passed in as a plain
+    /// argument purely to make one server-to-server token-exchange call.
+    pub fn start_google_login(
+        &self,
+        code: String,
+        client_id: String,
+        client_secret: String,
+        redirect_uri: String,
+    ) -> String {
+        let id = {
+            use rand::RngCore;
+            let mut buf = [0u8; 16];
+            rand::rngs::OsRng.fill_bytes(&mut buf);
+            buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        };
+        self.0.lock().unwrap().insert(id.clone(), None);
+
+        let jobs = self.0.clone();
+        let job_id = id.clone();
+        async_runtime_handle().spawn(async move {
+            let client = reqwest::Client::new();
+            let outcome = async {
+                let token_resp = client
+                    .post("https://oauth2.googleapis.com/token")
+                    .form(&[
+                        ("code", code.as_str()),
+                        ("client_id", client_id.as_str()),
+                        ("client_secret", client_secret.as_str()),
+                        ("redirect_uri", redirect_uri.as_str()),
+                        ("grant_type", "authorization_code"),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|e| format!("token request failed: {e}"))?;
+                if !token_resp.status().is_success() {
+                    let status = token_resp.status();
+                    let body = token_resp.text().await.unwrap_or_default();
+                    return Err(format!("Google returned HTTP {status} exchanging code: {body}"));
+                }
+                let token_json: ling_http::serde_json::Value = token_resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("bad JSON from Google token endpoint: {e}"))?;
+                let access_token = token_json
+                    .get("access_token")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| "no access_token in Google's response".to_string())?;
+
+                let userinfo_resp = client
+                    .get("https://www.googleapis.com/oauth2/v3/userinfo")
+                    .bearer_auth(access_token)
+                    .send()
+                    .await
+                    .map_err(|e| format!("userinfo request failed: {e}"))?;
+                if !userinfo_resp.status().is_success() {
+                    return Err(format!("Google returned HTTP {} fetching userinfo", userinfo_resp.status()));
+                }
+                let profile: ling_http::serde_json::Value = userinfo_resp
+                    .json()
+                    .await
+                    .map_err(|e| format!("bad JSON from Google userinfo endpoint: {e}"))?;
+                let sub = profile.get("sub").and_then(|v| v.as_str()).unwrap_or_default();
+                if sub.is_empty() {
+                    return Err("no sub in Google's userinfo response".to_string());
+                }
+                Ok(OAuthResult {
+                    error: String::new(),
+                    sub: sub.to_string(),
+                    email: profile.get("email").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    name: profile.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                })
+            }
+            .await
+            .unwrap_or_else(|e| OAuthResult { error: e, ..Default::default() });
+
+            jobs.lock().unwrap().insert(job_id, Some(outcome));
+        });
+
+        id
+    }
+
+    fn get(&self, id: &str) -> Option<OAuthResult> {
+        self.0.lock().unwrap().get(id).cloned().flatten()
+    }
+
+    pub fn done(&self, id: &str) -> bool {
+        matches!(self.0.lock().unwrap().get(id), Some(Some(_)))
+    }
+
+    pub fn error(&self, id: &str) -> String {
+        self.get(id).map(|r| r.error).unwrap_or_default()
+    }
+
+    pub fn sub(&self, id: &str) -> String {
+        self.get(id).map(|r| r.sub).unwrap_or_default()
+    }
+
+    pub fn email(&self, id: &str) -> String {
+        self.get(id).map(|r| r.email).unwrap_or_default()
+    }
+
+    pub fn name(&self, id: &str) -> String {
+        self.get(id).map(|r| r.name).unwrap_or_default()
+    }
+}
+
 /// A background tokio runtime dedicated to `AsyncJobs`, independent of whether
 /// `http_serve`/`spawn_server`'s own server runtime is running — so
 /// `http_post_async` also works from a plain script, not just inside a route
