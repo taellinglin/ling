@@ -52,6 +52,33 @@ impl TrapFrame {
     pub fn from_userspace(&self) -> bool {
         self.cs & 3 == 3
     }
+
+    pub fn syscall_num(&self) -> u64 {
+        self.rax
+    }
+
+    /// Syscall argument `i` (0-indexed), in the `syscall` instruction's own
+    /// register order: `rdi, rsi, rdx, r10, r8, r9` — `r10` stands in for
+    /// `rcx`, which `syscall` itself clobbers.
+    pub fn arg(&self, i: usize) -> u64 {
+        match i {
+            0 => self.rdi,
+            1 => self.rsi,
+            2 => self.rdx,
+            3 => self.r10,
+            4 => self.r8,
+            5 => self.r9,
+            _ => 0,
+        }
+    }
+
+    pub fn set_return(&mut self, value: u64) {
+        self.rax = value;
+    }
+
+    pub fn return_value(&self) -> u64 {
+        self.rax
+    }
 }
 
 static mut TICKS: u64 = 0;
@@ -232,8 +259,28 @@ extern "C" {
 
 pub const TRAPFRAME_SIZE: u64 = core::mem::size_of::<TrapFrame>() as u64;
 
-pub fn set_syscall_kernel_stack(stack_top: u64) {
+/// Point both of the places x86_64 hardware lazily consults a "this
+/// process's kernel stack" value at — `TSS.rsp0` (IDT-gate ring3->ring0
+/// transitions: faults) and `LSTAR`'s `syscall` fast path (its own separate
+/// stored stack, `gdt::set_kernel_stack` doesn't cover it) — at
+/// `stack_top`, on every switch to a different process. The portable
+/// counterpart of the aarch64 backend's `trap::switch_kernel_stack`, which
+/// is a no-op there — see that module's doc for why the two architectures
+/// differ here.
+pub fn switch_kernel_stack(stack_top: u64) {
+    gdt::set_kernel_stack(stack_top);
     unsafe { syscall_kernel_rsp = stack_top };
+}
+
+/// Fabricate a fresh process's first `TrapFrame`: ring 3, entry point,
+/// `IF` set, its own stack.
+pub unsafe fn init_user_frame(frame: *mut TrapFrame, entry: u64, user_stack_top: u64) {
+    core::ptr::write_bytes(frame as *mut u8, 0, TRAPFRAME_SIZE as usize);
+    (*frame).rip = entry;
+    (*frame).cs = gdt::USER_CODE_SEL as u64;
+    (*frame).rflags = 0x202;
+    (*frame).rsp = user_stack_top;
+    (*frame).ss = gdt::USER_DATA_SEL as u64;
 }
 
 /// Enter ring 3 for the very first time, running whatever `TrapFrame` sits

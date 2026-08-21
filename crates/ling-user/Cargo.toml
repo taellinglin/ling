@@ -1,0 +1,13 @@
+[package]
+name = "ling-user"
+version = "2030.1.0"
+edition = "2021"
+authors = ["vinceswu"]
+description = "Userland runtime for Ling programs on LingOS"
+license = "Apache-2.0 OR MIT"
+
+[lib]
+name = "ling_user"
+crate-type = ["rlib"]
+
+[dependencies]

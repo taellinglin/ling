@@ -102,14 +102,7 @@ pub fn spawn(elf: &[u8]) -> Result<usize, &'static str> {
     }
 
     let frame = (kernel_stack_top - TRAPFRAME_SIZE) as *mut TrapFrame;
-    unsafe {
-        core::ptr::write_bytes(frame as *mut u8, 0, TRAPFRAME_SIZE as usize);
-        (*frame).rip = entry;
-        (*frame).cs = crate::arch::gdt::USER_CODE_SEL as u64;
-        (*frame).rflags = 0x202; // IF set
-        (*frame).rsp = USER_STACK_TOP;
-        (*frame).ss = crate::arch::gdt::USER_DATA_SEL as u64;
-    }
+    unsafe { trap::init_user_frame(frame, entry, USER_STACK_TOP) };
 
     unsafe {
         TABLE[slot] = Process { state: State::Ready, pml4, kernel_stack_top };
@@ -146,8 +139,7 @@ pub fn run_to_completion(pid: usize) -> i32 {
 
 unsafe fn switch_to(pid: usize) {
     CURRENT = pid;
-    crate::arch::gdt::set_kernel_stack(TABLE[pid].kernel_stack_top);
-    trap::set_syscall_kernel_stack(TABLE[pid].kernel_stack_top);
+    trap::switch_kernel_stack(TABLE[pid].kernel_stack_top);
     paging::switch_to(TABLE[pid].pml4);
 }
 
@@ -173,13 +165,13 @@ fn wake_blocked() {
                     // so resuming ring 3 sees a real `sleep_ms` return (0),
                     // not its own syscall number echoed back.
                     let frame = frame_addr_of(&TABLE[i]) as *mut TrapFrame;
-                    (*frame).rax = 0;
+                    (*frame).set_return(0);
                     TABLE[i].state = State::Ready;
                 }
                 State::WaitingChild(target) => {
                     if let State::Exited(code) = TABLE[target].state {
                         let frame = frame_addr_of(&TABLE[i]) as *mut TrapFrame;
-                        (*frame).rax = code as u64;
+                        (*frame).set_return(code as u64);
                         TABLE[i].state = State::Ready;
                     }
                 }
@@ -301,9 +293,3 @@ pub fn block_current_until_tick(wake_at: u64) {
     unsafe { TABLE[CURRENT].state = State::Blocked(wake_at) };
 }
 
-pub fn current_frame_rax(value: u64) {
-    unsafe {
-        let frame = frame_addr_of(&TABLE[CURRENT]) as *mut TrapFrame;
-        (*frame).rax = value;
-    }
-}

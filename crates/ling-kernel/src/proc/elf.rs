@@ -9,7 +9,10 @@ use crate::arch::paging;
 
 const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
 const ET_EXEC: u16 = 2;
-const EM_X86_64: u16 = 62;
+#[cfg(target_arch = "x86_64")]
+const EM_EXPECTED: u16 = 62; // EM_X86_64
+#[cfg(target_arch = "aarch64")]
+const EM_EXPECTED: u16 = 183; // EM_AARCH64
 const PT_LOAD: u32 = 1;
 const PF_X: u32 = 1;
 const PF_W: u32 = 2;
@@ -42,8 +45,8 @@ pub fn load(pml4: u64, elf: &[u8]) -> Result<u64, &'static str> {
     if read_u16(elf, 16) != ET_EXEC {
         return Err("not a static executable (ET_EXEC)");
     }
-    if read_u16(elf, 18) != EM_X86_64 {
-        return Err("not x86_64");
+    if read_u16(elf, 18) != EM_EXPECTED {
+        return Err("wrong machine type for this architecture");
     }
 
     let entry = read_u64(elf, 24);

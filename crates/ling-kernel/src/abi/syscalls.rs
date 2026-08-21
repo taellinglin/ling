@@ -36,12 +36,18 @@ pub const SYS_POLL_INPUT: u64 = 13;
 pub const SYS_FB_MAP: u64 = 14;
 pub const SYS_UNAME: u64 = 15;
 
-const ENOENT: u64 = -2i64 as u64;
-const EIO: u64 = -5i64 as u64;
-const EBADF: u64 = -9i64 as u64;
-const EINVAL: u64 = -22i64 as u64;
-const EFAULT: u64 = -14i64 as u64;
-const ENOSYS: u64 = -38i64 as u64;
+#[allow(dead_code)]
+pub const ENOENT: u64 = -2i64 as u64;
+#[allow(dead_code)]
+pub const EIO: u64 = -5i64 as u64;
+#[allow(dead_code)]
+pub const EBADF: u64 = -9i64 as u64;
+#[allow(dead_code)]
+pub const EINVAL: u64 = -22i64 as u64;
+#[allow(dead_code)]
+pub const EFAULT: u64 = -14i64 as u64;
+#[allow(dead_code)]
+pub const ENOSYS: u64 = -38i64 as u64;
 
 /// Ticks (at the 100Hz heartbeat `timer::start_periodic` programs) per
 /// millisecond of `sleep_ms`, rounded up so a sub-tick request still sleeps
@@ -53,29 +59,38 @@ fn ms_to_ticks(ms: u64) -> u64 {
 pub fn dispatch(frame: &mut TrapFrame) {
     trap::enable_interrupts_in_syscall();
     let pml4 = uproc::current_pml4();
-    match frame.rax {
-        SYS_EXIT => uproc::exit_current(frame.rdi as i32),
-        SYS_WRITE => frame.rax = sys_write(pml4, frame.rdi, frame.rsi, frame.rdx),
-        SYS_YIELD => frame.rax = 0,
-        SYS_GETPID => frame.rax = uproc::current_pid(),
-        SYS_SLEEP_MS => {
-            let wake_at = trap::ticks() + ms_to_ticks(frame.rdi);
-            uproc::block_current_until_tick(wake_at);
-            // `rax` deliberately left unset: `uproc::wake_blocked` writes
-            // the real return value (0) once the sleep is actually over —
-            // see that function's doc for why.
+    let num = frame.syscall_num();
+    let arg0 = frame.arg(0);
+    let arg1 = frame.arg(1);
+    let arg2 = frame.arg(2);
+    match num {
+        SYS_EXIT => uproc::exit_current(arg0 as i32),
+        SYS_WRITE => {
+            let ret = sys_write(pml4, arg0, arg1, arg2);
+            frame.set_return(ret);
         }
-        SYS_SPAWN => frame.rax = sys_spawn(pml4, frame.rdi, frame.rsi),
-        SYS_WAITPID => match uproc::waitpid_start(frame.rdi as usize) {
-            uproc::WaitOutcome::Invalid => frame.rax = EINVAL,
-            uproc::WaitOutcome::Immediate(code) => frame.rax = code as u64,
-            // `rax` deliberately left unset — `uproc::wake_blocked` fills
+        SYS_YIELD => frame.set_return(0),
+        SYS_GETPID => frame.set_return(uproc::current_pid()),
+        SYS_SLEEP_MS => {
+            let wake_at = trap::ticks() + ms_to_ticks(arg0);
+            uproc::block_current_until_tick(wake_at);
+            // Return value deliberately left unset: `uproc::wake_blocked` writes
+            // the real return value (0) once the sleep is actually over.
+        }
+        SYS_SPAWN => {
+            let ret = sys_spawn(pml4, arg0, arg1);
+            frame.set_return(ret);
+        }
+        SYS_WAITPID => match uproc::waitpid_start(arg0 as usize) {
+            uproc::WaitOutcome::Invalid => frame.set_return(EINVAL),
+            uproc::WaitOutcome::Immediate(code) => frame.set_return(code as u64),
+            // Return value deliberately left unset — `uproc::wake_blocked` fills
             // in the child's real exit code once it exits.
             uproc::WaitOutcome::Blocked => {}
         },
         SYS_READ | SYS_OPEN | SYS_CLOSE | SYS_LSEEK | SYS_MMAP | SYS_MUNMAP | SYS_POLL_INPUT
-        | SYS_FB_MAP | SYS_UNAME => frame.rax = ENOSYS,
-        _ => frame.rax = ENOSYS,
+        | SYS_FB_MAP | SYS_UNAME => frame.set_return(ENOSYS),
+        _ => frame.set_return(ENOSYS),
     }
 }
 
@@ -119,12 +134,20 @@ fn sys_spawn(pml4: u64, path_ptr: u64, path_len: u64) -> u64 {
         Err(_) => return EFAULT,
     };
 
-    let mut elf_buf = [0u8; crate::fs::lingfs::BLOCK_SIZE];
-    match crate::fs::lingfs::read_file(path, &mut elf_buf) {
-        Ok(Some(len)) => match uproc::spawn(&elf_buf[..len]) {
-            Ok(pid) => pid as u64,
-            Err(_) => EIO,
-        },
-        Ok(None) | Err(_) => ENOENT,
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut elf_buf = [0u8; crate::fs::lingfs::BLOCK_SIZE];
+        match crate::fs::lingfs::read_file(path, &mut elf_buf) {
+            Ok(Some(len)) => match uproc::spawn(&elf_buf[..len]) {
+                Ok(pid) => pid as u64,
+                Err(_) => EIO,
+            },
+            Ok(None) | Err(_) => ENOENT,
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = path;
+        ENOSYS
     }
 }

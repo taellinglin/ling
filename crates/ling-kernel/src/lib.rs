@@ -13,8 +13,7 @@ pub mod fs;
 // ─── Task scheduling ─────────────────────────────────────────────────────
 pub mod proc;
 
-// ─── Syscall ABI ring-3 processes use (x86_64 only for now) ────────────────
-#[cfg(target_arch = "x86_64")]
+// ─── Syscall ABI ring-3 processes use ────────────────────────────────────
 pub mod abi;
 
 // ─── Physical memory management (frame allocator; paging/heap follow) ──────

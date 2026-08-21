@@ -1,45 +1,45 @@
-//! Multiboot2 linear framebuffer support. `boot32.rs` requests one in the
-//! Multiboot2 header (a type-5 tag) and stashes GRUB's info-structure
-//! pointer in the `mb2_info_ptr` symbol before Rust code ever runs; `init`
-//! (called from `ling_kernel_init`) walks that structure's tags looking for
-//! the type-8 framebuffer-info tag GRUB fills in in response. Text-mode VGA
-//! (`vga.rs`/`term.rs`) stays the console the shell runs on — this is
-//! additive, for graphics-mode programs (the window manager/desktop
-//! environment) to draw into once they exist.
+//! Linear framebuffer support across x86_64 (Multiboot2) and aarch64 (BCM2835 mailbox).
+
 use core::ptr;
 
+#[cfg(target_arch = "x86_64")]
 extern "C" {
     static mb2_info_ptr: u32;
 }
 
 #[derive(Clone, Copy)]
-struct FbInfo {
-    addr: u64,
-    pitch: u32,
-    width: u32,
-    height: u32,
-    bpp: u8,
+pub struct FbInfo {
+    pub addr: u64,
+    pub pitch: u32,
+    pub width: u32,
+    pub height: u32,
+    pub bpp: u8,
 }
 
 static mut FB: Option<FbInfo> = None;
 
-/// Parse the Multiboot2 info structure for a framebuffer tag. Safe to call
-/// even if GRUB left us in text mode (no tag found, `FB` stays `None`) or on
-/// a boot path with no Multiboot2 info at all (`mb2_info_ptr == 0`).
+const BACKBUFFER_MAX: usize = 1920 * 1080 * 4;
+static mut BACKBUFFER: [u8; BACKBUFFER_MAX] = [0u8; BACKBUFFER_MAX];
+
+fn back_buf() -> &'static mut [u8; BACKBUFFER_MAX] {
+    unsafe { &mut *&raw mut BACKBUFFER }
+}
+
 pub fn init() {
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         let info_ptr = ptr::read_volatile(&raw const mb2_info_ptr);
         if info_ptr == 0 {
             return;
         }
         let total_size = ptr::read_unaligned(info_ptr as *const u32);
-        let mut offset: u32 = 8; // skip the fixed total_size+reserved header
+        let mut offset: u32 = 8;
         while offset + 8 <= total_size {
             let tag_ptr = (info_ptr + offset) as *const u32;
             let tag_type = ptr::read_unaligned(tag_ptr);
             let tag_size = ptr::read_unaligned(tag_ptr.add(1));
             if tag_type == 0 {
-                break; // end tag
+                break;
             }
             if tag_type == 8 && tag_size >= 29 {
                 let base = info_ptr + offset;
@@ -51,13 +51,23 @@ pub fn init() {
                 ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
                 return;
             }
-            // Tags are padded to 8-byte alignment; `tag_size` itself isn't.
             offset += (tag_size + 7) & !7;
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if let Some((addr, pitch, width, height, bpp)) =
+            crate::arch::aarch64::mailbox::allocate_framebuffer(1024, 768, 32)
+        {
+            unsafe {
+                ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
+            }
         }
     }
 }
 
-fn get() -> Option<FbInfo> {
+pub fn get() -> Option<FbInfo> {
     unsafe { ptr::read(&raw const FB) }
 }
 
@@ -73,9 +83,6 @@ pub fn height() -> u32 {
     get().map(|f| f.height).unwrap_or(0)
 }
 
-/// `color` is packed `0x00RRGGBB`; truncated to whatever the mode's actual
-/// bit depth supports (24bpp/32bpp only — 15/16bpp packed modes aren't
-/// handled and are silently ignored, same as an out-of-bounds pixel).
 pub fn set_pixel(x: u32, y: u32, color: u32) {
     unsafe {
         let Some(fb) = get() else { return };
@@ -98,9 +105,37 @@ pub fn set_pixel(x: u32, y: u32, color: u32) {
 }
 
 pub fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
-    for row in y..y.saturating_add(h) {
-        for col in x..x.saturating_add(w) {
-            set_pixel(col, row, color);
+    let Some(fb) = get() else { return };
+    if x >= fb.width || y >= fb.height {
+        return;
+    }
+    let w = w.min(fb.width - x);
+    let h = h.min(fb.height - y);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let bypp = fb.bpp as u32 / 8;
+    if bypp == 4 {
+        for row in y..y + h {
+            let row_start = (fb.addr + row as u64 * fb.pitch as u64 + x as u64 * 4) as *mut u32;
+            for col in 0..w as usize {
+                unsafe { ptr::write_volatile(row_start.add(col), color) };
+            }
+        }
+    } else if bypp == 3 {
+        let b0 = (color & 0xFF) as u8;
+        let b1 = ((color >> 8) & 0xFF) as u8;
+        let b2 = ((color >> 16) & 0xFF) as u8;
+        for row in y..y + h {
+            let mut p = (fb.addr + row as u64 * fb.pitch as u64 + x as u64 * 3) as *mut u8;
+            for _ in 0..w {
+                unsafe {
+                    ptr::write_volatile(p, b0);
+                    ptr::write_volatile(p.add(1), b1);
+                    ptr::write_volatile(p.add(2), b2);
+                    p = p.add(3);
+                }
+            }
         }
     }
 }
@@ -110,51 +145,65 @@ pub fn clear(color: u32) {
     fill_rect(0, 0, w, h, color);
 }
 
-// ── Back buffer: draw a whole frame off-screen, then blit it in one shot ──
-// Redrawing shapes directly into the live framebuffer (the functions above)
-// tears visibly on every frame once anything moves — confirmed by an actual
-// screendump catching a titlebar fill overwritten mid-redraw by the body
-// fill after it. Drawing into this plain `.bss` buffer instead and blitting
-// it with one `copy_nonoverlapping` at the end of a frame makes the visible
-// update as close to atomic as this kernel can get without real vsync.
-// Sized for the largest resolution GRUB is likely to hand back for a
-// "basic" OS's test hardware; `present` clamps to whatever's actually
-// negotiated, so a smaller real mode just uses the front part of it.
-const BACKBUFFER_MAX: usize = 1920 * 1080 * 4;
-static mut BACKBUFFER: [u8; BACKBUFFER_MAX] = [0u8; BACKBUFFER_MAX];
-
-fn back_buf() -> &'static mut [u8; BACKBUFFER_MAX] {
-    unsafe { &mut *&raw mut BACKBUFFER }
-}
-
 pub fn back_set_pixel(x: u32, y: u32, color: u32) {
-    {
-        let Some(fb) = get() else { return };
-        if x >= fb.width || y >= fb.height {
-            return;
-        }
-        let bypp = fb.bpp as u32 / 8;
-        let offset = y as usize * fb.pitch as usize + x as usize * bypp as usize;
-        if offset + bypp as usize > BACKBUFFER_MAX {
-            return;
-        }
-        let buf = back_buf();
-        match bypp {
-            4 => buf[offset..offset + 4].copy_from_slice(&color.to_le_bytes()),
-            3 => {
-                buf[offset] = (color & 0xFF) as u8;
-                buf[offset + 1] = ((color >> 8) & 0xFF) as u8;
-                buf[offset + 2] = ((color >> 16) & 0xFF) as u8;
-            },
-            _ => {},
-        }
+    let Some(fb) = get() else { return };
+    if x >= fb.width || y >= fb.height {
+        return;
+    }
+    let bypp = fb.bpp as u32 / 8;
+    let offset = y as usize * fb.pitch as usize + x as usize * bypp as usize;
+    if offset + bypp as usize > BACKBUFFER_MAX {
+        return;
+    }
+    let buf = back_buf();
+    match bypp {
+        4 => buf[offset..offset + 4].copy_from_slice(&color.to_le_bytes()),
+        3 => {
+            buf[offset] = (color & 0xFF) as u8;
+            buf[offset + 1] = ((color >> 8) & 0xFF) as u8;
+            buf[offset + 2] = ((color >> 16) & 0xFF) as u8;
+        },
+        _ => {},
     }
 }
 
 pub fn back_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
-    for row in y..y.saturating_add(h) {
-        for col in x..x.saturating_add(w) {
-            back_set_pixel(col, row, color);
+    let Some(fb) = get() else { return };
+    if x >= fb.width || y >= fb.height {
+        return;
+    }
+    let w = w.min(fb.width - x);
+    let h = h.min(fb.height - y);
+    if w == 0 || h == 0 {
+        return;
+    }
+    let bypp = fb.bpp as u32 / 8;
+    let buf = back_buf();
+    if bypp == 4 {
+        let col_bytes = color.to_le_bytes();
+        for row in y..y + h {
+            let row_offset = row as usize * fb.pitch as usize + x as usize * 4;
+            if row_offset + (w as usize) * 4 <= BACKBUFFER_MAX {
+                for col in 0..w as usize {
+                    let off = row_offset + col * 4;
+                    buf[off..off + 4].copy_from_slice(&col_bytes);
+                }
+            }
+        }
+    } else if bypp == 3 {
+        let b0 = (color & 0xFF) as u8;
+        let b1 = ((color >> 8) & 0xFF) as u8;
+        let b2 = ((color >> 16) & 0xFF) as u8;
+        for row in y..y + h {
+            let row_offset = row as usize * fb.pitch as usize + x as usize * 3;
+            if row_offset + (w as usize) * 3 <= BACKBUFFER_MAX {
+                for col in 0..w as usize {
+                    let off = row_offset + col * 3;
+                    buf[off] = b0;
+                    buf[off + 1] = b1;
+                    buf[off + 2] = b2;
+                }
+            }
         }
     }
 }
@@ -164,9 +213,6 @@ pub fn back_clear(color: u32) {
     back_fill_rect(0, 0, w, h, color);
 }
 
-/// Blit the back buffer to the real framebuffer in one copy — call once per
-/// finished frame, after however many `back_*` draw calls it took to build
-/// that frame.
 pub fn present() {
     unsafe {
         let Some(fb) = get() else { return };
