@@ -13,6 +13,10 @@ pub mod fs;
 // ─── Task scheduling ─────────────────────────────────────────────────────
 pub mod proc;
 
+// ─── Syscall ABI ring-3 processes use (x86_64 only for now) ────────────────
+#[cfg(target_arch = "x86_64")]
+pub mod abi;
+
 // ─── Physical memory management (frame allocator; paging/heap follow) ──────
 pub mod mm;
 
@@ -87,6 +91,21 @@ pub fn init() {
         console_write(b"mm: ");
         print_decimal((mm::frame::free_frame_count() * 4) as u64);
         console_write(b" KiB free (frame allocator)\n");
+
+        // Real page tables (NX + W^X on the kernel image) replacing
+        // boot.rs's temporary flat RWX map — must come after the frame
+        // allocator (page tables are themselves frame-allocated) and before
+        // anything that depends on the kernel's .text/.rodata actually
+        // being protected.
+        arch::paging::init();
+        serial::write(b"paging enabled (NX, W^X kernel image)\n");
+
+        // Ring-3 processes: must come after paging (per-process address
+        // spaces clone the kernel PML4) and after the GDT (STAR encodes
+        // its kernel code selector) — before anything ever executes
+        // `syscall`, which is only true once a process exists at all.
+        arch::trap::init();
+        serial::write(b"syscall/sysret enabled (ring-3 processes ready)\n");
 
         // Establish the shell as slot 0 of the cooperative scheduler before
         // anything (a shell command, `ling_kernel_spawn`) can depend on it.
@@ -301,6 +320,34 @@ pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fs_selftest() -> u64 {
     lingfs::self_test() as u64
+}
+
+/// Load and run `testbins/ring3_selftest.elf` — a hand-assembled ring-3
+/// program (source alongside it, `testbins/ring3_selftest.asm`) that writes
+/// a string via `SYS_WRITE` and exits via `SYS_EXIT(42)` — end to end
+/// through real paging, the real GDT/TSS ring-3 descriptors, real
+/// `syscall`/`iretq` transitions, and `abi::syscalls::dispatch`'s pointer
+/// validation. Returns 1 if the process ran and exited with code 42
+/// (proving the whole mechanism actually works, not just that it compiled),
+/// 0 otherwise.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
+    static TEST_ELF: &[u8] = include_bytes!("../testbins/ring3_selftest.elf");
+    let pid = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"proctest: spawn failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    let code = proc::uproc::run_to_completion(pid);
+    console_write(b"proctest: exit code = ");
+    print_decimal(code as u64);
+    console_write(b"\n");
+    (code == 42) as u64
 }
 
 /// Mount (or format, if blank) the filesystem without running the

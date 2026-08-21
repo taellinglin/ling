@@ -13,6 +13,8 @@ pub mod timer;
 
 pub mod gdt;
 pub mod idt;
+pub mod paging;
 pub mod pic;
+pub mod trap;
 
 pub mod boot;

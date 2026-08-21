@@ -159,20 +159,14 @@ exception_fatal_no_err!(isr_reserved_31, 31, "Reserved");
 
 // ─── Hardware IRQs (vectors 32+, remapped by pic.rs) ────────────────────
 
-static mut TICKS: u64 = 0;
-
-extern "x86-interrupt" fn isr_timer(_frame: InterruptFrame) {
-    unsafe { TICKS += 1 };
-    pic::eoi(0);
-}
-
-/// Ticks of the periodic PIT heartbeat `timer::start_periodic` programs
-/// (Phase 2 only counts them, to prove the IDT/PIC pipeline end-to-end and
-/// drive `keyboard.rs`'s idle-font timeout without a busy poll; Phase 3's
-/// scheduler rewrite hooks preemption into this same vector).
-pub fn ticks() -> u64 {
-    unsafe { TICKS }
-}
+// Vector 32 (the PIT heartbeat) is *not* wired here: it needs full
+// general-purpose-register save/restore to drive `proc::uproc`'s
+// preemptive scheduler, which the `extern "x86-interrupt"` ABI's
+// compiler-managed prologue never exposes to Rust. See `trap.rs` for that
+// handler (`timer_trap_entry`) and `ticks()` (moved there too, alongside
+// the state it now also drives scheduling decisions from) — `init` below
+// still installs it, just onto `gdt::TIMER_IST` instead of the shared
+// no-IST gates every other vector uses.
 
 extern "x86-interrupt" fn isr_keyboard(_frame: InterruptFrame) {
     let scancode = unsafe { io::inb(0x60) };
@@ -230,7 +224,7 @@ pub fn init() {
     for v in 32..IDT_ENTRIES {
         set_gate(v as u8, isr_spurious as *const () as u64, 0);
     }
-    set_gate(pic::IRQ0_VECTOR, isr_timer as *const () as u64, 0);
+    set_gate(pic::IRQ0_VECTOR, super::trap::timer_trap_entry as *const () as u64, gdt::TIMER_IST);
     set_gate(pic::IRQ0_VECTOR + 1, isr_keyboard as *const () as u64, 0);
     set_gate(pic::IRQ0_VECTOR + 12, isr_mouse as *const () as u64, 0);
 

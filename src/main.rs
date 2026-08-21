@@ -1845,13 +1845,16 @@ SECTIONS {
         KEEP(*(.ling_multiboot))
     }
 
+    _text_start = .;
     .text : ALIGN(4096) {
         *(.text .text.*)
     }
+    _text_end = .;
 
     .rodata : ALIGN(4096) {
         *(.rodata .rodata.*)
     }
+    _rodata_end = .;
 
     .data : ALIGN(4096) {
         *(.data .data.*)
@@ -1885,14 +1888,17 @@ ENTRY(_start)
 SECTIONS {
     . = 0x80000;
 
+    _text_start = .;
     .text : ALIGN(4096) {
         KEEP(*(.text.boot))
         *(.text .text.*)
     }
+    _text_end = .;
 
     .rodata : ALIGN(4096) {
         *(.rodata .rodata.*)
     }
+    _rodata_end = .;
 
     .data : ALIGN(4096) {
         *(.data .data.*)
