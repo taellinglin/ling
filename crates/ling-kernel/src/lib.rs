@@ -38,7 +38,7 @@ use crate::arch::cpu;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::{bootmodule, io, timer};
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::{font8x8, framebuffer, keyboard, mouse, serial, term, vga};
+use crate::drivers::{font8x8, framebuffer, keyboard, mouse, serial, term, vga, wm_liquid};
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
@@ -292,6 +292,15 @@ pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
     sched::getpid()
 }
 
+/// Milliseconds since boot (calibrated TSC, see `arch::timer`) -- for `.ling`
+/// code that needs to time something (an animation, a timeout) without any
+/// mutable-state workaround, since it can read a fresh value each call.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
+    timer::now_ms()
+}
+
 /// Spawn a task, yield to it, confirm it actually ran and yielded back.
 /// Returns 1 on success, 0 on failure. Honest scope: proves cooperative
 /// task creation/switching works, nothing about preemption or isolation
@@ -531,6 +540,51 @@ pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64
     0
 }
 
+/// Advance the "liquid window" spring simulation one frame toward
+/// `(target_x, target_y)` -- see `drivers::wm_liquid`'s module doc for why
+/// this state lives here and not in `.ling`: the kernel-build path has no
+/// mutable-reassignment construct (`bind` only ever introduces a *new*
+/// name) and the compiler does no tail-call optimization, so neither real
+/// mutation nor safe unbounded recursion exists on the `.ling` side to hold
+/// frame-persistent physics state in a loop that runs indefinitely. Call
+/// once per frame, before the position/scale getters below. All the actual
+/// window/event-loop orchestration stays in `.ling` (`kernel/x86_64-wm`) --
+/// this is only the numeric integration step, same division of labor as
+/// every other piece of kernel state (`ling_kernel_mouse_x`, `_getpid`, …).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_step(target_x: u64, target_y: u64) -> u64 {
+    wm_liquid::step(target_x as f64, target_y as f64);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_x() -> u64 {
+    wm_liquid::x().max(0.0) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_y() -> u64 {
+    wm_liquid::y().max(0.0) as u64
+}
+
+/// Width/height scale, as a percentage (100 = unscaled) -- an integer
+/// rather than a raw float since `.ling` only has integer arithmetic over
+/// this flat-u64 FFI boundary; multiply/divide by 100 on the caller side.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_w_pct() -> u64 {
+    wm_liquid::scale_w_pct()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_h_pct() -> u64 {
+    wm_liquid::scale_h_pct()
+}
+
 /// Install a `.lpkg` blob already stored at `blob_name` in lingfs (see
 /// `packages.rs` for the format and its honest limits — no network fetch,
 /// no signing, no way to execute the result). Returns 1 on success, 0 on a
@@ -565,12 +619,18 @@ pub unsafe extern "C" fn ling_kernel_life_run() -> u64 {
     0
 }
 
-/// Enable the PS/2 mouse and put it into streaming-report mode. Call once,
-/// e.g. right after `ling_kernel_init`.
+/// No-op: `ling_kernel_init()` already runs the PS/2 mouse's synchronous
+/// 8042 handshake itself, before IRQ12 is unmasked (see `mouse::init`'s doc
+/// comment for why that ordering matters). Calling this afterward — as
+/// existing `.ling` WM code does — used to repeat that same handshake with
+/// IRQ12 already live, racing the real IRQ12 handler for the controller's
+/// ACK/status bytes and hanging forever in `wait_output_full()` (confirmed:
+/// boot got through `ling_kernel_init()` fine, then never rendered a single
+/// frame). Kept as a real ABI entry point, not removed, for the same reason
+/// as `ling_kernel_mouse_poll` just above.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_mouse_init() -> u64 {
-    mouse::init();
     0
 }
 

@@ -169,6 +169,11 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             &[types::I64, types::I64, types::I64, types::I64, types::I64],
             types::I64,
         ),
+        ("ling_kernel_wm_liquid_step", &[types::I64, types::I64], types::I64),
+        ("ling_kernel_wm_liquid_x", &[], types::I64),
+        ("ling_kernel_wm_liquid_y", &[], types::I64),
+        ("ling_kernel_wm_liquid_scale_w_pct", &[], types::I64),
+        ("ling_kernel_wm_liquid_scale_h_pct", &[], types::I64),
         ("ling_kernel_pkg_install", &[types::I64], types::I64),
         ("ling_kernel_pkg_install_module", &[], types::I64),
         ("ling_kernel_life_run", &[], types::I64),
@@ -215,6 +220,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_getpid", &[], types::I64),
         ("ling_kernel_proc_selftest", &[], types::I64),
         ("ling_kernel_proc_ps", &[], types::I64),
+        ("ling_kernel_uptime_ms", &[], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {

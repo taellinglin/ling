@@ -174,7 +174,12 @@ fn run_file_jit(path: &str) {
     }
 
     use ling::CompilerConfig;
-    let config = CompilerConfig::default();
+    // O3 turns on the already-implemented inliner/LICM/tail-call-opt/loop
+    // passes (crates/ling-mir/src/optimizations/) that `ling build --aot`
+    // already uses — `ling run`'s default used to leave them off entirely
+    // (OptimizationLevel::None), so every JIT run paid full call overhead on
+    // every helper-function call and skipped loop-invariant hoisting.
+    let config = CompilerConfig { optimization: ling::core::OptimizationLevel::O3 };
     let compiler = ling::LingCompiler::new(config);
     if let Err(e) = compiler.compile_and_run_jit(path) {
         use ling::core::LingError;
@@ -1755,9 +1760,41 @@ extern "C" {
     fn __main__() -> u64;
 }
 
+// A silent `loop {}` here makes every kernel panic indistinguishable from a
+// hardware deadlock -- confirmed the hard way debugging the WM target, where
+// the actual cause (a font8x8 glyph-table index panic) looked identical to a
+// PS/2 handshake hang until this was added. Prints "PANIC" plus the
+// panicking file:line (no message formatting -- no_std/no_alloc here, and
+// location alone is enough to find it) to serial before halting.
+fn panic_write_u32(n: u32) {
+    let mut buf = [0u8; 10];
+    let mut i = buf.len();
+    let mut v = n;
+    if v == 0 {
+        ling_kernel::drivers::serial::write(b"0");
+        return;
+    }
+    while v > 0 {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    ling_kernel::drivers::serial::write(&buf[i..]);
+}
+
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    ling_kernel::drivers::serial::write(b"\nPANIC");
+    if let Some(loc) = info.location() {
+        ling_kernel::drivers::serial::write(b" at ");
+        ling_kernel::drivers::serial::write(loc.file().as_bytes());
+        ling_kernel::drivers::serial::write(b":");
+        panic_write_u32(loc.line());
+    }
+    ling_kernel::drivers::serial::write(b"\n");
+    loop {
+        unsafe { core::arch::asm!("hlt") };
+    }
 }
 
 #[no_mangle]

@@ -1,0 +1,281 @@
+// ─────────────────────────────────────────────────────────────────────────
+//  Ling vs Python+Panda3D — engine-feature benchmark.
+//  Each line:  BENCH <name> RESULT <checksum> TIME <seconds>
+//  Mirrors panda_bench.py exactly (same math, same op order):
+//    MATH      vec_math         scalar dot/cross/length   (Panda3D: LVecBase3d)
+//    COMPUTING noise_field      fbm builtin, 4 octaves    (Panda3D: StackedPerlinNoise2)
+//    GRAPHICS  vertex_pipeline  rotate+translate+project  (Panda3D: LMatrix4d)
+//    AUDIO     fm_synth         2-op FM + envelope        (Panda3D has no DSP API)
+//    CRYPTO    hash_chain       sha256_hex chain          (Panda3D: HashVal MD5)
+//    AI        boids            seek + separation flock   (Panda3D: LVecBase3d)
+//    PHYSICS   spring_rope      spring-mass rope, symplectic Euler
+//  noise_field / hash_chain use different algorithms per language (Perlin
+//  tables / SHA-256 vs MD5) so their checksums are per-language only.
+// ─────────────────────────────────────────────────────────────────────────
+
+bind start = do {
+    bind PI = 3.141592653589793
+
+    // ── MATH: vec_math ────────────────────────────────────────────────────
+    bind t0 = time_now()
+    bind acc = 0.0
+    bind i = 0
+    while i < 400000 {
+        bind ax = sin(i * 0.001)
+        bind ay = cos(i * 0.001)
+        bind az = 0.5
+        bind bx = cos(i * 0.002)
+        bind by = sin(i * 0.002)
+        bind bz = 0.0 - 0.5
+        bind dd = ax * bx + ay * by + az * bz
+        bind cx = ay * bz - az * by
+        bind cy = az * bx - ax * bz
+        bind cz = ax * by - ay * bx
+        bind clen = sqrt(cx * cx + cy * cy + cz * cz)
+        bind acc = acc + dd + clen
+        if clen > 0.000000001 {
+            bind acc = acc + cx / clen
+        }
+        bind i = i + 1
+    }
+    print("BENCH vec_math RESULT ", acc, " TIME ", time_now() - t0)
+
+    // ── COMPUTING: noise_field (fbm 4 octaves over 350x350 grid) ─────────
+    bind t0 = time_now()
+    bind acc = 0.0
+    bind y = 0
+    while y < 350 {
+        bind x = 0
+        while x < 350 {
+            bind acc = acc + fbm(x * 0.05, y * 0.05, 4, 42)
+            bind x = x + 1
+        }
+        bind y = y + 1
+    }
+    print("BENCH noise_field RESULT ", acc, " TIME ", time_now() - t0)
+
+    // ── GRAPHICS: vertex_pipeline (rotate Y + translate z-6 + project) ───
+    bind t0 = time_now()
+    bind P = 2000
+    bind F = 150
+    bind gx = list_new()
+    bind gy = list_new()
+    bind gz = list_new()
+    bind j = 0
+    while j < P {
+        bind gx = list_push(gx, sin(j) * 1.5)
+        bind gy = list_push(gy, cos(j * 0.7))
+        bind gz = list_push(gz, sin(j * 0.3))
+        bind j = j + 1
+    }
+    bind acc = 0.0
+    bind f = 0
+    while f < F {
+        bind ang = f * 0.7 * PI / 180.0
+        bind ca = cos(ang)
+        bind sa = sin(ang)
+        bind j = 0
+        while j < P {
+            bind x = list_get(gx, j)
+            bind y = list_get(gy, j)
+            bind z = list_get(gz, j)
+            bind xr = x * ca + z * sa
+            bind zr = z * ca - x * sa - 6.0
+            bind ww = 0.0 - zr
+            bind acc = acc + xr / ww * 400.0 + 400.0 + y / ww * 300.0 + 300.0
+            bind j = j + 1
+        }
+        bind f = f + 1
+    }
+    print("BENCH vertex_pipeline RESULT ", acc, " TIME ", time_now() - t0)
+
+    // ── AUDIO: fm_synth (2-operator FM + decay envelope) ─────────────────
+    bind t0 = time_now()
+    bind N = 400000
+    bind sr = 44100.0
+    bind acc = 0.0
+    bind j = 0
+    while j < N {
+        bind tt = j / sr
+        bind env = exp(0.0 - 1.5 * tt)
+        bind m2 = sin(2.0 * PI * 660.0 * tt)
+        bind m1 = sin(2.0 * PI * 220.0 * tt + 2.0 * m2)
+        bind acc = acc + env * sin(2.0 * PI * 110.0 * tt + 3.0 * m1)
+        bind j = j + 1
+    }
+    print("BENCH fm_synth RESULT ", acc, " TIME ", time_now() - t0)
+
+    // ── CRYPTO: hash_chain (iterated sha256_hex over 256-char messages) ──
+    bind t0 = time_now()
+    bind s = substr(sha256_hex("ling-panda-benchmark-0"), 0, 32)
+    bind i = 0
+    while i < 50000 {
+        bind msg = str_repeat(s, 8)
+        bind s = substr(sha256_hex(msg), 0, 32)
+        bind i = i + 1
+    }
+    bind chk = hex_to_number(substr(s, 0, 8))
+    print("BENCH hash_chain RESULT ", chk, " TIME ", time_now() - t0)
+
+    // ── AI: boids (seek center + separation, sequential update) ──────────
+    bind t0 = time_now()
+    bind B = 50
+    bind S = 200
+    bind px = list_new()
+    bind py = list_new()
+    bind pz = list_new()
+    bind vx = list_new()
+    bind vy = list_new()
+    bind vz = list_new()
+    bind i = 0
+    while i < B {
+        // exact rational init (no trig) so Ling/Python trajectories are bit-identical
+        bind px = list_push(px, ((i * 37) % 101) * 0.07 - 3.5)
+        bind py = list_push(py, ((i * 53) % 97) * 0.08 - 3.8)
+        bind pz = list_push(pz, ((i * 71) % 89) * 0.05 - 2.2)
+        bind vx = list_push(vx, 0.0)
+        bind vy = list_push(vy, 0.0)
+        bind vz = list_push(vz, 0.0)
+        bind i = i + 1
+    }
+    bind stp = 0
+    while stp < S {
+        bind cenx = 0.0
+        bind ceny = 0.0
+        bind cenz = 0.0
+        bind i = 0
+        while i < B {
+            bind cenx = cenx + list_get(px, i)
+            bind ceny = ceny + list_get(py, i)
+            bind cenz = cenz + list_get(pz, i)
+            bind i = i + 1
+        }
+        bind rB = 1.0 / B
+        bind cenx = cenx * rB
+        bind ceny = ceny * rB
+        bind cenz = cenz * rB
+        bind i = 0
+        while i < B {
+            bind pxi = list_get(px, i)
+            bind pyi = list_get(py, i)
+            bind pzi = list_get(pz, i)
+            bind sx = (cenx - pxi) * 0.01
+            bind sy = (ceny - pyi) * 0.01
+            bind sz = (cenz - pzi) * 0.01
+            bind sepx = 0.0
+            bind sepy = 0.0
+            bind sepz = 0.0
+            bind j = 0
+            while j < B {
+                if j != i {
+                    bind dx = pxi - list_get(px, j)
+                    bind dy = pyi - list_get(py, j)
+                    bind dz = pzi - list_get(pz, j)
+                    bind d2 = dx * dx + dy * dy + dz * dz
+                    // smooth 1/d^2 falloff, no cutoff branch (see panda_bench.py)
+                    bind w2 = 0.05 / (d2 + 0.01)
+                    bind sepx = sepx + dx * w2
+                    bind sepy = sepy + dy * w2
+                    bind sepz = sepz + dz * w2
+                }
+                bind j = j + 1
+            }
+            bind nvx = (list_get(vx, i) + sx + sepx) * 0.98
+            bind nvy = (list_get(vy, i) + sy + sepy) * 0.98
+            bind nvz = (list_get(vz, i) + sz + sepz) * 0.98
+            bind spd = sqrt(nvx * nvx + nvy * nvy + nvz * nvz)
+            if spd > 0.5 {
+                bind cl = 0.5 / spd
+                bind nvx = nvx * cl
+                bind nvy = nvy * cl
+                bind nvz = nvz * cl
+            }
+            bind vx = list_set(vx, i, nvx)
+            bind vy = list_set(vy, i, nvy)
+            bind vz = list_set(vz, i, nvz)
+            bind px = list_set(px, i, pxi + nvx)
+            bind py = list_set(py, i, pyi + nvy)
+            bind pz = list_set(pz, i, pzi + nvz)
+            bind i = i + 1
+        }
+        bind stp = stp + 1
+    }
+    bind acc = 0.0
+    bind i = 0
+    while i < B {
+        bind xx = list_get(px, i)
+        bind yy = list_get(py, i)
+        bind zz = list_get(pz, i)
+        bind acc = acc + sqrt(xx * xx + yy * yy + zz * zz)
+        bind i = i + 1
+    }
+    print("BENCH boids RESULT ", acc, " TIME ", time_now() - t0)
+
+    // ── PHYSICS: spring_rope (pinned chain, symplectic Euler, +y down) ───
+    bind t0 = time_now()
+    bind M = 64
+    bind S = 1200
+    bind K = 200.0
+    bind REST = 0.12
+    bind DT = 0.002
+    bind DRAG = 0.995
+    bind G = 2.0
+    bind px = list_new()
+    bind py = list_new()
+    bind vx = list_new()
+    bind vy = list_new()
+    bind fx = list_new()
+    bind fy = list_new()
+    bind i = 0
+    while i < M {
+        bind px = list_push(px, i * 0.12)
+        bind py = list_push(py, 0.0)
+        bind vx = list_push(vx, 0.0)
+        bind vy = list_push(vy, 0.0)
+        bind fx = list_push(fx, 0.0)
+        bind fy = list_push(fy, 0.0)
+        bind i = i + 1
+    }
+    bind stp = 0
+    while stp < S {
+        bind i = 0
+        while i < M {
+            bind fx = list_set(fx, i, 0.0)
+            bind fy = list_set(fy, i, G)
+            bind i = i + 1
+        }
+        bind i = 0
+        while i < M - 1 {
+            bind dx = list_get(px, i + 1) - list_get(px, i)
+            bind dy = list_get(py, i + 1) - list_get(py, i)
+            bind dist = sqrt(dx * dx + dy * dy)
+            bind fmag = K * (dist - REST)
+            bind sc = fmag / dist
+            bind fxi = dx * sc
+            bind fyi = dy * sc
+            bind fx = list_set(fx, i, list_get(fx, i) + fxi)
+            bind fy = list_set(fy, i, list_get(fy, i) + fyi)
+            bind fx = list_set(fx, i + 1, list_get(fx, i + 1) - fxi)
+            bind fy = list_set(fy, i + 1, list_get(fy, i + 1) - fyi)
+            bind i = i + 1
+        }
+        bind i = 1
+        while i < M {
+            bind nvx = (list_get(vx, i) + list_get(fx, i) * DT) * DRAG
+            bind nvy = (list_get(vy, i) + list_get(fy, i) * DT) * DRAG
+            bind vx = list_set(vx, i, nvx)
+            bind vy = list_set(vy, i, nvy)
+            bind px = list_set(px, i, list_get(px, i) + nvx * DT)
+            bind py = list_set(py, i, list_get(py, i) + nvy * DT)
+            bind i = i + 1
+        }
+        bind stp = stp + 1
+    }
+    bind acc = 0.0
+    bind i = 0
+    while i < M {
+        bind acc = acc + list_get(px, i) + list_get(py, i)
+        bind i = i + 1
+    }
+    print("BENCH spring_rope RESULT ", acc, " TIME ", time_now() - t0)
+}
