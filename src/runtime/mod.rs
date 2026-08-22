@@ -9648,6 +9648,29 @@ impl Interpreter {
             // disk; returns true on success. The only way binary data (an
             // uploaded/rendered PNG) reaches the filesystem from `.ling` source.
             #[cfg(not(target_arch = "wasm32"))]
+            // remove_file(path) -> bool. Deletes a file. Used to clear a
+            // streamed upload temp file when a publish is rejected, so a
+            // failed run cannot leave gigabytes behind in storage/tmp.
+            "remove_file" | "ลบไฟล์" | "删除文件" | "ファイル削除" | "파일삭제" => {
+                let path = self.arg_str(&args, 0, "");
+                return Ok(Value::Bool(std::fs::remove_file(&path).is_ok()));
+            },
+            // rename_file(from, to) -> bool. Moves a file, falling back to
+            // copy+delete when the two ends are on different filesystems.
+            // Finalising a streamed upload is a rename, not a copy: the
+            // artifact is already fully written and can be hundreds of MB.
+            "rename_file" | "เปลี่ยนชื่อไฟล์" | "重命名文件" | "ファイル改名" | "파일이름변경" => {
+                let from = self.arg_str(&args, 0, "");
+                let to = self.arg_str(&args, 1, "");
+                if std::fs::rename(&from, &to).is_ok() {
+                    return Ok(Value::Bool(true));
+                }
+                let ok = std::fs::copy(&from, &to).is_ok();
+                if ok {
+                    let _ = std::fs::remove_file(&from);
+                }
+                return Ok(Value::Bool(ok));
+            },
             "base64_decode_to_file" | "base64파일로저장" => {
                 use base64::Engine as _;
                 let b64 = self.arg_str(&args, 0, "");

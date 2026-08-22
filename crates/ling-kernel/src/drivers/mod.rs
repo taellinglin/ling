@@ -9,6 +9,8 @@ pub mod ahci;
 #[cfg(target_arch = "x86_64")]
 pub mod ata;
 #[cfg(target_arch = "x86_64")]
+pub mod font8x8;
+#[cfg(target_arch = "x86_64")]
 pub mod framebuffer;
 #[cfg(target_arch = "x86_64")]
 pub mod keyboard;

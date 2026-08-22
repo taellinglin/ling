@@ -39,10 +39,39 @@ static mut PENDING_EXTENDED: bool = false;
 /// speeds" — replaced now that IRQ-driven input makes counting poll
 /// iterations meaningless (there often aren't any: `read_char` parks in
 /// `hlt` between keystrokes instead of spinning).
-const IDLE_MS_THRESHOLD: u64 = 8_000;
+const IDLE_MS_THRESHOLD: u64 = 300_000; // 5 minutes
 
 static mut LAST_ACTIVITY_MS: u64 = 0;
 static mut IDLE_FIRED: bool = false;
+
+/// A gap this much longer than any real inter-keystroke timing most likely
+/// means something interrupted input mid-sequence -- a VirtualBox host
+/// focus change or Ctrl+Alt+Del was the reported trigger. Without this,
+/// e.g. `PENDING_EXTENDED` left `true` by a make code that never got its
+/// follow-up byte before focus was lost would silently misroute every
+/// subsequent scancode through the extended-key branch forever, with no way
+/// to self-recover. Needs real VirtualBox confirmation, not just QEMU --
+/// this is the best fix available without reproducing the exact PS/2
+/// resync behavior VirtualBox's host-focus handling triggers.
+const FOCUS_LOSS_GAP_MS: u64 = 2_000;
+
+/// Reset modifier/sequence state if it's been stale long enough that
+/// trusting it would misinterpret the next scancode. Call before processing
+/// any newly-read scancode, using the *old* `LAST_ACTIVITY_MS` (i.e. before
+/// `note_activity()` updates it).
+fn reset_stale_modifier_state() {
+    unsafe {
+        if LAST_ACTIVITY_MS == 0 {
+            return; // first keypress ever -- nothing to have gotten stuck
+        }
+        let now = crate::arch::timer::now_ms();
+        if now.saturating_sub(LAST_ACTIVITY_MS) > FOCUS_LOSS_GAP_MS {
+            PENDING_EXTENDED = false;
+            CTRL_DOWN = false;
+            SHIFT_DOWN = false;
+        }
+    }
+}
 
 /// Fixed-capacity scancode queue the IRQ1 handler (`arch::x86_64::idt`)
 /// pushes into and `read_scancode` drains. Single producer (the ISR, which
@@ -164,6 +193,7 @@ fn try_switch_term(code: u8) -> bool {
 pub fn read_char() -> u8 {
     loop {
         if let Some(code) = read_scancode() {
+            reset_stale_modifier_state();
             note_activity();
             if code == EXT_PREFIX {
                 unsafe { PENDING_EXTENDED = true; }
@@ -211,6 +241,11 @@ pub fn read_char() -> u8 {
             }
         } else {
             note_idle_check();
+            // The PIT heartbeat wakes this `hlt` ~100x/sec even with no key
+            // activity, which is exactly the periodic hook the cursor blink
+            // needs (see `term::tick_cursor_blink`'s doc comment) -- no new
+            // interrupt wiring required to get it ticking while idle.
+            crate::drivers::term::tick_cursor_blink();
             // Park until the next interrupt (keyboard, mouse, or the PIT
             // heartbeat, whichever comes first) instead of burning CPU in a
             // busy-poll — real work now that input is IRQ-delivered rather
@@ -224,6 +259,7 @@ pub fn read_char() -> u8 {
 pub fn poll_char() -> u8 {
     match read_scancode() {
         Some(code) => {
+            reset_stale_modifier_state();
             note_activity();
             if code == EXT_PREFIX {
                 unsafe { PENDING_EXTENDED = true; }

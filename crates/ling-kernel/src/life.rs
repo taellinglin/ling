@@ -5,8 +5,9 @@
 //! live cells, and a small per-generation chance for any cell to flip
 //! regardless of the rules so it keeps moving indefinitely instead of
 //! settling into stable/dead patterns the way unmodified Life usually
-//! does. Runs until a key is pressed or the mouse moves/clicks.
-use crate::drivers::{keyboard, mouse, term, vga};
+//! does. Runs until a key is pressed (mouse movement no longer exits it --
+//! just looking at it, cursor drifting, shouldn't cut it short).
+use crate::drivers::{keyboard, term, vga};
 
 const WIDTH: usize = 80;
 const HEIGHT: usize = 25;
@@ -154,9 +155,8 @@ fn draw() {
     term::blit_active();
 }
 
-/// Run the screensaver until a key is pressed or the mouse moves/clicks;
-/// clears the screen on the way out so the shell's next prompt starts
-/// clean.
+/// Run the screensaver until a key is pressed; clears the screen on the way
+/// out so the shell's next prompt starts clean.
 pub fn run() {
     seed_rng();
     init_quarter();
@@ -165,10 +165,6 @@ pub fn run() {
     // whichever font happened to be active when the command was typed.
     vga::use_idle_font();
 
-    let start_x = mouse::x();
-    let start_y = mouse::y();
-    let start_buttons = mouse::buttons();
-
     loop {
         step();
         draw();
@@ -176,12 +172,9 @@ pub fn run() {
             unsafe { crate::arch::cpu::pause() };
         }
 
-        let key = keyboard::poll_char();
-        if key != 0
-            || mouse::x() != start_x
-            || mouse::y() != start_y
-            || mouse::buttons() != start_buttons
-        {
+        // Keypress only -- mouse movement no longer exits, so the pattern
+        // keeps running while you're just looking at it, not typing.
+        if keyboard::poll_char() != 0 {
             break;
         }
     }

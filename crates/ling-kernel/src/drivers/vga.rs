@@ -120,6 +120,19 @@ pub fn restore_normal_font() {
     }
 }
 
+/// Disable the hardware text-mode cursor (CRTC "Cursor Start" register,
+/// index 0x0A, bit 5). Nothing in this driver ever programs the CRTC
+/// cursor-position registers (0x3D4/0x3D5 index 0x0E/0x0F) either, so
+/// leaving the hardware cursor enabled means it just sits wherever GRUB/BIOS
+/// last left it, blinking, never tracking real writes -- the reported "cursor
+/// in a random position" bug. `term.rs` draws its own cursor instead (always
+/// derived from the live write position), so the hardware one just needs to
+/// get out of the way, not be kept in sync. Call once, at boot.
+pub unsafe fn disable_hardware_cursor() {
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);
+}
+
 /// Set one VGA DAC palette entry (index 0..=15, matching `Color`'s ordinal
 /// values). `r`/`g`/`b` are 6-bit (0..=63) — the VGA DAC's native precision,
 /// not the 8-bit values a CSS-style hex color gives you; scale by dividing

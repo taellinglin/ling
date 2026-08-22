@@ -29,11 +29,55 @@ impl Term {
 static mut TERMS: [Term; NUM_TERMS] = [Term::new(); NUM_TERMS];
 static mut ACTIVE: usize = 0;
 
+// ─── Software cursor ──────────────────────────────────────────────────────
+// See `vga::disable_hardware_cursor`'s doc comment for why this exists
+// instead of programming the CRTC cursor-position registers: drawing it
+// ourselves, re-derived from the live `col`/`row` on every blit, means it's
+// always exactly where the cursor actually is rather than a stale register
+// nobody ever updates. Overlaid on top of the real hardware copy in
+// `blit_active_to_hardware`, never written into `cells` itself, so it never
+// needs "restoring" -- the next blit just omits it during the off phase.
+
+const CURSOR_CHAR: u8 = b'|';
+const CURSOR_BLINK_MS: u64 = 250; // faster than the ~530ms hardware default
+// Cycles one step through these brighter palette slots each time the
+// cursor blinks back on (Color::{LightCyan, LightGreen, Yellow, LightMagenta}).
+const CURSOR_COLORS: [u8; 4] = [0x0B, 0x0A, 0x0E, 0x0D];
+
+static mut CURSOR_VISIBLE: bool = true;
+static mut CURSOR_COLOR_IDX: usize = 0;
+static mut CURSOR_LAST_TOGGLE_MS: u64 = 0;
+
+/// Called from the keyboard idle loop, which already wakes ~100x/sec off
+/// the timer heartbeat even with no key activity (see
+/// `keyboard::read_char`'s `hlt`) -- advances the blink clock and re-blits
+/// if the phase changed. A no-op the rest of the time; no new interrupt
+/// wiring needed.
+pub fn tick_cursor_blink() {
+    let now = crate::arch::timer::now_ms();
+    unsafe {
+        if now.saturating_sub(CURSOR_LAST_TOGGLE_MS) < CURSOR_BLINK_MS {
+            return;
+        }
+        CURSOR_LAST_TOGGLE_MS = now;
+        CURSOR_VISIBLE = !CURSOR_VISIBLE;
+        if CURSOR_VISIBLE {
+            CURSOR_COLOR_IDX = (CURSOR_COLOR_IDX + 1) % CURSOR_COLORS.len();
+        }
+    }
+    blit_active_to_hardware();
+}
+
 fn blit_active_to_hardware() {
     unsafe {
         let t = &TERMS[ACTIVE];
         for i in 0..(WIDTH * HEIGHT * 2) {
             ptr::write_volatile(VGA_BUF.add(i), t.cells[i]);
+        }
+        if CURSOR_VISIBLE && t.row < HEIGHT && t.col < WIDTH {
+            let pos = t.row * WIDTH + t.col;
+            ptr::write_volatile(VGA_BUF.add(pos * 2), CURSOR_CHAR);
+            ptr::write_volatile(VGA_BUF.add(pos * 2 + 1), CURSOR_COLORS[CURSOR_COLOR_IDX]);
         }
     }
 }

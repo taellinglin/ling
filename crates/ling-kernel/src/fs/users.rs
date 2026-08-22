@@ -6,9 +6,19 @@
 //! roadmap (see `packages/README.md`'s no_std `ling-crypto` port item), so
 //! this is meaningfully better than plaintext but not what a real
 //! multi-user system should ship long-term. There's also no
-//! process/privilege model yet, so nothing here is *enforced* — `login`
-//! only changes which name new lingfs writes get attributed to
-//! (`lingfs::set_current_user`), it doesn't gate access to anything.
+//! process/privilege model yet, so nothing here is *kernel*-enforced —
+//! `login` only changes which name new lingfs writes get attributed to
+//! (`lingfs::set_current_user`).
+//!
+//! The shell's `sudo` (see `apps/lsh`) checks `group_of() == "wheel"` via
+//! `ling_kernel_user_is_wheel` before running certain commands, with a
+//! password re-prompt. Say plainly what that can and can't mean: there is
+//! no ring-3, no per-process address space, no MMU-enforced boundary of any
+//! kind in this kernel — every line of code already runs with full
+//! hardware privilege, sudo gate or not. It's a shell-level social
+//! contract (stops an operator from fat-fingering a sensitive command by
+//! accident, same category of value as bash/zsh's own `sudo` for a single
+//! physical operator), not a security boundary against malicious code.
 use crate::fs::lingfs::{self, BLOCK_SIZE};
 
 const USERS_DIR: &str = "users";

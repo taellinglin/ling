@@ -17,7 +17,7 @@ dev-certs = ["dep:rcgen"]
 
 [dependencies]
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "sync"] }
-axum = { version = "0.8", features = ["json", "macros"] }
+axum = { version = "0.8", features = ["json", "macros", "multipart"] }
 # tls-rustls-no-provider (not tls-rustls): we install the `ring` crypto
 # provider ourselves below, so this doesn't pull in aws-lc-rs, which needs
 # cmake/NASM to build on Windows.

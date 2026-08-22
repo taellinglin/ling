@@ -164,6 +164,11 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             types::I64,
         ),
         ("ling_kernel_fb_present", &[], types::I64),
+        (
+            "ling_kernel_fb_draw_str",
+            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
         ("ling_kernel_pkg_install", &[types::I64], types::I64),
         ("ling_kernel_pkg_install_module", &[], types::I64),
         ("ling_kernel_life_run", &[], types::I64),
@@ -189,6 +194,8 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_user_set_password", &[types::I64, types::I64], types::I64),
         ("ling_kernel_user_set_group", &[types::I64, types::I64], types::I64),
         ("ling_kernel_whoami", &[], types::I64),
+        ("ling_kernel_user_group", &[], types::I64),
+        ("ling_kernel_user_is_wheel", &[], types::I64),
         ("ling_kernel_cd", &[types::I64], types::I64),
         ("ling_kernel_cwd", &[], types::I64),
         ("ling_kernel_read_line_masked", &[], types::I64),
@@ -197,6 +204,17 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             &[types::I64, types::I64, types::I64],
             types::I64,
         ),
+        // Cooperative scheduler (proc::sched) -- these existed as real,
+        // working Rust intrinsics in ling-kernel but were never added here,
+        // so any `.ling` call to them was silently dropped at compile time
+        // (undeclared-symbol calls don't error, they just don't get a
+        // func_refs entry -- see `declare_runtime_functions`'s caller).
+        ("ling_kernel_spawn", &[types::I64], types::I64),
+        ("ling_kernel_yield", &[], types::I64),
+        ("ling_kernel_exit", &[], types::I64),
+        ("ling_kernel_getpid", &[], types::I64),
+        ("ling_kernel_proc_selftest", &[], types::I64),
+        ("ling_kernel_proc_ps", &[], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {

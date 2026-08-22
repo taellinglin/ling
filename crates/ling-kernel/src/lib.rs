@@ -38,7 +38,7 @@ use crate::arch::cpu;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::{bootmodule, io, timer};
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::{framebuffer, keyboard, mouse, serial, term, vga};
+use crate::drivers::{font8x8, framebuffer, keyboard, mouse, serial, term, vga};
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
@@ -57,6 +57,7 @@ pub fn init() {
         // slots a cell picks) — swap `THEME_LINGOS` for another `vga::Theme`
         // to retheme the whole console; see its doc comment.
         vga::apply_theme(&vga::THEME_LINGOS);
+        unsafe { vga::disable_hardware_cursor() };
         term::clear_active();
         term::set_color_active(vga::color_byte(
             vga::Color::LightGreen as u8,
@@ -265,9 +266,10 @@ pub unsafe extern "C" fn ling_kernel_spawn(entry: u64) -> u64 {
     sched::spawn(entry)
 }
 
-/// Voluntarily give up the CPU to the next `Ready` task, if any. This
-/// kernel has no timer interrupt, so nothing else ever runs unless
-/// something calls this (or `ling_kernel_exit`) — see `sched`'s module doc.
+/// Voluntarily give up the CPU to the next `Ready` task, if any. The 100Hz
+/// timer heartbeat isn't wired to preemption, so nothing else ever runs
+/// unless something calls this (or `ling_kernel_exit`) — see `sched`'s
+/// module doc.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_yield() -> u64 {
@@ -288,6 +290,42 @@ pub unsafe extern "C" fn ling_kernel_exit() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
     sched::getpid()
+}
+
+/// Spawn a task, yield to it, confirm it actually ran and yielded back.
+/// Returns 1 on success, 0 on failure. Honest scope: proves cooperative
+/// task creation/switching works, nothing about preemption or isolation
+/// (this scheduler has neither — see `sched`'s module doc).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
+    if sched::selftest() { 1 } else { 0 }
+}
+
+/// Print each task slot's state to the console. Returns the count of
+/// non-`Unused` slots.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_ps() -> u64 {
+    let mut count = 0u64;
+    for i in 0..sched::MAX_TASKS {
+        let Some(state) = sched::task_state(i) else { continue };
+        let label: &[u8] = match state {
+            sched::TaskStateInfo::Unused => b"unused",
+            sched::TaskStateInfo::Ready => b"ready",
+            sched::TaskStateInfo::Running => b"running",
+            sched::TaskStateInfo::Exited => b"exited",
+        };
+        console_write(b"  slot ");
+        print_decimal(i as u64);
+        console_write(b": ");
+        console_write(label);
+        console_write(b"\n");
+        if state != sched::TaskStateInfo::Unused {
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Run `lingfs::self_test()` against the real disk (mount/format, put,
@@ -479,6 +517,20 @@ pub unsafe extern "C" fn ling_kernel_fb_present() -> u64 {
     0
 }
 
+/// Draw an 8x8-per-character bitmap string into the framebuffer's back
+/// buffer at `(x, y)` -- see `drivers::font8x8`'s module doc for why this
+/// exists (nothing rendered text into pixel-graphics mode before it; the
+/// VGA hardware font is a different, text-mode-only consumer). `fg`/`bg`
+/// are 0x00RRGGBB, same as every other `ling_kernel_fb_*` color argument.
+/// Call `ling_kernel_fb_present` once after a batch of draws, same as the
+/// fill/clear primitives it's built on.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64, bg: u64) -> u64 {
+    font8x8::draw_str(x as u32, y as u32, arg_str(s).as_bytes(), fg as u32, bg as u32);
+    0
+}
+
 /// Install a `.lpkg` blob already stored at `blob_name` in lingfs (see
 /// `packages.rs` for the format and its honest limits — no network fetch,
 /// no signing, no way to execute the result). Returns 1 on success, 0 on a
@@ -654,6 +706,39 @@ pub unsafe extern "C" fn ling_kernel_user_set_group(username: u64, new_group: u6
 pub unsafe extern "C" fn ling_kernel_whoami() -> u64 {
     let name = lingfs::current_user();
     strings::ling_str_new(name.as_ptr(), name.len())
+}
+
+/// The currently logged-in user's group, as an LSTR (empty if unset).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_group() -> u64 {
+    let name = lingfs::current_user();
+    let mut buf = [0u8; 32];
+    let len = users::group_of(name, &mut buf).unwrap_or(0);
+    strings::ling_str_new(buf.as_ptr(), len)
+}
+
+/// Whether the currently logged-in user is in the `wheel` group — the
+/// `sudo` gate's check. See `fs/users.rs`'s module doc for exactly what
+/// this can and can't mean (a shell-level gate, not a kernel security
+/// boundary — this kernel has no ring-3/per-process isolation at all).
+///
+/// `"root"` (the implicit identity before any real `login`/`useradd` has
+/// ever happened — `lingfs::current_user()`'s own default) is always
+/// treated as wheel, same as real Unix root bypassing group checks —
+/// otherwise a fresh install has no way to ever create its first user:
+/// `useradd` itself requires wheel, and no lingfs user record (let alone a
+/// wheel one) exists until something has already run `useradd` once.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_is_wheel() -> u64 {
+    let name = lingfs::current_user();
+    if name == "root" {
+        return 1;
+    }
+    let mut buf = [0u8; 32];
+    let len = users::group_of(name, &mut buf).unwrap_or(0);
+    (len == 5 && &buf[..5] == b"wheel") as u64
 }
 
 /// `ed25519_verify(pubkey, msg, sig) -> 1|0`. All three arguments are raw
