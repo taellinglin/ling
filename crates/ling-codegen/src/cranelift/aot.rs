@@ -273,6 +273,13 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_proc_selftest", &[], types::I64),
         ("ling_kernel_proc_ps", &[], types::I64),
         ("ling_kernel_uptime_ms", &[], types::I64),
+        ("ling_kernel_rtc_unix_ts", &[], types::I64),
+        ("ling_kernel_rtc_year", &[], types::I64),
+        ("ling_kernel_rtc_month", &[], types::I64),
+        ("ling_kernel_rtc_day", &[], types::I64),
+        ("ling_kernel_rtc_hour", &[], types::I64),
+        ("ling_kernel_rtc_minute", &[], types::I64),
+        ("ling_kernel_rtc_second", &[], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {

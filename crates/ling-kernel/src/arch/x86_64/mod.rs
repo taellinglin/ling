@@ -9,6 +9,7 @@ pub mod cpu;
 pub mod io;
 pub mod meminfo;
 pub mod pci;
+pub mod rtc;
 pub mod timer;
 
 pub mod gdt;

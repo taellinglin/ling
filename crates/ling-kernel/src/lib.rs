@@ -303,6 +303,48 @@ pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
     timer::now_ms()
 }
 
+/// Seconds since the Unix epoch, per the CMOS RTC (see `arch::rtc`'s doc for
+/// what "UTC" means here in practice). The one source of real wall-clock
+/// time anywhere in this kernel -- everything else is boot-relative only.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_unix_ts() -> u64 {
+    arch::rtc::unix_timestamp().max(0) as u64
+}
+
+/// Individual UTC calendar fields from the CMOS RTC, for callers that want
+/// to render a date/time rather than just diff two timestamps.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_year() -> u64 {
+    arch::rtc::read().year as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_month() -> u64 {
+    arch::rtc::read().month as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_day() -> u64 {
+    arch::rtc::read().day as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_hour() -> u64 {
+    arch::rtc::read().hour as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_minute() -> u64 {
+    arch::rtc::read().minute as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_second() -> u64 {
+    arch::rtc::read().second as u64
+}
+
 /// Spawn a task, yield to it, confirm it actually ran and yielded back.
 /// Returns 1 on success, 0 on failure. Honest scope: proves cooperative
 /// task creation/switching works, nothing about preemption or isolation
