@@ -300,16 +300,7 @@ pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
-    let ms = timer::now_ms();
-    static mut LAST_LOGGED_SEC: u64 = u64::MAX;
-    let sec = ms / 1000;
-    if sec != LAST_LOGGED_SEC {
-        LAST_LOGGED_SEC = sec;
-        serial::write(b"DEBUG: uptime sec=");
-        print_decimal(sec);
-        serial::write(b"\n");
-    }
-    ms
+    timer::now_ms()
 }
 
 /// Spawn a task, yield to it, confirm it actually ran and yielded back.
@@ -594,13 +585,6 @@ pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_liquid_step(target_x: u64, target_y: u64) -> u64 {
-    static mut LAST_LOGGED: u64 = u64::MAX;
-    if target_x != LAST_LOGGED {
-        LAST_LOGGED = target_x;
-        serial::write(b"DEBUG: target_x=");
-        print_decimal(target_x);
-        serial::write(b"\n");
-    }
     wm_liquid::step(target_x as f64, target_y as f64);
     0
 }
