@@ -29,17 +29,20 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev xorg-dev
 
+      # ling-kernel is excluded from both steps below: it's no_std/bare-metal
+      # and requires the nightly toolchain (`#![feature(abi_x86_interrupt)]`,
+      # plus `-Z build-std` for a real build — see `ling build --platform
+      # kernel` / gen_kernel_cargo_toml in src/main.rs), which this job never
+      # installs (stable only, line 20). `cargo build --workspace` without
+      # the exclude fails immediately with E0554 ("#![feature] may not be
+      # used on the stable release channel") — confirmed against the exact
+      # CI failure. Its own boot assembly (boot32.rs) also calls
+      # `kernel_entry`, which it never defines itself (only a generated
+      # kernel project's main.rs does), so even on nightly `cargo test`
+      # would fail to link a standalone test binary for it regardless.
       - name: Build
-        run: cargo build --workspace --verbose
+        run: cargo build --workspace --exclude ling-kernel --verbose
 
-      # ling-kernel's own boot assembly (boot32.rs) calls `kernel_entry`,
-      # which it never defines itself — that symbol is only ever supplied by
-      # a generated kernel project's own main.rs (`ling build --platform
-      # kernel`, see gen_kernel_main_rs in src/main.rs). `cargo build` is
-      # fine (a lib doesn't need to link), but `cargo test` tries to link a
-      # standalone test binary for every workspace member and fails with
-      # "unresolved external symbol kernel_entry" for this one — confirmed
-      # by reproducing the exact CI failure locally.
       - name: Run tests
         run: cargo test --workspace --exclude ling-kernel --verbose
 
