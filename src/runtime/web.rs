@@ -153,9 +153,7 @@ async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
 
         if is_file {
             if !synthesized.is_empty() {
-                return Err(
-                    (StatusCode::BAD_REQUEST, "more than one file part").into_response()
-                );
+                return Err((StatusCode::BAD_REQUEST, "more than one file part").into_response());
             }
             if let Err(e) = tokio::fs::create_dir_all("storage/tmp").await {
                 return Err((
@@ -208,11 +206,10 @@ async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
                     Err(e) => {
                         drop(file);
                         let _ = tokio::fs::remove_file(&path).await;
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            format!("upload stream broke: {e}"),
-                        )
-                            .into_response());
+                        return Err(
+                            (StatusCode::BAD_REQUEST, format!("upload stream broke: {e}"))
+                                .into_response(),
+                        );
                     },
                 }
             }
@@ -224,8 +221,11 @@ async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
                 )
                     .into_response());
             }
-            synthesized =
-                format!("artifact_path={}&artifact_size={}&", url_encode(&path), total);
+            synthesized = format!(
+                "artifact_path={}&artifact_size={}&",
+                url_encode(&path),
+                total
+            );
         } else {
             if RESERVED_FIELDS.contains(&name.as_str()) {
                 continue;
@@ -246,10 +246,8 @@ async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
                     },
                     Ok(None) => break,
                     Err(e) => {
-                        return Err(
-                            (StatusCode::BAD_REQUEST, format!("bad form field: {e}"))
-                                .into_response(),
-                        )
+                        return Err((StatusCode::BAD_REQUEST, format!("bad form field: {e}"))
+                            .into_response())
                     },
                 }
             }
@@ -337,7 +335,11 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         respond_to: resp_tx,
     });
     if sent.is_err() {
-        return (StatusCode::SERVICE_UNAVAILABLE, "no Ling http_serve loop running").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no Ling http_serve loop running",
+        )
+            .into_response();
     }
 
     match resp_rx.await {
@@ -345,11 +347,13 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
             let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::OK);
             let mut r = (status, resp.body).into_response();
             if let Ok(value) = resp.content_type.parse() {
-                r.headers_mut().insert(axum::http::header::CONTENT_TYPE, value);
+                r.headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, value);
             }
             if let Some(sc) = &resp.set_cookie {
                 if let Ok(value) = sc.parse() {
-                    r.headers_mut().insert(axum::http::header::SET_COOKIE, value);
+                    r.headers_mut()
+                        .insert(axum::http::header::SET_COOKIE, value);
                 }
             }
             if let Some(loc) = &resp.location {
@@ -371,7 +375,11 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
             );
             r
         },
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "handler dropped the response").into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "handler dropped the response",
+        )
+            .into_response(),
     }
 }
 
@@ -454,7 +462,9 @@ pub fn value_to_response(v: &crate::runtime::Value) -> HttpResponse {
                     ("status", Value::Number(n)) => resp.status = *n as u16,
                     ("body", Value::Str(s)) => resp.body = s.clone(),
                     ("content_type", Value::Str(s)) => resp.content_type = s.clone(),
-                    ("set_cookie", Value::Str(s)) if !s.is_empty() => resp.set_cookie = Some(s.clone()),
+                    ("set_cookie", Value::Str(s)) if !s.is_empty() => {
+                        resp.set_cookie = Some(s.clone())
+                    },
                     ("location", Value::Str(s)) if !s.is_empty() => resp.location = Some(s.clone()),
                     _ => {},
                 }
@@ -546,7 +556,13 @@ impl AsyncJobs {
     /// one SDAI-specific bit of JSON handling into Rust avoids needing one.
     /// On failure the result starts with `"ERROR:"`, which `.ling` code can
     /// check with a plain string-prefix comparison instead of parsing JSON.
-    pub fn start_sdai_txt2img(&self, base_url: String, prompt: String, width: u32, height: u32) -> String {
+    pub fn start_sdai_txt2img(
+        &self,
+        base_url: String,
+        prompt: String,
+        width: u32,
+        height: u32,
+    ) -> String {
         let id = {
             use rand::RngCore;
             let mut buf = [0u8; 16];
@@ -581,7 +597,11 @@ impl AsyncJobs {
                         format!("ERROR: SDAI returned HTTP {}", resp.status())
                     } else {
                         match resp.json::<ling_http::serde_json::Value>().await {
-                            Ok(v) => match v.get("images").and_then(|im| im.get(0)).and_then(|s| s.as_str()) {
+                            Ok(v) => match v
+                                .get("images")
+                                .and_then(|im| im.get(0))
+                                .and_then(|s| s.as_str())
+                            {
                                 Some(b64) => b64.to_string(),
                                 None => "ERROR: no images[0] in SDAI response".to_string(),
                             },
@@ -611,7 +631,8 @@ struct OAuthResult {
     name: String,
 }
 
-type OAuthMap = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Option<OAuthResult>>>>;
+type OAuthMap =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Option<OAuthResult>>>>;
 
 #[derive(Clone, Default)]
 pub struct OAuthJobs(OAuthMap);
@@ -662,7 +683,9 @@ impl OAuthJobs {
                 if !token_resp.status().is_success() {
                     let status = token_resp.status();
                     let body = token_resp.text().await.unwrap_or_default();
-                    return Err(format!("Google returned HTTP {status} exchanging code: {body}"));
+                    return Err(format!(
+                        "Google returned HTTP {status} exchanging code: {body}"
+                    ));
                 }
                 let token_json: ling_http::serde_json::Value = token_resp
                     .json()
@@ -680,21 +703,35 @@ impl OAuthJobs {
                     .await
                     .map_err(|e| format!("userinfo request failed: {e}"))?;
                 if !userinfo_resp.status().is_success() {
-                    return Err(format!("Google returned HTTP {} fetching userinfo", userinfo_resp.status()));
+                    return Err(format!(
+                        "Google returned HTTP {} fetching userinfo",
+                        userinfo_resp.status()
+                    ));
                 }
                 let profile: ling_http::serde_json::Value = userinfo_resp
                     .json()
                     .await
                     .map_err(|e| format!("bad JSON from Google userinfo endpoint: {e}"))?;
-                let sub = profile.get("sub").and_then(|v| v.as_str()).unwrap_or_default();
+                let sub = profile
+                    .get("sub")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 if sub.is_empty() {
                     return Err("no sub in Google's userinfo response".to_string());
                 }
                 Ok(OAuthResult {
                     error: String::new(),
                     sub: sub.to_string(),
-                    email: profile.get("email").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    name: profile.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    email: profile
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    name: profile
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 })
             }
             .await
@@ -741,11 +778,14 @@ fn async_runtime_handle() -> tokio::runtime::Handle {
         .get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("ling: failed to start async-job tokio runtime");
-                tx.send(rt.handle().clone()).expect("ling: async-job runtime handle send failed");
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("ling: failed to start async-job tokio runtime");
+                tx.send(rt.handle().clone())
+                    .expect("ling: async-job runtime handle send failed");
                 rt.block_on(std::future::pending::<()>());
             });
-            rx.recv().expect("ling: async-job runtime handle recv failed")
+            rx.recv()
+                .expect("ling: async-job runtime handle recv failed")
         })
         .clone()
 }

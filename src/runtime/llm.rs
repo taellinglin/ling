@@ -70,7 +70,10 @@ fn new_job_id() -> String {
     use rand::RngCore;
     let mut buf = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut buf);
-    format!("llm{}", buf.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!(
+        "llm{}",
+        buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 // ── builtins ─────────────────────────────────────────────────────────────
@@ -114,10 +117,18 @@ pub fn llm_generate_start(
 
     std::thread::spawn(move || {
         let mut generated = String::new();
-        model.generate(&system_prompt, &history, max_tokens, temperature, top_p, seed, |piece| {
-            generated.push_str(piece);
-            *job.text.lock().unwrap() = generated.clone();
-        });
+        model.generate(
+            &system_prompt,
+            &history,
+            max_tokens,
+            temperature,
+            top_p,
+            seed,
+            |piece| {
+                generated.push_str(piece);
+                *job.text.lock().unwrap() = generated.clone();
+            },
+        );
         *job.status.lock().unwrap() = JobStatus::Done;
     });
 

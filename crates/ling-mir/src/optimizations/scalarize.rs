@@ -179,7 +179,7 @@ fn collect_field_map(
             match &stmt.kind {
                 StatementKind::SetAttr(op, field, val)
                     if operand_local(op).is_some_and(|l| aliases.contains(&l))
-                    && !map.contains_key(field) =>
+                        && !map.contains_key(field) =>
                 {
                     let ty = infer_type(func, val);
                     let next = map.len();
@@ -187,7 +187,7 @@ fn collect_field_map(
                 },
                 StatementKind::Assign(_, Rvalue::GetAttr(op, field))
                     if operand_local(op).is_some_and(|l| aliases.contains(&l))
-                    && !map.contains_key(field) =>
+                        && !map.contains_key(field) =>
                 {
                     let next = map.len();
                     map.insert(field.clone(), (next, MirType::Any));

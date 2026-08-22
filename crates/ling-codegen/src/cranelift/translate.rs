@@ -284,8 +284,10 @@ pub(crate) fn translate_rvalue(
             // for any non-trivial `__main__`, since copy/const-prop aren't
             // skipped there) silently reinterprets raw literal bytes as a
             // length header.
-            let raw_cstr_kernel_fn =
-                matches!(callee_name.as_str(), "ling_kernel_vga_write_str" | "ling_kernel_panic");
+            let raw_cstr_kernel_fn = matches!(
+                callee_name.as_str(),
+                "ling_kernel_vga_write_str" | "ling_kernel_panic"
+            );
             let mut cal_args = Vec::new();
             if is_kernel {
                 for arg in args {
@@ -766,7 +768,9 @@ pub(crate) fn dynamic_to_raw(builder: &mut FunctionBuilder, v: Value) -> Value {
     let is_num = emit_is_number(builder, v);
     let f = i64_as_f64(builder, v);
     let as_int = builder.ins().fcvt_to_sint_sat(types::I64, f);
-    let ptr_mask = builder.ins().iconst(types::I64, 0x0000_FFFF_FFFF_FFFFu64 as i64);
+    let ptr_mask = builder
+        .ins()
+        .iconst(types::I64, 0x0000_FFFF_FFFF_FFFFu64 as i64);
     let as_ptr = builder.ins().band(v, ptr_mask);
     builder.ins().select(is_num, as_int, as_ptr)
 }
@@ -1119,27 +1123,13 @@ pub(crate) fn emit_builtin_call(
         {
             return emit_runtime_call0(builder, "__ling_list_new", runtime_refs);
         },
-        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가"
-            if args.len() >= 2 =>
+        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" if args.len() >= 2 =>
         {
-            return emit_runtime_call2(
-                builder,
-                "__ling_list_push",
-                args[0],
-                args[1],
-                runtime_refs,
-            );
+            return emit_runtime_call2(builder, "__ling_list_push", args[0], args[1], runtime_refs);
         },
-        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기"
-            if args.len() >= 2 =>
+        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" if args.len() >= 2 =>
         {
-            return emit_runtime_call2(
-                builder,
-                "__ling_list_get",
-                args[0],
-                args[1],
-                runtime_refs,
-            );
+            return emit_runtime_call2(builder, "__ling_list_get", args[0], args[1], runtime_refs);
         },
         _ => {},
     }

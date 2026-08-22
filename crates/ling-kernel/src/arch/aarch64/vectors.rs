@@ -139,7 +139,11 @@ fn print_hex64(label: &str, val: u64) {
     let mut buf = [0u8; 16];
     for i in 0..16 {
         let nibble = (val >> ((15 - i) * 4)) & 0xF;
-        buf[i] = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        buf[i] = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
     }
     crate::console_write(&buf);
     crate::console_write(b"\n");
@@ -187,7 +191,7 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) {
             if crate::arch::intc::uart_pending() {
                 crate::drivers::uart::irq_drain();
             }
-        }
+        },
         0 => {
             let esr = read_esr_el1();
             let ec = (esr >> 26) & 0x3F;
@@ -198,7 +202,7 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) {
                 return;
             }
             fault_halt("Synchronous Exception", frame, esr, read_far_el1());
-        }
+        },
         _ => fault_halt("Unhandled Exception", frame, read_esr_el1(), read_far_el1()),
     }
 }

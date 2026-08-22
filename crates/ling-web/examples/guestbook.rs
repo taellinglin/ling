@@ -29,7 +29,12 @@ struct SignForm {
 }
 
 async fn index(State(state): State<AppState>, session: Session) -> Result<Html<String>, HttpError> {
-    let visits: u32 = session.get::<u32>("visits").await.unwrap_or(None).unwrap_or(0) + 1;
+    let visits: u32 = session
+        .get::<u32>("visits")
+        .await
+        .unwrap_or(None)
+        .unwrap_or(0)
+        + 1;
     session
         .insert("visits", visits)
         .await
@@ -93,10 +98,7 @@ async fn main() -> anyhow::Result<()> {
     let sessions = ling_web::session_layer(&db, false).await?;
 
     let templates = Templates::load(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/templates"))?;
-    let state = AppState {
-        templates,
-        entries: Arc::new(Mutex::new(Vec::new())),
-    };
+    let state = AppState { templates, entries: Arc::new(Mutex::new(Vec::new())) };
 
     let router: Router = Router::new()
         .route("/", get(index).post(sign))

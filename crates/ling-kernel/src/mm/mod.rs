@@ -30,7 +30,7 @@ pub fn init_physical_memory() {
                 // only if the firmware mailbox call itself fails (not
                 // observed on QEMU's `raspi3b` or real Pi 3/4 hardware).
                 frame::add_free_region(16 * 1024 * 1024, 112 * 1024 * 1024, kernel_end);
-            }
+            },
         }
     }
 }

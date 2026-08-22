@@ -126,8 +126,7 @@ impl SessionStoreTrait for SqliteSessionStore {
             return Ok(None);
         };
 
-        let expiry_date =
-            OffsetDateTime::from_unix_timestamp(expiry).map_err(to_store_err)?;
+        let expiry_date = OffsetDateTime::from_unix_timestamp(expiry).map_err(to_store_err)?;
         if expiry_date < OffsetDateTime::now_utc() {
             let _ = self.delete(session_id).await;
             return Ok(None);
@@ -142,7 +141,10 @@ impl SessionStoreTrait for SqliteSessionStore {
         let id = *session_id;
         self.db
             .with_conn(move |conn| {
-                conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id.to_string()])
+                conn.execute(
+                    "DELETE FROM sessions WHERE id = ?1",
+                    rusqlite::params![id.to_string()],
+                )
             })
             .await
             .map_err(to_store_err)?;

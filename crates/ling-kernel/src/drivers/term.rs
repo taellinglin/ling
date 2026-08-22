@@ -40,8 +40,8 @@ static mut ACTIVE: usize = 0;
 
 const CURSOR_CHAR: u8 = b'|';
 const CURSOR_BLINK_MS: u64 = 250; // faster than the ~530ms hardware default
-// Cycles one step through these brighter palette slots each time the
-// cursor blinks back on (Color::{LightCyan, LightGreen, Yellow, LightMagenta}).
+                                  // Cycles one step through these brighter palette slots each time the
+                                  // cursor blinks back on (Color::{LightCyan, LightGreen, Yellow, LightMagenta}).
 const CURSOR_COLORS: [u8; 4] = [0x0B, 0x0A, 0x0E, 0x0D];
 
 static mut CURSOR_VISIBLE: bool = true;
@@ -177,7 +177,9 @@ pub fn clear_active() {
 }
 
 pub fn set_color_active(color: u8) {
-    unsafe { TERMS[ACTIVE].color = color; }
+    unsafe {
+        TERMS[ACTIVE].color = color;
+    }
 }
 
 /// Direct random-access cell write (row/col, not the streaming

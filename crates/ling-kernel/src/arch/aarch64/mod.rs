@@ -7,10 +7,10 @@
 //! exception vector table (`vectors`) built on top of them.
 
 pub mod cpu;
+pub mod intc;
 pub mod mailbox;
 pub mod mmio;
 pub mod timer;
-pub mod intc;
 pub mod vectors;
 
 pub mod boot;

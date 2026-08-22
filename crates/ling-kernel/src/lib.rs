@@ -17,10 +17,10 @@ pub mod proc;
 pub mod mm;
 
 // ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
+pub mod ed25519;
 pub mod hash;
 pub mod runtime;
 pub mod strings;
-pub mod ed25519;
 
 #[cfg(target_arch = "x86_64")]
 pub mod history;
@@ -37,14 +37,14 @@ use core::ptr;
 use crate::arch::cpu;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::{bootmodule, io, timer};
+#[cfg(target_arch = "aarch64")]
+use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{font8x8, framebuffer, keyboard, mouse, serial, term, vga, wm_liquid};
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
 use crate::proc::sched;
-#[cfg(target_arch = "aarch64")]
-use crate::drivers::uart;
 
 /// Initialize the kernel: bring up the console (VGA+serial on x86_64, PL011
 /// UART on aarch64/Raspberry Pi) and print a ready banner.
@@ -166,7 +166,9 @@ pub fn kernel_panic(msg: &str) -> ! {
     console_write(msg.as_bytes());
     console_write(b"\n");
     loop {
-        unsafe { cpu::halt(); }
+        unsafe {
+            cpu::halt();
+        }
     }
 }
 
@@ -298,7 +300,16 @@ pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
-    timer::now_ms()
+    let ms = timer::now_ms();
+    static mut LAST_LOGGED_SEC: u64 = u64::MAX;
+    let sec = ms / 1000;
+    if sec != LAST_LOGGED_SEC {
+        LAST_LOGGED_SEC = sec;
+        serial::write(b"DEBUG: uptime sec=");
+        print_decimal(sec);
+        serial::write(b"\n");
+    }
+    ms
 }
 
 /// Spawn a task, yield to it, confirm it actually ran and yielded back.
@@ -308,7 +319,11 @@ pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
-    if sched::selftest() { 1 } else { 0 }
+    if sched::selftest() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Print each task slot's state to the console. Returns the count of
@@ -374,7 +389,11 @@ pub unsafe extern "C" fn ling_kernel_fs_mount() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fs_ls(arg: u64) -> u64 {
-    let arg = if arg == 0 { "" } else { core::str::from_utf8(strings::bytes_of_ptr(arg as *mut u8)).unwrap_or("") };
+    let arg = if arg == 0 {
+        ""
+    } else {
+        core::str::from_utf8(strings::bytes_of_ptr(arg as *mut u8)).unwrap_or("")
+    };
 
     let mut show_all = false;
     let mut long = false;
@@ -416,7 +435,10 @@ pub unsafe extern "C" fn ling_kernel_fs_write(name: u64, content: u64) -> u64 {
 pub unsafe extern "C" fn ling_kernel_fs_read(name: u64) -> u64 {
     let name = core::str::from_utf8(strings::bytes_of_ptr(name as *mut u8)).unwrap_or("");
     let mut buf = [0u8; lingfs::BLOCK_SIZE];
-    let len = lingfs::read_file(name, &mut buf).ok().flatten().unwrap_or(0);
+    let len = lingfs::read_file(name, &mut buf)
+        .ok()
+        .flatten()
+        .unwrap_or(0);
     strings::ling_str_new(buf.as_ptr(), len)
 }
 
@@ -488,7 +510,13 @@ pub unsafe extern "C" fn ling_kernel_fb_set_pixel(x: u64, y: u64, color: u64) ->
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn ling_kernel_fb_fill_rect(x: u64, y: u64, w: u64, h: u64, color: u64) -> u64 {
+pub unsafe extern "C" fn ling_kernel_fb_fill_rect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    color: u64,
+) -> u64 {
     framebuffer::fill_rect(x as u32, y as u32, w as u32, h as u32, color as u32);
     0
 }
@@ -514,7 +542,13 @@ pub unsafe extern "C" fn ling_kernel_fb_back_clear(color: u64) -> u64 {
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn ling_kernel_fb_back_fill_rect(x: u64, y: u64, w: u64, h: u64, color: u64) -> u64 {
+pub unsafe extern "C" fn ling_kernel_fb_back_fill_rect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    color: u64,
+) -> u64 {
     framebuffer::back_fill_rect(x as u32, y as u32, w as u32, h as u32, color as u32);
     0
 }
@@ -536,7 +570,13 @@ pub unsafe extern "C" fn ling_kernel_fb_present() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64, bg: u64) -> u64 {
-    font8x8::draw_str(x as u32, y as u32, arg_str(s).as_bytes(), fg as u32, bg as u32);
+    font8x8::draw_str(
+        x as u32,
+        y as u32,
+        arg_str(s).as_bytes(),
+        fg as u32,
+        bg as u32,
+    );
     0
 }
 
@@ -554,6 +594,13 @@ pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_liquid_step(target_x: u64, target_y: u64) -> u64 {
+    static mut LAST_LOGGED: u64 = u64::MAX;
+    if target_x != LAST_LOGGED {
+        LAST_LOGGED = target_x;
+        serial::write(b"DEBUG: target_x=");
+        print_decimal(target_x);
+        serial::write(b"\n");
+    }
     wm_liquid::step(target_x as f64, target_y as f64);
     0
 }
@@ -682,14 +729,18 @@ pub unsafe extern "C" fn ling_kernel_mouse_buttons() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_bootmodule_addr() -> u64 {
-    bootmodule::first_module().map(|(s, _)| s as u64).unwrap_or(0)
+    bootmodule::first_module()
+        .map(|(s, _)| s as u64)
+        .unwrap_or(0)
 }
 
 /// Size in bytes of the first Multiboot2 module, or 0 if there isn't one.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_bootmodule_size() -> u64 {
-    bootmodule::first_module().map(|(s, e)| (e - s) as u64).unwrap_or(0)
+    bootmodule::first_module()
+        .map(|(s, e)| (e - s) as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -809,7 +860,11 @@ pub unsafe extern "C" fn ling_kernel_user_is_wheel() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_ed25519_verify(pubkey: u64, msg: u64, sig: u64) -> u64 {
     let raw = |v: u64| -> &'static [u8] {
-        if v == 0 { &[] } else { strings::bytes_of_ptr(v as *mut u8) }
+        if v == 0 {
+            &[]
+        } else {
+            strings::bytes_of_ptr(v as *mut u8)
+        }
     };
     ed25519::verify(raw(pubkey), raw(msg), raw(sig)) as u64
 }
@@ -844,7 +899,10 @@ pub unsafe extern "C" fn ling_kernel_disk_write_raw(lba: u64, src_ptr: u64, coun
     let src = src_ptr as *const u8;
     for i in 0..count {
         let mut sector = [0u8; blockdev::SECTOR_SIZE];
-        let chunk = core::slice::from_raw_parts(src.add(i as usize * blockdev::SECTOR_SIZE), blockdev::SECTOR_SIZE);
+        let chunk = core::slice::from_raw_parts(
+            src.add(i as usize * blockdev::SECTOR_SIZE),
+            blockdev::SECTOR_SIZE,
+        );
         sector.copy_from_slice(chunk);
         if blockdev::write_sector((lba + i) as u32, &sector).is_err() {
             return 0;
@@ -1039,33 +1097,55 @@ pub unsafe extern "C" fn ling_kernel_cpuid(eax: u64, ecx: u64, out_ptr: u64, _un
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_asm_exec(ptr: u64, len: u64) -> u64 {
-    let template = core::str::from_utf8_unchecked(
-        core::slice::from_raw_parts(ptr as *const u8, len as usize)
-    );
+    let template =
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len as usize));
     match template {
         #[cfg(target_arch = "x86_64")]
-        "hlt" | "halt" => {
-            loop { cpu::halt(); }
-        }
+        "hlt" | "halt" => loop {
+            cpu::halt();
+        },
         #[cfg(target_arch = "aarch64")]
-        "wfi" | "halt" => {
-            loop { cpu::halt(); }
-        }
+        "wfi" | "halt" => loop {
+            cpu::halt();
+        },
         #[cfg(target_arch = "aarch64")]
-        "wfe" => { cpu::wfe(); 0 },
-        "cli" => { cpu::cli(); 0 },
-        "sti" => { cpu::sti(); 0 },
-        "nop" => { core::hint::spin_loop(); 0 },
-        "pause" => { core::hint::spin_loop(); 0 },
+        "wfe" => {
+            cpu::wfe();
+            0
+        },
+        "cli" => {
+            cpu::cli();
+            0
+        },
+        "sti" => {
+            cpu::sti();
+            0
+        },
+        "nop" => {
+            core::hint::spin_loop();
+            0
+        },
+        "pause" => {
+            core::hint::spin_loop();
+            0
+        },
         #[cfg(target_arch = "x86_64")]
-        "int3" => { core::arch::asm!("int3"); 0 },
+        "int3" => {
+            core::arch::asm!("int3");
+            0
+        },
         #[cfg(target_arch = "aarch64")]
-        "brk" => { cpu::brk(); 0 },
+        "brk" => {
+            cpu::brk();
+            0
+        },
         _ => {
             console_write(b"ling_kernel_asm_exec: unknown template: ");
             console_write(template.as_bytes());
             console_write(b"\n");
-            loop { cpu::halt(); }
-        }
+            loop {
+                cpu::halt();
+            }
+        },
     }
 }

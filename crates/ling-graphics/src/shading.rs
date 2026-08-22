@@ -256,7 +256,10 @@ mod tests {
         // luminance should move, not the channel ratios.
         let c = [0.9, 0.5, 0.1];
         let q = posterize(c, 4);
-        assert!(q[0] > q[1] && q[1] > q[2], "hue order must survive posterisation: {q:?}");
+        assert!(
+            q[0] > q[1] && q[1] > q[2],
+            "hue order must survive posterisation: {q:?}"
+        );
     }
 
     #[test]
@@ -273,7 +276,11 @@ mod tests {
             levels.insert((q[0] * 1000.0).round() as i32);
             t += 0.01;
         }
-        assert!(levels.len() <= 4, "expected at most 4 distinct levels, got {}", levels.len());
+        assert!(
+            levels.len() <= 4,
+            "expected at most 4 distinct levels, got {}",
+            levels.len()
+        );
     }
 
     #[test]

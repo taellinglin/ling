@@ -342,12 +342,23 @@ mod tests {
     fn vertices3_with_a_shared_normal_matches_the_single_normal_variant() {
         let base = 0x00FF_FFFF;
         let normal = [0.0, 1.0, 0.0];
-        let light = Light { x: 0.0, y: 5.0, z: 0.0, r: 1.0, g: 1.0, b: 1.0, intensity: 1.0, radius: 10.0 };
+        let light = Light {
+            x: 0.0,
+            y: 5.0,
+            z: 0.0,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            intensity: 1.0,
+            radius: 10.0,
+        };
         let va = [0.0, 0.0, 0.0];
         let vb = [1.0, 0.0, 0.0];
         let vc = [0.0, 0.0, 1.0];
-        let one = compute_lit_color_vertices(base, normal, va, vb, vc, std::slice::from_ref(&light), 0.1);
-        let three = compute_lit_color_vertices3(base, normal, normal, normal, va, vb, vc, &[light], 0.1);
+        let one =
+            compute_lit_color_vertices(base, normal, va, vb, vc, std::slice::from_ref(&light), 0.1);
+        let three =
+            compute_lit_color_vertices3(base, normal, normal, normal, va, vb, vc, &[light], 0.1);
         assert_eq!(one, three);
     }
 
@@ -357,9 +368,27 @@ mod tests {
         // collapse to identical colours the way a single shared face normal would.
         let base = 0x00FF_FFFF;
         let pos = [0.0, 0.0, 0.0];
-        let light = Light { x: 8.0, y: 2.0, z: 0.0, r: 1.0, g: 1.0, b: 1.0, intensity: 1.0, radius: 20.0 };
-        let flat = compute_lit_color_linear(base, [0.0, 1.0, 0.0], pos, std::slice::from_ref(&light), 0.1);
+        let light = Light {
+            x: 8.0,
+            y: 2.0,
+            z: 0.0,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            intensity: 1.0,
+            radius: 20.0,
+        };
+        let flat = compute_lit_color_linear(
+            base,
+            [0.0, 1.0, 0.0],
+            pos,
+            std::slice::from_ref(&light),
+            0.1,
+        );
         let tilted = compute_lit_color_linear(base, [1.0, 0.0, 0.0], pos, &[light], 0.1);
-        assert_ne!(flat, tilted, "different normals at the same point must shade differently");
+        assert_ne!(
+            flat, tilted,
+            "different normals at the same point must shade differently"
+        );
     }
 }

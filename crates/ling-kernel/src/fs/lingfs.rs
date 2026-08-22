@@ -67,8 +67,12 @@ pub struct Meta {
     pub modified_seq: u32,
 }
 
-const EMPTY_META: Meta =
-    Meta { mode: 0, owner: [0u8; OWNER_LEN], group: [0u8; OWNER_LEN], modified_seq: 0 };
+const EMPTY_META: Meta = Meta {
+    mode: 0,
+    owner: [0u8; OWNER_LEN],
+    group: [0u8; OWNER_LEN],
+    modified_seq: 0,
+};
 
 fn str_to_owner_buf(s: &str) -> [u8; OWNER_LEN] {
     let mut buf = [0u8; OWNER_LEN];
@@ -102,7 +106,12 @@ pub fn current_user() -> &'static str {
 
 fn make_meta(mode: u16) -> Meta {
     unsafe {
-        Meta { mode, owner: CURRENT_USER, group: CURRENT_GROUP, modified_seq: next_seq() }
+        Meta {
+            mode,
+            owner: CURRENT_USER,
+            group: CURRENT_GROUP,
+            modified_seq: next_seq(),
+        }
     }
 }
 
@@ -459,7 +468,10 @@ pub fn get_tree(
         let off = i * TREE_ENTRY_BYTES;
         let mut name = [0u8; TREE_ENTRY_NAME_LEN];
         name.copy_from_slice(&buf[off..off + TREE_ENTRY_NAME_LEN]);
-        let name_len = name.iter().position(|&b| b == 0).unwrap_or(TREE_ENTRY_NAME_LEN);
+        let name_len = name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(TREE_ENTRY_NAME_LEN);
         let mut o = off + TREE_ENTRY_NAME_LEN;
         let mut entry_hash = ZERO_HASH;
         entry_hash.copy_from_slice(&buf[o..o + 32]);
@@ -475,14 +487,23 @@ pub fn get_tree(
         group.copy_from_slice(&buf[o..o + OWNER_LEN]);
         o += OWNER_LEN;
         let modified_seq = u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
-        out[i] = ((name, name_len), entry_hash, kind, Meta { mode, owner, group, modified_seq });
+        out[i] = (
+            (name, name_len),
+            entry_hash,
+            kind,
+            Meta { mode, owner, group, modified_seq },
+        );
     }
     Ok(Some(count))
 }
 
 type TreeEntries = [(([u8; TREE_ENTRY_NAME_LEN], usize), Hash, Kind, Meta); MAX_TREE_ENTRIES];
-const EMPTY_TREE_ENTRY: (([u8; TREE_ENTRY_NAME_LEN], usize), Hash, Kind, Meta) =
-    (([0u8; TREE_ENTRY_NAME_LEN], 0), ZERO_HASH, Kind::Blob, EMPTY_META);
+const EMPTY_TREE_ENTRY: (([u8; TREE_ENTRY_NAME_LEN], usize), Hash, Kind, Meta) = (
+    ([0u8; TREE_ENTRY_NAME_LEN], 0),
+    ZERO_HASH,
+    Kind::Blob,
+    EMPTY_META,
+);
 
 fn name_eq(entry: &([u8; TREE_ENTRY_NAME_LEN], usize), name: &str) -> bool {
     let (buf, len) = entry;
@@ -519,7 +540,12 @@ fn upsert_root_entry(name: &str, hash: Hash, kind: Kind, default_meta: Meta) -> 
         if count >= MAX_TREE_ENTRIES {
             return Err(());
         }
-        entries[count] = ((str_to_name_buf(name), name.len()), hash, kind, default_meta);
+        entries[count] = (
+            (str_to_name_buf(name), name.len()),
+            hash,
+            kind,
+            default_meta,
+        );
         count += 1;
     }
 
@@ -578,7 +604,12 @@ pub fn write_dir(dirname: &str, files: &[(&str, &[u8])]) -> Result<(), ()> {
         refs[i] = (fname, blob_hash, Kind::Blob, make_meta(MODE_FILE_DEFAULT));
     }
     let subtree_hash = put_tree(&refs[..files.len()])?;
-    upsert_root_entry(dirname, subtree_hash, Kind::Tree, make_meta(MODE_DIR_DEFAULT))
+    upsert_root_entry(
+        dirname,
+        subtree_hash,
+        Kind::Tree,
+        make_meta(MODE_DIR_DEFAULT),
+    )
 }
 
 /// Replace-or-add a single `(fname, content)` blob inside a one-level
@@ -611,8 +642,12 @@ pub fn write_in_dir(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()
         if count >= MAX_TREE_ENTRIES {
             return Err(());
         }
-        entries[count] =
-            ((str_to_name_buf(fname), fname.len()), blob_hash, Kind::Blob, make_meta(MODE_FILE_DEFAULT));
+        entries[count] = (
+            (str_to_name_buf(fname), fname.len()),
+            blob_hash,
+            Kind::Blob,
+            make_meta(MODE_FILE_DEFAULT),
+        );
         count += 1;
     }
 
@@ -630,7 +665,12 @@ pub fn write_in_dir(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()
         r
     };
     let subtree_hash = put_tree(&refs[..count])?;
-    upsert_root_entry(dirname, subtree_hash, Kind::Tree, make_meta(MODE_DIR_DEFAULT))
+    upsert_root_entry(
+        dirname,
+        subtree_hash,
+        Kind::Tree,
+        make_meta(MODE_DIR_DEFAULT),
+    )
 }
 
 /// Split `"dev/ata0"` into `Some(("dev", "ata0"))`; a name with no `/`
@@ -861,7 +901,11 @@ fn is_hidden(name_buf: &[u8; TREE_ENTRY_NAME_LEN], name_len: usize) -> bool {
 /// a read error.
 pub fn print_ls(path: &str, show_all: bool, long: bool) {
     let mut rbuf = [0u8; RESOLVE_BUF];
-    let effective: &str = if path.is_empty() { cwd() } else { resolve(path, &mut rbuf) };
+    let effective: &str = if path.is_empty() {
+        cwd()
+    } else {
+        resolve(path, &mut rbuf)
+    };
     let (entries, count) = if !effective.is_empty() {
         match lookup_dir(effective) {
             Ok(Some((entries, count))) => (entries, count),
@@ -904,8 +948,9 @@ pub fn print_ls(path: &str, show_all: bool, long: bool) {
 /// live) so `bin/` reflects what the shell actually accepts; update this
 /// list alongside the `if cmd == "..."` chain in each kernel target's
 /// `main.ling`.
-const BUILTIN_COMMANDS: [&str; 9] =
-    ["help", "clear", "ls", "cat", "write", "hostname", "about", "selftest", "theme"];
+const BUILTIN_COMMANDS: [&str; 9] = [
+    "help", "clear", "ls", "cat", "write", "hostname", "about", "selftest", "theme",
+];
 
 /// (Re)seed the synthetic `dev/` and `bin/` directories from what this boot
 /// actually detected — called once after every successful `mount()`, not
@@ -953,7 +998,11 @@ pub fn commit(new_root: Hash) -> Result<(), ()> {
         if VOLUME.commit_count as usize >= MAX_COMMITS {
             return Err(());
         }
-        let parent = if VOLUME.commit_count == 0 { u32::MAX } else { VOLUME.commit_count - 1 };
+        let parent = if VOLUME.commit_count == 0 {
+            u32::MAX
+        } else {
+            VOLUME.commit_count - 1
+        };
         VOLUME.commits[VOLUME.commit_count as usize] = CommitEntry { root: new_root, parent };
         VOLUME.commit_count += 1;
     }

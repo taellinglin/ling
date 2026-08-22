@@ -10,12 +10,7 @@ pub struct Tooltip {
 
 impl Tooltip {
     pub fn new(text: impl Into<String>, target_rect: [f32; 4]) -> Self {
-        Self {
-            text: text.into(),
-            target_rect,
-            hover_timer: 0.0,
-            delay: 0.4,
-        }
+        Self { text: text.into(), target_rect, hover_timer: 0.0, delay: 0.4 }
     }
 
     pub fn update(&mut self, is_hovered: bool, delta_time: f32) -> bool {
@@ -28,7 +23,13 @@ impl Tooltip {
         }
     }
 
-    pub fn compute_position(&self, card_w: f32, card_h: f32, screen_w: f32, screen_h: f32) -> [f32; 2] {
+    pub fn compute_position(
+        &self,
+        card_w: f32,
+        card_h: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) -> [f32; 2] {
         let [tx, ty, tw, _th] = self.target_rect;
         let mut x = tx + tw * 0.5 - card_w * 0.5;
         let mut y = ty - card_h - 6.0;

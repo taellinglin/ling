@@ -45,7 +45,7 @@ impl SplitPane {
                 let rect_s = [x + w_a, y, t, h];
                 let rect_b = [x + w_a + t, y, w_b, h];
                 (rect_a, rect_s, rect_b)
-            }
+            },
             SplitDirection::Vertical => {
                 let available = (h - t).max(self.min_size_a + self.min_size_b);
                 let mut h_a = (available * self.ratio).max(self.min_size_a);
@@ -60,7 +60,7 @@ impl SplitPane {
                 let rect_s = [x, y + h_a, w, t];
                 let rect_b = [x, y + h_a + t, w, h_b];
                 (rect_a, rect_s, rect_b)
-            }
+            },
         }
     }
 
@@ -74,11 +74,11 @@ impl SplitPane {
             SplitDirection::Horizontal => {
                 let rel = (cursor_x - x - t * 0.5) / (w - t).max(1.0);
                 self.ratio = rel.clamp(0.05, 0.95);
-            }
+            },
             SplitDirection::Vertical => {
                 let rel = (cursor_y - y - t * 0.5) / (h - t).max(1.0);
                 self.ratio = rel.clamp(0.05, 0.95);
-            }
+            },
         }
     }
 }

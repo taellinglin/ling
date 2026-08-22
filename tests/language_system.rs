@@ -169,31 +169,52 @@ fn for_loop_thai() {
 }
 #[test]
 fn for_loop_arabic() {
-    assert_runs("for-ar", r#"ربط ابدأ = افعل { لأجل i في 0..3 { print(i) } }"#);
+    assert_runs(
+        "for-ar",
+        r#"ربط ابدأ = افعل { لأجل i في 0..3 { print(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_persian() {
-    assert_runs("for-fa", r#"پیوند شروع = انجام { برای i در 0..3 { print(i) } }"#);
+    assert_runs(
+        "for-fa",
+        r#"پیوند شروع = انجام { برای i در 0..3 { print(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_hebrew() {
-    assert_runs("for-he", r#"קשר התחל = בצע { עבור i בתוך 0..3 { print(i) } }"#);
+    assert_runs(
+        "for-he",
+        r#"קשר התחל = בצע { עבור i בתוך 0..3 { print(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_urdu() {
-    assert_runs("for-ur", r#"باندھو شروع = کرو { کے_لیے i میں 0..3 { print(i) } }"#);
+    assert_runs(
+        "for-ur",
+        r#"باندھو شروع = کرو { کے_لیے i میں 0..3 { print(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_french() {
-    assert_runs("for-fr", r#"lier début = faire { pour i dans 0..3 { afficher(i) } }"#);
+    assert_runs(
+        "for-fr",
+        r#"lier début = faire { pour i dans 0..3 { afficher(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_german() {
-    assert_runs("for-de", r#"binden anfang = machen { für i in 0..3 { drucken(i) } }"#);
+    assert_runs(
+        "for-de",
+        r#"binden anfang = machen { für i in 0..3 { drucken(i) } }"#,
+    );
 }
 #[test]
 fn for_loop_russian() {
-    assert_runs("for-ru", r#"связать начать = сделать { для i в 0..3 { печать(i) } }"#);
+    assert_runs(
+        "for-ru",
+        r#"связать начать = сделать { для i в 0..3 { печать(i) } }"#,
+    );
 }
 
 /// Recursive `fn` + if/else implicit-return — the canonical fib, in Korean.
@@ -557,7 +578,7 @@ fn keyword_coverage_rtl_languages() {
         ("أنشئ", Token::Spawn),
         ("تمام", Token::Ok),
         ("سيء", Token::Bad),
-        ("لا_شيء", Token::None,),
+        ("لا_شيء", Token::None),
         // Persian
         ("تابع", Token::Fn),
         ("ماژول", Token::Mod),

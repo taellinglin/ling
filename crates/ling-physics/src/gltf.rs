@@ -128,7 +128,11 @@ pub struct GltfModel {
 fn point_seg_dist(p: Vec3, a: Vec3, b: Vec3) -> f32 {
     let ab = b - a;
     let l2 = ab.length_squared();
-    let t = if l2 > 1e-9 { ((p - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    let t = if l2 > 1e-9 {
+        ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     (p - (a + ab * t)).length()
 }
 
@@ -244,18 +248,18 @@ impl GltfModel {
             parent: p,
         };
         self.bones = vec![
-            bone(cx, y(0.50), cx, y(0.62), -1),                            // 0 hips
-            bone(cx, y(0.62), cx, y(0.74), 0),                             // 1 spine
-            bone(cx, y(0.74), cx, y(0.84), 1),                             // 2 chest
-            bone(cx, y(0.86), cx, y(1.00), 2),                             // 3 head
-            bone(cx + aw * 0.28, y(0.80), cx + aw * 0.60, y(0.78), 2),     // 4 L upper arm
-            bone(cx + aw * 0.60, y(0.78), cx + aw * 0.95, y(0.70), 4),     // 5 L forearm
-            bone(cx - aw * 0.28, y(0.80), cx - aw * 0.60, y(0.78), 2),     // 6 R upper arm
-            bone(cx - aw * 0.60, y(0.78), cx - aw * 0.95, y(0.70), 6),     // 7 R forearm
-            bone(cx + aw * 0.18, y(0.50), cx + aw * 0.18, y(0.26), 0),     // 8 L thigh
-            bone(cx + aw * 0.18, y(0.26), cx + aw * 0.18, y(0.02), 8),     // 9 L shin
-            bone(cx - aw * 0.18, y(0.50), cx - aw * 0.18, y(0.26), 0),     // 10 R thigh
-            bone(cx - aw * 0.18, y(0.26), cx - aw * 0.18, y(0.02), 10),    // 11 R shin
+            bone(cx, y(0.50), cx, y(0.62), -1), // 0 hips
+            bone(cx, y(0.62), cx, y(0.74), 0),  // 1 spine
+            bone(cx, y(0.74), cx, y(0.84), 1),  // 2 chest
+            bone(cx, y(0.86), cx, y(1.00), 2),  // 3 head
+            bone(cx + aw * 0.28, y(0.80), cx + aw * 0.60, y(0.78), 2), // 4 L upper arm
+            bone(cx + aw * 0.60, y(0.78), cx + aw * 0.95, y(0.70), 4), // 5 L forearm
+            bone(cx - aw * 0.28, y(0.80), cx - aw * 0.60, y(0.78), 2), // 6 R upper arm
+            bone(cx - aw * 0.60, y(0.78), cx - aw * 0.95, y(0.70), 6), // 7 R forearm
+            bone(cx + aw * 0.18, y(0.50), cx + aw * 0.18, y(0.26), 0), // 8 L thigh
+            bone(cx + aw * 0.18, y(0.26), cx + aw * 0.18, y(0.02), 8), // 9 L shin
+            bone(cx - aw * 0.18, y(0.50), cx - aw * 0.18, y(0.26), 0), // 10 R thigh
+            bone(cx - aw * 0.18, y(0.26), cx - aw * 0.18, y(0.02), 10), // 11 R shin
         ];
         // weight each vertex to its nearest two bones (inverse-square falloff)
         for m in &mut self.meshes {
@@ -319,7 +323,12 @@ impl GltfModel {
             return self
                 .meshes
                 .iter()
-                .map(|m| m.verts.iter().map(|v| [v.pos.x, v.pos.y, v.pos.z]).collect())
+                .map(|m| {
+                    m.verts
+                        .iter()
+                        .map(|v| [v.pos.x, v.pos.y, v.pos.z])
+                        .collect()
+                })
                 .collect();
         }
         let mats = self.skinning_mats(euler);

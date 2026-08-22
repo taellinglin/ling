@@ -401,7 +401,10 @@ impl<'a> BorrowChecker<'a> {
         }
 
         for (ref_var, pointed_var) in &self.provenance {
-            if !live_locals.contains(ref_var) && !still_borrowed.contains(pointed_var) && pointed_var.0 < state.borrows.len() {
+            if !live_locals.contains(ref_var)
+                && !still_borrowed.contains(pointed_var)
+                && pointed_var.0 < state.borrows.len()
+            {
                 let borrow = &mut state.borrows[pointed_var.0];
                 if borrow.0 > 0 {
                     borrow.0 -= 1;

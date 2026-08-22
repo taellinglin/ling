@@ -122,7 +122,9 @@ pub async fn serve_dev_tls(router: Router, addr: SocketAddr) -> anyhow::Result<(
     let TlsMaterial { config, .. } = crate::tls::generate_dev_cert(addr).await?;
     tracing::warn!(%addr, "ling-http listening (HTTPS, SELF-SIGNED DEV CERT — do not use in production)");
     print_listening_banner("https", addr);
-    println!("  \x1b[33m⚠\x1b[0m  self-signed dev cert — browsers/curl will reject it as untrusted\n");
+    println!(
+        "  \x1b[33m⚠\x1b[0m  self-signed dev cert — browsers/curl will reject it as untrusted\n"
+    );
     axum_server::bind_rustls(addr, config)
         .serve(router.into_make_service())
         .await?;

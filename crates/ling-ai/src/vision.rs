@@ -39,10 +39,9 @@ impl VisionModel {
         let mut file = std::fs::File::open(gguf_path).map_err(|e| e.to_string())?;
         let content = gguf_file::Content::read(&mut file).map_err(|e| e.to_string())?;
         let config = Config::v2();
-        let vb = candle_transformers::quantized_var_builder::VarBuilder::from_gguf(
-            gguf_path, &device,
-        )
-        .map_err(|e| e.to_string())?;
+        let vb =
+            candle_transformers::quantized_var_builder::VarBuilder::from_gguf(gguf_path, &device)
+                .map_err(|e| e.to_string())?;
         let _ = content; // content re-parsed internally by from_gguf(path, ..); kept only to fail fast above on a bad file.
         let model = Model::new(&config, vb).map_err(|e| e.to_string())?;
 
@@ -93,22 +92,34 @@ impl VisionModel {
         seed: u64,
         mut on_token: impl FnMut(&str),
     ) -> Result<(), String> {
-        let image = self.preprocess_image(image_bytes)?.unsqueeze(0).map_err(|e| e.to_string())?;
+        let image = self
+            .preprocess_image(image_bytes)?
+            .unsqueeze(0)
+            .map_err(|e| e.to_string())?;
 
         // Moondream's expected prompting convention (not a system/user/
         // assistant chat template like the text model — a plain Q&A frame).
         let prompt = format!("\n\nQuestion: {question}\n\nAnswer:");
-        let encoding = self.tokenizer.encode(prompt, true).map_err(|e| e.to_string())?;
+        let encoding = self
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(|e| e.to_string())?;
         let mut tokens: Vec<u32> = encoding.get_ids().to_vec();
         if tokens.is_empty() {
             return Err("empty prompt encoding".to_string());
         }
 
-        let top_p_opt = if top_p > 0.0 && top_p < 1.0 { Some(top_p) } else { None };
+        let top_p_opt = if top_p > 0.0 && top_p < 1.0 {
+            Some(top_p)
+        } else {
+            None
+        };
         let mut logits_processor = LogitsProcessor::new(seed, Some(temperature), top_p_opt);
 
         let mut model = self.model.lock().map_err(|e| e.to_string())?;
-        let image_embeds = image.apply(model.vision_encoder()).map_err(|e| e.to_string())?;
+        let image_embeds = image
+            .apply(model.vision_encoder())
+            .map_err(|e| e.to_string())?;
 
         for index in 0..max_tokens.max(1) {
             let context_size = if index > 0 { 1 } else { tokens.len() };
@@ -126,10 +137,18 @@ impl VisionModel {
                     .forward_with_img(&bos, &input, &image_embeds)
                     .map_err(|e| e.to_string())?
             } else {
-                model.text_model.forward(&input).map_err(|e| e.to_string())?
+                model
+                    .text_model
+                    .forward(&input)
+                    .map_err(|e| e.to_string())?
             };
-            let logits = logits.squeeze(0).and_then(|l| l.to_dtype(DType::F32)).map_err(|e| e.to_string())?;
-            let next_token = logits_processor.sample(&logits).map_err(|e| e.to_string())?;
+            let logits = logits
+                .squeeze(0)
+                .and_then(|l| l.to_dtype(DType::F32))
+                .map_err(|e| e.to_string())?;
+            let next_token = logits_processor
+                .sample(&logits)
+                .map_err(|e| e.to_string())?;
             tokens.push(next_token);
             if next_token == self.eos_token {
                 break;

@@ -65,10 +65,10 @@ pub fn init() {
         write32(UART_FBRD, 3);
 
         write32(UART_LCRH, (1 << 4) | (3 << 5)); // FIFOs enabled, 8N1
-        // Only RX + RX-timeout unmasked: TX is still polled (`write_byte`),
-        // and unmasking TXIM here would fire continuously any time the TX
-        // FIFO isn't full — which, for a byte-at-a-time console, is nearly
-        // always — flooding the IRQ line with nothing to service.
+                                                 // Only RX + RX-timeout unmasked: TX is still polled (`write_byte`),
+                                                 // and unmasking TXIM here would fire continuously any time the TX
+                                                 // FIFO isn't full — which, for a byte-at-a-time console, is nearly
+                                                 // always — flooding the IRQ line with nothing to service.
         write32(UART_IMSC, RXIC_RTIC);
         write32(UART_CR, (1 << 0) | (1 << 8) | (1 << 9)); // UARTEN | TXE | RXE
     }

@@ -18,10 +18,7 @@ pub async fn flash(
     message: impl Into<String>,
 ) -> anyhow::Result<()> {
     let mut flashes: Vec<Flash> = session.get(FLASH_KEY).await?.unwrap_or_default();
-    flashes.push(Flash {
-        category: category.into(),
-        message: message.into(),
-    });
+    flashes.push(Flash { category: category.into(), message: message.into() });
     session.insert(FLASH_KEY, flashes).await?;
     Ok(())
 }

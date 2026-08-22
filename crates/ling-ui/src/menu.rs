@@ -2,14 +2,8 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MenuItemKind {
-    Action {
-        id: String,
-        shortcut: Option<String>,
-        checked: Option<bool>,
-    },
-    Submenu {
-        items: Vec<MenuItem>,
-    },
+    Action { id: String, shortcut: Option<String>, checked: Option<bool> },
+    Submenu { items: Vec<MenuItem> },
     Separator,
 }
 
@@ -125,9 +119,7 @@ impl MenuPopup {
         {
             let rel_y = cursor_y - (self.y + 8.0);
             let idx = (rel_y / 24.0).floor() as usize;
-            if idx < self.items.len()
-                && self.items[idx].enabled
-                && self.hovered_index != Some(idx)
+            if idx < self.items.len() && self.items[idx].enabled && self.hovered_index != Some(idx)
             {
                 self.hovered_index = Some(idx);
                 if let MenuItemKind::Submenu { ref items } = self.items[idx].kind {
@@ -167,14 +159,17 @@ pub struct MenuBar {
 
 impl MenuBar {
     pub fn new(categories: Vec<MenuCategory>) -> Self {
-        Self {
-            categories,
-            active_category: None,
-            popup: None,
-        }
+        Self { categories, active_category: None, popup: None }
     }
 
-    pub fn open_category(&mut self, index: usize, bar_x: f32, bar_y: f32, screen_w: f32, screen_h: f32) {
+    pub fn open_category(
+        &mut self,
+        index: usize,
+        bar_x: f32,
+        bar_y: f32,
+        screen_w: f32,
+        screen_h: f32,
+    ) {
         if index < self.categories.len() {
             self.active_category = Some(index);
             let offset_x = bar_x + index as f32 * 64.0 + 8.0;

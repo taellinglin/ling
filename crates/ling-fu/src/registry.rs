@@ -9,7 +9,7 @@
 //! same way a one-file script does. Credentials live in
 //! `~/.lingfu/credentials.toml`, mirroring how cargo stores registry tokens.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -178,7 +178,9 @@ fn quote_non_ascii_keys(text: &str) -> String {
 fn parse_manifest(manifest: &Path) -> Result<toml::Value> {
     let text = std::fs::read_to_string(manifest)
         .with_context(|| format!("reading manifest {}", manifest.display()))?;
-    quote_non_ascii_keys(&text).parse().context("parsing manifest TOML")
+    quote_non_ascii_keys(&text)
+        .parse()
+        .context("parsing manifest TOML")
 }
 
 /// Reads `(name, version, description)` from the project manifest, trying
@@ -193,7 +195,13 @@ fn manifest_meta(manifest: &Path) -> Result<(String, String, String)> {
     // native synonym — accept both. "版本" covers the zh scaffold too.
     let version_keys = ["version", "版", "版本", "버전", "รุ่น", "เวอร์ชัน"];
     let desc_keys = [
-        "description", "desc", "描述", "説明", "설명", "คำอธิบาย", "รายละเอียด",
+        "description",
+        "desc",
+        "描述",
+        "説明",
+        "설명",
+        "คำอธิบาย",
+        "รายละเอียด",
     ];
 
     let find = |keys: &[&str]| -> Option<String> {
@@ -289,7 +297,13 @@ fn manifest_extra(manifest: &Path) -> Extra {
 /// Reads a README from the project root (first of a few common names),
 /// truncated to a sane size for a form field.
 fn read_readme(root: &Path) -> String {
-    for name in ["README.md", "README.ling", "README.txt", "README", "อ่านฉัน.md"] {
+    for name in [
+        "README.md",
+        "README.ling",
+        "README.txt",
+        "README",
+        "อ่านฉัน.md",
+    ] {
         if let Ok(s) = std::fs::read_to_string(root.join(name)) {
             return s.chars().take(20_000).collect();
         }
@@ -319,8 +333,8 @@ fn upload_bar_style() -> ProgressStyle {
 /// asset, a keyfile that ended up sitting in the project directory) out of
 /// an uploaded package short of physically moving it first.
 fn build_tarball(dir: &Path) -> Result<(tempfile::NamedTempFile, u64)> {
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
 
     let ignore_patterns = crate::ignore::load(dir);
     let tmp = tempfile::NamedTempFile::new().context("creating temp file for package artifact")?;
@@ -328,7 +342,10 @@ fn build_tarball(dir: &Path) -> Result<(tempfile::NamedTempFile, u64)> {
     let mut tar = tar::Builder::new(gz);
 
     let spinner = ProgressBar::new_spinner();
-    spinner.set_style(ProgressStyle::with_template("{spinner:.cyan} packaging… {msg}").expect("valid indicatif template"));
+    spinner.set_style(
+        ProgressStyle::with_template("{spinner:.cyan} packaging… {msg}")
+            .expect("valid indicatif template"),
+    );
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
     let mut file_count: u64 = 0;
 
@@ -364,7 +381,8 @@ fn build_tarball(dir: &Path) -> Result<(tempfile::NamedTempFile, u64)> {
         .metadata()
         .context("reading packaged artifact size")?
         .len();
-    tmp.seek(SeekFrom::Start(0)).context("rewinding packaged artifact")?;
+    tmp.seek(SeekFrom::Start(0))
+        .context("rewinding packaged artifact")?;
     Ok((tmp, size))
 }
 
@@ -412,10 +430,9 @@ fn multipart_wrap(boundary: &str, fields: &[(&str, &str)]) -> (Vec<u8>, Vec<u8>)
 /// the registry, authenticated with the saved API key.
 pub fn publish(args: &[String]) -> Result<()> {
     let creds = load_credentials();
-    let token = creds
-        .token
-        .clone()
-        .context("not logged in — run `lingfu login <api-key>` first (create a key at <registry>/me/keys)")?;
+    let token = creds.token.clone().context(
+        "not logged in — run `lingfu login <api-key>` first (create a key at <registry>/me/keys)",
+    )?;
     let registry = registry_url();
 
     // Locate the manifest (walk up), and use its directory as the project root.
@@ -461,17 +478,20 @@ pub fn publish(args: &[String]) -> Result<()> {
             .unwrap_or_default()
             .as_nanos()
     );
-    let (preamble, epilogue) = multipart_wrap(&boundary, &[
-        ("name", name.as_str()),
-        ("version", version.as_str()),
-        ("description", description.as_str()),
-        ("keywords", extra.keywords.as_str()),
-        ("homepage", extra.homepage.as_str()),
-        ("repository", extra.repository.as_str()),
-        ("license", extra.license.as_str()),
-        ("authors", extra.authors.as_str()),
-        ("readme", readme.as_str()),
-    ]);
+    let (preamble, epilogue) = multipart_wrap(
+        &boundary,
+        &[
+            ("name", name.as_str()),
+            ("version", version.as_str()),
+            ("description", description.as_str()),
+            ("keywords", extra.keywords.as_str()),
+            ("homepage", extra.homepage.as_str()),
+            ("repository", extra.repository.as_str()),
+            ("license", extra.license.as_str()),
+            ("authors", extra.authors.as_str()),
+            ("readme", readme.as_str()),
+        ],
+    );
 
     let bar = ProgressBar::new(tarball_size);
     bar.set_style(upload_bar_style());
@@ -483,7 +503,10 @@ pub fn publish(args: &[String]) -> Result<()> {
     let url = format!("{registry}/api/v1/packages/publish");
     let resp = ureq::post(&url)
         .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .set(
+            "Content-Type",
+            &format!("multipart/form-data; boundary={boundary}"),
+        )
         .send(body);
     bar.finish_and_clear();
 
@@ -547,9 +570,6 @@ mod tests {
         let text = "[灵符]\n名 = \"hello_world\"\n型 = \"独行\"\n版 = \"2030.0.0\"\n\n[灵者]\n灵林 = { 邮 = \"taellinglin@gmail.com\" }\n";
         let quoted = quote_non_ascii_keys(text);
         let value: toml::Value = quoted.parse().expect("should parse");
-        assert_eq!(
-            value["灵符"]["名"].as_str(),
-            Some("hello_world")
-        );
+        assert_eq!(value["灵符"]["名"].as_str(), Some("hello_world"));
     }
 }

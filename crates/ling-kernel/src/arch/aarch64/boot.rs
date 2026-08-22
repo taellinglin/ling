@@ -12,7 +12,7 @@ global_asm!(
     "    mrs x0, mpidr_el1",
     "    and x0, x0, #0xFF",
     "    cbz x0, primary",
-    "1:  wfe",              // secondary cores: park forever
+    "1:  wfe", // secondary cores: park forever
     "    b 1b",
     "primary:",
     // Drop EL2 -> EL1 if the firmware handed off with the hypervisor
@@ -25,10 +25,10 @@ global_asm!(
     "    lsr x0, x0, #2",
     "    cmp x0, #2",
     "    b.ne el1_entry",
-    "    mov x0, #(1 << 31)",    // HCR_EL2.RW: EL1 runs AArch64
+    "    mov x0, #(1 << 31)", // HCR_EL2.RW: EL1 runs AArch64
     "    msr hcr_el2, x0",
     "    mrs x0, cnthctl_el2",
-    "    orr x0, x0, #3",        // EL1PCTEN | EL1PCEN: untrap CNTP_*_EL0 from EL1
+    "    orr x0, x0, #3", // EL1PCTEN | EL1PCEN: untrap CNTP_*_EL0 from EL1
     "    msr cnthctl_el2, x0",
     "    msr cntvoff_el2, xzr",
     // CPTR_EL2.TFP (bit 10) defaults to an implementation-defined value on
@@ -43,7 +43,7 @@ global_asm!(
     // this was set, recursively re-trapping the fault handler's own
     // `console_write` calls into a self-sustaining exception storm.
     "    msr cptr_el2, xzr",
-    "    mov x0, #0x3C5",        // SPSR: EL1h, D|A|I|F all masked
+    "    mov x0, #0x3C5", // SPSR: EL1h, D|A|I|F all masked
     "    msr spsr_el2, x0",
     "    adr x0, el1_entry",
     "    msr elr_el2, x0",

@@ -363,15 +363,19 @@ fn collect_ling_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else { continue };
-        if file_type.is_symlink() { continue; }
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if file_type.is_dir() {
-            if name.starts_with('.') || matches!(
-                name.as_ref(),
-                "灵碑" | "target" | "dist" | "node_modules" | "AST"
-            ) {
+            if name.starts_with('.')
+                || matches!(
+                    name.as_ref(),
+                    "灵碑" | "target" | "dist" | "node_modules" | "AST"
+                )
+            {
                 continue;
             }
             collect_ling_files(&path, out);
@@ -570,16 +574,22 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
     }
 
     // Entry point: 灵源/启.灵 or ต้นกำเนิด/เริ่ม.ลิง (ling-fu convention)
-    let entry = ["ต้นกำเนิด/เริ่ม.ลิง", "เริ่ม.ลิง", "灵源/启.灵", "灵源/main.ling", "main.ling"]
-        .iter()
-        .map(|p| base.join(p))
-        .find(|p| p.exists())
-        .unwrap_or_else(|| {
-            auto_entry(base).unwrap_or_else(|| {
-                eprintln!("error: cannot find entry point for project '{}'", name);
-                std::process::exit(1);
-            })
-        });
+    let entry = [
+        "ต้นกำเนิด/เริ่ม.ลิง",
+        "เริ่ม.ลิง",
+        "灵源/启.灵",
+        "灵源/main.ling",
+        "main.ling",
+    ]
+    .iter()
+    .map(|p| base.join(p))
+    .find(|p| p.exists())
+    .unwrap_or_else(|| {
+        auto_entry(base).unwrap_or_else(|| {
+            eprintln!("error: cannot find entry point for project '{}'", name);
+            std::process::exit(1);
+        })
+    });
 
     let source_dir = base.to_path_buf();
     // ling-fu uses 灵碑/ for build artifacts
@@ -779,7 +789,10 @@ fn run_build(
                 build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
             },
             other => {
-                eprintln!("unknown platform '{}' — use web|win|lin|mac|kernel|rpi|all", other);
+                eprintln!(
+                    "unknown platform '{}' — use web|win|lin|mac|kernel|rpi|all",
+                    other
+                );
                 std::process::exit(1);
             },
         }
@@ -1097,9 +1110,8 @@ fn build_native(
         // arch name resolves to an "unknown" OS/vendor, which cranelift-object
         // maps to ELF — correct for every `*-unknown-none` kernel target
         // regardless of which OS `ling` itself is running on.
-        let mut backend =
-            ling_codegen::CraneliftBackend::new_for_arch(platform.cranelift_arch())
-                .with_progress(true);
+        let mut backend = ling_codegen::CraneliftBackend::new_for_arch(platform.cranelift_arch())
+            .with_progress(true);
         let obj_path = build_dir.join("entry.o");
         use ling_codegen::CodegenBackend;
         backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
@@ -1112,7 +1124,12 @@ fn build_native(
         // Generate kernel-specific Cargo.toml with ling-kernel dependency
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_kernel_cargo_toml(&project.name, &project.version, &ling_root, project.graphics),
+            gen_kernel_cargo_toml(
+                &project.name,
+                &project.version,
+                &ling_root,
+                project.graphics,
+            ),
         )
         .expect("write Cargo.toml");
 
@@ -1124,7 +1141,8 @@ fn build_native(
         let idle_font_mod = if !is_rpi {
             find_font_asset(&project.source_dir).and_then(|font_path| {
                 let bytes = std::fs::read(&font_path).ok()?;
-                let cjk_fallback = std::fs::read(ling_root.join("assets/fonts/NotoSansSC.ttf")).ok();
+                let cjk_fallback =
+                    std::fs::read(ling_root.join("assets/fonts/NotoSansSC.ttf")).ok();
                 let atlas = rasterize_vga_font(&bytes, cjk_fallback.as_deref());
                 std::fs::write(build_dir.join("src/idle_font.rs"), gen_idle_font_rs(&atlas))
                     .ok()?;
@@ -1142,11 +1160,14 @@ fn build_native(
         };
         std::fs::write(build_dir.join("src/main.rs"), main_rs).expect("write src/main.rs");
 
-        std::fs::write(build_dir.join("build.rs"), gen_kernel_build_rs())
-            .expect("write build.rs");
+        std::fs::write(build_dir.join("build.rs"), gen_kernel_build_rs()).expect("write build.rs");
 
         // Write linker script
-        let linker_script = if is_rpi { RPI_LINKER_SCRIPT } else { KERNEL_LINKER_SCRIPT };
+        let linker_script = if is_rpi {
+            RPI_LINKER_SCRIPT
+        } else {
+            KERNEL_LINKER_SCRIPT
+        };
         std::fs::write(build_dir.join("linker.ld"), linker_script).expect("write linker.ld");
 
         println!("    kernel build files written to {}", build_dir.display());
@@ -1180,11 +1201,8 @@ fn build_native(
             gen_app_cargo_toml(&project.name, &project.version, &ling_root),
         )
         .expect("write Cargo.toml");
-        std::fs::write(
-            build_dir.join("src/main.rs"),
-            gen_aot_main_rs(do_pack),
-        )
-        .expect("write src/main.rs");
+        std::fs::write(build_dir.join("src/main.rs"), gen_aot_main_rs(do_pack))
+            .expect("write src/main.rs");
         std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
         std::fs::write(
             build_dir.join("Cargo.toml"),
@@ -1286,7 +1304,17 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
         .ok();
         // Use nightly for build-std support
         let nightly = "cargo";
-        cargo_args = vec!["+nightly", "build", "--release", "--target", triple, "-Z", "build-std=core,compiler_builtins", "-Z", "build-std-features=compiler-builtins-mem"];
+        cargo_args = vec![
+            "+nightly",
+            "build",
+            "--release",
+            "--target",
+            triple,
+            "-Z",
+            "build-std=core,compiler_builtins",
+            "-Z",
+            "build-std-features=compiler-builtins-mem",
+        ];
         let status = Command::new(nightly)
             .args(&cargo_args)
             .current_dir(build_dir)
@@ -1567,11 +1595,18 @@ fn copy_ling_sources(src: &Path, dst: &Path) {
     let Ok(entries) = std::fs::read_dir(src) else { return };
     for entry in entries.flatten() {
         let Ok(file_type) = entry.file_type() else { continue };
-        if file_type.is_symlink() { continue; }
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
         if file_type.is_dir() {
             let dname = path.file_name().unwrap_or_default().to_string_lossy();
-            if !dname.starts_with('.') && !matches!(dname.as_ref(), "灵碑" | "target" | "dist" | "node_modules" | "AST") {
+            if !dname.starts_with('.')
+                && !matches!(
+                    dname.as_ref(),
+                    "灵碑" | "target" | "dist" | "node_modules" | "AST"
+                )
+            {
                 copy_ling_sources(&path, dst);
             }
         } else if matches!(
@@ -1645,7 +1680,9 @@ strip = true
 fn gen_kernel_cargo_toml(name: &str, version: &str, ling_root: &Path, graphics: bool) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
     let ling_kernel_dep = if graphics {
-        format!(r#"{{ path = "{root_str}/crates/ling-kernel", features = ["request_framebuffer"] }}"#)
+        format!(
+            r#"{{ path = "{root_str}/crates/ling-kernel", features = ["request_framebuffer"] }}"#
+        )
     } else {
         format!(r#"{{ path = "{root_str}/crates/ling-kernel" }}"#)
     };

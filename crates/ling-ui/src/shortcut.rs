@@ -11,26 +11,14 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
-    pub const NONE: Self = Self {
-        ctrl: false,
-        shift: false,
-        alt: false,
-        meta: false,
-    };
+    pub const NONE: Self = Self { ctrl: false, shift: false, alt: false, meta: false };
 
     pub fn ctrl() -> Self {
-        Self {
-            ctrl: true,
-            ..Self::NONE
-        }
+        Self { ctrl: true, ..Self::NONE }
     }
 
     pub fn ctrl_shift() -> Self {
-        Self {
-            ctrl: true,
-            shift: true,
-            ..Self::NONE
-        }
+        Self { ctrl: true, shift: true, ..Self::NONE }
     }
 }
 
@@ -42,10 +30,7 @@ pub struct KeyCombo {
 
 impl KeyCombo {
     pub fn new(key: impl Into<String>, modifiers: Modifiers) -> Self {
-        Self {
-            key: key.into().to_uppercase(),
-            modifiers,
-        }
+        Self { key: key.into().to_uppercase(), modifiers }
     }
 
     pub fn display(&self) -> String {

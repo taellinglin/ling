@@ -124,10 +124,7 @@ impl Keyboard {
 
     /// Feed one key's live `down` state (creates the slot on first use).
     pub fn set(&mut self, key: Key, down: bool, dt: f32) {
-        self.keys
-            .entry(key)
-            .or_default()
-            .update(down, dt);
+        self.keys.entry(key).or_default().update(down, dt);
         match key {
             Key::LeftCtrl | Key::RightCtrl => self.modifiers.ctrl = down,
             Key::LeftShift | Key::RightShift => self.modifiers.shift = down,

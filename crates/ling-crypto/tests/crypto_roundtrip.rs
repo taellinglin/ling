@@ -110,7 +110,11 @@ fn ml_dsa_65_seed_is_deterministic() {
         "a signature from one seed-derived keypair must verify against the other's public key"
     );
 
-    assert_eq!(&*kp_a.to_bytes(), &seed, "to_bytes() must round-trip the original seed");
+    assert_eq!(
+        &*kp_a.to_bytes(),
+        &seed,
+        "to_bytes() must round-trip the original seed"
+    );
 }
 
 #[test]

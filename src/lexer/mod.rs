@@ -140,9 +140,13 @@ impl<'a> Lexer<'a> {
             "in" | "于" => Token::In,
             "match" | "配" => Token::Match,
             "return" | "归" => Token::Return,
-            "own" | "拥有" | "独" | "所有" | "소유" | "เป็นเจ้าของ" => Token::Own,
+            "own" | "拥有" | "独" | "所有" | "소유" | "เป็นเจ้าของ" => {
+                Token::Own
+            },
             "lend" | "借" | "貸す" | "빌려" | "ให้ยืม" => Token::Lend,
-            "share" | "共享" | "共" | "共有" | "공유" | "แบ่งปัน" => Token::Share,
+            "share" | "共享" | "共" | "共有" | "공유" | "แบ่งปัน" => {
+                Token::Share
+            },
             "move" | "移动" | "移" | "移動" | "이동" | "ย้าย" => Token::Move,
             "copy" | "复制" | "复" | "複製" | "복사" | "คัดลอก" => Token::Copy,
             "async" | "异步" | "异" => Token::Async,
@@ -161,7 +165,9 @@ impl<'a> Lexer<'a> {
                 Token::Choose
             },
             "can" | "能" | "できる" | "가능" | "สามารถ" => Token::Can,
-            "change" | "改变" | "变" | "変える" | "변경" | "เปลี่ยนแปลง" => Token::Change,
+            "change" | "改变" | "变" | "変える" | "변경" | "เปลี่ยนแปลง" => {
+                Token::Change
+            },
             // stop/again/try/spawn's ja/ko forms live in the Japanese/Korean
             // sections below — only th was missing here.
             "stop" | "停止" | "止" | "หยุด" => Token::Stop,

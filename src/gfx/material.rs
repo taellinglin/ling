@@ -134,7 +134,11 @@ fn tone_map_rgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
 
     let mapped = 1.0 - (-lum * 0.82).exp();
     let scale = mapped / lum.max(1e-6);
-    ((r * scale).min(1.0), (g * scale).min(1.0), (b * scale).min(1.0))
+    (
+        (r * scale).min(1.0),
+        (g * scale).min(1.0),
+        (b * scale).min(1.0),
+    )
 }
 
 /// Schlick Fresnel: f0 + (1-f0)*(1-cosθ)^5
@@ -168,7 +172,6 @@ fn ggx_smooth(n_dot_h: f32, roughness: f32) -> f32 {
     let ggx = a2 / (std::f32::consts::PI * d * d + 1e-6);
     (ggx * a2 * 3.0).clamp(0.0, 1.0)
 }
-
 
 #[inline]
 fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {

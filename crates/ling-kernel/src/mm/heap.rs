@@ -85,7 +85,7 @@ pub fn alloc(size: usize) -> *mut u8 {
             Some(addr) => {
                 write_header(addr, LARGE_FLAG | order as u64);
                 (addr + 8) as *mut u8
-            }
+            },
             None => ptr::null_mut(),
         }
     }

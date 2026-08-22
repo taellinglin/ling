@@ -64,7 +64,10 @@ fn new_job_id() -> String {
     use rand::RngCore;
     let mut buf = [0u8; 16];
     rand::rngs::OsRng.fill_bytes(&mut buf);
-    format!("vis{}", buf.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!(
+        "vis{}",
+        buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 // ── builtins ─────────────────────────────────────────────────────────────
@@ -114,10 +117,18 @@ pub fn vision_analyze_start(
 
     std::thread::spawn(move || {
         let mut generated = String::new();
-        let result = model.analyze(&image_bytes, &question, max_tokens, temperature, top_p, seed, |piece| {
-            generated.push_str(piece);
-            *job.text.lock().unwrap() = generated.clone();
-        });
+        let result = model.analyze(
+            &image_bytes,
+            &question,
+            max_tokens,
+            temperature,
+            top_p,
+            seed,
+            |piece| {
+                generated.push_str(piece);
+                *job.text.lock().unwrap() = generated.clone();
+            },
+        );
         if let Err(e) = result {
             *job.error.lock().unwrap() = e;
         }

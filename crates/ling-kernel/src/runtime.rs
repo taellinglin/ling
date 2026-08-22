@@ -31,7 +31,11 @@ fn from_f64(v: f64) -> u64 {
 }
 
 fn encode_bool(b: bool) -> u64 {
-    if b { TAG_TRUE } else { TAG_FALSE }
+    if b {
+        TAG_TRUE
+    } else {
+        TAG_FALSE
+    }
 }
 
 fn is_truthy(v: u64) -> bool {
@@ -39,17 +43,29 @@ fn is_truthy(v: u64) -> bool {
 }
 
 #[no_mangle]
-pub extern "C" fn ling_add(a: u64, b: u64) -> u64 { from_f64(as_f64(a) + as_f64(b)) }
+pub extern "C" fn ling_add(a: u64, b: u64) -> u64 {
+    from_f64(as_f64(a) + as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_sub(a: u64, b: u64) -> u64 { from_f64(as_f64(a) - as_f64(b)) }
+pub extern "C" fn ling_sub(a: u64, b: u64) -> u64 {
+    from_f64(as_f64(a) - as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_mul(a: u64, b: u64) -> u64 { from_f64(as_f64(a) * as_f64(b)) }
+pub extern "C" fn ling_mul(a: u64, b: u64) -> u64 {
+    from_f64(as_f64(a) * as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_div(a: u64, b: u64) -> u64 { from_f64(as_f64(a) / as_f64(b)) }
+pub extern "C" fn ling_div(a: u64, b: u64) -> u64 {
+    from_f64(as_f64(a) / as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_rem(a: u64, b: u64) -> u64 { from_f64(as_f64(a) % as_f64(b)) }
+pub extern "C" fn ling_rem(a: u64, b: u64) -> u64 {
+    from_f64(as_f64(a) % as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_neg(a: u64) -> u64 { from_f64(-as_f64(a)) }
+pub extern "C" fn ling_neg(a: u64) -> u64 {
+    from_f64(-as_f64(a))
+}
 
 /// `==`/`!=`: numbers compare by value, strings by *content* (so
 /// `if cmd == "ls"` in a shell works regardless of where each string was
@@ -68,27 +84,47 @@ fn value_eq(a: u64, b: u64) -> bool {
     use crate::strings::{bytes_of, tag_kind, TAG_KIND_STRING};
     if is_number(a) && is_number(b) {
         as_f64(a) == as_f64(b)
-    } else if !is_number(a) && !is_number(b) && tag_kind(a) == TAG_KIND_STRING && tag_kind(b) == TAG_KIND_STRING {
+    } else if !is_number(a)
+        && !is_number(b)
+        && tag_kind(a) == TAG_KIND_STRING
+        && tag_kind(b) == TAG_KIND_STRING
+    {
         unsafe { bytes_of(a) == bytes_of(b) }
     } else {
         a == b
     }
 }
 #[no_mangle]
-pub extern "C" fn ling_lt(a: u64, b: u64) -> u64 { encode_bool(as_f64(a) < as_f64(b)) }
+pub extern "C" fn ling_lt(a: u64, b: u64) -> u64 {
+    encode_bool(as_f64(a) < as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_le(a: u64, b: u64) -> u64 { encode_bool(as_f64(a) <= as_f64(b)) }
+pub extern "C" fn ling_le(a: u64, b: u64) -> u64 {
+    encode_bool(as_f64(a) <= as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_gt(a: u64, b: u64) -> u64 { encode_bool(as_f64(a) > as_f64(b)) }
+pub extern "C" fn ling_gt(a: u64, b: u64) -> u64 {
+    encode_bool(as_f64(a) > as_f64(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_ge(a: u64, b: u64) -> u64 { encode_bool(as_f64(a) >= as_f64(b)) }
+pub extern "C" fn ling_ge(a: u64, b: u64) -> u64 {
+    encode_bool(as_f64(a) >= as_f64(b))
+}
 
 #[no_mangle]
-pub extern "C" fn ling_and(a: u64, b: u64) -> u64 { encode_bool(is_truthy(a) && is_truthy(b)) }
+pub extern "C" fn ling_and(a: u64, b: u64) -> u64 {
+    encode_bool(is_truthy(a) && is_truthy(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_or(a: u64, b: u64) -> u64 { encode_bool(is_truthy(a) || is_truthy(b)) }
+pub extern "C" fn ling_or(a: u64, b: u64) -> u64 {
+    encode_bool(is_truthy(a) || is_truthy(b))
+}
 #[no_mangle]
-pub extern "C" fn ling_not(a: u64) -> u64 { encode_bool(!is_truthy(a)) }
+pub extern "C" fn ling_not(a: u64) -> u64 {
+    encode_bool(!is_truthy(a))
+}
 
 #[no_mangle]
-pub extern "C" fn ling_bool_to_u64(b: u64) -> u64 { is_truthy(b) as u64 }
+pub extern "C" fn ling_bool_to_u64(b: u64) -> u64 {
+    is_truthy(b) as u64
+}

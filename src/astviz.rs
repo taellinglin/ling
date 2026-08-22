@@ -804,7 +804,13 @@ fn render_artwork(p: &Project) -> String {
         let _ = write!(
             body,
             r##"<polygon points="{}" fill="hsl({},55%,55%)" opacity="0.05"/>"##,
-            ngon_points(cx, cy, r, sides, frand(seed, i + 300) * std::f32::consts::TAU),
+            ngon_points(
+                cx,
+                cy,
+                r,
+                sides,
+                frand(seed, i + 300) * std::f32::consts::TAU
+            ),
             hue
         );
     }
@@ -836,12 +842,7 @@ fn render_artwork(p: &Project) -> String {
                 f(fy)
             );
 
-            let shapes = fc
-                .calls
-                .iter()
-                .map(|c| c.count)
-                .sum::<usize>()
-                .clamp(1, 14);
+            let shapes = fc.calls.iter().map(|c| c.count).sum::<usize>().clamp(1, 14);
             let fnseed = hash(&fc.name) ^ fseed;
             let pal: Vec<&str> = if fc.calls.is_empty() {
                 vec!["#6ab0f5"]

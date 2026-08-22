@@ -61,7 +61,10 @@ fn hex_decode(hex: &[u8], out: &mut [u8]) -> Option<usize> {
 fn field<'a>(record: &'a [u8], key: &str) -> Option<&'a [u8]> {
     for line in record.split(|&b| b == b'\n') {
         let prefix_len = key.len() + 1;
-        if line.len() > prefix_len && &line[..key.len()] == key.as_bytes() && line[key.len()] == b':' {
+        if line.len() > prefix_len
+            && &line[..key.len()] == key.as_bytes()
+            && line[key.len()] == b':'
+        {
             return Some(&line[prefix_len..]);
         }
     }
@@ -126,7 +129,15 @@ pub fn create(
     append(&mut buf, &mut len, b"\nemail:");
     append(&mut buf, &mut len, email.as_bytes());
     append(&mut buf, &mut len, b"\ngroup:");
-    append(&mut buf, &mut len, if group.is_empty() { b"users" } else { group.as_bytes() });
+    append(
+        &mut buf,
+        &mut len,
+        if group.is_empty() {
+            b"users"
+        } else {
+            group.as_bytes()
+        },
+    );
     append(&mut buf, &mut len, b"\nsalt:");
     append(&mut buf, &mut len, &salt_hex);
     append(&mut buf, &mut len, b"\nhash:");

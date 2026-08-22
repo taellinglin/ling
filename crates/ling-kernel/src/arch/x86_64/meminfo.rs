@@ -61,14 +61,24 @@ pub fn detect_and_register(kernel_end: u64) {
                 module_count += 1;
             }
             if tag_type == TAG_MEMORY_MAP {
-                register_memory_map(info_ptr + offset, tag_size, kernel_end, &modules[..module_count]);
+                register_memory_map(
+                    info_ptr + offset,
+                    tag_size,
+                    kernel_end,
+                    &modules[..module_count],
+                );
             }
             offset += (tag_size + 7) & !7;
         }
     }
 }
 
-unsafe fn register_memory_map(tag_base: u32, tag_size: u32, kernel_end: u64, modules: &[(u64, u64)]) {
+unsafe fn register_memory_map(
+    tag_base: u32,
+    tag_size: u32,
+    kernel_end: u64,
+    modules: &[(u64, u64)],
+) {
     let entry_size = ptr::read_unaligned((tag_base + 8) as *const u32);
     if entry_size == 0 {
         return;

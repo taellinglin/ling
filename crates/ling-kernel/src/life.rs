@@ -69,7 +69,11 @@ fn rand_color() -> u8 {
 }
 
 fn random_cell() -> Cell {
-    Cell { alive: rand_below(2) == 1, ch: rand_char(), color: rand_color() }
+    Cell {
+        alive: rand_below(2) == 1,
+        ch: rand_char(),
+        color: rand_color(),
+    }
 }
 
 fn init_quarter() {

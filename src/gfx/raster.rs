@@ -1709,7 +1709,7 @@ mod fill_tests {
     fn soft_disc_is_darkest_at_center() {
         let (w, h) = (40usize, 40usize);
         let mut buf = vec![0xFFFFFFu32; w * h]; // white bg
-        // black shadow, alpha 0.8, soft edge
+                                                // black shadow, alpha 0.8, soft edge
         fill_disc_soft(
             &mut buf, w, h, 20.0, 20.0, 12.0, 12.0, 0x000000, 0.8, 0.5, 0, false,
         );
@@ -2038,8 +2038,23 @@ mod fill_tests {
         // continuously (multiple distinct colours), not collapse to a few
         // discrete bands.
         fill_triangle_gouraud(
-            &mut smooth, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000,
-            0, 0.0, 1.0, 0, false,
+            &mut smooth,
+            w,
+            h,
+            2.0,
+            2.0,
+            0x00FF0000,
+            18.0,
+            2.0,
+            0x0000FF00,
+            2.0,
+            18.0,
+            0x00FF0000,
+            0,
+            0.0,
+            1.0,
+            0,
+            false,
         );
         assert_eq!(buf, smooth, "bands=0 must be deterministic passthrough");
         let distinct: std::collections::HashSet<u32> =
@@ -2079,13 +2094,28 @@ mod fill_tests {
         let (w, h) = (20usize, 20usize);
         let mut hard_off = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut hard_off, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0,
-            0x00FF0000, 0, 0.0, 1.0, 0, false,
+            &mut hard_off,
+            w,
+            h,
+            2.0,
+            2.0,
+            0x00FF0000,
+            18.0,
+            2.0,
+            0x0000FF00,
+            2.0,
+            18.0,
+            0x00FF0000,
+            0,
+            0.0,
+            1.0,
+            0,
+            false,
         );
         let mut soft = vec![0u32; w * h];
         fill_triangle_gouraud(
-            &mut soft, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000,
-            4, 1.0, 1.0, 0, false,
+            &mut soft, w, h, 2.0, 2.0, 0x00FF0000, 18.0, 2.0, 0x0000FF00, 2.0, 18.0, 0x00FF0000, 4,
+            1.0, 1.0, 0, false,
         );
         for i in 0..hard_off.len() {
             let (a, b) = (hard_off[i], soft[i]);
