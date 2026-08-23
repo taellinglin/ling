@@ -41,8 +41,8 @@ use crate::arch::{bootmodule, io, timer};
 use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
-    flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, serial, term, vga,
-    wm_liquid,
+    flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, net_e1000, serial, term,
+    vga, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -1302,4 +1302,70 @@ pub unsafe extern "C" fn ling_kernel_asm_exec(ptr: u64, len: u64) -> u64 {
             }
         },
     }
+}
+
+/// Bring up the e1000 NIC (see `drivers::net_e1000`'s module doc). Returns
+/// 1 if a NIC was found and initialized, 0 if none is present (a normal
+/// outcome, not an error -- not every machine has one this driver covers).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
+    let Ok(()) = net_e1000::init() else {
+        serial::write(b"net: no e1000-compatible NIC found\n");
+        return 0;
+    };
+    let m = net_e1000::mac();
+    serial::write(b"net: MAC=");
+    for (i, b) in m.iter().enumerate() {
+        if i > 0 {
+            serial::write(b":");
+        }
+        print_decimal(*b as u64);
+    }
+    serial::write(b" link_up=");
+    print_decimal(net_e1000::link_up() as u64);
+    serial::write(b"\n");
+    1
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_link_up() -> u64 {
+    net_e1000::link_up() as u64
+}
+/// One byte (0..5) of the NIC's real MAC address.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_mac_byte(i: u64) -> u64 {
+    net_e1000::mac().get(i as usize).copied().unwrap_or(0) as u64
+}
+/// Hand-built ARP request/reply round trip, bypassing any IP stack --
+/// see `net_e1000::arp_selftest`'s doc. Returns 1 and fills `out_mac_byte`-
+/// queryable state on a real reply, 0 on timeout/no NIC.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_arp_selftest() -> u64 {
+    match net_e1000::arp_selftest() {
+        Some(mac) => {
+            ARP_REPLY_MAC = mac;
+            serial::write(b"net: ARP reply from ");
+            for (i, b) in mac.iter().enumerate() {
+                if i > 0 {
+                    serial::write(b":");
+                }
+                print_decimal(*b as u64);
+            }
+            serial::write(b"\n");
+            1
+        }
+        None => {
+            serial::write(b"net: ARP selftest: no reply\n");
+            0
+        }
+    }
+}
+static mut ARP_REPLY_MAC: [u8; 6] = [0; 6];
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_arp_reply_mac_byte(i: u64) -> u64 {
+    ARP_REPLY_MAC.get(i as usize).copied().unwrap_or(0) as u64
 }

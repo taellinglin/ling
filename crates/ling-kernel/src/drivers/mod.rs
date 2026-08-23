@@ -23,6 +23,8 @@ pub mod locale;
 #[cfg(target_arch = "x86_64")]
 pub mod mouse;
 #[cfg(target_arch = "x86_64")]
+pub mod net_e1000;
+#[cfg(target_arch = "x86_64")]
 pub mod serial;
 #[cfg(target_arch = "x86_64")]
 pub mod term;
