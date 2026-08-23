@@ -10389,12 +10389,14 @@ impl Interpreter {
                 let kind = match std::fs::File::open(&path) {
                     Ok(mut f) => {
                         use std::io::Read;
-                        let mut buf = [0u8; 4];
+                        let mut buf = [0u8; 8];
                         let n = f.read(&mut buf).unwrap_or(0);
                         if n >= 2 && buf[0] == 0x1f && buf[1] == 0x8b {
                             "gzip"
                         } else if n >= 4 && &buf[0..2] == b"PK" {
                             "zip"
+                        } else if n >= 8 && &buf[0..8] == b"\x89PNG\r\n\x1a\n" {
+                            "png"
                         } else {
                             "other"
                         }
@@ -10493,6 +10495,60 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Str(content));
+            },
+            // tar_gz_extract_to(tar_path, entry_name, out_path) -> bool. Byte-perfect
+            // single-entry extraction straight to disk — unlike tar_gz_read, no
+            // UTF-8 round-trip, so binary entries (icons, images) come through intact.
+            // Same in-archive-name string match as tar_gz_read (not a filesystem path
+            // join), so an entry name can't traverse outside the archive's own listing.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "tar_gz_extract_to" | "แตกไฟล์ทาร์" => {
+                let path = self.arg_str(&args, 0, "");
+                let want = self.arg_str(&args, 1, "");
+                let want = want.trim_start_matches("./").replace('\\', "/");
+                let out_path = self.arg_str(&args, 2, "");
+                let mut found = false;
+                if let Ok(file) = std::fs::File::open(&path) {
+                    let gz = flate2::read::GzDecoder::new(file);
+                    let mut ar = tar::Archive::new(gz);
+                    if let Ok(entries) = ar.entries() {
+                        for entry in entries.flatten() {
+                            let mut entry = entry;
+                            let name = match entry.path() {
+                                Ok(p) => p
+                                    .to_string_lossy()
+                                    .trim_start_matches("./")
+                                    .replace('\\', "/"),
+                                Err(_) => continue,
+                            };
+                            if name == want {
+                                if let Some(parent) = std::path::Path::new(&out_path).parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Ok(mut out) = std::fs::File::create(&out_path) {
+                                    use std::io::copy;
+                                    found = copy(&mut entry, &mut out).is_ok();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                return Ok(Value::Bool(found));
+            },
+            // icon_convert_to_png(src_path, out_path, size) -> bool. Rasterizes any
+            // ling-icon-supported source (.svg/.png/.jpg/.bmp/.ico) to a single
+            // size×size PNG — used to turn a package manifest's icon into a web avatar.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "icon_convert_to_png" | "แปลงไอคอนเป็นพีเอ็นจี" => {
+                let src = self.arg_str(&args, 0, "");
+                let out = self.arg_str(&args, 1, "");
+                let size = self.arg_num(&args, 2, 300.0)? as u32;
+                let ok = match ling_icon::png_bytes(std::path::Path::new(&src), size) {
+                    Ok(bytes) => std::fs::write(&out, bytes).is_ok(),
+                    Err(_) => false,
+                };
+                return Ok(Value::Bool(ok));
             },
             // ── TOTP (RFC 6238, HMAC-SHA1, 6 digits, 30s) for 2FA ──
             // Base32 secret compatible with Google Authenticator / Authy etc.

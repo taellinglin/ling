@@ -1,10 +1,11 @@
 [package]
 name = "ling-core"
-version = "2030.0.5"
+version = "2030.0.6"
 edition = "2021"
 authors = ["Ling Lin <ling@ling-lang.org>"]
 description = "Core types, errors, and compiler infrastructure for Ling"
 license = "Apache-2.0 OR MIT"
+readme = "README.md"
 [dependencies]
 thiserror = "1.0"
 anyhow = "1.0"

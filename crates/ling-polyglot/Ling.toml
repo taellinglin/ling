@@ -1,0 +1,8 @@
+[package]
+name = "ling-polyglot"
+version = "2030.0.4"
+description = "Polyglot lexicon system - 16+ human languages"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]

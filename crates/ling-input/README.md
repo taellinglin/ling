@@ -1,3 +1,5 @@
+![ling-input icon](images/icon.svg)
+
 # ling-input — "Sensorium"
 
 Ling's unified input system. **Every controller, touch, limb, and gaze becomes

@@ -194,6 +194,18 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             types::I64,
         ),
         (
+            "ling_kernel_fb_draw_utf8_str",
+            &[
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+            ],
+            types::I64,
+        ),
+        (
             "ling_kernel_wm_liquid_step",
             &[types::I64, types::I64],
             types::I64,
@@ -280,6 +292,22 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_rtc_hour", &[], types::I64),
         ("ling_kernel_rtc_minute", &[], types::I64),
         ("ling_kernel_rtc_second", &[], types::I64),
+        ("ling_kernel_locale_count", &[], types::I64),
+        ("ling_kernel_locale_id", &[types::I64], types::I64),
+        ("ling_kernel_locale_native_name", &[types::I64], types::I64),
+        ("ling_kernel_locale_latin_name", &[types::I64], types::I64),
+        ("ling_kernel_locale_utc_offset_min", &[types::I64], types::I64),
+        ("ling_kernel_locale_is_celestial", &[types::I64], types::I64),
+        ("ling_kernel_locale_uses_daemon", &[types::I64], types::I64),
+        ("ling_kernel_locale_flag_id", &[types::I64], types::I64),
+        ("ling_kernel_moon_day_progress", &[], types::I64),
+        ("ling_kernel_locale_selected", &[], types::I64),
+        ("ling_kernel_locale_select", &[types::I64], types::I64),
+        (
+            "ling_kernel_fb_draw_flag",
+            &[types::I64, types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
     ];
 
     for &(name, params, ret) in runtime_fns {

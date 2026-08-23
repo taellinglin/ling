@@ -1153,10 +1153,59 @@ fn build_native(
             None
         };
 
+        // Curated multi-script Unicode atlas + the Daemon (constructed-
+        // script) reskin of ASCII, for `ling_kernel_fb_draw_utf8_str` — see
+        // `ling-kernel`'s `drivers::font_unicode` module doc for why this is
+        // a curated character set (language names/greetings), not full
+        // script coverage. Real fonts: `assets/fonts/` (this repo's own,
+        // already used above for the CJK special-glyph fallback) for
+        // Chinese/Korean/Thai; the target project's own `font/i18n/Daemon.*`
+        // (LingOS-specific, not a general `ling` asset) for Daemon.
+        let unicode_font_mod = if !is_rpi {
+            const ZH_CHARS: &str = "简体中文你好欢迎语言灵源";
+            const KO_CHARS: &str = "한국어안녕하세요환영합니다언어";
+            const TH_CHARS: &str = "ภาษาไทยสวัสดียินดีต้อนรับ";
+            let mut unicode_glyphs = Vec::new();
+            for (chars, rel_path) in [
+                (ZH_CHARS, "assets/fonts/NotoSansSC.ttf"),
+                (KO_CHARS, "assets/fonts/NotoSansKR.ttf"),
+                (TH_CHARS, "assets/fonts/NotoSansThai.ttf"),
+            ] {
+                if let Ok(bytes) = std::fs::read(ling_root.join(rel_path)) {
+                    unicode_glyphs.extend(rasterize_unicode_atlas(chars, &bytes));
+                }
+            }
+            let daemon_glyphs = find_font_dir(&project.source_dir)
+                .and_then(|font_dir| std::fs::read(font_dir.join("i18n/Daemon.otf")).ok())
+                .map(|bytes| {
+                    let ascii: String = (0x20u8..=0x7E).map(|b| b as char).collect();
+                    rasterize_unicode_atlas(&ascii, &bytes)
+                })
+                .unwrap_or_default();
+
+            if unicode_glyphs.is_empty() && daemon_glyphs.is_empty() {
+                None
+            } else {
+                std::fs::write(
+                    build_dir.join("src/unicode_font.rs"),
+                    gen_unicode_font_rs(&unicode_glyphs, &daemon_glyphs),
+                )
+                .ok();
+                println!(
+                    "    unicode font: {} script + {} daemon glyphs → src/unicode_font.rs",
+                    unicode_glyphs.len(),
+                    daemon_glyphs.len()
+                );
+                Some("unicode_font")
+            }
+        } else {
+            None
+        };
+
         let main_rs = if is_rpi {
             gen_rpi_kernel_main_rs()
         } else {
-            gen_kernel_main_rs(idle_font_mod)
+            gen_kernel_main_rs(idle_font_mod, unicode_font_mod)
         };
         std::fs::write(build_dir.join("src/main.rs"), main_rs).expect("write src/main.rs");
 
@@ -1511,6 +1560,23 @@ fn find_font_asset(dir: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Same walk-up as `find_font_asset`, but returns the `font/` directory
+/// itself rather than a specific file inside it — for assets that live at a
+/// known sub-path within it (e.g. `font/i18n/Daemon.otf`) rather than being
+/// discovered by extension.
+fn find_font_dir(dir: &Path) -> Option<PathBuf> {
+    let mut cur = Some(dir);
+    for _ in 0..6 {
+        let d = cur?;
+        let font_dir = d.join("font");
+        if font_dir.is_dir() {
+            return Some(font_dir);
+        }
+        cur = d.parent();
+    }
+    None
+}
+
 /// Byte slots reserved for glyphs beyond the primary font's own coverage —
 /// currently a couple of Chinese characters for the boot banner, sourced
 /// from a CJK-capable fallback font (most small/display fonts, like a
@@ -1586,6 +1652,88 @@ fn gen_idle_font_rs(atlas: &[u8; 4096]) -> String {
         out.push('\n');
     }
     out.push_str("];\n");
+    out
+}
+
+/// Rasterize one glyph into a 16x16, 1bpp, 32-byte cell (2 bytes/row, MSB =
+/// leftmost pixel) — the WM/framebuffer Unicode font's cell size, bigger
+/// than `blit_glyph`'s 8x16 VGA-text cell since CJK/Hangul/Thai glyphs need
+/// the extra resolution to stay legible. Returns `None` if the font doesn't
+/// cover this character (left out of the atlas entirely, rather than a
+/// blank entry, so the kernel-side lookup's "not found" fallback applies).
+fn blit_glyph16(font: &fontdue::Font, ch: char) -> Option<[u8; 32]> {
+    // Bigger than `blit_glyph`'s 15.0 (proportionate to its 8px-wide cell)
+    // and a lower coverage threshold: CJK glyphs pack many thin strokes into
+    // one cell, and at 15px/threshold-128 most of them anti-aliased down to
+    // "mostly background" and vanished almost entirely — confirmed via an
+    // actual screendump, not just theory (Thai and the single-stroke Daemon
+    // glyphs were fine at the old settings; dense Han/Hangul characters
+    // specifically were not).
+    let (metrics, bitmap) = font.rasterize(ch, 19.0);
+    if metrics.width == 0 || metrics.height == 0 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    let y_off = ((16i32 - metrics.height as i32) / 2).max(0) as usize;
+    let x_off = ((16i32 - metrics.width as i32) / 2).max(0) as usize;
+    for row in 0..metrics.height.min(16) {
+        let mut word = 0u16;
+        for col in 0..metrics.width.min(16) {
+            if bitmap[row * metrics.width + col] > 70 {
+                word |= 1 << (15usize.saturating_sub(x_off + col));
+            }
+        }
+        let out_row = y_off + row;
+        if out_row < 16 {
+            out[out_row * 2] |= (word >> 8) as u8;
+            out[out_row * 2 + 1] |= (word & 0xFF) as u8;
+        }
+    }
+    Some(out)
+}
+
+/// Rasterize every char in `chars` (deduplicated) from `font_bytes` into
+/// `(codepoint, glyph)` pairs, skipping any the font doesn't cover.
+fn rasterize_unicode_atlas(chars: &str, font_bytes: &[u8]) -> Vec<(u32, [u8; 32])> {
+    let Ok(font) = fontdue::Font::from_bytes(font_bytes, fontdue::FontSettings::default()) else {
+        return Vec::new();
+    };
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for ch in chars.chars() {
+        if !seen.insert(ch) {
+            continue;
+        }
+        if let Some(glyph) = blit_glyph16(&font, ch) {
+            out.push((ch as u32, glyph));
+        }
+    }
+    out
+}
+
+/// Generate `src/unicode_font.rs`: two build-time-rasterized glyph tables
+/// (curated multi-script text, and the Daemon constructed-script reskin of
+/// ASCII — see `ling-kernel`'s `drivers::font_unicode` module doc for what
+/// these back), `include!`d by the generated kernel `main.rs` alongside the
+/// idle font when either atlas is non-empty.
+fn gen_unicode_font_rs(unicode: &[(u32, [u8; 32])], daemon: &[(u32, [u8; 32])]) -> String {
+    fn emit(name: &str, entries: &[(u32, [u8; 32])], out: &mut String) {
+        out.push_str(&format!(
+            "pub static {name}: [(u32, [u8; 32]); {}] = [\n",
+            entries.len()
+        ));
+        for (cp, glyph) in entries {
+            out.push_str(&format!("    ({cp}, ["));
+            for b in glyph {
+                out.push_str(&format!("{b},"));
+            }
+            out.push_str("]),\n");
+        }
+        out.push_str("];\n");
+    }
+    let mut out = String::with_capacity((unicode.len() + daemon.len()) * 96 + 128);
+    emit("UNICODE_GLYPHS", unicode, &mut out);
+    emit("DAEMON_GLYPHS", daemon, &mut out);
     out
 }
 
@@ -1773,13 +1921,21 @@ strip = true
 /// (`idle_font.rs`, written alongside this file) holding the byte array, and
 /// gets registered with `ling_kernel::drivers::vga::set_idle_font` before the kernel's
 /// own code runs, so `keyboard::read_char`'s idle timer can swap to it later.
-fn gen_kernel_main_rs(idle_font: Option<&str>) -> String {
+fn gen_kernel_main_rs(idle_font: Option<&str>, unicode_font: Option<&str>) -> String {
     // Plain string substitution (not `format!`) — the template below is full
     // of literal Rust-code braces that `format!` would otherwise try to
     // parse as placeholders.
     let idle_font_mod = idle_font.map(|m| format!("mod {m};\n")).unwrap_or_default();
     let idle_font_reg = idle_font
         .map(|m| format!("        ling_kernel::drivers::vga::set_idle_font(&{m}::IDLE_FONT);\n"))
+        .unwrap_or_default();
+    let unicode_font_mod = unicode_font.map(|m| format!("mod {m};\n")).unwrap_or_default();
+    let unicode_font_reg = unicode_font
+        .map(|m| {
+            format!(
+                "        ling_kernel::drivers::font_unicode::set_unicode_atlas(&{m}::UNICODE_GLYPHS);\n        ling_kernel::drivers::font_unicode::set_daemon_atlas(&{m}::DAEMON_GLYPHS);\n"
+            )
+        })
         .unwrap_or_default();
     let template = r#"#![no_std]
 #![no_main]
@@ -1792,6 +1948,7 @@ fn gen_kernel_main_rs(idle_font: Option<&str>) -> String {
 extern crate ling_kernel;
 
 /*IDLE_FONT_MOD*/
+/*UNICODE_FONT_MOD*/
 
 extern "C" {
     fn __main__() -> u64;
@@ -1838,6 +1995,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 pub extern "C" fn kernel_entry() -> ! {
     unsafe {
 /*IDLE_FONT_REG*/
+/*UNICODE_FONT_REG*/
         __main__();
     }
     loop {
@@ -1848,6 +2006,8 @@ pub extern "C" fn kernel_entry() -> ! {
     template
         .replace("/*IDLE_FONT_MOD*/", &idle_font_mod)
         .replace("/*IDLE_FONT_REG*/", &idle_font_reg)
+        .replace("/*UNICODE_FONT_MOD*/", &unicode_font_mod)
+        .replace("/*UNICODE_FONT_REG*/", &unicode_font_reg)
 }
 
 /// Generate `build.rs` for kernel builds: links entry.o, multiboot.o, and linker script.

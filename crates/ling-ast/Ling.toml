@@ -1,0 +1,8 @@
+[package]
+name = "ling-ast"
+version = "2030.0.4"
+description = "Abstract Syntax Tree types for the Ling language"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]

@@ -40,7 +40,10 @@ use crate::arch::{bootmodule, io, timer};
 #[cfg(target_arch = "aarch64")]
 use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::{font8x8, framebuffer, keyboard, mouse, serial, term, vga, wm_liquid};
+use crate::drivers::{
+    flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, serial, term, vga,
+    wm_liquid,
+};
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
@@ -339,6 +342,100 @@ pub unsafe extern "C" fn ling_kernel_rtc_hour() -> u64 {
 pub unsafe extern "C" fn ling_kernel_rtc_minute() -> u64 {
     arch::rtc::read().minute as u64
 }
+
+/// Locale/timezone table — see `drivers::locale`'s module doc for what's
+/// real (Earth UTC offsets, the Moon's actual synodic-month day cycle) and
+/// what's disclosed as symbolic (the invented celestial locales' offsets).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_count() -> u64 {
+    locale::count() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_id(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.id).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_native_name(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.native_name).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_latin_name(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.latin_name).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+/// Signed minutes offset from UTC, bit-cast into a `u64` ((`as i64 as u64`) --
+/// `.ling` has no signed-integer FFI type, so callers that need the sign
+/// back must reinterpret the low 32 bits as `i32` themselves (offsets here
+/// never exceed +-2048 minutes, well within range).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_utc_offset_min(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.utc_offset_min).unwrap_or(0) as i64 as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_is_celestial(i: u64) -> u64 {
+    match locale::get(i as usize).map(|l| l.kind) {
+        Some(locale::Kind::Celestial) => 1,
+        _ => 0,
+    }
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_uses_daemon(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.uses_daemon_script).unwrap_or(false) as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_flag_id(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.flag_id as u64).unwrap_or(u64::MAX)
+}
+/// Permille (0..1000) through the Moon's real day/night cycle right now --
+/// see `drivers::locale::moon_day_progress_permille`'s doc for the actual
+/// astronomy behind this number.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_moon_day_progress() -> u64 {
+    locale::moon_day_progress_permille() as u64
+}
+
+/// Draw the flag matching `locale::Locale::flag_id` into the box
+/// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
+/// here (hand-encoded proportional layouts, not a decoded image file).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+/// The user's picked locale index, or `u64::MAX` if none yet — see
+/// `drivers::locale::select`'s doc for why this is kernel-side state.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_selected() -> u64 {
+    locale::selected().map(|i| i as u64).unwrap_or(u64::MAX)
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_select(i: u64) -> u64 {
+    locale::select(i as usize);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_flag(
+    id: u64,
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+) -> u64 {
+    flags::draw(id as u32, x as u32, y as u32, w as u32, h as u32);
+    0
+}
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_rtc_second() -> u64 {
@@ -611,6 +708,32 @@ pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64
         bg as u32,
     );
     0
+}
+
+/// Draw a UTF-8 string that may contain non-ASCII text -- see
+/// `drivers::font_unicode`'s module doc for what's actually covered (a
+/// curated character set, not full Unicode) and its real limitations (no
+/// text shaping). `daemon` non-zero renders ASCII bytes through the
+/// constructed-script glyph reskin instead of plain Latin. Returns the
+/// pixel width drawn.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_utf8_str(
+    x: u64,
+    y: u64,
+    s: u64,
+    fg: u64,
+    bg: u64,
+    daemon: u64,
+) -> u64 {
+    font_unicode::draw_utf8_str(
+        x as u32,
+        y as u32,
+        arg_str(s).as_bytes(),
+        fg as u32,
+        bg as u32,
+        daemon != 0,
+    ) as u64
 }
 
 /// Advance the "liquid window" spring simulation one frame toward
