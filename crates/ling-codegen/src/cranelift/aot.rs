@@ -304,6 +304,8 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_net_init", &[], types::I64),
         ("ling_kernel_net_link_up", &[], types::I64),
         ("ling_kernel_net_mac_byte", &[types::I64], types::I64),
+        ("ling_kernel_net_self_ip_byte", &[types::I64], types::I64),
+        ("ling_kernel_net_gateway_ip_byte", &[types::I64], types::I64),
         ("ling_kernel_net_arp_selftest", &[], types::I64),
         ("ling_kernel_net_arp_reply_mac_byte", &[types::I64], types::I64),
         ("ling_kernel_locale_selected", &[], types::I64),

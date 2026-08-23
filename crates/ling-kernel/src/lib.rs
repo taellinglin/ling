@@ -156,6 +156,16 @@ fn print_decimal(n: u64) {
     console_write(&digits[i..]);
 }
 
+/// Print `n` as two lowercase hex digits (zero-padded) -- for MAC address
+/// bytes, where the conventional hex notation reads far more recognizably
+/// than `print_decimal`'s output (confirmed the hard way: misreading a
+/// decimal-formatted MAC as hex cost real debugging time chasing a bug that
+/// turned out not to exist).
+fn print_hex_byte(n: u8) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    console_write(&[DIGITS[(n >> 4) as usize], DIGITS[(n & 0xF) as usize]]);
+}
+
 fn console_clear() {
     // aarch64: no general "clear screen" concept over a plain UART, so this
     // is a no-op there.
@@ -1320,7 +1330,7 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
         if i > 0 {
             serial::write(b":");
         }
-        print_decimal(*b as u64);
+        print_hex_byte(*b);
     }
     serial::write(b" link_up=");
     print_decimal(net_e1000::link_up() as u64);
@@ -1338,6 +1348,20 @@ pub unsafe extern "C" fn ling_kernel_net_link_up() -> u64 {
 pub unsafe extern "C" fn ling_kernel_net_mac_byte(i: u64) -> u64 {
     net_e1000::mac().get(i as usize).copied().unwrap_or(0) as u64
 }
+/// One byte (0..3) of this driver's claimed static IPv4 address (see
+/// `net_e1000::SELF_IP`'s doc -- no DHCP yet).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_self_ip_byte(i: u64) -> u64 {
+    net_e1000::SELF_IP.get(i as usize).copied().unwrap_or(0) as u64
+}
+/// One byte (0..3) of the configured gateway IPv4 address (see
+/// `net_e1000::GATEWAY_IP`'s doc).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_net_gateway_ip_byte(i: u64) -> u64 {
+    net_e1000::GATEWAY_IP.get(i as usize).copied().unwrap_or(0) as u64
+}
 /// Hand-built ARP request/reply round trip, bypassing any IP stack --
 /// see `net_e1000::arp_selftest`'s doc. Returns 1 and fills `out_mac_byte`-
 /// queryable state on a real reply, 0 on timeout/no NIC.
@@ -1352,7 +1376,7 @@ pub unsafe extern "C" fn ling_kernel_net_arp_selftest() -> u64 {
                 if i > 0 {
                     serial::write(b":");
                 }
-                print_decimal(*b as u64);
+                print_hex_byte(*b);
             }
             serial::write(b"\n");
             1

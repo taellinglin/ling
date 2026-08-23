@@ -16,22 +16,37 @@
 //! no preemption to lose while spinning.
 //!
 //! **Current status, honestly: partially verified, not yet fully working.**
-//! Confirmed via QEMU (`-nic user,model=e1000`) + serial log: the PCI
-//! device is found, reset completes, `STATUS.LU` (link up) reads true, and
-//! `transmit()` genuinely reaches the hardware (`TDH` advances past the
-//! descriptor and `ICR.TXQE` fires, both real device-driven effects — nothing
-//! in this driver writes `TDH` itself). Two real bugs were found and fixed
-//! along the way (frame padded to Ethernet's 60-byte minimum; descriptor
-//! `status` reads switched to `read_volatile`/`addr_of!`, since a plain
-//! field read is fair game for the compiler to hoist across a polling loop).
-//! Still unresolved: the MAC address read via EERD/EEPROM doesn't match
-//! what QEMU's monitor (`info network`) reports for the same NIC, and the
-//! ARP self-test (`arp_selftest`) times out with zero packets ever seen on
-//! the RX side — both point at something more fundamental (possibly BAR0/
-//! MMIO addressing) than either fix above, not yet root-caused. Treat
-//! `init()`/`link_up()`/`transmit()` as real and working; treat `receive()`
-//! and anything depending on a reply (`arp_selftest`, and by extension any
-//! future IP-stack integration) as unverified until this is resolved.
+//! Confirmed via QEMU (`-nic user,model=e1000`) + serial log: the PCI device
+//! is found (vendor/device 8086:100e — genuinely an 82540EM, not a
+//! misidentified device), BAR0 resolves to a plausible, correctly-behaving
+//! MMIO address, reset completes, the real MAC reads correctly via EERD/
+//! EEPROM (matches QEMU's monitor exactly — an earlier apparent mismatch
+//! was a debug-print bug, not a driver bug: the MAC bytes were printed with
+//! `print_decimal` and misread as hex), `STATUS.LU` (link up) reads true,
+//! `transmit()`'s frame content is byte-perfect in the TX buffer (verified
+//! via a raw memory dump against the exact expected ARP request bytes), and
+//! the descriptor ring mechanics run (`TDH` advances past the descriptor
+//! and `ICR.TXQE` fires, both real device-driven effects — nothing in this
+//! driver writes `TDH` itself). Real bugs found and fixed along the way:
+//! frame padded to Ethernet's 60-byte minimum; descriptor `status` reads
+//! switched to `read_volatile`/`addr_of!` (a plain field read is fair game
+//! for the compiler to hoist across a polling loop); `TXDCTL`/`RXDCTL` now
+//! configured (some driver references treat this as required, not optional).
+//!
+//! **Still unresolved, and deeper than any of the above**: independently
+//! verified via a QEMU `-object filter-dump` packet capture on the netdev
+//! itself (catches every frame regardless of guest-side correctness) that
+//! the transmitted frame — despite being byte-perfect and despite every
+//! device-side signal (TDH, ICR.TXQE) indicating the hardware processed it
+//! — never actually reaches the network backend at all (0 bytes captured).
+//! This rules out everything checked so far (frame content, descriptor
+//! format, ring setup, TXDCTL) and points at something more fundamental in
+//! this specific QEMU e1000 emulation that needs either QEMU source-level
+//! debugging or a different environment to make further progress on. Treat
+//! `init()`/`mac()`/`link_up()`/`transmit()`'s ring mechanics as real and
+//! working; treat actual packet delivery (in either direction) and anything
+//! depending on it (`arp_selftest`, future IP-stack integration) as
+//! unverified until this is resolved.
 use crate::arch::{pci, timer};
 use core::ptr;
 
@@ -44,6 +59,8 @@ const REG_IMC: usize = 0x00D8;
 const REG_RCTL: usize = 0x0100;
 const REG_TCTL: usize = 0x0400;
 const REG_TIPG: usize = 0x0410;
+const REG_TXDCTL: usize = 0x3828;
+const REG_RXDCTL: usize = 0x2828;
 const REG_RDBAL: usize = 0x2800;
 const REG_RDBAH: usize = 0x2804;
 const REG_RDLEN: usize = 0x2808;
@@ -189,11 +206,10 @@ pub fn init() -> Result<(), ()> {
         reg_write(REG_MTA + i * 4, 0);
     }
 
-    // MAC address via the EEPROM (EERD) -- confirmed the hard way that
-    // RAL0/RAH0 are NOT reliably pre-populated with the real MAC on this
-    // QEMU version (read back a value with no relation at all to the MAC
-    // `info network` reported), contrary to what the original plan assumed.
-    // EERD is the standard, always-correct path real drivers use first.
+    // MAC address via the EEPROM (EERD) -- RAL0/RAH0 aren't a reliable
+    // shortcut here (unclear whether/when QEMU shadows the EEPROM into
+    // them), so this always goes through the real EEPROM read path real
+    // drivers use.
     let w0 = eeprom_read(0);
     let w1 = eeprom_read(1);
     let w2 = eeprom_read(2);
@@ -245,6 +261,7 @@ fn setup_rx() {
         reg_write(REG_RDT, (RX_DESC_COUNT - 1) as u32);
         RX_TAIL = RX_DESC_COUNT - 1;
     }
+    reg_write(REG_RXDCTL, (1 << 24) | (1 << 16)); // see setup_tx's TXDCTL comment
     reg_write(
         REG_RCTL,
         RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_BSIZE_2048 | RCTL_SECRC,
@@ -273,6 +290,15 @@ fn setup_tx() {
         TX_TAIL = 0;
     }
     reg_write(REG_TIPG, 10 | (8 << 10) | (6 << 20)); // standard IPG timings
+    // TXDCTL: some e1000 driver references treat this as required for the
+    // transmit engine to actually dispatch queued packets, not merely a
+    // write-back-timing tuning knob -- GRAN=1 (bit24, descriptor
+    // granularity) + WTHRESH=1 (bits16-21), a commonly-cited minimal-working
+    // setting. Trying this because TDH advances/ICR.TXQE fires (proving the
+    // ring mechanics work) yet the frame provably never reaches the network
+    // backend (confirmed via a QEMU `filter-dump` packet capture showing
+    // zero bytes) -- unexplained by anything else checked so far.
+    reg_write(REG_TXDCTL, (1 << 24) | (1 << 16));
     reg_write(REG_TCTL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 }
 
@@ -439,5 +465,13 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
         }
         false
     });
+    if found.is_none() {
+        // Did the hardware receive *anything* at all (even noise that
+        // didn't match the reply filter), or genuinely nothing? RDH only
+        // ever advances via the NIC's own DMA -- nothing in this driver
+        // writes it -- so this distinguishes "RX path is fundamentally
+        // broken" from "nothing happened to arrive that matched."
+        log_hex(b"net: arp_selftest: RDH after wait=0x", reg_read(REG_RDH));
+    }
     found
 }
