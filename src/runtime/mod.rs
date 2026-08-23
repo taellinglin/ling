@@ -10496,6 +10496,64 @@ impl Interpreter {
                 }
                 return Ok(Value::Str(content));
             },
+            // run_process(cmd, args_list, timeout_secs, log_path) -> number (exit code;
+            // -1 = spawn/log-open failure; -2 = killed after timeout). No shell involved
+            // (Command::new + .args, never a shell string), so args can't be reinterpreted;
+            // this exists solely for the registry's own first-party controllers to drive
+            // `docker run` for sandboxed package builds — never exposed to uploaded content.
+            // stdout+stderr both append to log_path (two independent opens of the same
+            // file — an approximation of 2>&1, fine for a build log, not byte-interleaved).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "run_process" | "รันโปรเซส" => {
+                let cmd = self.arg_str(&args, 0, "");
+                let argv = self.arg_list_str(&args, 1);
+                let timeout_secs = self.arg_num(&args, 2, 60.0)?.max(1.0) as u64;
+                let log_path = self.arg_str(&args, 3, "");
+
+                let make_stdio = || -> std::process::Stdio {
+                    if log_path.is_empty() {
+                        std::process::Stdio::null()
+                    } else {
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&log_path)
+                            .map(std::process::Stdio::from)
+                            .unwrap_or_else(|_| std::process::Stdio::null())
+                    }
+                };
+
+                let spawned = std::process::Command::new(&cmd)
+                    .args(&argv)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(make_stdio())
+                    .stderr(make_stdio())
+                    .spawn();
+
+                let mut child = match spawned {
+                    Ok(c) => c,
+                    Err(_) => return Ok(Value::Number(-1.0)),
+                };
+
+                let start = std::time::Instant::now();
+                let timeout = std::time::Duration::from_secs(timeout_secs);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            return Ok(Value::Number(status.code().unwrap_or(-1) as f64));
+                        },
+                        Ok(None) => {
+                            if start.elapsed() > timeout {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                return Ok(Value::Number(-2.0));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(300));
+                        },
+                        Err(_) => return Ok(Value::Number(-1.0)),
+                    }
+                }
+            },
             // tar_gz_extract_to(tar_path, entry_name, out_path) -> bool. Byte-perfect
             // single-entry extraction straight to disk — unlike tar_gz_read, no
             // UTF-8 round-trip, so binary entries (icons, images) come through intact.
@@ -17314,6 +17372,15 @@ impl Interpreter {
         args.get(n)
             .map(|v| v.to_string())
             .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Read a list-of-strings argument as `Vec<String>` (empty if absent/not a list).
+    /// Used by `run_process` for argv — never shell-interpreted, so no injection risk.
+    fn arg_list_str(&self, args: &[Value], n: usize) -> Vec<String> {
+        match args.get(n) {
+            Some(Value::List(v)) => v.iter().map(|x| x.to_string()).collect(),
+            _ => Vec::new(),
+        }
     }
 
     /// Read a list-of-numbers argument as `Vec<f32>` (empty if absent/not a list).

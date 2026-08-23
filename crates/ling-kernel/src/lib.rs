@@ -405,11 +405,6 @@ pub unsafe extern "C" fn ling_kernel_moon_day_progress() -> u64 {
     locale::moon_day_progress_permille() as u64
 }
 
-/// Draw the flag matching `locale::Locale::flag_id` into the box
-/// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
-/// here (hand-encoded proportional layouts, not a decoded image file).
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
 /// The user's picked locale index, or `u64::MAX` if none yet — see
 /// `drivers::locale::select`'s doc for why this is kernel-side state.
 #[cfg(target_arch = "x86_64")]
@@ -424,6 +419,9 @@ pub unsafe extern "C" fn ling_kernel_locale_select(i: u64) -> u64 {
     0
 }
 
+/// Draw the flag matching `locale::Locale::flag_id` into the box
+/// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
+/// here (hand-encoded proportional layouts, not a decoded image file).
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fb_draw_flag(
