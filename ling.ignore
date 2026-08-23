@@ -1,0 +1,54 @@
+# ling.ignore — what `lingfu publish` leaves out of the root `ling-lang`
+# tarball. Unlike `cargo publish` (which is git-aware and already skips
+# everything .gitignore keeps untracked, e.g. ling-lang.org/), lingfu's
+# tarball builder walks the raw filesystem with no git awareness at all — so
+# large/non-essential content needs to be listed here explicitly, or it gets
+# swept straight into the upload. Mirrors the crates.io `[package] exclude`
+# policy in Cargo.toml (same "what's actually part of the distributable
+# language/compiler" call already made there), plus a few purely-local /
+# generated directories .gitignore already keeps out of git.
+
+# Large or non-essential content (same policy as Cargo.toml's crates.io exclude)
+assets/
+examples/
+docs/
+instruments/
+lexicons/
+chinese-room-web/
+recordings/
+cache/
+
+# The project website — gitignored, "published separately, not part of crate"
+ling-lang.org/
+
+# Build/VCS output (build_tarball also hardcodes skipping target/.git/dist/
+# .ling-build/.ling-shared-target by name at any depth; listed here too for
+# clarity and in case that hardcoded list ever narrows)
+target/
+dist/
+.ling-build/
+.ling-shared-target/
+benchmarks/bin/
+__pycache__/
+
+# Editor / tooling
+.vscode/
+.idea/
+.claude/
+.github/
+
+# Compiled/binary/media artifacts that shouldn't be in a source tarball
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.wasm
+*.pdb
+*.rlib
+*.rmeta
+*.wav
+*.mp3
+*.ogg
+*.flac
