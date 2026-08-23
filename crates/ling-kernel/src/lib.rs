@@ -405,12 +405,19 @@ pub unsafe extern "C" fn ling_kernel_moon_day_progress() -> u64 {
     locale::moon_day_progress_permille() as u64
 }
 
-/// The user's picked locale index, or `u64::MAX` if none yet — see
+/// The user's picked locale index, or `locale::count()` (one past the last
+/// valid index — small and exact, unlike `u64::MAX`, which `.ling`'s
+/// number type can't represent losslessly) if none yet. See
 /// `drivers::locale::select`'s doc for why this is kernel-side state.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_locale_selected() -> u64 {
-    locale::selected().map(|i| i as u64).unwrap_or(u64::MAX)
+    locale::selected().unwrap_or(locale::count()) as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_index_of_id(id: u64) -> u64 {
+    locale::index_of_id(arg_str(id)) as u64
 }
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]

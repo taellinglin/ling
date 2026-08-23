@@ -1162,7 +1162,7 @@ fn build_native(
         // Chinese/Korean/Thai; the target project's own `font/i18n/Daemon.*`
         // (LingOS-specific, not a general `ling` asset) for Daemon.
         let unicode_font_mod = if !is_rpi {
-            const ZH_CHARS: &str = "简体中文你好欢迎语言灵源";
+            const ZH_CHARS: &str = "简体中文你好欢迎语言灵源月宫龙嫦娥";
             const KO_CHARS: &str = "한국어안녕하세요환영합니다언어";
             const TH_CHARS: &str = "ภาษาไทยสวัสดียินดีต้อนรับ";
             let mut unicode_glyphs = Vec::new();

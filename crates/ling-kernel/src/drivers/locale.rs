@@ -144,6 +144,18 @@ pub fn get(i: usize) -> Option<&'static Locale> {
     LOCALES.get(i)
 }
 
+/// Index of the locale with this `id` (case-insensitive -- a typed prompt
+/// shouldn't reject "ZH-CN"/"zh-cn" just because the table's own id is
+/// mixed-case), or 0 (`en-US`, the table's first/default entry) if `id` is
+/// empty or matches nothing, so a blank/mistyped entry falls back to a sane
+/// default rather than an error mid-setup.
+pub fn index_of_id(id: &str) -> usize {
+    LOCALES
+        .iter()
+        .position(|l| l.id.eq_ignore_ascii_case(id))
+        .unwrap_or(0)
+}
+
 static mut SELECTED: Option<usize> = None;
 
 /// Record the user's locale choice — kernel-side state for the same reason

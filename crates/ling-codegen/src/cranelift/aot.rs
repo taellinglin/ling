@@ -302,6 +302,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_locale_flag_id", &[types::I64], types::I64),
         ("ling_kernel_moon_day_progress", &[], types::I64),
         ("ling_kernel_locale_selected", &[], types::I64),
+        ("ling_kernel_locale_index_of_id", &[types::I64], types::I64),
         ("ling_kernel_locale_select", &[types::I64], types::I64),
         (
             "ling_kernel_fb_draw_flag",
