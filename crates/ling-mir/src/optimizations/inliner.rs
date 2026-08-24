@@ -33,28 +33,31 @@ impl Inliner {
                     for (stmt_idx, stmt) in bb.statements.iter().enumerate() {
                         if let StatementKind::Assign(
                             _,
-                            Rvalue::Call { func: Operand::Constant(Constant::Function(name)), args },
+                            Rvalue::Call {
+                                func: Operand::Constant(Constant::Function(name)),
+                                args,
+                            },
                         ) = &stmt.kind
                         {
                             if name == &func.name {
                                 continue;
                             }
-                                if let Some(target_fn) = fn_map.get(name) {
-                                    let is_recursive = target_fn.basic_blocks.iter().any(|bb| {
-                                        bb.statements.iter().any(|s| {
-                                            matches!(&s.kind, StatementKind::Assign(_, Rvalue::Call {
+                            if let Some(target_fn) = fn_map.get(name) {
+                                let is_recursive = target_fn.basic_blocks.iter().any(|bb| {
+                                    bb.statements.iter().any(|s| {
+                                        matches!(&s.kind, StatementKind::Assign(_, Rvalue::Call {
                                                 func: Operand::Constant(Constant::Function(n)), ..
                                             }) if n == &target_fn.name)
-                                        })
-                                    });
-                                    if is_recursive {
-                                        continue;
-                                    }
-                                    if target_fn.basic_blocks.len() < 100 {
-                                        call_found = Some((stmt_idx, name.clone(), args.clone()));
-                                        break;
-                                    }
+                                    })
+                                });
+                                if is_recursive {
+                                    continue;
                                 }
+                                if target_fn.basic_blocks.len() < 100 {
+                                    call_found = Some((stmt_idx, name.clone(), args.clone()));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }

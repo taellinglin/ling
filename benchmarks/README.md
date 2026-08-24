@@ -44,6 +44,37 @@ Regenerate just the infographic from existing results:
 python make_infographic.py results.json ling_benchmark.svg
 ```
 
+## Panda3D feature suite
+
+A second suite compares **Ling's builtin surface** against **Python + Panda3D**
+(the C++ game engine via its Python bindings) across engine-feature categories:
+
+![panda infographic](panda_benchmark.svg)
+
+| Bench | Category | Panda3D feature | Ling equivalent |
+|-------|----------|-----------------|-----------------|
+| `vec_math` | MATH | `LVecBase3d` dot/cross/length | scalar math |
+| `noise_field` | COMPUTING | `StackedPerlinNoise2` (4 octaves) | `fbm` builtin |
+| `vertex_pipeline` | GRAPHICS | `LMatrix4d` compose + xform + project | scalar transform |
+| `fm_synth` | AUDIO | *(no DSP API — pure Python)* | `sin`/`exp` |
+| `hash_chain` | CRYPTO | `HashVal` (MD5, C++) | `sha256_hex` |
+| `boids` | AI | steering with `LVecBase3d` | lists + scalar math |
+| `spring_rope` | PHYSICS | spring rope with `LVecBase3d` | lists + scalar math |
+
+```sh
+python run_panda_benchmarks.py       # needs: pip install panda3d
+```
+
+Writes `panda_results.json` + `panda_benchmark.svg`. Checksums are verified
+identical for `vec_math`, `vertex_pipeline`, `fm_synth`, `boids`, and
+`spring_rope`; `noise_field`/`hash_chain` intentionally compare each engine's
+*native* algorithm (different Perlin tables; MD5 vs SHA-256), so only timing is
+compared. Two fairness details worth knowing: Panda3D's MSVC build fuses
+multiply-adds (FMA) inside `dot`/`length_squared`, so the boids flock uses a
+smooth separation falloff (no distance cutoff) to keep 1-ulp differences from
+flipping branches; and both sides multiply by an explicit reciprocal instead of
+using Panda3D's `/=`, which C++ implements as reciprocal-multiply.
+
 ## Methodology / fairness notes
 
 - **Internal timing.** Each program times only the compute region with a

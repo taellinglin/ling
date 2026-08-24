@@ -179,7 +179,15 @@ pub fn checkerboard(
         for x in 0..width {
             let tx = x * tiles / width;
             let ty = y * tiles / height;
-            tex.set(x, y, if (tx + ty).is_multiple_of(2) { color_a } else { color_b });
+            tex.set(
+                x,
+                y,
+                if (tx + ty).is_multiple_of(2) {
+                    color_a
+                } else {
+                    color_b
+                },
+            );
         }
     }
     tex.into_vec()

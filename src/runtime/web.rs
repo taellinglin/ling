@@ -24,7 +24,7 @@
 use ling_http::axum;
 use ling_http::tokio;
 
-use axum::extract::{Request, State};
+use axum::extract::{DefaultBodyLimit, FromRequest, Multipart, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Router;
@@ -77,6 +77,196 @@ struct ServerState {
     tx: std::sync::mpsc::Sender<PendingRequest>,
 }
 
+/// Non-multipart bodies are still buffered in RAM — they are forms and JSON,
+/// and the Ling handler receives them as a `String` either way.
+const MAX_INMEM_BODY: usize = 32 * 1024 * 1024;
+/// A streamed `multipart/form-data` file part never lands in memory, so this
+/// bound exists only to stop a client filling the disk. 8 GiB is well past any
+/// real package (Soul Symphony with full voiceover is ~0.5 GB).
+const MAX_UPLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// Text fields DO land in memory, so they get a much tighter cap.
+const MAX_FIELD_BYTES: usize = 1024 * 1024;
+/// Field names the server synthesises itself; a client may not set them.
+const RESERVED_FIELDS: [&str; 2] = ["artifact_path", "artifact_size"];
+
+/// Percent-encode a value so it survives being packed into the `k=v&k=v` body
+/// string that `query_param()` parses on the Ling side.
+fn url_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*b as char)
+            },
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Stream a `multipart/form-data` request to disk.
+///
+/// The file part (`artifact`, or any part carrying a filename) is written
+/// straight to `storage/tmp/` in whatever chunks arrive off the socket — the
+/// bytes are never collected into a `String`, which is what made a multi-
+/// hundred-megabyte publish impossible before. Every other part is a small
+/// text field and is collected normally.
+///
+/// Returns the synthesised body the Ling handler sees, in the same `k=v&k=v`
+/// shape a urlencoded form would have, plus two extra keys: `artifact_path`
+/// (where the streamed file landed) and `artifact_size`.
+///
+/// Security: the synthesised keys are written FIRST and any client part using
+/// one of those names is dropped. `query_param()` returns the first match, so
+/// a malicious client cannot point the handler at a path of its choosing.
+async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut mp = match Multipart::from_request(req, &()).await {
+        Ok(m) => m,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("malformed multipart body: {e}"),
+            )
+                .into_response())
+        },
+    };
+
+    let mut synthesized = String::new();
+    let mut fields = String::new();
+
+    loop {
+        let field = match mp.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    format!("malformed multipart field: {e}"),
+                )
+                    .into_response())
+            },
+        };
+        let name = field.name().unwrap_or("").to_string();
+        let is_file = field.file_name().is_some() || name == "artifact";
+
+        if is_file {
+            if !synthesized.is_empty() {
+                return Err((StatusCode::BAD_REQUEST, "more than one file part").into_response());
+            }
+            if let Err(e) = tokio::fs::create_dir_all("storage/tmp").await {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("cannot create storage/tmp: {e}"),
+                )
+                    .into_response());
+            }
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = format!("storage/tmp/upload-{stamp:x}.part");
+            let mut file = match tokio::fs::File::create(&path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("cannot open upload temp file: {e}"),
+                    )
+                        .into_response())
+                },
+            };
+            let mut total: u64 = 0;
+            let mut field = field;
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        total += chunk.len() as u64;
+                        if total > MAX_UPLOAD_BYTES {
+                            drop(file);
+                            let _ = tokio::fs::remove_file(&path).await;
+                            return Err((
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                format!("upload exceeds {MAX_UPLOAD_BYTES} bytes"),
+                            )
+                                .into_response());
+                        }
+                        if let Err(e) = file.write_all(&chunk).await {
+                            drop(file);
+                            let _ = tokio::fs::remove_file(&path).await;
+                            return Err((
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("write failed: {e}"),
+                            )
+                                .into_response());
+                        }
+                    },
+                    Ok(None) => break,
+                    Err(e) => {
+                        drop(file);
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return Err(
+                            (StatusCode::BAD_REQUEST, format!("upload stream broke: {e}"))
+                                .into_response(),
+                        );
+                    },
+                }
+            }
+            if let Err(e) = file.flush().await {
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("flush failed: {e}"),
+                )
+                    .into_response());
+            }
+            synthesized = format!(
+                "artifact_path={}&artifact_size={}&",
+                url_encode(&path),
+                total
+            );
+        } else {
+            if RESERVED_FIELDS.contains(&name.as_str()) {
+                continue;
+            }
+            let mut field = field;
+            let mut buf: Vec<u8> = Vec::new();
+            loop {
+                match field.chunk().await {
+                    Ok(Some(chunk)) => {
+                        if buf.len() + chunk.len() > MAX_FIELD_BYTES {
+                            return Err((
+                                StatusCode::PAYLOAD_TOO_LARGE,
+                                format!("form field is over {MAX_FIELD_BYTES} bytes"),
+                            )
+                                .into_response());
+                        }
+                        buf.extend_from_slice(&chunk);
+                    },
+                    Ok(None) => break,
+                    Err(e) => {
+                        return Err((StatusCode::BAD_REQUEST, format!("bad form field: {e}"))
+                            .into_response())
+                    },
+                }
+            }
+            let value = String::from_utf8_lossy(&buf).into_owned();
+            fields.push_str(&url_encode(&name));
+            fields.push('=');
+            fields.push_str(&url_encode(&value));
+            fields.push('&');
+        }
+    }
+
+    let mut body = synthesized;
+    body.push_str(&fields);
+    while body.ends_with('&') {
+        body.pop();
+    }
+    Ok(body)
+}
+
 async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -108,11 +298,30 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         })
         .unwrap_or_default();
 
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 32 * 1024 * 1024).await {
-        Ok(b) => b,
-        Err(_) => return (StatusCode::BAD_REQUEST, "body too large or unreadable").into_response(),
+    // multipart/form-data streams to disk; everything else is a small form or
+    // JSON body and is still read into memory. Without this split a package
+    // upload had to fit in MAX_INMEM_BODY, which capped publishes at 32 MiB.
+    let content_type = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let body = if content_type.starts_with("multipart/form-data") {
+        match stream_multipart_to_disk(req).await {
+            Ok(b) => b,
+            Err(resp) => return resp,
+        }
+    } else {
+        let body_bytes = match axum::body::to_bytes(req.into_body(), MAX_INMEM_BODY).await {
+            Ok(b) => b,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "body too large or unreadable").into_response()
+            },
+        };
+        String::from_utf8_lossy(&body_bytes).into_owned()
     };
-    let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
     let sent = state.tx.send(PendingRequest {
@@ -126,7 +335,11 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         respond_to: resp_tx,
     });
     if sent.is_err() {
-        return (StatusCode::SERVICE_UNAVAILABLE, "no Ling http_serve loop running").into_response();
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no Ling http_serve loop running",
+        )
+            .into_response();
     }
 
     match resp_rx.await {
@@ -134,11 +347,13 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
             let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::OK);
             let mut r = (status, resp.body).into_response();
             if let Ok(value) = resp.content_type.parse() {
-                r.headers_mut().insert(axum::http::header::CONTENT_TYPE, value);
+                r.headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, value);
             }
             if let Some(sc) = &resp.set_cookie {
                 if let Ok(value) = sc.parse() {
-                    r.headers_mut().insert(axum::http::header::SET_COOKIE, value);
+                    r.headers_mut()
+                        .insert(axum::http::header::SET_COOKIE, value);
                 }
             }
             if let Some(loc) = &resp.location {
@@ -160,7 +375,11 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
             );
             r
         },
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "handler dropped the response").into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "handler dropped the response",
+        )
+            .into_response(),
     }
 }
 
@@ -205,7 +424,13 @@ pub fn spawn_server(
             for (prefix, dir) in &static_dirs {
                 router = router.nest_service(prefix, tower_http::services::ServeDir::new(dir));
             }
-            let router: Router = router.fallback(catch_all).with_state(state);
+            // Multipart::from_request honours DefaultBodyLimit (2 MB by default),
+            // which would defeat the streaming path. Our own MAX_UPLOAD_BYTES /
+            // MAX_INMEM_BODY caps are what actually bound a request.
+            let router: Router = router
+                .fallback(catch_all)
+                .layer(DefaultBodyLimit::disable())
+                .with_state(state);
             if let Err(e) = ling_http::serve_http(router, addr).await {
                 eprintln!("http_serve: {e}");
             }
@@ -237,7 +462,9 @@ pub fn value_to_response(v: &crate::runtime::Value) -> HttpResponse {
                     ("status", Value::Number(n)) => resp.status = *n as u16,
                     ("body", Value::Str(s)) => resp.body = s.clone(),
                     ("content_type", Value::Str(s)) => resp.content_type = s.clone(),
-                    ("set_cookie", Value::Str(s)) if !s.is_empty() => resp.set_cookie = Some(s.clone()),
+                    ("set_cookie", Value::Str(s)) if !s.is_empty() => {
+                        resp.set_cookie = Some(s.clone())
+                    },
                     ("location", Value::Str(s)) if !s.is_empty() => resp.location = Some(s.clone()),
                     _ => {},
                 }
@@ -329,7 +556,13 @@ impl AsyncJobs {
     /// one SDAI-specific bit of JSON handling into Rust avoids needing one.
     /// On failure the result starts with `"ERROR:"`, which `.ling` code can
     /// check with a plain string-prefix comparison instead of parsing JSON.
-    pub fn start_sdai_txt2img(&self, base_url: String, prompt: String, width: u32, height: u32) -> String {
+    pub fn start_sdai_txt2img(
+        &self,
+        base_url: String,
+        prompt: String,
+        width: u32,
+        height: u32,
+    ) -> String {
         let id = {
             use rand::RngCore;
             let mut buf = [0u8; 16];
@@ -364,7 +597,11 @@ impl AsyncJobs {
                         format!("ERROR: SDAI returned HTTP {}", resp.status())
                     } else {
                         match resp.json::<ling_http::serde_json::Value>().await {
-                            Ok(v) => match v.get("images").and_then(|im| im.get(0)).and_then(|s| s.as_str()) {
+                            Ok(v) => match v
+                                .get("images")
+                                .and_then(|im| im.get(0))
+                                .and_then(|s| s.as_str())
+                            {
                                 Some(b64) => b64.to_string(),
                                 None => "ERROR: no images[0] in SDAI response".to_string(),
                             },
@@ -394,7 +631,8 @@ struct OAuthResult {
     name: String,
 }
 
-type OAuthMap = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Option<OAuthResult>>>>;
+type OAuthMap =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Option<OAuthResult>>>>;
 
 #[derive(Clone, Default)]
 pub struct OAuthJobs(OAuthMap);
@@ -445,7 +683,9 @@ impl OAuthJobs {
                 if !token_resp.status().is_success() {
                     let status = token_resp.status();
                     let body = token_resp.text().await.unwrap_or_default();
-                    return Err(format!("Google returned HTTP {status} exchanging code: {body}"));
+                    return Err(format!(
+                        "Google returned HTTP {status} exchanging code: {body}"
+                    ));
                 }
                 let token_json: ling_http::serde_json::Value = token_resp
                     .json()
@@ -463,21 +703,35 @@ impl OAuthJobs {
                     .await
                     .map_err(|e| format!("userinfo request failed: {e}"))?;
                 if !userinfo_resp.status().is_success() {
-                    return Err(format!("Google returned HTTP {} fetching userinfo", userinfo_resp.status()));
+                    return Err(format!(
+                        "Google returned HTTP {} fetching userinfo",
+                        userinfo_resp.status()
+                    ));
                 }
                 let profile: ling_http::serde_json::Value = userinfo_resp
                     .json()
                     .await
                     .map_err(|e| format!("bad JSON from Google userinfo endpoint: {e}"))?;
-                let sub = profile.get("sub").and_then(|v| v.as_str()).unwrap_or_default();
+                let sub = profile
+                    .get("sub")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
                 if sub.is_empty() {
                     return Err("no sub in Google's userinfo response".to_string());
                 }
                 Ok(OAuthResult {
                     error: String::new(),
                     sub: sub.to_string(),
-                    email: profile.get("email").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
-                    name: profile.get("name").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+                    email: profile
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    name: profile
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
                 })
             }
             .await
@@ -524,11 +778,14 @@ fn async_runtime_handle() -> tokio::runtime::Handle {
         .get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("ling: failed to start async-job tokio runtime");
-                tx.send(rt.handle().clone()).expect("ling: async-job runtime handle send failed");
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("ling: failed to start async-job tokio runtime");
+                tx.send(rt.handle().clone())
+                    .expect("ling: async-job runtime handle send failed");
                 rt.block_on(std::future::pending::<()>());
             });
-            rx.recv().expect("ling: async-job runtime handle recv failed")
+            rx.recv()
+                .expect("ling: async-job runtime handle recv failed")
         })
         .clone()
 }

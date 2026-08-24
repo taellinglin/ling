@@ -616,7 +616,9 @@ impl Parser {
                         self.advance();
                         s
                     },
-                    other => return Err(format!("asm!() expects a string literal, got {:?}", other)),
+                    other => {
+                        return Err(format!("asm!() expects a string literal, got {:?}", other))
+                    },
                 };
                 self.expect(&Token::RParen)?;
                 Ok(Expr::Asm(template))

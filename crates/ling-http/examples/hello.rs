@@ -60,10 +60,10 @@ struct Notes;
 
 #[async_trait::async_trait]
 impl Resource for Notes {
-    type State = AppState;
+    type Create = CreateNote;
     type Id = i64;
     type Item = Note;
-    type Create = CreateNote;
+    type State = AppState;
     type Update = UpdateNote;
 
     async fn index(state: &AppState) -> HttpResult<Vec<Note>> {

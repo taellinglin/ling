@@ -16,7 +16,7 @@
 //! recoverability by also splitting the derived key into Shamir shares
 //! (2-of-3): any two reconstruct it without the keyfile at all.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -45,7 +45,10 @@ fn essential_files(root: &Path) -> Result<Vec<PathBuf>> {
         .output()
         .context("running `git ls-files` (is this a git repository?)")?;
     if !out.status.success() {
-        bail!("git ls-files failed: {}", String::from_utf8_lossy(&out.stderr));
+        bail!(
+            "git ls-files failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     let ignore_patterns = crate::ignore::load(root);
     Ok(String::from_utf8_lossy(&out.stdout)
@@ -125,8 +128,9 @@ fn text_to_manifest(text: &str) -> Result<(Manifest, [u8; 32])> {
     for line in text.lines() {
         let Some((hash_hex, name)) = line.split_once("  ") else { continue };
         let hash = hex::decode(hash_hex).context("corrupt manifest: bad hash hex")?;
-        let hash: [u8; 32] =
-            hash.try_into().map_err(|_| anyhow::anyhow!("corrupt manifest: hash not 32 bytes"))?;
+        let hash: [u8; 32] = hash
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("corrupt manifest: hash not 32 bytes"))?;
         if name == "ROOT" {
             root = Some(hash);
         } else {
@@ -209,8 +213,8 @@ fn read_wav(path: &Path) -> Result<Vec<u8>> {
 // ─── key derivation + AEAD ──────────────────────────────────────────────────
 
 fn derive_key(keyfile: &Path) -> Result<[u8; 32]> {
-    let ikm = std::fs::read(keyfile)
-        .with_context(|| format!("reading keyfile {}", keyfile.display()))?;
+    let ikm =
+        std::fs::read(keyfile).with_context(|| format!("reading keyfile {}", keyfile.display()))?;
     let derived = ling_crypto::kdf::hkdf_sha3(&ikm, &[], INFO_LABEL, 32)
         .map_err(|e| anyhow::anyhow!("hkdf: {e}"))?;
     let mut key = [0u8; 32];
@@ -227,7 +231,9 @@ fn encrypt(key: [u8; 32], plaintext: &[u8]) -> Result<Vec<u8>> {
 fn decrypt(key: [u8; 32], nonce_and_ct: &[u8]) -> Result<Vec<u8>> {
     ling_crypto::symmetric::XChaCha20::new(key)
         .decrypt(nonce_and_ct)
-        .map_err(|e| anyhow::anyhow!("decrypt (wrong keyfile/shares, or the seed was tampered with): {e}"))
+        .map_err(|e| {
+            anyhow::anyhow!("decrypt (wrong keyfile/shares, or the seed was tampered with): {e}")
+        })
 }
 
 // ─── Shamir recovery ────────────────────────────────────────────────────────
@@ -265,9 +271,9 @@ fn recover_key(share_paths: &[String]) -> Result<[u8; 32]> {
         shares.push(ling_crypto::shamir::Share { x, y });
     }
     let secret = ling_crypto::shamir::reconstruct_secret(&shares);
-    let key: [u8; 32] = secret
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("reconstructed secret is not 32 bytes — wrong/mismatched shares"))?;
+    let key: [u8; 32] = secret.try_into().map_err(|_| {
+        anyhow::anyhow!("reconstructed secret is not 32 bytes — wrong/mismatched shares")
+    })?;
     Ok(key)
 }
 
@@ -300,11 +306,16 @@ fn report_diff(old: &Manifest, new: &Manifest) -> bool {
 // ─── CLI ────────────────────────────────────────────────────────────────────
 
 fn flag_value(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 pub fn run(args: &[String]) -> Result<()> {
-    let root = flag_value(args, "--path").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let root = flag_value(args, "--path")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     let check = args.iter().any(|a| a == "--check");
     let recover_init_flag = args.iter().any(|a| a == "--recover-init");
     let recover_shares: Vec<String> = {
@@ -337,12 +348,18 @@ pub fn run(args: &[String]) -> Result<()> {
     };
 
     if recover_init_flag {
-        let out_dir = flag_value(args, "--out-dir").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+        let out_dir = flag_value(args, "--out-dir")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
         return recover_init(key, &out_dir);
     }
 
     let files = essential_files(&root)?;
-    println!("lingfu seed: {} tracked files under {}", files.len(), root.display());
+    println!(
+        "lingfu seed: {} tracked files under {}",
+        files.len(),
+        root.display()
+    );
     let manifest = build_manifest(&root, &files)?;
     let root_hash = merkle_root(&manifest);
     println!("  root: {}", hex::encode(&root_hash));
@@ -363,7 +380,12 @@ pub fn run(args: &[String]) -> Result<()> {
         let text = manifest_to_text(&manifest, &root_hash);
         let ciphertext = encrypt(key, text.as_bytes())?;
         write_wav(&seed_path, &ciphertext)?;
-        println!("wrote {} ({} files, {} bytes encrypted)", seed_path.display(), manifest.len(), ciphertext.len());
+        println!(
+            "wrote {} ({} files, {} bytes encrypted)",
+            seed_path.display(),
+            manifest.len(),
+            ciphertext.len()
+        );
         Ok(())
     }
 }

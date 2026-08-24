@@ -1,12 +1,12 @@
-//! Cooperative (not preemptive) multitasking: no IDT/timer/ring-3 exist in
-//! this kernel yet (see the module doc in `boot32.rs` for the one-time
-//! long-mode bring-up this deliberately never touches), so there is no way
-//! to interrupt a running task — every task must voluntarily call
-//! [`yield_now`] for anything else to make progress. All tasks share the one
-//! flat identity-mapped address space and run in ring 0, same as everything
-//! else in this kernel; this gives real concurrent progress (multiple
-//! independent stacks, a scheduler, actual interleaving) without needing an
-//! interrupt/privilege/paging subsystem this kernel doesn't have.
+//! Cooperative (not preemptive) multitasking: real IDT/PIC/timer interrupts
+//! exist now (`arch::x86_64::{idt,pic,timer}`), but the 100Hz heartbeat isn't
+//! wired to preemption — there is still no way to interrupt a running task,
+//! every task must voluntarily call [`yield_now`] for anything else to make
+//! progress. All tasks share the one flat identity-mapped address space and
+//! run in ring 0 (no TSS/ring-3 anywhere in this kernel); this gives real
+//! concurrent progress (multiple independent stacks, a scheduler, actual
+//! interleaving) without needing per-process paging/privilege separation
+//! this kernel doesn't have yet.
 //!
 //! Slot 0 is always the caller of [`init_main_task`] (the shell) — it's
 //! folded into the same fixed-size task table rather than treated as a
@@ -181,4 +181,56 @@ pub fn exit() -> ! {
 
 pub fn getpid() -> u64 {
     unsafe { CURRENT as u64 }
+}
+
+/// Per-slot state, exposed outside this module for `ps`-style reporting.
+/// A plain copy of the private `TaskState` rather than reusing it directly,
+/// so callers don't get a handle onto anything they could mutate.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum TaskStateInfo {
+    Unused,
+    Ready,
+    Running,
+    Exited,
+}
+
+pub fn task_state(i: usize) -> Option<TaskStateInfo> {
+    if i >= MAX_TASKS {
+        return None;
+    }
+    unsafe {
+        Some(match TASKS[i].state {
+            TaskState::Unused => TaskStateInfo::Unused,
+            TaskState::Ready => TaskStateInfo::Ready,
+            TaskState::Running => TaskStateInfo::Running,
+            TaskState::Exited => TaskStateInfo::Exited,
+        })
+    }
+}
+
+static mut SELFTEST_MARK: bool = false;
+
+extern "C" fn selftest_task() {
+    unsafe { SELFTEST_MARK = true };
+    yield_now();
+}
+
+/// A real, honest self-test: spawn a task, yield to it (it sets a marker
+/// then yields back), confirm the marker got set. Proves task creation +
+/// context switch + voluntary yield-back genuinely work. Does **not** prove
+/// or claim anything about preemption or isolation — this scheduler has
+/// neither (see this module's doc comment).
+pub fn selftest() -> bool {
+    unsafe { SELFTEST_MARK = false };
+    if spawn(selftest_task as *const () as usize as u64) == u64::MAX {
+        return false;
+    }
+    yield_now(); // switches to the task: sets the marker, yields back here
+    let result = unsafe { SELFTEST_MARK };
+    // One more yield lets the task resume past its own `yield_now()` and
+    // fall through to `exit()`, reaping its slot -- without this it's left
+    // permanently `Ready`, never scheduled again on its own, which would
+    // leak one of the 4 fixed slots per selftest run.
+    yield_now();
+    result
 }

@@ -89,6 +89,81 @@ fn raster_to_ico(src: &Path, sizes: &[u32]) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+// ── Any supported source → single PNG (registry/web avatars, not Windows-only) ─
+
+/// Rasterize `src` (`.svg`/`.svgz`, `.png`/`.jpg`/`.bmp`/…, or `.ico`) to a single
+/// square PNG at `size`×`size`. Used by fu.ling-lang.org to turn a package
+/// manifest's `icon` field into a web-displayable avatar — unlike `ico_bytes`,
+/// this never touches Windows resource embedding and always yields one PNG.
+pub fn png_bytes(src: &Path, size: u32) -> Result<Vec<u8>, String> {
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "svg" | "svgz" => svg_to_png(src, size),
+        "ico" => ico_to_png(src, size),
+        _ => raster_to_png(src, size),
+    }
+}
+
+fn svg_to_png(src: &Path, size: u32) -> Result<Vec<u8>, String> {
+    use resvg::{tiny_skia, usvg};
+
+    let data = std::fs::read(src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    let opt = usvg::Options::default();
+    let tree = usvg::Tree::from_data(&data, &opt)
+        .map_err(|e| format!("parse SVG {}: {e}", src.display()))?;
+    let svg_size = tree.size();
+    let (sw, sh) = (svg_size.width(), svg_size.height());
+
+    let n = size.clamp(1, 4096);
+    let mut pixmap =
+        tiny_skia::Pixmap::new(n, n).ok_or_else(|| format!("alloc {n}x{n} pixmap"))?;
+    let scale = (n as f32 / sw).min(n as f32 / sh);
+    let tx = (n as f32 - sw * scale) / 2.0;
+    let ty = (n as f32 - sh * scale) / 2.0;
+    let transform = tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+
+    pixmap.encode_png().map_err(|e| format!("encode png: {e}"))
+}
+
+fn raster_to_png(src: &Path, size: u32) -> Result<Vec<u8>, String> {
+    let img = image::open(src).map_err(|e| format!("open {}: {e}", src.display()))?;
+    let n = size.clamp(1, 4096);
+    let scaled = img.resize_exact(n, n, image::imageops::FilterType::Lanczos3);
+    let mut buf = Vec::new();
+    scaled
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| format!("encode png: {e}"))?;
+    Ok(buf)
+}
+
+fn ico_to_png(src: &Path, size: u32) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(src).map_err(|e| format!("open {}: {e}", src.display()))?;
+    let dir = ico::IconDir::read(file).map_err(|e| format!("read ico {}: {e}", src.display()))?;
+    let entry = dir
+        .entries()
+        .iter()
+        .min_by_key(|e| (e.width() as i32 - size as i32).abs())
+        .ok_or_else(|| format!("{} has no icon frames", src.display()))?;
+    let image = entry.decode().map_err(|e| format!("decode ico frame: {e}"))?;
+    let (w, h) = (image.width(), image.height());
+    let rgba = image::RgbaImage::from_raw(w, h, image.rgba_data().to_vec())
+        .ok_or_else(|| "ico frame has inconsistent dimensions".to_string())?;
+    let dyn_img = image::DynamicImage::ImageRgba8(rgba);
+    let n = size.clamp(1, 4096);
+    let scaled = dyn_img.resize_exact(n, n, image::imageops::FilterType::Lanczos3);
+    let mut buf = Vec::new();
+    scaled
+        .write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+        .map_err(|e| format!("encode png: {e}"))?;
+    Ok(buf)
+}
+
 // ── Build-script embedding ────────────────────────────────────────────────────
 
 /// From a **build script**, embed `ico_path` as the executable icon for every

@@ -69,7 +69,14 @@ impl Camera3D {
             },
             Projection::Orthographic { half_width, near, far } => {
                 let h = half_width / self.aspect;
-                glam::camera::rh::proj::directx::orthographic(-half_width, half_width, -h, h, near, far)
+                glam::camera::rh::proj::directx::orthographic(
+                    -half_width,
+                    half_width,
+                    -h,
+                    h,
+                    near,
+                    far,
+                )
             },
         }
     }

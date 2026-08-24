@@ -184,7 +184,14 @@ fn issue(lba: u32, buf_ptr: *mut u8, write: bool) -> Result<(), ()> {
         }
         ptr::write_volatile(cfis, FIS_TYPE_REG_H2D);
         ptr::write_volatile(cfis.add(1), 1 << 7); // bit7 = command (not control)
-        ptr::write_volatile(cfis.add(2), if write { ATA_CMD_WRITE_DMA_EXT } else { ATA_CMD_READ_DMA_EXT });
+        ptr::write_volatile(
+            cfis.add(2),
+            if write {
+                ATA_CMD_WRITE_DMA_EXT
+            } else {
+                ATA_CMD_READ_DMA_EXT
+            },
+        );
         ptr::write_volatile(cfis.add(4), lba as u8);
         ptr::write_volatile(cfis.add(5), (lba >> 8) as u8);
         ptr::write_volatile(cfis.add(6), (lba >> 16) as u8);
@@ -200,7 +207,10 @@ fn issue(lba: u32, buf_ptr: *mut u8, write: bool) -> Result<(), ()> {
         ptr::write_volatile(prdt as *mut u32, buf_ptr as u32);
         ptr::write_volatile(prdt.add(4) as *mut u32, 0);
         ptr::write_volatile(prdt.add(8) as *mut u32, 0);
-        ptr::write_volatile(prdt.add(12) as *mut u32, (SECTOR_SIZE as u32 - 1) | (1 << 31));
+        ptr::write_volatile(
+            prdt.add(12) as *mut u32,
+            (SECTOR_SIZE as u32 - 1) | (1 << 31),
+        );
     }
 
     // Wait for the port to be idle (BSY/DRQ clear in the task-file data

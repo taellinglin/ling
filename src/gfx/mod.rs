@@ -734,9 +734,11 @@ impl GfxState {
         let vx = cx - ax;
         let vy = cy - ay;
         let vz = cz - az;
-        let normal = self
-            .normal_override
-            .unwrap_or([uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]);
+        let normal = self.normal_override.unwrap_or([
+            uy * vz - uz * vy,
+            uz * vx - ux * vz,
+            ux * vy - uy * vx,
+        ]);
 
         let (c0, c1, c2) = if self.flat_shade {
             (self.color, self.color, self.color)

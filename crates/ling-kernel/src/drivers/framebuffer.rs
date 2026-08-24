@@ -48,7 +48,10 @@ pub fn init() {
                 let width = ptr::read_unaligned((base + 20) as *const u32);
                 let height = ptr::read_unaligned((base + 24) as *const u32);
                 let bpp = ptr::read_volatile((base + 28) as *const u8);
-                ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
+                ptr::write(
+                    &raw mut FB,
+                    Some(FbInfo { addr, pitch, width, height, bpp }),
+                );
                 return;
             }
             offset += (tag_size + 7) & !7;

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+<defs>
+  <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="2.2" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="glow2" x="-60%" y="-60%" width="220%" height="220%">
+    <feGaussianBlur stdDeviation="3.5" result="b"/>
+    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <pattern id="gr" width="8" height="8" patternUnits="userSpaceOnUse">
+    <path d="M 8 0 L 0 0 0 8" fill="none" stroke="#ffffff" stroke-width="0.18" opacity="0.07"/>
+  </pattern>
+</defs>
+
+<circle cx="100" cy="100" r="100" fill="#07070f"/>
+<circle cx="100" cy="100" r="100" fill="url(#gr)"/>
+
+<!-- RINGS -->
+<circle cx="100" cy="100" r="90" fill="none" stroke="#ff1040" stroke-width="1"    opacity="0.75" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="81" fill="none" stroke="#ff6000" stroke-width="0.8"  opacity="0.80" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="72" fill="none" stroke="#ffe000" stroke-width="0.8"  opacity="0.80" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="63" fill="none" stroke="#40e020" stroke-width="0.8"  opacity="0.80" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="54" fill="none" stroke="#00e0cc" stroke-width="0.8"  opacity="0.85" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="45" fill="none" stroke="#0070ff" stroke-width="0.8"  opacity="0.85" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="36" fill="none" stroke="#8800ff" stroke-width="0.8"  opacity="0.85" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="27" fill="none" stroke="#ff00aa" stroke-width="0.8"  opacity="0.85" filter="url(#glow)"/>
+<circle cx="100" cy="100" r="18" fill="none" stroke="#ff4020" stroke-width="0.75" opacity="0.9"  filter="url(#glow)"/>
+<circle cx="100" cy="100" r="10" fill="none" stroke="#00e0cc" stroke-width="0.75" opacity="0.9"  filter="url(#glow)"/>
+
+<!-- SPOKES — 12 × 30°, each rotated from a single base line (113→187, y=100) -->
+<line x1="113" y1="100" x2="187" y2="100" stroke="#ff1040" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(0   100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#ff5010" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(30  100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#ffb000" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(60  100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#ffe000" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(90  100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#60e000" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(120 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#00d080" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(150 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#00cccc" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(180 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#0070ff" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(210 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#5500ff" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(240 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#9900ee" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(270 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#dd00bb" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(300 100 100)"/>
+<line x1="113" y1="100" x2="187" y2="100" stroke="#ff0060" stroke-width="0.55" opacity="0.6" filter="url(#glow)" transform="rotate(330 100 100)"/>
+
+<!-- YANTRA — up-pointing r=62: 270°(100,38) 30°(154,131) 150°(46,131) -->
+<polygon points="100,38 154,131 46,131"  fill="none" stroke="#00e0cc" stroke-width="0.85" opacity="0.7" filter="url(#glow)"/>
+<!-- down-pointing: 90°(100,162) 210°(46,69) 330°(154,69) -->
+<polygon points="100,162 46,69 154,69"   fill="none" stroke="#ff1040" stroke-width="0.85" opacity="0.7" filter="url(#glow)"/>
+
+<!-- LOTUS — 8 petals -->
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#ff1040" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(0   100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#ff8800" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(45  100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#ffe000" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(90  100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#40e020" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(135 100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#00e0cc" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(180 100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#0070ff" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(225 100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#8800ff" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(270 100 100)"/>
+<ellipse cx="100" cy="72.5" rx="5" ry="27.5" fill="none" stroke="#ff00aa" stroke-width="0.7" opacity="0.7" filter="url(#glow)" transform="rotate(315 100 100)"/>
+
+<!-- INNER FLOWER — 6 petals -->
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#ff4060" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(0   100 100)"/>
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#ffaa00" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(60  100 100)"/>
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#00e0cc" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(120 100 100)"/>
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#ff4060" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(180 100 100)"/>
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#ffaa00" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(240 100 100)"/>
+<ellipse cx="100" cy="86" rx="3.5" ry="14" fill="none" stroke="#00e0cc" stroke-width="0.65" opacity="0.8" filter="url(#glow)" transform="rotate(300 100 100)"/>
+
+<!-- SPIRAL ARCS — 4 arms -->
+<path d="M100 82 A18 18 0 0 1 118 100 A27 27 0 0 1 100 127 A36 36 0 0 1 64 100 A45 45 0 0 1 100 55" fill="none" stroke="#ff6020" stroke-width="0.7" opacity="0.5" filter="url(#glow)"/>
+<path d="M100 82 A18 18 0 0 1 118 100 A27 27 0 0 1 100 127 A36 36 0 0 1 64 100 A45 45 0 0 1 100 55" fill="none" stroke="#00ccff" stroke-width="0.7" opacity="0.5" filter="url(#glow)" transform="rotate(90  100 100)"/>
+<path d="M100 82 A18 18 0 0 1 118 100 A27 27 0 0 1 100 127 A36 36 0 0 1 64 100 A45 45 0 0 1 100 55" fill="none" stroke="#aa00ff" stroke-width="0.7" opacity="0.5" filter="url(#glow)" transform="rotate(180 100 100)"/>
+<path d="M100 82 A18 18 0 0 1 118 100 A27 27 0 0 1 100 127 A36 36 0 0 1 64 100 A45 45 0 0 1 100 55" fill="none" stroke="#40ee20" stroke-width="0.7" opacity="0.5" filter="url(#glow)" transform="rotate(270 100 100)"/>
+
+<!-- OUTER DOTS — 12 positions -->
+<circle cx="190" cy="100" r="1.8" fill="#ff1040" opacity="0.9" filter="url(#glow)" transform="rotate(0   100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#ff5010" opacity="0.9" filter="url(#glow)" transform="rotate(30  100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#ffb000" opacity="0.9" filter="url(#glow)" transform="rotate(60  100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#ffe000" opacity="0.9" filter="url(#glow)" transform="rotate(90  100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#60e000" opacity="0.9" filter="url(#glow)" transform="rotate(120 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#00d080" opacity="0.9" filter="url(#glow)" transform="rotate(150 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#00cccc" opacity="0.9" filter="url(#glow)" transform="rotate(180 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#0070ff" opacity="0.9" filter="url(#glow)" transform="rotate(210 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#5500ff" opacity="0.9" filter="url(#glow)" transform="rotate(240 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#9900ee" opacity="0.9" filter="url(#glow)" transform="rotate(270 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#dd00bb" opacity="0.9" filter="url(#glow)" transform="rotate(300 100 100)"/>
+<circle cx="190" cy="100" r="1.8" fill="#ff0060" opacity="0.9" filter="url(#glow)" transform="rotate(330 100 100)"/>
+
+<!-- CENTER -->
+<circle cx="100" cy="100" r="4" fill="none" stroke="#00e0cc" stroke-width="1"   filter="url(#glow2)"/>
+<circle cx="100" cy="100" r="2" fill="#ffffff"               opacity="0.95"      filter="url(#glow2)"/>
+
+<circle cx="100" cy="100" r="98" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+</svg>

@@ -37,7 +37,10 @@ pub fn resource<R: Resource>(path: &str) -> Router<R::State> {
     let item_path = format!("{path}/{{id}}");
     Router::new()
         .route(path, get(index::<R>).post(create::<R>))
-        .route(&item_path, get(show::<R>).put(update::<R>).delete(destroy::<R>))
+        .route(
+            &item_path,
+            get(show::<R>).put(update::<R>).delete(destroy::<R>),
+        )
 }
 
 async fn index<R: Resource>(State(state): State<R::State>) -> Result<Json<Vec<R::Item>>> {

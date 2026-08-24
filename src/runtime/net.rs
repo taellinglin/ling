@@ -47,7 +47,10 @@ enum Role {
         clients: Mutex<HashMap<u64, ClientHandle>>,
         accept_stop: Arc<AtomicBool>,
     },
-    Client { out_tx: Sender<String>, stream: Arc<Mutex<Option<TcpStream>>> },
+    Client {
+        out_tx: Sender<String>,
+        stream: Arc<Mutex<Option<TcpStream>>>,
+    },
 }
 
 struct Hub {
@@ -128,7 +131,12 @@ fn install(role: Role) -> (Arc<AtomicU8>, Inbound, Events) {
     let inbound = Arc::new(Mutex::new(VecDeque::new()));
     let events = Arc::new(Mutex::new(VecDeque::new()));
     if let Ok(mut g) = NET.lock() {
-        *g = Some(Hub { status: status.clone(), inbound: inbound.clone(), events: events.clone(), role });
+        *g = Some(Hub {
+            status: status.clone(),
+            inbound: inbound.clone(),
+            events: events.clone(),
+            role,
+        });
     }
     (status, inbound, events)
 }
@@ -209,7 +217,8 @@ pub fn host(port: u16) {
 pub fn join(ip: &str, port: u16) {
     let (tx, rx) = channel::<String>();
     let shutdown_slot: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
-    let (status, inbound, _events) = install(Role::Client { out_tx: tx, stream: shutdown_slot.clone() });
+    let (status, inbound, _events) =
+        install(Role::Client { out_tx: tx, stream: shutdown_slot.clone() });
     let ip = ip.to_string();
     std::thread::spawn(move || {
         let stream = match TcpStream::connect((ip.as_str(), port)) {
@@ -235,7 +244,6 @@ pub fn join(ip: &str, port: u16) {
 // Up to 64 concurrent connections, each with its own id (assigned on accept)
 // and its own outbound queue. Inbound lines from every connection land in one
 // shared FIFO `inbox`, drained via recv_from() as "<id>|<line>".
-
 
 /// Tear down the current role (host or client) and reset to idle. Sockets are
 /// shut down so the reader/writer threads they own unblock and exit; the
@@ -335,7 +343,11 @@ pub fn clients() -> String {
                 if let Ok(m) = clients.lock() {
                     let mut ids: Vec<u64> = m.keys().copied().collect();
                     ids.sort_unstable();
-                    return ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                    return ids
+                        .iter()
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
                 }
             }
         }
@@ -526,7 +538,10 @@ mod tests {
             if let Ok(s) = TcpStream::connect(addr) {
                 return s;
             }
-            assert!(start.elapsed() < Duration::from_secs(3), "could not connect to {addr}");
+            assert!(
+                start.elapsed() < Duration::from_secs(3),
+                "could not connect to {addr}"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -539,7 +554,10 @@ mod tests {
         let addr = format!("127.0.0.1:{port}");
         let mut peers: Vec<TcpStream> = (0..3).map(|_| wait_connect(&addr)).collect();
 
-        assert!(deadline_poll(|| client_count() == 3), "expected 3 clients connected");
+        assert!(
+            deadline_poll(|| client_count() == 3),
+            "expected 3 clients connected"
+        );
         let ids: Vec<u64> = clients().split(',').map(|s| s.parse().unwrap()).collect();
         assert_eq!(ids.len(), 3);
 
@@ -598,7 +616,10 @@ mod tests {
         assert!(deadline_poll(|| client_count() == 1));
 
         drop(peer);
-        assert!(deadline_poll(|| client_count() == 0), "disconnect must drop the client");
+        assert!(
+            deadline_poll(|| client_count() == 0),
+            "disconnect must drop the client"
+        );
         assert!(deadline_poll(|| events().contains("disconnect:")));
     }
 
@@ -617,7 +638,10 @@ mod tests {
         });
 
         join("127.0.0.1", port);
-        assert!(deadline_poll(|| status() == 2), "client must report connected");
+        assert!(
+            deadline_poll(|| status() == 2),
+            "client must report connected"
+        );
 
         let mut got = String::new();
         assert!(deadline_poll(|| {
@@ -670,7 +694,10 @@ mod tests {
         assert_eq!(recv(), "", "closed hub must not serve stale state");
 
         let host_saw_eof = handle.join().unwrap();
-        assert!(host_saw_eof, "close() must shut the socket down, not just forget it");
+        assert!(
+            host_saw_eof,
+            "close() must shut the socket down, not just forget it"
+        );
     }
 
     #[test]

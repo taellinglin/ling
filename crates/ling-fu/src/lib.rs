@@ -2287,7 +2287,10 @@ fn find_ling_binary() -> std::path::PathBuf {
 }
 
 fn has_ling_ext(path: &std::path::Path) -> bool {
-    matches!(path.extension().and_then(|e| e.to_str()), Some("ling" | "灵" | "霊" | "령" | "ลิง"))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("ling" | "灵" | "霊" | "령" | "ลิง")
+    )
 }
 
 // ─── cmd_normalize ────────────────────────────────────────────────────────────

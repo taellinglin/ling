@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10203f"/>
+      <stop offset="1" stop-color="#070b18"/>
+    </linearGradient>
+    <linearGradient id="spectrum" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0"   stop-color="#ff1040"/>
+      <stop offset="0.35" stop-color="#ffb000"/>
+      <stop offset="0.6" stop-color="#40e020"/>
+      <stop offset="0.8" stop-color="#00e0cc"/>
+      <stop offset="1"   stop-color="#0070ff"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowSoft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="2.6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="3" y="3" width="122" height="122" rx="26" fill="url(#bg)"/>
+  <rect x="3.5" y="3.5" width="121" height="121" rx="25.5" fill="none" stroke="#ffffff" stroke-width="1" opacity="0.08"/>
+  <circle cx="64" cy="64" r="50" fill="none" stroke="url(#spectrum)" stroke-width="2.4" opacity="0.9" filter="url(#glow)"/>
+  <circle cx="64" cy="64" r="41" fill="none" stroke="#0070ff" stroke-width="1"   opacity="0.45"/>
+  <polygon points="64,24 96,80 32,80" fill="none" stroke="#30d060" stroke-width="4"
+           stroke-linejoin="round" opacity="0.95" filter="url(#glow)"/>
+  <polygon points="64,104 32,48 96,48" fill="none" stroke="#ffcc33" stroke-width="4"
+           stroke-linejoin="round" opacity="0.95" filter="url(#glow)"/>
+  <circle cx="64" cy="64" r="8.5" fill="none" stroke="#30d060" stroke-width="2" filter="url(#glowSoft)"/>
+  <circle cx="64" cy="64" r="3.6" fill="#ffffff" opacity="0.97" filter="url(#glowSoft)"/>
+</svg>

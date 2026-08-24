@@ -14,14 +14,21 @@ const HEIGHT: usize = 25;
 /// pixel), i.e. the standard raw PC screen-font glyph layout.
 pub unsafe fn load_font(font: &[u8; 4096]) {
     // Enter font-access mode: select plane 2, sequential addressing.
-    outb(0x3C4, 0x00); outb(0x3C5, 0x01); // sequencer reset
-    outb(0x3C4, 0x02); outb(0x3C5, 0x04); // map mask: plane 2 only
-    outb(0x3C4, 0x04); outb(0x3C5, 0x07); // sequential addressing, extended mem
-    outb(0x3C4, 0x00); outb(0x3C5, 0x03); // end reset
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01); // sequencer reset
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x04); // map mask: plane 2 only
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x07); // sequential addressing, extended mem
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03); // end reset
 
-    outb(0x3CE, 0x04); outb(0x3CF, 0x02); // read map select: plane 2
-    outb(0x3CE, 0x05); outb(0x3CF, 0x00); // write mode 0, read mode 0
-    outb(0x3CE, 0x06); outb(0x3CF, 0x04); // map at 0xA0000, disable odd/even
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x02); // read map select: plane 2
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x00); // write mode 0, read mode 0
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x04); // map at 0xA0000, disable odd/even
 
     // Glyphs are stored on 32-byte centers even though only 16 bytes (an 8x16
     // cell) are meaningful, matching the VGA font plane's fixed glyph pitch.
@@ -33,14 +40,21 @@ pub unsafe fn load_font(font: &[u8; 4096]) {
     }
 
     // Restore normal text-mode addressing (planes 0/1, odd/even, 0xB8000).
-    outb(0x3C4, 0x00); outb(0x3C5, 0x01);
-    outb(0x3C4, 0x02); outb(0x3C5, 0x03); // map mask: planes 0+1
-    outb(0x3C4, 0x04); outb(0x3C5, 0x03); // odd/even addressing
-    outb(0x3C4, 0x00); outb(0x3C5, 0x03);
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01);
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x03); // map mask: planes 0+1
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x03); // odd/even addressing
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03);
 
-    outb(0x3CE, 0x04); outb(0x3CF, 0x00);
-    outb(0x3CE, 0x05); outb(0x3CF, 0x10); // odd/even mode
-    outb(0x3CE, 0x06); outb(0x3CF, 0x0E); // map at 0xB8000, odd/even enabled
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x00);
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x10); // odd/even mode
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x0E); // map at 0xB8000, odd/even enabled
 }
 
 /// Registered by the generated per-project `_start` (if a build-time idle
@@ -50,7 +64,9 @@ pub unsafe fn load_font(font: &[u8; 4096]) {
 static mut IDLE_FONT: Option<&'static [u8; 4096]> = None;
 
 pub fn set_idle_font(font: &'static [u8; 4096]) {
-    unsafe { IDLE_FONT = Some(font); }
+    unsafe {
+        IDLE_FONT = Some(font);
+    }
 }
 
 /// A snapshot of whatever font was actually active (the BIOS default,
@@ -69,14 +85,21 @@ unsafe fn save_original_font_if_needed() {
     // Same font-plane-2 access dance as `load_font`, but reading instead of
     // writing (Graphics Controller "read map select" instead of the
     // Sequencer's write "map mask").
-    outb(0x3C4, 0x00); outb(0x3C5, 0x01);
-    outb(0x3C4, 0x02); outb(0x3C5, 0x04);
-    outb(0x3C4, 0x04); outb(0x3C5, 0x07);
-    outb(0x3C4, 0x00); outb(0x3C5, 0x03);
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01);
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x04);
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x07);
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03);
 
-    outb(0x3CE, 0x04); outb(0x3CF, 0x02); // read map select: plane 2
-    outb(0x3CE, 0x05); outb(0x3CF, 0x00);
-    outb(0x3CE, 0x06); outb(0x3CF, 0x04);
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x02); // read map select: plane 2
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x00);
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x04);
 
     let font_mem = 0xA0000 as *const u8;
     for glyph in 0..256usize {
@@ -86,13 +109,20 @@ unsafe fn save_original_font_if_needed() {
         }
     }
 
-    outb(0x3C4, 0x00); outb(0x3C5, 0x01);
-    outb(0x3C4, 0x02); outb(0x3C5, 0x03);
-    outb(0x3C4, 0x04); outb(0x3C5, 0x03);
-    outb(0x3C4, 0x00); outb(0x3C5, 0x03);
-    outb(0x3CE, 0x04); outb(0x3CF, 0x00);
-    outb(0x3CE, 0x05); outb(0x3CF, 0x10);
-    outb(0x3CE, 0x06); outb(0x3CF, 0x0E);
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x01);
+    outb(0x3C4, 0x02);
+    outb(0x3C5, 0x03);
+    outb(0x3C4, 0x04);
+    outb(0x3C5, 0x03);
+    outb(0x3C4, 0x00);
+    outb(0x3C5, 0x03);
+    outb(0x3CE, 0x04);
+    outb(0x3CF, 0x00);
+    outb(0x3CE, 0x05);
+    outb(0x3CF, 0x10);
+    outb(0x3CE, 0x06);
+    outb(0x3CF, 0x0E);
 
     ORIGINAL_FONT_SAVED = true;
 }
@@ -120,6 +150,19 @@ pub fn restore_normal_font() {
     }
 }
 
+/// Disable the hardware text-mode cursor (CRTC "Cursor Start" register,
+/// index 0x0A, bit 5). Nothing in this driver ever programs the CRTC
+/// cursor-position registers (0x3D4/0x3D5 index 0x0E/0x0F) either, so
+/// leaving the hardware cursor enabled means it just sits wherever GRUB/BIOS
+/// last left it, blinking, never tracking real writes -- the reported "cursor
+/// in a random position" bug. `term.rs` draws its own cursor instead (always
+/// derived from the live write position), so the hardware one just needs to
+/// get out of the way, not be kept in sync. Call once, at boot.
+pub unsafe fn disable_hardware_cursor() {
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);
+}
+
 /// Set one VGA DAC palette entry (index 0..=15, matching `Color`'s ordinal
 /// values). `r`/`g`/`b` are 6-bit (0..=63) — the VGA DAC's native precision,
 /// not the 8-bit values a CSS-style hex color gives you; scale by dividing
@@ -138,22 +181,22 @@ pub type Theme = [(u8, u8, u8); 16];
 /// this and overrides only the entries it actually wants to restyle, so
 /// colors nobody themed still look like reasonable, conventional colors.
 pub const DEFAULT_THEME: Theme = [
-    (0, 0, 0),      // 0  Black
-    (0, 0, 42),     // 1  Blue
-    (0, 42, 0),     // 2  Green
-    (0, 42, 42),    // 3  Cyan
-    (42, 0, 0),     // 4  Red
-    (42, 0, 42),    // 5  Magenta
-    (42, 21, 0),    // 6  Brown
-    (42, 42, 42),   // 7  LightGrey
-    (21, 21, 21),   // 8  DarkGrey
-    (21, 21, 63),   // 9  LightBlue
-    (21, 63, 21),   // 10 LightGreen
-    (21, 63, 63),   // 11 LightCyan
-    (63, 21, 21),   // 12 LightRed
-    (63, 21, 63),   // 13 LightMagenta
-    (63, 63, 21),   // 14 Yellow
-    (63, 63, 63),   // 15 White
+    (0, 0, 0),    // 0  Black
+    (0, 0, 42),   // 1  Blue
+    (0, 42, 0),   // 2  Green
+    (0, 42, 42),  // 3  Cyan
+    (42, 0, 0),   // 4  Red
+    (42, 0, 42),  // 5  Magenta
+    (42, 21, 0),  // 6  Brown
+    (42, 42, 42), // 7  LightGrey
+    (21, 21, 21), // 8  DarkGrey
+    (21, 21, 63), // 9  LightBlue
+    (21, 63, 21), // 10 LightGreen
+    (21, 63, 63), // 11 LightCyan
+    (63, 21, 21), // 12 LightRed
+    (63, 21, 63), // 13 LightMagenta
+    (63, 63, 21), // 14 Yellow
+    (63, 63, 63), // 15 White
 ];
 
 /// LingOS's default theme: a dark indigo background with taupe, navy,

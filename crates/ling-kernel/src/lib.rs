@@ -20,10 +20,10 @@ pub mod abi;
 pub mod mm;
 
 // ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
+pub mod ed25519;
 pub mod hash;
 pub mod runtime;
 pub mod strings;
-pub mod ed25519;
 
 #[cfg(target_arch = "x86_64")]
 pub mod history;
@@ -40,14 +40,17 @@ use core::ptr;
 use crate::arch::cpu;
 #[cfg(target_arch = "x86_64")]
 use crate::arch::{bootmodule, io, timer};
+#[cfg(target_arch = "aarch64")]
+use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
-use crate::drivers::{framebuffer, keyboard, mouse, serial, term, vga};
+use crate::drivers::{
+    flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, serial, term, vga,
+    wm_liquid,
+};
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
 use crate::proc::sched;
-#[cfg(target_arch = "aarch64")]
-use crate::drivers::uart;
 
 /// Initialize the kernel: bring up the console (VGA+serial on x86_64, PL011
 /// UART on aarch64/Raspberry Pi) and print a ready banner.
@@ -60,6 +63,7 @@ pub fn init() {
         // slots a cell picks) — swap `THEME_LINGOS` for another `vga::Theme`
         // to retheme the whole console; see its doc comment.
         vga::apply_theme(&vga::THEME_LINGOS);
+        unsafe { vga::disable_hardware_cursor() };
         term::clear_active();
         term::set_color_active(vga::color_byte(
             vga::Color::LightGreen as u8,
@@ -183,7 +187,9 @@ pub fn kernel_panic(msg: &str) -> ! {
     console_write(msg.as_bytes());
     console_write(b"\n");
     loop {
-        unsafe { cpu::halt(); }
+        unsafe {
+            cpu::halt();
+        }
     }
 }
 
@@ -283,9 +289,10 @@ pub unsafe extern "C" fn ling_kernel_spawn(entry: u64) -> u64 {
     sched::spawn(entry)
 }
 
-/// Voluntarily give up the CPU to the next `Ready` task, if any. This
-/// kernel has no timer interrupt, so nothing else ever runs unless
-/// something calls this (or `ling_kernel_exit`) — see `sched`'s module doc.
+/// Voluntarily give up the CPU to the next `Ready` task, if any. The 100Hz
+/// timer heartbeat isn't wired to preemption, so nothing else ever runs
+/// unless something calls this (or `ling_kernel_exit`) — see `sched`'s
+/// module doc.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_yield() -> u64 {
@@ -306,6 +313,149 @@ pub unsafe extern "C" fn ling_kernel_exit() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
     sched::getpid()
+}
+
+/// Milliseconds since boot (calibrated TSC, see `arch::timer`) -- for `.ling`
+/// code that needs to time something (an animation, a timeout) without any
+/// mutable-state workaround, since it can read a fresh value each call.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_uptime_ms() -> u64 {
+    timer::now_ms()
+}
+
+/// Seconds since the Unix epoch, per the CMOS RTC (see `arch::rtc`'s doc for
+/// what "UTC" means here in practice). The one source of real wall-clock
+/// time anywhere in this kernel -- everything else is boot-relative only.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_unix_ts() -> u64 {
+    arch::rtc::unix_timestamp().max(0) as u64
+}
+
+/// Individual UTC calendar fields from the CMOS RTC, for callers that want
+/// to render a date/time rather than just diff two timestamps.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_year() -> u64 {
+    arch::rtc::read().year as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_month() -> u64 {
+    arch::rtc::read().month as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_day() -> u64 {
+    arch::rtc::read().day as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_hour() -> u64 {
+    arch::rtc::read().hour as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_minute() -> u64 {
+    arch::rtc::read().minute as u64
+}
+
+/// Locale/timezone table — see `drivers::locale`'s module doc for what's
+/// real (Earth UTC offsets, the Moon's actual synodic-month day cycle) and
+/// what's disclosed as symbolic (the invented celestial locales' offsets).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_count() -> u64 {
+    locale::count() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_id(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.id).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_native_name(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.native_name).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_latin_name(i: u64) -> u64 {
+    let s = locale::get(i as usize).map(|l| l.latin_name).unwrap_or("");
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+/// Signed minutes offset from UTC, bit-cast into a `u64` ((`as i64 as u64`) --
+/// `.ling` has no signed-integer FFI type, so callers that need the sign
+/// back must reinterpret the low 32 bits as `i32` themselves (offsets here
+/// never exceed +-2048 minutes, well within range).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_utc_offset_min(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.utc_offset_min).unwrap_or(0) as i64 as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_is_celestial(i: u64) -> u64 {
+    match locale::get(i as usize).map(|l| l.kind) {
+        Some(locale::Kind::Celestial) => 1,
+        _ => 0,
+    }
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_uses_daemon(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.uses_daemon_script).unwrap_or(false) as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_flag_id(i: u64) -> u64 {
+    locale::get(i as usize).map(|l| l.flag_id as u64).unwrap_or(u64::MAX)
+}
+/// Permille (0..1000) through the Moon's real day/night cycle right now --
+/// see `drivers::locale::moon_day_progress_permille`'s doc for the actual
+/// astronomy behind this number.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_moon_day_progress() -> u64 {
+    locale::moon_day_progress_permille() as u64
+}
+
+/// The user's picked locale index, or `u64::MAX` if none yet — see
+/// `drivers::locale::select`'s doc for why this is kernel-side state.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_selected() -> u64 {
+    locale::selected().map(|i| i as u64).unwrap_or(u64::MAX)
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_select(i: u64) -> u64 {
+    locale::select(i as usize);
+    0
+}
+
+/// Draw the flag matching `locale::Locale::flag_id` into the box
+/// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
+/// here (hand-encoded proportional layouts, not a decoded image file).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_flag(
+    id: u64,
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+) -> u64 {
+    flags::draw(id as u32, x as u32, y as u32, w as u32, h as u32);
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_rtc_second() -> u64 {
+    arch::rtc::read().second as u64
 }
 
 /// Run `lingfs::self_test()` against the real disk (mount/format, put,
@@ -440,7 +590,11 @@ pub unsafe extern "C" fn ling_kernel_fs_mount() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fs_ls(arg: u64) -> u64 {
-    let arg = if arg == 0 { "" } else { core::str::from_utf8(strings::bytes_of_ptr(arg as *mut u8)).unwrap_or("") };
+    let arg = if arg == 0 {
+        ""
+    } else {
+        core::str::from_utf8(strings::bytes_of_ptr(arg as *mut u8)).unwrap_or("")
+    };
 
     let mut show_all = false;
     let mut long = false;
@@ -482,7 +636,10 @@ pub unsafe extern "C" fn ling_kernel_fs_write(name: u64, content: u64) -> u64 {
 pub unsafe extern "C" fn ling_kernel_fs_read(name: u64) -> u64 {
     let name = core::str::from_utf8(strings::bytes_of_ptr(name as *mut u8)).unwrap_or("");
     let mut buf = [0u8; lingfs::BLOCK_SIZE];
-    let len = lingfs::read_file(name, &mut buf).ok().flatten().unwrap_or(0);
+    let len = lingfs::read_file(name, &mut buf)
+        .ok()
+        .flatten()
+        .unwrap_or(0);
     strings::ling_str_new(buf.as_ptr(), len)
 }
 
@@ -554,7 +711,13 @@ pub unsafe extern "C" fn ling_kernel_fb_set_pixel(x: u64, y: u64, color: u64) ->
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn ling_kernel_fb_fill_rect(x: u64, y: u64, w: u64, h: u64, color: u64) -> u64 {
+pub unsafe extern "C" fn ling_kernel_fb_fill_rect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    color: u64,
+) -> u64 {
     framebuffer::fill_rect(x as u32, y as u32, w as u32, h as u32, color as u32);
     0
 }
@@ -580,7 +743,13 @@ pub unsafe extern "C" fn ling_kernel_fb_back_clear(color: u64) -> u64 {
 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn ling_kernel_fb_back_fill_rect(x: u64, y: u64, w: u64, h: u64, color: u64) -> u64 {
+pub unsafe extern "C" fn ling_kernel_fb_back_fill_rect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    color: u64,
+) -> u64 {
     framebuffer::back_fill_rect(x as u32, y as u32, w as u32, h as u32, color as u32);
     0
 }
@@ -590,6 +759,97 @@ pub unsafe extern "C" fn ling_kernel_fb_back_fill_rect(x: u64, y: u64, w: u64, h
 pub unsafe extern "C" fn ling_kernel_fb_present() -> u64 {
     framebuffer::present();
     0
+}
+
+/// Draw an 8x8-per-character bitmap string into the framebuffer's back
+/// buffer at `(x, y)` -- see `drivers::font8x8`'s module doc for why this
+/// exists (nothing rendered text into pixel-graphics mode before it; the
+/// VGA hardware font is a different, text-mode-only consumer). `fg`/`bg`
+/// are 0x00RRGGBB, same as every other `ling_kernel_fb_*` color argument.
+/// Call `ling_kernel_fb_present` once after a batch of draws, same as the
+/// fill/clear primitives it's built on.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_str(x: u64, y: u64, s: u64, fg: u64, bg: u64) -> u64 {
+    font8x8::draw_str(
+        x as u32,
+        y as u32,
+        arg_str(s).as_bytes(),
+        fg as u32,
+        bg as u32,
+    );
+    0
+}
+
+/// Draw a UTF-8 string that may contain non-ASCII text -- see
+/// `drivers::font_unicode`'s module doc for what's actually covered (a
+/// curated character set, not full Unicode) and its real limitations (no
+/// text shaping). `daemon` non-zero renders ASCII bytes through the
+/// constructed-script glyph reskin instead of plain Latin. Returns the
+/// pixel width drawn.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_draw_utf8_str(
+    x: u64,
+    y: u64,
+    s: u64,
+    fg: u64,
+    bg: u64,
+    daemon: u64,
+) -> u64 {
+    font_unicode::draw_utf8_str(
+        x as u32,
+        y as u32,
+        arg_str(s).as_bytes(),
+        fg as u32,
+        bg as u32,
+        daemon != 0,
+    ) as u64
+}
+
+/// Advance the "liquid window" spring simulation one frame toward
+/// `(target_x, target_y)` -- see `drivers::wm_liquid`'s module doc for why
+/// this state lives here and not in `.ling`: the kernel-build path has no
+/// mutable-reassignment construct (`bind` only ever introduces a *new*
+/// name) and the compiler does no tail-call optimization, so neither real
+/// mutation nor safe unbounded recursion exists on the `.ling` side to hold
+/// frame-persistent physics state in a loop that runs indefinitely. Call
+/// once per frame, before the position/scale getters below. All the actual
+/// window/event-loop orchestration stays in `.ling` (`kernel/x86_64-wm`) --
+/// this is only the numeric integration step, same division of labor as
+/// every other piece of kernel state (`ling_kernel_mouse_x`, `_getpid`, …).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_step(target_x: u64, target_y: u64) -> u64 {
+    wm_liquid::step(target_x as f64, target_y as f64);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_x() -> u64 {
+    wm_liquid::x().max(0.0) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_y() -> u64 {
+    wm_liquid::y().max(0.0) as u64
+}
+
+/// Width/height scale, as a percentage (100 = unscaled) -- an integer
+/// rather than a raw float since `.ling` only has integer arithmetic over
+/// this flat-u64 FFI boundary; multiply/divide by 100 on the caller side.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_w_pct() -> u64 {
+    wm_liquid::scale_w_pct()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_h_pct() -> u64 {
+    wm_liquid::scale_h_pct()
 }
 
 /// Install a `.lpkg` blob already stored at `blob_name` in lingfs (see
@@ -626,12 +886,18 @@ pub unsafe extern "C" fn ling_kernel_life_run() -> u64 {
     0
 }
 
-/// Enable the PS/2 mouse and put it into streaming-report mode. Call once,
-/// e.g. right after `ling_kernel_init`.
+/// No-op: `ling_kernel_init()` already runs the PS/2 mouse's synchronous
+/// 8042 handshake itself, before IRQ12 is unmasked (see `mouse::init`'s doc
+/// comment for why that ordering matters). Calling this afterward — as
+/// existing `.ling` WM code does — used to repeat that same handshake with
+/// IRQ12 already live, racing the real IRQ12 handler for the controller's
+/// ACK/status bytes and hanging forever in `wait_output_full()` (confirmed:
+/// boot got through `ling_kernel_init()` fine, then never rendered a single
+/// frame). Kept as a real ABI entry point, not removed, for the same reason
+/// as `ling_kernel_mouse_poll` just above.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_mouse_init() -> u64 {
-    mouse::init();
     0
 }
 
@@ -683,14 +949,18 @@ pub unsafe extern "C" fn ling_kernel_mouse_buttons() -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_bootmodule_addr() -> u64 {
-    bootmodule::first_module().map(|(s, _)| s as u64).unwrap_or(0)
+    bootmodule::first_module()
+        .map(|(s, _)| s as u64)
+        .unwrap_or(0)
 }
 
 /// Size in bytes of the first Multiboot2 module, or 0 if there isn't one.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_bootmodule_size() -> u64 {
-    bootmodule::first_module().map(|(s, e)| (e - s) as u64).unwrap_or(0)
+    bootmodule::first_module()
+        .map(|(s, e)| (e - s) as u64)
+        .unwrap_or(0)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -769,6 +1039,39 @@ pub unsafe extern "C" fn ling_kernel_whoami() -> u64 {
     strings::ling_str_new(name.as_ptr(), name.len())
 }
 
+/// The currently logged-in user's group, as an LSTR (empty if unset).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_group() -> u64 {
+    let name = lingfs::current_user();
+    let mut buf = [0u8; 32];
+    let len = users::group_of(name, &mut buf).unwrap_or(0);
+    strings::ling_str_new(buf.as_ptr(), len)
+}
+
+/// Whether the currently logged-in user is in the `wheel` group — the
+/// `sudo` gate's check. See `fs/users.rs`'s module doc for exactly what
+/// this can and can't mean (a shell-level gate, not a kernel security
+/// boundary — this kernel has no ring-3/per-process isolation at all).
+///
+/// `"root"` (the implicit identity before any real `login`/`useradd` has
+/// ever happened — `lingfs::current_user()`'s own default) is always
+/// treated as wheel, same as real Unix root bypassing group checks —
+/// otherwise a fresh install has no way to ever create its first user:
+/// `useradd` itself requires wheel, and no lingfs user record (let alone a
+/// wheel one) exists until something has already run `useradd` once.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_is_wheel() -> u64 {
+    let name = lingfs::current_user();
+    if name == "root" {
+        return 1;
+    }
+    let mut buf = [0u8; 32];
+    let len = users::group_of(name, &mut buf).unwrap_or(0);
+    (len == 5 && &buf[..5] == b"wheel") as u64
+}
+
 /// `ed25519_verify(pubkey, msg, sig) -> 1|0`. All three arguments are raw
 /// Ling byte-strings (binary-safe, not `arg_str`'s UTF-8-only reading) —
 /// `pubkey` must be exactly 32 bytes and `sig` exactly 64, anything else
@@ -777,7 +1080,11 @@ pub unsafe extern "C" fn ling_kernel_whoami() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_ed25519_verify(pubkey: u64, msg: u64, sig: u64) -> u64 {
     let raw = |v: u64| -> &'static [u8] {
-        if v == 0 { &[] } else { strings::bytes_of_ptr(v as *mut u8) }
+        if v == 0 {
+            &[]
+        } else {
+            strings::bytes_of_ptr(v as *mut u8)
+        }
     };
     ed25519::verify(raw(pubkey), raw(msg), raw(sig)) as u64
 }
@@ -812,7 +1119,10 @@ pub unsafe extern "C" fn ling_kernel_disk_write_raw(lba: u64, src_ptr: u64, coun
     let src = src_ptr as *const u8;
     for i in 0..count {
         let mut sector = [0u8; blockdev::SECTOR_SIZE];
-        let chunk = core::slice::from_raw_parts(src.add(i as usize * blockdev::SECTOR_SIZE), blockdev::SECTOR_SIZE);
+        let chunk = core::slice::from_raw_parts(
+            src.add(i as usize * blockdev::SECTOR_SIZE),
+            blockdev::SECTOR_SIZE,
+        );
         sector.copy_from_slice(chunk);
         if blockdev::write_sector((lba + i) as u32, &sector).is_err() {
             return 0;
@@ -1007,33 +1317,55 @@ pub unsafe extern "C" fn ling_kernel_cpuid(eax: u64, ecx: u64, out_ptr: u64, _un
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_asm_exec(ptr: u64, len: u64) -> u64 {
-    let template = core::str::from_utf8_unchecked(
-        core::slice::from_raw_parts(ptr as *const u8, len as usize)
-    );
+    let template =
+        core::str::from_utf8_unchecked(core::slice::from_raw_parts(ptr as *const u8, len as usize));
     match template {
         #[cfg(target_arch = "x86_64")]
-        "hlt" | "halt" => {
-            loop { cpu::halt(); }
-        }
+        "hlt" | "halt" => loop {
+            cpu::halt();
+        },
         #[cfg(target_arch = "aarch64")]
-        "wfi" | "halt" => {
-            loop { cpu::halt(); }
-        }
+        "wfi" | "halt" => loop {
+            cpu::halt();
+        },
         #[cfg(target_arch = "aarch64")]
-        "wfe" => { cpu::wfe(); 0 },
-        "cli" => { cpu::cli(); 0 },
-        "sti" => { cpu::sti(); 0 },
-        "nop" => { core::hint::spin_loop(); 0 },
-        "pause" => { core::hint::spin_loop(); 0 },
+        "wfe" => {
+            cpu::wfe();
+            0
+        },
+        "cli" => {
+            cpu::cli();
+            0
+        },
+        "sti" => {
+            cpu::sti();
+            0
+        },
+        "nop" => {
+            core::hint::spin_loop();
+            0
+        },
+        "pause" => {
+            core::hint::spin_loop();
+            0
+        },
         #[cfg(target_arch = "x86_64")]
-        "int3" => { core::arch::asm!("int3"); 0 },
+        "int3" => {
+            core::arch::asm!("int3");
+            0
+        },
         #[cfg(target_arch = "aarch64")]
-        "brk" => { cpu::brk(); 0 },
+        "brk" => {
+            cpu::brk();
+            0
+        },
         _ => {
             console_write(b"ling_kernel_asm_exec: unknown template: ");
             console_write(template.as_bytes());
             console_write(b"\n");
-            loop { cpu::halt(); }
-        }
+            loop {
+                cpu::halt();
+            }
+        },
     }
 }

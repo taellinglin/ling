@@ -68,7 +68,11 @@ fn print_hex64(label: &str, val: u64) {
     let mut buf = [0u8; 16];
     for i in 0..16 {
         let nibble = (val >> ((15 - i) * 4)) & 0xF;
-        buf[i] = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        buf[i] = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
     }
     crate::console_write(&buf);
     crate::console_write(b"\n");
@@ -152,7 +156,11 @@ exception_fatal_no_err!(isr_reserved_24, 24, "Reserved");
 exception_fatal_no_err!(isr_reserved_25, 25, "Reserved");
 exception_fatal_no_err!(isr_reserved_26, 26, "Reserved");
 exception_fatal_no_err!(isr_reserved_27, 27, "Reserved");
-exception_fatal_no_err!(isr_hypervisor_injection, 28, "Hypervisor Injection Exception");
+exception_fatal_no_err!(
+    isr_hypervisor_injection,
+    28,
+    "Hypervisor Injection Exception"
+);
 exception_fatal_with_err!(isr_vmm_communication, 29, "VMM Communication Exception");
 exception_fatal_with_err!(isr_security, 30, "Security Exception");
 exception_fatal_no_err!(isr_reserved_31, 31, "Reserved");
@@ -196,7 +204,11 @@ pub fn init() {
     set_gate(5, isr_bound_range as *const () as u64, 0);
     set_gate(6, isr_invalid_opcode as *const () as u64, 0);
     set_gate(7, isr_device_not_available as *const () as u64, 0);
-    set_gate(8, isr_double_fault as *const () as u64, gdt::DOUBLE_FAULT_IST);
+    set_gate(
+        8,
+        isr_double_fault as *const () as u64,
+        gdt::DOUBLE_FAULT_IST,
+    );
     set_gate(9, isr_coprocessor_overrun as *const () as u64, 0);
     set_gate(10, isr_invalid_tss as *const () as u64, 0);
     set_gate(11, isr_segment_not_present as *const () as u64, 0);
@@ -206,7 +218,11 @@ pub fn init() {
     set_gate(15, isr_reserved_15 as *const () as u64, 0);
     set_gate(16, isr_x87_fp as *const () as u64, 0);
     set_gate(17, isr_alignment_check as *const () as u64, 0);
-    set_gate(18, isr_machine_check as *const () as u64, gdt::DOUBLE_FAULT_IST);
+    set_gate(
+        18,
+        isr_machine_check as *const () as u64,
+        gdt::DOUBLE_FAULT_IST,
+    );
     set_gate(19, isr_simd_fp as *const () as u64, 0);
     set_gate(20, isr_virtualization as *const () as u64, 0);
     set_gate(21, isr_control_protection as *const () as u64, 0);

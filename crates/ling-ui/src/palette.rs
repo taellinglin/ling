@@ -62,8 +62,7 @@ impl CommandPalette {
         self.items
             .iter()
             .filter(|item| {
-                item.label.to_lowercase().contains(&q)
-                    || item.category.to_lowercase().contains(&q)
+                item.label.to_lowercase().contains(&q) || item.category.to_lowercase().contains(&q)
             })
             .collect()
     }

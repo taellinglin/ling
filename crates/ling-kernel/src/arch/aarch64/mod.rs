@@ -12,10 +12,10 @@
 //! run on.
 
 pub mod cpu;
+pub mod intc;
 pub mod mailbox;
 pub mod mmio;
 pub mod timer;
-pub mod intc;
 pub mod paging;
 pub mod vectors;
 pub mod trap;

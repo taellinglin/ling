@@ -9,5 +9,9 @@ license = "Apache-2.0 OR MIT"
 [lib]
 name = "ling_user"
 crate-type = ["rlib"]
+# no_std freestanding runtime: a `cargo test` lib target would link std and
+# collide with this crate's own `panic` handler (E0152 duplicate lang item)
+test = false
+doctest = false
 
 [dependencies]

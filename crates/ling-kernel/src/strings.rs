@@ -94,5 +94,9 @@ pub unsafe extern "C" fn ling_str_concat(a: u64, b: u64) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_str_eq(a: u64, b: u64) -> u64 {
     let eq = bytes_of(a) == bytes_of(b);
-    if eq { 0x7F02_0000_0000_0000 } else { 0x7F01_0000_0000_0000 }
+    if eq {
+        0x7F02_0000_0000_0000
+    } else {
+        0x7F01_0000_0000_0000
+    }
 }

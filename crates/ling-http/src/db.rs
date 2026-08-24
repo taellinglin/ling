@@ -39,7 +39,10 @@ impl Db {
             // shared-cache memory data once its last connection closes, so
             // keeping exactly one alive in the pool for the process
             // lifetime is what makes data survive across pool checkouts.
-            Ok(Pool::builder().max_size(1).min_idle(Some(1)).build(manager)?)
+            Ok(Pool::builder()
+                .max_size(1)
+                .min_idle(Some(1))
+                .build(manager)?)
         })
         .await??;
         Ok(Self(pool))
@@ -67,7 +70,10 @@ impl Db {
 
     /// Applies `(name, sql)` migrations in order, skipping ones already
     /// recorded as applied in a `_migrations` bookkeeping table.
-    pub async fn run_migrations(&self, migrations: &'static [(&'static str, &'static str)]) -> anyhow::Result<()> {
+    pub async fn run_migrations(
+        &self,
+        migrations: &'static [(&'static str, &'static str)],
+    ) -> anyhow::Result<()> {
         let pool = self.0.clone();
         tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
             let mut conn = pool.get()?;

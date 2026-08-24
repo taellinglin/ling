@@ -133,6 +133,8 @@ pub fn is_builtin(name: &str) -> bool {
         "random_hex" => true,
         "base64_encode" => true,
         "base64_decode_to_file" => true,
+        "remove_file" => true,
+        "rename_file" => true,
         "qr_svg" => true,
         "zip_files" => true,
         "pdf_from_images" => true,

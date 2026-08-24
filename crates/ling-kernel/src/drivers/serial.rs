@@ -26,9 +26,13 @@ pub fn write_ready() -> bool {
 
 pub fn write_byte(byte: u8) {
     while !write_ready() {
-        unsafe { crate::arch::cpu::pause(); }
+        unsafe {
+            crate::arch::cpu::pause();
+        }
     }
-    unsafe { io::outb(COM1, byte); }
+    unsafe {
+        io::outb(COM1, byte);
+    }
 }
 
 pub fn write(bytes: &[u8]) {

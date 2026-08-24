@@ -977,7 +977,13 @@ pub fn menu_popup_draw(popup: &MenuPopup, bg: Rgba, border: Rgba, accent: Rgba) 
 }
 
 /// Top application menu bar background strip and active category highlight.
-pub fn menu_bar_draw(bar: &MenuBar, rect: [f32; 4], bg: Rgba, active_bg: Rgba, border: Rgba) -> Draw {
+pub fn menu_bar_draw(
+    bar: &MenuBar,
+    rect: [f32; 4],
+    bg: Rgba,
+    active_bg: Rgba,
+    border: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let [x, y, w, h] = rect;
     d.rect_fill(bg, x, y, w, h);
@@ -991,7 +997,12 @@ pub fn menu_bar_draw(bar: &MenuBar, rect: [f32; 4], bg: Rgba, active_bg: Rgba, b
 }
 
 /// Draggable splitter bar handle with grip indicators.
-pub fn splitter_draw(rect: [f32; 4], direction: SplitDirection, is_hovered: bool, color: Rgba) -> Draw {
+pub fn splitter_draw(
+    rect: [f32; 4],
+    direction: SplitDirection,
+    is_hovered: bool,
+    color: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let [x, y, w, h] = rect;
     let col = if is_hovered { shade(color, 1.4) } else { color };
@@ -1010,7 +1021,15 @@ pub fn splitter_draw(rect: [f32; 4], direction: SplitDirection, is_hovered: bool
 }
 
 /// Blender-style numeric scrubber box with value fill bar and outline.
-pub fn value_drag_draw(drag: &ValueDrag, x: f32, y: f32, w: f32, h: f32, primary: Rgba, bg: Rgba) -> Draw {
+pub fn value_drag_draw(
+    drag: &ValueDrag,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    primary: Rgba,
+    bg: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     d.rect_fill(bg, x, y, w, h);
 
@@ -1020,26 +1039,50 @@ pub fn value_drag_draw(drag: &ValueDrag, x: f32, y: f32, w: f32, h: f32, primary
         d.rect_fill(shade(primary, 0.4), x + 2.0, y + 2.0, fill_w, h - 4.0);
     }
 
-    let border_col = if drag.is_dragging { primary } else { shade(primary, 0.6) };
+    let border_col = if drag.is_dragging {
+        primary
+    } else {
+        shade(primary, 0.6)
+    };
     d.rect_outline(border_col, x, y, w, h);
     d
 }
 
 /// Toggle switch box (pill track + indicator knob).
-pub fn toggle_draw(toggle: &Toggle, x: f32, y: f32, w: f32, h: f32, active_color: Rgba, bg: Rgba) -> Draw {
+pub fn toggle_draw(
+    toggle: &Toggle,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    active_color: Rgba,
+    bg: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     let track_col = if toggle.value { active_color } else { bg };
     d.rect_fill(track_col, x, y, w, h);
     d.rect_outline(active_color, x, y, w, h);
 
     let knob_w = h - 4.0;
-    let knob_x = if toggle.value { x + w - knob_w - 2.0 } else { x + 2.0 };
+    let knob_x = if toggle.value {
+        x + w - knob_w - 2.0
+    } else {
+        x + 2.0
+    };
     d.rect_fill(0xFFFFFF, knob_x, y + 2.0, knob_w, knob_w);
     d
 }
 
 /// Command palette overlay launcher window geometry.
-pub fn command_palette_draw(palette: &CommandPalette, x: f32, y: f32, w: f32, h: f32, bg: Rgba, primary: Rgba) -> Draw {
+pub fn command_palette_draw(
+    palette: &CommandPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    bg: Rgba,
+    primary: Rgba,
+) -> Draw {
     let mut d = Draw::new();
     if !palette.is_open {
         return d;

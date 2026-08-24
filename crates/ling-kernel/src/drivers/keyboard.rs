@@ -39,10 +39,39 @@ static mut PENDING_EXTENDED: bool = false;
 /// speeds" — replaced now that IRQ-driven input makes counting poll
 /// iterations meaningless (there often aren't any: `read_char` parks in
 /// `hlt` between keystrokes instead of spinning).
-const IDLE_MS_THRESHOLD: u64 = 8_000;
+const IDLE_MS_THRESHOLD: u64 = 300_000; // 5 minutes
 
 static mut LAST_ACTIVITY_MS: u64 = 0;
 static mut IDLE_FIRED: bool = false;
+
+/// A gap this much longer than any real inter-keystroke timing most likely
+/// means something interrupted input mid-sequence -- a VirtualBox host
+/// focus change or Ctrl+Alt+Del was the reported trigger. Without this,
+/// e.g. `PENDING_EXTENDED` left `true` by a make code that never got its
+/// follow-up byte before focus was lost would silently misroute every
+/// subsequent scancode through the extended-key branch forever, with no way
+/// to self-recover. Needs real VirtualBox confirmation, not just QEMU --
+/// this is the best fix available without reproducing the exact PS/2
+/// resync behavior VirtualBox's host-focus handling triggers.
+const FOCUS_LOSS_GAP_MS: u64 = 2_000;
+
+/// Reset modifier/sequence state if it's been stale long enough that
+/// trusting it would misinterpret the next scancode. Call before processing
+/// any newly-read scancode, using the *old* `LAST_ACTIVITY_MS` (i.e. before
+/// `note_activity()` updates it).
+fn reset_stale_modifier_state() {
+    unsafe {
+        if LAST_ACTIVITY_MS == 0 {
+            return; // first keypress ever -- nothing to have gotten stuck
+        }
+        let now = crate::arch::timer::now_ms();
+        if now.saturating_sub(LAST_ACTIVITY_MS) > FOCUS_LOSS_GAP_MS {
+            PENDING_EXTENDED = false;
+            CTRL_DOWN = false;
+            SHIFT_DOWN = false;
+        }
+    }
+}
 
 /// Fixed-capacity scancode queue the IRQ1 handler (`arch::x86_64::idt`)
 /// pushes into and `read_scancode` drains. Single producer (the ISR, which
@@ -77,12 +106,16 @@ pub(crate) fn irq_scancode(code: u8) {
 static SCANCODE_ASCII: [u8; 88] = [
     0, 27, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', // 0x00-0x09
     b'9', b'0', b'-', b'=', 8, b'\t', // 0x0A-0x0F
-    b'q', b'w', b'e', b'r', b't', b'y', b'u', b'i', b'o', b'p', b'[', b']', b'\n', 0, // 0x10-0x1D (0x1D = LCtrl)
-    b'a', b's', b'd', b'f', b'g', b'h', b'j', b'k', b'l', b';', b'\'', b'`', 0, b'\\', // 0x1E-0x2B (0x2A = LShift)
-    b'z', b'x', b'c', b'v', b'b', b'n', b'm', b',', b'.', b'/', 0, // 0x2C-0x36 (0x36 = RShift)
+    b'q', b'w', b'e', b'r', b't', b'y', b'u', b'i', b'o', b'p', b'[', b']', b'\n',
+    0, // 0x10-0x1D (0x1D = LCtrl)
+    b'a', b's', b'd', b'f', b'g', b'h', b'j', b'k', b'l', b';', b'\'', b'`', 0,
+    b'\\', // 0x1E-0x2B (0x2A = LShift)
+    b'z', b'x', b'c', b'v', b'b', b'n', b'm', b',', b'.', b'/',
+    0, // 0x2C-0x36 (0x36 = RShift)
     b'*', 0, b' ', // 0x37-0x39 (0x38 = LAlt, 0x39 = space)
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x3A-0x43 (function/lock keys, unmapped)
-    0, 0, 0, 0, 0, 0, 0, b'7', b'8', b'9', b'-', b'4', b'5', b'6', b'+', b'1', b'2', b'3', b'0', b'.', // keypad
+    0, 0, 0, 0, 0, 0, 0, b'7', b'8', b'9', b'-', b'4', b'5', b'6', b'+', b'1', b'2', b'3', b'0',
+    b'.', // keypad
 ];
 
 /// Same layout, shifted: digit row becomes its symbols, letters go
@@ -93,16 +126,23 @@ static SCANCODE_ASCII: [u8; 88] = [
 static SCANCODE_ASCII_SHIFTED: [u8; 88] = [
     0, 27, b'!', b'@', b'#', b'$', b'%', b'^', b'&', b'*', // 0x00-0x09
     b'(', b')', b'_', b'+', 8, b'\t', // 0x0A-0x0F
-    b'Q', b'W', b'E', b'R', b'T', b'Y', b'U', b'I', b'O', b'P', b'{', b'}', b'\n', 0, // 0x10-0x1D
-    b'A', b'S', b'D', b'F', b'G', b'H', b'J', b'K', b'L', b':', b'"', b'~', 0, b'|', // 0x1E-0x2B
+    b'Q', b'W', b'E', b'R', b'T', b'Y', b'U', b'I', b'O', b'P', b'{', b'}', b'\n',
+    0, // 0x10-0x1D
+    b'A', b'S', b'D', b'F', b'G', b'H', b'J', b'K', b'L', b':', b'"', b'~', 0,
+    b'|', // 0x1E-0x2B
     b'Z', b'X', b'C', b'V', b'B', b'N', b'M', b'<', b'>', b'?', 0, // 0x2C-0x36
     b'*', 0, b' ', // 0x37-0x39
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x3A-0x43
-    0, 0, 0, 0, 0, 0, 0, b'7', b'8', b'9', b'-', b'4', b'5', b'6', b'+', b'1', b'2', b'3', b'0', b'.', // keypad
+    0, 0, 0, 0, 0, 0, 0, b'7', b'8', b'9', b'-', b'4', b'5', b'6', b'+', b'1', b'2', b'3', b'0',
+    b'.', // keypad
 ];
 
 fn lookup_ascii(code: u8) -> u8 {
-    let table = if unsafe { SHIFT_DOWN } { &SCANCODE_ASCII_SHIFTED } else { &SCANCODE_ASCII };
+    let table = if unsafe { SHIFT_DOWN } {
+        &SCANCODE_ASCII_SHIFTED
+    } else {
+        &SCANCODE_ASCII
+    };
     table.get(code as usize).copied().unwrap_or(0)
 }
 
@@ -164,13 +204,18 @@ fn try_switch_term(code: u8) -> bool {
 pub fn read_char() -> u8 {
     loop {
         if let Some(code) = read_scancode() {
+            reset_stale_modifier_state();
             note_activity();
             if code == EXT_PREFIX {
-                unsafe { PENDING_EXTENDED = true; }
+                unsafe {
+                    PENDING_EXTENDED = true;
+                }
                 continue;
             }
             if unsafe { PENDING_EXTENDED } {
-                unsafe { PENDING_EXTENDED = false; }
+                unsafe {
+                    PENDING_EXTENDED = false;
+                }
                 if code == EXT_UP {
                     return UP_ARROW;
                 }
@@ -180,19 +225,27 @@ pub fn read_char() -> u8 {
                 continue;
             }
             if code == LCTRL {
-                unsafe { CTRL_DOWN = true; }
+                unsafe {
+                    CTRL_DOWN = true;
+                }
                 continue;
             }
             if code == LCTRL | 0x80 {
-                unsafe { CTRL_DOWN = false; }
+                unsafe {
+                    CTRL_DOWN = false;
+                }
                 continue;
             }
             if code == LSHIFT || code == RSHIFT {
-                unsafe { SHIFT_DOWN = true; }
+                unsafe {
+                    SHIFT_DOWN = true;
+                }
                 continue;
             }
             if code == LSHIFT | 0x80 || code == RSHIFT | 0x80 {
-                unsafe { SHIFT_DOWN = false; }
+                unsafe {
+                    SHIFT_DOWN = false;
+                }
                 continue;
             }
             // Release (key-up) codes have the top bit set; ignore them.
@@ -211,6 +264,11 @@ pub fn read_char() -> u8 {
             }
         } else {
             note_idle_check();
+            // The PIT heartbeat wakes this `hlt` ~100x/sec even with no key
+            // activity, which is exactly the periodic hook the cursor blink
+            // needs (see `term::tick_cursor_blink`'s doc comment) -- no new
+            // interrupt wiring required to get it ticking while idle.
+            crate::drivers::term::tick_cursor_blink();
             // Park until the next interrupt (keyboard, mouse, or the PIT
             // heartbeat, whichever comes first) instead of burning CPU in a
             // busy-poll — real work now that input is IRQ-delivered rather
@@ -224,13 +282,18 @@ pub fn read_char() -> u8 {
 pub fn poll_char() -> u8 {
     match read_scancode() {
         Some(code) => {
+            reset_stale_modifier_state();
             note_activity();
             if code == EXT_PREFIX {
-                unsafe { PENDING_EXTENDED = true; }
+                unsafe {
+                    PENDING_EXTENDED = true;
+                }
                 return 0;
             }
             if unsafe { PENDING_EXTENDED } {
-                unsafe { PENDING_EXTENDED = false; }
+                unsafe {
+                    PENDING_EXTENDED = false;
+                }
                 if code == EXT_UP {
                     return UP_ARROW;
                 }
@@ -240,19 +303,27 @@ pub fn poll_char() -> u8 {
                 return 0;
             }
             if code == LCTRL {
-                unsafe { CTRL_DOWN = true; }
+                unsafe {
+                    CTRL_DOWN = true;
+                }
                 return 0;
             }
             if code == LCTRL | 0x80 {
-                unsafe { CTRL_DOWN = false; }
+                unsafe {
+                    CTRL_DOWN = false;
+                }
                 return 0;
             }
             if code == LSHIFT || code == RSHIFT {
-                unsafe { SHIFT_DOWN = true; }
+                unsafe {
+                    SHIFT_DOWN = true;
+                }
                 return 0;
             }
             if code == LSHIFT | 0x80 || code == RSHIFT | 0x80 {
-                unsafe { SHIFT_DOWN = false; }
+                unsafe {
+                    SHIFT_DOWN = false;
+                }
                 return 0;
             }
             if code & 0x80 != 0 || try_switch_term(code) {

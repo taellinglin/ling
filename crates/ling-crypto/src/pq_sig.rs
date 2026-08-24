@@ -37,7 +37,8 @@ impl MlDsa65Keypair {
             EncodedVerifyingKey::<MlDsa65>::try_from(pubkey).map_err(|_| "invalid pubkey")?;
         let vk = VerifyingKey::<MlDsa65>::decode(&vk_enc);
 
-        let sig_enc = EncodedSignature::<MlDsa65>::try_from(sig).map_err(|_| "invalid signature")?;
+        let sig_enc =
+            EncodedSignature::<MlDsa65>::try_from(sig).map_err(|_| "invalid signature")?;
         let signature = Signature::<MlDsa65>::decode(&sig_enc).ok_or("invalid signature")?;
 
         vk.verify(msg, &signature).map_err(|_| "signature invalid")

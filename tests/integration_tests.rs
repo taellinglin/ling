@@ -43,7 +43,10 @@ fn test_polyglot_chinese() {
         }
     "#;
 
-    assert!(ling::run(source).is_ok(), "chinese-alias program failed to run");
+    assert!(
+        ling::run(source).is_ok(),
+        "chinese-alias program failed to run"
+    );
 }
 
 // ── B1: user-defined data types (form / choose) ─────────────────────────────
@@ -143,6 +146,8 @@ fn test_deduplicated_math_aliases() {
             print(tau)
         }
     "#;
-    assert!(ling::run(source).is_ok(), "deduplicated math aliases failed");
+    assert!(
+        ling::run(source).is_ok(),
+        "deduplicated math aliases failed"
+    );
 }
-

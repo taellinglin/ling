@@ -42,7 +42,12 @@ struct TokenOutputStream<'a> {
 
 impl<'a> TokenOutputStream<'a> {
     fn new(tokenizer: &'a Tokenizer) -> Self {
-        Self { tokenizer, tokens: Vec::new(), prev_index: 0, current_index: 0 }
+        Self {
+            tokenizer,
+            tokens: Vec::new(),
+            prev_index: 0,
+            current_index: 0,
+        }
     }
 
     fn decode(&self, tokens: &[u32]) -> Option<String> {

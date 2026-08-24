@@ -44,5 +44,9 @@ pub fn write_sector(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
 /// detected rather than a hardcoded guess.
 pub fn active_driver_name() -> &'static str {
     init();
-    if unsafe { USE_AHCI } { "ahci0" } else { "ata0" }
+    if unsafe { USE_AHCI } {
+        "ahci0"
+    } else {
+        "ata0"
+    }
 }

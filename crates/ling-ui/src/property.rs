@@ -64,10 +64,7 @@ pub struct Toggle {
 
 impl Toggle {
     pub fn new(label: impl Into<String>, value: bool) -> Self {
-        Self {
-            label: label.into(),
-            value,
-        }
+        Self { label: label.into(), value }
     }
 
     pub fn toggle(&mut self) {
@@ -85,12 +82,7 @@ pub struct Dropdown {
 
 impl Dropdown {
     pub fn new(label: impl Into<String>, options: Vec<String>, selected_index: usize) -> Self {
-        Self {
-            label: label.into(),
-            options,
-            selected_index,
-            is_open: false,
-        }
+        Self { label: label.into(), options, selected_index, is_open: false }
     }
 
     pub fn select(&mut self, index: usize) {
@@ -116,10 +108,7 @@ pub struct PropertySection {
 
 impl PropertySection {
     pub fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            collapsed: false,
-        }
+        Self { title: title.into(), collapsed: false }
     }
 
     pub fn toggle_collapsed(&mut self) {

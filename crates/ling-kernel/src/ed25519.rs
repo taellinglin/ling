@@ -27,10 +27,7 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 /// the same as every other verify-style builtin in this codebase
 /// (`users::verify`, `totp_check`).
 pub fn verify(pubkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
-    let (Ok(pk), Ok(sig)) = (
-        <[u8; 32]>::try_from(pubkey),
-        <[u8; 64]>::try_from(sig),
-    ) else {
+    let (Ok(pk), Ok(sig)) = (<[u8; 32]>::try_from(pubkey), <[u8; 64]>::try_from(sig)) else {
         return false;
     };
     let Ok(vk) = VerifyingKey::from_bytes(&pk) else { return false };
