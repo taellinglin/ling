@@ -31,9 +31,11 @@ struct Tss {
 }
 
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
+const TIMER_STACK_SIZE: usize = 16 * 1024;
 const KERNEL_BOOT_STACK_TOP_PLACEHOLDER: u64 = 0;
 
 static mut DOUBLE_FAULT_STACK: [u8; DOUBLE_FAULT_STACK_SIZE] = [0; DOUBLE_FAULT_STACK_SIZE];
+static mut TIMER_STACK: [u8; TIMER_STACK_SIZE] = [0; TIMER_STACK_SIZE];
 static mut TSS: Tss = Tss {
     reserved0: 0,
     rsp0: KERNEL_BOOT_STACK_TOP_PLACEHOLDER,
@@ -68,6 +70,18 @@ const TSS_SEL: u16 = 6 * 8;
 /// page fault into an unrecoverable triple fault via infinite re-entry).
 pub const DOUBLE_FAULT_IST: u8 = 1;
 
+/// IST index for the timer vector. Not for stack *safety* like IST1 — it's
+/// there so the hardware unconditionally pushes the full `ss:rsp` pair on
+/// every timer interrupt, even one that happens to interrupt ring-0 code
+/// where a privilege level change (the normal trigger for that push) never
+/// occurs. Without this, the same vector's exception frame is 3 qwords when
+/// it interrupts the kernel and 5 when it interrupts ring 3 — a shape that
+/// depends on what got interrupted is exactly the kind of asymmetry Phase
+/// 3's preemptive scheduler can't afford to special-case; the SDM documents
+/// IST-based stack switching as unconditional on privilege level specifically
+/// to make that frame shape uniform.
+pub const TIMER_IST: u8 = 2;
+
 fn descriptor(base: u32, limit: u32, access: u8, flags: u8) -> u64 {
     let limit_low = (limit & 0xFFFF) as u64;
     let base_low = (base & 0xFFFFFF) as u64;
@@ -91,6 +105,8 @@ pub fn init(boot_stack_top: u64) {
         TSS.rsp0 = boot_stack_top;
         let df_stack_top = (&raw const DOUBLE_FAULT_STACK) as u64 + DOUBLE_FAULT_STACK_SIZE as u64;
         TSS.ist[(DOUBLE_FAULT_IST - 1) as usize] = df_stack_top & !0xF;
+        let timer_stack_top = (&raw const TIMER_STACK) as u64 + TIMER_STACK_SIZE as u64;
+        TSS.ist[(TIMER_IST - 1) as usize] = timer_stack_top & !0xF;
 
         GDT[0] = 0;
         // access=0x9A: present, ring0, code, executable+readable.
@@ -145,4 +161,14 @@ pub fn init(boot_stack_top: u64) {
         );
         asm!("ltr {sel:x}", sel = in(reg) TSS_SEL, options(nostack, preserves_flags));
     }
+}
+
+/// Point `TSS.rsp0` at `stack_top` — the kernel stack the CPU switches to on
+/// any ring3→ring0 transition via an IDT gate without its own IST (page
+/// faults, GPFs, syscalls-via-int, ...). The scheduler calls this on every
+/// switch to a different process, so a fault taken while running process A
+/// always lands on A's own kernel stack, never a stale one left over from
+/// whichever process ran last.
+pub fn set_kernel_stack(stack_top: u64) {
+    unsafe { TSS.rsp0 = stack_top };
 }

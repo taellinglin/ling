@@ -272,7 +272,7 @@ pub(crate) fn translate_rvalue(
                 Operand::Constant(Constant::Function(n)) => n.clone(),
                 _ => String::new(),
             };
-            let is_kernel = callee_name.starts_with("ling_kernel_");
+            let is_sys_or_kernel = callee_name.starts_with("ling_kernel_") || callee_name.starts_with("ling_sys_");
             // Only these two intrinsics scan their string argument for a NUL
             // terminator (`ling_kernel_vga_write_str`/`ling_kernel_panic` in
             // ling-kernel's lib.rs); every other kernel intrinsic reads the
@@ -289,7 +289,7 @@ pub(crate) fn translate_rvalue(
                 "ling_kernel_vga_write_str" | "ling_kernel_panic"
             );
             let mut cal_args = Vec::new();
-            if is_kernel {
+            if is_sys_or_kernel {
                 for arg in args {
                     if !raw_cstr_kernel_fn {
                         if let Operand::Constant(Constant::Str(_)) = arg {
@@ -308,7 +308,7 @@ pub(crate) fn translate_rvalue(
             let v: (Value, Repr) = if let Some(&fr) = ctx.func_refs.get(&callee_name) {
                 if let Some(&arity) = ctx.func_arities.get(&callee_name) {
                     if cal_args.len() < arity {
-                        let unit = if is_kernel {
+                        let unit = if is_sys_or_kernel {
                             builder.ins().iconst(types::I64, 0)
                         } else {
                             builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64)
@@ -320,7 +320,7 @@ pub(crate) fn translate_rvalue(
                 }
                 let inst = builder.ins().call(fr, &cal_args);
                 let raw = builder.inst_results(inst)[0];
-                if is_kernel {
+                if is_sys_or_kernel {
                     (dynamic_from_raw(builder, raw), Repr::Boxed)
                 } else {
                     (raw, Repr::Boxed)

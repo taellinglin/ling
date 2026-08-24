@@ -40,11 +40,21 @@ jobs:
       # `kernel_entry`, which it never defines itself (only a generated
       # kernel project's main.rs does), so even on nightly `cargo test`
       # would fail to link a standalone test binary for it regardless.
+      #
+      # ling-user is excluded from the test step only: it's the no_std
+      # userland runtime ring-3 LingOS processes link against, with its own
+      # `#[panic_handler]` (see crates/ling-user/src/entry.rs) — its own
+      # Cargo.toml already sets `test = false` to stop `cargo test -p
+      # ling-user` from linking std alongside that handler (E0152 duplicate
+      # `panic_impl`), but a workspace-wide `cargo test` still pulls it into
+      # the shared test-profile dependency graph unless excluded here too.
+      # It builds fine as an ordinary rlib dependency, so `cargo build`
+      # doesn't need the same exclude.
       - name: Build
         run: cargo build --workspace --exclude ling-kernel --verbose
 
       - name: Run tests
-        run: cargo test --workspace --exclude ling-kernel --verbose
+        run: cargo test --workspace --exclude ling-kernel --exclude ling-user --verbose
 
   lint:
     name: Format & Clippy (non-blocking)

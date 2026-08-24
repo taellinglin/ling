@@ -54,6 +54,16 @@ pub unsafe fn read_cr3() -> u64 {
     val
 }
 
+pub unsafe fn read_cr0() -> u64 {
+    let val: u64;
+    asm!("mov {}, cr0", out(reg) val, options(nomem, nostack));
+    val
+}
+
+pub unsafe fn write_cr0(val: u64) {
+    asm!("mov cr0, {}", in(reg) val, options(nomem, nostack));
+}
+
 pub unsafe fn write_cr3(val: u64) {
     asm!("mov cr3, {}", in(reg) val, options(nomem, nostack));
 }

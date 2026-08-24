@@ -1,12 +1,5 @@
-//! BCM2837 mailbox property-interface channel — the only way to ask the
-//! VideoCore firmware anything on this hardware (there is no CPU-visible
-//! register that just reports installed RAM the way x86's Multiboot2 memory
-//! map does). Minimal on purpose: only `arm_memory()` (tag `0x00010005`,
-//! what `mm::frame`'s aarch64 detection needs) is implemented here. The
-//! framebuffer-allocation property calls this same interface can make are
-//! Phase 6's job (`packages/README.md`'s build order puts the graphics
-//! framebuffer after this), and belong in their own function when that
-//! phase actually needs them rather than being guessed at now.
+//! BCM2837 mailbox property-interface channel.
+
 use crate::arch::mmio::{read32, write32, PERIPHERAL_BASE};
 
 const MBOX_BASE: usize = PERIPHERAL_BASE + 0xB880;
@@ -19,21 +12,17 @@ const MBOX_EMPTY: u32 = 1 << 30;
 const CHANNEL_PROPERTY: u32 = 8;
 
 const TAG_GET_ARM_MEMORY: u32 = 0x0001_0005;
+const TAG_SET_PHYS_WH: u32 = 0x0004_8003;
+const TAG_SET_VIRT_WH: u32 = 0x0004_8004;
+const TAG_SET_DEPTH: u32 = 0x0004_8005;
+const TAG_ALLOCATE_BUFFER: u32 = 0x0004_0001;
+const TAG_GET_PITCH: u32 = 0x0004_0008;
 const TAG_END: u32 = 0;
 
-/// The mailbox message buffer must be 16-byte aligned and its physical
-/// address fits in 28 bits with the channel number in the low 4 — easiest
-/// guaranteed by a page-aligned static buffer well under the 4GiB/28-bit
-/// range this kernel already runs in. No MMU is enabled at the point this
-/// runs (frame-allocator detection happens before Phase 3's paging work),
-/// so this physical address is also its address as accessed here.
 #[repr(align(16))]
-struct MailboxBuffer([u32; 8]);
-static mut BUFFER: MailboxBuffer = MailboxBuffer([0; 8]);
+struct MailboxBuffer([u32; 36]);
+static mut BUFFER: MailboxBuffer = MailboxBuffer([0; 36]);
 
-/// Bounded rather than an unbounded spin — same reasoning as `timer.rs`'s
-/// `poll_until`: a missing/misbehaving mailbox peer should never hang the
-/// whole kernel forever waiting for a response that isn't coming.
 const MAILBOX_TIMEOUT_SPINS: u32 = 10_000_000;
 
 unsafe fn call(channel: u32) -> bool {
@@ -61,28 +50,71 @@ unsafe fn call(channel: u32) -> bool {
         }
         let resp = read32(MBOX_READ);
         if resp == msg {
-            return BUFFER.0[1] == 0x8000_0000; // request succeeded
+            return BUFFER.0[1] == 0x8000_0000;
         }
     }
 }
 
-/// `(base, size)` in bytes of the board's ARM-visible memory, or `None` if
-/// the firmware call fails (should not happen on real hardware or QEMU's
-/// `raspi3b`, but `mm::frame`'s caller falls back to a conservative fixed
-/// range rather than trusting this unconditionally).
 pub fn arm_memory() -> Option<(u64, u64)> {
     unsafe {
-        BUFFER.0[0] = 8 * 4; // total buffer size in bytes
-        BUFFER.0[1] = 0; // request
+        BUFFER.0[0] = 8 * 4;
+        BUFFER.0[1] = 0;
         BUFFER.0[2] = TAG_GET_ARM_MEMORY;
-        BUFFER.0[3] = 8; // value buffer size (base + size, 2x u32)
-        BUFFER.0[4] = 0; // request/response indicator
-        BUFFER.0[5] = 0; // response: base address
-        BUFFER.0[6] = 0; // response: size
+        BUFFER.0[3] = 8;
+        BUFFER.0[4] = 0;
+        BUFFER.0[5] = 0;
+        BUFFER.0[6] = 0;
         BUFFER.0[7] = TAG_END;
 
         if call(CHANNEL_PROPERTY) {
             Some((BUFFER.0[5] as u64, BUFFER.0[6] as u64))
+        } else {
+            None
+        }
+    }
+}
+
+pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32, u32, u8)> {
+    unsafe {
+        BUFFER.0[0] = 35 * 4;
+        BUFFER.0[1] = 0; // request
+
+        BUFFER.0[2] = TAG_SET_PHYS_WH;
+        BUFFER.0[3] = 8;
+        BUFFER.0[4] = 8;
+        BUFFER.0[5] = w;
+        BUFFER.0[6] = h;
+
+        BUFFER.0[7] = TAG_SET_VIRT_WH;
+        BUFFER.0[8] = 8;
+        BUFFER.0[9] = 8;
+        BUFFER.0[10] = w;
+        BUFFER.0[11] = h;
+
+        BUFFER.0[12] = TAG_SET_DEPTH;
+        BUFFER.0[13] = 4;
+        BUFFER.0[14] = 4;
+        BUFFER.0[15] = depth;
+
+        BUFFER.0[16] = TAG_ALLOCATE_BUFFER;
+        BUFFER.0[17] = 8;
+        BUFFER.0[18] = 8;
+        BUFFER.0[19] = 16; // 16-byte align
+        BUFFER.0[20] = 0;
+
+        BUFFER.0[21] = TAG_GET_PITCH;
+        BUFFER.0[22] = 4;
+        BUFFER.0[23] = 4;
+        BUFFER.0[24] = 0;
+
+        BUFFER.0[25] = TAG_END;
+
+        if call(CHANNEL_PROPERTY) {
+            let bus_addr = BUFFER.0[19] as u64;
+            let pitch = BUFFER.0[24];
+            // Convert VC bus address (0xC0000000.. or 0x40000000..) to ARM physical (0x00000000..)
+            let arm_addr = bus_addr & 0x3FFF_FFFF;
+            Some((arm_addr, pitch, w, h, depth as u8))
         } else {
             None
         }

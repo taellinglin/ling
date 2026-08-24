@@ -1,11 +1,19 @@
 //! AArch64 exception vector table: all 16 entries (4 exception classes ×
 //! {current EL SP0, current EL SPx, lower EL AArch64, lower EL AArch32}),
-//! installed at `VBAR_EL1`. This kernel runs entirely in EL1h (SP_EL1), so
-//! only the "current EL, SPx" synchronous and IRQ entries are reachable
-//! today — the rest (SP0, and every lower-EL entry, unreachable until
-//! Phase 3 runs code at EL0) still get a real handler rather than being
-//! left empty: an unpopulated vector slot on a real fault is a silent
-//! reset, exactly what this phase exists to replace with a readable dump.
+//! installed at `VBAR_EL1`. This kernel runs entirely in EL1h (SP_EL1). The
+//! "current EL, SPx" entries handle the kernel faulting on itself and a
+//! timer/UART IRQ landing while kernel code was running; the "lower EL,
+//! AArch64" entries — unreachable before [`crate::proc::uproc`] ever `eret`s
+//! into EL0 — handle a process's `svc` (syscall) and a timer IRQ preempting
+//! it. Every other slot (SP0, AArch32) still gets a real handler rather
+//! than being left empty: an unpopulated vector slot on a real fault is a
+//! silent reset, exactly what this exists to replace with a readable dump.
+//!
+//! Because EL0 and EL1 sync/IRQ traps land on architecturally distinct
+//! vector slots here (unlike x86_64, where one shared IDT vector serves
+//! both and the handler tells them apart from `CS`), there is no need for
+//! an aarch64 `from_userspace()` check — which vector fired already answers
+//! that question.
 use core::arch::global_asm;
 use core::mem::size_of;
 
@@ -17,7 +25,23 @@ pub struct TrapFrame {
     pub spsr: u64,
 }
 
+impl TrapFrame {
+    pub fn syscall_num(&self) -> u64 {
+        self.gpr[8]
+    }
+    pub fn arg(&self, i: usize) -> u64 {
+        self.gpr[i]
+    }
+    pub fn set_return(&mut self, value: u64) {
+        self.gpr[0] = value;
+    }
+    pub fn return_value(&self) -> u64 {
+        self.gpr[0]
+    }
+}
+
 const FRAME_SIZE: usize = size_of::<TrapFrame>();
+pub const TRAPFRAME_SIZE: u64 = FRAME_SIZE as u64;
 
 global_asm!(
     r#"
@@ -64,6 +88,11 @@ global_asm!(
     mov x0, sp
     mov x1, \kind
     bl \handler
+    // `x0` now holds the handler's return value: the frame to resume from,
+    // which may belong to a different process than the one that trapped in
+    // (the scheduler switched) — same "handler picks the next stack" shape
+    // as the x86_64 backend's `mov rsp, rax`.
+    mov sp, x0
     ldr x9, [sp, #256]
     msr elr_el1, x9
     ldr x9, [sp, #264]
@@ -98,12 +127,12 @@ vector_table_el1:
     VECTOR vec_unreachable   // IRQ, current EL, SP0 (unreachable)
     VECTOR vec_unreachable   // FIQ, current EL, SP0 (unreachable)
     VECTOR vec_unreachable   // SError, current EL, SP0 (unreachable)
-    VECTOR vec_sync          // sync, current EL, SPx -- real
-    VECTOR vec_irq           // IRQ, current EL, SPx -- real
+    VECTOR vec_sync          // sync, current EL, SPx -- kernel-mode fault
+    VECTOR vec_irq           // IRQ, current EL, SPx -- kernel-mode tick
     VECTOR vec_unreachable   // FIQ, current EL, SPx (never enabled)
     VECTOR vec_unreachable   // SError, current EL, SPx
-    VECTOR vec_unreachable   // sync, lower EL, AArch64 (Phase 3)
-    VECTOR vec_unreachable   // IRQ, lower EL, AArch64 (Phase 3)
+    VECTOR vec_sync_el0      // sync, lower EL, AArch64 -- svc from a process
+    VECTOR vec_irq_el0       // IRQ, lower EL, AArch64 -- preempt a process
     VECTOR vec_unreachable   // FIQ, lower EL, AArch64
     VECTOR vec_unreachable   // SError, lower EL, AArch64
     VECTOR vec_unreachable   // sync, lower EL, AArch32 (never used)
@@ -118,6 +147,10 @@ vec_irq:
     SAVE_AND_DISPATCH 1, aarch64_trap_handler
 vec_unreachable:
     SAVE_AND_DISPATCH 2, aarch64_trap_handler
+vec_sync_el0:
+    SAVE_AND_DISPATCH 3, aarch64_trap_handler
+vec_irq_el0:
+    SAVE_AND_DISPATCH 4, aarch64_trap_handler
 "#,
     frame_size = const FRAME_SIZE,
 );
@@ -139,11 +172,7 @@ fn print_hex64(label: &str, val: u64) {
     let mut buf = [0u8; 16];
     for i in 0..16 {
         let nibble = (val >> ((15 - i) * 4)) & 0xF;
-        buf[i] = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
+        buf[i] = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
     }
     crate::console_write(&buf);
     crate::console_write(b"\n");
@@ -180,8 +209,12 @@ pub fn ticks() -> u64 {
 /// returning, or it re-traps the same `brk` forever.
 const ESR_EC_BRK: u64 = 0x3C;
 
+/// `ESR_EL1[31:26]` exception class for an `svc` trap.
+const ESR_EC_SVC64: u64 = 0x15;
+
 #[no_mangle]
-extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) {
+extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
+    let frame_addr = frame as *mut TrapFrame as u64;
     match kind {
         1 => {
             if crate::arch::intc::core_timer_pending() {
@@ -191,7 +224,8 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) {
             if crate::arch::intc::uart_pending() {
                 crate::drivers::uart::irq_drain();
             }
-        },
+            frame_addr
+        }
         0 => {
             let esr = read_esr_el1();
             let ec = (esr >> 26) & 0x3F;
@@ -199,10 +233,33 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) {
                 crate::console_write(b"\n!!! Breakpoint (brk)\n");
                 print_hex64("  elr=", frame.elr);
                 frame.elr += 4;
-                return;
+                return frame_addr;
             }
             fault_halt("Synchronous Exception", frame, esr, read_far_el1());
-        },
+        }
+        // svc from a running process: ESR's EC confirms it (a process
+        // reaching this vector any other way -- a data/instruction abort at
+        // EL0 -- isn't a syscall and gets the same fault report a kernel-mode
+        // fault does, rather than being misread as one).
+        3 => {
+            let esr = read_esr_el1();
+            let ec = (esr >> 26) & 0x3F;
+            if ec != ESR_EC_SVC64 {
+                fault_halt("Process Exception", frame, esr, read_far_el1());
+            }
+            crate::abi::syscalls::dispatch(frame);
+            crate::proc::uproc::on_syscall_return(frame_addr)
+        }
+        4 => {
+            if crate::arch::intc::core_timer_pending() {
+                unsafe { TICKS += 1 };
+                crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
+            }
+            if crate::arch::intc::uart_pending() {
+                crate::drivers::uart::irq_drain();
+            }
+            crate::proc::uproc::on_timer_preempt(frame_addr)
+        }
         _ => fault_halt("Unhandled Exception", frame, read_esr_el1(), read_far_el1()),
     }
 }

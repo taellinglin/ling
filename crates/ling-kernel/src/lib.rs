@@ -13,6 +13,9 @@ pub mod fs;
 // ─── Task scheduling ─────────────────────────────────────────────────────
 pub mod proc;
 
+// ─── Syscall ABI ring-3 processes use ────────────────────────────────────
+pub mod abi;
+
 // ─── Physical memory management (frame allocator; paging/heap follow) ──────
 pub mod mm;
 
@@ -91,6 +94,21 @@ pub fn init() {
         console_write(b"mm: ");
         print_decimal((mm::frame::free_frame_count() * 4) as u64);
         console_write(b" KiB free (frame allocator)\n");
+
+        // Real page tables (NX + W^X on the kernel image) replacing
+        // boot.rs's temporary flat RWX map — must come after the frame
+        // allocator (page tables are themselves frame-allocated) and before
+        // anything that depends on the kernel's .text/.rodata actually
+        // being protected.
+        arch::paging::init();
+        serial::write(b"paging enabled (NX, W^X kernel image)\n");
+
+        // Ring-3 processes: must come after paging (per-process address
+        // spaces clone the kernel PML4) and after the GDT (STAR encodes
+        // its kernel code selector) — before anything ever executes
+        // `syscall`, which is only true once a process exists at all.
+        arch::trap::init();
+        serial::write(b"syscall/sysret enabled (ring-3 processes ready)\n");
 
         // Establish the shell as slot 0 of the cooperative scheduler before
         // anything (a shell command, `ling_kernel_spawn`) can depend on it.
@@ -554,46 +572,6 @@ pub unsafe extern "C" fn ling_kernel_rtc_second() -> u64 {
     arch::rtc::read().second as u64
 }
 
-/// Spawn a task, yield to it, confirm it actually ran and yielded back.
-/// Returns 1 on success, 0 on failure. Honest scope: proves cooperative
-/// task creation/switching works, nothing about preemption or isolation
-/// (this scheduler has neither — see `sched`'s module doc).
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
-    if sched::selftest() {
-        1
-    } else {
-        0
-    }
-}
-
-/// Print each task slot's state to the console. Returns the count of
-/// non-`Unused` slots.
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn ling_kernel_proc_ps() -> u64 {
-    let mut count = 0u64;
-    for i in 0..sched::MAX_TASKS {
-        let Some(state) = sched::task_state(i) else { continue };
-        let label: &[u8] = match state {
-            sched::TaskStateInfo::Unused => b"unused",
-            sched::TaskStateInfo::Ready => b"ready",
-            sched::TaskStateInfo::Running => b"running",
-            sched::TaskStateInfo::Exited => b"exited",
-        };
-        console_write(b"  slot ");
-        print_decimal(i as u64);
-        console_write(b": ");
-        console_write(label);
-        console_write(b"\n");
-        if state != sched::TaskStateInfo::Unused {
-            count += 1;
-        }
-    }
-    count
-}
-
 /// Run `lingfs::self_test()` against the real disk (mount/format, put,
 /// get, dedup, tree, commit, root round-trip). Returns 1 on success, 0 on
 /// failure. This *mutates* the filesystem (adds a throwaway commit each
@@ -605,6 +583,101 @@ pub unsafe extern "C" fn ling_kernel_proc_ps() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fs_selftest() -> u64 {
     lingfs::self_test() as u64
+}
+
+/// Load and run `testbins/ring3_selftest.elf` — a hand-assembled ring-3
+/// program (source alongside it, `testbins/ring3_selftest.asm`) that writes
+/// a string via `SYS_WRITE` and exits via `SYS_EXIT(42)` — end to end
+/// through real paging, the real GDT/TSS ring-3 descriptors, real
+/// `syscall`/`iretq` transitions, and `abi::syscalls::dispatch`'s pointer
+/// validation. Returns 1 if the process ran and exited with code 42
+/// (proving the whole mechanism actually works, not just that it compiled),
+/// 0 otherwise.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_selftest() -> u64 {
+    static TEST_ELF: &[u8] = include_bytes!("../testbins/ring3_selftest.elf");
+    let pid = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"proctest: spawn failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    let code = proc::uproc::run_to_completion(pid);
+    console_write(b"proctest: exit code = ");
+    print_decimal(code as u64);
+    console_write(b"\n");
+    (code == 42) as u64
+}
+
+/// Spawn two independent copies of `testbins/loop_selftest.elf` — each
+/// prints its own pid-derived letter six times with a busy-spin between
+/// prints, *never* calling `yield` or `sleep_ms` — and run both to
+/// completion. Both are `Ready` before either runs, so the timer's
+/// preemptive scheduler (`uproc::on_timer_preempt`) is the only thing that
+/// interleaves them; genuine concurrent progress shows up as an interleaved
+/// mix of both processes' letters in the serial log rather than one
+/// process's six lines followed by the other's. Returns 1 if both exited
+/// with the expected code 7, 0 otherwise.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_pairtest() -> u64 {
+    static TEST_ELF: &[u8] = include_bytes!("../testbins/loop_selftest.elf");
+    let pid_a = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"pairtest: spawn a failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    let pid_b = match proc::uproc::spawn(TEST_ELF) {
+        Ok(p) => p,
+        Err(e) => {
+            console_write(b"pairtest: spawn b failed: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            return 0;
+        }
+    };
+    console_write(b"pairtest: running two processes under the preemptive timer\n");
+    // A single `run_to_completion` call blocks until every `Ready` process
+    // in the table is done, which by construction includes `pid_b` too
+    // (spawned before this call) — calling it a second time here would
+    // re-launch `pid_b`'s already-exited frame straight into a fault.
+    let code_a = proc::uproc::run_to_completion(pid_a);
+    let code_b = proc::uproc::exit_code(pid_b).unwrap_or(-1);
+    console_write(b"pairtest: exit codes = ");
+    print_decimal(code_a as u64);
+    console_write(b", ");
+    print_decimal(code_b as u64);
+    console_write(b"\n");
+    (code_a == 7 && code_b == 7) as u64
+}
+
+/// Print pid/state/exit-code for every live process slot — the `ps` shell
+/// command's backing intrinsic.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_proc_ps() -> u64 {
+    let mut rows = [(0usize, 0u8, 0i32); proc::uproc::MAX_PROCESSES];
+    let n = proc::uproc::snapshot(&mut rows);
+    console_write(b"PID STATE EXIT\n");
+    for &(pid, tag, code) in &rows[..n] {
+        print_decimal(pid as u64);
+        console_write(b"   ");
+        console_write(&[tag]);
+        console_write(b"     ");
+        if tag == b'Z' {
+            print_decimal(code as u64);
+        }
+        console_write(b"\n");
+    }
+    n as u64
 }
 
 /// Mount (or format, if blank) the filesystem without running the

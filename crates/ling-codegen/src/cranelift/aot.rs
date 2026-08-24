@@ -310,6 +310,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_exit", &[], types::I64),
         ("ling_kernel_getpid", &[], types::I64),
         ("ling_kernel_proc_selftest", &[], types::I64),
+        ("ling_kernel_proc_pairtest", &[], types::I64),
         ("ling_kernel_proc_ps", &[], types::I64),
         ("ling_kernel_uptime_ms", &[], types::I64),
         ("ling_kernel_rtc_unix_ts", &[], types::I64),
@@ -358,6 +359,23 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             &[types::I64, types::I64, types::I64, types::I64, types::I64],
             types::I64,
         ),
+        // LingOS userspace syscall intrinsics (no_std ring-3)
+        ("ling_sys_exit", &[types::I64], types::I64),
+        ("ling_sys_write", &[types::I64, types::I64, types::I64], types::I64),
+        ("ling_sys_read", &[types::I64, types::I64, types::I64], types::I64),
+        ("ling_sys_open", &[types::I64, types::I64], types::I64),
+        ("ling_sys_close", &[types::I64], types::I64),
+        ("ling_sys_lseek", &[types::I64, types::I64, types::I64], types::I64),
+        ("ling_sys_mmap", &[types::I64, types::I64, types::I64, types::I64], types::I64),
+        ("ling_sys_munmap", &[types::I64, types::I64], types::I64),
+        ("ling_sys_spawn", &[types::I64, types::I64], types::I64),
+        ("ling_sys_waitpid", &[types::I64], types::I64),
+        ("ling_sys_yield", &[], types::I64),
+        ("ling_sys_getpid", &[], types::I64),
+        ("ling_sys_sleep_ms", &[types::I64], types::I64),
+        ("ling_sys_poll_input", &[], types::I64),
+        ("ling_sys_fb_map", &[], types::I64),
+        ("ling_sys_uname", &[types::I64, types::I64], types::I64),
     ];
 
     for &(name, params, ret) in runtime_fns {

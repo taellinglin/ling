@@ -55,6 +55,7 @@ members = [
     "crates/ling-animation",
     "crates/ling-input",
     "crates/ling-kernel",
+    "crates/ling-user",
     "crates/ling-web"
 
 ]

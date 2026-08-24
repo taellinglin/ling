@@ -788,9 +788,12 @@ fn run_build(
             "rpi" | "raspberrypi" => {
                 build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
             },
+            "lingos" | "app" | "apps" => {
+                build_native(&project, out, NativePlatform::Lingos, icon, pack, aot)
+            },
             other => {
                 eprintln!(
-                    "unknown platform '{}' — use web|win|lin|mac|kernel|rpi|all",
+                    "unknown platform '{}' — use web|win|lin|mac|kernel|rpi|lingos|all",
                     other
                 );
                 std::process::exit(1);
@@ -961,6 +964,8 @@ enum NativePlatform {
     BareMetal,
     /// Raspberry Pi (aarch64), bare-metal — see `RPI_LINKER_SCRIPT`.
     Rpi,
+    /// LingOS ring-3 userspace ELF process linked against ling-user.
+    Lingos,
 }
 
 impl NativePlatform {
@@ -971,6 +976,7 @@ impl NativePlatform {
             Self::Mac => "macos",
             Self::BareMetal => "kernel",
             Self::Rpi => "rpi",
+            Self::Lingos => "apps",
         }
     }
 
@@ -999,7 +1005,7 @@ impl NativePlatform {
                     "x86_64-apple-darwin"
                 }
             },
-            Self::BareMetal => "x86_64-unknown-none",
+            Self::BareMetal | Self::Lingos => "x86_64-unknown-none",
             Self::Rpi => "aarch64-unknown-none",
         }
     }
@@ -1007,6 +1013,7 @@ impl NativePlatform {
     fn exe_suffix(self) -> &'static str {
         match self {
             Self::Windows => ".exe",
+            Self::Lingos => ".elf",
             Self::BareMetal | Self::Rpi => "",
             _ => "",
         }
@@ -1017,7 +1024,7 @@ impl NativePlatform {
             Self::Windows => cfg!(target_os = "windows"),
             Self::Linux => cfg!(target_os = "linux"),
             Self::Mac => cfg!(target_os = "macos"),
-            Self::BareMetal | Self::Rpi => false,
+            Self::BareMetal | Self::Rpi | Self::Lingos => false,
         }
     }
 
@@ -1028,9 +1035,9 @@ impl NativePlatform {
     /// the bare-metal linker step can't read).
     fn cranelift_arch(self) -> &'static str {
         match self {
-            Self::BareMetal => "x86_64",
+            Self::BareMetal | Self::Lingos => "x86_64",
             Self::Rpi => "aarch64",
-            _ => unreachable!("cranelift_arch only used for kernel targets"),
+            _ => unreachable!("cranelift_arch only used for kernel and lingos targets"),
         }
     }
 }
@@ -1045,6 +1052,7 @@ fn build_native(
 ) {
     let triple = platform.triple();
     let is_kernel = matches!(platform, NativePlatform::BareMetal | NativePlatform::Rpi);
+    let is_lingos = matches!(platform, NativePlatform::Lingos);
     let is_rpi = matches!(platform, NativePlatform::Rpi);
     println!(
         "  [{}] building {} ({triple}){}…",
@@ -1068,8 +1076,8 @@ fn build_native(
         std::process::exit(1);
     });
 
-    // Kernel builds always use AOT (compiling the .ling to a .o and linking it)
-    let use_aot = aot || is_kernel;
+    // Kernel & LingOS app builds always use AOT (compiling the .ling to a .o and linking it)
+    let use_aot = aot || is_kernel || is_lingos;
 
     // Copy all .ling files from source_dir (recurse one level for ling-fu 灵源/)
     if !use_aot {
@@ -1088,7 +1096,52 @@ fn build_native(
     let resources = expand_includes(project);
     let do_pack = pack && !resources.is_empty();
 
-    if is_kernel {
+    if is_lingos {
+        // ── LingOS userland path: AOT compile + ling-user runtime ───────────
+        println!("    AOT-compiling {} for LingOS userspace…", entry_filename);
+
+        let mir = ling::mir::compile_path(&project.entry, ling::core::OptimizationLevel::O3)
+            .unwrap_or_else(|e| {
+                eprintln!("    MIR compilation failed: {e}");
+                std::process::exit(1);
+            });
+
+        let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
+        println!(
+            "    compiling {} functions to native code…",
+            mir_prog.mir.functions.len()
+        );
+        let mut backend =
+            ling_codegen::CraneliftBackend::new_for_arch(platform.cranelift_arch())
+                .with_progress(true);
+        let obj_path = build_dir.join("entry.o");
+        use ling_codegen::CodegenBackend;
+        backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
+            eprintln!("    AOT codegen failed: {e}");
+            std::process::exit(1);
+        });
+
+        println!("    AOT object written to {}", obj_path.display());
+
+        std::fs::write(
+            build_dir.join("Cargo.toml"),
+            gen_user_cargo_toml(&project.name, &project.version, &ling_root),
+        )
+        .expect("write Cargo.toml");
+
+        std::fs::write(build_dir.join("src/main.rs"), gen_user_main_rs())
+            .expect("write src/main.rs");
+
+        std::fs::write(build_dir.join("build.rs"), gen_user_build_rs())
+            .expect("write build.rs");
+
+        let user_ld_path = ling_root.join("crates/ling-user/linker.ld");
+        let linker_script = std::fs::read_to_string(&user_ld_path)
+            .unwrap_or_else(|_| include_str!("../crates/ling-user/linker.ld").to_string());
+        std::fs::write(build_dir.join("linker.ld"), linker_script).expect("write linker.ld");
+
+        println!("    LingOS userland build files written to {}", build_dir.display());
+    } else if is_kernel {
         // ── Kernel path: AOT compile + no_std runtime ──────────────────────
         println!("    AOT-compiling {} for kernel…", entry_filename);
 
@@ -1312,7 +1365,7 @@ fn build_native(
     let mut cargo_args: Vec<&str> = vec!["build", "--release", "--target", triple];
 
     // For no_std targets, we need nightly features
-    if is_kernel {
+    if is_kernel || is_lingos {
         // Write .cargo/config.toml to enable build-std. The linker script and
         // entry.o are wired in separately via build.rs's
         // `cargo:rustc-link-arg-bins` (see `gen_kernel_build_rs`), so this
@@ -1338,6 +1391,11 @@ fn build_native(
         // arch-generic, not x86-specific.
         let cargo_dir = build_dir.join(".cargo");
         std::fs::create_dir_all(&cargo_dir).expect("create .cargo dir");
+        let extra_flags = if is_lingos {
+            r#""-C", "code-model=large","#
+        } else {
+            r#""--cfg", "curve25519_dalek_backend=\"serial\"","#
+        };
         std::fs::write(
             cargo_dir.join("config.toml"),
             format!(
@@ -1346,7 +1404,7 @@ build-std = ["core", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
 [target.{triple}]
-rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend=\"serial\""]
+rustflags = ["-C", "relocation-model=static", {extra_flags}]
 "#
             ),
         )
@@ -1414,8 +1472,17 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
         .map(PathBuf::from)
         .map(|t| if t.is_relative() { build_dir.join(t) } else { t })
         .unwrap_or_else(|| build_dir.join("target"));
+    // cargo's own output filename always follows the TARGET platform's
+    // convention (".exe" only for Windows targets), which can differ from
+    // `platform.exe_suffix()` when cross-compiling — so the source lookup
+    // and the copied destination name are computed separately.
+    let cargo_bin_name = if matches!(platform, NativePlatform::Windows) {
+        format!("{}.exe", project.name)
+    } else {
+        project.name.clone()
+    };
     let exe = format!("{}{}", project.name, platform.exe_suffix());
-    let src_bin = target_base.join(triple).join("release").join(&exe);
+    let src_bin = target_base.join(triple).join("release").join(&cargo_bin_name);
     let platform_dir = Path::new(out).join(platform.dir_name());
     std::fs::create_dir_all(&platform_dir).expect("create platform dir");
     let dst = platform_dir.join(&exe);
@@ -1447,7 +1514,7 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
     // since the compiled binary ends up in `target/<triple>/release/`, not
     // next to the sources copy_ling_sources placed in build_dir itself.
     // Harmless for single-file projects (nothing to copy beyond the exe).
-    if !is_kernel {
+    if !is_kernel && !is_lingos {
         copy_ling_sources(&project.source_dir, &platform_dir);
     }
 
@@ -1837,6 +1904,60 @@ strip = true
     )
 }
 
+/// Generate Cargo.toml for LingOS userspace (no_std, links to ling-user).
+fn gen_user_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+    let root_str = ling_root.display().to_string().replace('\\', "/");
+    format!(
+        r#"[workspace]
+[package]
+name = "{name}"
+version = "{version}"
+edition = "2021"
+build = "build.rs"
+
+[[bin]]
+name = "{name}"
+path = "src/main.rs"
+
+[dependencies]
+ling-user = {{ path = "{root_str}/crates/ling-user" }}
+
+[build-dependencies]
+cc = "1.0"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+panic = "abort"
+strip = true
+"#
+    )
+}
+
+fn gen_user_main_rs() -> String {
+    r#"#![no_std]
+#![no_main]
+
+extern crate ling_user;
+"#
+    .to_string()
+}
+
+fn gen_user_build_rs() -> String {
+    r#"fn main() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:rustc-link-arg-bins=-static");
+    println!("cargo:rustc-link-arg-bins=-n");
+    println!("cargo:rustc-link-arg-bins=-T{}/linker.ld", manifest_dir);
+    println!("cargo:rustc-link-arg-bins={}/entry.o", manifest_dir);
+    println!("cargo:rerun-if-changed=entry.o");
+    println!("cargo:rerun-if-changed=linker.ld");
+}
+"#
+    .to_string()
+}
+
 /// Generate Cargo.toml for kernel (no_std, no default features, links to ling-kernel).
 fn gen_kernel_cargo_toml(name: &str, version: &str, ling_root: &Path, graphics: bool) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
@@ -2092,13 +2213,16 @@ SECTIONS {
         KEEP(*(.ling_multiboot))
     }
 
+    _text_start = .;
     .text : ALIGN(4096) {
         *(.text .text.*)
     }
+    _text_end = .;
 
     .rodata : ALIGN(4096) {
         *(.rodata .rodata.*)
     }
+    _rodata_end = .;
 
     .data : ALIGN(4096) {
         *(.data .data.*)
@@ -2132,14 +2256,17 @@ ENTRY(_start)
 SECTIONS {
     . = 0x80000;
 
+    _text_start = .;
     .text : ALIGN(4096) {
         KEEP(*(.text.boot))
         *(.text .text.*)
     }
+    _text_end = .;
 
     .rodata : ALIGN(4096) {
         *(.rodata .rodata.*)
     }
+    _rodata_end = .;
 
     .data : ALIGN(4096) {
         *(.data .data.*)

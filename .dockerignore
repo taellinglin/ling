@@ -1,0 +1,13 @@
+target/
+.git/
+*.log
+ling-lang.org/
+assets/
+examples/
+examples-web/
+dist/
+benchmarks/
+AST/
+docs/
+editors/
+cache/
