@@ -179,6 +179,36 @@ pub fn selected() -> Option<usize> {
 /// first pick instantly.
 pub fn reset() {
     unsafe { SELECTED = None };
+    unsafe { CURSOR = 0 };
+}
+
+static mut CURSOR: usize = 0;
+
+/// The picker's currently-highlighted row -- separate from [`selected`]
+/// (which only becomes `Some` once the user actually confirms with
+/// Enter), for real arrow-key/Enter navigation instead of typing a raw
+/// digit for the row you want. Kernel-side for the same reason as
+/// `selected`: no persistent mutable state on the `.ling` side of an
+/// infinite per-frame loop.
+pub fn cursor() -> usize {
+    unsafe { CURSOR }
+}
+
+pub fn cursor_up() {
+    unsafe {
+        CURSOR = if CURSOR == 0 { LOCALES.len() - 1 } else { CURSOR - 1 };
+    }
+}
+
+pub fn cursor_down() {
+    unsafe {
+        CURSOR = (CURSOR + 1) % LOCALES.len();
+    }
+}
+
+/// Confirm whatever row is currently highlighted -- the Enter-key action.
+pub fn confirm_cursor() {
+    unsafe { SELECTED = Some(CURSOR) };
 }
 
 /// How far through its real day/night cycle the Moon currently is, as a

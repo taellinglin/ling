@@ -42,7 +42,7 @@ use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
     flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, net_e1000, serial, term,
-    vga, wm_liquid,
+    ui_scale, vga, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -444,6 +444,33 @@ pub unsafe extern "C" fn ling_kernel_locale_reset() -> u64 {
     locale::reset();
     0
 }
+/// The picker's currently-highlighted row -- see `drivers::locale::cursor`'s
+/// doc for how this differs from `ling_kernel_locale_selected`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_cursor() -> u64 {
+    locale::cursor() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_cursor_up() -> u64 {
+    locale::cursor_up();
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_cursor_down() -> u64 {
+    locale::cursor_down();
+    0
+}
+/// Select whatever row the cursor currently highlights -- the Enter-key
+/// action.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_confirm_cursor() -> u64 {
+    locale::confirm_cursor();
+    0
+}
 
 /// Draw the flag matching `locale::Locale::flag_id` into the box
 /// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
@@ -646,6 +673,27 @@ pub unsafe extern "C" fn ling_kernel_fb_available() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fb_width() -> u64 {
     framebuffer::width() as u64
+}
+
+/// Map a virtual-canvas coordinate/length (see `drivers::ui_scale`'s module
+/// doc -- a fixed 960x600 design canvas, uniformly scaled and letterboxed
+/// to whatever real resolution GRUB actually negotiated) to real
+/// framebuffer pixels. `ui_x`/`ui_y` include the letterbox offset (use for
+/// a rect's position); `ui_len` doesn't (use for a rect's width/height).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_ui_x(vx: u64) -> u64 {
+    ui_scale::x(vx) as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_ui_y(vy: u64) -> u64 {
+    ui_scale::y(vy) as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_ui_len(v: u64) -> u64 {
+    ui_scale::len(v) as u64
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1205,12 +1253,12 @@ pub unsafe extern "C" fn ling_kernel_gui_read_line(x: u64, y: u64, fg: u64, bg: 
     strings::ling_str_new(buf.as_ptr(), len)
 }
 
-/// Like `ling_kernel_gui_read_line`, for password entry: echoes `*` instead
-/// of the typed character. No masking-strength claims beyond "not shown on
-/// screen" -- same real limitation as the text-mode version.
-#[cfg(target_arch = "x86_64")]
-#[no_mangle]
-pub unsafe extern "C" fn ling_kernel_gui_read_line_masked(x: u64, y: u64, fg: u64, bg: u64) -> u64 {
+/// Shared by `ling_kernel_gui_read_line_masked` and the confirmed-password
+/// variant below -- reads one masked line at `(x, y)`, returning the raw
+/// bytes and length rather than a boxed Ling string, so the confirmed
+/// variant can compare two reads without round-tripping through the string
+/// runtime.
+unsafe fn gui_read_masked_line_at(x: u32, y: u32, fg: u32, bg: u32) -> ([u8; MAX_LINE], usize) {
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;
     let stars = [b'*'; MAX_LINE];
@@ -1231,20 +1279,70 @@ pub unsafe extern "C" fn ling_kernel_gui_read_line_masked(x: u64, y: u64, fg: u6
         } else {
             continue;
         }
-        framebuffer::back_fill_rect(x as u32, y as u32, 40 * 8, 16, bg as u32);
-        font_unicode::draw_utf8_str(x as u32, y as u32, &stars[..len], fg as u32, bg as u32, false);
+        framebuffer::back_fill_rect(x, y, 40 * 8, 16, bg);
+        font_unicode::draw_utf8_str(x, y, &stars[..len], fg, bg, false);
         framebuffer::present();
     }
+    (buf, len)
+}
+
+/// Like `ling_kernel_gui_read_line`, for password entry: echoes `*` instead
+/// of the typed character. No masking-strength claims beyond "not shown on
+/// screen" -- same real limitation as the text-mode version.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_gui_read_line_masked(x: u64, y: u64, fg: u64, bg: u64) -> u64 {
+    let (buf, len) = gui_read_masked_line_at(x as u32, y as u32, fg as u32, bg as u32);
     strings::ling_str_new(buf.as_ptr(), len)
 }
 
-/// Like `ling_kernel_read_line`, for password entry: echoes `*` instead of
-/// the typed character, ignores Up/Down (no history recall — a typed
-/// password should never be recoverable that way), and never pushes the
-/// result into `history`.
+/// Read a password twice (input fields at `y1`/`y2`, an error line at
+/// `err_y`) and retry -- internally, in a real loop -- until the two
+/// entries match, rather than making the caller re-implement "type it
+/// twice, check they're equal" with `.ling`'s own inability to hold a
+/// retry loop's state across a rejected attempt. Labels ("Password:",
+/// "Confirm password:") are the caller's job to draw once, since they
+/// don't change between retries; this only owns the two input fields and
+/// the error line.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
-pub unsafe extern "C" fn ling_kernel_read_line_masked() -> u64 {
+pub unsafe extern "C" fn ling_kernel_gui_read_password_confirmed(
+    x: u64,
+    y1: u64,
+    y2: u64,
+    err_y: u64,
+    fg: u64,
+    bg: u64,
+    err_fg: u64,
+) -> u64 {
+    let (x, y1, y2, err_y) = (x as u32, y1 as u32, y2 as u32, err_y as u32);
+    let (fg, bg, err_fg) = (fg as u32, bg as u32, err_fg as u32);
+    loop {
+        framebuffer::back_fill_rect(x, err_y, 600, 16, bg);
+        framebuffer::present();
+        let (pw1, len1) = gui_read_masked_line_at(x, y1, fg, bg);
+        let (pw2, len2) = gui_read_masked_line_at(x, y2, fg, bg);
+        if len1 == len2 && pw1[..len1] == pw2[..len2] {
+            return strings::ling_str_new(pw1.as_ptr(), len1);
+        }
+        framebuffer::back_fill_rect(x, y1, 40 * 8, 16, bg);
+        framebuffer::back_fill_rect(x, y2, 40 * 8, 16, bg);
+        font_unicode::draw_utf8_str(
+            x,
+            err_y,
+            b"Passwords didn't match -- try again.",
+            err_fg,
+            bg,
+            false,
+        );
+        framebuffer::present();
+    }
+}
+
+/// Shared by `ling_kernel_read_line_masked` and the confirmed-password
+/// variant below -- see `gui_read_masked_line_at`'s doc for why this
+/// returns raw bytes rather than a boxed Ling string.
+unsafe fn read_masked_line() -> ([u8; MAX_LINE], usize) {
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;
     loop {
@@ -1269,7 +1367,38 @@ pub unsafe extern "C" fn ling_kernel_read_line_masked() -> u64 {
             console_write(b"*");
         }
     }
+    (buf, len)
+}
+
+/// Like `ling_kernel_read_line`, for password entry: echoes `*` instead of
+/// the typed character, ignores Up/Down (no history recall — a typed
+/// password should never be recoverable that way), and never pushes the
+/// result into `history`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_read_line_masked() -> u64 {
+    let (buf, len) = read_masked_line();
     strings::ling_str_new(buf.as_ptr(), len)
+}
+
+/// Text-mode counterpart to `ling_kernel_gui_read_password_confirmed`:
+/// prompts "Password: "/"Confirm password: " itself (unlike the graphics
+/// version, VGA text has no fixed-position field to redraw in place, so
+/// this reprints the whole exchange on a retry rather than taking caller-
+/// supplied coordinates), reads twice, retries until they match.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_read_line_masked_confirmed() -> u64 {
+    loop {
+        console_write(b"Password: ");
+        let (pw1, len1) = read_masked_line();
+        console_write(b"Confirm password: ");
+        let (pw2, len2) = read_masked_line();
+        if len1 == len2 && pw1[..len1] == pw2[..len2] {
+            return strings::ling_str_new(pw1.as_ptr(), len1);
+        }
+        console_write(b"Passwords didn't match -- try again.\n");
+    }
 }
 
 /// Print a heap-allocated Ling string (from a literal, concatenation,

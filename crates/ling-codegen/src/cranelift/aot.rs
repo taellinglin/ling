@@ -164,6 +164,19 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
             &[types::I64, types::I64, types::I64, types::I64],
             types::I64,
         ),
+        (
+            "ling_kernel_gui_read_password_confirmed",
+            &[
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+                types::I64,
+            ],
+            types::I64,
+        ),
         ("ling_kernel_print_lstr", &[types::I64], types::I64),
         ("ling_kernel_fs_mount", &[], types::I64),
         ("ling_kernel_fs_ls", &[types::I64], types::I64),
@@ -179,6 +192,9 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_theme_light", &[], types::I64),
         ("ling_kernel_fb_available", &[], types::I64),
         ("ling_kernel_fb_width", &[], types::I64),
+        ("ling_kernel_ui_x", &[types::I64], types::I64),
+        ("ling_kernel_ui_y", &[types::I64], types::I64),
+        ("ling_kernel_ui_len", &[types::I64], types::I64),
         ("ling_kernel_fb_height", &[], types::I64),
         (
             "ling_kernel_fb_set_pixel",
@@ -278,6 +294,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_cd", &[types::I64], types::I64),
         ("ling_kernel_cwd", &[], types::I64),
         ("ling_kernel_read_line_masked", &[], types::I64),
+        ("ling_kernel_read_line_masked_confirmed", &[], types::I64),
         (
             "ling_kernel_ed25519_verify",
             &[types::I64, types::I64, types::I64],
@@ -322,6 +339,10 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_locale_index_of_id", &[types::I64], types::I64),
         ("ling_kernel_locale_select", &[types::I64], types::I64),
         ("ling_kernel_locale_reset", &[], types::I64),
+        ("ling_kernel_locale_cursor", &[], types::I64),
+        ("ling_kernel_locale_cursor_up", &[], types::I64),
+        ("ling_kernel_locale_cursor_down", &[], types::I64),
+        ("ling_kernel_locale_confirm_cursor", &[], types::I64),
         (
             "ling_kernel_fb_draw_flag",
             &[types::I64, types::I64, types::I64, types::I64, types::I64],
