@@ -154,6 +154,16 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ),
         ("ling_kernel_fs_selftest", &[], types::I64),
         ("ling_kernel_read_line", &[], types::I64),
+        (
+            "ling_kernel_gui_read_line",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
+        (
+            "ling_kernel_gui_read_line_masked",
+            &[types::I64, types::I64, types::I64, types::I64],
+            types::I64,
+        ),
         ("ling_kernel_print_lstr", &[types::I64], types::I64),
         ("ling_kernel_fs_mount", &[], types::I64),
         ("ling_kernel_fs_ls", &[types::I64], types::I64),
@@ -311,6 +321,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_locale_selected", &[], types::I64),
         ("ling_kernel_locale_index_of_id", &[types::I64], types::I64),
         ("ling_kernel_locale_select", &[types::I64], types::I64),
+        ("ling_kernel_locale_reset", &[], types::I64),
         (
             "ling_kernel_fb_draw_flag",
             &[types::I64, types::I64, types::I64, types::I64, types::I64],

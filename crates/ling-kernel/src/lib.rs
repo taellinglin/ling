@@ -435,6 +435,15 @@ pub unsafe extern "C" fn ling_kernel_locale_select(i: u64) -> u64 {
     locale::select(i as usize);
     0
 }
+/// See `drivers::locale::reset`'s doc -- lets a multi-step wizard reuse the
+/// same picker screen for two independent choices (language, then locale/
+/// timezone) over the same table.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_reset() -> u64 {
+    locale::reset();
+    0
+}
 
 /// Draw the flag matching `locale::Locale::flag_id` into the box
 /// `(x, y, w, h)` — see `drivers::flags`'s module doc for what "flag" means
@@ -1148,6 +1157,83 @@ pub unsafe extern "C" fn ling_kernel_read_line() -> u64 {
     }
     if len > 0 {
         history::push(&buf[..len]);
+    }
+    strings::ling_str_new(buf.as_ptr(), len)
+}
+
+/// Blocking line read for graphics-mode UI (the WM, the graphics installer
+/// front-end): same shape as `ling_kernel_read_line`, but echoes into the
+/// framebuffer's back buffer at `(x, y)` via `font_unicode::draw_utf8_str`
+/// instead of the VGA text console (which isn't the visible surface once a
+/// linear framebuffer is in use — see `ling_kernel_init`'s doc for why
+/// those are mutually exclusive on this kernel). Simplified relative to
+/// `read_line`: no history recall (Up/Down arrows), since a one-off
+/// hostname/setting field doesn't need it. Redraws the whole typed string
+/// on every keystroke rather than tracking per-character pixel widths
+/// incrementally -- simpler and correct for the short strings this is for,
+/// at the cost of a full-line repaint per key.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_gui_read_line(x: u64, y: u64, fg: u64, bg: u64) -> u64 {
+    let mut buf = [0u8; MAX_LINE];
+    let mut len = 0usize;
+    loop {
+        let c = keyboard::read_char();
+        if c == b'\n' || c == b'\r' {
+            break;
+        } else if c == 0x03 {
+            len = 0;
+            break;
+        } else if c == 0x08 {
+            if len > 0 {
+                len -= 1;
+            }
+        } else if len < MAX_LINE && c >= 0x20 && c < 0x7F {
+            buf[len] = c;
+            len += 1;
+        } else {
+            continue;
+        }
+        // Blank a fixed-width field before redrawing -- MAX_LINE chars at
+        // font8x8's 8px advance would overflow any reasonable screen, but
+        // this field is for short strings (hostnames, package names); clear
+        // enough width for ~40 characters, comfortably more than needed.
+        framebuffer::back_fill_rect(x as u32, y as u32, 40 * 8, 16, bg as u32);
+        font_unicode::draw_utf8_str(x as u32, y as u32, &buf[..len], fg as u32, bg as u32, false);
+        framebuffer::present();
+    }
+    strings::ling_str_new(buf.as_ptr(), len)
+}
+
+/// Like `ling_kernel_gui_read_line`, for password entry: echoes `*` instead
+/// of the typed character. No masking-strength claims beyond "not shown on
+/// screen" -- same real limitation as the text-mode version.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_gui_read_line_masked(x: u64, y: u64, fg: u64, bg: u64) -> u64 {
+    let mut buf = [0u8; MAX_LINE];
+    let mut len = 0usize;
+    let stars = [b'*'; MAX_LINE];
+    loop {
+        let c = keyboard::read_char();
+        if c == b'\n' || c == b'\r' {
+            break;
+        } else if c == 0x03 {
+            len = 0;
+            break;
+        } else if c == 0x08 {
+            if len > 0 {
+                len -= 1;
+            }
+        } else if len < MAX_LINE && c >= 0x20 && c < 0x7F {
+            buf[len] = c;
+            len += 1;
+        } else {
+            continue;
+        }
+        framebuffer::back_fill_rect(x as u32, y as u32, 40 * 8, 16, bg as u32);
+        font_unicode::draw_utf8_str(x as u32, y as u32, &stars[..len], fg as u32, bg as u32, false);
+        framebuffer::present();
     }
     strings::ling_str_new(buf.as_ptr(), len)
 }

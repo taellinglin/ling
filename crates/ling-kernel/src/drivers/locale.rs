@@ -172,6 +172,15 @@ pub fn selected() -> Option<usize> {
     unsafe { SELECTED }
 }
 
+/// Clear the current pick, so [`selected`] reports "unselected" again --
+/// lets a multi-step wizard (language, then a separate locale/timezone
+/// step) run the same picker screen twice over the same table for two
+/// independent choices, rather than the second call just re-confirming the
+/// first pick instantly.
+pub fn reset() {
+    unsafe { SELECTED = None };
+}
+
 /// How far through its real day/night cycle the Moon currently is, as a
 /// permille (0..1000) of a full cycle. Grounded in the actual synodic month
 /// (29.530589 days — the Moon's tidally-locked day length, distinct from
