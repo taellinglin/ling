@@ -1402,12 +1402,20 @@ rustflags = ["-C", "relocation-model=static", "--cfg", "curve25519_dalek_backend
     }
 
     // ── 5. Copy binary to dist/<platform>/ ──────────────────────────────────
+    // cargo writes build output under $CARGO_TARGET_DIR when set (resolved
+    // relative to the cwd it was invoked from, i.e. build_dir — see the
+    // `cargo build`/`cross build` invocation above, which runs with
+    // `.current_dir(build_dir)`), falling back to build_dir/target otherwise.
+    // A caller pinning CARGO_TARGET_DIR to a shared location (e.g. so a build
+    // farm's per-package wrapper projects all reuse one already-compiled copy
+    // of this same `ling` dependency tree instead of recompiling it from
+    // scratch every time) needs this to still find the right binary.
+    let target_base = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .map(|t| if t.is_relative() { build_dir.join(t) } else { t })
+        .unwrap_or_else(|| build_dir.join("target"));
     let exe = format!("{}{}", project.name, platform.exe_suffix());
-    let src_bin = build_dir
-        .join("target")
-        .join(triple)
-        .join("release")
-        .join(&exe);
+    let src_bin = target_base.join(triple).join("release").join(&exe);
     let platform_dir = Path::new(out).join(platform.dir_name());
     std::fs::create_dir_all(&platform_dir).expect("create platform dir");
     let dst = platform_dir.join(&exe);
@@ -1783,7 +1791,7 @@ fn main() {
         return;
     }
     println!("cargo:rerun-if-changed=app.ico");
-    let mut res = winres::WindowsResource::new();
+    let mut res = winresource::WindowsResource::new();
     res.set_icon("app.ico");
     if let Err(e) = res.compile() {
         println!("cargo:warning=icon embed skipped ({e})");
@@ -1793,7 +1801,12 @@ fn main() {
     .to_string()
 }
 
-/// Generate Cargo.toml for standard app builds.
+/// Generate Cargo.toml for standard app builds. Both call sites (build_native's
+/// AOT and standard paths) immediately overwrite this with gen_native_cargo_toml
+/// right after — this first write only matters for the (currently unused, kept
+/// for parity) build-dependency name it declares, which must match gen_build_rs's
+/// `winresource::WindowsResource` reference above regardless of which of the two
+/// Cargo.toml writes ends up being final on disk.
 fn gen_app_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
     format!(
@@ -1812,7 +1825,7 @@ path = "src/main.rs"
 ling = {{ path = "{root_str}", package = "ling-lang" }}
 
 [build-dependencies]
-winres = "0.1"
+winresource = "0.1"
 
 [profile.release]
 lto = "fat"

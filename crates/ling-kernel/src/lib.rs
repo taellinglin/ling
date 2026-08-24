@@ -41,8 +41,8 @@ use crate::arch::{bootmodule, io, timer};
 use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
-    flags, font8x8, font_unicode, framebuffer, keyboard, locale, mouse, net_e1000, serial, term,
-    ui_scale, vga, wm_liquid,
+    flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, locale, mouse, net_e1000,
+    serial, term, ui_scale, vga, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -444,6 +444,67 @@ pub unsafe extern "C" fn ling_kernel_locale_reset() -> u64 {
     locale::reset();
     0
 }
+
+/// See `drivers::kbdlayout`'s module doc for what's actually covered
+/// (5 real ASCII-position remaps) and, just as importantly, what isn't
+/// (any layout needing non-Latin character output or a real IME).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_count() -> u64 {
+    kbdlayout::count() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_name(i: u64) -> u64 {
+    let s = kbdlayout::name(i as usize);
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_current() -> u64 {
+    kbdlayout::current() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_set(i: u64) -> u64 {
+    kbdlayout::set_current(i as usize);
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_cursor() -> u64 {
+    kbdlayout::cursor() as u64
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_cursor_up() -> u64 {
+    kbdlayout::cursor_up();
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_cursor_down() -> u64 {
+    kbdlayout::cursor_down();
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_confirm_cursor() -> u64 {
+    kbdlayout::confirm_cursor();
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_reset() -> u64 {
+    kbdlayout::reset();
+    0
+}
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_kbd_layout_selected() -> u64 {
+    kbdlayout::selected() as u64
+}
+
 /// The picker's currently-highlighted row -- see `drivers::locale::cursor`'s
 /// doc for how this differs from `ling_kernel_locale_selected`.
 #[cfg(target_arch = "x86_64")]

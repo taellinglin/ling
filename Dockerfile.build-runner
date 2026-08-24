@@ -1,0 +1,82 @@
+# Dockerfile.build-runner — sandboxed environment fu.ling-lang.org uses to validate
+# that an uploaded package actually builds, per package: docker run --rm --network none
+# --read-only --tmpfs /work ... (network only needed here, at IMAGE BUILD time, to fetch
+# `ling`'s own dependency tree once; every later container run is fully offline).
+#
+# `ling build`'s native-target path generates a wrapper Cargo project with a *local path*
+# dependency on this same `ling` source tree (see gen_native_cargo_toml in src/main.rs) —
+# not a crates.io version — so baking the full source in here and building it once is
+# both how we get the `ling` binary itself AND how we warm the cargo registry cache for
+# every later offline `cargo build` a real user package triggers.
+FROM rust:1-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libasound2-dev \
+    libx11-dev \
+    libxi-dev \
+    libxcursor-dev \
+    libxrandr-dev \
+    libgl1-mesa-dev \
+    libxkbcommon-dev \
+    libwayland-dev \
+    libudev-dev \
+    clang \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# `ling build --platform web` shells out to `lingc webgl`, which itself shells out
+# to the external `wasm-pack` CLI (see has_wasm_pack/find_ling_wasm_crate in
+# src/bin/lingc.rs) to compile crates/ling-wasm to wasm32-unknown-unknown —
+# neither is a Cargo dependency of this workspace, so both need installing here.
+RUN rustup target add wasm32-unknown-unknown && \
+    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+WORKDIR /opt/ling
+COPY . .
+
+# `ling build --platform web` shells out to a sibling `lingc` binary (see
+# sibling_binary() in src/main.rs — it looks next to ling's own exe path), so
+# both bins must exist or every web build fails with "lingc not found".
+RUN cargo build --release --bin ling --bin lingc
+
+ENV PATH="/opt/ling/target/release:${PATH}"
+ENV LING_HOME="/opt/ling"
+
+# Every per-package native build generates its OWN wrapper Cargo project (a
+# fresh, disposable one, per gen_native_cargo_toml in src/main.rs) that depends
+# on this same ling-lang tree by local path. Without a shared CARGO_TARGET_DIR,
+# each one would recompile ling-lang's entire dependency graph (cranelift et
+# al — the ~3min chunk of the build above) from scratch, every single publish.
+# Pinning CARGO_TARGET_DIR here means the warmup build below bakes those
+# already-compiled rlibs into the image itself; every later container run
+# (same image, same env var) reuses them and only compiles the small
+# per-package wrapper bin — cargo keys reuse by crate/version/features/profile,
+# not by source path, so this works even though every real package's wrapper
+# project lives at a different /work/src path than the warmup's.
+ENV CARGO_TARGET_DIR="/opt/cargo-target-shared"
+
+# NOTE: CARGO_NET_OFFLINE is deliberately NOT set here (only at real per-package
+# `docker run` time, via -e — see controllers/publish.ling). Setting it globally
+# in the image broke this very warmup step: `ling build --platform web`'s
+# `wasm-pack build` runs `cargo metadata` first, which evaluates the *whole*
+# workspace graph (every member, e.g. crates/ling-kernel) regardless of what's
+# actually being compiled, and wanted to fetch a crate (android_system_properties,
+# a transitive dep only ling-kernel touches) that nothing had ever needed before.
+# Keeping this step on real network guarantees everything gets cached at least
+# once; only the offline-with-network-actually-cut real builds need --offline.
+
+# Warm that shared target dir AND the offline cargo registry cache for the
+# wrapper Cargo project (local path dep on this same tree, unconditional
+# `winresource` build-dependency even on non-Windows targets — see
+# gen_native_cargo_toml in src/main.rs), and smoke-test that both allowed v1
+# platforms (web, lin) actually build in this environment. This is the one and
+# only network access any of this ever needs after image build — every later
+# per-package build runs with --network none.
+RUN mkdir -p /opt/warmup && \
+    printf 'ผูก เริ่ม = ทำ {\n    พิมพ์("build farm warmup ok")\n}\n' > /opt/warmup/hello.ling && \
+    cd /opt/warmup && ling build hello.ling --platform web,lin --out dist && \
+    cd / && rm -rf /opt/warmup
+
+WORKDIR /work

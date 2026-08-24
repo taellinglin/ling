@@ -30,7 +30,21 @@ English, Arabic, Hebrew, Russian, and more — in the same source file, with no
 ## Quick Start
 
 ```bash
-cargo install ling-lang
+# macOS / Linux
+curl --proto '=https' --tlsv1.2 -sSf https://ling-lang.org/install.sh | sh
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://ling-lang.org/install.ps1 | iex
+```
+
+Installs a Rust toolchain first if you don't already have one (same as
+[rustup](https://rustup.rs)), then builds `ling` and `lingfu` from crates.io.
+
+```bash
+# Or, if you already have Rust:
+cargo install ling-lang lingfu
 ling run examples/basics/thai_hello_world.ling
 ```
 

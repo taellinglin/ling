@@ -138,11 +138,11 @@ static SCANCODE_ASCII_SHIFTED: [u8; 88] = [
 ];
 
 fn lookup_ascii(code: u8) -> u8 {
-    let table = if unsafe { SHIFT_DOWN } {
-        &SCANCODE_ASCII_SHIFTED
-    } else {
-        &SCANCODE_ASCII
-    };
+    let shifted = unsafe { SHIFT_DOWN };
+    if let Some(c) = crate::drivers::kbdlayout::override_for(code, shifted) {
+        return c;
+    }
+    let table = if shifted { &SCANCODE_ASCII_SHIFTED } else { &SCANCODE_ASCII };
     table.get(code as usize).copied().unwrap_or(0)
 }
 

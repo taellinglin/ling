@@ -17,6 +17,8 @@ pub mod font_unicode;
 #[cfg(target_arch = "x86_64")]
 pub mod framebuffer;
 #[cfg(target_arch = "x86_64")]
+pub mod kbdlayout;
+#[cfg(target_arch = "x86_64")]
 pub mod keyboard;
 #[cfg(target_arch = "x86_64")]
 pub mod locale;

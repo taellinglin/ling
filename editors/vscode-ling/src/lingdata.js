@@ -134,6 +134,7 @@ const signatures = {
   ceil: "ceil(x: number) -> number",
   round: "round(x: number) -> number",
   pow: "pow(base: number, exp: number) -> number",
+  exp: "exp(x: number) -> number",
   log: "log(x: number) -> number",
   min: "min(a: number, b: number) -> number",
   max: "max(a: number, b: number) -> number",

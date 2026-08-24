@@ -152,6 +152,8 @@ fn wasm_fetch_text(path: &str) -> Result<String, String> {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod net;
+#[cfg(not(target_arch = "wasm32"))]
+mod ssh;
 #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
 pub mod web;
 use crate::gfx::{GfxState, Light};
@@ -1845,7 +1847,13 @@ pub struct Interpreter {
     #[cfg(not(target_arch = "wasm32"))]
     fonts: Vec<ling_graphics::VectorFont>,
     /// Loaded raster images (PNG/etc.), referenced by handle (index) from
-    /// `image_load` — read pixel-by-pixel via `image_pixel_r/g/b/a`.
+    /// `image_load` — read pixel-by-pixel via `image_pixel_r/g/b/a`. The
+    /// `image` crate is a native-only dependency (see Cargo.toml's
+    /// `cfg(not(target_arch = "wasm32"))` dependency block), so this field —
+    /// like its sibling fields above (mldsa_ids, mic_buffer, fonts, music) —
+    /// only exists on native targets; every image_* builtin below has a
+    /// wasm32 stub arm to match.
+    #[cfg(not(target_arch = "wasm32"))]
     images: Vec<image::RgbaImage>,
     /// Customizable UI colour palette (set via `ui_theme`).
     ui_theme: UiTheme,
@@ -1968,6 +1976,7 @@ impl Interpreter {
             mic_buffer: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             fonts: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
             images: Vec::new(),
             ui_theme: UiTheme::default(),
             mouse_was_down: false,
@@ -9220,6 +9229,18 @@ impl Interpreter {
                 net::close();
                 return Ok(Value::Unit);
             },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_clients" => {
+                return Ok(Value::Str(net::clients()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_client_count" => {
+                return Ok(Value::Number(net::client_count() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "net_events" => {
+                return Ok(Value::Str(net::events()));
+            },
             // ── LAN lobby discovery (UDP broadcast) ──
             #[cfg(not(target_arch = "wasm32"))]
             "net_announce"
@@ -9254,6 +9275,85 @@ impl Interpreter {
             {
                 let port = self.arg_num(&args, 0, 7777.0)? as u16;
                 return Ok(Value::Str(net::test_bind(port)));
+            },
+            // ── SSH (real SSH2 client + server via `russh`; see runtime::ssh) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_config" => {
+                let port = self.arg_num(&args, 0, 22.0)? as u16;
+                let user = self.arg_str(&args, 1, "");
+                let password = self.arg_str(&args, 2, "");
+                let host_key_path = self.arg_str(&args, 3, "");
+                ssh::configure(port, &user, &password, &host_key_path);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve" => {
+                return Ok(Value::Bool(ssh::serve()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_stop" => {
+                ssh::stop();
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_send" => {
+                let id = self.arg_num(&args, 0, 0.0)? as u64;
+                let s = self.arg_str(&args, 1, "");
+                ssh::serve_send(id, &s);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_recv" => {
+                return Ok(Value::Str(ssh::serve_recv()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_exit" => {
+                let id = self.arg_num(&args, 0, 0.0)? as u64;
+                let code = self.arg_num(&args, 1, 0.0)? as u32;
+                ssh::serve_exit(id, code);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_clients" => {
+                return Ok(Value::Str(ssh::serve_clients()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_client_count" => {
+                return Ok(Value::Number(ssh::serve_client_count() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_events" => {
+                return Ok(Value::Str(ssh::serve_events()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_serve_status" => {
+                return Ok(Value::Number(ssh::serve_status() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_connect" => {
+                let host = self.arg_str(&args, 0, "");
+                let port = self.arg_num(&args, 1, 22.0)? as u16;
+                let user = self.arg_str(&args, 2, "");
+                let password = self.arg_str(&args, 3, "");
+                return Ok(Value::Number(ssh::connect(&host, port, &user, &password)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_exec" => {
+                let cmd = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(ssh::exec(&cmd)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_exit_code" => {
+                return Ok(Value::Number(ssh::exit_code()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_client_status" => {
+                return Ok(Value::Number(ssh::client_status() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "ssh_close" => {
+                ssh::close();
+                return Ok(Value::Unit);
             },
             // ── HTTP server (interpreter <-> async bridge, see runtime::web) ──
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
@@ -10363,6 +10463,41 @@ impl Interpreter {
                 let path = self.arg_str(&args, 0, "");
                 return Ok(Value::Bool(std::fs::create_dir_all(&path).is_ok()));
             },
+            // remove_dir_all(path) -> bool. Recursively deletes a directory tree —
+            // used by the build farm to throw away each build's disposable extracted
+            // source/output folders once the sandbox run is done (success or fail),
+            // so per-publish throwaway dirs don't accumulate on disk forever.
+            // Not found is treated as success (nothing to clean up).
+            #[cfg(not(target_arch = "wasm32"))]
+            "remove_dir_all" | "ลบไดเรกทอรีทั้งหมด" => {
+                let path = self.arg_str(&args, 0, "");
+                let ok = match std::fs::remove_dir_all(&path) {
+                    Ok(()) => true,
+                    Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+                };
+                return Ok(Value::Bool(ok));
+            },
+            // absolute_path(path) -> string. Resolves a relative path against the
+            // process's current working directory, forward-slash-normalized — needed
+            // because `docker run -v host:container` bind mounts require an absolute
+            // host path (a relative one is silently misinterpreted). Deliberately joins
+            // with current_dir() rather than fs::canonicalize(), which on Windows
+            // returns a \\?\-prefixed UNC path that Docker Desktop's CLI doesn't parse
+            // as a normal drive path. If `path` is already absolute, it's returned
+            // unchanged (just slash-normalized).
+            #[cfg(not(target_arch = "wasm32"))]
+            "absolute_path" | "พาธสัมบูรณ์" => {
+                let path = self.arg_str(&args, 0, "");
+                let p = std::path::Path::new(&path);
+                let joined = if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    std::env::current_dir()
+                        .map(|cwd| cwd.join(p))
+                        .unwrap_or_else(|_| p.to_path_buf())
+                };
+                return Ok(Value::Str(joined.to_string_lossy().replace('\\', "/")));
+            },
             // str_strip_prefix("Bearer x", "Bearer ") → "x" (unchanged if absent).
             "str_strip_prefix"
             | "ตัดคำนำหน้า"
@@ -10469,7 +10604,6 @@ impl Interpreter {
                     let mut ar = tar::Archive::new(gz);
                     if let Ok(entries) = ar.entries() {
                         for entry in entries.flatten() {
-                            let mut entry = entry;
                             let name = match entry.path() {
                                 Ok(p) => p
                                     .to_string_lossy()
@@ -10570,8 +10704,7 @@ impl Interpreter {
                     let gz = flate2::read::GzDecoder::new(file);
                     let mut ar = tar::Archive::new(gz);
                     if let Ok(entries) = ar.entries() {
-                        for entry in entries.flatten() {
-                            let mut entry = entry;
+                        for mut entry in entries.flatten() {
                             let name = match entry.path() {
                                 Ok(p) => p
                                     .to_string_lossy()
@@ -10593,6 +10726,75 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Bool(found));
+            },
+            // tar_gz_extract_all(archive_path, dest_dir) -> bool. Unpacks every entry of
+            // an uploaded package tarball into dest_dir — this is how the build farm
+            // materializes a fresh, disposable copy of untrusted content to bind-mount
+            // read-only into the sandbox container (see controllers/publish.ling,
+            // ทำสร้างบิลด์). Delegates to tar-rs's own Archive::unpack, which already
+            // rejects/strips ".."-traversing and absolute entry paths (the exact
+            // zip-slip class of bug the build-farm security review flagged for
+            // ling build's own [includes]/`use "../.."` resolvers) — no manual entry
+            // path sanitization needed on top of that.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "tar_gz_extract_all" | "แตกทาร์ทั้งหมด" => {
+                let path = self.arg_str(&args, 0, "");
+                let dest = self.arg_str(&args, 1, "");
+                let ok = (|| -> std::io::Result<()> {
+                    std::fs::create_dir_all(&dest)?;
+                    let file = std::fs::File::open(&path)?;
+                    let gz = flate2::read::GzDecoder::new(file);
+                    let mut ar = tar::Archive::new(gz);
+                    ar.unpack(&dest)
+                })()
+                .is_ok();
+                return Ok(Value::Bool(ok));
+            },
+            // zip_dir(dir_path, out_path) -> bool. Recursively zips a directory,
+            // preserving relative paths (unlike zip_files, which flattens everything
+            // to basenames) — used to package a sandboxed build's output folder
+            // (e.g. dist/web/ with nested assets) into one downloadable artifact.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "zip_dir" | "บีบอัดโฟลเดอร์" => {
+                let dir_path = self.arg_str(&args, 0, "");
+                let out_path = self.arg_str(&args, 1, "out.zip");
+                fn add_dir(
+                    writer: &mut zip::ZipWriter<std::fs::File>,
+                    base: &std::path::Path,
+                    dir: &std::path::Path,
+                    options: zip::write::FileOptions<'_, ()>,
+                ) -> std::io::Result<()> {
+                    for entry in std::fs::read_dir(dir)? {
+                        let entry = entry?;
+                        let path = entry.path();
+                        let rel = path
+                            .strip_prefix(base)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+                        if path.is_dir() {
+                            add_dir(writer, base, &path, options)?;
+                        } else {
+                            let bytes = std::fs::read(&path)?;
+                            writer.start_file(rel, options)?;
+                            std::io::Write::write_all(writer, &bytes)?;
+                        }
+                    }
+                    Ok(())
+                }
+                let ok = (|| -> std::io::Result<()> {
+                    let base = std::path::Path::new(&dir_path);
+                    let file = std::fs::File::create(&out_path)?;
+                    let mut writer = zip::ZipWriter::new(file);
+                    let options: zip::write::FileOptions<'_, ()> =
+                        zip::write::FileOptions::default()
+                            .compression_method(zip::CompressionMethod::Deflated);
+                    add_dir(&mut writer, base, base, options)?;
+                    writer.finish()?;
+                    Ok(())
+                })()
+                .is_ok();
+                return Ok(Value::Bool(ok));
             },
             // icon_convert_to_png(src_path, out_path, size) -> bool. Rasterizes any
             // ling-icon-supported source (.svg/.png/.jpg/.bmp/.ico) to a single
@@ -13108,6 +13310,7 @@ impl Interpreter {
                 // Web runtime does not load host image files yet.
                 return Ok(Value::Number(-1.0));
             },
+            #[cfg(not(target_arch = "wasm32"))]
             "image_width" => {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 if id >= 0 && (id as usize) < self.images.len() {
@@ -13115,6 +13318,9 @@ impl Interpreter {
                 }
                 return Ok(Value::Number(0.0));
             },
+            #[cfg(target_arch = "wasm32")]
+            "image_width" => return Ok(Value::Number(0.0)),
+            #[cfg(not(target_arch = "wasm32"))]
             "image_height" => {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 if id >= 0 && (id as usize) < self.images.len() {
@@ -13122,6 +13328,16 @@ impl Interpreter {
                 }
                 return Ok(Value::Number(0.0));
             },
+            #[cfg(target_arch = "wasm32")]
+            "image_height" => return Ok(Value::Number(0.0)),
+            // image_load never succeeds on wasm32 (see its own wasm32 stub, always -1),
+            // so any id here is always out-of-range there too — 0.0 matches exactly what
+            // the native bounds-check-failure path below already returns for a bad id.
+            #[cfg(target_arch = "wasm32")]
+            "image_pixel_r" | "image_pixel_g" | "image_pixel_b" | "image_pixel_a" => {
+                return Ok(Value::Number(0.0));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
             "image_pixel_r" | "image_pixel_g" | "image_pixel_b" | "image_pixel_a" => {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let px = self.arg_num(&args, 1, 0.0)? as i64;
@@ -13150,6 +13366,7 @@ impl Interpreter {
             // (mm x DPI) PNG exports — something a raw window screenshot()
             // can't do, since it always captures the whole on-screen
             // framebuffer at whatever size the window happens to be.
+            #[cfg(not(target_arch = "wasm32"))]
             "image_new" => {
                 let w = self.arg_num(&args, 0, 1.0)?.max(1.0) as u32;
                 let h = self.arg_num(&args, 1, 1.0)?.max(1.0) as u32;
@@ -13157,10 +13374,14 @@ impl Interpreter {
                 self.images.push(image::RgbaImage::new(w, h));
                 return Ok(Value::Number(id as f64));
             },
+            // Matches image_load's own wasm32 stub convention (-1 = failure/unavailable).
+            #[cfg(target_arch = "wasm32")]
+            "image_new" => return Ok(Value::Number(-1.0)),
             // image_set_pixel(id, x, y, r, g, b, a) — paint one pixel of an
             // image created with image_new (0..255 channels; out-of-bounds is
             // a silent no-op, matching image_pixel_*'s own out-of-bounds
             // behaviour).
+            #[cfg(not(target_arch = "wasm32"))]
             "image_set_pixel" => {
                 let id = self.arg_num(&args, 0, -1.0)? as i64;
                 let px = self.arg_num(&args, 1, 0.0)? as i64;
@@ -13178,6 +13399,10 @@ impl Interpreter {
                 }
                 return Ok(Value::Unit);
             },
+            // image_new always fails on wasm32, so there's never a valid id to set a
+            // pixel on — no-op, matching the native code's own bad-id no-op behaviour.
+            #[cfg(target_arch = "wasm32")]
+            "image_set_pixel" => return Ok(Value::Unit),
             // image_save(id, "path.png") — encode an image (from image_new or
             // image_load) to disk, alpha preserved. Returns 1 on success, -1
             // on failure (bad id or write error), mirroring image_load's own
