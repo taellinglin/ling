@@ -487,12 +487,12 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
 
     let mut buf = [0u8; BUF_SIZE];
     let mut found = None;
-    // 30s of *kernel* time, not the old 2s: TSC calibration under QEMU
-    // TCG runs tens of times fast (observed via wildly inflated uptime
-    // displays), so a 2s kernel-time budget was only ~20-40ms of wall
-    // clock -- shorter than QEMU's bottom-half RX delivery hop. On real
-    // hardware this only lengthens the genuine-no-reply worst case.
-    timer::poll_until(30_000_000, || {
+    // 8s of *kernel* time: enough that TCG's fast-TSC miscalibration still
+    // leaves a real wall-clock window for QEMU's bottom-half RX delivery
+    // (the old 2s was only ~20-40ms wall and always missed), but bounded
+    // so a genuinely dead gateway doesn't freeze the desktop loop that
+    // calls into this synchronously. Healthy ARP replies arrive in ms.
+    timer::poll_until(8_000_000, || {
         if let Some(len) = receive(&mut buf) {
             if len >= 42
                 && buf[12] == 0x08

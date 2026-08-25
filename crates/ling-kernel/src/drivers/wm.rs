@@ -27,7 +27,8 @@
 
 use crate::arch::{rtc, timer};
 use crate::drivers::{
-    browser, display, framebuffer, font8x8, font_unicode, kbdlayout, locale, mixer, theme, wallpaper,
+    browser, display, editor, framebuffer, font8x8, font_unicode, gallery, kbdlayout, locale,
+    mixer, theme, wallpaper,
 };
 use crate::fs::lingfs;
 
@@ -44,7 +45,10 @@ pub const KIND_ABOUT: u8 = 0;
 pub const KIND_SETTINGS: u8 = 1;
 pub const KIND_FILES: u8 = 2;
 pub const KIND_WEB: u8 = 3;
-const DOCK_APPS: [u8; 4] = [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB];
+pub const KIND_EDIT: u8 = 4;
+pub const KIND_GALLERY: u8 = 5;
+const DOCK_APPS: [u8; 6] =
+    [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB, KIND_EDIT, KIND_GALLERY];
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -159,6 +163,14 @@ pub fn set_wallpaper_image(name: &str) -> bool {
     }
 }
 
+/// Promote the image already in the decode cache (the one the Gallery is
+/// showing) to the desktop wallpaper -- no re-decode.
+pub fn set_wallpaper_current() {
+    if wallpaper::loaded() {
+        unsafe { WALLPAPER = WALL_IMAGE };
+    }
+}
+
 // -- Applications menu (MATE-style, top-left) -------------------------------
 // A categorized launcher dropped from the top bar's brand corner. Headers
 // aren't clickable; app rows open (or raise) their window and close the
@@ -169,14 +181,16 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 7] = [
+const MENU: [MenuRow; 9] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
+    MenuRow { header: "Accessories", app: "", kind: 255 },
+    MenuRow { header: "", app: "Editor", kind: KIND_EDIT },
+    MenuRow { header: "", app: "Files", kind: KIND_FILES },
+    MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
     MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
-    MenuRow { header: "Accessories", app: "", kind: 255 },
-    MenuRow { header: "", app: "Files", kind: KIND_FILES },
 ];
 const MENU_W: u32 = 210;
 const MENU_ROW_H: u32 = 22;
@@ -328,6 +342,8 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_SETTINGS => "Settings",
         KIND_FILES => "Files",
         KIND_WEB => "bring - browser in ling",
+        KIND_EDIT => "Editor",
+        KIND_GALLERY => "Gallery",
         _ => "?",
     }
 }
@@ -341,6 +357,8 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_SETTINGS => (470.0, 380.0),
         KIND_FILES => (470.0, 370.0),
         KIND_WEB => (620.0, 460.0),
+        KIND_EDIT => (600.0, 440.0),
+        KIND_GALLERY => (560.0, 440.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -352,6 +370,8 @@ pub fn dock_letter(i: usize) -> &'static str {
         Some(&KIND_SETTINGS) => "S",
         Some(&KIND_FILES) => "F",
         Some(&KIND_WEB) => "W",
+        Some(&KIND_EDIT) => "E",
+        Some(&KIND_GALLERY) => "G",
         _ => "",
     }
 }
@@ -785,6 +805,8 @@ pub fn key(k: u8) {
         KIND_SETTINGS => settings_key(k),
         KIND_FILES => files_key(k),
         KIND_WEB => web_key(k),
+        KIND_EDIT => editor::key(k, crate::drivers::keyboard::shift_down()),
+        KIND_GALLERY => gallery::key(k),
         _ => {},
     }
 }
@@ -856,8 +878,43 @@ fn fm_entry_count() -> usize {
     n
 }
 
+/// Extensions the Editor opens (everything else is a binary peek). Also
+/// treats extensionless names as text -- most lingfs synthetic files
+/// (hostname, language) are plain text.
+fn is_editable(name: &[u8]) -> bool {
+    let ext = |suffix: &[u8]| name.len() >= suffix.len() && &name[name.len() - suffix.len()..] == suffix;
+    ext(b".ling")
+        || ext(b".txt")
+        || ext(b".md")
+        || ext(b".cfg")
+        || ext(b".toml")
+        || ext(b".sh")
+        || !name.contains(&b'.')
+}
+
 fn files_key(k: u8) {
+    use crate::drivers::{clipboard, keyboard as kb};
     unsafe {
+        // Ctrl+C copies the highlighted entry's path to the clipboard, so
+        // it can be pasted into the editor, terminal, or browser URL bar.
+        if k == kb::CTRL_C {
+            let mut nm = [0u8; FM_NAME_MAX];
+            if let Some((len, _)) = lingfs::list_entry(fm_dir(), FM_CURSOR, &mut nm) {
+                let dir = fm_dir();
+                if dir.is_empty() {
+                    clipboard::set(&nm[..len]);
+                } else {
+                    // "dir/name"
+                    let mut full = [0u8; FM_NAME_MAX * 2 + 1];
+                    let dl = dir.len();
+                    full[..dl].copy_from_slice(dir.as_bytes());
+                    full[dl] = b'/';
+                    full[dl + 1..dl + 1 + len].copy_from_slice(&nm[..len]);
+                    clipboard::set(&full[..dl + 1 + len]);
+                }
+            }
+            return;
+        }
         if FM_VIEWING {
             // Any of backspace/left/enter leaves the file view.
             if k == 0x08 || k == 0x13 || k == 10 {
@@ -905,10 +962,16 @@ fn files_key(k: u8) {
                     }
                     vn[off..off + len].copy_from_slice(&name[..len]);
                     FM_VIEW_NAME_LEN = off + len;
-                    // A .bmp opens as the wallpaper, not the text viewer.
+                    let full = core::str::from_utf8(&vn[..off + len]).unwrap_or("");
+                    // Route by extension: .bmp -> Gallery, text-ish files
+                    // -> Editor, anything else -> the inline text peek.
                     if len >= 4 && &name[len - 4..len] == b".bmp" {
-                        let full = core::str::from_utf8(&vn[..off + len]).unwrap_or("");
-                        set_wallpaper_image(full);
+                        if gallery::open(full) {
+                            open(KIND_GALLERY);
+                        }
+                    } else if is_editable(&name[..len]) {
+                        editor::load(full);
+                        open(KIND_EDIT);
                     } else {
                         FM_VIEWING = true;
                     }
@@ -1215,6 +1278,14 @@ pub fn draw_content(slot: usize) {
     let (wx, wy, dw, dh) = deformed_rect(w);
     let x = (wx.max(0) as u32) + 16;
     let y = (wy.max(0) as u32) + TITLEBAR_H + 14;
+    if w.kind == KIND_EDIT {
+        editor::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
+    if w.kind == KIND_GALLERY {
+        gallery::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
     if w.kind == KIND_WEB {
         // Capture the wrap width for key-driven fetches on the focused
         // window (8px glyphs, minus margins).

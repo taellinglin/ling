@@ -36,6 +36,43 @@ pub const DOWN_ARROW: u8 = 0x12;
 pub const LEFT_ARROW: u8 = 0x13;
 pub const RIGHT_ARROW: u8 = 0x14;
 
+// Ctrl-chords, reported in a dedicated 0x80+ range: raw ASCII control
+// codes (letter & 0x1F) would collide with the arrows above (Ctrl+Q/R/S/T
+// = 0x11..0x14). A Ctrl+letter is `0x80 | (1..26)`; a few Ctrl+symbol
+// combos map to zoom. Every app decides what a chord means -- the
+// terminal reads CTRL_C as interrupt, the editor as copy. Bytes are >=
+// 0x80 so they never collide with printable ASCII or the arrows.
+pub const CTRL_A: u8 = 0x80 | 1; // select all
+pub const CTRL_C: u8 = 0x80 | 3; // copy (terminal: interrupt)
+pub const CTRL_N: u8 = 0x80 | 14; // new window
+pub const CTRL_S: u8 = 0x80 | 19; // save
+pub const CTRL_T: u8 = 0x80 | 20; // new tab
+pub const CTRL_V: u8 = 0x80 | 22; // paste
+pub const CTRL_W: u8 = 0x80 | 23; // close
+pub const CTRL_X: u8 = 0x80 | 24; // cut
+pub const CTRL_Z: u8 = 0x80 | 26; // undo
+pub const CTRL_ZOOM_IN: u8 = 0xE0; // Ctrl + '='/'+'
+pub const CTRL_ZOOM_OUT: u8 = 0xE1; // Ctrl + '-'
+pub const CTRL_ZOOM_RESET: u8 = 0xE2; // Ctrl + '0'
+
+/// Map a scancode pressed while Ctrl is held to its chord byte, or 0 if it
+/// isn't a chord we route (a bare modifier, or a key with no Ctrl meaning).
+fn ctrl_chord(code: u8) -> u8 {
+    let base = {
+        // Always use the UNSHIFTED table for the letter identity so
+        // Ctrl+Shift+C still resolves to the 'c' chord.
+        let table = &SCANCODE_ASCII;
+        table.get(code as usize).copied().unwrap_or(0)
+    };
+    match base {
+        b'a'..=b'z' => 0x80 | (base - b'a' + 1),
+        b'=' | b'+' => CTRL_ZOOM_IN,
+        b'-' | b'_' => CTRL_ZOOM_OUT,
+        b'0' | b')' => CTRL_ZOOM_RESET,
+        _ => 0,
+    }
+}
+
 static mut PENDING_EXTENDED: bool = false;
 
 /// Idle-font swap threshold, now a real duration off `timer::now_ms` (a
@@ -141,6 +178,12 @@ static SCANCODE_ASCII_SHIFTED: [u8; 88] = [
     0, 0, 0, 0, 0, 0, 0, b'7', b'8', b'9', b'-', b'4', b'5', b'6', b'+', b'1', b'2', b'3', b'0',
     b'.', // keypad
 ];
+
+/// Whether Shift is currently held -- the WM reads this to distinguish a
+/// selection-extending Shift+Arrow from a plain caret move in the editor.
+pub fn shift_down() -> bool {
+    unsafe { SHIFT_DOWN }
+}
 
 fn lookup_ascii(code: u8) -> u8 {
     let shifted = unsafe { SHIFT_DOWN };
@@ -266,8 +309,18 @@ pub fn read_char() -> u8 {
             if try_switch_term(code) {
                 continue;
             }
-            if code == C_KEY && unsafe { CTRL_DOWN } {
-                return ETX;
+            if unsafe { CTRL_DOWN } {
+                // Ctrl+C stays the shell's interrupt (returned as ETX) so
+                // read_line's cancel keeps working; other Ctrl-chords pass
+                // through as their 0x80+ codes for line-editor callers that
+                // care (none today -- they just ignore them).
+                if code == C_KEY {
+                    return ETX;
+                }
+                let chord = ctrl_chord(code);
+                if chord != 0 {
+                    return chord;
+                }
             }
             let ascii = lookup_ascii(code);
             if ascii != 0 {
@@ -346,8 +399,11 @@ pub fn poll_char() -> u8 {
             if code & 0x80 != 0 || try_switch_term(code) {
                 return 0;
             }
-            if code == C_KEY && unsafe { CTRL_DOWN } {
-                return ETX;
+            if unsafe { CTRL_DOWN } {
+                let chord = ctrl_chord(code);
+                if chord != 0 {
+                    return chord;
+                }
             }
             lookup_ascii(code)
         },

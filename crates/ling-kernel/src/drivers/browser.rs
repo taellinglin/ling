@@ -43,11 +43,33 @@ fn set_url(url: &str) {
 
 /// Fetch `url` and lay it out at `cols` columns. Returns false (with the
 /// reason in `status()`) on any failure -- the previous page stays.
+/// Paint a centered "loading <url>" toast and present it immediately.
+/// The desktop loop is single-threaded, so a fetch blocks all redraws
+/// while it runs -- without this the screen would sit stale (looking
+/// frozen) until the fetch returns. This at least tells the user what's
+/// happening; the bounded netstack budget keeps the block short.
+fn loading_toast(url: &str) {
+    let w = framebuffer::width();
+    let bw = 520u32.min(w.saturating_sub(40));
+    let bx = (w.saturating_sub(bw)) / 2;
+    let by = 60u32;
+    framebuffer::back_blend_rounded_rect(bx + 4, by + 5, bw, 40, 10, theme::color(theme::SLOT_SHADOW), 90);
+    framebuffer::back_fill_rounded_rect(bx, by, bw, 40, 10, theme::color(theme::SLOT_PANEL_BORDER));
+    framebuffer::back_fill_rounded_rect(bx + 1, by + 1, bw - 2, 38, 9, theme::color(theme::SLOT_PANEL));
+    font8x8::draw_str(bx + 14, by + 8, b"loading", theme::color(theme::SLOT_ACCENT), theme::color(theme::SLOT_PANEL));
+    let u = url.as_bytes();
+    let n = u.len().min(((bw - 90) / 8) as usize);
+    font8x8::draw_str(bx + 84, by + 8, &u[..n], theme::color(theme::SLOT_TEXT), theme::color(theme::SLOT_PANEL));
+    font8x8::draw_str(bx + 14, by + 22, b"(the desktop waits here until the fetch returns)", theme::color(theme::SLOT_DIM), theme::color(theme::SLOT_PANEL));
+    framebuffer::present();
+}
+
 pub fn go(url: &str, cols: usize) -> bool {
     let Some((host, port, path, tls)) = netstack::parse_url(url) else {
         unsafe { STATUS = "bad URL (want http://host[:port]/path)" };
         return false;
     };
+    loading_toast(url);
     if tls {
         unsafe {
             STATUS = "https needs a TLS stack LingOS doesn't have yet -- try http://";

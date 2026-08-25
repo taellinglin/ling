@@ -147,3 +147,23 @@ pub fn draw_str(x: u32, y: u32, s: &[u8], fg: u32, bg: u32) {
         draw_char(x + i as u32 * 8, y, c, fg, bg);
     }
 }
+
+/// Integer-scaled glyph: each source pixel becomes a `scale`x`scale` block.
+/// `scale == 1` is identical to `draw_char`. This is real nearest-neighbor
+/// upscaling of the 8x8 bitmap -- honestly blocky at higher zoom (the font
+/// is an 8x8 atlas, not vector), which is exactly the editor/gallery zoom
+/// the desktop offers. `scale == 0` is treated as 1.
+pub fn draw_char_scaled(x: u32, y: u32, c: u8, fg: u32, bg: u32, scale: u32) {
+    let s = scale.max(1);
+    if s == 1 {
+        draw_char(x, y, c, fg, bg);
+        return;
+    }
+    let rows = glyph(c);
+    for (row, bits) in rows.iter().enumerate() {
+        for col in 0..8u32 {
+            let set = (bits >> col) & 1 != 0;
+            framebuffer::back_fill_rect(x + col * s, y + row as u32 * s, s, s, if set { fg } else { bg });
+        }
+    }
+}

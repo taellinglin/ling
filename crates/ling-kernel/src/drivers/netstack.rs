@@ -22,9 +22,14 @@ pub const SELF_IP: [u8; 4] = nic::SELF_IP;
 pub const GATEWAY_IP: [u8; 4] = nic::GATEWAY_IP;
 const MSS: usize = 1400;
 const RX_WINDOW: u16 = 8192;
-/// Kernel-time poll budgets (TSC under TCG runs fast -- see the e1000
-/// module doc's resolution notes; these are sized for that).
-const WAIT_BUDGET_US: u64 = 30_000_000;
+/// Kernel-time poll budget. This bounds how long a *failed* fetch blocks
+/// the (single-threaded) desktop loop -- a healthy fetch returns as soon
+/// as the data arrives, well under this. Kept modest (8s) because the
+/// whole UI is frozen while it runs: a dead host or an https redirect
+/// must not hang the machine. Healthy DNS/TCP complete in well under a
+/// second in practice (verified: curl example.com over the real
+/// internet), so this only bites on genuine failure.
+const WAIT_BUDGET_US: u64 = 8_000_000;
 
 static mut GW_MAC: [u8; 6] = [0; 6];
 static mut GW_MAC_KNOWN: bool = false;

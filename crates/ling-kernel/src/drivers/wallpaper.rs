@@ -22,6 +22,27 @@ pub fn loaded() -> bool {
     unsafe { LOADED }
 }
 
+static mut IMG_W: u32 = 0;
+static mut IMG_H: u32 = 0;
+
+/// Native size of the last decoded image (before screen-scaling) -- the
+/// Gallery fits/zooms against this. Note: `load` scales into the cache at
+/// framebuffer size, so `cached_pixel` samples that scaled cache; the
+/// Gallery treats the cache as its source and re-fits from there.
+pub fn cached_size() -> (u32, u32) {
+    (framebuffer::width(), framebuffer::height())
+}
+
+/// One pixel of the (framebuffer-sized) decode cache.
+pub fn cached_pixel(x: u32, y: u32) -> u32 {
+    let (fw, fh) = (framebuffer::width(), framebuffer::height());
+    if x >= fw || y >= fh {
+        return 0;
+    }
+    let cache = unsafe { &*&raw const CACHE };
+    cache[y as usize * MAX_W + x as usize]
+}
+
 fn rd_u32(b: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
 }

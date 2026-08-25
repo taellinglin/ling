@@ -13,7 +13,11 @@ pub mod ata;
 #[cfg(target_arch = "x86_64")]
 pub mod browser;
 #[cfg(target_arch = "x86_64")]
+pub mod clipboard;
+#[cfg(target_arch = "x86_64")]
 pub mod display;
+#[cfg(target_arch = "x86_64")]
+pub mod editor;
 #[cfg(target_arch = "x86_64")]
 pub mod mixer;
 #[cfg(target_arch = "x86_64")]
@@ -24,6 +28,8 @@ pub mod font8x8;
 pub mod flags;
 #[cfg(target_arch = "x86_64")]
 pub mod font_unicode;
+#[cfg(target_arch = "x86_64")]
+pub mod gallery;
 #[cfg(target_arch = "x86_64")]
 pub mod framebuffer;
 #[cfg(target_arch = "x86_64")]
