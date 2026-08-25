@@ -28,7 +28,7 @@
 use crate::arch::{rtc, timer};
 use crate::drivers::{
     browser, display, editor, framebuffer, font8x8, font_unicode, gallery, kbdlayout, locale,
-    mixer, theme, wallpaper,
+    mixer, terminal, theme, wallpaper,
 };
 use crate::fs::lingfs;
 
@@ -67,8 +67,9 @@ pub const KIND_FILES: u8 = 2;
 pub const KIND_WEB: u8 = 3;
 pub const KIND_EDIT: u8 = 4;
 pub const KIND_GALLERY: u8 = 5;
-const DOCK_APPS: [u8; 6] =
-    [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB, KIND_EDIT, KIND_GALLERY];
+pub const KIND_TERM: u8 = 6;
+const DOCK_APPS: [u8; 7] =
+    [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB, KIND_EDIT, KIND_GALLERY, KIND_TERM];
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -283,10 +284,11 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 9] = [
+const MENU: [MenuRow; 10] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "Accessories", app: "", kind: 255 },
+    MenuRow { header: "", app: "Terminal", kind: KIND_TERM },
     MenuRow { header: "", app: "Editor", kind: KIND_EDIT },
     MenuRow { header: "", app: "Files", kind: KIND_FILES },
     MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
@@ -446,6 +448,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_WEB => "bring - browser in ling",
         KIND_EDIT => "Editor",
         KIND_GALLERY => "Gallery",
+        KIND_TERM => "Terminal",
         _ => "?",
     }
 }
@@ -461,6 +464,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_WEB => (620.0, 460.0),
         KIND_EDIT => (600.0, 440.0),
         KIND_GALLERY => (560.0, 440.0),
+        KIND_TERM => (620.0, 420.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -474,6 +478,7 @@ pub fn dock_letter(i: usize) -> &'static str {
         Some(&KIND_WEB) => "W",
         Some(&KIND_EDIT) => "E",
         Some(&KIND_GALLERY) => "G",
+        Some(&KIND_TERM) => "T",
         _ => "",
     }
 }
@@ -921,6 +926,7 @@ pub fn key(k: u8) {
         KIND_WEB => web_key(k),
         KIND_EDIT => editor::key(k, crate::drivers::keyboard::shift_down()),
         KIND_GALLERY => gallery::key(k),
+        KIND_TERM => terminal::key(k),
         _ => {},
     }
 }
@@ -1440,6 +1446,10 @@ pub fn draw_content(slot: usize) {
         gallery::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
         return;
     }
+    if w.kind == KIND_TERM {
+        terminal::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
     if w.kind == KIND_WEB {
         // Capture the wrap width for key-driven fetches on the focused
         // window (8px glyphs, minus margins).
@@ -1549,14 +1559,23 @@ pub fn draw_content(slot: usize) {
                     6 => {
                         let li = locale::selected().unwrap_or(0);
                         if let Some(l) = locale::get(li) {
-                            font_unicode::draw_utf8_str(
-                                vx,
-                                ry,
-                                l.native_name.as_bytes(),
-                                accent,
-                                panel,
-                                l.uses_daemon_script,
-                            );
+                            // Daemon-script locales carry Latin names (e.g.
+                            // "Ling Country") that would render through the
+                            // 16px daemon atlas -- oversized next to the 8px
+                            // rows. Show those in the 8px Latin font; keep
+                            // the real 16px native script for CJK/Thai etc.
+                            if l.uses_daemon_script {
+                                font8x8::draw_str(vx, ry, l.latin_name.as_bytes(), accent, panel);
+                            } else {
+                                font_unicode::draw_utf8_str(
+                                    vx,
+                                    ry,
+                                    l.native_name.as_bytes(),
+                                    accent,
+                                    panel,
+                                    false,
+                                );
+                            }
                         }
                     },
                     _ => {
