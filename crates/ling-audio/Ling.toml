@@ -1,6 +1,6 @@
 [package]
 name = "ling-audio"
-version = "2030.0.8"
+version = "2030.0.11"
 description = "4D positional audio synthesis and WAV BGM for Ling"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

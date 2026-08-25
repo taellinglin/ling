@@ -1,6 +1,6 @@
 [package]
-name = "lingfu"
-version = "2030.1.13"
+name = "ling-fu"
+version = "2030.1.16"
 description = "灵符 — The Ling project manager. lingfu new/build/run/normalize and more."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

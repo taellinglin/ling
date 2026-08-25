@@ -1,6 +1,6 @@
 [package]
 name = "ling-polyglot"
-version = "2030.0.4"
+version = "2030.0.7"
 description = "Polyglot lexicon system - 16+ human languages"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

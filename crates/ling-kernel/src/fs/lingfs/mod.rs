@@ -259,6 +259,51 @@ pub fn print_ls(path: &str, show_all: bool, long: bool) {
     }
 }
 
+/// Structured directory listing for graphical callers (the WM's file
+/// manager): the same walk as `print_ls`, but handing back one entry per
+/// call instead of printing -- index-driven so a caller with no allocator
+/// and no closures (the WM's fixed-size row loop) can enumerate. Hidden
+/// (dot-prefixed) entries are skipped, matching `ls` without `-a`.
+/// Returns `(name_len_copied_into_name_out, is_dir)`, or `None` past the
+/// end / on any filesystem error (a graphical list has no error channel
+/// better than "shows empty" -- the shell's `ls` remains the diagnosing
+/// tool).
+pub fn list_entry(path: &str, index: usize, name_out: &mut [u8]) -> Option<(usize, bool)> {
+    let mut rbuf = [0u8; RESOLVE_BUF];
+    let effective: &str = if path.is_empty() { "" } else { resolve(path, &mut rbuf) };
+    let (entries, count) = if !effective.is_empty() {
+        match lookup_dir(effective) {
+            Ok(Some((entries, count))) => (entries, count),
+            _ => return None,
+        }
+    } else {
+        let current_root = root();
+        if current_root == ZERO_HASH {
+            return None;
+        }
+        let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+        match get_tree(&current_root, &mut entries) {
+            Ok(Some(count)) => (entries, count),
+            _ => return None,
+        }
+    };
+
+    let mut visible = 0usize;
+    for i in 0..count {
+        let ((name_buf, name_len), _, kind, _) = &entries[i];
+        if is_hidden(name_buf, *name_len) {
+            continue;
+        }
+        if visible == index {
+            let n = (*name_len).min(name_out.len());
+            name_out[..n].copy_from_slice(&name_buf[..n]);
+            return Some((n, matches!(kind, Kind::Tree)));
+        }
+        visible += 1;
+    }
+    None
+}
+
 const BUILTIN_COMMANDS: [&str; 9] =
     ["help", "clear", "ls", "cat", "write", "hostname", "about", "selftest", "theme"];
 

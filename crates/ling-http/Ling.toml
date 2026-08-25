@@ -1,6 +1,6 @@
 [package]
 name = "ling-http"
-version = "0.1.4"
+version = "0.1.7"
 description = "灵网 — HTTPS/JSON/SQLite MVC framework for the Ling ecosystem (Flask-for-Ling)."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

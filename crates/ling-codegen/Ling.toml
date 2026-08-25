@@ -1,6 +1,6 @@
 [package]
 name = "ling-codegen"
-version = "2030.0.7"
+version = "2030.0.10"
 description = "Code generation backends for Ling (bytecode, WASM, native)"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

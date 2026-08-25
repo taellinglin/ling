@@ -1,6 +1,6 @@
 [package]
 name = "ling-physics"
-version = "2030.1.13"
+version = "2030.1.16"
 description = "Physics, world generation, and hyperbolic geometry for Ling"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

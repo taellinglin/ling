@@ -176,15 +176,42 @@ exception_fatal_no_err!(isr_reserved_31, 31, "Reserved");
 // still installs it, just onto `gdt::TIMER_IST` instead of the shared
 // no-IST gates every other vector uses.
 
+/// Drain every byte the 8042 currently holds, routing each by the status
+/// register's aux-origin bit (bit 5: set = mouse, clear = keyboard). Both
+/// the IRQ1 and IRQ12 handlers call this instead of reading exactly one
+/// byte, for two load-bearing reasons found the hard way (QEMU headless
+/// `mouse_move` test, `wm.rs`'s serial diagnostics):
+///
+/// 1. The 8259 PIC is edge-triggered and the 8042 keeps its interrupt line
+///    HIGH while more bytes are queued -- a one-byte-per-interrupt handler
+///    reads byte 1, the line never falls, no new edge ever arrives, and the
+///    remaining bytes wedge there forever (observed: status 0x3D -- OBF set,
+///    aux origin, byte count frozen at 1).
+/// 2. With both devices live, "which IRQ fired" does not reliably identify
+///    the byte's origin -- the status bit does. Routing by IRQ number sent
+///    mouse packets into the keyboard decoder on real interleavings.
+fn drain_8042() {
+    loop {
+        let status = unsafe { io::inb(0x64) };
+        if status & 0x01 == 0 {
+            break;
+        }
+        let byte = unsafe { io::inb(0x60) };
+        if status & 0x20 != 0 {
+            crate::drivers::mouse::irq_byte(byte);
+        } else {
+            crate::drivers::keyboard::irq_scancode(byte);
+        }
+    }
+}
+
 extern "x86-interrupt" fn isr_keyboard(_frame: InterruptFrame) {
-    let scancode = unsafe { io::inb(0x60) };
-    crate::drivers::keyboard::irq_scancode(scancode);
+    drain_8042();
     pic::eoi(1);
 }
 
 extern "x86-interrupt" fn isr_mouse(_frame: InterruptFrame) {
-    let byte = unsafe { io::inb(0x60) };
-    crate::drivers::mouse::irq_byte(byte);
+    drain_8042();
     pic::eoi(12);
 }
 

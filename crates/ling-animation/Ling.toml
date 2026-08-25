@@ -1,6 +1,6 @@
 [package]
 name = "ling-animation"
-version = "2030.0.4"
+version = "2030.0.7"
 description = "Anima — Ling's unified animation system: one rig, any target, any temperament (organic 灵 ↔ mechanical 机)"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

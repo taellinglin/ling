@@ -1,6 +1,6 @@
 [package]
 name = "ling-web"
-version = "0.1.5"
+version = "0.1.8"
 description = "灵网站 — the Flask-flavored layer on ling-http: sessions, flash messages, templates, static files, blueprints, CSRF."
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

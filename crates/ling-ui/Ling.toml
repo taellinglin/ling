@@ -1,6 +1,6 @@
 [package]
 name = "ling-ui"
-version = "2030.0.5"
+version = "2030.0.8"
 description = "Ling UI framework — retained-mode widgets and flex layout"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

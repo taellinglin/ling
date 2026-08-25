@@ -1,6 +1,6 @@
 [package]
 name = "ling-mir"
-version = "2030.0.7"
+version = "2030.0.10"
 description = "Ling MIR - Mid-level Intermediate Representation for codegen backends"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

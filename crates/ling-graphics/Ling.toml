@@ -1,6 +1,6 @@
 [package]
 name = "ling-graphics"
-version = "2030.0.9"
+version = "2030.0.12"
 description = "3D/4D rendering, geometry, animation, and font tools for the Ling ecosystem"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

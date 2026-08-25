@@ -1,6 +1,6 @@
 [package]
 name = "ling-macro"
-version = "2030.0.4"
+version = "2030.0.7"
 description = "Procedural macros for the Ling language ecosystem"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

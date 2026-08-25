@@ -1,6 +1,6 @@
 [package]
 name = "ling-input"
-version = "2030.0.5"
+version = "2030.0.8"
 description = "Sensorium — Ling's unified input system: gamepads, joysticks, haptics, motion, XR controllers, and themeable on-screen touch controls (灵 organic ↔ 机 mechanical)"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

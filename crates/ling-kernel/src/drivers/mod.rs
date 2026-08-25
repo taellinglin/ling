@@ -31,9 +31,13 @@ pub mod serial;
 #[cfg(target_arch = "x86_64")]
 pub mod term;
 #[cfg(target_arch = "x86_64")]
+pub mod theme;
+#[cfg(target_arch = "x86_64")]
 pub mod ui_scale;
 #[cfg(target_arch = "x86_64")]
 pub mod vga;
+#[cfg(target_arch = "x86_64")]
+pub mod wm;
 #[cfg(target_arch = "x86_64")]
 pub mod wm_liquid;
 

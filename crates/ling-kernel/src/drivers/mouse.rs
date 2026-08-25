@@ -66,6 +66,21 @@ fn mouse_write(data: u8) {
 /// unmasks IRQ12 only after this returns).
 pub fn init() {
     write_command(0xA8); // enable the auxiliary device
+
+    // Enable IRQ12 delivery in the 8042 controller config byte (bit 1 =
+    // aux-port interrupt enable; also make sure bit 5, aux clock disable,
+    // is clear). SeaBIOS under QEMU boots with aux interrupts OFF, so
+    // without this every mouse byte just sat in the output buffer and
+    // IRQ12 never fired -- the keyboard kept working (its bit 0 defaults
+    // on), which made this look like anything but an 8042 config issue.
+    // Found via the headless monitor-driven WM test (`mouse_move` injected
+    // packets, cursor never moved); VirtualBox's BIOS enables the bit
+    // itself, which is why the earlier VBox screenshots had a live cursor.
+    write_command(0x20); // read config byte
+    let cfg = read_data();
+    write_command(0x60); // write config byte
+    write_data((cfg | 0x02) & !0x20);
+
     mouse_write(0xF6); // set defaults
     read_data(); // ack (0xFA)
     mouse_write(0xF4); // enable data reporting
@@ -89,6 +104,8 @@ pub fn set_bounds(w: i32, h: i32) {
 pub(crate) fn irq_byte(byte: u8) {
     crate::drivers::keyboard::note_activity();
     unsafe {
+        BYTE_COUNT = BYTE_COUNT.wrapping_add(1);
+        LAST_BYTE = byte;
         PACKET[PACKET_IDX] = byte;
         PACKET_IDX += 1;
         if PACKET_IDX == 3 {
@@ -96,6 +113,20 @@ pub(crate) fn irq_byte(byte: u8) {
             apply_packet(PACKET);
         }
     }
+}
+
+static mut BYTE_COUNT: u32 = 0;
+static mut LAST_BYTE: u8 = 0;
+
+/// Raw IRQ12 bytes received since boot -- diagnostic counter for verifying
+/// the interrupt path end-to-end (a cursor that doesn't move could be a
+/// hit-test bug or a dead IRQ line; this distinguishes them over serial).
+pub fn byte_count() -> u32 {
+    unsafe { BYTE_COUNT }
+}
+
+pub fn last_byte() -> u8 {
+    unsafe { LAST_BYTE }
 }
 
 fn apply_packet(p: [u8; 3]) {

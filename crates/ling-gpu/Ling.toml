@@ -1,6 +1,6 @@
 [package]
 name = "ling-gpu"
-version = "2030.0.6"
+version = "2030.0.9"
 description = "GPU compute backend for Ling (CUDA via cudarc, with a portable CPU fallback)"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

@@ -1,6 +1,6 @@
 [package]
 name = "ling-mic"
-version = "2030.0.6"
+version = "2030.0.9"
 description = "Microphone input and real-time audio capture for Ling"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

@@ -1,0 +1,146 @@
+//! UI theme table for every graphics-mode surface (GUI installer, WM
+//! desktop, greeter) -- one kernel-side source of truth for the palette,
+//! switchable at runtime from the desktop's Settings window, so "theme"
+//! means one thing across the whole system instead of each `.ling` screen
+//! hardcoding its own copy of the colors (which is exactly what
+//! `apps/gui-common` did before this existed, and why its palette and the
+//! WM's could have drifted).
+//!
+//! Selection state lives here (kernel-side `static mut`) for the same
+//! reason `wm_liquid`'s does: the `.ling` AOT path has no mutable
+//! rebinding, so a "current theme" that survives frame to frame has
+//! nowhere else to live. Switching also re-themes the VGA text console
+//! (`vga::apply_theme`) so a later drop to text mode matches -- one theme
+//! choice, every surface.
+//!
+//! Colors are 0xRRGGBB u32s, same convention as `framebuffer.rs`. Slots
+//! are a fixed contract with `.ling` callers (`ling_kernel_theme_color(n)`)
+//! -- add to the end, never renumber.
+
+use crate::drivers::vga;
+
+pub const SLOT_BG: usize = 0; // desktop / screen background
+pub const SLOT_PANEL: usize = 1; // window body, cards
+pub const SLOT_PANEL_BORDER: usize = 2; // card borders, dividers
+pub const SLOT_TEXT: usize = 3; // primary text
+pub const SLOT_DIM: usize = 4; // secondary text, hints
+pub const SLOT_ERROR: usize = 5; // error text
+pub const SLOT_TITLEBAR: usize = 6; // focused window titlebar
+pub const SLOT_TITLEBAR_IDLE: usize = 7; // unfocused window titlebar
+pub const SLOT_TITLEBAR_TEXT: usize = 8;
+pub const SLOT_DOCK: usize = 9; // dock plate (blended over wallpaper)
+pub const SLOT_ACCENT: usize = 10; // selection rings, focused highlights
+pub const SLOT_SHADOW: usize = 11; // window drop shadow (alpha at draw time)
+pub const SLOT_WALL_TOP: usize = 12; // wallpaper gradient, top edge
+pub const SLOT_WALL_BOTTOM: usize = 13; // wallpaper gradient, bottom edge
+pub const SLOT_DOT_DIM: usize = 14; // stepper dot, not yet reached
+pub const SLOT_COUNT: usize = 15;
+
+pub struct UiTheme {
+    pub name: &'static str,
+    pub colors: [u32; SLOT_COUNT],
+    /// Whether the VGA text console should use its dark or light palette
+    /// when this theme is active -- keeps a text-mode drop consistent.
+    pub vga_dark: bool,
+}
+
+/// Theme 0 is the palette `apps/gui-common` shipped with (bg 0x1A1423 dark
+/// purple etc.) -- existing screens look identical by default, they just
+/// stop owning the numbers.
+pub static THEMES: [UiTheme; 3] = [
+    UiTheme {
+        name: "Dusk",
+        colors: [
+            0x1A1423, // bg
+            0x241B33, // panel
+            0x3A2F4D, // panel border
+            0xFFFFFF, // text
+            0x9B8FB0, // dim
+            0xE55800, // error (amber)
+            0x362A4D, // titlebar focused
+            0x241B33, // titlebar idle
+            0xFFFFFF, // titlebar text
+            0x120E1A, // dock
+            0x4A8FE0, // accent (blue)
+            0x000000, // shadow
+            0x2B2140, // wallpaper top
+            0x120E1A, // wallpaper bottom
+            0x4A4058, // dot dim
+        ],
+        vga_dark: true,
+    },
+    UiTheme {
+        name: "Daylight",
+        colors: [
+            0xE9E5F2, // bg
+            0xFAF8FE, // panel
+            0xC8C0DA, // panel border
+            0x241B33, // text
+            0x6E6486, // dim
+            0xB33A14, // error
+            0xD9D2E8, // titlebar focused
+            0xEDE9F5, // titlebar idle
+            0x241B33, // titlebar text
+            0xF3F0FA, // dock
+            0x3A6FD0, // accent
+            0x241B33, // shadow
+            0xF2EFF9, // wallpaper top
+            0xCFC6E0, // wallpaper bottom
+            0xB4ABc8, // dot dim
+        ],
+        vga_dark: false,
+    },
+    UiTheme {
+        name: "Jade",
+        colors: [
+            0x0E1A14, // bg
+            0x14241B, // panel
+            0x2A4D3A, // panel border
+            0xE8FFF0, // text
+            0x8FB09B, // dim
+            0xE0A44A, // error
+            0x1F3A2C, // titlebar focused
+            0x14241B, // titlebar idle
+            0xE8FFF0, // titlebar text
+            0x0A120E, // dock
+            0x4AE0A0, // accent
+            0x000000, // shadow
+            0x1B3326, // wallpaper top
+            0x0A120E, // wallpaper bottom
+            0x2E4438, // dot dim
+        ],
+        vga_dark: true,
+    },
+];
+
+static mut CURRENT: usize = 0;
+
+pub fn count() -> usize {
+    THEMES.len()
+}
+
+pub fn current() -> usize {
+    unsafe { CURRENT }
+}
+
+pub fn name(idx: usize) -> &'static str {
+    THEMES.get(idx).map(|t| t.name).unwrap_or("")
+}
+
+pub fn color(slot: usize) -> u32 {
+    let t = &THEMES[unsafe { CURRENT } % THEMES.len()];
+    t.colors.get(slot).copied().unwrap_or(0xFF00FF)
+}
+
+/// Switch the active theme (index wraps, so a Settings "next theme" button
+/// can just pass `current()+1`) and re-theme the VGA console to match.
+pub fn set(idx: usize) {
+    unsafe {
+        CURRENT = idx % THEMES.len();
+    }
+    if THEMES[unsafe { CURRENT }].vga_dark {
+        vga::apply_theme(&vga::THEME_LINGOS);
+    } else {
+        vga::apply_theme(&vga::THEME_LIGHT);
+    }
+}

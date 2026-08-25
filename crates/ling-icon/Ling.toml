@@ -1,6 +1,6 @@
 [package]
 name = "ling-icon"
-version = "2030.0.5"
+version = "2030.0.8"
 description = "Rasterize SVG/PNG icons to multi-resolution .ico and embed them in Windows executables"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

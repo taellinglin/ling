@@ -216,6 +216,132 @@ pub fn back_clear(color: u32) {
     back_fill_rect(0, 0, w, h, color);
 }
 
+/// Integer square root (largest `r` with `r*r <= v`) -- the corner-arc code
+/// below needs sqrt but this crate is no_std with no libm (same constraint
+/// `wm_liquid::scale_w_pct` documents), and Newton over u32 converges in a
+/// handful of iterations at these magnitudes (radii are tens of pixels).
+fn isqrt(v: u32) -> u32 {
+    if v < 2 {
+        return v;
+    }
+    let mut x = v;
+    let mut y = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + v / x) / 2;
+    }
+    x
+}
+
+/// Horizontal inset of a rounded rect's row `dy` (0-based from the top)
+/// for corner radius `r` in a rect of height `h`: 0 for the straight middle
+/// rows, quarter-circle-shaped for the top/bottom `r` rows. Shared by the
+/// fill and blend variants so the two can never disagree on shape.
+fn rounded_row_inset(dy: u32, h: u32, r: u32) -> u32 {
+    let r = r.min(h / 2);
+    if r == 0 {
+        return 0;
+    }
+    let d = if dy < r {
+        r - dy
+    } else if dy >= h - r {
+        dy - (h - 1 - r)
+    } else {
+        return 0;
+    };
+    if d > r {
+        return r;
+    }
+    r - isqrt(r * r - d * d)
+}
+
+/// Filled rounded rectangle into the back buffer: plain row spans with
+/// quarter-circle insets on the top/bottom `radius` rows. No antialiasing
+/// -- honest hard-edged spans, same as every other primitive here.
+pub fn back_fill_rounded_rect(x: u32, y: u32, w: u32, h: u32, radius: u32, color: u32) {
+    if h == 0 || w == 0 {
+        return;
+    }
+    for dy in 0..h {
+        let inset = rounded_row_inset(dy, h, radius).min(w / 2);
+        back_fill_rect(x + inset, y + dy, w - inset * 2, 1, color);
+    }
+}
+
+/// Filled circle into the back buffer -- row spans via `isqrt`, the same
+/// arc math as `rounded_row_inset` without the straight middle section.
+pub fn back_fill_circle(cx: u32, cy: u32, radius: u32, color: u32) {
+    if radius == 0 {
+        return;
+    }
+    let r = radius as i64;
+    for dy in -r..=r {
+        let e = isqrt((r * r - dy * dy) as u32) as i64;
+        let row_y = cy as i64 + dy;
+        let row_x = cx as i64 - e;
+        if row_y < 0 || row_x + 2 * e < 0 {
+            continue;
+        }
+        back_fill_rect(row_x.max(0) as u32, row_y as u32, (2 * e + 1) as u32, 1, color);
+    }
+}
+
+/// Alpha-blend one back-buffer pixel: `out = src*a + dst*(255-a)` per
+/// channel, `alpha` in 0..=255. Reads the back buffer (not the live
+/// framebuffer) so blending composes correctly with everything drawn
+/// earlier this frame, before the single `present()` blit.
+fn back_blend_pixel(x: u32, y: u32, color: u32, alpha: u32) {
+    let Some(fb) = get() else { return };
+    if x >= fb.width || y >= fb.height {
+        return;
+    }
+    let bypp = fb.bpp as u32 / 8;
+    let offset = y as usize * fb.pitch as usize + x as usize * bypp as usize;
+    if offset + bypp as usize > BACKBUFFER_MAX || (bypp != 3 && bypp != 4) {
+        return;
+    }
+    let buf = back_buf();
+    let inv = 255 - alpha;
+    for ch in 0..3usize {
+        let src = (color >> (ch * 8)) & 0xFF;
+        let dst = buf[offset + ch] as u32;
+        buf[offset + ch] = ((src * alpha + dst * inv) / 255) as u8;
+    }
+}
+
+/// Alpha-blended rectangle into the back buffer, `alpha` 0..=255 (255 =
+/// opaque, use `back_fill_rect` instead there -- this is per-pixel
+/// read-modify-write and costs accordingly). This is what makes real
+/// drop shadows and glass effects possible; before it existed every
+/// "shadow" would have been a fake solid grey.
+pub fn back_blend_rect(x: u32, y: u32, w: u32, h: u32, color: u32, alpha: u32) {
+    let alpha = alpha.min(255);
+    if alpha == 0 {
+        return;
+    }
+    for dy in 0..h {
+        for dx in 0..w {
+            back_blend_pixel(x + dx, y + dy, color, alpha);
+        }
+    }
+}
+
+/// Alpha-blended rounded rectangle -- the drop-shadow primitive (a dark
+/// blended rounded rect offset a few pixels under a window reads as soft
+/// shadow even without a real gaussian falloff).
+pub fn back_blend_rounded_rect(x: u32, y: u32, w: u32, h: u32, radius: u32, color: u32, alpha: u32) {
+    let alpha = alpha.min(255);
+    if alpha == 0 || h == 0 {
+        return;
+    }
+    for dy in 0..h {
+        let inset = rounded_row_inset(dy, h, radius).min(w / 2);
+        for dx in inset..w - inset {
+            back_blend_pixel(x + dx, y + dy, color, alpha);
+        }
+    }
+}
+
 pub fn present() {
     unsafe {
         let Some(fb) = get() else { return };

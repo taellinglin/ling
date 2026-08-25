@@ -1,6 +1,6 @@
 [package]
 name = "ling-lex"
-version = "2030.0.4"
+version = "2030.0.7"
 description = "Lexical analysis and polyglot tokenization for Ling"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

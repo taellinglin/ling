@@ -1,6 +1,6 @@
 [package]
 name = "ling-ai"
-version = "2030.0.5"
+version = "2030.0.8"
 description = "Tensor computation, neural networks, and LLM inference"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

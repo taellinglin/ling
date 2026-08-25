@@ -1,6 +1,6 @@
 [package]
 name = "ling-net"
-version = "2030.0.4"
+version = "2030.0.7"
 description = "Async networking — HTTP, WebSocket, QUIC, and peer-to-peer"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

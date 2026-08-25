@@ -45,7 +45,7 @@ use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
     flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, locale, mouse, net_e1000,
-    serial, term, ui_scale, vga, wm_liquid,
+    serial, term, theme, ui_scale, vga, wm, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -985,6 +985,262 @@ pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_w_pct() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_liquid_scale_h_pct() -> u64 {
     wm_liquid::scale_h_pct()
+}
+
+// -- UI themes (drivers::theme) -- one palette table for every graphics
+// surface; see the module doc for the slot contract. ---------------------
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_theme_count() -> u64 {
+    theme::count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_theme_current() -> u64 {
+    theme::current() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_theme_select(idx: u64) -> u64 {
+    theme::set(idx as usize);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_theme_name(idx: u64) -> u64 {
+    let n = theme::name(idx as usize);
+    strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+/// Palette lookup by slot index (`theme::SLOT_*`) -- the one call every
+/// themed `.ling` screen routes its colors through.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_theme_color(slot: u64) -> u64 {
+    theme::color(slot as usize) as u64
+}
+
+// -- Rounded/blended framebuffer primitives (drivers::framebuffer) -- what
+// makes windows/cards/dots genuinely rounded and shadowed instead of the
+// rect-only approximations gui-common used to disclose. ------------------
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_back_fill_rrect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    r: u64,
+    color: u64,
+) -> u64 {
+    framebuffer::back_fill_rounded_rect(x as u32, y as u32, w as u32, h as u32, r as u32, color as u32);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_back_fill_circle(cx: u64, cy: u64, r: u64, color: u64) -> u64 {
+    framebuffer::back_fill_circle(cx as u32, cy as u32, r as u32, color as u32);
+    0
+}
+
+/// `alpha` 0..=255. Per-pixel read-modify-write -- use for shadows and
+/// glass, not for large opaque fills.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_back_blend_rect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    color: u64,
+    alpha: u64,
+) -> u64 {
+    framebuffer::back_blend_rect(x as u32, y as u32, w as u32, h as u32, color as u32, alpha as u32);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_back_blend_rrect(
+    x: u64,
+    y: u64,
+    w: u64,
+    h: u64,
+    r: u64,
+    color: u64,
+    alpha: u64,
+) -> u64 {
+    framebuffer::back_blend_rounded_rect(
+        x as u32,
+        y as u32,
+        w as u32,
+        h as u32,
+        r as u32,
+        color as u32,
+        alpha as u32,
+    );
+    0
+}
+
+// -- Multi-window manager (drivers::wm) -- state/hit-testing kernel-side,
+// chrome drawing in .ling; see the module doc for the honest scope
+// (kernel-side windows, not an X-style client/server protocol). ----------
+
+/// One frame of window-system logic (click routing, drag, springs). Call
+/// once per frame before any `ling_kernel_wm_slot_*` getter.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_step(mx: u64, my: u64, buttons: u64) -> u64 {
+    wm::step(mx as i64, my as i64, buttons as u8);
+    0
+}
+
+/// Route one key (the keyboard driver's byte encoding, same as the
+/// pickers) to the focused window.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_key(k: u64) -> u64 {
+    wm::key(k as u8);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_open(kind: u64) -> u64 {
+    wm::open(kind as u8);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_count() -> u64 {
+    wm::slot_count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_titlebar_h() -> u64 {
+    wm::TITLEBAR_H as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_x(slot: u64) -> u64 {
+    wm::slot_x(slot as usize).max(0) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_y(slot: u64) -> u64 {
+    wm::slot_y(slot as usize).max(0) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_w(slot: u64) -> u64 {
+    wm::slot_w(slot as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_h(slot: u64) -> u64 {
+    wm::slot_h(slot as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_kind(slot: u64) -> u64 {
+    wm::slot_kind(slot as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_focused(slot: u64) -> u64 {
+    wm::slot_focused(slot as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_slot_title(slot: u64) -> u64 {
+    let t = wm::slot_title(slot as usize);
+    strings::ling_str_new(t.as_ptr(), t.len())
+}
+
+/// Render the focused-content interior of the window at z `slot` (settings
+/// rows, file listings -- runtime-sized loops `.ling` kernel code cannot
+/// express). The `.ling` caller draws the chrome first, then calls this.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_content(slot: u64) -> u64 {
+    wm::draw_content(slot as usize);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_count() -> u64 {
+    wm::dock_count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_x(i: u64) -> u64 {
+    wm::dock_x(i as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_y() -> u64 {
+    wm::dock_y() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_size() -> u64 {
+    wm::dock_icon_size() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_letter(i: u64) -> u64 {
+    let s = wm::dock_letter(i as usize);
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_running(i: u64) -> u64 {
+    wm::dock_running(i as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_dock_hover(i: u64) -> u64 {
+    wm::dock_hover(i as usize) as u64
+}
+
+/// "HH:MM" (or 12-hour, per Settings) in the selected locale's UTC offset
+/// -- real CMOS clock through the real locale table.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_clock_str() -> u64 {
+    let s = wm::clock_str();
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+
+/// Vertical-gradient wallpaper from the active theme's wallpaper slots --
+/// the desktop's replacement for a flat `fb_back_clear`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_wallpaper() -> u64 {
+    wm::draw_wallpaper();
+    0
 }
 
 /// Install a `.lpkg` blob already stored at `blob_name` in lingfs (see

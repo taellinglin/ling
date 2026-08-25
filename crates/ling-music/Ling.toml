@@ -1,6 +1,6 @@
 [package]
 name = "ling-music"
-version = "2030.0.5"
+version = "2030.0.8"
 description = "2030-ready music toolkit for Ling — decode, BPM/key analysis, GM-capable synthesis, rhythm-game & karaoke tools"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"

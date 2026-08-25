@@ -1,6 +1,6 @@
 [package]
 name = "ling-wasm"
-version = "2030.0.12"
+version = "2030.0.15"
 description = "Ling language — WebGL2 WASM runtime"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/taellinglin/ling"
