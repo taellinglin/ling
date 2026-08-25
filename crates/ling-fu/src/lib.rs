@@ -147,7 +147,7 @@ impl InvocationLanguage {
     }
 
     fn version_text(&self) -> String {
-        format!("{} v2030.0.0", self.cli_name())
+        format!("{} v{}", self.cli_name(), env!("CARGO_PKG_VERSION"))
     }
 }
 
