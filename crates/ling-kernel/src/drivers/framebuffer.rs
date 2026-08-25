@@ -25,11 +25,41 @@ fn back_buf() -> &'static mut [u8; BACKBUFFER_MAX] {
     unsafe { &mut *&raw mut BACKBUFFER }
 }
 
+/// Physical address + magic of the VBE handoff block the disk-boot
+/// stage2 leaves behind (bootloader/stage2.asm's LFB_INFO_ADDR/_MAGIC --
+/// keep in sync). Layout: magic, physbase, pitch, width, height, bpp,
+/// each a u32.
+#[cfg(target_arch = "x86_64")]
+const LFB_INFO_ADDR: u64 = 0x6000;
+#[cfg(target_arch = "x86_64")]
+const LFB_INFO_MAGIC: u32 = 0x4942_464C; // "LFBI"
+
+/// True when this kernel was loaded by the disk-boot path (stage1/stage2,
+/// no GRUB): there is no Multiboot2 info structure at all. The desktop
+/// uses this to decide between the Live auto-login flow and the installed
+/// system's login greeter.
+#[cfg(target_arch = "x86_64")]
+pub fn booted_from_disk() -> bool {
+    unsafe { ptr::read_volatile(&raw const mb2_info_ptr) == 0 }
+}
+
 pub fn init() {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         let info_ptr = ptr::read_volatile(&raw const mb2_info_ptr);
         if info_ptr == 0 {
+            // Disk boot: no Multiboot2 info exists. stage2 may have set a
+            // VBE mode and left its tagged handoff block instead.
+            if ptr::read_volatile(LFB_INFO_ADDR as *const u32) == LFB_INFO_MAGIC {
+                let addr = ptr::read_volatile((LFB_INFO_ADDR + 4) as *const u32) as u64;
+                let pitch = ptr::read_volatile((LFB_INFO_ADDR + 8) as *const u32);
+                let width = ptr::read_volatile((LFB_INFO_ADDR + 12) as *const u32);
+                let height = ptr::read_volatile((LFB_INFO_ADDR + 16) as *const u32);
+                let bpp = ptr::read_volatile((LFB_INFO_ADDR + 20) as *const u32) as u8;
+                if addr != 0 && width > 0 && height > 0 && (bpp == 24 || bpp == 32) {
+                    ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
+                }
+            }
             return;
         }
         let total_size = ptr::read_unaligned(info_ptr as *const u32);

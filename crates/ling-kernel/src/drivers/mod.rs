@@ -5,9 +5,13 @@
 //! compile error at the call site rather than a stub.
 
 #[cfg(target_arch = "x86_64")]
+pub mod ac97;
+#[cfg(target_arch = "x86_64")]
 pub mod ahci;
 #[cfg(target_arch = "x86_64")]
 pub mod ata;
+#[cfg(target_arch = "x86_64")]
+pub mod mixer;
 #[cfg(target_arch = "x86_64")]
 pub mod font8x8;
 #[cfg(target_arch = "x86_64")]
@@ -21,11 +25,15 @@ pub mod kbdlayout;
 #[cfg(target_arch = "x86_64")]
 pub mod keyboard;
 #[cfg(target_arch = "x86_64")]
+pub mod lingfu;
+#[cfg(target_arch = "x86_64")]
 pub mod locale;
 #[cfg(target_arch = "x86_64")]
 pub mod mouse;
 #[cfg(target_arch = "x86_64")]
 pub mod net_e1000;
+#[cfg(target_arch = "x86_64")]
+pub mod netstack;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
 #[cfg(target_arch = "x86_64")]

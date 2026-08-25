@@ -26,7 +26,7 @@
 //! and focus state).
 
 use crate::arch::{rtc, timer};
-use crate::drivers::{framebuffer, font8x8, font_unicode, kbdlayout, locale, theme};
+use crate::drivers::{framebuffer, font8x8, font_unicode, kbdlayout, locale, mixer, theme};
 use crate::fs::lingfs;
 
 // Same spring feel as wm_liquid.rs, applied per window.
@@ -93,9 +93,33 @@ static mut SPAWN_COUNT: u32 = 0;
 static mut HOVER_DOCK: i32 = -1;
 
 // -- Settings window state -------------------------------------------------
-const SETTINGS_ROWS: usize = 4; // UI theme / keyboard / language / clock
+// Rows: UI theme / Sound theme / Wallpaper / Keyboard / Language / Clock.
+const SETTINGS_ROWS: usize = 6;
 static mut SETTINGS_CURSOR: usize = 0;
 static mut CLOCK_24H: bool = true;
+
+// -- Wallpaper --------------------------------------------------------------
+pub const WALL_GRADIENT: u32 = 0;
+pub const WALL_ROYGBIV: u32 = 1;
+pub const WALL_SOLID: u32 = 2;
+const WALL_MODES: u32 = 3;
+static mut WALLPAPER: u32 = 0;
+
+pub fn wallpaper() -> u32 {
+    unsafe { WALLPAPER }
+}
+
+pub fn set_wallpaper(mode: u32) {
+    unsafe { WALLPAPER = mode % WALL_MODES };
+}
+
+fn wallpaper_name(mode: u32) -> &'static str {
+    match mode {
+        WALL_ROYGBIV => "ROYGBIV",
+        WALL_SOLID => "Solid",
+        _ => "Gradient",
+    }
+}
 
 // -- Files window state ----------------------------------------------------
 const FM_NAME_MAX: usize = 60;
@@ -254,6 +278,7 @@ pub fn open(kind: u8) {
         scale_h: 1.0,
     };
     z_raise(idx);
+    mixer::jingle(mixer::EVENT_OPEN);
 }
 
 pub fn close(idx: usize) {
@@ -265,6 +290,7 @@ pub fn close(idx: usize) {
                 DRAG_WIN = -1;
             }
         }
+        mixer::jingle(mixer::EVENT_CLOSE);
     }
 }
 
@@ -355,9 +381,15 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         HOVER_DOCK = dock_hit(mx, my);
 
         if left && !was {
-            // Press edge: route the click.
+            // Press edge: tray first (it overlays everything), then dock,
+            // then windows.
+            if tray_hit(mx, my) {
+                PREV_BUTTONS = buttons;
+                return;
+            }
             let dock = HOVER_DOCK;
             if dock >= 0 {
+                mixer::jingle(mixer::EVENT_CLICK);
                 let kind = DOCK_APPS[dock as usize];
                 match find_kind(kind) {
                     Some(idx) if windows()[idx].minimized => {
@@ -391,8 +423,12 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
                             DRAG_WIN = idx as i32;
                             GRAB_DX = mx as f64 - windows()[idx].px;
                             GRAB_DY = my as f64 - windows()[idx].py;
+                            log_hex(b"wm: grab my=0x", my as u32);
+                            log_hex(b"wm: grab py=0x", windows()[idx].py as u32);
                         }
                     }
+                } else {
+                    log_hex(b"wm: click missed, my=0x", my as u32);
                 }
             }
         }
@@ -412,22 +448,42 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             windows()[idx].ty = (my as f64 - GRAB_DY).max(34.0).min(max_y);
         }
 
-        // Spring advance, shared dt (same clamp rationale as wm_liquid).
+        // Spring advance, shared dt. Clamped like wm_liquid, but ALSO
+        // sub-stepped in <=8ms slices: explicit-Euler with this stiffness
+        // is numerically unstable at dt=50 (k*dt^2 ~ 70 -- observed under
+        // QEMU TCG, whose frame times routinely hit the clamp, as windows
+        // overshooting clean off the top of the screen).
         let now = timer::now_ms();
         let dt = if LAST_STEP_MS == 0 { 16 } else { now.saturating_sub(LAST_STEP_MS).min(50) };
         LAST_STEP_MS = now;
-        let dt = dt as f64;
-        if dt > 0.0 {
+        let mut remaining = dt as f64;
+        while remaining > 0.0 {
+            let step = remaining.min(4.0);
+            remaining -= step;
             for w in windows().iter_mut() {
                 if !w.used {
                     continue;
                 }
-                let ax = (w.tx - w.px) * SPRING_K - w.vx * DAMPING;
-                let ay = (w.ty - w.py) * SPRING_K - w.vy * DAMPING;
-                w.vx += ax * dt;
-                w.vy += ay * dt;
-                w.px += w.vx * dt;
-                w.py += w.vy * dt;
+                // Semi-implicit Euler with IMPLICIT damping: the explicit
+                // form multiplies velocity by (1 - damping*step), which
+                // goes sign-alternating once damping*step > 1 (0.22*8 =
+                // 1.76 here) -- observed as windows that never settle,
+                // drifting to a different rest spot every run. Dividing by
+                // (1 + damping*step) decays monotonically at ANY step
+                // size; the spring term stays explicit so the liquid
+                // overshoot the WM is named for survives.
+                w.vx = (w.vx + (w.tx - w.px) * SPRING_K * step) / (1.0 + DAMPING * step);
+                w.vy = (w.vy + (w.ty - w.py) * SPRING_K * step) / (1.0 + DAMPING * step);
+                w.px += w.vx * step;
+                w.py += w.vy * step;
+                // Hard floor below the top bar: overshoot may squash
+                // against it, but a titlebar must never become unreachable.
+                if w.py < 34.0 {
+                    w.py = 34.0;
+                    if w.vy < 0.0 {
+                        w.vy = 0.0;
+                    }
+                }
                 let sx = (w.vx.abs() * STRETCH_SENSITIVITY).min(MAX_STRETCH);
                 let sy = (w.vy.abs() * STRETCH_SENSITIVITY).min(MAX_STRETCH);
                 w.scale_w = 1.0 + sx - sy * 0.5;
@@ -486,6 +542,10 @@ pub fn slot_focused(slot: usize) -> bool {
 /// driver's DC1/DC2/etc. control bytes, same encoding the pickers use
 /// (0x11 up, 0x12 down, 0x13 left, 0x14 right per `drivers/keyboard.rs`).
 pub fn key(k: u8) {
+    // An open tray popover captures keys ahead of the focused window.
+    if tray_key(k) {
+        return;
+    }
     let focused_kind = unsafe {
         if Z_LEN == 0 {
             return;
@@ -513,11 +573,23 @@ fn settings_key(k: u8) {
                         theme::set(((cur + dir + n) % n) as usize);
                     },
                     1 => {
+                        let n = mixer::sound_theme_count() as i32;
+                        let cur = mixer::sound_theme() as i32;
+                        mixer::set_sound_theme(((cur + dir + n) % n) as usize);
+                        // Audition the theme you just landed on.
+                        mixer::jingle(mixer::EVENT_LOGIN);
+                    },
+                    2 => {
+                        let n = WALL_MODES as i32;
+                        let cur = WALLPAPER as i32;
+                        set_wallpaper(((cur + dir + n) % n) as u32);
+                    },
+                    3 => {
                         let n = kbdlayout::count() as i32;
                         let cur = kbdlayout::current() as i32;
                         kbdlayout::set_current(((cur + dir + n) % n) as usize);
                     },
-                    2 => {
+                    4 => {
                         let n = locale::count() as i32;
                         let cur = locale::selected().unwrap_or(0) as i32;
                         locale::select(((cur + dir + n) % n) as usize);
@@ -611,6 +683,134 @@ fn files_key(k: u8) {
     }
 }
 
+// -- Top-bar tray: volume + network widgets --------------------------------
+// MATE-panel-shaped: two icons at the top bar's right end (left of the
+// clock); clicking the speaker opens a volume popover with a master row
+// plus one row per app stream (the mixer's per-app volumes), adjusted
+// with up/down + left/right while open. The net icon just reports the
+// real e1000 state -- ethernet only, because that's the NIC we have.
+
+static mut TRAY_OPEN: bool = false;
+static mut TRAY_CURSOR: usize = 0; // 0 = master, 1.. = mixer streams
+
+fn tray_vol_x() -> i64 {
+    framebuffer::width() as i64 - 140
+}
+
+fn tray_net_x() -> i64 {
+    framebuffer::width() as i64 - 110
+}
+
+fn tray_hit(mx: i64, my: i64) -> bool {
+    if my >= 30 {
+        return false;
+    }
+    if mx >= tray_vol_x() && mx < tray_vol_x() + 24 {
+        unsafe {
+            TRAY_OPEN = !TRAY_OPEN;
+            TRAY_CURSOR = 0;
+        }
+        mixer::jingle(mixer::EVENT_CLICK);
+        return true;
+    }
+    // The net icon has no popover yet; swallowing the click keeps it from
+    // falling through to a window underneath.
+    mx >= tray_net_x() && mx < tray_net_x() + 24
+}
+
+pub fn tray_open() -> bool {
+    unsafe { TRAY_OPEN }
+}
+
+fn tray_key(k: u8) -> bool {
+    unsafe {
+        if !TRAY_OPEN {
+            return false;
+        }
+        let rows = 1 + mixer::stream_count();
+        match k {
+            0x11 => TRAY_CURSOR = TRAY_CURSOR.saturating_sub(1),
+            0x12 => TRAY_CURSOR = (TRAY_CURSOR + 1).min(rows - 1),
+            0x13 | 0x14 => {
+                let delta: i64 = if k == 0x13 { -10 } else { 10 };
+                if TRAY_CURSOR == 0 {
+                    let v = (mixer::master_volume() as i64 + delta).clamp(0, 100);
+                    mixer::set_master_volume(v as u32);
+                } else {
+                    let s = TRAY_CURSOR - 1;
+                    let v = (mixer::stream_volume(s) as i64 + delta).clamp(0, 100);
+                    mixer::set_stream_volume(s, v as u32);
+                }
+                mixer::jingle(mixer::EVENT_CLICK);
+            },
+            0x1B | 10 => TRAY_OPEN = false, // Esc or Enter closes
+            _ => {},
+        }
+        true
+    }
+}
+
+/// Draw the tray icons and (if open) the volume popover. `net_up` is the
+/// real e1000 init result the desktop got at boot.
+pub fn draw_tray(net_up: bool) {
+    let panel = theme::color(theme::SLOT_PANEL);
+    let accent = theme::color(theme::SLOT_ACCENT);
+    let dim = theme::color(theme::SLOT_DIM);
+    let text = theme::color(theme::SLOT_TEXT);
+
+    // Speaker: box + cone triangle-ish (two rects) + a sound arc dot.
+    let vx = tray_vol_x() as u32;
+    framebuffer::back_fill_rect(vx, 11, 6, 8, if mixer::master_volume() > 0 { text } else { dim });
+    framebuffer::back_fill_rect(vx + 6, 8, 5, 14, if mixer::master_volume() > 0 { text } else { dim });
+    if mixer::master_volume() > 0 {
+        framebuffer::back_fill_circle(vx + 16, 15, 2, accent);
+    }
+
+    // Net: rounded plug + stem; accent when the NIC is up, dim otherwise.
+    let nx = tray_net_x() as u32;
+    let net_color = if net_up { accent } else { dim };
+    framebuffer::back_fill_rounded_rect(nx, 9, 14, 10, 3, net_color);
+    framebuffer::back_fill_rect(nx + 6, 19, 2, 5, net_color);
+
+    if !unsafe { TRAY_OPEN } {
+        return;
+    }
+    // Popover: rounded card under the speaker with master + stream rows.
+    let rows = 1 + mixer::stream_count();
+    let row_h = 26u32;
+    let pw = 240u32;
+    let ph = rows as u32 * row_h + 20;
+    let px = (framebuffer::width()).saturating_sub(pw + 16);
+    let py = 34u32;
+    framebuffer::back_blend_rounded_rect(px + 4, py + 5, pw, ph, 10, theme::color(theme::SLOT_SHADOW), 80);
+    framebuffer::back_fill_rounded_rect(px, py, pw, ph, 10, theme::color(theme::SLOT_PANEL_BORDER));
+    framebuffer::back_fill_rounded_rect(px + 1, py + 1, pw - 2, ph - 2, 9, panel);
+    for r in 0..rows {
+        let ry = py + 10 + r as u32 * row_h;
+        let selected = unsafe { TRAY_CURSOR == r };
+        if selected {
+            framebuffer::back_fill_rounded_rect(px + 6, ry.saturating_sub(4), pw - 12, row_h - 4, 5, accent);
+            framebuffer::back_fill_rounded_rect(px + 8, ry.saturating_sub(2), pw - 16, row_h - 8, 4, panel);
+        }
+        let (name, vol): (&str, u32) = if r == 0 {
+            ("master", mixer::master_volume())
+        } else {
+            (mixer::stream_name(r - 1), mixer::stream_volume(r - 1))
+        };
+        font8x8::draw_str(px + 14, ry, name.as_bytes(), if r == 0 { text } else { dim }, panel);
+        // Volume bar: track + fill, 100px wide.
+        let bx = px + 110;
+        framebuffer::back_fill_rounded_rect(bx, ry + 2, 100, 6, 3, theme::color(theme::SLOT_DOT_DIM));
+        if vol > 0 {
+            framebuffer::back_fill_rounded_rect(bx, ry + 2, vol, 6, 3, accent);
+        }
+        // Exclusive-mode marker on the holding stream.
+        if r > 0 && mixer::exclusive_holder() == (r - 1) as i32 {
+            font8x8::draw_str(px + pw - 24, ry, b"!", theme::color(theme::SLOT_ERROR), panel);
+        }
+    }
+}
+
 // -- Clock -----------------------------------------------------------------
 
 static mut CLOCK_BUF: [u8; 16] = [0; 16];
@@ -648,28 +848,97 @@ pub fn clock_str() -> &'static str {
     }
 }
 
-/// Vertical-gradient wallpaper between the theme's two wallpaper slots --
-/// per-row linear interpolation, which is exactly the kind of counter-
-/// carrying loop `.ling` kernel code can't write, so the desktop calls
-/// this instead of `fb_back_clear`.
+/// Mix two 0xRRGGBB colors: `t_num/t_den` of `b`, the rest `a`.
+fn mix_rgb(a: u32, b: u32, t_num: u32, t_den: u32) -> u32 {
+    let mut out = 0u32;
+    for ch in 0..3 {
+        let ca = (a >> (ch * 8)) & 0xFF;
+        let cb = (b >> (ch * 8)) & 0xFF;
+        let m = (ca * (t_den - t_num) + cb * t_num) / t_den;
+        out |= m << (ch * 8);
+    }
+    out
+}
+
+/// The seven ROYGBIV hues, each pre-tempered toward the active theme's
+/// background so the rainbow reads as *of* the theme (LingOS dusk purple
+/// under Dusk, light-washed under Daylight) instead of a paint-store
+/// swatch pasted on top.
+fn roygbiv_color(i: usize) -> u32 {
+    const HUES: [u32; 7] = [
+        0xE0453A, // red
+        0xE08A3A, // orange
+        0xE0D24A, // yellow
+        0x4AE06A, // green
+        0x3A8AE0, // blue
+        0x4A4AE0, // indigo
+        0x9A4AE0, // violet
+    ];
+    mix_rgb(HUES[i % 7], theme::color(theme::SLOT_BG), 55, 100)
+}
+
+/// Wallpaper renderer, mode from the Settings row: theme gradient (the
+/// default), the LingOS ROYGBIV diagonal (seven theme-tempered stripes
+/// with a blended edge band between neighbors), or solid. Per-row span
+/// fills only -- no per-pixel work, cheap enough to redraw every frame
+/// even under TCG.
 pub fn draw_wallpaper() {
     let h = framebuffer::height();
     let w = framebuffer::width();
     if h == 0 {
         return;
     }
-    let top = theme::color(theme::SLOT_WALL_TOP);
-    let bottom = theme::color(theme::SLOT_WALL_BOTTOM);
-    let denom = (h - 1).max(1) as u64;
-    for row in 0..h {
-        let mut color = 0u32;
-        for ch in 0..3 {
-            let a = ((top >> (ch * 8)) & 0xFF) as u64;
-            let b = ((bottom >> (ch * 8)) & 0xFF) as u64;
-            let mixed = (a * (h - 1 - row) as u64 + b * row as u64) / denom;
-            color |= (mixed as u32) << (ch * 8);
-        }
-        framebuffer::back_fill_rect(0, row, w, 1, color);
+    match unsafe { WALLPAPER } {
+        WALL_SOLID => framebuffer::back_clear(theme::color(theme::SLOT_BG)),
+        WALL_ROYGBIV => {
+            // Diagonal stripes: each row shifts the stripe origin left by
+            // half a pixel per row. Stripe width spans the diagonal extent
+            // so all seven hues are on-screen at once; each stripe's last
+            // ~25% blends into the next hue for a soft edge.
+            let diag = w + h / 2;
+            let sw = (diag / 7).max(8);
+            let blend_w = sw / 4;
+            for row in 0..h {
+                let offset = (row / 2) as i64;
+                for i in 0..8i64 {
+                    let hue = ((i % 7) + 7) as usize % 7;
+                    let next = (hue + 1) % 7;
+                    let x0 = i * sw as i64 - offset;
+                    let solid_w = sw - blend_w;
+                    // Solid body of the stripe.
+                    let sx = x0.max(0);
+                    let sw_clip = (x0 + solid_w as i64 - sx).max(0) as u32;
+                    if sx < w as i64 && sw_clip > 0 {
+                        framebuffer::back_fill_rect(sx as u32, row, sw_clip, 1, roygbiv_color(hue));
+                    }
+                    // Blended edge band, in 4 sub-steps toward the next hue.
+                    for b in 0..4u32 {
+                        let bx = x0 + solid_w as i64 + (blend_w / 4 * b) as i64;
+                        let bw = (blend_w / 4).max(1);
+                        if bx + (bw as i64) < 0 || bx >= w as i64 {
+                            continue;
+                        }
+                        let c = mix_rgb(roygbiv_color(hue), roygbiv_color(next), b * 25 + 12, 100);
+                        framebuffer::back_fill_rect(bx.max(0) as u32, row, bw, 1, c);
+                    }
+                }
+            }
+        },
+        _ => {
+            let top = theme::color(theme::SLOT_WALL_TOP);
+            let bottom = theme::color(theme::SLOT_WALL_BOTTOM);
+            let denom = (h - 1).max(1) as u64;
+            for row in 0..h {
+                let mut color = 0u32;
+                for ch in 0..3 {
+                    let a = ((top >> (ch * 8)) & 0xFF) as u64;
+                    let b = ((bottom >> (ch * 8)) & 0xFF) as u64;
+                    let mixed = (a * (h - 1 - row) as u64 + b * row as u64) / denom;
+                    color |= (mixed as u32) << (ch * 8);
+                }
+                framebuffer::back_fill_rect(0, row, w, 1, color);
+            }
+        },
     }
 }
 
@@ -736,8 +1005,14 @@ pub fn draw_content(slot: usize) {
         KIND_SETTINGS => {
             let row_h = 34u32;
             let row_w = dw.saturating_sub(32).max(40);
-            let labels: [&[u8]; SETTINGS_ROWS] =
-                [b"UI theme", b"Keyboard", b"Language", b"Clock"];
+            let labels: [&[u8]; SETTINGS_ROWS] = [
+                b"UI theme",
+                b"Sound theme",
+                b"Wallpaper",
+                b"Keyboard",
+                b"Language",
+                b"Clock",
+            ];
             for (i, label) in labels.iter().enumerate() {
                 let ry = y + i as u32 * row_h;
                 draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe {
@@ -747,8 +1022,16 @@ pub fn draw_content(slot: usize) {
                 let vx = x + 130;
                 match i {
                     0 => font8x8::draw_str(vx, ry, theme::name(theme::current()).as_bytes(), accent, panel),
-                    1 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
-                    2 => {
+                    1 => font8x8::draw_str(
+                        vx,
+                        ry,
+                        mixer::sound_theme_name(mixer::sound_theme()).as_bytes(),
+                        accent,
+                        panel,
+                    ),
+                    2 => font8x8::draw_str(vx, ry, wallpaper_name(unsafe { WALLPAPER }).as_bytes(), accent, panel),
+                    3 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
+                    4 => {
                         let li = locale::selected().unwrap_or(0);
                         if let Some(l) = locale::get(li) {
                             font_unicode::draw_utf8_str(

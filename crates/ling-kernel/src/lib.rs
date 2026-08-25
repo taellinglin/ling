@@ -44,8 +44,8 @@ use crate::arch::{bootmodule, io, timer};
 use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
-    flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, locale, mouse, net_e1000,
-    serial, term, theme, ui_scale, vga, wm, wm_liquid,
+    flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, lingfu, locale, mixer,
+    mouse, net_e1000, serial, term, theme, ui_scale, vga, wm, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -1234,13 +1234,286 @@ pub unsafe extern "C" fn ling_kernel_wm_clock_str() -> u64 {
     strings::ling_str_new(s.as_ptr(), s.len())
 }
 
-/// Vertical-gradient wallpaper from the active theme's wallpaper slots --
-/// the desktop's replacement for a flat `fb_back_clear`.
+/// Wallpaper from the active theme + Settings' wallpaper mode (gradient /
+/// ROYGBIV / solid) -- the desktop's replacement for a flat
+/// `fb_back_clear`.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_draw_wallpaper() -> u64 {
     wm::draw_wallpaper();
     0
+}
+
+// -- Audio: AC'97 + the OS mixer (drivers::{ac97, mixer}) ----------------
+// Windows-audio-shaped: per-app shared-mode streams with their own
+// volumes, one optional exclusive-mode takeover, a pentatonic synth for
+// jingles/sound themes, and the tape player's transport. See mixer.rs's
+// module doc for the full design rationale.
+
+/// Find and bring up the AC'97 device. 1 if present, 0 if not (audio
+/// calls all no-op safely in that case).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_init() -> u64 {
+    mixer::init() as u64
+}
+
+/// Keep the DMA ring fed -- call once per frame / shell-loop pass.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_pump() -> u64 {
+    mixer::pump();
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_master() -> u64 {
+    mixer::master_volume() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_set_master(v: u64) -> u64 {
+    mixer::set_master_volume(v as u32);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_stream_count() -> u64 {
+    mixer::stream_count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_stream_name(i: u64) -> u64 {
+    let n = mixer::stream_name(i as usize);
+    strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_stream_volume(i: u64) -> u64 {
+    mixer::stream_volume(i as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_set_stream_volume(i: u64, v: u64) -> u64 {
+    mixer::set_stream_volume(i as usize, v as u32);
+    0
+}
+
+/// ASIO-style exclusive takeover for stream `i`; 1 on success, 0 if
+/// another stream already holds it.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_exclusive_claim(i: u64) -> u64 {
+    mixer::exclusive_claim(i as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_exclusive_release(i: u64) -> u64 {
+    mixer::exclusive_release(i as usize);
+    0
+}
+
+/// Stream index currently holding exclusive mode, or a large sentinel
+/// (u64::MAX) when shared -- flat-u64 ABI has no -1.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_exclusive_holder() -> u64 {
+    let h = mixer::exclusive_holder();
+    if h < 0 {
+        u64::MAX
+    } else {
+        h as u64
+    }
+}
+
+/// Fire a UI sound event (mixer::EVENT_*) through the active sound theme.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_jingle(event: u64) -> u64 {
+    mixer::jingle(event as usize);
+    0
+}
+
+/// Play one raw synth note on a stream: frequency in centihertz
+/// (Hz * 100), duration shaping the decay envelope.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_audio_note(stream: u64, centihz: u64, dur_ms: u64) -> u64 {
+    mixer::note(stream as usize, centihz as u32, dur_ms as u32, 0, false);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sound_theme_count() -> u64 {
+    mixer::sound_theme_count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sound_theme_current() -> u64 {
+    mixer::sound_theme() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sound_theme_select(i: u64) -> u64 {
+    mixer::set_sound_theme(i as usize);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sound_theme_name(i: u64) -> u64 {
+    let n = mixer::sound_theme_name(i as usize);
+    strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+// Tape player transport (the `play` command's engine).
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_load(seed: u64, len_ms: u64) -> u64 {
+    mixer::player_load(seed, len_ms as u32);
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_play() -> u64 {
+    mixer::player_play();
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_pause() -> u64 {
+    mixer::player_pause();
+    0
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_stop() -> u64 {
+    mixer::player_stop();
+    0
+}
+
+/// 0 stopped, 1 playing, 2 paused.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_state() -> u64 {
+    mixer::player_state() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_pos_ms() -> u64 {
+    mixer::player_pos_ms()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_len_ms() -> u64 {
+    mixer::player_len_ms()
+}
+
+/// One-line ASCII tape transport (`[>] |####----| 00:12 / 01:00`) --
+/// built kernel-side because a variable-length bar is a loop `.ling`
+/// can't hold. Redraw with a leading `\r` for the in-place effect.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_player_line() -> u64 {
+    let s = mixer::player_line();
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+
+/// Top-bar tray (volume + network icons, volume popover when open).
+/// `net_up` is the real `ling_kernel_net_init` result.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_tray(net_up: u64) -> u64 {
+    wm::draw_tray(net_up != 0);
+    0
+}
+
+// -- lingfu network client (drivers::{netstack, lingfu}) -- catalog sync,
+// search, download, install over real HTTP. --------------------------------
+
+/// Fetch the package catalog from the configured repo (lingfs `/repo`,
+/// default 10.0.2.2:8000 -- QEMU SLIRP's host alias). Returns the number
+/// of catalog entries; 0 = failure (reasons printed).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_lingfu_sync() -> u64 {
+    lingfu::sync() as u64
+}
+
+/// Print catalog entries containing `query` (empty string = all).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_lingfu_query(query: u64) -> u64 {
+    lingfu::list(arg_str(query)) as u64
+}
+
+/// Download + install one catalog package by name; 1 on success.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_lingfu_fetch_install(name: u64) -> u64 {
+    lingfu::install(arg_str(name)) as u64
+}
+
+/// 1 when this kernel was loaded by the installed-disk boot path
+/// (stage1/stage2, no GRUB/Multiboot2 info) -- the desktop's cue to show
+/// the login greeter instead of the Live auto-login flow.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_boot_is_disk() -> u64 {
+    framebuffer::booted_from_disk() as u64
+}
+
+/// Name of the detected boot-target block device ("ahci0" / "ata0") --
+/// the installer's disk-selection list. One device today, honestly: the
+/// block layer drives AHCI port 0 or the ATA primary master, so the list
+/// has one real entry, not an invented menu.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_disk_name() -> u64 {
+    let n = fs::blockdev::active_driver_name();
+    strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+/// Erase the target disk's boot-critical regions for a clean install:
+/// zeros the MBR/stage1, stage2 area, kernel header sector, and the
+/// lingfs superblock sectors. NOT a full-surface wipe (that claim would
+/// need minutes of I/O this returns too fast to have done) -- it makes
+/// the disk genuinely non-booting and unformatted, which is what "erase
+/// before install" needs. Returns 1 on success.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_disk_erase_quick() -> u64 {
+    let zero = [0u8; fs::blockdev::SECTOR_SIZE];
+    // LBA 0 (stage1/MBR), 1..16 (stage2), 17 (kernel header).
+    for lba in 0..=17u32 {
+        if fs::blockdev::write_sector(lba, &zero).is_err() {
+            return 0;
+        }
+    }
+    // lingfs superblocks: double-buffered at the base LBA (see
+    // lingfs.rs's LINGFS_BASE_LBA reservation comment in packages/README).
+    for lba in 8192..8200u32 {
+        if fs::blockdev::write_sector(lba, &zero).is_err() {
+            return 0;
+        }
+    }
+    1
 }
 
 /// Install a `.lpkg` blob already stored at `blob_name` in lingfs (see
@@ -1308,9 +1581,17 @@ pub unsafe extern "C" fn ling_kernel_mouse_set_bounds(w: u64, h: u64) -> u64 {
 /// existing/compiled callers that still call it between reading
 /// `ling_kernel_mouse_x/y/buttons` keep working, just reading already-fresh
 /// state instead of triggering a drain.
+/// Drain any bytes the 8042 is holding (routed keyboard/mouse by the
+/// status register's origin bit) with interrupts briefly masked. No longer
+/// a pure no-op: QEMU's 8042 was observed parking aux data with OBF high
+/// and never raising IRQ12 (see `arch::x86_64::idt::poll_drain_8042`'s
+/// doc), so the WM's once-per-frame call to this is what guarantees input
+/// progress everywhere; the IRQ path remains for low-latency delivery on
+/// hardware that does assert the line.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_mouse_poll() -> u64 {
+    arch::idt::poll_drain_8042();
     0
 }
 

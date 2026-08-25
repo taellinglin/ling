@@ -33,20 +33,28 @@
 //! for the compiler to hoist across a polling loop); `TXDCTL`/`RXDCTL` now
 //! configured (some driver references treat this as required, not optional).
 //!
-//! **Still unresolved, and deeper than any of the above**: independently
-//! verified via a QEMU `-object filter-dump` packet capture on the netdev
-//! itself (catches every frame regardless of guest-side correctness) that
-//! the transmitted frame — despite being byte-perfect and despite every
-//! device-side signal (TDH, ICR.TXQE) indicating the hardware processed it
-//! — never actually reaches the network backend at all (0 bytes captured).
-//! This rules out everything checked so far (frame content, descriptor
-//! format, ring setup, TXDCTL) and points at something more fundamental in
-//! this specific QEMU e1000 emulation that needs either QEMU source-level
-//! debugging or a different environment to make further progress on. Treat
-//! `init()`/`mac()`/`link_up()`/`transmit()`'s ring mechanics as real and
-//! working; treat actual packet delivery (in either direction) and anything
-//! depending on it (`arp_selftest`, future IP-stack integration) as
-//! unverified until this is resolved.
+//! **RESOLVED (2026-08-26)** -- the long-standing "byte-perfect frame,
+//! TDH advances, TXQE fires, yet 0 bytes ever reach the backend" mystery
+//! had two stacked root causes, found via the same filter-dump setup that
+//! originally proved the silence:
+//!
+//! 1. **PCI bus mastering was never enabled.** Without PCI_COMMAND.BM the
+//!    device cannot DMA; QEMU's PCI core makes its descriptor reads
+//!    return zeros, so the model "processed" all-zero descriptors (TDH
+//!    still advances, TXQE still fires -- the exact observed signals) and
+//!    emitted zero-length frames the capture never saw, while the real
+//!    frame sat unread in guest memory. SeaBIOS only sets BM on devices
+//!    it boots from -- disk worked, NIC didn't. `init()` now sets
+//!    MEM+BM explicitly.
+//! 2. **The RX wait was ~50x shorter than intended.** TSC calibration
+//!    under QEMU TCG runs tens of times fast, so `arp_selftest`'s "2s"
+//!    poll was ~20-40ms of wall clock -- shorter than QEMU's deferred RX
+//!    delivery. The budget is now 30s of kernel time.
+//!
+//! With both fixed: `nettest`'s ARP selftest PASSES against QEMU SLIRP --
+//! request on the wire (pcap-verified), gateway reply received and parsed
+//! by `receive()`. TX and RX are confirmed working end to end; the IP
+//! stack can build on this for real.
 use crate::arch::{pci, timer};
 use core::ptr;
 
@@ -181,6 +189,25 @@ fn eeprom_read(addr: u8) -> u16 {
 /// controller is present at all — callers should treat "no networking" as
 /// a normal, expected outcome (e.g. real hardware with a different NIC),
 /// not a fatal error.
+static mut INITED: bool = false;
+
+/// Idempotent wrapper: init once, remember the outcome. The polled stack
+/// (`netstack`/`lingfu`) calls this on every operation rather than
+/// trusting some earlier command to have run `net_init` -- a full re-init
+/// mid-flow would tear down live descriptor rings.
+pub fn ensure_init() -> bool {
+    unsafe {
+        if INITED {
+            return true;
+        }
+    }
+    let ok = init().is_ok();
+    unsafe {
+        INITED = ok;
+    }
+    ok
+}
+
 pub fn init() -> Result<(), ()> {
     let loc = pci::find(0x02, 0x00, 0x00).ok_or(())?;
     let bar0 = loc.bar(0);
@@ -188,6 +215,18 @@ pub fn init() -> Result<(), ()> {
         return Err(());
     }
     unsafe { MMIO_BASE = bar0 as usize };
+
+    // Enable PCI memory space + BUS MASTERING. This was the module doc's
+    // long-unexplained "frame never reaches the backend" mystery: without
+    // PCI_COMMAND.BM (bit 2) the device cannot DMA, and QEMU's PCI core
+    // makes its descriptor reads return zeros -- the model then happily
+    // "processes" all-zero descriptors (TDH advances, ICR.TXQE fires,
+    // exactly the observed device-driven effects) and emits zero-length
+    // frames the filter-dump capture never sees, while the byte-perfect
+    // frame sits unread in OUR buffer. SeaBIOS only sets BM on devices it
+    // boots from, which is why the disk worked and the NIC didn't.
+    let cmd = loc.read32(0x04);
+    pci::write32(loc.bus, loc.device, loc.function, 0x04, cmd | 0x0006);
 
     // Full device reset, then wait for it to clear (the standard e1000
     // reset idiom) -- bounded, not trusted to always self-clear promptly.
@@ -448,7 +487,12 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
 
     let mut buf = [0u8; BUF_SIZE];
     let mut found = None;
-    timer::poll_until(2_000_000, || {
+    // 30s of *kernel* time, not the old 2s: TSC calibration under QEMU
+    // TCG runs tens of times fast (observed via wildly inflated uptime
+    // displays), so a 2s kernel-time budget was only ~20-40ms of wall
+    // clock -- shorter than QEMU's bottom-half RX delivery hop. On real
+    // hardware this only lengthens the genuine-no-reply worst case.
+    timer::poll_until(30_000_000, || {
         if let Some(len) = receive(&mut buf) {
             if len >= 42
                 && buf[12] == 0x08
@@ -472,6 +516,19 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
         // writes it -- so this distinguishes "RX path is fundamentally
         // broken" from "nothing happened to arrive that matched."
         log_hex(b"net: arp_selftest: RDH after wait=0x", reg_read(REG_RDH));
+        // Full RX-side state dump for the "reply visible in the wire
+        // capture, RDH never moved" investigation: is the receiver
+        // actually enabled as configured, does the ring geometry read
+        // back, and did descriptor 0 get a status write despite RDH?
+        log_hex(b"net: RCTL readback=0x", reg_read(REG_RCTL));
+        log_hex(b"net: RDT=0x", reg_read(REG_RDT));
+        log_hex(b"net: RDLEN=0x", reg_read(REG_RDLEN));
+        log_hex(b"net: RDBAL=0x", reg_read(REG_RDBAL));
+        unsafe {
+            log_hex(b"net: ring virt=0x", RX_RING.0.as_ptr() as u32);
+            log_hex(b"net: desc0 status=0x", rx_status(0) as u32);
+            log_hex(b"net: desc0 len=0x", RX_RING.0[0].length as u32);
+        }
     }
     found
 }
