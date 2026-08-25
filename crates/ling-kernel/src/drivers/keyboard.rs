@@ -21,15 +21,20 @@ const RSHIFT: u8 = 0x36;
 
 static mut SHIFT_DOWN: bool = false;
 
-// Extended (0xE0-prefixed) keys: only Up/Down are handled, for command
-// history recall (`ling_kernel_read_line`). Reported to callers as DC1/DC2
-// (0x11/0x12) — control codes nothing else uses. Left/Right aren't handled
-// yet (no mid-line cursor movement in the line editor).
+// Extended (0xE0-prefixed) keys: the four arrows, reported to callers as
+// DC1..DC4 (0x11..0x14) — control codes nothing else uses. Up/Down came
+// first (command history recall in `ling_kernel_read_line`); Left/Right
+// were added for the desktop's Settings rows (value cycling). The line
+// editor still ignores Left/Right (no mid-line cursor movement yet).
 const EXT_PREFIX: u8 = 0xE0;
 const EXT_UP: u8 = 0x48;
 const EXT_DOWN: u8 = 0x50;
+const EXT_LEFT: u8 = 0x4B;
+const EXT_RIGHT: u8 = 0x4D;
 pub const UP_ARROW: u8 = 0x11;
 pub const DOWN_ARROW: u8 = 0x12;
+pub const LEFT_ARROW: u8 = 0x13;
+pub const RIGHT_ARROW: u8 = 0x14;
 
 static mut PENDING_EXTENDED: bool = false;
 
@@ -222,6 +227,12 @@ pub fn read_char() -> u8 {
                 if code == EXT_DOWN {
                     return DOWN_ARROW;
                 }
+                if code == EXT_LEFT {
+                    return LEFT_ARROW;
+                }
+                if code == EXT_RIGHT {
+                    return RIGHT_ARROW;
+                }
                 continue;
             }
             if code == LCTRL {
@@ -299,6 +310,12 @@ pub fn poll_char() -> u8 {
                 }
                 if code == EXT_DOWN {
                     return DOWN_ARROW;
+                }
+                if code == EXT_LEFT {
+                    return LEFT_ARROW;
+                }
+                if code == EXT_RIGHT {
+                    return RIGHT_ARROW;
                 }
                 return 0;
             }

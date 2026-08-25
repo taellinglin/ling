@@ -205,6 +205,23 @@ fn drain_8042() {
     }
 }
 
+/// Polled variant of the same drain, for callers outside interrupt context
+/// (the WM's once-per-frame `ling_kernel_mouse_poll`). Interrupts are
+/// masked across the drain so an IRQ1/IRQ12 can't interleave and split a
+/// 3-byte mouse packet between the two paths. This exists because QEMU's
+/// 8042 was observed holding OBF high with aux data queued while never
+/// raising IRQ12 at all (see `drain_8042`'s doc) -- with a per-frame poll,
+/// input keeps flowing on any 8042, IRQ-generous or not.
+pub(crate) fn poll_drain_8042() {
+    unsafe {
+        core::arch::asm!("cli");
+    }
+    drain_8042();
+    unsafe {
+        core::arch::asm!("sti");
+    }
+}
+
 extern "x86-interrupt" fn isr_keyboard(_frame: InterruptFrame) {
     drain_8042();
     pic::eoi(1);
