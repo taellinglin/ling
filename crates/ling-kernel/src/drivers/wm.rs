@@ -32,11 +32,31 @@ use crate::drivers::{
 };
 use crate::fs::lingfs;
 
-// Same spring feel as wm_liquid.rs, applied per window.
-const SPRING_K: f64 = 0.028;
+// Same spring feel as wm_liquid.rs, applied per window. Stiffness is a
+// runtime knob now (Settings > Window spring): higher snaps windows to
+// the cursor faster with less soap-film wobble, lower is looser/jellier.
+// Stored x1000 so the flat-u64 FFI / integer Settings row can carry it.
 const DAMPING: f64 = 0.22;
 const STRETCH_SENSITIVITY: f64 = 0.006;
 const MAX_STRETCH: f64 = 0.35;
+const SPRING_K_MIN: u32 = 10; // 0.010
+const SPRING_K_MAX: u32 = 80; // 0.080
+static mut SPRING_K_MILLI: u32 = 28; // 0.028 default
+
+fn spring_k() -> f64 {
+    unsafe { SPRING_K_MILLI as f64 / 1000.0 }
+}
+
+pub fn spring_stiffness_milli() -> u32 {
+    unsafe { SPRING_K_MILLI }
+}
+
+pub fn spring_adjust(delta: i32) {
+    unsafe {
+        let v = (SPRING_K_MILLI as i32 + delta).clamp(SPRING_K_MIN as i32, SPRING_K_MAX as i32);
+        SPRING_K_MILLI = v as u32;
+    }
+}
 
 pub const MAX_WINDOWS: usize = 6;
 pub const TITLEBAR_H: u32 = 28;
@@ -113,11 +133,93 @@ static mut SPAWN_COUNT: u32 = 0;
 static mut HOVER_DOCK: i32 = -1;
 
 // -- Settings window state -------------------------------------------------
-// Rows: UI theme / Sound theme / Wallpaper / Display / Keyboard / Language
-// / Clock.
-const SETTINGS_ROWS: usize = 7;
+// Rows: UI theme / Sound theme / Wallpaper / Display / Window spring /
+// Keyboard / Language / Clock. Changes apply live as you arrow; the
+// Apply/OK buttons persist them to lingfs so they survive a reboot.
+const SETTINGS_ROWS: usize = 8;
 static mut SETTINGS_CURSOR: usize = 0;
 static mut CLOCK_24H: bool = true;
+
+/// Persist the live settings to lingfs `/settings` (one line of small
+/// integers) so Apply/OK actually mean something across reboots. Format
+/// is deliberately trivial and versioned by field order.
+pub fn settings_save() {
+    let mut line = [0u8; 64];
+    let vals = [
+        theme::current() as u32,
+        mixer::sound_theme() as u32,
+        unsafe { WALLPAPER },
+        display::preferred() as u32,
+        spring_stiffness_milli(),
+        kbdlayout::current() as u32,
+        locale::selected().unwrap_or(0) as u32,
+        unsafe { CLOCK_24H as u32 },
+    ];
+    let mut n = 0;
+    for (i, v) in vals.iter().enumerate() {
+        if i > 0 && n < line.len() {
+            line[n] = b' ';
+            n += 1;
+        }
+        n += write_u32_into(&mut line[n..], *v);
+    }
+    let _ = lingfs::write_file("settings", &line[..n]);
+}
+
+/// Restore settings written by `settings_save`. Called once at desktop
+/// start. Silently keeps defaults if the file is absent/garbled.
+pub fn settings_load() {
+    let mut buf = [0u8; crate::fs::lingfs::BLOCK_SIZE];
+    let Ok(Some(len)) = lingfs::read_file("settings", &mut buf) else { return };
+    let mut it = buf[..len].split(|&b| b == b' ' || b == b'\n').filter(|s| !s.is_empty());
+    let mut next = || -> Option<u32> {
+        it.next().and_then(|s| core::str::from_utf8(s).ok()).and_then(|s| s.parse::<u32>().ok())
+    };
+    if let Some(v) = next() {
+        theme::set(v as usize);
+    }
+    if let Some(v) = next() {
+        mixer::set_sound_theme(v as usize);
+    }
+    if let Some(v) = next() {
+        set_wallpaper(v);
+    }
+    let _display = next(); // display pref lives in the boot header, not here
+    if let Some(v) = next() {
+        unsafe { SPRING_K_MILLI = v.clamp(SPRING_K_MIN, SPRING_K_MAX) };
+    }
+    if let Some(v) = next() {
+        kbdlayout::set_current(v as usize);
+    }
+    if let Some(v) = next() {
+        locale::select(v as usize);
+    }
+    if let Some(v) = next() {
+        unsafe { CLOCK_24H = v != 0 };
+    }
+}
+
+fn write_u32_into(buf: &mut [u8], mut v: u32) -> usize {
+    if buf.is_empty() {
+        return 0;
+    }
+    if v == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut k = 0;
+    while v > 0 && k < tmp.len() {
+        tmp[k] = b'0' + (v % 10) as u8;
+        v /= 10;
+        k += 1;
+    }
+    let n = k.min(buf.len());
+    for i in 0..n {
+        buf[i] = tmp[k - 1 - i];
+    }
+    n
+}
 
 // -- Wallpaper --------------------------------------------------------------
 pub const WALL_GRADIENT: u32 = 0;
@@ -570,8 +672,17 @@ fn dock_hit(mx: i64, my: i64) -> i32 {
 /// buttons, titlebar drag starts, raise-on-click), drag tracking, and the
 /// per-window spring advance. Call once per frame from the `.ling` loop,
 /// before reading any slot getter.
+static mut SETTINGS_LOADED: bool = false;
+
 pub fn step(mx: i64, my: i64, buttons: u8) {
     unsafe {
+        // Restore persisted settings on the first frame (lingfs is mounted
+        // by the time the desktop loop starts). Lazy so no extra intrinsic
+        // / compiler rebuild is needed just to call settings_load.
+        if !SETTINGS_LOADED {
+            SETTINGS_LOADED = true;
+            settings_load();
+        }
         // Serial diagnostic, once every 512 frames: proves whether IRQ12
         // bytes are flowing and where the driver thinks the cursor is --
         // the framebuffer regression lesson applied to input (a dead mouse
@@ -650,8 +761,10 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
                             DRAG_WIN = idx as i32;
                             GRAB_DX = mx as f64 - windows()[idx].px;
                             GRAB_DY = my as f64 - windows()[idx].py;
-                            log_hex(b"wm: grab my=0x", my as u32);
-                            log_hex(b"wm: grab py=0x", windows()[idx].py as u32);
+                        } else {
+                            // Click in the content area -- let the app
+                            // handle it (Settings Apply/OK buttons today).
+                            content_click(idx, mx, my);
                         }
                     }
                 } else {
@@ -699,8 +812,9 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
                 // (1 + damping*step) decays monotonically at ANY step
                 // size; the spring term stays explicit so the liquid
                 // overshoot the WM is named for survives.
-                w.vx = (w.vx + (w.tx - w.px) * SPRING_K * step) / (1.0 + DAMPING * step);
-                w.vy = (w.vy + (w.ty - w.py) * SPRING_K * step) / (1.0 + DAMPING * step);
+                let k = spring_k();
+                w.vx = (w.vx + (w.tx - w.px) * k * step) / (1.0 + DAMPING * step);
+                w.vy = (w.vy + (w.ty - w.py) * k * step) / (1.0 + DAMPING * step);
                 w.px += w.vx * step;
                 w.py += w.vy * step;
                 // Hard floor below the top bar: overshoot may squash
@@ -842,12 +956,13 @@ fn settings_key(k: u8) {
                         let cur = display::preferred() as i32;
                         display::set_preferred(((cur + dir + n) % n) as usize);
                     },
-                    4 => {
+                    4 => spring_adjust(dir * 2), // window spring stiffness
+                    5 => {
                         let n = kbdlayout::count() as i32;
                         let cur = kbdlayout::current() as i32;
                         kbdlayout::set_current(((cur + dir + n) % n) as usize);
                     },
-                    5 => {
+                    6 => {
                         let n = locale::count() as i32;
                         let cur = locale::selected().unwrap_or(0) as i32;
                         locale::select(((cur + dir + n) % n) as usize);
@@ -1270,6 +1385,45 @@ fn draw_row_ring(x: u32, y: u32, w: u32, h: u32, selected: bool) {
     }
 }
 
+// Settings Apply/OK button rects, in absolute screen pixels, from the
+// window's deformed rect. OK sits bottom-right, Apply just left of it.
+fn settings_ok_rect(wx: i64, wy: i64, dw: u32, dh: u32) -> (u32, u32, u32, u32) {
+    let (bw, bh) = (70u32, 28u32);
+    let ox = (wx + dw as i64 - bw as i64 - 16).max(0) as u32;
+    let oy = (wy + dh as i64 - bh as i64 - 14).max(0) as u32;
+    (ox, oy, bw, bh)
+}
+
+fn settings_apply_rect(wx: i64, wy: i64, dw: u32, dh: u32) -> (u32, u32, u32, u32) {
+    let (ox, oy, bw, bh) = settings_ok_rect(wx, wy, dw, dh);
+    (ox.saturating_sub(bw + 10), oy, bw, bh)
+}
+
+fn pt_in(px: i64, py: i64, r: (u32, u32, u32, u32)) -> bool {
+    px >= r.0 as i64 && px < (r.0 + r.2) as i64 && py >= r.1 as i64 && py < (r.1 + r.3) as i64
+}
+
+/// Handle a click inside a window's content area (below the titlebar).
+/// Today only Settings has clickable content (Apply/OK). Returns true if
+/// the click was consumed.
+fn content_click(idx: usize, mx: i64, my: i64) -> bool {
+    let w = windows()[idx];
+    if w.kind != KIND_SETTINGS {
+        return false;
+    }
+    let (wx, wy, dw, dh) = deformed_rect(&w);
+    if pt_in(mx, my, settings_ok_rect(wx, wy, dw, dh)) {
+        settings_save();
+        close(idx);
+        return true;
+    }
+    if pt_in(mx, my, settings_apply_rect(wx, wy, dw, dh)) {
+        settings_save();
+        return true;
+    }
+    false
+}
+
 /// Render the interior of the window at z `slot` into the back buffer.
 /// The `.ling` side has already drawn the shadow/frame/titlebar; `x..y`
 /// here is the content origin (below the titlebar).
@@ -1347,6 +1501,7 @@ pub fn draw_content(slot: usize) {
                 b"Sound theme",
                 b"Wallpaper",
                 b"Display",
+                b"Window spring",
                 b"Keyboard",
                 b"Language",
                 b"Clock",
@@ -1369,9 +1524,6 @@ pub fn draw_content(slot: usize) {
                     ),
                     2 => font8x8::draw_str(vx, ry, wallpaper_name(unsafe { WALLPAPER }).as_bytes(), accent, panel),
                     3 => {
-                        // Show the persisted next-boot mode + live size; if
-                        // there's no installed-boot header to persist into,
-                        // say so instead of implying it stuck.
                         font8x8::draw_str(vx, ry, display::mode_label(display::preferred()).as_bytes(), accent, panel);
                         if display::persistable() {
                             font8x8::draw_str(vx + 130, ry, b"(next boot)", dim, panel);
@@ -1379,8 +1531,22 @@ pub fn draw_content(slot: usize) {
                             font8x8::draw_str(vx + 130, ry, display::current_str().as_bytes(), dim, panel);
                         }
                     },
-                    4 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
-                    5 => {
+                    4 => {
+                        // Spring stiffness as a small bar + numeric milli.
+                        let milli = spring_stiffness_milli();
+                        let mut nb = [0u8; 8];
+                        let mut nn = 0;
+                        nb[nn] = b'0'; nb[nn + 1] = b'.'; nn += 2;
+                        nb[nn] = b'0' + ((milli / 10) % 10) as u8; nn += 1;
+                        nb[nn] = b'0' + (milli % 10) as u8; nn += 1;
+                        font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                        let bx = vx + 60;
+                        framebuffer::back_fill_rounded_rect(bx, ry + 2, 100, 6, 3, theme::color(theme::SLOT_DOT_DIM));
+                        let fill = (milli.saturating_sub(SPRING_K_MIN)) * 100 / (SPRING_K_MAX - SPRING_K_MIN);
+                        framebuffer::back_fill_rounded_rect(bx, ry + 2, fill.max(1), 6, 3, accent);
+                    },
+                    5 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
+                    6 => {
                         let li = locale::selected().unwrap_or(0);
                         if let Some(l) = locale::get(li) {
                             font_unicode::draw_utf8_str(
@@ -1399,13 +1565,17 @@ pub fn draw_content(slot: usize) {
                     },
                 }
             }
-            font8x8::draw_str(
-                x,
-                y + SETTINGS_ROWS as u32 * 34 + 10,
-                b"up/down: row   left/right: change",
-                dim,
-                panel,
-            );
+            let hint_y = y + SETTINGS_ROWS as u32 * row_h + 8;
+            font8x8::draw_str(x, hint_y, b"up/down: row   left/right: change", dim, panel);
+            // Apply / OK buttons (mouse-clickable; see settings_content_click).
+            let (ax, ay, aw, ah) = settings_apply_rect(wx, wy, dw, dh);
+            framebuffer::back_fill_rounded_rect(ax, ay, aw, ah, 6, theme::color(theme::SLOT_PANEL_BORDER));
+            framebuffer::back_fill_rounded_rect(ax + 1, ay + 1, aw - 2, ah - 2, 5, panel);
+            font8x8::draw_str(ax + 18, ay + 9, b"Apply", text, panel);
+            let (ox, oy, ow, oh) = settings_ok_rect(wx, wy, dw, dh);
+            framebuffer::back_fill_rounded_rect(ox, oy, ow, oh, 6, accent);
+            framebuffer::back_fill_rounded_rect(ox + 1, oy + 1, ow - 2, oh - 2, 5, theme::color(theme::SLOT_TITLEBAR));
+            font8x8::draw_str(ox + 28, oy + 9, b"OK", theme::color(theme::SLOT_TITLEBAR_TEXT), theme::color(theme::SLOT_TITLEBAR));
         },
         KIND_FILES => {
             unsafe {
