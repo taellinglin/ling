@@ -99,6 +99,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_list_new", &[], types::I64),
         ("ling_list_push", &[types::I64, types::I64], types::I64),
         ("ling_list_get", &[types::I64, types::I64], types::I64),
+        ("ling_list_set", &[types::I64, types::I64, types::I64], types::I64),
         ("ling_list_len", &[types::I64], types::I64),
         (
             "ling_struct_new",

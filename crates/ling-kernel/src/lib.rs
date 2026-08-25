@@ -1392,6 +1392,7 @@ pub unsafe extern "C" fn ling_kernel_gui_read_line(x: u64, y: u64, fg: u64, bg: 
 /// bytes and length rather than a boxed Ling string, so the confirmed
 /// variant can compare two reads without round-tripping through the string
 /// runtime.
+#[cfg(target_arch = "x86_64")]
 unsafe fn gui_read_masked_line_at(x: u32, y: u32, fg: u32, bg: u32) -> ([u8; MAX_LINE], usize) {
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;
@@ -1476,6 +1477,7 @@ pub unsafe extern "C" fn ling_kernel_gui_read_password_confirmed(
 /// Shared by `ling_kernel_read_line_masked` and the confirmed-password
 /// variant below -- see `gui_read_masked_line_at`'s doc for why this
 /// returns raw bytes rather than a boxed Ling string.
+#[cfg(target_arch = "x86_64")]
 unsafe fn read_masked_line() -> ([u8; MAX_LINE], usize) {
     let mut buf = [0u8; MAX_LINE];
     let mut len = 0usize;

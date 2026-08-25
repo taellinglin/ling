@@ -3,7 +3,7 @@
 //! per-function symbol maps, so both backends build identical code from the same
 //! source of truth.
 
-use super::numtype::NumberTypes;
+use super::numtype::{int_literal_value, NumberTypes};
 use super::runtime;
 use cranelift::codegen::ir::{FuncRef, GlobalValue, InstBuilder, StackSlotData, StackSlotKind};
 use cranelift::prelude::*;
@@ -45,7 +45,21 @@ pub(crate) fn build_function_body(
             let params: Vec<Value> = builder.block_params(blocks[bi]).to_vec();
             for (j, val) in params.iter().enumerate() {
                 if let Some(&var) = vars.get(&Local(j + 1)) {
-                    builder.def_var(var, *val);
+                    // The ABI always passes the boxed representation (callers
+                    // don't know the callee's internal Int-vs-Boxed choice
+                    // for its own parameters — see Rvalue::Call in
+                    // translate_rvalue, which always emits boxed arguments).
+                    // If numtype proved this parameter integral, the rest of
+                    // the function body reads it raw (translate_op_int's
+                    // `local_is_int` case skips unboxing), so it must be
+                    // unboxed here at entry to match, not left as the
+                    // incoming boxed bit pattern.
+                    let stored = if ctx.nt.local_is_int(ctx.fname, j + 1) {
+                        boxed_to_int(builder, *val)
+                    } else {
+                        *val
+                    };
+                    builder.def_var(var, stored);
                 }
             }
         }
@@ -405,10 +419,10 @@ fn translate_binop_rvalue(
             // path never does. Only take the integer path for a safe constant
             // divisor; variable divisors fall through to the boxed float remainder.
             BinOp::Rem => {
-                if let Operand::Constant(Constant::I64(c)) = rhs {
-                    if *c != 0 && *c != -1 {
+                if let Some(c) = int_literal_value(rhs) {
+                    if c != 0 && c != -1 {
                         let a = translate_op_int(lhs, builder, ctx);
-                        let b = builder.ins().iconst(types::I64, *c);
+                        let b = builder.ins().iconst(types::I64, c);
                         return (builder.ins().srem(a, b), Repr::Int);
                     }
                 }
@@ -500,7 +514,14 @@ pub(crate) fn translate_op_int(
     ctx: &TransCtx,
 ) -> Value {
     match op {
-        Operand::Constant(Constant::I64(v)) => builder.ins().iconst(types::I64, *v),
+        // Ling has no integer-literal syntax: every source literal lowers to
+        // Constant::F64 (see numtype::constant_is_int's doc comment), so
+        // int_literal_value's F64 case is the common one here — a literal
+        // used directly as an operand, e.g. `n % 2` or a call argument like
+        // `modexp(base, 65537, 65521)`.
+        Operand::Constant(_) if int_literal_value(op).is_some() => {
+            builder.ins().iconst(types::I64, int_literal_value(op).unwrap())
+        },
         Operand::Copy(l) | Operand::Move(l) if ctx.nt.local_is_int(ctx.fname, l.0) => {
             builder.use_var(ctx.vars[l])
         },
@@ -1059,6 +1080,21 @@ pub(crate) fn emit_runtime_call2(
     builder.inst_results(inst)[0]
 }
 
+pub(crate) fn emit_runtime_call3(
+    builder: &mut FunctionBuilder,
+    name: &str,
+    a: Value,
+    b: Value,
+    c: Value,
+    runtime_refs: &HashMap<String, FuncRef>,
+) -> Value {
+    let fr = *runtime_refs
+        .get(name)
+        .unwrap_or_else(|| panic!("runtime fn not found: {}", name));
+    let inst = builder.ins().call(fr, &[a, b, c]);
+    builder.inst_results(inst)[0]
+}
+
 pub(crate) fn emit_runtime_call4(
     builder: &mut FunctionBuilder,
     name: &str,
@@ -1123,13 +1159,62 @@ pub(crate) fn emit_builtin_call(
         {
             return emit_runtime_call0(builder, "__ling_list_new", runtime_refs);
         },
-        "list_push" | "เพิ่มรายการ" | "列表添加" | "リスト追加" | "목록추가" if args.len() >= 2 =>
+        "list_push"
+        | "เพิ่มรายการ"
+        | "列表添加"
+        | "リスト追加"
+        | "목록추가"
+        | "افزودن_به_فهرست"
+        | "أضف_للقائمة"
+        | "הוסף_לרשימה"
+        | "فہرست_میں_شامل_کرو"
+        | "ajouter_liste"
+        | "liste_anhängen"
+        | "добавить_в_список"
+            if args.len() >= 2 =>
         {
             return emit_runtime_call2(builder, "__ling_list_push", args[0], args[1], runtime_refs);
         },
-        "list_get" | "รับรายการ" | "取元素" | "要素取得" | "요소가져오기" if args.len() >= 2 =>
+        "list_get"
+        | "รับรายการ"
+        | "取元素"
+        | "要素取得"
+        | "요소가져오기"
+        | "دریافت_از_فهرست"
+        | "اجلب_من_القائمة"
+        | "קבל_מרשימה"
+        | "فہرست_سے_حاصل_کرو"
+        | "obtenir_liste"
+        | "liste_abrufen"
+        | "получить_из_списка"
+            if args.len() >= 2 =>
         {
             return emit_runtime_call2(builder, "__ling_list_get", args[0], args[1], runtime_refs);
+        },
+        // list_set was the odd one out: list_get/list_push already bypassed the
+        // generic __ling_builtin dispatch (stack-slot arg marshaling + a
+        // string-name lookup on every call), but list_set didn't — so any loop
+        // mutating a list element every iteration (e.g. spring_rope's symplectic
+        // Euler integrator) paid that overhead on every single write.
+        "list_set"
+        | "ตั้งรายการ"
+        | "设元素"
+        | "要素設定"
+        | "요소설정"
+        | "تنظیم_عنصر_فهرست"
+        | "عيّن_عنصر_القائمة"
+        | "קבע_איבר_רשימה"
+        | "فہرست_سیٹ"
+            if args.len() >= 3 =>
+        {
+            return emit_runtime_call3(
+                builder,
+                "__ling_list_set",
+                args[0],
+                args[1],
+                args[2],
+                runtime_refs,
+            );
         },
         _ => {},
     }
@@ -1258,6 +1343,15 @@ pub(crate) fn translate_terminator(
         },
         TerminatorKind::Return => {
             let ret = builder.use_var(ctx.vars[&Local(0)]);
+            // The ABI always returns the boxed representation — callers (see
+            // Rvalue::Call in translate_rvalue) unconditionally treat a
+            // call's result as Repr::Boxed, since they don't know the
+            // callee's internal Int-vs-Boxed choice for its own return slot.
+            // Local(0) itself may be stored raw when `local_is_int` proved
+            // the return integral (translate_stmt's assignment coercion
+            // keeps it consistent with that internal representation), so it
+            // must be boxed here at the actual return, not just left as-is.
+            let ret = if ctx.nt.local_is_int(ctx.fname, 0) { int_to_boxed(builder, ret) } else { ret };
             builder.ins().return_(&[ret]);
         },
         TerminatorKind::Unreachable => {

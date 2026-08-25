@@ -98,7 +98,7 @@ impl LingCompiler {
             ling_cos, ling_div, ling_eq, ling_f64_add, ling_f64_div, ling_f64_eq, ling_f64_ge,
             ling_f64_gt, ling_f64_le, ling_f64_lt, ling_f64_mul, ling_f64_neg, ling_f64_rem,
             ling_f64_sub, ling_floor, ling_free, ling_ge, ling_gt, ling_le, ling_list_get,
-            ling_list_len, ling_list_new, ling_list_push, ling_lt, ling_mul, ling_ne, ling_neg,
+            ling_list_len, ling_list_new, ling_list_push, ling_list_set, ling_lt, ling_mul, ling_ne, ling_neg,
             ling_not, ling_or, ling_panic, ling_print, ling_print_newline, ling_print_val,
             ling_rem, ling_round, ling_sin, ling_sqrt, ling_str_concat, ling_str_eq, ling_str_len,
             ling_str_new, ling_struct_get, ling_struct_new, ling_sub, ling_time_now,
@@ -158,6 +158,7 @@ impl LingCompiler {
             reg!(ling_list_new, "list_new");
             reg!(ling_list_push, "list_push");
             reg!(ling_list_get, "list_get");
+            reg!(ling_list_set, "list_set");
             reg!(ling_list_len, "list_len");
             reg!(ling_struct_new, "struct_new");
             reg!(ling_struct_get, "struct_get");

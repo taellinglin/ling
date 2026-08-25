@@ -521,6 +521,37 @@ pub unsafe extern "C" fn ling_list_get(list: u64, idx: u64) -> u64 {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn ling_list_set(list: u64, idx: u64, val: u64) -> u64 {
+    // Same in-place-when-unique trick as ling_list_push: take ownership of the
+    // boxed `Rc<Vec>`, `make_mut` (no copy for the common `bind v = list_set(v,
+    // i, x)` accumulator pattern where the Rc is uniquely held), write the
+    // element, and re-box the same allocation. Previously every list_set from
+    // JIT'd code fell through the generic `__ling_builtin` string-dispatch
+    // bridge (stack-slot arg marshaling + name lookup) even though list_get/
+    // list_push already had this direct O(1) path — the asymmetry mattered on
+    // any loop mutating a list element every iteration (see spring_rope).
+    let idx_v = decode_value(idx);
+    let val_v = decode_value(val);
+    if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {
+        let ptr = decode_ptr(list) as *mut Rc<Vec<Value>>;
+        if !ptr.is_null() {
+            let mut boxed = unsafe { Box::from_raw(ptr) };
+            if let Value::Number(n) = idx_v {
+                let i = n as usize;
+                let vec = Rc::make_mut(&mut boxed);
+                if i < vec.len() {
+                    vec[i] = val_v;
+                }
+            }
+            let p = Box::into_raw(boxed) as u64;
+            return TAG_PATTERN | TAG_KIND_LIST | (p & PTR_MASK);
+        }
+    }
+    // Not a list handle: match the interpreter's list_set fallback (empty list).
+    ling_list_new()
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn ling_list_len(list: u64) -> u64 {
     // Borrow the boxed Rc in place; no Vec copy.
     if !is_number(list) && tag_kind(list) == TAG_KIND_LIST {

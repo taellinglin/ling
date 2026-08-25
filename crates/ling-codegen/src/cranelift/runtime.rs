@@ -167,6 +167,7 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     ("__ling_list_new", b"ling_list_new\0"),
     ("__ling_list_push", b"ling_list_push\0"),
     ("__ling_list_get", b"ling_list_get\0"),
+    ("__ling_list_set", b"ling_list_set\0"),
     ("__ling_list_len", b"ling_list_len\0"),
     // Struct operations
     ("__ling_struct_new", b"ling_struct_new\0"),
@@ -256,6 +257,7 @@ extern "C" {
     pub fn ling_list_new() -> u64;
     pub fn ling_list_push(list: u64, val: u64) -> u64;
     pub fn ling_list_get(list: u64, idx: u64) -> u64;
+    pub fn ling_list_set(list: u64, idx: u64, val: u64) -> u64;
     pub fn ling_list_len(list: u64) -> u64;
 
     pub fn ling_struct_new(
