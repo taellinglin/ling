@@ -1135,9 +1135,24 @@ fn build_native(
         std::fs::write(build_dir.join("build.rs"), gen_user_build_rs())
             .expect("write build.rs");
 
+        // Read from the live workspace rather than embedding a copy via
+        // include_str!: that macro resolves at ling-lang's own compile time,
+        // and crates/ling-user/ is a sibling package outside ling-lang's
+        // package root — cargo publish's isolated verification build (which
+        // only sees ling-lang's own tarball) can't find it, so an embedded
+        // fallback would break every `cargo publish -p ling-lang`. A LingOS
+        // userland build already needs the full workspace checkout (same as
+        // the kernel build path below), so failing clearly here is honest
+        // rather than silently vendoring a copy that could drift.
         let user_ld_path = ling_root.join("crates/ling-user/linker.ld");
-        let linker_script = std::fs::read_to_string(&user_ld_path)
-            .unwrap_or_else(|_| include_str!("../crates/ling-user/linker.ld").to_string());
+        let linker_script = std::fs::read_to_string(&user_ld_path).unwrap_or_else(|e| {
+            eprintln!(
+                "    error: could not read {} ({e}); LingOS userland builds need a full \
+                 workspace checkout with crates/ling-user present",
+                user_ld_path.display()
+            );
+            std::process::exit(1);
+        });
         std::fs::write(build_dir.join("linker.ld"), linker_script).expect("write linker.ld");
 
         println!("    LingOS userland build files written to {}", build_dir.display());
