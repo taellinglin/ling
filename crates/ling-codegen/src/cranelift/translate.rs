@@ -3,6 +3,7 @@
 //! per-function symbol maps, so both backends build identical code from the same
 //! source of truth.
 
+use super::branchfuse;
 use super::numtype::{int_literal_value, NumberTypes};
 use super::runtime;
 use cranelift::codegen::ir::{FuncRef, GlobalValue, InstBuilder, StackSlotData, StackSlotKind};
@@ -33,6 +34,7 @@ pub(crate) fn build_function_body(
     let pred_count = count_predecessors(func);
     let mut sealed = vec![false; func.basic_blocks.len()];
     let mut filled_pred = vec![0u32; func.basic_blocks.len()];
+    let fusion = branchfuse::FunctionFusion::build(func, ctx.nt);
 
     for bi in 0..func.basic_blocks.len() {
         builder.switch_to_block(blocks[bi]);
@@ -64,11 +66,17 @@ pub(crate) fn build_function_body(
             }
         }
 
-        for stmt in &func.basic_blocks[bi].statements {
-            translate_stmt(stmt, builder, ctx);
+        // A planned branch fusion absorbs its condition's defining statements
+        // (a suffix of this block); they are emitted inside the terminator.
+        let plan = fusion.plan_for(bi);
+        for (si, stmt) in func.basic_blocks[bi].statements.iter().enumerate() {
+            let skipped = plan.is_some_and(|p| p.skips(si));
+            if !skipped {
+                translate_stmt(stmt, builder, ctx);
+            }
         }
         if let Some(term) = &func.basic_blocks[bi].terminator {
-            translate_terminator(term, builder, blocks, ctx);
+            translate_terminator(term, builder, blocks, ctx, plan);
             match &term.kind {
                 TerminatorKind::Goto { target } => {
                     filled_pred[target.0] += 1;
@@ -286,7 +294,8 @@ pub(crate) fn translate_rvalue(
                 Operand::Constant(Constant::Function(n)) => n.clone(),
                 _ => String::new(),
             };
-            let is_sys_or_kernel = callee_name.starts_with("ling_kernel_") || callee_name.starts_with("ling_sys_");
+            let is_sys_or_kernel =
+                callee_name.starts_with("ling_kernel_") || callee_name.starts_with("ling_sys_");
             // Only these two intrinsics scan their string argument for a NUL
             // terminator (`ling_kernel_vga_write_str`/`ling_kernel_panic` in
             // ling-kernel's lib.rs); every other kernel intrinsic reads the
@@ -1296,21 +1305,28 @@ pub(crate) fn translate_terminator(
     builder: &mut FunctionBuilder,
     blocks: &[Block],
     ctx: &TransCtx,
+    fusion_plan: Option<&branchfuse::PlannedBranch>,
 ) {
     match &term.kind {
         TerminatorKind::Goto { target } => {
             builder.ins().jump(blocks[target.0], &[]);
         },
         TerminatorKind::SwitchInt { discr, targets, otherwise } => {
-            let val = translate_op(discr, builder, ctx);
-            // A strict-bool discriminant (the common loop/if condition) only needs a
-            // direct compare against TAG_TRUE, skipping the general truthiness path.
-            let is_truthy = if ctx.nt.operand_is_bool(ctx.fname, discr) {
-                builder
-                    .ins()
-                    .icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
+            let is_truthy = if let Some(plan) = fusion_plan {
+                // Fused path: the condition's comparisons were absorbed from
+                // the statement list; emit them as the branch test directly.
+                branchfuse::emit_condition(plan.condition(), builder, ctx)
             } else {
-                emit_is_truthy(builder, val, ctx.runtime_refs)
+                let val = translate_op(discr, builder, ctx);
+                // A strict-bool discriminant (the common loop/if condition) only needs a
+                // direct compare against TAG_TRUE, skipping the general truthiness path.
+                if ctx.nt.operand_is_bool(ctx.fname, discr) {
+                    builder
+                        .ins()
+                        .icmp_imm(IntCC::Equal, val, runtime::TAG_TRUE as i64)
+                } else {
+                    emit_is_truthy(builder, val, ctx.runtime_refs)
+                }
             };
             let mut true_target = otherwise.0;
             let mut false_target = otherwise.0;

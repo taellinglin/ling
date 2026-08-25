@@ -2,7 +2,7 @@ use crate::ir::*;
 use crate::loop_utils;
 use crate::optimizations::Transform;
 use ling_ast::Span;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 pub struct Licm;
 
@@ -10,7 +10,7 @@ impl Transform for Licm {
     fn run(&self, func: &mut MirFunction) -> bool {
         let mut changed = false;
         let loops = loop_utils::find_loops(func);
-        let mut processed_headers = HashSet::new();
+        let mut processed_headers = HashSet::default();
 
         for lp in loops {
             if lp.header.0 == 0 || processed_headers.contains(&lp.header) {
@@ -30,7 +30,7 @@ impl Transform for Licm {
 
 impl Licm {
     fn optimize_loop(&self, func: &mut MirFunction, lp: &loop_utils::Loop) -> bool {
-        let mut assign_counts: HashMap<Local, usize> = HashMap::new();
+        let mut assign_counts: HashMap<Local, usize> = HashMap::default();
         for bb in &func.basic_blocks {
             for stmt in &bb.statements {
                 if let StatementKind::Assign(local, _) = &stmt.kind {
@@ -54,7 +54,7 @@ impl Licm {
             }
         }
 
-        let mut defined_in_loop = HashSet::new();
+        let mut defined_in_loop = HashSet::default();
         for &bb_id in &lp.body {
             let bb = &func.basic_blocks[bb_id.0];
             for stmt in &bb.statements {
@@ -83,7 +83,7 @@ impl Licm {
         sorted_body.sort_by_key(|id| id.0);
 
         let mut invariant_stmts = Vec::new();
-        let mut invariant_locals = HashSet::new();
+        let mut invariant_locals = HashSet::default();
         let mut loop_changed = true;
 
         while loop_changed {

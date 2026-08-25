@@ -1,4 +1,5 @@
 pub mod aot;
+pub(crate) mod branchfuse;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod jit;
 pub mod numtype;

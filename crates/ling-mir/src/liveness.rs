@@ -1,5 +1,5 @@
 use crate::ir::*;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet as HashSet;
 
 pub struct Liveness {
     pub live_after: Vec<Vec<HashSet<Local>>>,
@@ -9,7 +9,7 @@ impl Liveness {
     pub fn compute(func: &MirFunction) -> Self {
         let mut live_after: Vec<Vec<HashSet<Local>>> = Vec::new();
         for bb in &func.basic_blocks {
-            live_after.push(vec![HashSet::new(); bb.statements.len() + 1]);
+            live_after.push(vec![HashSet::default(); bb.statements.len() + 1]);
         }
 
         let mut changed = true;
@@ -17,7 +17,7 @@ impl Liveness {
             changed = false;
 
             for (bb_idx, bb) in func.basic_blocks.iter().enumerate().rev() {
-                let mut current_live = HashSet::new();
+                let mut current_live = HashSet::default();
                 let succs = Self::successors(bb);
                 for succ in &succs {
                     for &l in &live_after[*succ][0] {

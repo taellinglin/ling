@@ -350,11 +350,22 @@ fn safe_int_divisor(op: &Operand) -> bool {
     matches!(int_literal_value(op), Some(v) if v != 0 && v != -1)
 }
 
-/// Whether an f64 bit pattern is an exact integer that round-trips through
-/// `i64` without loss.
+/// Whether an f64 bit pattern is an exact integer safe to widen to a raw
+/// `i64`. Bounded to ±2^53 (not the full i64 range): the boxing/unboxing
+/// round-trip in `int_to_boxed`/`boxed_to_int` is only exact within ±2^53
+/// (the largest range where every integer is itself exactly representable
+/// as an f64), and ongoing arithmetic on an `int`-classified local (a loop
+/// counter, an accumulator) needs to keep matching what the boxed f64 path
+/// would have computed if the value ever grew past that. `-0.0` is excluded
+/// separately — a raw `i64` can't carry its sign, so it must stay on the
+/// boxed path or `1 / x < 0`-style sign-sensitive uses would break.
 pub(crate) fn f64_bits_is_int(bits: u64) -> bool {
     let v = f64::from_bits(bits);
-    v.is_finite() && v.fract() == 0.0 && v >= -(2f64.powi(63)) && v < 2f64.powi(63)
+    v.is_finite()
+        && !(v == 0.0 && v.is_sign_negative())
+        && v.fract() == 0.0
+        && v >= -(2u64.pow(53) as f64)
+        && v <= (2u64.pow(53) as f64)
 }
 
 /// Whether an rvalue produces a strict integer, given the current

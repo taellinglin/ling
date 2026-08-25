@@ -1,5 +1,5 @@
 use crate::ir::*;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 pub struct Loop {
     pub header: BasicBlockId,
@@ -21,7 +21,7 @@ pub fn find_loops(func: &MirFunction) -> Vec<Loop> {
         let n = BasicBlockId(n_idx);
         for &d in &successors(bb) {
             if dominators[n.0].contains(&d) {
-                let mut body = HashSet::new();
+                let mut body = HashSet::default();
                 body.insert(d);
                 body.insert(n);
 
@@ -66,7 +66,7 @@ fn compute_dominators(func: &MirFunction) -> Vec<HashSet<BasicBlockId>> {
         for i in 1..num_blocks {
             let preds = predecessors(func, BasicBlockId(i));
             let new_dom = if preds.is_empty() {
-                let mut set = HashSet::new();
+                let mut set = HashSet::default();
                 set.insert(BasicBlockId(i));
                 set
             } else {
@@ -101,7 +101,7 @@ pub fn clone_blocks(
     func: &mut MirFunction,
     blocks: &HashSet<BasicBlockId>,
 ) -> HashMap<BasicBlockId, BasicBlockId> {
-    let mut map = HashMap::new();
+    let mut map = HashMap::default();
 
     for &id in blocks {
         let new_id = BasicBlockId(func.basic_blocks.len());

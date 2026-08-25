@@ -1,7 +1,7 @@
 use super::Transform;
 use crate::ir::*;
 use crate::liveness::Liveness;
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 pub struct MoveElision;
 
@@ -29,7 +29,7 @@ impl MoveElision {
     fn optimize_statement(
         &self,
         stmt: &mut Statement,
-        live_after: &HashSet<Local>,
+        live_after: &FxHashSet<Local>,
         locals: &[LocalDecl],
     ) -> bool {
         match &mut stmt.kind {
@@ -63,7 +63,7 @@ impl MoveElision {
     fn optimize_terminator(
         &self,
         term: &mut Terminator,
-        live_after: &HashSet<Local>,
+        live_after: &FxHashSet<Local>,
         locals: &[LocalDecl],
     ) -> bool {
         match &mut term.kind {
@@ -77,7 +77,7 @@ impl MoveElision {
     fn optimize_rvalue(
         &self,
         rval: &mut Rvalue,
-        live_after: &HashSet<Local>,
+        live_after: &FxHashSet<Local>,
         locals: &[LocalDecl],
     ) -> bool {
         match rval {
@@ -123,7 +123,7 @@ impl MoveElision {
     fn optimize_operand(
         &self,
         op: &mut Operand,
-        live_after: &HashSet<Local>,
+        live_after: &FxHashSet<Local>,
         locals: &[LocalDecl],
     ) -> bool {
         if let Operand::Copy(local) = op {
