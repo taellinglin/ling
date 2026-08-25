@@ -246,6 +246,35 @@ pub fn back_clear(color: u32) {
     back_fill_rect(0, 0, w, h, color);
 }
 
+/// Blit one full row of 0xRRGGBB pixels at line `y` -- the wallpaper
+/// cache's fast path (per-pixel `back_set_pixel` over a whole frame is
+/// visibly slow under TCG).
+pub fn back_blit_row(y: u32, colors: &[u32]) {
+    let Some(fb) = get() else { return };
+    if y >= fb.height {
+        return;
+    }
+    let w = (colors.len() as u32).min(fb.width) as usize;
+    let bypp = fb.bpp as usize / 8;
+    let row_off = y as usize * fb.pitch as usize;
+    if row_off + w * bypp > BACKBUFFER_MAX || (bypp != 3 && bypp != 4) {
+        return;
+    }
+    let buf = back_buf();
+    if bypp == 4 {
+        for (x, &c) in colors[..w].iter().enumerate() {
+            buf[row_off + x * 4..row_off + x * 4 + 4].copy_from_slice(&c.to_le_bytes());
+        }
+    } else {
+        for (x, &c) in colors[..w].iter().enumerate() {
+            let o = row_off + x * 3;
+            buf[o] = (c & 0xFF) as u8;
+            buf[o + 1] = ((c >> 8) & 0xFF) as u8;
+            buf[o + 2] = ((c >> 16) & 0xFF) as u8;
+        }
+    }
+}
+
 /// Integer square root (largest `r` with `r*r <= v`) -- the corner-arc code
 /// below needs sqrt but this crate is no_std with no libm (same constraint
 /// `wm_liquid::scale_w_pct` documents), and Newton over u32 converges in a
@@ -267,7 +296,7 @@ fn isqrt(v: u32) -> u32 {
 /// for corner radius `r` in a rect of height `h`: 0 for the straight middle
 /// rows, quarter-circle-shaped for the top/bottom `r` rows. Shared by the
 /// fill and blend variants so the two can never disagree on shape.
-fn rounded_row_inset(dy: u32, h: u32, r: u32) -> u32 {
+pub fn rounded_row_inset(dy: u32, h: u32, r: u32) -> u32 {
     let r = r.min(h / 2);
     if r == 0 {
         return 0;

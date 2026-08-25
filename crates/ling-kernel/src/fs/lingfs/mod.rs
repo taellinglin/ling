@@ -115,6 +115,150 @@ pub fn write_file(name: &str, content: &[u8]) -> Result<(), ()> {
     upsert_root_entry(name, blob_hash, Kind::Blob, make_meta(MODE_FILE_DEFAULT, next_seq()))
 }
 
+// -- Multi-block ("big") files -----------------------------------------------
+// The single-block cap (4KiB) made wallpapers, real WAVs, and any package
+// past toy size impossible. Big files are content-addressed like
+// everything else: the data is chunked into ordinary blob objects and a
+// MANIFEST blob lists their hashes -- "LBIG" (leaf: total_len u32 + up to
+// 127 hashes = ~508KiB) with one level of indirection, "LBG2" (its
+// entries are hashes of LBIG leaves), lifting the cap to ~64MiB. Root
+// directory entries stay Kind::Blob; readers distinguish by the magic.
+// The one disclosed collision hazard: a small file legitimately BEGINNING
+// with the magic bytes would misread through `read_file_all` -- so
+// `write_file_any` wraps such content in a manifest even when it fits a
+// block, making the magic unambiguous on disk.
+
+const BIG_MAGIC: &[u8; 4] = b"LBIG";
+const BIG2_MAGIC: &[u8; 4] = b"LBG2";
+const BIG_HEADER: usize = 8; // magic + total_len u32
+const HASHES_PER_MANIFEST: usize = (BLOCK_SIZE - BIG_HEADER) / 32; // 127
+
+fn build_leaf_manifest(chunk: &[u8]) -> Result<Hash, ()> {
+    // `chunk` here is a run of data up to 127 blocks; store its blocks and
+    // one LBIG manifest describing them.
+    let mut manifest = [0u8; BLOCK_SIZE];
+    manifest[..4].copy_from_slice(BIG_MAGIC);
+    manifest[4..8].copy_from_slice(&(chunk.len() as u32).to_le_bytes());
+    let mut n = 0usize;
+    let mut off = 0usize;
+    while off < chunk.len() {
+        let take = (chunk.len() - off).min(BLOCK_SIZE);
+        let h = put_object(&chunk[off..off + take])?;
+        manifest[BIG_HEADER + n * 32..BIG_HEADER + (n + 1) * 32].copy_from_slice(&h);
+        n += 1;
+        off += take;
+    }
+    put_object(&manifest[..BIG_HEADER + n * 32])
+}
+
+/// Write a file of any size (up to ~64MiB): small content goes the plain
+/// single-blob path, larger content is chunked behind manifests. Root
+/// files only for the large path today (downloads and wallpapers live at
+/// root) -- dir-path large writes return Err rather than pretending.
+pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
+    let needs_manifest = content.len() > BLOCK_SIZE
+        || content.get(..4) == Some(&BIG_MAGIC[..])
+        || content.get(..4) == Some(&BIG2_MAGIC[..]);
+    if !needs_manifest {
+        return write_file(name, content);
+    }
+    let mut rbuf = [0u8; RESOLVE_BUF];
+    let name = resolve(name, &mut rbuf);
+    if split_path(name).is_some() {
+        return Err(());
+    }
+    let leaf_span = HASHES_PER_MANIFEST * BLOCK_SIZE;
+    let root_hash = if content.len() <= leaf_span {
+        build_leaf_manifest(content)?
+    } else {
+        if content.len() > leaf_span * HASHES_PER_MANIFEST {
+            return Err(()); // ~64MiB two-level cap, stated not hidden
+        }
+        let mut m2 = [0u8; BLOCK_SIZE];
+        m2[..4].copy_from_slice(BIG2_MAGIC);
+        m2[4..8].copy_from_slice(&(content.len() as u32).to_le_bytes());
+        let mut n = 0usize;
+        let mut off = 0usize;
+        while off < content.len() {
+            let take = (content.len() - off).min(leaf_span);
+            let h = build_leaf_manifest(&content[off..off + take])?;
+            m2[BIG_HEADER + n * 32..BIG_HEADER + (n + 1) * 32].copy_from_slice(&h);
+            n += 1;
+            off += take;
+        }
+        put_object(&m2[..BIG_HEADER + n * 32])?
+    };
+    upsert_root_entry(name, root_hash, Kind::Blob, make_meta(MODE_FILE_DEFAULT, next_seq()))
+}
+
+fn read_leaf_manifest(manifest: &[u8], mlen: usize, out: &mut [u8], got: &mut usize) -> Result<(), ()> {
+    let total = u32::from_le_bytes([manifest[4], manifest[5], manifest[6], manifest[7]]) as usize;
+    let count = (mlen - BIG_HEADER) / 32;
+    let mut remaining = total;
+    for i in 0..count {
+        let mut h: Hash = ZERO_HASH;
+        h.copy_from_slice(&manifest[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32]);
+        let mut block = [0u8; BLOCK_SIZE];
+        let Ok(Some(blen)) = get_object(&h, &mut block) else { return Err(()) };
+        let want = remaining.min(blen);
+        let take = want.min(out.len().saturating_sub(*got));
+        out[*got..*got + take].copy_from_slice(&block[..take]);
+        *got += take;
+        remaining -= want;
+        if take < want {
+            return Ok(()); // caller's buffer full -- truncated read, reported via return length
+        }
+    }
+    Ok(())
+}
+
+/// Read a file of any size into `out`, following manifests when present.
+/// Returns the number of bytes written to `out` (truncated if `out` is
+/// smaller than the file), `Ok(None)` if the file doesn't exist.
+pub fn read_file_all(name: &str, out: &mut [u8]) -> Result<Option<usize>, ()> {
+    let mut root = [0u8; BLOCK_SIZE];
+    let Some(rlen) = read_file(name, &mut root)? else {
+        return Ok(None);
+    };
+    if rlen >= BIG_HEADER && &root[..4] == BIG_MAGIC {
+        let mut got = 0usize;
+        read_leaf_manifest(&root, rlen, out, &mut got)?;
+        return Ok(Some(got));
+    }
+    if rlen >= BIG_HEADER && &root[..4] == BIG2_MAGIC {
+        let mut got = 0usize;
+        let count = (rlen - BIG_HEADER) / 32;
+        for i in 0..count {
+            let mut h: Hash = ZERO_HASH;
+            h.copy_from_slice(&root[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32]);
+            let mut leaf = [0u8; BLOCK_SIZE];
+            let Ok(Some(llen)) = get_object(&h, &mut leaf) else { return Err(()) };
+            if llen < BIG_HEADER || &leaf[..4] != BIG_MAGIC {
+                return Err(());
+            }
+            read_leaf_manifest(&leaf, llen, out, &mut got)?;
+            if got >= out.len() {
+                break;
+            }
+        }
+        return Ok(Some(got));
+    }
+    let take = rlen.min(out.len());
+    out[..take].copy_from_slice(&root[..take]);
+    Ok(Some(take))
+}
+
+/// Logical size of a file (manifest-aware): what `read_file_all` would
+/// return given a large-enough buffer.
+pub fn file_size(name: &str) -> Option<usize> {
+    let mut root = [0u8; BLOCK_SIZE];
+    let Ok(Some(rlen)) = read_file(name, &mut root) else { return None };
+    if rlen >= BIG_HEADER && (&root[..4] == BIG_MAGIC || &root[..4] == BIG2_MAGIC) {
+        return Some(u32::from_le_bytes([root[4], root[5], root[6], root[7]]) as usize);
+    }
+    Some(rlen)
+}
+
 pub fn write_dir(dirname: &str, files: &[(&str, &[u8])]) -> Result<(), ()> {
     if files.len() > MAX_TREE_ENTRIES {
         return Err(());

@@ -47,7 +47,7 @@ pub struct UiTheme {
 /// Theme 0 is the palette `apps/gui-common` shipped with (bg 0x1A1423 dark
 /// purple etc.) -- existing screens look identical by default, they just
 /// stop owning the numbers.
-pub static THEMES: [UiTheme; 3] = [
+pub static THEMES: [UiTheme; 9] = [
     UiTheme {
         name: "Dusk",
         colors: [
@@ -90,28 +90,59 @@ pub static THEMES: [UiTheme; 3] = [
         ],
         vga_dark: false,
     },
+    hue_theme("Red", 0xE0453A),
+    hue_theme("Orange", 0xE08A3A),
+    hue_theme("Yellow", 0xE0D24A),
+    // Green keeps the old "Jade" palette's soul (same accent hue) under
+    // its plain-color name, per request.
+    hue_theme("Green", 0x4AE0A0),
+    hue_theme("Blue", 0x3A8AE0),
+    hue_theme("Indigo", 0x5A4AE0),
+    hue_theme("Violet", 0x9A4AE0),
+];
+
+/// Per-channel mix: `pct`% of `tint` into `base` -- const so the ROYGBIV
+/// themes are baked at compile time, not computed per lookup.
+const fn mix(base: u32, tint: u32, pct: u32) -> u32 {
+    let mut out = 0u32;
+    let mut ch = 0;
+    while ch < 3 {
+        let b = (base >> (ch * 8)) & 0xFF;
+        let t = (tint >> (ch * 8)) & 0xFF;
+        let m = (b * (100 - pct) + t * pct) / 100;
+        out |= m << (ch * 8);
+        ch += 1;
+    }
+    out
+}
+
+/// One dark theme derived from a single hue -- every surface is the same
+/// near-black tinted by a slot-specific amount of the hue, so all seven
+/// ROYGBIV themes share structure (and readability) and differ only in
+/// color. The accent is the hue itself lifted toward white.
+const fn hue_theme(name: &'static str, hue: u32) -> UiTheme {
     UiTheme {
-        name: "Jade",
+        name,
         colors: [
-            0x0E1A14, // bg
-            0x14241B, // panel
-            0x2A4D3A, // panel border
-            0xE8FFF0, // text
-            0x8FB09B, // dim
-            0xE0A44A, // error
-            0x1F3A2C, // titlebar focused
-            0x14241B, // titlebar idle
-            0xE8FFF0, // titlebar text
-            0x0A120E, // dock
-            0x4AE0A0, // accent
-            0x000000, // shadow
-            0x1B3326, // wallpaper top
-            0x0A120E, // wallpaper bottom
-            0x2E4438, // dot dim
+            mix(0x0E0E14, hue, 12),  // bg
+            mix(0x16161E, hue, 15),  // panel
+            mix(0x232330, hue, 30),  // panel border
+            0xF2F2F8,                // text
+            mix(0x9898A8, hue, 20),  // dim
+            0xE05840,                // error (fixed across hues)
+            mix(0x1C1C26, hue, 35),  // titlebar focused
+            mix(0x16161E, hue, 15),  // titlebar idle
+            0xF2F2F8,                // titlebar text
+            mix(0x0A0A10, hue, 15),  // dock
+            mix(hue, 0xFFFFFF, 25),  // accent
+            0x000000,                // shadow
+            mix(0x181820, hue, 25),  // wallpaper top
+            mix(0x0A0A10, hue, 10),  // wallpaper bottom
+            mix(0x3A3A48, hue, 15),  // dot dim
         ],
         vga_dark: true,
-    },
-];
+    }
+}
 
 static mut CURRENT: usize = 0;
 

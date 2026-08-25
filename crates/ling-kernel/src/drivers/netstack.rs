@@ -282,6 +282,207 @@ pub fn tcp_read_to_end(sink: &mut [u8]) -> usize {
     got
 }
 
+// -- UDP + DNS ---------------------------------------------------------------
+
+/// Send one UDP datagram (gateway-routed, like everything here).
+fn udp_send(dst_ip: [u8; 4], dst_port: u16, src_port: u16, payload: &[u8]) -> bool {
+    let Some(gw) = arp_gateway() else { return false };
+    if payload.len() > 512 {
+        return false;
+    }
+    let udp_len = 8 + payload.len();
+    let ip_len = 20 + udp_len;
+    let mut f = [0u8; 14 + 20 + 8 + 512];
+    f[0..6].copy_from_slice(&gw);
+    f[6..12].copy_from_slice(&nic::mac());
+    f[12..14].copy_from_slice(&[0x08, 0x00]);
+    let ip = &mut f[14..];
+    ip[0] = 0x45;
+    ip[2..4].copy_from_slice(&(ip_len as u16).to_be_bytes());
+    ip[6] = 0x40;
+    ip[8] = 64;
+    ip[9] = 17; // UDP
+    ip[12..16].copy_from_slice(&SELF_IP);
+    ip[16..20].copy_from_slice(&dst_ip);
+    let ipsum = checksum(&ip[..20], 0);
+    ip[10..12].copy_from_slice(&ipsum.to_be_bytes());
+    let u = &mut ip[20..];
+    u[0..2].copy_from_slice(&src_port.to_be_bytes());
+    u[2..4].copy_from_slice(&dst_port.to_be_bytes());
+    u[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    // UDP checksum optional over IPv4: zero = none. SLIRP accepts that.
+    u[8..8 + payload.len()].copy_from_slice(payload);
+    nic::transmit(&f[..(14 + ip_len).max(60)])
+}
+
+/// Poll for a UDP datagram to `port`; payload into `out`.
+fn udp_poll(port: u16, out: &mut [u8]) -> Option<usize> {
+    let mut buf = [0u8; 2048];
+    let len = nic::receive(&mut buf)?;
+    if len < 42 || buf[12] != 0x08 || buf[13] != 0x00 || buf[23] != 17 {
+        return None;
+    }
+    let ihl = ((buf[14] & 0x0F) as usize) * 4;
+    let u = 14 + ihl;
+    if u16::from_be_bytes([buf[u + 2], buf[u + 3]]) != port {
+        return None;
+    }
+    let ulen = u16::from_be_bytes([buf[u + 4], buf[u + 5]]) as usize;
+    let n = ulen.saturating_sub(8).min(out.len()).min(len - u - 8);
+    out[..n].copy_from_slice(&buf[u + 8..u + 8 + n]);
+    Some(n)
+}
+
+/// SLIRP's builtin DNS forwarder.
+pub const DNS_IP: [u8; 4] = [10, 0, 2, 3];
+
+/// Resolve `host` to an IPv4 address: a real DNS A query over UDP to the
+/// SLIRP resolver (which forwards to the host's resolver, so real names
+/// resolve for real). Dotted-quad "hosts" short-circuit without a query.
+pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
+    if let Some(ip) = parse_ipv4(host) {
+        return Some(ip);
+    }
+    let mut q = [0u8; 300];
+    // Header: id "LQ", flags RD, one question.
+    q[0] = b'L';
+    q[1] = b'Q';
+    q[2] = 0x01; // RD
+    q[5] = 1; // QDCOUNT
+    let mut n = 12;
+    for label in host.split('.') {
+        if label.is_empty() || label.len() > 63 || n + label.len() + 1 > 280 {
+            return None;
+        }
+        q[n] = label.len() as u8;
+        n += 1;
+        q[n..n + label.len()].copy_from_slice(label.as_bytes());
+        n += label.len();
+    }
+    q[n] = 0;
+    n += 1;
+    q[n..n + 4].copy_from_slice(&[0, 1, 0, 1]); // QTYPE A, QCLASS IN
+    n += 4;
+
+    let src_port = 33000 + (timer::now_ms() % 8000) as u16;
+    if !udp_send(DNS_IP, 53, src_port, &q[..n]) {
+        return None;
+    }
+    let mut resp = [0u8; 512];
+    let mut found: Option<[u8; 4]> = None;
+    timer::poll_until(WAIT_BUDGET_US, || {
+        let Some(rlen) = udp_poll(src_port, &mut resp) else { return false };
+        if rlen < 12 || resp[0] != b'L' || resp[1] != b'Q' {
+            return false;
+        }
+        let ancount = u16::from_be_bytes([resp[6], resp[7]]) as usize;
+        if ancount == 0 {
+            return true; // authoritative "no such name" -- stop waiting
+        }
+        // Skip the question section, then walk answers for the first A.
+        let mut p = 12;
+        while p < rlen && resp[p] != 0 {
+            p += resp[p] as usize + 1;
+        }
+        p += 5; // the 0 terminator + QTYPE/QCLASS
+        for _ in 0..ancount {
+            if p + 12 > rlen {
+                return true;
+            }
+            // Name: either a compression pointer (2 bytes) or labels.
+            if resp[p] & 0xC0 == 0xC0 {
+                p += 2;
+            } else {
+                while p < rlen && resp[p] != 0 {
+                    p += resp[p] as usize + 1;
+                }
+                p += 1;
+            }
+            let rtype = u16::from_be_bytes([resp[p], resp[p + 1]]);
+            let rdlen = u16::from_be_bytes([resp[p + 8], resp[p + 9]]) as usize;
+            p += 10;
+            if rtype == 1 && rdlen == 4 && p + 4 <= rlen {
+                found = Some([resp[p], resp[p + 1], resp[p + 2], resp[p + 3]]);
+                return true;
+            }
+            p += rdlen;
+        }
+        true
+    });
+    found
+}
+
+fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
+    let mut ip = [0u8; 4];
+    let mut part = 0;
+    let mut acc: u32 = 0;
+    let mut digits = 0;
+    for b in s.bytes() {
+        match b {
+            b'0'..=b'9' => {
+                acc = acc * 10 + (b - b'0') as u32;
+                digits += 1;
+                if acc > 255 || digits > 3 {
+                    return None;
+                }
+            },
+            b'.' => {
+                if digits == 0 || part >= 3 {
+                    return None;
+                }
+                ip[part] = acc as u8;
+                part += 1;
+                acc = 0;
+                digits = 0;
+            },
+            _ => return None,
+        }
+    }
+    if part == 3 && digits > 0 {
+        ip[3] = acc as u8;
+        Some(ip)
+    } else {
+        None
+    }
+}
+
+/// Parse `http://host[:port]/path` (https is recognized and REFUSED with
+/// None-plus-reason -- no TLS stack yet, said out loud rather than
+/// silently downgraded). Returns (host, port, path-start-index, is_tls).
+pub fn parse_url(url: &str) -> Option<(&str, u16, &str, bool)> {
+    let (rest, tls) = if let Some(r) = url.strip_prefix("http://") {
+        (r, false)
+    } else if let Some(r) = url.strip_prefix("https://") {
+        (r, true)
+    } else {
+        (url, false)
+    };
+    let (hostport, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    let (host, port) = match hostport.find(':') {
+        Some(i) => {
+            let mut p: u32 = 0;
+            for b in hostport[i + 1..].bytes() {
+                if !b.is_ascii_digit() {
+                    return None;
+                }
+                p = p * 10 + (b - b'0') as u32;
+                if p > 65535 {
+                    return None;
+                }
+            }
+            (&hostport[..i], p as u16)
+        },
+        None => (hostport, 80),
+    };
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port, path, tls))
+}
+
 /// HTTP/1.0 GET `path` from `ip:port`. Returns the body length written to
 /// `body` (headers parsed and stripped), or None on connect/protocol
 /// failure. HTTP/1.0 keeps it simple: no chunked encoding, connection

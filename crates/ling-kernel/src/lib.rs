@@ -44,8 +44,8 @@ use crate::arch::{bootmodule, io, timer};
 use crate::drivers::uart;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::{
-    flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, lingfu, locale, mixer,
-    mouse, net_e1000, serial, term, theme, ui_scale, vga, wm, wm_liquid,
+    browser, display, flags, font8x8, font_unicode, framebuffer, kbdlayout, keyboard, lingfu,
+    locale, mixer, mouse, net_e1000, netstack, serial, term, theme, ui_scale, vga, wm, wm_liquid,
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
@@ -1182,6 +1182,18 @@ pub unsafe extern "C" fn ling_kernel_wm_draw_content(slot: u64) -> u64 {
     0
 }
 
+/// Render a whole window at z `slot` kernel-side -- soft shadow, the
+/// soap-film-bending rounded body, titlebar + buttons, and its content.
+/// Handles the dissolve-on-close animation too. Replaces the per-slot
+/// rect drawing the `.ling` desktop used to do (rects can't shear or
+/// sublimate); `main.ling` now just calls this once per z slot.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_window(slot: u64) -> u64 {
+    wm::draw_window(slot as usize);
+    0
+}
+
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_dock_count() -> u64 {
@@ -1235,13 +1247,131 @@ pub unsafe extern "C" fn ling_kernel_wm_clock_str() -> u64 {
 }
 
 /// Wallpaper from the active theme + Settings' wallpaper mode (gradient /
-/// ROYGBIV / solid) -- the desktop's replacement for a flat
-/// `fb_back_clear`.
+/// ROYGBIV / solid / loaded image) -- the desktop's flat-clear
+/// replacement.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_draw_wallpaper() -> u64 {
     wm::draw_wallpaper();
     0
+}
+
+/// Load a BMP from lingfs as the desktop wallpaper (the Files app's "open
+/// a .bmp"); 1 if it decoded and is now showing.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_set_wallpaper_image(name: u64) -> u64 {
+    wm::set_wallpaper_image(arg_str(name)) as u64
+}
+
+/// Draw the MATE-style applications menu (top-left dropdown). Called last
+/// in the frame so it overlays windows and the dock; a no-op when closed.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_menu() -> u64 {
+    wm::draw_menu();
+    0
+}
+
+// -- The browser (drivers::browser + the bring-browser engine) -----------
+
+/// Fetch + render `url` at `cols` columns; 1 on success, 0 with the reason
+/// via `ling_kernel_browser_status`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_browser_go(url: u64, cols: u64) -> u64 {
+    browser::go(arg_str(url), cols as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_browser_status() -> u64 {
+    let s = browser::status();
+    strings::ling_str_new(s.as_ptr(), s.len())
+}
+
+/// Dump the loaded page to the console, lynx-style -- `bring --browse`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_browser_dump() -> u64 {
+    browser::dump_to_console();
+    0
+}
+
+// -- Display modes (drivers::display) -------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_display_count() -> u64 {
+    display::mode_count() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_display_preferred() -> u64 {
+    display::preferred() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_display_set(idx: u64) -> u64 {
+    display::set_preferred(idx as usize) as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_display_name(idx: u64) -> u64 {
+    let n = display::mode_label(idx as usize);
+    strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+/// Read a lingfs file of any size (manifest-aware) and save `data` HTTP
+/// body to it -- the `curl`/`bring --out` sink for large downloads.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_http_download(url: u64, out_name: u64) -> u64 {
+    let Some((host, port, path, tls)) = netstack::parse_url(arg_str(url)) else {
+        return 0;
+    };
+    if tls {
+        return 2; // https refused -- caller prints the reason
+    }
+    let Some(ip) = netstack::dns_resolve(host) else {
+        return 3; // DNS failure
+    };
+    static mut DLBUF: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024];
+    let buf = &mut *&raw mut DLBUF;
+    let Some(len) = netstack::http_get(ip, port, path, host, buf) else {
+        return 0;
+    };
+    if fs::lingfs::write_file_any(arg_str(out_name), &buf[..len]).is_err() {
+        return 4; // stored fetch but couldn't write (too big / fs error)
+    }
+    1
+}
+
+/// Fetch `url` and print its body straight to the console -- `curl` with
+/// no `--out`. Returns 1 on success.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_http_print(url: u64) -> u64 {
+    let Some((host, port, path, tls)) = netstack::parse_url(arg_str(url)) else {
+        return 0;
+    };
+    if tls {
+        return 2;
+    }
+    let Some(ip) = netstack::dns_resolve(host) else {
+        return 3;
+    };
+    static mut PRBUF: [u8; 256 * 1024] = [0; 256 * 1024];
+    let buf = &mut *&raw mut PRBUF;
+    let Some(len) = netstack::http_get(ip, port, path, host, buf) else {
+        return 0;
+    };
+    console_write(&buf[..len]);
+    console_write(b"\n");
+    1
 }
 
 // -- Audio: AC'97 + the OS mixer (drivers::{ac97, mixer}) ----------------

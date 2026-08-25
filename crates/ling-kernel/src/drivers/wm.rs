@@ -26,7 +26,9 @@
 //! and focus state).
 
 use crate::arch::{rtc, timer};
-use crate::drivers::{framebuffer, font8x8, font_unicode, kbdlayout, locale, mixer, theme};
+use crate::drivers::{
+    browser, display, framebuffer, font8x8, font_unicode, kbdlayout, locale, mixer, theme, wallpaper,
+};
 use crate::fs::lingfs;
 
 // Same spring feel as wm_liquid.rs, applied per window.
@@ -41,7 +43,8 @@ pub const TITLEBAR_H: u32 = 28;
 pub const KIND_ABOUT: u8 = 0;
 pub const KIND_SETTINGS: u8 = 1;
 pub const KIND_FILES: u8 = 2;
-const DOCK_APPS: [u8; 3] = [KIND_ABOUT, KIND_SETTINGS, KIND_FILES];
+pub const KIND_WEB: u8 = 3;
+const DOCK_APPS: [u8; 4] = [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB];
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -59,6 +62,16 @@ struct Window {
     ty: f64,
     scale_w: f64,
     scale_h: f64,
+    // Soap-film bend: a horizontal lean that trails the drag velocity and
+    // springs/wobbles as the window settles (see `step`). Rendered as a
+    // per-scanline x-offset in `draw_window`.
+    bend: f64,
+    // Dissolve-on-close: a window stays in the table and z-order after
+    // close() with `closing = true`, its `dissolve` ramping 0->1 over a
+    // few frames; `draw_window` sublimates it (diagonal hash sweep + fade)
+    // and `step` frees it at 1.0.
+    closing: bool,
+    dissolve: f64,
 }
 
 const EMPTY_WINDOW: Window = Window {
@@ -75,6 +88,9 @@ const EMPTY_WINDOW: Window = Window {
     ty: 0.0,
     scale_w: 1.0,
     scale_h: 1.0,
+    bend: 0.0,
+    closing: false,
+    dissolve: 0.0,
 };
 
 static mut WINDOWS: [Window; MAX_WINDOWS] = [EMPTY_WINDOW; MAX_WINDOWS];
@@ -93,8 +109,9 @@ static mut SPAWN_COUNT: u32 = 0;
 static mut HOVER_DOCK: i32 = -1;
 
 // -- Settings window state -------------------------------------------------
-// Rows: UI theme / Sound theme / Wallpaper / Keyboard / Language / Clock.
-const SETTINGS_ROWS: usize = 6;
+// Rows: UI theme / Sound theme / Wallpaper / Display / Keyboard / Language
+// / Clock.
+const SETTINGS_ROWS: usize = 7;
 static mut SETTINGS_CURSOR: usize = 0;
 static mut CLOCK_24H: bool = true;
 
@@ -102,7 +119,8 @@ static mut CLOCK_24H: bool = true;
 pub const WALL_GRADIENT: u32 = 0;
 pub const WALL_ROYGBIV: u32 = 1;
 pub const WALL_SOLID: u32 = 2;
-const WALL_MODES: u32 = 3;
+pub const WALL_IMAGE: u32 = 3;
+const WALL_MODES: u32 = 4;
 static mut WALLPAPER: u32 = 0;
 
 pub fn wallpaper() -> u32 {
@@ -110,14 +128,168 @@ pub fn wallpaper() -> u32 {
 }
 
 pub fn set_wallpaper(mode: u32) {
-    unsafe { WALLPAPER = mode % WALL_MODES };
+    unsafe {
+        // Image mode only sticks if one actually loaded; otherwise fall
+        // back to the gradient rather than showing a blank cache.
+        if mode % WALL_MODES == WALL_IMAGE && !wallpaper::loaded() {
+            WALLPAPER = WALL_GRADIENT;
+        } else {
+            WALLPAPER = mode % WALL_MODES;
+        }
+    }
 }
 
 fn wallpaper_name(mode: u32) -> &'static str {
     match mode {
         WALL_ROYGBIV => "ROYGBIV",
         WALL_SOLID => "Solid",
+        WALL_IMAGE => "Image",
         _ => "Gradient",
+    }
+}
+
+/// Load a BMP from lingfs and switch to Image wallpaper (the Files app's
+/// "set as wallpaper"). Returns false if it didn't decode.
+pub fn set_wallpaper_image(name: &str) -> bool {
+    if wallpaper::load(name) {
+        unsafe { WALLPAPER = WALL_IMAGE };
+        true
+    } else {
+        false
+    }
+}
+
+// -- Applications menu (MATE-style, top-left) -------------------------------
+// A categorized launcher dropped from the top bar's brand corner. Headers
+// aren't clickable; app rows open (or raise) their window and close the
+// menu. Kept a flat always-expanded list -- simplest thing that reads as
+// the MATE menu, and honest about how few apps exist to categorize yet.
+struct MenuRow {
+    header: &'static str, // non-empty => category header (not an app row)
+    app: &'static str,
+    kind: u8,
+}
+const MENU: [MenuRow; 7] = [
+    MenuRow { header: "Internet", app: "", kind: 255 },
+    MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
+    MenuRow { header: "System", app: "", kind: 255 },
+    MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
+    MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
+    MenuRow { header: "Accessories", app: "", kind: 255 },
+    MenuRow { header: "", app: "Files", kind: KIND_FILES },
+];
+const MENU_W: u32 = 210;
+const MENU_ROW_H: u32 = 22;
+static mut MENU_OPEN: bool = false;
+
+pub fn menu_open() -> bool {
+    unsafe { MENU_OPEN }
+}
+
+fn menu_rect() -> (u32, u32, u32, u32) {
+    let h = MENU.len() as u32 * MENU_ROW_H + 30;
+    (6, 31, MENU_W, h)
+}
+
+/// Brand corner (top-left of the top bar) toggles the menu.
+fn brand_hit(mx: i64, my: i64) -> bool {
+    my >= 0 && my < 30 && mx >= 0 && mx < 84
+}
+
+/// Returns the app kind if the press landed on an app row, else 255.
+/// Also closes the menu on any click (inside picks, outside dismisses).
+fn menu_click(mx: i64, my: i64) -> u8 {
+    let (rx, ry, rw, rh) = menu_rect();
+    let inside = mx >= rx as i64 && mx < (rx + rw) as i64 && my >= ry as i64 && my < (ry + rh) as i64;
+    unsafe { MENU_OPEN = false };
+    if !inside {
+        return 255;
+    }
+    let mut yy = ry + 22;
+    for row in MENU.iter() {
+        if row.header.is_empty() {
+            if my >= yy as i64 && my < (yy + MENU_ROW_H) as i64 {
+                return row.kind;
+            }
+            yy += MENU_ROW_H;
+        } else {
+            yy += MENU_ROW_H;
+        }
+    }
+    255
+}
+
+/// Draw the applications menu (call last, over windows and dock).
+pub fn draw_menu() {
+    if !unsafe { MENU_OPEN } {
+        return;
+    }
+    let (rx, ry, rw, rh) = menu_rect();
+    let panel = theme::color(theme::SLOT_PANEL);
+    let accent = theme::color(theme::SLOT_ACCENT);
+    framebuffer::back_blend_rounded_rect(rx + 4, ry + 5, rw, rh, 10, theme::color(theme::SLOT_SHADOW), 80);
+    framebuffer::back_fill_rounded_rect(rx, ry, rw, rh, 10, theme::color(theme::SLOT_PANEL_BORDER));
+    framebuffer::back_fill_rounded_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, panel);
+    font8x8::draw_str(rx + 12, ry + 6, b"Applications", accent, panel);
+    let mut yy = ry + 22;
+    for row in MENU.iter() {
+        if row.header.is_empty() {
+            font8x8::draw_str(rx + 24, yy + 6, row.app.as_bytes(), theme::color(theme::SLOT_TEXT), panel);
+            yy += MENU_ROW_H;
+        } else {
+            font8x8::draw_str(rx + 10, yy + 6, row.header.as_bytes(), theme::color(theme::SLOT_DIM), panel);
+            yy += MENU_ROW_H;
+        }
+    }
+}
+
+// -- Browser window state --------------------------------------------------
+const WEB_INPUT_MAX: usize = 200;
+static mut WEB_URL_ENTRY: bool = false;
+static mut WEB_INPUT: [u8; WEB_INPUT_MAX] = [0; WEB_INPUT_MAX];
+static mut WEB_INPUT_LEN: usize = 0;
+/// Content columns of the currently-focused browser window, captured at
+/// draw time so key-driven fetches wrap to the right width.
+static mut WEB_COLS: usize = 72;
+
+fn web_key(k: u8) {
+    unsafe {
+        if WEB_URL_ENTRY {
+            match k {
+                10 => {
+                    WEB_URL_ENTRY = false;
+                    let url = core::str::from_utf8(&(&*&raw const WEB_INPUT)[..WEB_INPUT_LEN])
+                        .unwrap_or("");
+                    browser::go(url, WEB_COLS);
+                },
+                0x1B | 0x03 => WEB_URL_ENTRY = false,
+                0x08 => {
+                    if WEB_INPUT_LEN > 0 {
+                        WEB_INPUT_LEN -= 1;
+                    }
+                },
+                0x20..=0x7E => {
+                    if WEB_INPUT_LEN < WEB_INPUT_MAX {
+                        (&mut *&raw mut WEB_INPUT)[WEB_INPUT_LEN] = k;
+                        WEB_INPUT_LEN += 1;
+                    }
+                },
+                _ => {},
+            }
+            return;
+        }
+        match k {
+            b'u' => {
+                WEB_URL_ENTRY = true;
+                WEB_INPUT_LEN = 0;
+            },
+            0x11 => browser::scroll(-3, 24),
+            0x12 => browser::scroll(3, 24),
+            b'1'..=b'9' => {
+                browser::follow((k - b'0') as usize, WEB_COLS);
+            },
+            _ => {},
+        }
     }
 }
 
@@ -155,6 +327,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_ABOUT => "About LingOS",
         KIND_SETTINGS => "Settings",
         KIND_FILES => "Files",
+        KIND_WEB => "bring - browser in ling",
         _ => "?",
     }
 }
@@ -165,8 +338,9 @@ fn kind_size(kind: u8) -> (u32, u32) {
     // against screen height directly).
     let s = (framebuffer::height() as f64 / 600.0).max(0.5);
     let (w, h) = match kind {
-        KIND_SETTINGS => (470.0, 330.0),
+        KIND_SETTINGS => (470.0, 380.0),
         KIND_FILES => (470.0, 370.0),
+        KIND_WEB => (620.0, 460.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -177,6 +351,7 @@ pub fn dock_letter(i: usize) -> &'static str {
         Some(&KIND_ABOUT) => "i",
         Some(&KIND_SETTINGS) => "S",
         Some(&KIND_FILES) => "F",
+        Some(&KIND_WEB) => "W",
         _ => "",
     }
 }
@@ -276,15 +451,21 @@ pub fn open(kind: u8) {
         ty: cy,
         scale_w: 1.0,
         scale_h: 1.0,
+        bend: 0.0,
+        closing: false,
+        dissolve: 0.0,
     };
     z_raise(idx);
     mixer::jingle(mixer::EVENT_OPEN);
 }
 
+/// Begin the dissolve-on-close animation. The window keeps its slot and
+/// its z position (so it sublimates in place, over lower windows) until
+/// `step` finalizes it -- see the Window::dissolve doc.
 pub fn close(idx: usize) {
-    if idx < MAX_WINDOWS && windows()[idx].used {
-        windows()[idx].used = false;
-        z_remove(idx);
+    if idx < MAX_WINDOWS && windows()[idx].used && !windows()[idx].closing {
+        windows()[idx].closing = true;
+        windows()[idx].dissolve = 0.0001; // nonzero so draw enters the sublimate path
         unsafe {
             if DRAG_WIN == idx as i32 {
                 DRAG_WIN = -1;
@@ -292,6 +473,12 @@ pub fn close(idx: usize) {
         }
         mixer::jingle(mixer::EVENT_CLOSE);
     }
+}
+
+fn finalize_closed(idx: usize) {
+    windows()[idx].used = false;
+    windows()[idx].closing = false;
+    z_remove(idx);
 }
 
 fn minimize(idx: usize) {
@@ -317,6 +504,11 @@ fn deformed_rect(w: &Window) -> (i64, i64, u32, u32) {
 }
 
 fn hit_window(w: &Window, mx: i64, my: i64) -> bool {
+    // A dissolving window is inert -- clicks fall through to whatever's
+    // beneath it.
+    if w.closing {
+        return false;
+    }
     let (x, y, dw, dh) = deformed_rect(w);
     mx >= x && mx < x + dw as i64 && my >= y && my < y + dh as i64
 }
@@ -381,8 +573,23 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         HOVER_DOCK = dock_hit(mx, my);
 
         if left && !was {
-            // Press edge: tray first (it overlays everything), then dock,
-            // then windows.
+            // Press edge, overlay-priority order: an open app menu first,
+            // then the brand corner that toggles it, then tray, dock,
+            // windows.
+            if MENU_OPEN {
+                let kind = menu_click(mx, my);
+                if kind != 255 {
+                    open(kind);
+                }
+                PREV_BUTTONS = buttons;
+                return;
+            }
+            if brand_hit(mx, my) {
+                MENU_OPEN = true;
+                mixer::jingle(mixer::EVENT_CLICK);
+                PREV_BUTTONS = buttons;
+                return;
+            }
             if tray_hit(mx, my) {
                 PREV_BUTTONS = buttons;
                 return;
@@ -488,6 +695,28 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
                 let sy = (w.vy.abs() * STRETCH_SENSITIVITY).min(MAX_STRETCH);
                 w.scale_w = 1.0 + sx - sy * 0.5;
                 w.scale_h = 1.0 + sy - sx * 0.5;
+                // Soap-film bend: the body trails the horizontal velocity.
+                // It rides the same spring (vx already oscillates as the
+                // window settles), so it wobbles then relaxes to flat -- no
+                // separate oscillator needed. Capped so it can't invert.
+                let target_bend = (w.vx * 0.9).clamp(-(w.w as f64) * 0.22, w.w as f64 * 0.22);
+                w.bend += (target_bend - w.bend) * (step / 40.0).min(1.0);
+            }
+        }
+        // Dissolve advances per FRAME, not per kernel-ms: the TSC runs
+        // tens-of-times fast under TCG, so a ms-based ramp would finish in
+        // a couple of frames (invisible). ~1/26 per frame => ~26 frames of
+        // sublimation, enjoyable to watch and catchable in a screendump.
+        for w in windows().iter_mut() {
+            if w.used && w.closing {
+                w.dissolve += 0.038;
+            }
+        }
+        // Finalize any window whose dissolve completed (outside the
+        // borrow above).
+        for i in 0..MAX_WINDOWS {
+            if windows()[i].used && windows()[i].closing && windows()[i].dissolve >= 1.0 {
+                finalize_closed(i);
             }
         }
     }
@@ -555,6 +784,7 @@ pub fn key(k: u8) {
     match focused_kind {
         KIND_SETTINGS => settings_key(k),
         KIND_FILES => files_key(k),
+        KIND_WEB => web_key(k),
         _ => {},
     }
 }
@@ -585,11 +815,17 @@ fn settings_key(k: u8) {
                         set_wallpaper(((cur + dir + n) % n) as u32);
                     },
                     3 => {
+                        // Display: persist a next-boot mode preference.
+                        let n = display::mode_count() as i32;
+                        let cur = display::preferred() as i32;
+                        display::set_preferred(((cur + dir + n) % n) as usize);
+                    },
+                    4 => {
                         let n = kbdlayout::count() as i32;
                         let cur = kbdlayout::current() as i32;
                         kbdlayout::set_current(((cur + dir + n) % n) as usize);
                     },
-                    4 => {
+                    5 => {
                         let n = locale::count() as i32;
                         let cur = locale::selected().unwrap_or(0) as i32;
                         locale::select(((cur + dir + n) % n) as usize);
@@ -669,7 +905,13 @@ fn files_key(k: u8) {
                     }
                     vn[off..off + len].copy_from_slice(&name[..len]);
                     FM_VIEW_NAME_LEN = off + len;
-                    FM_VIEWING = true;
+                    // A .bmp opens as the wallpaper, not the text viewer.
+                    if len >= 4 && &name[len - 4..len] == b".bmp" {
+                        let full = core::str::from_utf8(&vn[..off + len]).unwrap_or("");
+                        set_wallpaper_image(full);
+                    } else {
+                        FM_VIEWING = true;
+                    }
                 }
             },
             _ => {},
@@ -889,6 +1131,13 @@ pub fn draw_wallpaper() {
         return;
     }
     match unsafe { WALLPAPER } {
+        WALL_IMAGE => {
+            if wallpaper::loaded() {
+                wallpaper::draw();
+            } else {
+                framebuffer::back_clear(theme::color(theme::SLOT_BG));
+            }
+        },
         WALL_SOLID => framebuffer::back_clear(theme::color(theme::SLOT_BG)),
         WALL_ROYGBIV => {
             // Diagonal stripes: each row shifts the stripe origin left by
@@ -963,9 +1212,26 @@ fn draw_row_ring(x: u32, y: u32, w: u32, h: u32, selected: bool) {
 /// here is the content origin (below the titlebar).
 pub fn draw_content(slot: usize) {
     let Some(w) = slot_window(slot) else { return };
-    let (wx, wy, dw, _dh) = deformed_rect(w);
+    let (wx, wy, dw, dh) = deformed_rect(w);
     let x = (wx.max(0) as u32) + 16;
     let y = (wy.max(0) as u32) + TITLEBAR_H + 14;
+    if w.kind == KIND_WEB {
+        // Capture the wrap width for key-driven fetches on the focused
+        // window (8px glyphs, minus margins).
+        if slot_focused(slot) {
+            unsafe { WEB_COLS = (dw.saturating_sub(40) / 8).max(20) as usize };
+        }
+        browser::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        if unsafe { WEB_URL_ENTRY } {
+            // URL entry overlay along the bottom of the window.
+            let ey = (wy.max(0) as u32) + dh.saturating_sub(26);
+            framebuffer::back_fill_rect(x - 8, ey - 4, dw.saturating_sub(8), 24, theme::color(theme::SLOT_PANEL_BORDER));
+            font8x8::draw_str(x, ey, b"url:", theme::color(theme::SLOT_DIM), theme::color(theme::SLOT_PANEL_BORDER));
+            let buf = unsafe { &(&*&raw const WEB_INPUT)[..WEB_INPUT_LEN] };
+            font8x8::draw_str(x + 40, ey, buf, theme::color(theme::SLOT_TEXT), theme::color(theme::SLOT_PANEL_BORDER));
+        }
+        return;
+    }
     let text = theme::color(theme::SLOT_TEXT);
     let dim = theme::color(theme::SLOT_DIM);
     let panel = theme::color(theme::SLOT_PANEL);
@@ -1009,6 +1275,7 @@ pub fn draw_content(slot: usize) {
                 b"UI theme",
                 b"Sound theme",
                 b"Wallpaper",
+                b"Display",
                 b"Keyboard",
                 b"Language",
                 b"Clock",
@@ -1030,8 +1297,19 @@ pub fn draw_content(slot: usize) {
                         panel,
                     ),
                     2 => font8x8::draw_str(vx, ry, wallpaper_name(unsafe { WALLPAPER }).as_bytes(), accent, panel),
-                    3 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
-                    4 => {
+                    3 => {
+                        // Show the persisted next-boot mode + live size; if
+                        // there's no installed-boot header to persist into,
+                        // say so instead of implying it stuck.
+                        font8x8::draw_str(vx, ry, display::mode_label(display::preferred()).as_bytes(), accent, panel);
+                        if display::persistable() {
+                            font8x8::draw_str(vx + 130, ry, b"(next boot)", dim, panel);
+                        } else {
+                            font8x8::draw_str(vx + 130, ry, display::current_str().as_bytes(), dim, panel);
+                        }
+                    },
+                    4 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
+                    5 => {
                         let li = locale::selected().unwrap_or(0);
                         if let Some(l) = locale::get(li) {
                             font_unicode::draw_utf8_str(
@@ -1130,5 +1408,137 @@ pub fn draw_content(slot: usize) {
             }
         },
         _ => {},
+    }
+}
+
+/// Deterministic per-cell hash in 0.0..1.0 for the dissolve pattern (no
+/// Math.random on this target; a hash of the cell coords gives a stable,
+/// ragged sublimation edge that looks the same every frame of one close).
+fn cell_hash(cx: u32, cy: u32) -> f64 {
+    let mut h = cx.wrapping_mul(374761393).wrapping_add(cy.wrapping_mul(668265263));
+    h ^= h >> 13;
+    h = h.wrapping_mul(1274126177);
+    h ^= h >> 16;
+    (h & 0xFFFF) as f64 / 65535.0
+}
+
+/// Render a whole window kernel-side: soft shadow, a rounded body that
+/// *bends* (per-scanline horizontal shear driven by `bend`, so a dragged
+/// window leans and wobbles like a soap film), the titlebar with title +
+/// traffic-light buttons, and -- when not mid-dissolve -- its content. A
+/// closing window sublimates instead: a diagonal hash-sweep of vanishing
+/// cells plus an overall fade. This replaces the old `.ling` rect drawing
+/// (which couldn't shear or dissolve) -- `main.ling` now just calls this
+/// once per z slot.
+pub fn draw_window(slot: usize) {
+    let Some(w) = slot_window(slot) else { return };
+    let (x0, y0, dw, dh) = deformed_rect(w);
+    if dw < 8 || dh < 8 {
+        return;
+    }
+    let x0 = x0.max(-(dw as i64));
+    let bend = w.bend;
+    let dissolve = w.dissolve;
+    let fade = ((1.0 - dissolve) * 255.0).clamp(0.0, 255.0) as u32;
+    let focused = slot_focused(slot);
+    let radius = 10u32;
+    let tb = TITLEBAR_H;
+
+    let border = if focused {
+        theme::color(theme::SLOT_ACCENT)
+    } else {
+        theme::color(theme::SLOT_PANEL_BORDER)
+    };
+    let body = theme::color(theme::SLOT_PANEL);
+    let title_bg = if focused {
+        theme::color(theme::SLOT_TITLEBAR)
+    } else {
+        theme::color(theme::SLOT_TITLEBAR_IDLE)
+    };
+
+    // Per-scanline shear: a parallelogram lean around the vertical center,
+    // amplitude `bend`. `xoff(dy)` in pixels.
+    let shear = |dy: u32| -> i64 { (bend * (dy as f64 / dh as f64 - 0.5) * 2.0) as i64 };
+
+    // Shadow (skipped once mostly dissolved to save the blend cost).
+    if dissolve < 0.6 {
+        let sh_alpha = (70 * fade / 255).min(70);
+        framebuffer::back_blend_rounded_rect(
+            (x0 + 6).max(0) as u32,
+            (y0 + 8).max(0) as u32,
+            dw,
+            dh,
+            radius,
+            theme::color(theme::SLOT_SHADOW),
+            sh_alpha,
+        );
+    }
+
+    let cell = 9u32; // dissolve cell size
+    for dy in 0..dh {
+        let inset = framebuffer::rounded_row_inset(dy, dh, radius).min(dw / 2);
+        let rx = x0 + inset as i64 + shear(dy);
+        let ry = y0 + dy as i64;
+        if ry < 0 {
+            continue;
+        }
+        let row_w = dw - inset * 2;
+        let (fill, is_edge) = if dy < tb {
+            (title_bg, false)
+        } else {
+            (body, false)
+        };
+        let _ = is_edge;
+        if dissolve <= 0.0 {
+            // Fast opaque path: 1px border frame + inner fill.
+            framebuffer::back_fill_rect(rx.max(0) as u32, ry as u32, row_w, 1, border);
+            if dy >= 1 && dy + 1 < dh && row_w > 2 {
+                framebuffer::back_fill_rect((rx + 1).max(0) as u32, ry as u32, row_w - 2, 1, fill);
+            }
+        } else {
+            // Sublimating: draw cell by cell, skipping vanished cells and
+            // fading the survivors. Diagonal sweep from top-left + hash.
+            let mut cxp = 0u32;
+            while cxp < row_w {
+                let px = rx + cxp as i64;
+                let cw = cell.min(row_w - cxp);
+                let dprog = (cxp as f64 / dw as f64) * 0.5 + (dy as f64 / dh as f64) * 0.5;
+                let gone = dprog + cell_hash(cxp / cell, dy / cell) * 0.5 < dissolve * 1.6;
+                if !gone && px >= 0 {
+                    let c = if dy < tb { title_bg } else { fill };
+                    framebuffer::back_blend_rect(px as u32, ry as u32, cw, 1, c, fade);
+                }
+                cxp += cw;
+            }
+        }
+    }
+
+    // Titlebar text + traffic lights (fade out as it dissolves).
+    if dissolve < 0.55 {
+        let tx = (x0 + 12 + shear(6)).max(0) as u32;
+        let title = kind_title(w.kind);
+        let ttext = if focused {
+            theme::color(theme::SLOT_TITLEBAR_TEXT)
+        } else {
+            theme::color(theme::SLOT_DIM)
+        };
+        font8x8::draw_str(tx, (y0 + 8).max(0) as u32, title.as_bytes(), ttext, title_bg);
+        // minimize (amber) + close (red) at the right end.
+        let cyb = (y0 + tb as i64 / 2).max(0) as u32;
+        let close_x = x0 + dw as i64 - tb as i64 / 2 + shear(tb / 2);
+        let min_x = x0 + dw as i64 - tb as i64 - tb as i64 / 2 + shear(tb / 2);
+        if min_x >= 0 {
+            framebuffer::back_fill_circle(min_x as u32, cyb, 6, 0xE0A44A);
+        }
+        if close_x >= 0 {
+            framebuffer::back_fill_circle(close_x as u32, cyb, 6, 0xE0605A);
+        }
+    }
+
+    // Content: only while the window is coherent (not mid-dissolve). The
+    // bend is left off the content (it stays axis-aligned inside the bent
+    // body) -- the amplitude is small enough that text stays within it.
+    if dissolve <= 0.0 {
+        draw_content(slot);
     }
 }

@@ -43,6 +43,13 @@ blake3 = { version = "1.5", default-features = false, features = ["pure"] }
 # split the result of this operator!` build failure without it).
 ed25519-dalek = { version = "2.2", default-features = false }
 
+# The browser's layout engine ("bring": browser-in-ling) -- its own
+# package/repo (../../../bring-browser) so it host-tests with plain
+# `cargo test` and stays reusable outside the kernel. no_std, zero deps,
+# pure functions: HTML-subset in, styled wrapped lines + a link table
+# out. The kernel side (drivers/browser.rs) only fetches, scrolls, draws.
+bring-browser = { path = "../../../bring-browser" }
+
 [profile.release]
 lto = "fat"
 codegen-units = 1
