@@ -2,6 +2,7 @@ use ling_ast::Span;
 use ling_mir::ir::*;
 use ling_mir::liveness::Liveness;
 use std::collections::{HashMap, HashSet, VecDeque};
+use rustc_hash::FxHashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalState {
@@ -392,7 +393,7 @@ impl<'a> BorrowChecker<'a> {
         }
     }
 
-    fn release_dead_borrows(&self, state: &mut FlowState, live_locals: &HashSet<Local>) {
+    fn release_dead_borrows(&self, state: &mut FlowState, live_locals: &FxHashSet<Local>) {
         let mut still_borrowed = HashSet::new();
         for (ref_var, pointed_var) in &self.provenance {
             if live_locals.contains(ref_var) {

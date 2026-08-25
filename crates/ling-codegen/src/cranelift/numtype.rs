@@ -44,9 +44,14 @@ impl NumberTypes {
     pub fn operand_is_int(&self, func: &str, op: &Operand) -> bool {
         match op {
             Operand::Copy(l) | Operand::Move(l) => self.local_is_int(func, l.0),
-            Operand::Constant(Constant::I64(_)) => true,
-            _ => false,
+            Operand::Constant(c) => is_integral_constant(c),
         }
+    }
+
+    /// Whether a constant is a strict integer (the constant half of
+    /// `operand_is_int`), so codegen can materialize it as a raw `i64`.
+    pub fn constant_is_int(&self, c: &Constant) -> bool {
+        is_integral_constant(c)
     }
 
     /// Whether `op` evaluates to a number inside function `func`.
@@ -67,6 +72,30 @@ impl NumberTypes {
             Operand::Constant(Constant::Bool(_)) => true,
             _ => false,
         }
+    }
+}
+
+/// A constant is a *strict integer* when it is an `I64` or an `F64` whose
+/// value is exactly representable as such. The MIR lowering encodes every
+/// numeric literal (including `1`, `7`, loop bounds) as an F64 bit pattern
+/// (`src/mir/mod.rs`), so gating on `I64` alone made the raw-integer codegen
+/// path unreachable for user code. Integral F64s are safe to widen: the
+/// boxing/unboxing round-trip in `int_to_boxed`/`boxed_to_int` is exact for
+/// any value within ±2^53, and `f64 → i64 → f64` of an integral value is the
+/// identity. `-0.0` is excluded — a raw `i64` cannot carry its sign, so it
+/// must ride the boxed path or `1 / x < 0`-style sign-sensitive uses break.
+fn is_integral_constant(c: &Constant) -> bool {
+    match c {
+        Constant::I64(_) => true,
+        Constant::F64(bits) => {
+            let v = f64::from_bits(*bits);
+            v.is_finite()
+                && !(v == 0.0 && v.is_sign_negative())
+                && v >= -(2u64.pow(53) as f64)
+                && v <= (2u64.pow(53) as f64)
+                && v.fract() == 0.0
+        },
+        _ => false,
     }
 }
 
@@ -282,8 +311,7 @@ pub fn analyze(functions: &[MirFunction]) -> NumberTypes {
         let int_op = |set: &HashSet<usize>, op: &Operand| -> bool {
             match op {
                 Operand::Copy(l) | Operand::Move(l) => set.contains(&l.0),
-                Operand::Constant(Constant::I64(_)) => true,
-                _ => false,
+                Operand::Constant(c) => is_integral_constant(c),
             }
         };
         let mut changed = true;
