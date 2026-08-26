@@ -18,8 +18,15 @@
 use crate::arch::timer;
 use crate::drivers::net_e1000 as nic;
 
-pub const SELF_IP: [u8; 4] = nic::SELF_IP;
-pub const GATEWAY_IP: [u8; 4] = nic::GATEWAY_IP;
+/// Live IP config, resolved through the NIC's runtime config (a DHCP lease
+/// if one was obtained, else the SLIRP fallback) — never the compile-time
+/// const, so a fresh lease takes effect for every packet we build.
+pub fn self_ip() -> [u8; 4] {
+    nic::self_ip()
+}
+pub fn gateway_ip() -> [u8; 4] {
+    nic::gateway_ip()
+}
 const MSS: usize = 1400;
 const RX_WINDOW: u16 = 8192;
 /// Kernel-time poll budget. This bounds how long a *failed* fetch blocks
@@ -33,6 +40,15 @@ const WAIT_BUDGET_US: u64 = 8_000_000;
 
 static mut GW_MAC: [u8; 6] = [0; 6];
 static mut GW_MAC_KNOWN: bool = false;
+/// Timestamp (ms) of the last *failed* gateway ARP, or 0 for "never failed".
+/// Without this, a dead gateway made every `dns_query` re-run the 8-second
+/// `arp_selftest` — three servers per resolve froze the desktop for ~24s.
+/// With it, one failure suppresses further ARP attempts for a cool-off
+/// window, so an offline machine fails a lookup in well under a second while
+/// still recovering automatically once the network comes back.
+static mut GW_FAIL_AT_MS: u64 = 0;
+/// How long to trust a cached ARP failure before trying the gateway again.
+const GW_FAIL_COOLOFF_MS: u64 = 20_000;
 
 fn checksum(data: &[u8], init: u32) -> u16 {
     let mut sum = init;
@@ -51,7 +67,9 @@ fn checksum(data: &[u8], init: u32) -> u16 {
 }
 
 /// Resolve (and cache) the gateway MAC via ARP. Brings the NIC up first
-/// if nothing else has yet (idempotent).
+/// if nothing else has yet (idempotent). A recent failure is cached (see
+/// `GW_FAIL_AT_MS`) so a down network doesn't re-eat the 8s ARP timeout on
+/// every call.
 pub fn arp_gateway() -> Option<[u8; 6]> {
     if !nic::ensure_init() {
         return None;
@@ -60,13 +78,33 @@ pub fn arp_gateway() -> Option<[u8; 6]> {
         if GW_MAC_KNOWN {
             return Some(GW_MAC);
         }
+        // Suppress re-ARP during the cool-off after a recent failure.
+        if GW_FAIL_AT_MS != 0 && timer::now_ms().wrapping_sub(GW_FAIL_AT_MS) < GW_FAIL_COOLOFF_MS {
+            return None;
+        }
     }
-    let mac = nic::arp_selftest()?;
+    match nic::arp_selftest() {
+        Some(mac) => unsafe {
+            GW_MAC = mac;
+            GW_MAC_KNOWN = true;
+            GW_FAIL_AT_MS = 0;
+            Some(mac)
+        },
+        None => unsafe {
+            GW_FAIL_AT_MS = timer::now_ms().max(1);
+            None
+        },
+    }
+}
+
+/// Drop the cached gateway MAC (and any failure cool-off) so the next send
+/// re-ARPs. Called after a new IP config (DHCP lease / static IP) lands, in
+/// case the gateway changed.
+pub fn invalidate_gateway() {
     unsafe {
-        GW_MAC = mac;
-        GW_MAC_KNOWN = true;
+        GW_MAC_KNOWN = false;
+        GW_FAIL_AT_MS = 0;
     }
-    Some(mac)
 }
 
 // -- One static TCP connection ------------------------------------------------
@@ -115,7 +153,7 @@ fn tcp_send(flags: u8, payload: &[u8]) -> bool {
     ip[6] = 0x40; // don't fragment
     ip[8] = 64; // TTL
     ip[9] = 6; // TCP
-    ip[12..16].copy_from_slice(&SELF_IP);
+    ip[12..16].copy_from_slice(&self_ip());
     ip[16..20].copy_from_slice(&c.remote_ip);
     let ipsum = checksum(&ip[..20], 0);
     ip[10..12].copy_from_slice(&ipsum.to_be_bytes());
@@ -134,7 +172,7 @@ fn tcp_send(flags: u8, payload: &[u8]) -> bool {
     t[20 + opt_len..20 + opt_len + payload.len()].copy_from_slice(payload);
     // TCP checksum over pseudo-header + segment.
     let mut pseudo = [0u8; 12];
-    pseudo[0..4].copy_from_slice(&SELF_IP);
+    pseudo[0..4].copy_from_slice(&self_ip());
     pseudo[4..8].copy_from_slice(&c.remote_ip);
     pseudo[9] = 6;
     pseudo[10..12].copy_from_slice(&(tcp_len as u16).to_be_bytes());
@@ -307,7 +345,7 @@ fn udp_send(dst_ip: [u8; 4], dst_port: u16, src_port: u16, payload: &[u8]) -> bo
     ip[6] = 0x40;
     ip[8] = 64;
     ip[9] = 17; // UDP
-    ip[12..16].copy_from_slice(&SELF_IP);
+    ip[12..16].copy_from_slice(&self_ip());
     ip[16..20].copy_from_slice(&dst_ip);
     let ipsum = checksum(&ip[..20], 0);
     ip[10..12].copy_from_slice(&ipsum.to_be_bytes());
@@ -449,13 +487,233 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
     if let Some(ip) = parse_ipv4(host) {
         return Some(ip);
     }
+    // Resolve the gateway MAC ONCE. Every server below routes through the
+    // same gateway, so if the gateway is unreachable there's no point paying
+    // the ARP timeout three times over -- bail immediately. `arp_gateway`
+    // caches the failure, so this returns in microseconds on an offline box
+    // (the old path froze the desktop for ~24s: 3 servers x 8s ARP each).
+    if arp_gateway().is_none() {
+        return None;
+    }
     let (d1, d2) = unsafe { (DNS1, DNS2) };
     for server in [d1, d2, NAT_RESOLVER] {
+        if server == [0, 0, 0, 0] {
+            continue;
+        }
         if let Some(ip) = dns_query(server, host) {
             return Some(ip);
         }
     }
     None
+}
+
+// -- DHCP client -------------------------------------------------------------
+
+/// What we parse out of a DHCP OFFER/ACK. Any field left zero means the
+/// server didn't send that option.
+#[derive(Clone, Copy)]
+struct DhcpReply {
+    yiaddr: [u8; 4],
+    mask: [u8; 4],
+    router: [u8; 4],
+    dns: [u8; 4],
+    server_id: [u8; 4],
+    msg_type: u8,
+}
+impl DhcpReply {
+    const EMPTY: Self = Self {
+        yiaddr: [0; 4],
+        mask: [0; 4],
+        router: [0; 4],
+        dns: [0; 4],
+        server_id: [0; 4],
+        msg_type: 0,
+    };
+}
+
+/// Build and broadcast one BOOTREQUEST (op=1) with the given options. Uses
+/// raw frames (not `udp_send`) because DHCP happens before we have an IP or
+/// a known gateway: Ethernet dst = broadcast, IP src 0.0.0.0 -> 255.255.
+/// 255.255, UDP 68 -> 67, and the BOOTP broadcast flag set so the server
+/// broadcasts its reply (we can't receive a unicast to an IP we don't hold
+/// yet).
+fn dhcp_send(mac: [u8; 6], xid: u32, opts: &[u8]) -> bool {
+    let dhcp_len = 240 + opts.len();
+    let udp_len = 8 + dhcp_len;
+    let ip_len = 20 + udp_len;
+    let total = 14 + ip_len;
+    let mut f = [0u8; 14 + 20 + 8 + 240 + 40];
+    if total > f.len() {
+        return false;
+    }
+    f[0..6].copy_from_slice(&[0xFF; 6]);
+    f[6..12].copy_from_slice(&mac);
+    f[12..14].copy_from_slice(&[0x08, 0x00]);
+    let ip = &mut f[14..];
+    ip[0] = 0x45;
+    ip[2..4].copy_from_slice(&(ip_len as u16).to_be_bytes());
+    ip[6] = 0x40;
+    ip[8] = 64;
+    ip[9] = 17; // UDP
+    ip[12..16].copy_from_slice(&[0, 0, 0, 0]);
+    ip[16..20].copy_from_slice(&[255, 255, 255, 255]);
+    let ipsum = checksum(&ip[..20], 0);
+    ip[10..12].copy_from_slice(&ipsum.to_be_bytes());
+    let u = &mut ip[20..];
+    u[0..2].copy_from_slice(&68u16.to_be_bytes());
+    u[2..4].copy_from_slice(&67u16.to_be_bytes());
+    u[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    // UDP checksum optional over IPv4 -> left zero (SLIRP and real servers
+    // accept it), same as udp_send.
+    let d = &mut u[8..];
+    d[0] = 1; // op: BOOTREQUEST
+    d[1] = 1; // htype: Ethernet
+    d[2] = 6; // hlen
+    d[4..8].copy_from_slice(&xid.to_be_bytes());
+    d[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // flags: broadcast
+    d[28..34].copy_from_slice(&mac); // chaddr
+    d[236..240].copy_from_slice(&[99, 130, 83, 99]); // DHCP magic cookie
+    d[240..240 + opts.len()].copy_from_slice(opts);
+    nic::transmit(&f[..total.max(60)])
+}
+
+/// Poll (bounded) for a broadcast BOOTREPLY matching `xid` and, if given, a
+/// specific DHCP message type (2=OFFER, 5=ACK). Fills `out` and returns true
+/// on a match.
+fn dhcp_await(xid: u32, want_type: u8, out: &mut DhcpReply, budget_us: u64) -> bool {
+    let mut buf = [0u8; 2048];
+    let mut done = false;
+    timer::poll_until(budget_us, || {
+        let Some(len) = nic::receive(&mut buf) else { return false };
+        if len < 14 + 20 + 8 + 240 || buf[12] != 0x08 || buf[13] != 0x00 || buf[23] != 17 {
+            return false;
+        }
+        let ihl = ((buf[14] & 0x0F) as usize) * 4;
+        let u = 14 + ihl;
+        if u + 8 > len || u16::from_be_bytes([buf[u + 2], buf[u + 3]]) != 68 {
+            return false; // not to our DHCP client port
+        }
+        let d = u + 8;
+        if d + 240 > len
+            || buf[d] != 2 // BOOTREPLY
+            || buf[d + 4..d + 8] != xid.to_be_bytes()
+            || buf[d + 236..d + 240] != [99, 130, 83, 99]
+        {
+            return false;
+        }
+        let mut r = DhcpReply::EMPTY;
+        r.yiaddr.copy_from_slice(&buf[d + 16..d + 20]);
+        let mut p = d + 240;
+        while p + 1 < len {
+            let code = buf[p];
+            if code == 255 {
+                break;
+            }
+            if code == 0 {
+                p += 1;
+                continue;
+            }
+            let l = buf[p + 1] as usize;
+            if p + 2 + l > len {
+                break;
+            }
+            let v = &buf[p + 2..p + 2 + l];
+            match code {
+                53 if l >= 1 => r.msg_type = v[0],
+                1 if l >= 4 => r.mask.copy_from_slice(&v[..4]),
+                3 if l >= 4 => r.router.copy_from_slice(&v[..4]),
+                6 if l >= 4 => r.dns.copy_from_slice(&v[..4]),
+                54 if l >= 4 => r.server_id.copy_from_slice(&v[..4]),
+                _ => {},
+            }
+            p += 2 + l;
+        }
+        if want_type != 0 && r.msg_type != want_type {
+            return false;
+        }
+        *out = r;
+        done = true;
+        true
+    });
+    done
+}
+
+/// Configure our IPv4 via DHCP (DISCOVER -> OFFER -> REQUEST -> ACK). This is
+/// what makes DNS work on a VirtualBox *bridged*/*host-only* adapter: the
+/// lease's IP/mask/router/DNS come from the LAN's real server, so ARP finds
+/// the real gateway and off-subnet lookups (1.1.1.1, or the LAN resolver in
+/// option 6) actually route -- instead of the wrong 10.0.2.x SLIRP defaults.
+///
+/// Best-effort and bounded: on a network with no DHCP server it returns
+/// false after the timeouts and the static SLIRP fallback stays in place, so
+/// plain QEMU and manual static-IP setups still work. Runs once at boot.
+pub fn dhcp_configure() -> bool {
+    if !nic::ensure_init() {
+        return false;
+    }
+    let mac = nic::mac();
+    let xid = (timer::now_ms() as u32) ^ ((mac[4] as u32) << 8) ^ (mac[5] as u32) ^ 0x4C69_6E00;
+
+    let mut tries = 0;
+    while tries < 2 {
+        tries += 1;
+        let disc: &[u8] = &[53, 1, 1, 55, 4, 1, 3, 6, 15, 255];
+        if !dhcp_send(mac, xid, disc) {
+            return false;
+        }
+        let mut offer = DhcpReply::EMPTY;
+        if !dhcp_await(xid, 2, &mut offer, 2_000_000) || offer.yiaddr == [0; 4] {
+            continue;
+        }
+        // REQUEST the offered address (SELECTING state: ciaddr stays 0, the
+        // wanted IP goes in option 50, and we echo the server id in 54).
+        let mut req = [0u8; 32];
+        let mut n = 0;
+        req[n..n + 3].copy_from_slice(&[53, 1, 3]);
+        n += 3;
+        req[n..n + 2].copy_from_slice(&[50, 4]);
+        n += 2;
+        req[n..n + 4].copy_from_slice(&offer.yiaddr);
+        n += 4;
+        req[n..n + 2].copy_from_slice(&[54, 4]);
+        n += 2;
+        req[n..n + 4].copy_from_slice(&offer.server_id);
+        n += 4;
+        req[n..n + 5].copy_from_slice(&[55, 3, 1, 3, 6]);
+        n += 5;
+        req[n] = 255;
+        n += 1;
+        if !dhcp_send(mac, xid, &req[..n]) {
+            return false;
+        }
+        // Some servers' ACK omits fields already sent in the OFFER; fall back
+        // to the OFFER's values when the ACK is silent (or never arrives).
+        let mut ack = DhcpReply::EMPTY;
+        if !dhcp_await(xid, 5, &mut ack, 2_000_000) {
+            ack = offer;
+        }
+        let ip = if ack.yiaddr != [0; 4] { ack.yiaddr } else { offer.yiaddr };
+        let gw = if ack.router != [0; 4] { ack.router } else { offer.router };
+        if ip == [0; 4] || gw == [0; 4] {
+            continue; // unusable lease -- keep the static fallback
+        }
+        let mask = if ack.mask != [0; 4] {
+            ack.mask
+        } else if offer.mask != [0; 4] {
+            offer.mask
+        } else {
+            [255, 255, 255, 0]
+        };
+        nic::set_ip_config(ip, mask, gw);
+        invalidate_gateway();
+        // Prefer the lease's DNS as primary, keep Cloudflare as secondary.
+        let dns = if ack.dns != [0; 4] { ack.dns } else { offer.dns };
+        if dns != [0; 4] {
+            set_dns(dns, SECONDARY_DNS);
+        }
+        return true;
+    }
+    false
 }
 
 fn parse_ipv4(s: &str) -> Option<[u8; 4]> {

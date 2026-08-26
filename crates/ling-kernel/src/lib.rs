@@ -2384,6 +2384,40 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
     serial::write(b" link_up=");
     print_decimal(net_e1000::link_up() as u64);
     serial::write(b"\n");
+    // Learn our IP/mask/gateway/DNS from the network we're actually on. This
+    // is what makes DNS resolve on a VirtualBox bridged/host-only adapter,
+    // where the SLIRP-convention static fallbacks are wrong. Bounded and
+    // best-effort: on failure the static fallback stays and plain QEMU still
+    // works.
+    if netstack::dhcp_configure() {
+        let ip = net_e1000::self_ip();
+        let gw = net_e1000::gateway_ip();
+        let (d1, _) = netstack::dns_servers();
+        serial::write(b"net: DHCP lease ip=");
+        for (i, b) in ip.iter().enumerate() {
+            if i > 0 {
+                serial::write(b".");
+            }
+            print_decimal(*b as u64);
+        }
+        serial::write(b" gw=");
+        for (i, b) in gw.iter().enumerate() {
+            if i > 0 {
+                serial::write(b".");
+            }
+            print_decimal(*b as u64);
+        }
+        serial::write(b" dns=");
+        for (i, b) in d1.iter().enumerate() {
+            if i > 0 {
+                serial::write(b".");
+            }
+            print_decimal(*b as u64);
+        }
+        serial::write(b"\n");
+    } else {
+        serial::write(b"net: DHCP unavailable, using static SLIRP fallback\n");
+    }
     1
 }
 #[cfg(target_arch = "x86_64")]
@@ -2397,19 +2431,19 @@ pub unsafe extern "C" fn ling_kernel_net_link_up() -> u64 {
 pub unsafe extern "C" fn ling_kernel_net_mac_byte(i: u64) -> u64 {
     net_e1000::mac().get(i as usize).copied().unwrap_or(0) as u64
 }
-/// One byte (0..3) of this driver's claimed static IPv4 address (see
-/// `net_e1000::SELF_IP`'s doc -- no DHCP yet).
+/// One byte (0..3) of our current IPv4 address -- the DHCP lease if one was
+/// obtained, else the static SLIRP fallback.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_self_ip_byte(i: u64) -> u64 {
-    net_e1000::SELF_IP.get(i as usize).copied().unwrap_or(0) as u64
+    net_e1000::self_ip().get(i as usize).copied().unwrap_or(0) as u64
 }
-/// One byte (0..3) of the configured gateway IPv4 address (see
-/// `net_e1000::GATEWAY_IP`'s doc).
+/// One byte (0..3) of our current default gateway -- the DHCP router option
+/// if leased, else the static SLIRP fallback.
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_net_gateway_ip_byte(i: u64) -> u64 {
-    net_e1000::GATEWAY_IP.get(i as usize).copied().unwrap_or(0) as u64
+    net_e1000::gateway_ip().get(i as usize).copied().unwrap_or(0) as u64
 }
 /// Hand-built ARP request/reply round trip, bypassing any IP stack --
 /// see `net_e1000::arp_selftest`'s doc. Returns 1 and fills `out_mac_byte`-

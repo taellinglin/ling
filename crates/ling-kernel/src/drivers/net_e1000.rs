@@ -446,13 +446,49 @@ pub fn receive(out: &mut [u8]) -> Option<usize> {
     }
 }
 
-/// Our claimed IPv4 address for the self-test/static-IP phase (skipping
-/// DHCP — see the networking plan's phase-ordering doc) — a fixed address
-/// in QEMU SLIRP's default 10.0.2.0/24 range, one the SLIRP gateway itself
-/// doesn't use (.2 is the gateway, .3 is its DNS resolver).
+/// Fallback IPv4 address used *before DHCP succeeds* (or if it fails
+/// entirely) — a fixed address in QEMU SLIRP's default 10.0.2.0/24 range,
+/// one the SLIRP gateway itself doesn't use (.2 is the gateway, .3 is its
+/// DNS resolver). `netstack::dhcp_configure()` replaces the live config
+/// below with a lease learned from whatever network we're actually on
+/// (QEMU/VBox NAT, a bridged LAN, or host-only), which is what makes DNS
+/// resolve on VirtualBox bridged adapters where 10.0.2.x is wrong.
 pub const SELF_IP: [u8; 4] = [10, 0, 2, 15];
-/// QEMU/VirtualBox SLIRP's default gateway address.
+/// QEMU/VirtualBox SLIRP's default gateway address (fallback, pre-DHCP).
 pub const GATEWAY_IP: [u8; 4] = [10, 0, 2, 2];
+
+/// Live IP config — starts at the SLIRP fallbacks so networking works out
+/// of the box under plain QEMU even if DHCP is disabled/absent, and is
+/// overwritten by a successful DHCP lease. Everything that builds a packet
+/// (`arp_selftest`, `tcp_send`, `udp_send`) reads these getters, not the
+/// consts, so a new lease takes effect everywhere at once.
+static mut CFG_IP: [u8; 4] = SELF_IP;
+static mut CFG_GW: [u8; 4] = GATEWAY_IP;
+static mut CFG_MASK: [u8; 4] = [255, 255, 255, 0];
+
+/// Our current source IPv4 (DHCP lease if one was obtained, else the SLIRP
+/// fallback).
+pub fn self_ip() -> [u8; 4] {
+    unsafe { CFG_IP }
+}
+/// Our current default gateway (DHCP router option, else the SLIRP fallback).
+pub fn gateway_ip() -> [u8; 4] {
+    unsafe { CFG_GW }
+}
+/// Our current subnet mask (DHCP option 1, else /24).
+pub fn subnet_mask() -> [u8; 4] {
+    unsafe { CFG_MASK }
+}
+/// Install a fresh IP config (from DHCP or an explicit static-IP setting).
+/// Clears the cached gateway MAC in `netstack` so the next send re-ARPs the
+/// new gateway rather than reusing the stale one.
+pub fn set_ip_config(ip: [u8; 4], mask: [u8; 4], gw: [u8; 4]) {
+    unsafe {
+        CFG_IP = ip;
+        CFG_MASK = mask;
+        CFG_GW = gw;
+    }
+}
 
 /// Hand-built ARP request/reply round trip — deliberately not going through
 /// smoltcp at all, so this isolates genuinely new code (descriptor rings,
@@ -477,9 +513,9 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
     frame[19] = 4; // plen
     frame[20..22].copy_from_slice(&[0x00, 0x01]); // oper: request
     frame[22..28].copy_from_slice(&my_mac); // sender MAC
-    frame[28..32].copy_from_slice(&SELF_IP); // sender IP
+    frame[28..32].copy_from_slice(&self_ip()); // sender IP
     frame[32..38].copy_from_slice(&[0x00; 6]); // target MAC: unknown
-    frame[38..42].copy_from_slice(&GATEWAY_IP); // target IP
+    frame[38..42].copy_from_slice(&gateway_ip()); // target IP
 
     if !transmit(&frame) {
         return None;
@@ -499,7 +535,7 @@ pub fn arp_selftest() -> Option<[u8; 6]> {
                 && buf[13] == 0x06
                 && buf[20] == 0x00
                 && buf[21] == 0x02 // oper: reply
-                && buf[28..32] == GATEWAY_IP
+                && buf[28..32] == gateway_ip()
             {
                 let mut reply_mac = [0u8; 6];
                 reply_mac.copy_from_slice(&buf[22..28]);

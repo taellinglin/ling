@@ -30,7 +30,7 @@ fn repo_addr() -> ([u8; 4], u16) {
             return (ip, port);
         }
     }
-    (netstack::GATEWAY_IP, 8000)
+    (netstack::gateway_ip(), 8000)
 }
 
 fn parse_addr(s: &[u8]) -> Option<([u8; 4], u16)> {
