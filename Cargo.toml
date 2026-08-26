@@ -177,6 +177,7 @@ ling-audio = { workspace = true }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
 ling-mic = { path = "crates/ling-mic", version = "2030.0.9" }
 ling-crypto = { path = "crates/ling-crypto", version = "2030.1.10" }
+subtle = "2.6"   # constant-time compare for lingtp_*'s handshake Finished-MAC check
 ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins

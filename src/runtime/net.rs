@@ -170,6 +170,9 @@ pub fn host(port: u16) {
                 },
                 Err(_) => continue,
             };
+            // On Windows a stream accepted from a non-blocking listener inherits
+            // the non-blocking flag, breaking run_peer's blocking reads below.
+            let _ = stream.set_nonblocking(false);
             let g = NET.lock().ok();
             let Some(guard) = g else { break };
             let Some(hub) = guard.as_ref() else { break };

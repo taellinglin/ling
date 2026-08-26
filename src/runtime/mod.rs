@@ -154,6 +154,8 @@ fn wasm_fetch_text(path: &str) -> Result<String, String> {
 mod net;
 #[cfg(not(target_arch = "wasm32"))]
 mod ssh;
+#[cfg(not(target_arch = "wasm32"))]
+mod lingtp;
 #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
 pub mod web;
 use crate::gfx::{GfxState, Light};
@@ -1924,6 +1926,17 @@ pub struct Interpreter {
     /// all (DNS/connect/TLS failure).
     #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
     last_http_status: u16,
+    /// Routes registered by `lingtp_route(path, handler)`, consumed by
+    /// `lingtp_serve` — GET-only (no method), matching lingtp:// v1's
+    /// request shape. Unlike `http_routes`, not gated on `feature = "web"`:
+    /// lingtp only depends on ling-crypto, already unconditional here.
+    #[cfg(not(target_arch = "wasm32"))]
+    lingtp_routes: Vec<(String, Value)>,
+    /// Status of the last `lingtp_get` call — paired accessor, same shape as
+    /// `http_get_status()`. 1 = ok, 0 = connect/handshake error, -1 =
+    /// signature invalid, -2 = host key changed (refused).
+    #[cfg(not(target_arch = "wasm32"))]
+    last_lingtp_status: i32,
 }
 
 /// Live gamepad input state: a ling-input hub fed by the native `gilrs` backend.
@@ -2016,6 +2029,10 @@ impl Interpreter {
             oauth_jobs: web::OAuthJobs::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
             last_http_status: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            lingtp_routes: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            last_lingtp_status: 0,
         }
     }
 
@@ -9362,6 +9379,88 @@ impl Interpreter {
             "ssh_close" => {
                 ssh::close();
                 return Ok(Value::Unit);
+            },
+            // ── lingtp:// (post-quantum secure transport, see runtime::lingtp) ──
+            // Client: fetch one resource, https-style but with an ML-KEM/
+            // ML-DSA-87 handshake instead of TLS.
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_get" => {
+                let host = self.arg_str(&args, 0, "");
+                let port = self.arg_num(&args, 1, 7780.0)? as u16;
+                let path = self.arg_str(&args, 2, "/");
+                let (status, body) = lingtp::get(&host, port, &path);
+                self.last_lingtp_status = status;
+                return Ok(Value::Str(body));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_get_status" => {
+                return Ok(Value::Number(self.last_lingtp_status as f64));
+            },
+            // Server: stage config (port + where to persist the host's
+            // ML-DSA-87 identity key — generated once on first serve() and
+            // reused after, so returning clients' TOFU pin stays meaningful).
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_config" => {
+                let port = self.arg_num(&args, 0, 7780.0)? as u16;
+                let host_key_path = self.arg_str(&args, 1, "");
+                lingtp::configure(port, &host_key_path);
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_route" => {
+                let path = self.arg_str(&args, 0, "/");
+                let handler = args.get(1).cloned().unwrap_or(Value::Unit);
+                self.lingtp_routes.push((path, handler));
+                return Ok(Value::Unit);
+            },
+            // Starts listening (per the staged lingtp_config) and blocks,
+            // dispatching each request to whichever lingtp_route matches —
+            // same shape as http_serve's loop, just polling lingtp::recv_request()
+            // instead of draining a channel, since a TCP accept loop across
+            // many raw std::thread connections (not a Receiver handed back
+            // once) is what runtime::lingtp's server side hands us.
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_serve" => {
+                if !lingtp::serve() {
+                    return Ok(Value::Bool(false));
+                }
+                let routes = std::mem::take(&mut self.lingtp_routes);
+                loop {
+                    let Some(pending) = lingtp::recv_request() else {
+                        if lingtp::status() == 0 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    };
+                    let matched = routes.iter().find(|(p, _)| p == &pending.path);
+                    let body = match matched {
+                        Some((_, handler)) => match self.call_value(handler.clone(), vec![Value::Str(pending.path.clone())]) {
+                            Ok(v) => v.to_string(),
+                            Err(e) => format!("handler error: {e:?}"),
+                        },
+                        None => String::new(),
+                    };
+                    let _ = pending.respond_to.send(body);
+                }
+                return Ok(Value::Bool(true));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_stop" => {
+                lingtp::stop();
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_status" => {
+                return Ok(Value::Number(lingtp::status() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_client_count" => {
+                return Ok(Value::Number(lingtp::client_count() as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_events" => {
+                return Ok(Value::Str(lingtp::events()));
             },
             // ── HTTP server (interpreter <-> async bridge, see runtime::web) ──
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
