@@ -13,7 +13,7 @@
 //! class so errors read red, ok green, and command echoes accent.
 
 use crate::arch::rtc;
-use crate::drivers::{clipboard, font8x8, framebuffer, media, mixer, netstack, theme};
+use crate::drivers::{clipboard, font8x8, framebuffer, lingfu, media, mixer, netstack, theme};
 use crate::fs::lingfs;
 
 const COLS: usize = 128; // max stored chars per line
@@ -119,6 +119,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  date  theme dark|light  copy <t>  paste");
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
+            push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
         },
         "clear" => unsafe {
             COUNT = 0;
@@ -246,6 +247,7 @@ fn run(line: &str) {
                 fetch_and_dump(arg, true);
             }
         },
+        "lingfu" => run_lingfu(arg),
         _ => {
             let mut b = [0u8; 96];
             let p = b"unknown command: ";
@@ -254,6 +256,75 @@ fn run(line: &str) {
             b[p.len()..p.len() + n].copy_from_slice(&cmd.as_bytes()[..n]);
             push(Cls::Err, &b[..p.len() + n]);
         },
+    }
+}
+
+/// The desktop-terminal front end for the kernel `lingfu` package client.
+/// Handles the *package-management* verbs that work without a compiler
+/// (sync/search/install/update); the project/toolchain verbs (new, build,
+/// run, test, ...) need the `ling` compiler, which doesn't run inside LingOS
+/// yet -- so we say so plainly rather than pretend. lingfu writes through a
+/// capture sink here so its output lands in this window, not the text console.
+fn run_lingfu(arg: &str) {
+    let (sub, rest) = split_cmd(arg);
+    match sub {
+        "" | "help" => {
+            push(Cls::Accent, b"lingfu -- LingOS package client");
+            push(Cls::Normal, b"  lingfu sync              refresh the catalog from the repo");
+            push(Cls::Normal, b"  lingfu search <query>    find packages");
+            push(Cls::Normal, b"  lingfu install <name>    download + install a package");
+            push(Cls::Normal, b"  lingfu update            re-sync the catalog");
+            push(Cls::Dim, b"  new/build/run/test need the ling compiler (host-only for now)");
+        },
+        "new" | "init" | "build" | "run" | "test" | "check" | "clean" | "doc" | "fmt"
+        | "bench" | "tree" | "publish" | "add" | "manifest" | "wizard" => {
+            push(Cls::Err, b"lingfu: that verb needs the ling compiler/toolchain,");
+            push(Cls::Err, b"which doesn't run inside LingOS yet (no userspace/loader).");
+            push(Cls::Dim, b"Package verbs that DO work here: sync, search, install, update.");
+        },
+        "sync" | "update" => {
+            push(Cls::Dim, b"contacting repo...");
+            lingfu::begin_capture();
+            lingfu::sync();
+            dump_capture();
+        },
+        "search" | "list" => {
+            lingfu::begin_capture();
+            if !lingfu::synced() {
+                lingfu::sync();
+            }
+            lingfu::list(rest);
+            dump_capture();
+        },
+        "install" => {
+            if rest.is_empty() {
+                push(Cls::Err, b"usage: lingfu install <name>");
+            } else {
+                push(Cls::Dim, b"installing...");
+                lingfu::begin_capture();
+                lingfu::install(rest);
+                dump_capture();
+            }
+        },
+        other => {
+            let mut b = [0u8; 64];
+            let p = b"lingfu: unknown subcommand: ";
+            b[..p.len()].copy_from_slice(p);
+            let n = other.len().min(b.len() - p.len());
+            b[p.len()..p.len() + n].copy_from_slice(&other.as_bytes()[..n]);
+            push(Cls::Err, &b[..p.len() + n]);
+        },
+    }
+}
+
+/// Push everything lingfu captured this call into the terminal, one line per
+/// output line (blank lines dropped).
+fn dump_capture() {
+    let out = lingfu::end_capture();
+    for line in out.split(|&b| b == b'\n') {
+        if !line.is_empty() {
+            push_wrapped(Cls::Normal, line);
+        }
     }
 }
 

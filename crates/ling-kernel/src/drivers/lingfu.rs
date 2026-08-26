@@ -71,7 +71,44 @@ fn parse_addr(s: &[u8]) -> Option<([u8; 4], u16)> {
     }
 }
 
+/// Output capture, so the graphics Terminal app can show lingfu's output in
+/// its own window instead of the text console. When capturing, `print`
+/// appends into `CAP` (bounded); otherwise it goes to the console as before,
+/// keeping the text-mode `lsh` path unchanged.
+static mut CAP: [u8; 8 * 1024] = [0; 8 * 1024];
+static mut CAP_LEN: usize = 0;
+static mut CAPTURING: bool = false;
+
+pub fn begin_capture() {
+    unsafe {
+        CAPTURING = true;
+        CAP_LEN = 0;
+    }
+}
+
+pub fn end_capture() -> &'static [u8] {
+    unsafe {
+        CAPTURING = false;
+        &(&*&raw const CAP)[..CAP_LEN]
+    }
+}
+
+/// True once a catalog has been synced this session.
+pub fn synced() -> bool {
+    unsafe { CATALOG_LEN > 0 }
+}
+
 fn print(s: &[u8]) {
+    unsafe {
+        if CAPTURING {
+            let cap = &mut *&raw mut CAP;
+            let room = cap.len().saturating_sub(CAP_LEN);
+            let n = s.len().min(room);
+            cap[CAP_LEN..CAP_LEN + n].copy_from_slice(&s[..n]);
+            CAP_LEN += n;
+            return;
+        }
+    }
     crate::console_write(s);
 }
 
