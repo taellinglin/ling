@@ -21,6 +21,13 @@ pub static PELIPO_WAV: &[u8] = include_bytes!("../../assets/pelipo.wav");
 #[cfg(not(feature = "request_framebuffer"))]
 pub static PELIPO_WAV: &[u8] = &[];
 
+/// The Ling Country anthem -- same baking rationale as Pelipo (a
+/// downsampled clip of the 36MB master).
+#[cfg(feature = "request_framebuffer")]
+pub static ANTHEM_WAV: &[u8] = include_bytes!("../../assets/anthem.wav");
+#[cfg(not(feature = "request_framebuffer"))]
+pub static ANTHEM_WAV: &[u8] = &[];
+
 const BUF_MAX: usize = 4 * 1024 * 1024; // room for a few minutes of 8-bit mono
 static mut MEDIA_BUF: [u8; BUF_MAX] = [0; BUF_MAX];
 static mut LOADED: bool = false;
@@ -199,18 +206,45 @@ pub fn draw(x: u32, y: u32, w: u32, _h: u32) {
     font8x8::draw_str(x, y + 150, b"space: play/pause    s: stop", dim, panel);
 }
 
-/// Seed `music/Pelipo.wav` into lingfs from the baked clip, once (skips if
-/// already present). Called from lingfs mount on graphics kernels.
-pub fn seed_pelipo() {
-    if PELIPO_WAV.is_empty() {
-        return;
+static mut SEED_STEP: u32 = 0;
+
+/// Seed the bundled songs into `music/`, at most ONE file per call, so no
+/// single desktop frame blocks for the whole ~1.5MiB library write (that
+/// froze the UI badly enough to drop input). Call every frame until it
+/// returns true; each writing frame hitches once (a few hundred KiB), then
+/// the desktop is responsive again. Skips files already present (installed
+/// disks persist them). MUST use write_in_dir_any -- the clips are far
+/// past the single-block write_in_dir cap. Returns true when done.
+pub fn seed_pelipo() -> bool {
+    unsafe {
+        match SEED_STEP {
+            0 => {
+                if !PELIPO_WAV.is_empty() && !music_has("Pelipo.wav") {
+                    let _ = lingfs::write_in_dir_any("music", "Pelipo.wav", PELIPO_WAV);
+                }
+                SEED_STEP = 1;
+                false
+            },
+            1 => {
+                if !ANTHEM_WAV.is_empty() && !music_has("Anthem.wav") {
+                    let _ = lingfs::write_in_dir_any("music", "Anthem.wav", ANTHEM_WAV);
+                }
+                SEED_STEP = 2;
+                true
+            },
+            _ => true,
+        }
     }
-    // Skip if already seeded (installed disks persist it).
-    let mut probe = [0u8; 64];
-    if lingfs::list_entry("music", 0, &mut probe).is_some() {
-        return;
+}
+
+fn music_has(fname: &str) -> bool {
+    let mut nm = [0u8; 64];
+    let mut i = 0;
+    while let Some((len, _)) = lingfs::list_entry("music", i, &mut nm) {
+        if &nm[..len] == fname.as_bytes() {
+            return true;
+        }
+        i += 1;
     }
-    // MUST be write_in_dir_any: the clip is ~1MiB, far past the single-
-    // block write_in_dir cap -- that silently failed and left music/ empty.
-    let _ = lingfs::write_in_dir_any("music", "Pelipo.wav", PELIPO_WAV);
+    false
 }

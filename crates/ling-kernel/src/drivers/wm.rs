@@ -702,6 +702,7 @@ fn dock_hit(mx: i64, my: i64) -> i32 {
 /// per-window spring advance. Call once per frame from the `.ling` loop,
 /// before reading any slot getter.
 static mut SETTINGS_LOADED: bool = false;
+static mut SEED_DONE: bool = false;
 
 /// Read lingfs `/dns` (two dotted-quad lines: primary, secondary) and
 /// apply it, so DNS is configurable without a rebuild. Absent/garbled =
@@ -762,7 +763,11 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             SETTINGS_LOADED = true;
             settings_load();
             load_dns_config();
-            media::seed_pelipo();
+        }
+        // Seed the music library incrementally -- at most one song per
+        // frame, so the ~1.5MiB write never freezes a single frame.
+        if !SEED_DONE {
+            SEED_DONE = media::seed_pelipo();
         }
         // Serial diagnostic, once every 512 frames: proves whether IRQ12
         // bytes are flowing and where the driver thinks the cursor is --

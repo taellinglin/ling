@@ -6,7 +6,7 @@
 //! - [`asymmetric`] — Ed25519 signatures, X25519 ECDH
 //! - [`kdf`] — Argon2id, HKDF-SHA3
 //! - [`pq`] — ML-KEM-768 (post-quantum KEM, FIPS 203) — real implementation
-//! - [`pq_sig`] — ML-DSA-65 (post-quantum signatures, FIPS 204)
+//! - [`pq_sig`] — ML-DSA-65 and ML-DSA-87 (post-quantum signatures, FIPS 204)
 //! - [`hybrid`] — X25519 + ML-KEM-768 hybrid KEM (the PQ-migration primitive)
 //! - [`geo`] — Geometric suite: knot identities (PQ KEM), 3-D knot key
 //!   fingerprints, and a 4-D holographic all-or-nothing transform
@@ -38,7 +38,7 @@ pub use hybrid::{encapsulate as hybrid_encapsulate, HybridKeypair};
 pub use kdf::{hkdf_sha3, Argon2idParams};
 pub use mandala::{MandalaHash, MandalaParams};
 pub use pq::{encapsulate as mlkem768_encapsulate, MlKem768Keypair};
-pub use pq_sig::MlDsa65Keypair;
+pub use pq_sig::{MlDsa65Keypair, MlDsa87Keypair};
 pub use shamir::{reconstruct_secret, split_secret, Share};
 pub use symmetric::{AesGcm256, XChaCha20};
 pub use vrf::{VrfKeypair, VrfProof};

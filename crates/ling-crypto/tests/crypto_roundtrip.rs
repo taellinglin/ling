@@ -5,7 +5,7 @@
 use ling_crypto::hash::Blake3;
 use ling_crypto::hybrid::HybridKeypair;
 use ling_crypto::pq::MlKem768Keypair;
-use ling_crypto::pq_sig::MlDsa65Keypair;
+use ling_crypto::pq_sig::{MlDsa65Keypair, MlDsa87Keypair};
 use ling_crypto::symmetric::AesGcm256;
 
 #[test]
@@ -107,6 +107,69 @@ fn ml_dsa_65_seed_is_deterministic() {
     let sig = kp_a.sign(msg);
     assert!(
         MlDsa65Keypair::verify(&kp_b.public_key(), msg, &sig).is_ok(),
+        "a signature from one seed-derived keypair must verify against the other's public key"
+    );
+
+    assert_eq!(
+        &*kp_a.to_bytes(),
+        &seed,
+        "to_bytes() must round-trip the original seed"
+    );
+}
+
+#[test]
+fn ml_dsa_87_signs_and_verifies() {
+    let kp = MlDsa87Keypair::generate();
+    let pk = kp.public_key();
+    let msg = b"lingtp:// ServerHello transcript";
+    let sig = kp.sign(msg);
+    assert!(
+        MlDsa87Keypair::verify(&pk, msg, &sig).is_ok(),
+        "a genuine signature must verify"
+    );
+    // ML-DSA-87 (category 5) keys/signatures must actually be larger than
+    // -65's (category 3) — otherwise this would silently be using the wrong
+    // parameter set under a right name.
+    assert!(pk.len() > 1952, "ML-DSA-87 verifying key should be 2592 bytes, got {}", pk.len());
+    assert!(sig.len() > 3309, "ML-DSA-87 signature should be ~4627 bytes, got {}", sig.len());
+}
+
+#[test]
+fn ml_dsa_87_rejects_tampered_message_and_signature() {
+    let kp = MlDsa87Keypair::generate();
+    let pk = kp.public_key();
+    let msg = b"original message";
+    let sig = kp.sign(msg);
+
+    assert!(
+        MlDsa87Keypair::verify(&pk, b"tampered message", &sig).is_err(),
+        "signature must not verify against a different message"
+    );
+
+    let mut bad_sig = sig.clone();
+    let last = bad_sig.len() - 1;
+    bad_sig[last] ^= 0xFF;
+    assert!(
+        MlDsa87Keypair::verify(&pk, msg, &bad_sig).is_err(),
+        "tampered signature must not verify"
+    );
+}
+
+#[test]
+fn ml_dsa_87_seed_is_deterministic() {
+    let seed = [7u8; 32];
+    let kp_a = MlDsa87Keypair::from_seed(seed);
+    let kp_b = MlDsa87Keypair::from_seed(seed);
+    assert_eq!(
+        kp_a.public_key(),
+        kp_b.public_key(),
+        "same seed must rederive the same public key across restarts"
+    );
+
+    let msg = b"issuer identity persisted as a 32-byte seed";
+    let sig = kp_a.sign(msg);
+    assert!(
+        MlDsa87Keypair::verify(&kp_b.public_key(), msg, &sig).is_ok(),
         "a signature from one seed-derived keypair must verify against the other's public key"
     );
 
