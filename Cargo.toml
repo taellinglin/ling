@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.46"
+version = "2030.1.47"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -176,7 +176,7 @@ ling-icon = { path = "crates/ling-icon", version = "2030.0.8" }
 ling-audio = { workspace = true }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
 ling-mic = { path = "crates/ling-mic", version = "2030.0.9" }
-ling-crypto = { path = "crates/ling-crypto", version = "2030.1.10" }
+ling-crypto = { path = "crates/ling-crypto", version = "2030.1.11" }
 subtle = "2.6"   # constant-time compare for lingtp_*'s handshake Finished-MAC check
 ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
@@ -200,7 +200,7 @@ tokio = { workspace = true }   # async runtime backing ssh_* builtins (russh is 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-ling-crypto = { path = "crates/ling-crypto", version = "2030.1.10" }
+ling-crypto = { path = "crates/ling-crypto", version = "2030.1.11" }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
 # Pure-geometry vector UI (holo brackets/text + easings) — wasm-safe, so the
 # ui_* / ease builtins render on the web via the software framebuffer too.
@@ -280,7 +280,7 @@ ling-input    = { path = "crates/ling-input", version = "2030.0.8" }
 ling-ai = { path = "crates/ling-ai", version = "2030.0.8" }
 
 # Crypto
-ling-crypto   = { path = "crates/ling-crypto", version = "2030.1.10" }
+ling-crypto   = { path = "crates/ling-crypto", version = "2030.1.11" }
 aes-gcm       = "0.10"
 curve25519-dalek = "4.1"
 blake3        = "1.5"

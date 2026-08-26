@@ -108,4 +108,4 @@ tar = "0.4"
 indicatif = "0.17"
 dirs = "5"
 # `lingfu seed`'s keyfile HKDF, AEAD, and Shamir-recovery shares.
-ling-crypto = { path = "../ling-crypto", version = "2030.1.10" }
+ling-crypto = { path = "../ling-crypto", version = "2030.1.11" }
