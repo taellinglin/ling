@@ -98,6 +98,12 @@ pub fn synced() -> bool {
     unsafe { CATALOG_LEN > 0 }
 }
 
+/// The raw synced catalog bytes (one package per line), for the GUI package
+/// manager to parse and render. Empty until `sync()` succeeds.
+pub fn catalog_raw() -> &'static [u8] {
+    catalog()
+}
+
 fn print(s: &[u8]) {
     unsafe {
         if CAPTURING {

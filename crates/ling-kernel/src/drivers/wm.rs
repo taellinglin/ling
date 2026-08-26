@@ -28,7 +28,7 @@
 use crate::arch::{rtc, timer};
 use crate::drivers::{
     browser, display, editor, framebuffer, font8x8, font_unicode, gallery, kbdlayout, locale,
-    media, mixer, netstack, terminal, theme, wallpaper,
+    media, mixer, netstack, pkgman, terminal, theme, wallpaper,
 };
 use crate::fs::lingfs;
 
@@ -69,6 +69,7 @@ pub const KIND_EDIT: u8 = 4;
 pub const KIND_GALLERY: u8 = 5;
 pub const KIND_TERM: u8 = 6;
 pub const KIND_MEDIA: u8 = 7;
+pub const KIND_PKG: u8 = 8;
 const DOCK_APPS: [u8; 8] = [
     KIND_ABOUT,
     KIND_SETTINGS,
@@ -332,7 +333,7 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 16] = [
+const MENU: [MenuRow; 17] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "Accessories", app: "", kind: 255 },
@@ -343,6 +344,7 @@ const MENU: [MenuRow; 16] = [
     MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
     MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
     MenuRow { header: "System", app: "", kind: 255 },
+    MenuRow { header: "", app: "Packages", kind: KIND_PKG },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
     MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
     MenuRow { header: "Power", app: "", kind: 255 },
@@ -514,6 +516,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_GALLERY => "Gallery",
         KIND_TERM => "Terminal",
         KIND_MEDIA => "Media Player",
+        KIND_PKG => "Packages",
         _ => "?",
     }
 }
@@ -531,6 +534,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_GALLERY => (560.0, 440.0),
         KIND_TERM => (620.0, 420.0),
         KIND_MEDIA => (480.0, 300.0),
+        KIND_PKG => (560.0, 440.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -650,6 +654,12 @@ pub fn open(kind: u8) {
         dissolve: 0.0,
     };
     z_raise(idx);
+    // The package manager syncs its catalog when it first appears (bounded
+    // HTTP; fast-fail if no repo). Done here, not in draw, so the network
+    // wait happens once at open rather than every frame.
+    if kind == KIND_PKG {
+        pkgman::open();
+    }
     mixer::jingle(mixer::EVENT_OPEN);
 }
 
@@ -1056,6 +1066,7 @@ pub fn key(k: u8) {
         KIND_GALLERY => gallery::key(k),
         KIND_TERM => terminal::key(k),
         KIND_MEDIA => media::key(k),
+        KIND_PKG => pkgman::key(k),
         _ => {},
     }
 }
@@ -1600,6 +1611,10 @@ pub fn draw_content(slot: usize) {
     }
     if w.kind == KIND_MEDIA {
         media::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
+    if w.kind == KIND_PKG {
+        pkgman::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
         return;
     }
     if w.kind == KIND_WEB {
