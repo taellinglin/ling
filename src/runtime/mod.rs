@@ -1918,6 +1918,12 @@ pub struct Interpreter {
     /// `async_jobs` because a login result has three fields, not one string.
     #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
     oauth_jobs: web::OAuthJobs,
+    /// HTTP status of the last `http_get`/`http_get_headers` call — a paired
+    /// accessor (`http_get_status()`) rather than a multi-value return, same
+    /// shape as `ssh_exit_code()`. 0 if the request never got a response at
+    /// all (DNS/connect/TLS failure).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    last_http_status: u16,
 }
 
 /// Live gamepad input state: a ling-input hub fed by the native `gilrs` backend.
@@ -2008,6 +2014,8 @@ impl Interpreter {
             async_jobs: web::AsyncJobs::new(),
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
             oauth_jobs: web::OAuthJobs::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            last_http_status: 0,
         }
     }
 
@@ -9392,53 +9400,62 @@ impl Interpreter {
                 // its own banner, but only after the socket is actually
                 // bound — a more honest signal than printing right after
                 // requesting the background thread be spawned.
-                let rx = web::spawn_server(host.clone(), port, static_dirs);
-                for pending in rx {
-                    let matched = routes
-                        .iter()
-                        .find(|(m, p, _)| m == &pending.method && p == &pending.path);
-                    let response = match matched {
-                        Some((_, _, handler)) => {
-                            let req_value = Value::Struct {
-                                name: "Request".to_string(),
-                                fields: vec![
-                                    ("method".to_string(), Value::Str(pending.method.clone())),
-                                    ("path".to_string(), Value::Str(pending.path.clone())),
-                                    ("query".to_string(), Value::Str(pending.query.clone())),
-                                    ("body".to_string(), Value::Str(pending.body.clone())),
-                                    ("cookie".to_string(), Value::Str(pending.cookie.clone())),
-                                    (
-                                        "authorization".to_string(),
-                                        Value::Str(pending.authorization.clone()),
-                                    ),
-                                    (
-                                        "client_ip".to_string(),
-                                        Value::Str(pending.client_ip.clone()),
-                                    ),
-                                ],
-                            };
-                            match self.call_value(handler.clone(), vec![req_value]) {
-                                Ok(v) => web::value_to_response(&v),
-                                Err(e) => web::HttpResponse {
-                                    status: 500,
-                                    content_type: "text/plain; charset=utf-8".to_string(),
-                                    body: format!("handler error: {e:?}"),
-                                    set_cookie: None,
-                                    location: None,
-                                },
-                            }
-                        },
-                        None => web::HttpResponse {
-                            status: 404,
-                            content_type: "text/plain; charset=utf-8".to_string(),
-                            body: "not found".to_string(),
-                            set_cookie: None,
-                            location: None,
-                        },
-                    };
-                    let _ = pending.respond_to.send(response);
-                }
-                return Ok(Value::Unit);
+                let rx = web::spawn_server(host.clone(), port, static_dirs, web::TlsMode::Plain);
+                return self.drain_http_requests(rx, routes);
+            },
+            // Real HTTPS: terminates TLS itself using a cert/key PEM pair
+            // already on disk (e.g. from Let's Encrypt) — no reverse proxy
+            // needed. Same route-registration/dispatch as http_serve, only
+            // the transport underneath differs.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_serve_tls" => {
+                let host = self.arg_str(&args, 0, "127.0.0.1");
+                let port = self.arg_num(&args, 1, 8080.0)? as u16;
+                let cert_pem = self.arg_str(&args, 2, "");
+                let key_pem = self.arg_str(&args, 3, "");
+                let routes = std::mem::take(&mut self.http_routes);
+                let static_dirs = std::mem::take(&mut self.http_static_dirs);
+                let rx = web::spawn_server(
+                    host.clone(),
+                    port,
+                    static_dirs,
+                    web::TlsMode::Certs { cert_pem, key_pem },
+                );
+                return self.drain_http_requests(rx, routes);
+            },
+            // HTTPS with a throwaway self-signed cert generated at startup —
+            // local development only; browsers/curl reject it as untrusted
+            // (curl -k, or a script's own TOFU-style pinning, to proceed
+            // anyway). Never use this for a public-facing service.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_serve_dev_tls" => {
+                let host = self.arg_str(&args, 0, "127.0.0.1");
+                let port = self.arg_num(&args, 1, 8080.0)? as u16;
+                let routes = std::mem::take(&mut self.http_routes);
+                let static_dirs = std::mem::take(&mut self.http_static_dirs);
+                let rx = web::spawn_server(host.clone(), port, static_dirs, web::TlsMode::Dev);
+                return self.drain_http_requests(rx, routes);
+            },
+            // Fires a POST request on a background async runtime and returns a job
+            // Retrieves `url` (http:// or https://, TLS handled transparently
+            // by reqwest) and blocks until the body is in hand — the
+            // "fetch a page" half of a browser-shaped script, paired with
+            // http_get_status() for the response code. See get_blocking's
+            // doc comment for why blocking is the right call here (unlike
+            // http_serve's handlers, there's no other visitor to stall).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_get" | "เว็บรับ" | "دریافت_HTTP" | "اجلب_HTTP" | "קבל_HTTP" | "HTTP_حاصل_کرو" => {
+                let url = self.arg_str(&args, 0, "");
+                let (status, body) = web::get_blocking(&url);
+                self.last_http_status = status;
+                return Ok(Value::Str(body));
+            },
+            // HTTP status of the last http_get call (0 if it never got a
+            // response at all — DNS/connect/TLS failure, distinct from a
+            // real 4xx/5xx).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_get_status" => {
+                return Ok(Value::Number(self.last_http_status as f64));
             },
             // Fires a POST request on a background async runtime and returns a job
             // id immediately — for slow external calls (e.g. local Stable Diffusion
@@ -17597,6 +17614,58 @@ impl Interpreter {
         args.get(n)
             .map(|v| v.to_string())
             .unwrap_or_else(|| default.to_string())
+    }
+
+    /// Shared by `http_serve`/`http_serve_tls`/`http_serve_dev_tls`: drains
+    /// requests off `rx` — blocking, on the interpreter's own thread — and
+    /// dispatches each to whichever registered Ling route handler matches
+    /// method+path, exactly the same regardless of whether the connection
+    /// underneath is plain HTTP or TLS (that's all already decided by the
+    /// `web::TlsMode` passed to `web::spawn_server` before this runs).
+    #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+    fn drain_http_requests(
+        &mut self,
+        rx: std::sync::mpsc::Receiver<web::PendingRequest>,
+        routes: Vec<(String, String, Value)>,
+    ) -> Result<Value, EvalErr> {
+        for pending in rx {
+            let matched = routes.iter().find(|(m, p, _)| m == &pending.method && p == &pending.path);
+            let response = match matched {
+                Some((_, _, handler)) => {
+                    let req_value = Value::Struct {
+                        name: "Request".to_string(),
+                        fields: vec![
+                            ("method".to_string(), Value::Str(pending.method.clone())),
+                            ("path".to_string(), Value::Str(pending.path.clone())),
+                            ("query".to_string(), Value::Str(pending.query.clone())),
+                            ("body".to_string(), Value::Str(pending.body.clone())),
+                            ("cookie".to_string(), Value::Str(pending.cookie.clone())),
+                            ("authorization".to_string(), Value::Str(pending.authorization.clone())),
+                            ("client_ip".to_string(), Value::Str(pending.client_ip.clone())),
+                        ],
+                    };
+                    match self.call_value(handler.clone(), vec![req_value]) {
+                        Ok(v) => web::value_to_response(&v),
+                        Err(e) => web::HttpResponse {
+                            status: 500,
+                            content_type: "text/plain; charset=utf-8".to_string(),
+                            body: format!("handler error: {e:?}"),
+                            set_cookie: None,
+                            location: None,
+                        },
+                    }
+                },
+                None => web::HttpResponse {
+                    status: 404,
+                    content_type: "text/plain; charset=utf-8".to_string(),
+                    body: "not found".to_string(),
+                    set_cookie: None,
+                    location: None,
+                },
+            };
+            let _ = pending.respond_to.send(response);
+        }
+        Ok(Value::Unit)
     }
 
     /// Read a list-of-strings argument as `Vec<String>` (empty if absent/not a list).

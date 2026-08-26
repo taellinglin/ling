@@ -338,18 +338,37 @@ fn udp_poll(port: u16, out: &mut [u8]) -> Option<usize> {
     Some(n)
 }
 
-/// SLIRP's builtin DNS forwarder.
-pub const DNS_IP: [u8; 4] = [10, 0, 2, 3];
+/// DNS servers, tried in order with failover. Primary is a LAN resolver
+/// (the requested 192.168.0.2); secondary is Cloudflare 1.1.1.1 -- a
+/// cutting-edge, privacy-first public resolver (not Google/Microsoft/
+/// Yahoo), reachable through QEMU *and* VirtualBox NAT, so names resolve
+/// even when the LAN resolver is absent. Both overridable at runtime via
+/// `set_dns` (the desktop reads lingfs `/dns` at boot: two ip lines).
+pub const PRIMARY_DNS: [u8; 4] = [192, 168, 0, 2];
+pub const SECONDARY_DNS: [u8; 4] = [1, 1, 1, 1]; // Cloudflare
+static mut DNS1: [u8; 4] = PRIMARY_DNS;
+static mut DNS2: [u8; 4] = SECONDARY_DNS;
 
-/// Resolve `host` to an IPv4 address: a real DNS A query over UDP to the
-/// SLIRP resolver (which forwards to the host's resolver, so real names
-/// resolve for real). Dotted-quad "hosts" short-circuit without a query.
-pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
-    if let Some(ip) = parse_ipv4(host) {
-        return Some(ip);
+pub fn set_dns(primary: [u8; 4], secondary: [u8; 4]) {
+    unsafe {
+        DNS1 = primary;
+        DNS2 = secondary;
     }
+}
+
+pub fn dns_servers() -> ([u8; 4], [u8; 4]) {
+    unsafe { (DNS1, DNS2) }
+}
+
+/// A short budget per DNS server so failover is snappy on VirtualBox,
+/// where the LAN primary (192.168.0.2) isn't on the NAT and would
+/// otherwise stall every lookup before Cloudflare answers.
+const DNS_BUDGET_US: u64 = 1_500_000;
+
+/// One DNS A-query to a specific server. Returns the first A record, or
+/// None on timeout / NXDOMAIN.
+fn dns_query(server: [u8; 4], host: &str) -> Option<[u8; 4]> {
     let mut q = [0u8; 300];
-    // Header: id "LQ", flags RD, one question.
     q[0] = b'L';
     q[1] = b'Q';
     q[2] = 0x01; // RD
@@ -370,12 +389,12 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
     n += 4;
 
     let src_port = 33000 + (timer::now_ms() % 8000) as u16;
-    if !udp_send(DNS_IP, 53, src_port, &q[..n]) {
+    if !udp_send(server, 53, src_port, &q[..n]) {
         return None;
     }
     let mut resp = [0u8; 512];
     let mut found: Option<[u8; 4]> = None;
-    timer::poll_until(WAIT_BUDGET_US, || {
+    timer::poll_until(DNS_BUDGET_US, || {
         let Some(rlen) = udp_poll(src_port, &mut resp) else { return false };
         if rlen < 12 || resp[0] != b'L' || resp[1] != b'Q' {
             return false;
@@ -384,17 +403,15 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
         if ancount == 0 {
             return true; // authoritative "no such name" -- stop waiting
         }
-        // Skip the question section, then walk answers for the first A.
         let mut p = 12;
         while p < rlen && resp[p] != 0 {
             p += resp[p] as usize + 1;
         }
-        p += 5; // the 0 terminator + QTYPE/QCLASS
+        p += 5; // 0 terminator + QTYPE/QCLASS
         for _ in 0..ancount {
             if p + 12 > rlen {
                 return true;
             }
-            // Name: either a compression pointer (2 bytes) or labels.
             if resp[p] & 0xC0 == 0xC0 {
                 p += 2;
             } else {
@@ -415,6 +432,30 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
         true
     });
     found
+}
+
+/// The NAT built-in resolver (QEMU SLIRP *and* VirtualBox NAT both expose
+/// their DNS proxy here). Used as a guaranteed last-resort fallback: a LAN
+/// resolver like 192.168.0.2 or an external one like 1.1.1.1 isn't always
+/// reachable from inside a NAT, but 10.0.2.3 always is -- so resolution
+/// works out of the box on both hypervisors while still honoring the
+/// configured servers first on real hardware/LANs.
+pub const NAT_RESOLVER: [u8; 4] = [10, 0, 2, 3];
+
+/// Resolve `host` to an IPv4 address: dotted-quad short-circuits; otherwise
+/// a real DNS A query -- configured primary, then secondary, then the NAT
+/// resolver as a guaranteed fallback.
+pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
+    if let Some(ip) = parse_ipv4(host) {
+        return Some(ip);
+    }
+    let (d1, d2) = unsafe { (DNS1, DNS2) };
+    for server in [d1, d2, NAT_RESOLVER] {
+        if let Some(ip) = dns_query(server, host) {
+            return Some(ip);
+        }
+    }
+    None
 }
 
 fn parse_ipv4(s: &str) -> Option<[u8; 4]> {

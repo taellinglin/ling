@@ -383,6 +383,16 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
     }
 }
 
+/// How `spawn_server` should terminate the connection: plain HTTP, real TLS
+/// from a PEM cert/key pair on disk, or a throwaway self-signed dev cert
+/// generated at startup (see `ling_http::serve_dev_tls` — local dev only,
+/// browsers/curl reject it as untrusted).
+pub enum TlsMode {
+    Plain,
+    Certs { cert_pem: String, key_pem: String },
+    Dev,
+}
+
 /// Starts the async HTTP server on a background OS thread. Returns a
 /// receiver the caller drains — blocking, on its own thread — to actually
 /// answer requests. Non-blocking: returns as soon as the thread is spawned,
@@ -399,6 +409,7 @@ pub fn spawn_server(
     host: String,
     port: u16,
     static_dirs: Vec<(String, String)>,
+    tls: TlsMode,
 ) -> std::sync::mpsc::Receiver<PendingRequest> {
     let (tx, rx) = std::sync::mpsc::channel::<PendingRequest>();
     let state = ServerState { tx };
@@ -431,7 +442,18 @@ pub fn spawn_server(
                 .fallback(catch_all)
                 .layer(DefaultBodyLimit::disable())
                 .with_state(state);
-            if let Err(e) = ling_http::serve_http(router, addr).await {
+            // ling-http's `dev-certs` feature is unconditionally enabled on
+            // its dependency line in the root Cargo.toml (whenever this
+            // `web` feature is on, so is that one), so serve_dev_tls is
+            // always present here — no separate cfg needed.
+            let result = match tls {
+                TlsMode::Plain => ling_http::serve_http(router, addr).await,
+                TlsMode::Certs { cert_pem, key_pem } => {
+                    ling_http::serve_tls(router, addr, cert_pem, key_pem).await
+                },
+                TlsMode::Dev => ling_http::serve_dev_tls(router, addr).await,
+            };
+            if let Err(e) = result {
                 eprintln!("http_serve: {e}");
             }
         });
@@ -766,6 +788,38 @@ impl OAuthJobs {
     pub fn name(&self, id: &str) -> String {
         self.get(id).map(|r| r.name).unwrap_or_default()
     }
+}
+
+/// Fetches `url` and blocks the calling (interpreter) thread until the
+/// response body is in hand — for a `.ling` script that wants to *retrieve*
+/// a page (a browser-shaped client, not a server), blocking is the natural
+/// semantic: there's no other visitor to stall the way there would be
+/// inside an `http_serve` handler (see `AsyncJobs`'s doc comment above for
+/// why *that* path is async-job-based instead). `https://` is handled the
+/// same as `http://` — reqwest's `rustls-tls` feature (already enabled,
+/// root Cargo.toml's `web` feature) does real TLS with no extra wiring.
+/// Runs on `async_runtime_handle()`'s background runtime via `block_on`,
+/// which is safe to call from a plain OS thread that isn't itself inside
+/// that runtime (true here: the interpreter thread never enters it).
+///
+/// Returns `(status, body)`; `status` is 0 (with an empty body) if the
+/// request never got a response at all (DNS/connect/TLS failure) — the
+/// distinction between "0 = never connected" and "a real 4xx/5xx" matters to
+/// a caller deciding whether to retry.
+pub fn get_blocking(url: &str) -> (u16, String) {
+    let handle = async_runtime_handle();
+    let url = url.to_string();
+    handle.block_on(async move {
+        let client = reqwest::Client::new();
+        match client.get(&url).send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                (status, body)
+            },
+            Err(_) => (0, String::new()),
+        }
+    })
 }
 
 /// A background tokio runtime dedicated to `AsyncJobs`, independent of whether

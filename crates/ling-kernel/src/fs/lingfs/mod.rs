@@ -151,25 +151,21 @@ fn build_leaf_manifest(chunk: &[u8]) -> Result<Hash, ()> {
     put_object(&manifest[..BIG_HEADER + n * 32])
 }
 
-/// Write a file of any size (up to ~64MiB): small content goes the plain
-/// single-blob path, larger content is chunked behind manifests. Root
-/// files only for the large path today (downloads and wallpapers live at
-/// root) -- dir-path large writes return Err rather than pretending.
-pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
+/// Store `content` as an object and return the hash of its root -- a plain
+/// blob for small content, or an LBIG/LBG2 manifest chain for anything
+/// over one block (up to ~64MiB). Shared by the root and dir writers so a
+/// big file works the same wherever it lives. `read_file_all` transparently
+/// follows the manifest when it sees the magic.
+fn store_content_hash(content: &[u8]) -> Result<Hash, ()> {
     let needs_manifest = content.len() > BLOCK_SIZE
         || content.get(..4) == Some(&BIG_MAGIC[..])
         || content.get(..4) == Some(&BIG2_MAGIC[..]);
     if !needs_manifest {
-        return write_file(name, content);
-    }
-    let mut rbuf = [0u8; RESOLVE_BUF];
-    let name = resolve(name, &mut rbuf);
-    if split_path(name).is_some() {
-        return Err(());
+        return put_object(content);
     }
     let leaf_span = HASHES_PER_MANIFEST * BLOCK_SIZE;
-    let root_hash = if content.len() <= leaf_span {
-        build_leaf_manifest(content)?
+    if content.len() <= leaf_span {
+        build_leaf_manifest(content)
     } else {
         if content.len() > leaf_span * HASHES_PER_MANIFEST {
             return Err(()); // ~64MiB two-level cap, stated not hidden
@@ -186,9 +182,74 @@ pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
             n += 1;
             off += take;
         }
-        put_object(&m2[..BIG_HEADER + n * 32])?
-    };
+        put_object(&m2[..BIG_HEADER + n * 32])
+    }
+}
+
+/// Write a root file of any size (up to ~64MiB): small content is a plain
+/// blob, larger content is chunked behind manifests. For a one-level
+/// dir/file path use `write_in_dir_any`.
+pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
+    let mut rbuf = [0u8; RESOLVE_BUF];
+    let name = resolve(name, &mut rbuf);
+    if let Some((dirname, fname)) = split_path(name) {
+        return write_in_dir_any(dirname, fname, content);
+    }
+    let root_hash = store_content_hash(content)?;
     upsert_root_entry(name, root_hash, Kind::Blob, make_meta(MODE_FILE_DEFAULT, next_seq()))
+}
+
+/// Write a file of any size into a one-level directory (`dir/file`). The
+/// dir entry points at the content's manifest (or plain blob), so
+/// `read_file_all("dir/file")` transparently reassembles it. One level
+/// only, matching lingfs's directory model.
+pub fn write_in_dir_any(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()> {
+    let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+    let mut count = match lookup_dir(dirname)? {
+        Some((existing, n)) => {
+            entries = existing;
+            n
+        },
+        None => 0,
+    };
+    let hash = store_content_hash(content)?;
+    // Replace an existing same-named entry, else append.
+    let mut slot = None;
+    for i in 0..count {
+        if name_eq(&entries[i].0, fname) {
+            slot = Some(i);
+            break;
+        }
+    }
+    let i = match slot {
+        Some(i) => i,
+        None => {
+            if count >= MAX_TREE_ENTRIES {
+                return Err(());
+            }
+            count += 1;
+            count - 1
+        },
+    };
+    entries[i].0 = (str_to_name_buf(fname), fname.len());
+    entries[i].1 = hash;
+    entries[i].2 = Kind::Blob;
+    entries[i].3 = make_meta(MODE_FILE_DEFAULT, next_seq());
+    let refs: [(&str, Hash, Kind, Meta); MAX_TREE_ENTRIES] = {
+        let mut r = [("", ZERO_HASH, Kind::Blob, EMPTY_META); MAX_TREE_ENTRIES];
+        for j in 0..count {
+            let (buf, len) = &entries[j].0;
+            r[j] = (
+                core::str::from_utf8(&buf[..*len]).unwrap_or(""),
+                entries[j].1,
+                entries[j].2,
+                entries[j].3,
+            );
+        }
+        r
+    };
+    let subtree = put_tree(&refs[..count])?;
+    upsert_root_entry(dirname, subtree, Kind::Tree, make_meta(MODE_DIR_DEFAULT, next_seq()))
 }
 
 fn read_leaf_manifest(manifest: &[u8], mlen: usize, out: &mut [u8], got: &mut usize) -> Result<(), ()> {

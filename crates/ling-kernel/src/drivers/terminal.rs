@@ -13,7 +13,7 @@
 //! class so errors read red, ok green, and command echoes accent.
 
 use crate::arch::rtc;
-use crate::drivers::{clipboard, font8x8, framebuffer, netstack, theme};
+use crate::drivers::{clipboard, font8x8, framebuffer, media, mixer, netstack, theme};
 use crate::fs::lingfs;
 
 const COLS: usize = 128; // max stored chars per line
@@ -118,6 +118,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  help  clear  echo <t>  ls [dir]  cat <file>");
             push(Cls::Normal, b"  date  theme dark|light  copy <t>  paste");
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
+            push(Cls::Normal, b"  play <file.wav>   stop");
         },
         "clear" => unsafe {
             COUNT = 0;
@@ -125,6 +126,20 @@ fn run(line: &str) {
             SCROLL = 0;
         },
         "echo" => push(Cls::Normal, arg.as_bytes()),
+        "play" => {
+            if arg.is_empty() {
+                push(Cls::Err, b"usage: play <file.wav>");
+            } else if media::open(arg) {
+                mixer::pcm_play();
+                push(Cls::Ok, b"playing (media)");
+            } else {
+                push(Cls::Err, media::status().as_bytes());
+            }
+        },
+        "stop" => {
+            mixer::pcm_stop();
+            push(Cls::Dim, b"stopped");
+        },
         "date" => {
             let dt = rtc::read();
             let mut b = [0u8; 32];

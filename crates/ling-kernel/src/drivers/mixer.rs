@@ -18,11 +18,11 @@
 //! the same pentatonic tuning so nothing can sound dissonant next to
 //! anything else -- the property the pentatonic scale was chosen for.
 //!
-//! The tape player ("play" in lsh) is a stream like any other: today it
-//! plays a seeded generative pentatonic track (real synthesis with a real
-//! position/duration for the transport UI); WAV-from-lingfs lands when
-//! multi-block files do (a 4 KiB file cap can't hold 0.2s of audio --
-//! disclosed, not worked around by faking).
+//! The tape player ("play" in lsh) is a stream like any other: a seeded
+//! generative pentatonic track. Separately, a real *PCM sample* source
+//! (`pcm_*`) plays actual WAV audio from lingfs -- now that multi-block
+//! files exist, a real song fits -- resampling to 48 kHz and mixing it in
+//! alongside the synth voices. That's what the desktop Media player uses.
 
 use crate::drivers::ac97;
 
@@ -425,6 +425,105 @@ fn player_advance(frames: usize) {
 
 // -- The mix ------------------------------------------------------------------
 
+// -- PCM sample source (real WAV playback) ----------------------------------
+// Plays raw PCM from a caller-owned buffer (media.rs's lingfs read buffer),
+// resampled to 48 kHz and summed into the mix on the player stream. u8 and
+// s16le, mono or stereo. Fractional resampling via a 16.16 cursor.
+pub const PCM_STOPPED: u32 = 0;
+pub const PCM_PLAYING: u32 = 1;
+pub const PCM_PAUSED: u32 = 2;
+
+static mut PCM_PTR: *const u8 = core::ptr::null();
+static mut PCM_FRAMES: u64 = 0; // total source frames
+static mut PCM_RATE: u32 = 22050;
+static mut PCM_CH: u8 = 1;
+static mut PCM_BITS: u8 = 8;
+static mut PCM_POS: u64 = 0; // 16.16 fixed-point source frame index
+static mut PCM_STEP: u64 = 0; // src frames per output frame, 16.16
+static mut PCM_STATE: u32 = PCM_STOPPED;
+
+/// Point the PCM player at a raw sample buffer. `frames` is the number of
+/// whole sample frames (already accounting for channels). The buffer must
+/// outlive playback (media.rs keeps it in a static). Does not start.
+pub fn pcm_load(ptr: *const u8, frames: u64, rate: u32, channels: u8, bits: u8) {
+    unsafe {
+        PCM_PTR = ptr;
+        PCM_FRAMES = frames;
+        PCM_RATE = rate.max(1);
+        PCM_CH = channels.max(1);
+        PCM_BITS = if bits == 16 { 16 } else { 8 };
+        PCM_POS = 0;
+        PCM_STEP = ((rate as u64) << 16) / SAMPLE_RATE as u64;
+        PCM_STATE = PCM_STOPPED;
+    }
+}
+
+pub fn pcm_play() {
+    unsafe {
+        if !PCM_PTR.is_null() && PCM_FRAMES > 0 {
+            PCM_STATE = PCM_PLAYING;
+        }
+    }
+}
+pub fn pcm_pause() {
+    unsafe {
+        PCM_STATE = match PCM_STATE {
+            PCM_PLAYING => PCM_PAUSED,
+            PCM_PAUSED => PCM_PLAYING,
+            s => s,
+        };
+    }
+}
+pub fn pcm_stop() {
+    unsafe {
+        PCM_STATE = PCM_STOPPED;
+        PCM_POS = 0;
+    }
+}
+pub fn pcm_state() -> u32 {
+    unsafe { PCM_STATE }
+}
+pub fn pcm_pos_ms() -> u64 {
+    unsafe { (PCM_POS >> 16) * 1000 / PCM_RATE as u64 }
+}
+pub fn pcm_len_ms() -> u64 {
+    unsafe { PCM_FRAMES * 1000 / PCM_RATE as u64 }
+}
+
+/// One source sample (mono-summed, -1.0..1.0) at the current cursor, or 0
+/// if not playing / past the end. Advances the cursor by one output frame.
+unsafe fn pcm_next() -> f64 {
+    if PCM_STATE != PCM_PLAYING || PCM_PTR.is_null() {
+        return 0.0;
+    }
+    let idx = PCM_POS >> 16;
+    if idx >= PCM_FRAMES {
+        PCM_STATE = PCM_STOPPED;
+        PCM_POS = 0;
+        return 0.0;
+    }
+    let ch = PCM_CH as u64;
+    let bytes_per_sample = (PCM_BITS / 8) as u64;
+    let frame_bytes = ch * bytes_per_sample;
+    let base = (idx * frame_bytes) as usize;
+    let mut sum = 0.0f64;
+    for c in 0..ch as usize {
+        let off = base + c * bytes_per_sample as usize;
+        let v = if PCM_BITS == 16 {
+            let lo = *PCM_PTR.add(off) as i16;
+            let hi = *PCM_PTR.add(off + 1) as i16;
+            let s = (lo | (hi << 8)) as i16;
+            s as f64 / 32768.0
+        } else {
+            // u8 PCM is unsigned, centered at 128.
+            (*PCM_PTR.add(off) as f64 - 128.0) / 128.0
+        };
+        sum += v;
+    }
+    PCM_POS += PCM_STEP;
+    sum / ch as f64
+}
+
 /// Render `buf` (interleaved stereo i16) from all active voices, applying
 /// per-stream volume, exclusive mode, and master volume.
 fn render(buf: &mut [i16]) {
@@ -469,6 +568,16 @@ fn render(buf: &mut [i16]) {
                     STREAM_VOL[v.stream] as f64 / 100.0
                 };
                 acc += s * v.level * stream_gain * 0.22; // headroom for ~4 voices
+            }
+            // Real PCM (WAV) on the player stream, honoring exclusive mode.
+            let pcm = pcm_next();
+            if pcm != 0.0 {
+                let pgain = if excl >= 0 && excl as usize != APP_PLAYER {
+                    0.0
+                } else {
+                    STREAM_VOL[APP_PLAYER] as f64 / 100.0
+                };
+                acc += pcm * pgain * 0.9;
             }
             let master = MASTER_VOL as f64 / 100.0;
             let sample = (acc * master * 32767.0).clamp(-32767.0, 32767.0) as i16;

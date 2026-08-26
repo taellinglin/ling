@@ -28,7 +28,7 @@
 use crate::arch::{rtc, timer};
 use crate::drivers::{
     browser, display, editor, framebuffer, font8x8, font_unicode, gallery, kbdlayout, locale,
-    mixer, terminal, theme, wallpaper,
+    media, mixer, netstack, terminal, theme, wallpaper,
 };
 use crate::fs::lingfs;
 
@@ -68,8 +68,17 @@ pub const KIND_WEB: u8 = 3;
 pub const KIND_EDIT: u8 = 4;
 pub const KIND_GALLERY: u8 = 5;
 pub const KIND_TERM: u8 = 6;
-const DOCK_APPS: [u8; 7] =
-    [KIND_ABOUT, KIND_SETTINGS, KIND_FILES, KIND_WEB, KIND_EDIT, KIND_GALLERY, KIND_TERM];
+pub const KIND_MEDIA: u8 = 7;
+const DOCK_APPS: [u8; 8] = [
+    KIND_ABOUT,
+    KIND_SETTINGS,
+    KIND_FILES,
+    KIND_WEB,
+    KIND_EDIT,
+    KIND_GALLERY,
+    KIND_TERM,
+    KIND_MEDIA,
+];
 
 #[derive(Clone, Copy)]
 struct Window {
@@ -284,14 +293,16 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 10] = [
+const MENU: [MenuRow; 12] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "Accessories", app: "", kind: 255 },
     MenuRow { header: "", app: "Terminal", kind: KIND_TERM },
     MenuRow { header: "", app: "Editor", kind: KIND_EDIT },
     MenuRow { header: "", app: "Files", kind: KIND_FILES },
+    MenuRow { header: "Sound & Video", app: "", kind: 255 },
     MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
+    MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
     MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
@@ -362,8 +373,13 @@ pub fn draw_menu() {
 }
 
 // -- Browser window state --------------------------------------------------
+// The URL/search bar is always visible. WEB_EDITING = the bar has focus
+// (typing edits the URL); false = the page has focus (arrows scroll,
+// digits follow links). A fresh browser opens with the bar focused so you
+// can type a URL immediately; clicking the bar refocuses it, clicking the
+// page defocuses it. No more modal `u` key.
 const WEB_INPUT_MAX: usize = 200;
-static mut WEB_URL_ENTRY: bool = false;
+static mut WEB_EDITING: bool = true;
 static mut WEB_INPUT: [u8; WEB_INPUT_MAX] = [0; WEB_INPUT_MAX];
 static mut WEB_INPUT_LEN: usize = 0;
 /// Content columns of the currently-focused browser window, captured at
@@ -372,15 +388,16 @@ static mut WEB_COLS: usize = 72;
 
 fn web_key(k: u8) {
     unsafe {
-        if WEB_URL_ENTRY {
+        if WEB_EDITING {
             match k {
                 10 => {
-                    WEB_URL_ENTRY = false;
                     let url = core::str::from_utf8(&(&*&raw const WEB_INPUT)[..WEB_INPUT_LEN])
                         .unwrap_or("");
-                    browser::go(url, WEB_COLS);
+                    if browser::navigate(url, WEB_COLS) {
+                        WEB_EDITING = false; // hand focus to the page on success
+                    }
                 },
-                0x1B | 0x03 => WEB_URL_ENTRY = false,
+                0x1B => WEB_EDITING = false,
                 0x08 => {
                     if WEB_INPUT_LEN > 0 {
                         WEB_INPUT_LEN -= 1;
@@ -397,14 +414,18 @@ fn web_key(k: u8) {
             return;
         }
         match k {
-            b'u' => {
-                WEB_URL_ENTRY = true;
-                WEB_INPUT_LEN = 0;
-            },
             0x11 => browser::scroll(-3, 24),
             0x12 => browser::scroll(3, 24),
             b'1'..=b'9' => {
                 browser::follow((k - b'0') as usize, WEB_COLS);
+            },
+            // Any printable key refocuses the URL bar and starts a fresh
+            // edit (Chrome-style "just start typing").
+            0x20..=0x7E => {
+                WEB_EDITING = true;
+                WEB_INPUT_LEN = 0;
+                (&mut *&raw mut WEB_INPUT)[0] = k;
+                WEB_INPUT_LEN = 1;
             },
             _ => {},
         }
@@ -449,6 +470,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_EDIT => "Editor",
         KIND_GALLERY => "Gallery",
         KIND_TERM => "Terminal",
+        KIND_MEDIA => "Media Player",
         _ => "?",
     }
 }
@@ -465,6 +487,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_EDIT => (600.0, 440.0),
         KIND_GALLERY => (560.0, 440.0),
         KIND_TERM => (620.0, 420.0),
+        KIND_MEDIA => (480.0, 300.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -479,6 +502,7 @@ pub fn dock_letter(i: usize) -> &'static str {
         Some(&KIND_EDIT) => "E",
         Some(&KIND_GALLERY) => "G",
         Some(&KIND_TERM) => "T",
+        Some(&KIND_MEDIA) => "M",
         _ => "",
     }
 }
@@ -679,6 +703,56 @@ fn dock_hit(mx: i64, my: i64) -> i32 {
 /// before reading any slot getter.
 static mut SETTINGS_LOADED: bool = false;
 
+/// Read lingfs `/dns` (two dotted-quad lines: primary, secondary) and
+/// apply it, so DNS is configurable without a rebuild. Absent/garbled =
+/// keep the compiled defaults (192.168.0.2 -> Cloudflare 1.1.1.1).
+fn load_dns_config() {
+    let mut buf = [0u8; crate::fs::lingfs::BLOCK_SIZE];
+    let Ok(Some(len)) = lingfs::read_file("dns", &mut buf) else { return };
+    let mut it = buf[..len].split(|&b| b == b'\n' || b == b' ' || b == b'\r').filter(|s| !s.is_empty());
+    let parse = |s: &[u8]| -> Option<[u8; 4]> {
+        let mut ip = [0u8; 4];
+        let mut part = 0;
+        let mut acc: u32 = 0;
+        let mut any = false;
+        for &b in s {
+            match b {
+                b'0'..=b'9' => {
+                    acc = acc * 10 + (b - b'0') as u32;
+                    any = true;
+                    if acc > 255 {
+                        return None;
+                    }
+                },
+                b'.' => {
+                    if part >= 3 || !any {
+                        return None;
+                    }
+                    ip[part] = acc as u8;
+                    part += 1;
+                    acc = 0;
+                    any = false;
+                },
+                _ => return None,
+            }
+        }
+        if part == 3 && any {
+            ip[3] = acc as u8;
+            Some(ip)
+        } else {
+            None
+        }
+    };
+    let (mut p, mut s) = netstack::dns_servers();
+    if let Some(v) = it.next().and_then(parse) {
+        p = v;
+    }
+    if let Some(v) = it.next().and_then(parse) {
+        s = v;
+    }
+    netstack::set_dns(p, s);
+}
+
 pub fn step(mx: i64, my: i64, buttons: u8) {
     unsafe {
         // Restore persisted settings on the first frame (lingfs is mounted
@@ -687,6 +761,8 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         if !SETTINGS_LOADED {
             SETTINGS_LOADED = true;
             settings_load();
+            load_dns_config();
+            media::seed_pelipo();
         }
         // Serial diagnostic, once every 512 frames: proves whether IRQ12
         // bytes are flowing and where the driver thinks the cursor is --
@@ -927,6 +1003,7 @@ pub fn key(k: u8) {
         KIND_EDIT => editor::key(k, crate::drivers::keyboard::shift_down()),
         KIND_GALLERY => gallery::key(k),
         KIND_TERM => terminal::key(k),
+        KIND_MEDIA => media::key(k),
         _ => {},
     }
 }
@@ -1084,11 +1161,15 @@ fn files_key(k: u8) {
                     vn[off..off + len].copy_from_slice(&name[..len]);
                     FM_VIEW_NAME_LEN = off + len;
                     let full = core::str::from_utf8(&vn[..off + len]).unwrap_or("");
-                    // Route by extension: .bmp -> Gallery, text-ish files
-                    // -> Editor, anything else -> the inline text peek.
+                    // Route by extension: .bmp -> Gallery, .wav -> Media
+                    // Player, text-ish files -> Editor, else inline peek.
                     if len >= 4 && &name[len - 4..len] == b".bmp" {
                         if gallery::open(full) {
                             open(KIND_GALLERY);
+                        }
+                    } else if len >= 4 && &name[len - 4..len] == b".wav" {
+                        if media::open(full) {
+                            open(KIND_MEDIA);
                         }
                     } else if is_editable(&name[..len]) {
                         editor::load(full);
@@ -1414,17 +1495,26 @@ fn pt_in(px: i64, py: i64, r: (u32, u32, u32, u32)) -> bool {
 /// the click was consumed.
 fn content_click(idx: usize, mx: i64, my: i64) -> bool {
     let w = windows()[idx];
-    if w.kind != KIND_SETTINGS {
+    let (wx, wy, dw, dh) = deformed_rect(&w);
+    if w.kind == KIND_SETTINGS {
+        if pt_in(mx, my, settings_ok_rect(wx, wy, dw, dh)) {
+            settings_save();
+            close(idx);
+            return true;
+        }
+        if pt_in(mx, my, settings_apply_rect(wx, wy, dw, dh)) {
+            settings_save();
+            return true;
+        }
         return false;
     }
-    let (wx, wy, dw, dh) = deformed_rect(&w);
-    if pt_in(mx, my, settings_ok_rect(wx, wy, dw, dh)) {
-        settings_save();
-        close(idx);
-        return true;
-    }
-    if pt_in(mx, my, settings_apply_rect(wx, wy, dw, dh)) {
-        settings_save();
+    if w.kind == KIND_WEB {
+        // The URL bar sits at the top of the content; clicking it focuses
+        // the bar for editing, clicking the page hands focus back to it.
+        let cx = wx.max(0) + 16;
+        let cy = wy.max(0) + TITLEBAR_H as i64 + 14;
+        let bar = (cx as u32, cy as u32, dw.saturating_sub(24), 22u32);
+        unsafe { WEB_EDITING = pt_in(mx, my, bar) };
         return true;
     }
     false
@@ -1450,21 +1540,45 @@ pub fn draw_content(slot: usize) {
         terminal::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
         return;
     }
+    if w.kind == KIND_MEDIA {
+        media::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
     if w.kind == KIND_WEB {
-        // Capture the wrap width for key-driven fetches on the focused
-        // window (8px glyphs, minus margins).
         if slot_focused(slot) {
             unsafe { WEB_COLS = (dw.saturating_sub(40) / 8).max(20) as usize };
         }
-        browser::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
-        if unsafe { WEB_URL_ENTRY } {
-            // URL entry overlay along the bottom of the window.
-            let ey = (wy.max(0) as u32) + dh.saturating_sub(26);
-            framebuffer::back_fill_rect(x - 8, ey - 4, dw.saturating_sub(8), 24, theme::color(theme::SLOT_PANEL_BORDER));
-            font8x8::draw_str(x, ey, b"url:", theme::color(theme::SLOT_DIM), theme::color(theme::SLOT_PANEL_BORDER));
+        // Always-visible URL/search bar across the top of the content.
+        let bar_w = dw.saturating_sub(24);
+        let bar_h = 22u32;
+        let editing = unsafe { WEB_EDITING };
+        let border = if editing {
+            theme::color(theme::SLOT_ACCENT)
+        } else {
+            theme::color(theme::SLOT_PANEL_BORDER)
+        };
+        framebuffer::back_fill_rounded_rect(x, y, bar_w, bar_h, 6, border);
+        framebuffer::back_fill_rounded_rect(x + 2, y + 2, bar_w - 4, bar_h - 4, 5, theme::color(theme::SLOT_BG));
+        let text = theme::color(theme::SLOT_TEXT);
+        let bgc = theme::color(theme::SLOT_BG);
+        if editing {
             let buf = unsafe { &(&*&raw const WEB_INPUT)[..WEB_INPUT_LEN] };
-            font8x8::draw_str(x + 40, ey, buf, theme::color(theme::SLOT_TEXT), theme::color(theme::SLOT_PANEL_BORDER));
+            let maxch = ((bar_w - 16) / 8) as usize;
+            let shown = buf.len().min(maxch);
+            font8x8::draw_str(x + 8, y + 7, &buf[buf.len() - shown..], text, bgc);
+            framebuffer::back_fill_rect(x + 8 + shown as u32 * 8, y + 5, 2, 12, theme::color(theme::SLOT_ACCENT));
+        } else {
+            let url = browser::current_url();
+            if url.is_empty() {
+                font8x8::draw_str(x + 8, y + 7, b"search or enter a URL", theme::color(theme::SLOT_DIM), bgc);
+            } else {
+                let ub = url.as_bytes();
+                let maxch = ((bar_w - 16) / 8) as usize;
+                font8x8::draw_str(x + 8, y + 7, &ub[..ub.len().min(maxch)], theme::color(theme::SLOT_ACCENT), bgc);
+            }
         }
+        // Page body below the bar.
+        browser::draw_page(x, y + bar_h + 6, bar_w, dh.saturating_sub(TITLEBAR_H + bar_h + 26));
         return;
     }
     let text = theme::color(theme::SLOT_TEXT);

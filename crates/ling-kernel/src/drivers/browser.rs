@@ -98,6 +98,52 @@ pub fn go(url: &str, cols: usize) -> bool {
     true
 }
 
+/// Navigate from the URL/search bar: if `input` looks like a URL, go to
+/// it (prepending http:// when it has no scheme); otherwise treat it as a
+/// search and route through frogfind.com -- a plain-HTTP search proxy
+/// built for vintage browsers, so search works without a TLS stack.
+pub fn navigate(input: &str, cols: usize) -> bool {
+    let s = input.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let has_scheme = s.starts_with("http://") || s.starts_with("https://");
+    let looks_url = has_scheme || (!s.contains(' ') && s.contains('.'));
+    if looks_url {
+        return go(s, cols);
+    }
+    // Search: http://frogfind.com/?q=<url-encoded input>
+    let mut url = [0u8; 400];
+    let prefix = b"http://frogfind.com/?q=";
+    let mut n = prefix.len();
+    url[..n].copy_from_slice(prefix);
+    for &b in s.as_bytes() {
+        if n + 3 >= url.len() {
+            break;
+        }
+        match b {
+            b' ' => {
+                url[n] = b'+';
+                n += 1;
+            },
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                url[n] = b;
+                n += 1;
+            },
+            _ => {
+                // percent-encode everything else
+                let hex = b"0123456789ABCDEF";
+                url[n] = b'%';
+                url[n + 1] = hex[(b >> 4) as usize];
+                url[n + 2] = hex[(b & 0xF) as usize];
+                n += 3;
+            },
+        }
+    }
+    let target = core::str::from_utf8(&url[..n]).unwrap_or("");
+    go(target, cols)
+}
+
 /// Follow link number `n` (1-based, as displayed). Root-relative and
 /// absolute http URLs work; https and protocol-relative are refused with
 /// a status message.
@@ -158,17 +204,16 @@ fn line_color(kind: LineKind, link: u8, bold: bool) -> u32 {
     }
 }
 
-/// Render the page into a window's content rect (real pixels). The WM
-/// calls this for KIND_WEB windows after drawing the chrome.
-pub fn draw(x: u32, y: u32, w: u32, h: u32) {
+/// Render just the page body into a content rect (real pixels), starting
+/// at `y`. The WM draws the URL/search bar above this itself (it owns the
+/// editable input). `y` is already below that bar.
+pub fn draw_page(x: u32, y: u32, _w: u32, h: u32) {
     let panel = theme::color(theme::SLOT_PANEL);
     let dim = theme::color(theme::SLOT_DIM);
     let row_h = 14u32;
-    let rows = (h.saturating_sub(40) / row_h) as usize;
+    let rows = (h.saturating_sub(20) / row_h) as usize;
 
-    // URL + status header.
-    font8x8::draw_str(x, y, current_url().as_bytes(), theme::color(theme::SLOT_ACCENT), panel);
-    font8x8::draw_str(x, y + 16, status().as_bytes(), dim, panel);
+    font8x8::draw_str(x, y, status().as_bytes(), dim, panel);
 
     let p = page();
     let scroll = unsafe { SCROLL };
@@ -185,7 +230,7 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
             break;
         }
         let l = &p.lines[idx];
-        let ry = y + 36 + r as u32 * row_h;
+        let ry = y + 18 + r as u32 * row_h;
         let mut cx = x;
         if l.kind == LineKind::ListItem {
             framebuffer::back_fill_circle(x + 3, ry + 4, 2, dim);
@@ -217,8 +262,8 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         }
     }
     if p.line_count == 0 {
-        font8x8::draw_str(x, y + 40, b"bring: browser in ling", theme::color(theme::SLOT_TEXT), panel);
-        font8x8::draw_str(x, y + 58, b"press u, then type a URL (http:// only for now)", dim, panel);
+        font8x8::draw_str(x, y + 22, b"bring: browser in ling", theme::color(theme::SLOT_TEXT), panel);
+        font8x8::draw_str(x, y + 40, b"type a URL or search above and press Enter (http:// for now)", dim, panel);
     }
 }
 

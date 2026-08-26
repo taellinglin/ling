@@ -181,7 +181,7 @@ ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
-ling-http = { workspace = true, optional = true }   # http_route/http_serve builtins (feature = "web")
+ling-http = { workspace = true, optional = true, features = ["dev-certs"] }   # http_route/http_serve builtins (feature = "web"); dev-certs backs http_serve_dev_tls
 tower-http = { version = "0.6", features = ["fs"], optional = true }   # ServeDir backs http_static (feature = "web")
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }   # http_post_async/http_job_poll builtins (feature = "web")
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }   # zip_files builtin (feature = "web")
