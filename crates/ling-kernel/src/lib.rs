@@ -33,6 +33,9 @@ pub mod mm;
 // ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
 pub mod ed25519;
 pub mod hash;
+// In-kernel tree-walking interpreter for a subset of Ling (`ling run` in the
+// Terminal); built on the global allocator above.
+pub mod ling;
 pub mod runtime;
 pub mod strings;
 
