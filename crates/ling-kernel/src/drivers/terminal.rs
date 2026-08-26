@@ -248,6 +248,37 @@ fn run(line: &str) {
             }
         },
         "lingfu" => run_lingfu(arg),
+        "alloctest" => {
+            // Exercise the new kernel global allocator: a growing Vec (which
+            // reallocs), a String, then drop (which frees). Prints a known
+            // checksum -- sum of i*i for i in 0..1000 == 332833500 -- so a
+            // correct allocator is verifiable at a glance.
+            let mut v: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+            let mut i: u32 = 0;
+            while i < 1000 {
+                v.push(i * i);
+                i += 1;
+            }
+            let mut sum: u32 = 0;
+            for x in v.iter() {
+                sum = sum.wrapping_add(*x);
+            }
+            let mut s = alloc::string::String::new();
+            s.push_str("alloc ok: sum=");
+            let mut nb = [0u8; 16];
+            let n = w_any(&mut nb, sum);
+            if let Ok(ds) = core::str::from_utf8(&nb[..n]) {
+                s.push_str(ds);
+            }
+            s.push_str(" len=");
+            let mut lb = [0u8; 16];
+            let ln = w_any(&mut lb, v.len() as u32);
+            if let Ok(ls) = core::str::from_utf8(&lb[..ln]) {
+                s.push_str(ls);
+            }
+            push(Cls::Ok, s.as_bytes());
+            // v and s drop here, exercising free().
+        },
         _ => {
             let mut b = [0u8; 96];
             let p = b"unknown command: ";

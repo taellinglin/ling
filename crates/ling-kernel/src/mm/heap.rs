@@ -99,6 +99,64 @@ fn order_for(bytes: usize) -> usize {
     order
 }
 
+// ── Rust `#[global_allocator]` adapter ─────────────────────────────────────
+// Wiring this over the slab makes `alloc` (Vec/String/Box/BTreeMap) available
+// crate-wide -- the prerequisite for the in-kernel `ling` tree-walking
+// interpreter. The slab hands back 8-byte-aligned pointers with a header in
+// the 8 bytes *before* the pointer, so:
+//   * align <= 8 (the common case; everything the interpreter needs): use the
+//     slab pointer directly.
+//   * align > 8 (rare): over-allocate `size + align`, return an aligned
+//     pointer inside the block, and stash the real slab base in the 8 bytes
+//     just before it so `dealloc` can recover and free the true base.
+use core::alloc::{GlobalAlloc, Layout};
+
+unsafe fn galloc(layout: Layout) -> *mut u8 {
+    let align = layout.align();
+    if align <= 8 {
+        return alloc(layout.size());
+    }
+    let raw = alloc(layout.size() + align);
+    if raw.is_null() {
+        return raw;
+    }
+    let base = raw as usize;
+    // (base + align) & !(align-1) is strictly > base with a gap of at least 8
+    // bytes (base is 8-aligned, align >= 16), so stashing a usize at
+    // aligned-8 never touches the slab header at base-8.
+    let aligned = (base + align) & !(align - 1);
+    ptr::write((aligned - 8) as *mut usize, base);
+    aligned as *mut u8
+}
+
+unsafe fn gdealloc(user_ptr: *mut u8, layout: Layout) {
+    if user_ptr.is_null() {
+        return;
+    }
+    if layout.align() <= 8 {
+        free(user_ptr);
+    } else {
+        let base = ptr::read((user_ptr as usize - 8) as *const usize);
+        free(base as *mut u8);
+    }
+}
+
+/// The kernel's global allocator: every `alloc`/`dealloc` runs inside an
+/// [`super::IrqLock`] critical section so the unlocked slab free lists are
+/// safe against preemption on this single-core kernel.
+pub struct KernelHeap;
+
+unsafe impl GlobalAlloc for KernelHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let _guard = super::IrqLock::acquire();
+        galloc(layout)
+    }
+    unsafe fn dealloc(&self, user_ptr: *mut u8, layout: Layout) {
+        let _guard = super::IrqLock::acquire();
+        gdealloc(user_ptr, layout)
+    }
+}
+
 /// Return an allocation from [`alloc`] to the heap. Safe to call on any
 /// pointer this module handed out; undefined behavior (like any manual
 /// allocator) on anything else, a double free, or a null pointer.

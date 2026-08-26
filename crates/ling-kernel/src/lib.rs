@@ -1,6 +1,17 @@
 #![no_std]
 #![cfg_attr(target_arch = "x86_64", feature(abi_x86_interrupt))]
 
+// The kernel now has a real global allocator (a `GlobalAlloc` adapter over the
+// slab in `mm::heap`), so `alloc` collections are available crate-wide -- the
+// foundation for the in-kernel `ling` tree-walking interpreter.
+extern crate alloc;
+
+/// Route every `alloc`/`dealloc` through the slab heap. Safe because
+/// `mm::init_physical_memory()` seeds the frame allocator early in `init()`,
+/// before anything allocates.
+#[global_allocator]
+static KERNEL_HEAP: crate::mm::heap::KernelHeap = crate::mm::heap::KernelHeap;
+
 // ─── Per-architecture backend (CPU intrinsics, boot stub, port/MMIO I/O) ────
 pub mod arch;
 

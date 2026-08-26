@@ -9,6 +9,48 @@
 pub mod frame;
 pub mod heap;
 
+/// A uniprocessor critical section: disables interrupts on construction and
+/// restores the *prior* interrupt state on drop. LingOS is single-core, so
+/// masking interrupts is enough mutual exclusion to make the unlocked slab/
+/// frame free lists safe against the preemptive scheduler -- which matters
+/// now that a `#[global_allocator]` routes every `alloc`/`dealloc` through
+/// them. Restoring the saved flag (rather than unconditionally re-enabling)
+/// keeps it correct when called from a context that already had interrupts
+/// off (e.g. inside an interrupt handler).
+pub struct IrqLock {
+    #[cfg(target_arch = "x86_64")]
+    flags: u64,
+}
+
+impl IrqLock {
+    #[inline]
+    pub fn acquire() -> Self {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            let flags = crate::arch::cpu::read_flags();
+            crate::arch::cpu::cli();
+            IrqLock { flags }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            IrqLock {}
+        }
+    }
+}
+
+impl Drop for IrqLock {
+    #[inline]
+    fn drop(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            // IF is bit 9 of RFLAGS; only re-enable if it was set on entry.
+            if self.flags & (1 << 9) != 0 {
+                crate::arch::cpu::sti();
+            }
+        }
+    }
+}
+
 /// Detect this board's usable physical memory and hand every free range to
 /// [`frame::add_free_region`]. Call once, early in `init()`, after the
 /// console is up (so a fallback path can log that it's guessing) and

@@ -53,14 +53,23 @@ fn main() {
             } else if use_interp {
                 run_file(file);
             } else {
-                // Server programs (http_serve) run on the tree-walker: their
-                // handlers are closures passed as call arguments, which the
+                // Server programs (http_serve/lingtp_serve) run on the tree-walker:
+                // their handlers are closures passed as call arguments, which the
                 // Cranelift JIT currently lowers to Unit (known bug — JIT
                 // closure-argument support). The interpreter is the semantic
                 // reference and handles them correctly, and a web service is
                 // I/O-bound anyway, so JIT throughput isn't the bottleneck.
+                const SERVER_MARKERS: &[&str] = &[
+                    "http_serve",
+                    "เว็บเสิร์ฟ",
+                    "سرویس_HTTP",
+                    "قدّم_HTTP",
+                    "הגש_HTTP",
+                    "HTTP_سرو",
+                    "lingtp_serve",
+                ];
                 let is_server = std::fs::read_to_string(file)
-                    .map(|s| s.contains("http_serve") || s.contains("เว็บเสิร์ฟ"))
+                    .map(|s| SERVER_MARKERS.iter().any(|m| s.contains(m)))
                     .unwrap_or(false);
                 if is_server {
                     run_file(file);
@@ -1415,7 +1424,7 @@ fn build_native(
             cargo_dir.join("config.toml"),
             format!(
                 r#"[unstable]
-build-std = ["core", "compiler_builtins"]
+build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
 [target.{triple}]
@@ -1433,7 +1442,7 @@ rustflags = ["-C", "relocation-model=static", {extra_flags}]
             "--target",
             triple,
             "-Z",
-            "build-std=core,compiler_builtins",
+            "build-std=core,alloc,compiler_builtins",
             "-Z",
             "build-std-features=compiler-builtins-mem",
         ];
