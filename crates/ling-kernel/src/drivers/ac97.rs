@@ -35,10 +35,13 @@ const CR_RPBM: u8 = 0x01; // run
 const CR_RR: u8 = 0x02; // reset registers
 const GLOB_COLD_RESET: u32 = 0x02;
 
-/// 32 descriptors is the BDL's architectural size; we cycle a smaller
-/// working set so the mixer's latency stays low (~21ms per 1024-frame
-/// buffer at 48kHz).
-pub const NUM_BUFFERS: usize = 4;
+/// 32 descriptors is the BDL's architectural size; we cycle a working set
+/// of 16 (~340ms of audio at 48kHz). The mixer refills the ring only once
+/// per desktop frame, so a deep ring is what absorbs frame-time jitter --
+/// with only 4 buffers (~85ms) any long frame (a seed hitch, a heavy
+/// redraw, a network poll) starved the ring and the song went choppy every
+/// few seconds. 16 buffers tolerate a ~340ms stall before an underrun.
+pub const NUM_BUFFERS: usize = 16;
 pub const FRAMES_PER_BUFFER: usize = 1024;
 const SAMPLES_PER_BUFFER: usize = FRAMES_PER_BUFFER * 2; // stereo
 
