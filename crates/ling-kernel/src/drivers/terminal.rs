@@ -14,7 +14,7 @@
 
 use crate::arch::rtc;
 use crate::drivers::{clipboard, font8x8, framebuffer, lingfu, media, mixer, netstack, theme};
-use crate::fs::lingfs;
+use crate::fs::{lingfs, users};
 
 const COLS: usize = 128; // max stored chars per line
 const LINES: usize = 240; // scrollback ring
@@ -45,6 +45,28 @@ static mut INPUT_LEN: usize = 0;
 static mut ZOOM: u32 = 1;
 static mut SCROLL: usize = 0; // rows scrolled up from the bottom
 static mut STARTED: bool = false;
+
+// Command history (up/down recall), like a real shell.
+const HIST_N: usize = 32;
+static mut HIST: [[u8; INPUT_MAX]; HIST_N] = [[0; INPUT_MAX]; HIST_N];
+static mut HIST_LEN: [usize; HIST_N] = [0; HIST_N];
+static mut HIST_HEAD: usize = 0; // next write slot (ring)
+static mut HIST_COUNT: usize = 0; // entries stored (<= HIST_N)
+static mut HIST_NAV: usize = 0; // steps back currently recalled (0 = fresh line)
+
+// Current working directory: a single lingfs dir name (empty = root). lingfs
+// is one level deep, so this is at most one component.
+static mut CWD: [u8; 64] = [0; 64];
+static mut CWD_LEN: usize = 0;
+
+// sudo/su password entry: 0 = normal input, 1 = collecting a sudo password,
+// 2 = collecting an su password. PENDING holds the sudo command line (mode 1)
+// or the target username (mode 2).
+static mut PW_MODE: u8 = 0;
+static mut PW_INPUT: [u8; INPUT_MAX] = [0; INPUT_MAX];
+static mut PW_LEN: usize = 0;
+static mut PENDING: [u8; INPUT_MAX] = [0; INPUT_MAX];
+static mut PENDING_LEN: usize = 0;
 
 fn rows() -> &'static mut [Row; LINES] {
     unsafe { &mut *&raw mut ROWS }
@@ -102,6 +124,97 @@ fn input_str() -> &'static str {
     unsafe { core::str::from_utf8(&(&*&raw const INPUT)[..INPUT_LEN]).unwrap_or("") }
 }
 
+fn cwd_str() -> &'static str {
+    unsafe { core::str::from_utf8(&(&*&raw const CWD)[..CWD_LEN]).unwrap_or("") }
+}
+
+/// True if `name` is a directory at lingfs root (for `cd`).
+fn dir_exists(name: &str) -> bool {
+    let mut idx = 0;
+    let mut nm = [0u8; 64];
+    while idx < 256 {
+        match lingfs::list_entry("", idx, &mut nm) {
+            Some((len, is_dir)) => {
+                if is_dir && &nm[..len] == name.as_bytes() {
+                    return true;
+                }
+                idx += 1;
+            },
+            None => break,
+        }
+    }
+    false
+}
+
+/// Resolve a possibly-relative path against the CWD into `out`, returning the
+/// slice. An absolute-looking path (with a '/') or an empty CWD passes
+/// through unchanged; otherwise "cwd/name".
+fn resolve_path<'a>(arg: &str, out: &'a mut [u8; 128]) -> &'a str {
+    let cwd = cwd_str();
+    if cwd.is_empty() || arg.contains('/') {
+        let n = arg.len().min(out.len());
+        out[..n].copy_from_slice(&arg.as_bytes()[..n]);
+        return core::str::from_utf8(&out[..n]).unwrap_or("");
+    }
+    let mut n = 0;
+    let cb = cwd.as_bytes();
+    let cl = cb.len().min(out.len());
+    out[..cl].copy_from_slice(&cb[..cl]);
+    n += cl;
+    if n < out.len() {
+        out[n] = b'/';
+        n += 1;
+    }
+    let ab = arg.as_bytes();
+    let al = ab.len().min(out.len() - n);
+    out[n..n + al].copy_from_slice(&ab[..al]);
+    n += al;
+    core::str::from_utf8(&out[..n]).unwrap_or("")
+}
+
+/// Record a command in history (skips empties and consecutive duplicates).
+fn history_push(cmd: &[u8]) {
+    unsafe {
+        HIST_NAV = 0;
+        if cmd.is_empty() {
+            return;
+        }
+        if HIST_COUNT > 0 {
+            let last = (HIST_HEAD + HIST_N - 1) % HIST_N;
+            if HIST_LEN[last] == cmd.len() && HIST[last][..cmd.len()] == *cmd {
+                return;
+            }
+        }
+        let n = cmd.len().min(INPUT_MAX);
+        HIST[HIST_HEAD][..n].copy_from_slice(&cmd[..n]);
+        HIST_LEN[HIST_HEAD] = n;
+        HIST_HEAD = (HIST_HEAD + 1) % HIST_N;
+        if HIST_COUNT < HIST_N {
+            HIST_COUNT += 1;
+        }
+    }
+}
+
+/// Recall a history entry into the input line. `delta` +1 = further back,
+/// -1 = toward the fresh line.
+fn history_recall(delta: i32) {
+    unsafe {
+        if HIST_COUNT == 0 {
+            return;
+        }
+        let new_nav = (HIST_NAV as i32 + delta).clamp(0, HIST_COUNT as i32) as usize;
+        HIST_NAV = new_nav;
+        if new_nav == 0 {
+            INPUT_LEN = 0;
+            return;
+        }
+        let idx = (HIST_HEAD + HIST_N - new_nav) % HIST_N;
+        let len = HIST_LEN[idx];
+        INPUT[..len].copy_from_slice(&HIST[idx][..len]);
+        INPUT_LEN = len;
+    }
+}
+
 fn split_cmd(s: &str) -> (&str, &str) {
     match s.find(' ') {
         Some(i) => (&s[..i], s[i + 1..].trim_start()),
@@ -120,6 +233,8 @@ fn run(line: &str) {
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
             push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
+            push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
+            push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
             COUNT = 0;
@@ -174,11 +289,12 @@ fn run(line: &str) {
         },
         "paste" => push(Cls::Normal, clipboard::get()),
         "ls" => {
+            let dir = if arg.is_empty() { cwd_str() } else { arg };
             let mut idx = 0;
             let mut nm = [0u8; 64];
             let mut any = false;
             while idx < 128 {
-                match lingfs::list_entry(arg, idx, &mut nm) {
+                match lingfs::list_entry(dir, idx, &mut nm) {
                     Some((len, is_dir)) => {
                         let mut line = [0u8; 70];
                         let mut n = 0;
@@ -205,7 +321,9 @@ fn run(line: &str) {
             } else {
                 static mut CATBUF: [u8; 8192] = [0; 8192];
                 let cb = unsafe { &mut *&raw mut CATBUF };
-                match lingfs::read_file_all(arg, cb) {
+                let mut pbuf = [0u8; 128];
+                let path = resolve_path(arg, &mut pbuf);
+                match lingfs::read_file_all(path, cb) {
                     Ok(Some(len)) => push_wrapped(Cls::Normal, &cb[..len]),
                     _ => push(Cls::Err, b"cat: no such file"),
                 }
@@ -248,6 +366,74 @@ fn run(line: &str) {
             }
         },
         "lingfu" => run_lingfu(arg),
+        "cd" => {
+            if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
+                unsafe { CWD_LEN = 0 };
+            } else if dir_exists(arg) {
+                let b = arg.as_bytes();
+                let n = b.len().min(64);
+                unsafe {
+                    CWD[..n].copy_from_slice(&b[..n]);
+                    CWD_LEN = n;
+                }
+            } else {
+                push(Cls::Err, b"cd: no such directory");
+            }
+        },
+        "pwd" => {
+            let c = cwd_str();
+            if c.is_empty() {
+                push(Cls::Normal, b"/");
+            } else {
+                let mut b = [0u8; 66];
+                b[0] = b'/';
+                let n = c.len().min(64);
+                b[1..1 + n].copy_from_slice(&c.as_bytes()[..n]);
+                push(Cls::Normal, &b[..1 + n]);
+            }
+        },
+        "whoami" => push(Cls::Normal, lingfs::current_user().as_bytes()),
+        "sudo" => {
+            if arg.is_empty() {
+                push(Cls::Err, b"usage: sudo <command>");
+            } else {
+                let b = arg.as_bytes();
+                let n = b.len().min(INPUT_MAX);
+                unsafe {
+                    PENDING[..n].copy_from_slice(&b[..n]);
+                    PENDING_LEN = n;
+                    PW_MODE = 1;
+                    PW_LEN = 0;
+                }
+                let mut m = [0u8; 64];
+                let p = b"[sudo] password for ";
+                m[..p.len()].copy_from_slice(p);
+                let u = lingfs::current_user();
+                let un = u.len().min(m.len() - p.len() - 1);
+                m[p.len()..p.len() + un].copy_from_slice(&u.as_bytes()[..un]);
+                m[p.len() + un] = b':';
+                push(Cls::Dim, &m[..p.len() + un + 1]);
+            }
+        },
+        "su" => {
+            let target = if arg.is_empty() { "root" } else { arg };
+            let b = target.as_bytes();
+            let n = b.len().min(INPUT_MAX);
+            unsafe {
+                PENDING[..n].copy_from_slice(&b[..n]);
+                PENDING_LEN = n;
+                PW_MODE = 2;
+                PW_LEN = 0;
+            }
+            push(Cls::Dim, b"password:");
+        },
+        "ling-life" => {
+            // life::run() is the fullscreen text-mode idle screensaver; it
+            // takes over the console and can't render inside this framebuffer
+            // window, so don't launch it from here (it would freeze the WM).
+            push(Cls::Normal, b"ling-life: Conway's Life screensaver.");
+            push(Cls::Dim, b"It runs fullscreen on idle; a windowed Life app is on the roadmap.");
+        },
         "alloctest" => {
             // Exercise the new kernel global allocator: a growing Vec (which
             // reallocs), a String, then drop (which frees). Prints a known
@@ -426,12 +612,88 @@ fn w_any(buf: &mut [u8], mut v: u32) -> usize {
     k
 }
 
+/// While collecting a sudo/su password: masked entry, Enter submits, Esc
+/// cancels, Backspace edits. Returns true if the key was consumed (i.e. we're
+/// in password mode). On success, sudo re-runs the pending command and su
+/// switches the current user via `lingfs::set_current_user`.
+fn handle_pw_key(k: u8) -> bool {
+    unsafe {
+        if PW_MODE == 0 {
+            return false;
+        }
+        match k {
+            b'\n' | b'\r' => {
+                let mode = PW_MODE;
+                let plen = PENDING_LEN;
+                let mut pend = [0u8; INPUT_MAX];
+                pend[..plen].copy_from_slice(&(&*&raw const PENDING)[..plen]);
+                let pw = core::str::from_utf8(&(&*&raw const PW_INPUT)[..PW_LEN]).unwrap_or("");
+                if mode == 1 {
+                    let user = lingfs::current_user();
+                    if users::verify(user, pw) {
+                        push(Cls::Dim, b"[sudo] ok");
+                        PW_MODE = 0;
+                        PW_LEN = 0;
+                        PENDING_LEN = 0;
+                        run(core::str::from_utf8(&pend[..plen]).unwrap_or(""));
+                        return true;
+                    }
+                    push(Cls::Err, b"sudo: authentication failure");
+                } else if mode == 2 {
+                    let target = core::str::from_utf8(&pend[..plen]).unwrap_or("root");
+                    if users::verify(target, pw) {
+                        let mut gb = [0u8; 32];
+                        let glen = users::group_of(target, &mut gb).unwrap_or(0);
+                        let grp = core::str::from_utf8(&gb[..glen]).unwrap_or("users");
+                        lingfs::set_current_user(target, grp);
+                        let mut m = [0u8; 48];
+                        let p = b"now logged in as ";
+                        m[..p.len()].copy_from_slice(p);
+                        let tn = target.len().min(m.len() - p.len());
+                        m[p.len()..p.len() + tn].copy_from_slice(&target.as_bytes()[..tn]);
+                        push(Cls::Ok, &m[..p.len() + tn]);
+                    } else {
+                        push(Cls::Err, b"su: authentication failure");
+                    }
+                }
+                PW_MODE = 0;
+                PW_LEN = 0;
+                PENDING_LEN = 0;
+            },
+            0x08 => {
+                if PW_LEN > 0 {
+                    PW_LEN -= 1;
+                }
+            },
+            0x1B => {
+                PW_MODE = 0;
+                PW_LEN = 0;
+                PENDING_LEN = 0;
+                push(Cls::Dim, b"(cancelled)");
+            },
+            0x20..=0x7E => {
+                if PW_LEN < INPUT_MAX {
+                    PW_INPUT[PW_LEN] = k;
+                    PW_LEN += 1;
+                }
+            },
+            _ => {},
+        }
+        true
+    }
+}
+
 pub fn key(k: u8) {
     use crate::drivers::keyboard as kb;
     unsafe {
         if !STARTED {
             STARTED = true;
             banner();
+        }
+        // While a sudo/su password is being collected, all keys feed the
+        // masked entry, not the command line.
+        if handle_pw_key(k) {
+            return;
         }
         match k {
             kb::CTRL_ZOOM_IN => ZOOM = (ZOOM + 1).min(3),
@@ -453,14 +715,17 @@ pub fn key(k: u8) {
                     }
                 }
             },
-            kb::UP_ARROW => SCROLL = (SCROLL + 1).min(COUNT),
-            kb::DOWN_ARROW => SCROLL = SCROLL.saturating_sub(1),
+            // Up/Down walk command history (like a real shell), not the
+            // scrollback -- new output already snaps the view to the bottom.
+            kb::UP_ARROW => history_recall(1),
+            kb::DOWN_ARROW => history_recall(-1),
             b'\n' | b'\r' => {
                 prompt_echo();
                 let mut tmp = [0u8; INPUT_MAX];
                 let n = INPUT_LEN;
                 tmp[..n].copy_from_slice(&(&*&raw const INPUT)[..n]);
                 INPUT_LEN = 0;
+                history_push(&tmp[..n]);
                 run(core::str::from_utf8(&tmp[..n]).unwrap_or(""));
             },
             0x08 => {
@@ -529,17 +794,33 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         ry += gh;
     }
 
-    // Input prompt on the bottom row.
+    // Input prompt on the bottom row. In sudo/su password mode, show a
+    // "password:" label and mask the entry with asterisks.
     let py = y + (grid_rows as u32 - 1) * gh;
     let accent = theme::color(theme::SLOT_ACCENT);
-    font8x8::draw_char_scaled(x, py, b'>', accent, panel, z);
-    let inp = unsafe { &(&*&raw const INPUT)[..INPUT_LEN] };
-    let shown = inp.len().min(cols.saturating_sub(3));
-    let start = inp.len() - shown;
-    for (ci, &ch) in inp[start..].iter().enumerate() {
-        font8x8::draw_char_scaled(x + (ci as u32 + 2) * gw, py, ch, theme::color(theme::SLOT_TEXT), panel, z);
+    let txt = theme::color(theme::SLOT_TEXT);
+    let pw_mode = unsafe { PW_MODE };
+    if pw_mode != 0 {
+        let label: &[u8] = b"password:";
+        for (ci, &ch) in label.iter().enumerate() {
+            font8x8::draw_char_scaled(x + ci as u32 * gw, py, ch, theme::color(theme::SLOT_DIM), panel, z);
+        }
+        let pl = unsafe { PW_LEN };
+        let base = label.len() as u32 + 1;
+        let shown = pl.min(cols.saturating_sub(base as usize + 1));
+        for i in 0..shown {
+            font8x8::draw_char_scaled(x + (base + i as u32) * gw, py, b'*', txt, panel, z);
+        }
+        framebuffer::back_fill_rect(x + (base + shown as u32) * gw, py, gw / 4 + 1, gh, accent);
+    } else {
+        font8x8::draw_char_scaled(x, py, b'>', accent, panel, z);
+        let inp = unsafe { &(&*&raw const INPUT)[..INPUT_LEN] };
+        let shown = inp.len().min(cols.saturating_sub(3));
+        let start = inp.len() - shown;
+        for (ci, &ch) in inp[start..].iter().enumerate() {
+            font8x8::draw_char_scaled(x + (ci as u32 + 2) * gw, py, ch, txt, panel, z);
+        }
+        framebuffer::back_fill_rect(x + (shown as u32 + 2) * gw, py, gw / 4 + 1, gh, accent);
     }
-    // Caret.
-    framebuffer::back_fill_rect(x + (shown as u32 + 2) * gw, py, gw / 4 + 1, gh, accent);
     let _ = input_str;
 }
