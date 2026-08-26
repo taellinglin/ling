@@ -156,6 +156,21 @@ pub fn init() {
 /// `ling_kernel_*` intrinsics below, so both architectures stay behind one
 /// set of names.
 pub(crate) fn console_write(bytes: &[u8]) {
+    // Optional capture: when a graphics app (e.g. the Terminal) runs a spawned
+    // native process, that process's SYS_WRITE output comes through here. The
+    // caller enables capture so it can show the output in its own window
+    // rather than only on the (invisible-in-graphics-mode) text console.
+    unsafe {
+        if CONSOLE_CAPTURING {
+            let cap = &mut *&raw mut CONSOLE_CAP;
+            for &b in bytes {
+                if CONSOLE_CAP_LEN < cap.len() {
+                    cap[CONSOLE_CAP_LEN] = b;
+                    CONSOLE_CAP_LEN += 1;
+                }
+            }
+        }
+    }
     #[cfg(target_arch = "x86_64")]
     {
         for &b in bytes {
@@ -166,6 +181,54 @@ pub(crate) fn console_write(bytes: &[u8]) {
     #[cfg(target_arch = "aarch64")]
     {
         uart::write(bytes);
+    }
+}
+
+// Console capture, for showing a spawned native app's output in a graphics
+// window (see `console_write`). Single-threaded use only (begin -> run -> end).
+static mut CONSOLE_CAP: [u8; 8192] = [0; 8192];
+static mut CONSOLE_CAP_LEN: usize = 0;
+static mut CONSOLE_CAPTURING: bool = false;
+
+pub fn console_capture_begin() {
+    unsafe {
+        CONSOLE_CAPTURING = true;
+        CONSOLE_CAP_LEN = 0;
+    }
+}
+
+pub fn console_capture_end() -> &'static [u8] {
+    unsafe {
+        CONSOLE_CAPTURING = false;
+        &(&*&raw const CONSOLE_CAP)[..CONSOLE_CAP_LEN]
+    }
+}
+
+/// The embedded demo app: `testbins/hello_app.ling` AOT-compiled with
+/// `--platform lingos` to a native ring-3 ELF. Proves the whole pipeline
+/// (Cranelift AOT -> ling-user runtime -> ELF loader -> ring 3 -> syscalls)
+/// with a *real compiler-produced* program, not a hand-assembled one.
+#[cfg(target_arch = "x86_64")]
+pub static HELLO_APP_ELF: &[u8] = include_bytes!("../testbins/hello_app.elf");
+
+/// Load an ELF image into a new ring-3 process and run it to completion,
+/// returning its exit code. The kernel-side launcher behind the Terminal's
+/// `run` command.
+#[cfg(target_arch = "x86_64")]
+pub fn run_app_bytes(elf: &[u8]) -> Result<i32, &'static str> {
+    let pid = proc::uproc::spawn(elf)?;
+    Ok(proc::uproc::run_to_completion(pid))
+}
+
+/// Read an app ELF from lingfs (multi-block, so real ling-user apps that
+/// exceed one 4KiB block work) and run it. Returns the exit code.
+#[cfg(target_arch = "x86_64")]
+pub fn run_app_file(path: &str) -> Result<i32, &'static str> {
+    static mut APPBUF: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024];
+    let buf = unsafe { &mut *&raw mut APPBUF };
+    match fs::lingfs::read_file_all(path, buf) {
+        Ok(Some(len)) => run_app_bytes(&buf[..len]),
+        Ok(None) | Err(_) => Err("app not found in lingfs"),
     }
 }
 

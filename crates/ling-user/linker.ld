@@ -4,6 +4,7 @@ PHDRS {
     text PT_LOAD FLAGS(5);
     rodata PT_LOAD FLAGS(4);
     data PT_LOAD FLAGS(6);
+    bss PT_LOAD FLAGS(6);
 }
 
 SECTIONS {
@@ -23,9 +24,17 @@ SECTIONS {
     .data : ALIGN(4K) {
         *(.data .data.* .ldata .ldata.*)
         *(.got .got.*)
+    } :data
+
+    /* .bss in its own NOBITS segment so zero-initialized statics (e.g.
+       ling-user's multi-MiB HEAP_MEM arena) are NOT stored in the ELF file
+       -- the loader zero-fills the tail past p_filesz. Without this the whole
+       arena bloats every app by megabytes. */
+    . = ALIGN(4K);
+    .bss (NOLOAD) : ALIGN(4K) {
         *(.bss .bss.* .lbss .lbss.*)
         *(COMMON)
-    } :data
+    } :bss
 
     /DISCARD/ : {
         *(.comment)

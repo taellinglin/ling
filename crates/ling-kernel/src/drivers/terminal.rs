@@ -233,7 +233,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
             push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
-            push(Cls::Normal, b"  ling run <file.ling>|eval <src>");
+            push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run <app.elf>|demo");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
             push(Cls::Dim, b"  up/down: command history");
         },
@@ -368,6 +368,7 @@ fn run(line: &str) {
         },
         "lingfu" => run_lingfu(arg),
         "ling" => run_ling(arg),
+        "run" => run_native(arg),
         "cd" => {
             if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
                 unsafe { CWD_LEN = 0 };
@@ -590,6 +591,48 @@ fn run_ling(arg: &str) {
             }
         },
         _ => push(Cls::Err, b"ling: unknown subcommand (try: ling run <file> | ling eval <src>)"),
+    }
+}
+
+/// `run demo` / `run <path.elf>` -- load a native AOT-compiled Ling app into
+/// a ring-3 process and run it to completion, showing its output here. This
+/// is the real native-app path (Cranelift AOT -> ling-user -> ELF loader ->
+/// ring 3 -> syscalls), distinct from `ling run` (the in-kernel interpreter).
+fn run_native(arg: &str) {
+    push(Cls::Dim, b"launching native app (ring 3)...");
+    crate::console_capture_begin();
+    let result = if arg.is_empty() || arg == "demo" {
+        crate::run_app_bytes(crate::HELLO_APP_ELF)
+    } else {
+        let mut pbuf = [0u8; 128];
+        let path = resolve_path(arg, &mut pbuf);
+        crate::run_app_file(path)
+    };
+    let cap = crate::console_capture_end();
+    for line in cap.split(|&b| b == b'\n') {
+        if !line.is_empty() {
+            push_wrapped(Cls::Normal, line);
+        }
+    }
+    match result {
+        Ok(code) => {
+            let mut b = [0u8; 32];
+            let p = b"[exited, code ";
+            b[..p.len()].copy_from_slice(p);
+            let mut n = p.len();
+            n += w_any(&mut b[n..], code as u32);
+            b[n] = b']';
+            n += 1;
+            push(Cls::Ok, &b[..n]);
+        },
+        Err(e) => {
+            let mut b = [0u8; 96];
+            let p = b"run: ";
+            b[..p.len()].copy_from_slice(p);
+            let k = e.len().min(b.len() - p.len());
+            b[p.len()..p.len() + k].copy_from_slice(&e.as_bytes()[..k]);
+            push(Cls::Err, &b[..p.len() + k]);
+        },
     }
 }
 

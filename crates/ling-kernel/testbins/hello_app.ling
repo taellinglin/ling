@@ -1,0 +1,3 @@
+bind start = do {
+    print("hello from a native ling app in LingOS")
+}
