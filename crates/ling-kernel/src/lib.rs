@@ -258,6 +258,22 @@ pub unsafe extern "C" fn ling_kernel_halt() -> u64 {
     }
 }
 
+/// Reboot the machine (8042 pulse -> triple-fault fallback). Never
+/// returns. See `arch::power`'s doc for the VM-vs-real-hardware scope.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_reboot() -> u64 {
+    arch::power::reboot();
+}
+
+/// Power off (VM ACPI-shutdown ports). Never returns on a VM; halts if no
+/// port took.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_poweroff() -> u64 {
+    arch::power::poweroff();
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_cli() -> u64 {
     cpu::cli();
@@ -1270,6 +1286,21 @@ pub unsafe extern "C" fn ling_kernel_wm_set_wallpaper_image(name: u64) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_draw_menu() -> u64 {
     wm::draw_menu();
+    0
+}
+
+/// 1 when the user picked Log Out from the Power menu -- the desktop loop
+/// tears down the session and returns to the greeter. `clear` resets it.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_logout_requested() -> u64 {
+    wm::logout_requested() as u64
+}
+
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_clear_logout() -> u64 {
+    wm::clear_logout();
     0
 }
 

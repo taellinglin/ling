@@ -144,11 +144,28 @@ static mut HOVER_DOCK: i32 = -1;
 
 // -- Settings window state -------------------------------------------------
 // Rows: UI theme / Sound theme / Wallpaper / Display / Window spring /
-// Keyboard / Language / Clock. Changes apply live as you arrow; the
+// Keyboard / Language / Clock / DNS. Changes apply live as you arrow; the
 // Apply/OK buttons persist them to lingfs so they survive a reboot.
-const SETTINGS_ROWS: usize = 8;
+const SETTINGS_ROWS: usize = 9;
 static mut SETTINGS_CURSOR: usize = 0;
 static mut CLOCK_24H: bool = true;
+
+// Network: a DNS-server preset cycler (the Settings "DNS" row). Each preset
+// is the primary resolver; the NAT resolver stays the guaranteed fallback
+// (see netstack). Cutting-edge, privacy-first options first.
+const DNS_PRESETS: [(&str, [u8; 4]); 5] = [
+    ("Cloudflare 1.1.1.1", [1, 1, 1, 1]),
+    ("Quad9 9.9.9.9", [9, 9, 9, 9]),
+    ("AdGuard 94.140.14.14", [94, 140, 14, 14]),
+    ("LAN 192.168.0.2", [192, 168, 0, 2]),
+    ("NAT 10.0.2.3", [10, 0, 2, 3]),
+];
+static mut DNS_PRESET: usize = 0;
+
+fn apply_dns_preset() {
+    let (_, ip) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
+    netstack::set_dns(ip, netstack::NAT_RESOLVER);
+}
 
 /// Persist the live settings to lingfs `/settings` (one line of small
 /// integers) so Apply/OK actually mean something across reboots. Format
@@ -164,6 +181,7 @@ pub fn settings_save() {
         kbdlayout::current() as u32,
         locale::selected().unwrap_or(0) as u32,
         unsafe { CLOCK_24H as u32 },
+        unsafe { DNS_PRESET as u32 },
     ];
     let mut n = 0;
     for (i, v) in vals.iter().enumerate() {
@@ -206,6 +224,10 @@ pub fn settings_load() {
     }
     if let Some(v) = next() {
         unsafe { CLOCK_24H = v != 0 };
+    }
+    if let Some(v) = next() {
+        unsafe { DNS_PRESET = (v as usize) % DNS_PRESETS.len() };
+        apply_dns_preset();
     }
 }
 
@@ -288,12 +310,29 @@ pub fn set_wallpaper_current() {
 // aren't clickable; app rows open (or raise) their window and close the
 // menu. Kept a flat always-expanded list -- simplest thing that reads as
 // the MATE menu, and honest about how few apps exist to categorize yet.
+// Power actions live in the menu as pseudo-"kinds" above the real window
+// kinds so one click routing handles both.
+const ACT_LOGOUT: u8 = 200;
+const ACT_RESTART: u8 = 201;
+const ACT_SHUTDOWN: u8 = 202;
+
+static mut LOGOUT_REQUESTED: bool = false;
+
+/// The desktop loop (main.ling) polls this each frame; when true it tears
+/// down the session and returns to the greeter/login.
+pub fn logout_requested() -> bool {
+    unsafe { LOGOUT_REQUESTED }
+}
+pub fn clear_logout() {
+    unsafe { LOGOUT_REQUESTED = false };
+}
+
 struct MenuRow {
     header: &'static str, // non-empty => category header (not an app row)
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 12] = [
+const MENU: [MenuRow; 16] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "Accessories", app: "", kind: 255 },
@@ -306,6 +345,10 @@ const MENU: [MenuRow; 12] = [
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
     MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
+    MenuRow { header: "Power", app: "", kind: 255 },
+    MenuRow { header: "", app: "Log Out", kind: ACT_LOGOUT },
+    MenuRow { header: "", app: "Restart", kind: ACT_RESTART },
+    MenuRow { header: "", app: "Shut Down", kind: ACT_SHUTDOWN },
 ];
 const MENU_W: u32 = 210;
 const MENU_ROW_H: u32 = 22;
@@ -481,7 +524,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
     // against screen height directly).
     let s = (framebuffer::height() as f64 / 600.0).max(0.5);
     let (w, h) = match kind {
-        KIND_SETTINGS => (470.0, 380.0),
+        KIND_SETTINGS => (470.0, 430.0),
         KIND_FILES => (470.0, 370.0),
         KIND_WEB => (620.0, 460.0),
         KIND_EDIT => (600.0, 440.0),
@@ -795,8 +838,12 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             // windows.
             if MENU_OPEN {
                 let kind = menu_click(mx, my);
-                if kind != 255 {
-                    open(kind);
+                match kind {
+                    255 => {},
+                    ACT_LOGOUT => LOGOUT_REQUESTED = true,
+                    ACT_RESTART => crate::arch::power::reboot(),
+                    ACT_SHUTDOWN => crate::arch::power::poweroff(),
+                    k => open(k),
                 }
                 PREV_BUTTONS = buttons;
                 return;
@@ -1055,7 +1102,13 @@ fn settings_key(k: u8) {
                         let cur = locale::selected().unwrap_or(0) as i32;
                         locale::select(((cur + dir + n) % n) as usize);
                     },
-                    _ => CLOCK_24H = !CLOCK_24H,
+                    7 => CLOCK_24H = !CLOCK_24H,
+                    _ => {
+                        // DNS server preset.
+                        let n = DNS_PRESETS.len() as i32;
+                        DNS_PRESET = ((DNS_PRESET as i32 + dir + n) % n) as usize;
+                        apply_dns_preset();
+                    },
                 }
             },
             _ => {},
@@ -1634,6 +1687,7 @@ pub fn draw_content(slot: usize) {
                 b"Keyboard",
                 b"Language",
                 b"Clock",
+                b"DNS server",
             ];
             for (i, label) in labels.iter().enumerate() {
                 let ry = y + i as u32 * row_h;
@@ -1697,9 +1751,13 @@ pub fn draw_content(slot: usize) {
                             }
                         }
                     },
-                    _ => {
+                    7 => {
                         let v: &[u8] = if unsafe { CLOCK_24H } { b"24-hour" } else { b"12-hour" };
                         font8x8::draw_str(vx, ry, v, accent, panel);
+                    },
+                    _ => {
+                        let (name, _) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
+                        font8x8::draw_str(vx, ry, name.as_bytes(), accent, panel);
                     },
                 }
             }
