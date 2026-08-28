@@ -31,6 +31,10 @@ pub mod abi;
 pub mod mm;
 
 // ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
+// TLS 1.3 crypto suite (SHA-256/HMAC/HKDF/ChaCha20-Poly1305/X25519) + RDRAND
+// entropy -- the foundation HTTPS/lingtp/fu.ling-lang.org build on.
+#[cfg(target_arch = "x86_64")]
+pub mod crypto;
 pub mod ed25519;
 pub mod hash;
 // In-kernel tree-walking interpreter for a subset of Ling (`ling run` in the

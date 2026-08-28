@@ -437,6 +437,33 @@ fn run(line: &str) {
             push(Cls::Normal, b"ling-life: Conway's Life screensaver.");
             push(Cls::Dim, b"It runs fullscreen on idle; a windowed Life app is on the roadmap.");
         },
+        "cryptotest" => {
+            // Prove the TLS 1.3 crypto suite computes correct answers in-kernel
+            // (known-answer test vectors), not just that it compiled.
+            let t = crate::crypto::selftest();
+            let mark = |ok: bool| if ok { b"[ok]  ".as_slice() } else { b"[FAIL]".as_slice() };
+            let mut row = |ok: bool, name: &[u8]| {
+                let mut b = [0u8; 48];
+                let m = mark(ok);
+                b[..m.len()].copy_from_slice(m);
+                b[m.len()] = b' ';
+                let n = name.len().min(b.len() - m.len() - 1);
+                b[m.len() + 1..m.len() + 1 + n].copy_from_slice(&name[..n]);
+                push(if ok { Cls::Ok } else { Cls::Err }, &b[..m.len() + 1 + n]);
+            };
+            push(Cls::Accent, b"TLS crypto self-test (known-answer vectors):");
+            row(t.rdrand, b"RDRAND entropy");
+            row(t.sha256, b"SHA-256          (FIPS 180-4)");
+            row(t.hmac, b"HMAC-SHA256      (RFC 4231)");
+            row(t.hkdf, b"HKDF-SHA256      (RFC 5869)");
+            row(t.chachapoly, b"ChaCha20-Poly1305 (RFC 8439)");
+            row(t.x25519, b"X25519 ECDHE     (RFC 7748)");
+            if t.all_ok() {
+                push(Cls::Ok, b"all primitives pass -- ready for the TLS handshake");
+            } else {
+                push(Cls::Err, b"some primitives failed");
+            }
+        },
         "alloctest" => {
             // Exercise the new kernel global allocator: a growing Vec (which
             // reallocs), a String, then drop (which frees). Prints a known

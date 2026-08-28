@@ -90,3 +90,38 @@ pub unsafe fn read_flags() -> u64 {
     asm!("pushfq; pop {}", out(reg) val, options(nomem, nostack));
     val
 }
+
+/// True if the CPU advertises RDRAND (CPUID.01H:ECX[30]). QEMU exposes it on
+/// its default CPU models; real hardware since Ivy Bridge / Excavator.
+pub unsafe fn has_rdrand() -> bool {
+    let (_, _, ecx, _) = cpuid(1, 0);
+    ecx & (1 << 30) != 0
+}
+
+/// One 64-bit hardware random word via RDRAND. The instruction sets CF=1 on
+/// success; retry a few times per Intel's guidance, and return None if the
+/// RNG is starved (extremely rare) or RDRAND is unsupported. This is the
+/// kernel's real entropy source -- the CSPRNG seed the ed25519/TLS crypto
+/// needs and that `users.rs`'s rdtsc-salt was explicitly a placeholder for.
+pub unsafe fn rdrand64() -> Option<u64> {
+    if !has_rdrand() {
+        return None;
+    }
+    let mut attempts = 0;
+    while attempts < 16 {
+        let val: u64;
+        let ok: u8;
+        asm!(
+            "rdrand {v}",
+            "setc {c}",
+            v = out(reg) val,
+            c = out(reg_byte) ok,
+            options(nomem, nostack),
+        );
+        if ok != 0 {
+            return Some(val);
+        }
+        attempts += 1;
+    }
+    None
+}
