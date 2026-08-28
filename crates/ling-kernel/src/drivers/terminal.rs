@@ -372,6 +372,7 @@ fn run(line: &str) {
         "run" => run_native(arg),
         "ssh" => run_ssh(arg),
         "services" => run_services(arg),
+        "https" => run_https(arg),
         "cd" => {
             if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
                 unsafe { CWD_LEN = 0 };
@@ -719,6 +720,48 @@ fn run_ssh(arg: &str) {
     push(Cls::Ok, &buf[..end]);
     push(Cls::Dim, b"ssh: TCP + SSH version banner exchanged with the server.");
     push(Cls::Dim, b"     KEX/auth/shell (the SSH transport) build on the crypto suite -- WIP.");
+}
+
+/// `https <host[:port][/path]>` -- a real TLS 1.3 handshake (X25519 +
+/// ChaCha20-Poly1305) and an encrypted GET, showing the decrypted response.
+/// Certificate validation is NOT performed yet (disclosed) -- this proves the
+/// handshake + record crypto, not authenticity.
+fn run_https(arg: &str) {
+    if arg.is_empty() {
+        push(Cls::Err, b"usage: https <host[:port][/path]>");
+        return;
+    }
+    let a = arg.strip_prefix("https://").unwrap_or(arg);
+    let (hostpart, path) = match a.find('/') {
+        Some(i) => (&a[..i], &a[i..]),
+        None => (a, "/"),
+    };
+    let (host, port) = match hostpart.rfind(':') {
+        Some(i) => (&hostpart[..i], hostpart[i + 1..].parse::<u16>().unwrap_or(443)),
+        None => (hostpart, 443u16),
+    };
+    push(Cls::Dim, b"tls: cert validation is NOT done yet -- channel is encrypted, not authenticated");
+    static mut HTTPSBUF: [u8; 32 * 1024] = [0; 32 * 1024];
+    let buf = unsafe { &mut *&raw mut HTTPSBUF };
+    let mut logline = |m: &[u8]| {
+        let m = if m.last() == Some(&b'\n') { &m[..m.len() - 1] } else { m };
+        push(Cls::Dim, m);
+    };
+    match crate::tls::https_get(host, port, path, buf, &mut logline) {
+        Ok(0) => push(Cls::Err, b"https: handshake ok but no data decrypted"),
+        Ok(len) => {
+            push(Cls::Ok, b"https: response (decrypted):");
+            push_wrapped(Cls::Normal, &buf[..len.min(2048)]);
+        },
+        Err(e) => {
+            let mut b = [0u8; 96];
+            let p = b"https: ";
+            b[..p.len()].copy_from_slice(p);
+            let k = e.len().min(b.len() - p.len());
+            b[p.len()..p.len() + k].copy_from_slice(&e.as_bytes()[..k]);
+            push(Cls::Err, &b[..p.len() + k]);
+        },
+    }
 }
 
 /// `services [list|enable ssh|disable ssh]` -- configure which services start

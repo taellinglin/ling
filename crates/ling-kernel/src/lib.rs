@@ -35,6 +35,9 @@ pub mod mm;
 // entropy -- the foundation HTTPS/lingtp/fu.ling-lang.org build on.
 #[cfg(target_arch = "x86_64")]
 pub mod crypto;
+// TLS 1.3 client (HTTPS) built on crypto + netstack.
+#[cfg(target_arch = "x86_64")]
+pub mod tls;
 pub mod ed25519;
 pub mod hash;
 // Boot-time service configuration (SSH-at-boot prompt + persistence).

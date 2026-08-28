@@ -1,0 +1,579 @@
+//! A minimal TLS 1.3 client (RFC 8446) for the kernel, on top of crypto.rs and
+//! netstack's TCP: X25519 key exchange, ChaCha20-Poly1305 records, HKDF-SHA256
+//! key schedule. Enough to establish an encrypted channel and do an HTTPS GET.
+//!
+//! Honest scope, stated at the call site too: **certificate validation is not
+//! performed** -- this proves the handshake + record crypto (an eavesdropper
+//! can't read the traffic), but a full client must verify the server's cert
+//! chain against a trust store (X.509 + CA bundle), which is separate large
+//! work; without it this is vulnerable to an active MITM. One cipher suite
+//! (TLS_CHACHA20_POLY1305_SHA256), X25519 only, no resumption, no 0-RTT.
+
+use crate::crypto::{chachapoly_open, chachapoly_seal, hmac_sha256, random_bytes, sha256, x25519, x25519_public};
+use crate::drivers::netstack;
+use sha2::{Digest, Sha256};
+
+// ── HKDF key schedule ───────────────────────────────────────────────────────
+
+fn hkdf_extract(salt: &[u8], ikm: &[u8]) -> [u8; 32] {
+    // HKDF-Extract(salt, IKM) = HMAC-Hash(salt, IKM).
+    hmac_sha256(salt, ikm)
+}
+
+fn hkdf_expand_label(secret: &[u8; 32], label: &[u8], context: &[u8], out: &mut [u8]) {
+    // struct HkdfLabel { uint16 length; opaque label<"tls13 "..>; opaque context; }
+    let mut info = [0u8; 320];
+    let mut n = 0;
+    let l = out.len() as u16;
+    info[0] = (l >> 8) as u8;
+    info[1] = (l & 0xff) as u8;
+    n += 2;
+    info[n] = (6 + label.len()) as u8;
+    n += 1;
+    info[n..n + 6].copy_from_slice(b"tls13 ");
+    n += 6;
+    info[n..n + label.len()].copy_from_slice(label);
+    n += label.len();
+    info[n] = context.len() as u8;
+    n += 1;
+    info[n..n + context.len()].copy_from_slice(context);
+    n += context.len();
+    let hk = hkdf::Hkdf::<Sha256>::from_prk(secret).expect("32-byte prk");
+    hk.expand(&info[..n], out).expect("hkdf expand");
+}
+
+fn derive_secret(secret: &[u8; 32], label: &[u8], transcript: &[u8; 32]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    hkdf_expand_label(secret, label, transcript, &mut out);
+    out
+}
+
+/// A directional traffic key set + record sequence counter.
+struct Keys {
+    key: [u8; 32],
+    iv: [u8; 12],
+    seq: u64,
+}
+
+fn traffic_keys(secret: &[u8; 32]) -> Keys {
+    let mut key = [0u8; 32];
+    let mut iv = [0u8; 12];
+    hkdf_expand_label(secret, b"key", &[], &mut key);
+    hkdf_expand_label(secret, b"iv", &[], &mut iv);
+    Keys { key, iv, seq: 0 }
+}
+
+fn record_nonce(iv: &[u8; 12], seq: u64) -> [u8; 12] {
+    let mut n = *iv;
+    let s = seq.to_be_bytes();
+    for i in 0..8 {
+        n[4 + i] ^= s[i];
+    }
+    n
+}
+
+/// Decrypt one TLS 1.3 application_data record in place. `hdr` is the 5-byte
+/// record header (the AEAD's AAD); `body` is ciphertext||tag(16). On success
+/// returns (inner_content_type, plaintext_len) with the plaintext at body[..len].
+fn decrypt_record(keys: &mut Keys, hdr: &[u8; 5], body: &mut [u8]) -> Option<(u8, usize)> {
+    if body.len() < 16 {
+        return None;
+    }
+    let ct_len = body.len() - 16;
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&body[ct_len..]);
+    let n = record_nonce(&keys.iv, keys.seq);
+    keys.seq += 1;
+    if !chachapoly_open(&keys.key, &n, hdr, &mut body[..ct_len], &tag) {
+        return None;
+    }
+    // Strip zero padding; the last non-zero byte is the real content type.
+    let mut end = ct_len;
+    while end > 0 && body[end - 1] == 0 {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    Some((body[end - 1], end - 1))
+}
+
+/// Encrypt `data` as a TLS 1.3 record of inner type `ct` into `out` (which must
+/// hold 5 + data.len() + 1 + 16 bytes). Returns the total record length.
+fn encrypt_record(keys: &mut Keys, ct: u8, data: &[u8], out: &mut [u8]) -> usize {
+    let inner_len = data.len() + 1;
+    let rec_len = inner_len + 16;
+    out[0] = 0x17;
+    out[1] = 0x03;
+    out[2] = 0x03;
+    out[3] = (rec_len >> 8) as u8;
+    out[4] = (rec_len & 0xff) as u8;
+    let hdr = [out[0], out[1], out[2], out[3], out[4]];
+    out[5..5 + data.len()].copy_from_slice(data);
+    out[5 + data.len()] = ct;
+    let n = record_nonce(&keys.iv, keys.seq);
+    keys.seq += 1;
+    let tag = chachapoly_seal(&keys.key, &n, &hdr, &mut out[5..5 + inner_len]).expect("seal");
+    out[5 + inner_len..5 + inner_len + 16].copy_from_slice(&tag);
+    5 + rec_len
+}
+
+// ── ClientHello ─────────────────────────────────────────────────────────────
+
+/// Build a ClientHello record into `out`. Returns (record_len, handshake_off,
+/// handshake_len) so the caller can feed the handshake bytes to the transcript.
+fn build_client_hello(host: &str, pubkey: &[u8; 32], out: &mut [u8]) -> (usize, usize, usize) {
+    let mut rnd = [0u8; 32];
+    let mut sid = [0u8; 32];
+    random_bytes(&mut rnd);
+    random_bytes(&mut sid);
+
+    // Handshake body starts at out[9] (out[0..5]=record hdr, out[5..9]=hs hdr).
+    let body = 9usize;
+    let mut n = body;
+    out[n] = 0x03;
+    out[n + 1] = 0x03;
+    n += 2; // legacy_version
+    out[n..n + 32].copy_from_slice(&rnd);
+    n += 32;
+    out[n] = 32;
+    n += 1;
+    out[n..n + 32].copy_from_slice(&sid);
+    n += 32; // session id
+    out[n] = 0x00;
+    out[n + 1] = 0x02;
+    out[n + 2] = 0x13;
+    out[n + 3] = 0x03;
+    n += 4; // cipher_suites: TLS_CHACHA20_POLY1305_SHA256
+    out[n] = 0x01;
+    out[n + 1] = 0x00;
+    n += 2; // compression: null
+
+    // extensions (reserve 2 bytes for total length)
+    let ext_len_pos = n;
+    n += 2;
+    let ext_start = n;
+
+    // server_name (SNI)
+    let hl = host.len();
+    out[n] = 0x00;
+    out[n + 1] = 0x00;
+    n += 2;
+    let sni_data = 2 + 1 + 2 + hl;
+    out[n] = (sni_data >> 8) as u8;
+    out[n + 1] = (sni_data & 0xff) as u8;
+    n += 2;
+    let name_entry = 1 + 2 + hl;
+    out[n] = (name_entry >> 8) as u8;
+    out[n + 1] = (name_entry & 0xff) as u8;
+    n += 2;
+    out[n] = 0x00;
+    n += 1; // host_name
+    out[n] = (hl >> 8) as u8;
+    out[n + 1] = (hl & 0xff) as u8;
+    n += 2;
+    out[n..n + hl].copy_from_slice(host.as_bytes());
+    n += hl;
+
+    // supported_versions: TLS 1.3
+    out[n] = 0x00;
+    out[n + 1] = 0x2b;
+    out[n + 2] = 0x00;
+    out[n + 3] = 0x03;
+    out[n + 4] = 0x02;
+    out[n + 5] = 0x03;
+    out[n + 6] = 0x04;
+    n += 7;
+
+    // supported_groups: x25519
+    out[n] = 0x00;
+    out[n + 1] = 0x0a;
+    out[n + 2] = 0x00;
+    out[n + 3] = 0x04;
+    out[n + 4] = 0x00;
+    out[n + 5] = 0x02;
+    out[n + 6] = 0x00;
+    out[n + 7] = 0x1d;
+    n += 8;
+
+    // signature_algorithms (server needs one to sign its CertificateVerify)
+    let algos: [u16; 6] = [0x0403, 0x0804, 0x0807, 0x0401, 0x0805, 0x0501];
+    out[n] = 0x00;
+    out[n + 1] = 0x0d;
+    n += 2;
+    let sa_data = 2 + algos.len() * 2;
+    out[n] = (sa_data >> 8) as u8;
+    out[n + 1] = (sa_data & 0xff) as u8;
+    n += 2;
+    let sa_list = algos.len() * 2;
+    out[n] = (sa_list >> 8) as u8;
+    out[n + 1] = (sa_list & 0xff) as u8;
+    n += 2;
+    for a in algos {
+        out[n] = (a >> 8) as u8;
+        out[n + 1] = (a & 0xff) as u8;
+        n += 2;
+    }
+
+    // key_share: x25519
+    out[n] = 0x00;
+    out[n + 1] = 0x33;
+    n += 2;
+    let ks_entry = 2 + 2 + 32;
+    let ks_data = 2 + ks_entry;
+    out[n] = (ks_data >> 8) as u8;
+    out[n + 1] = (ks_data & 0xff) as u8;
+    n += 2;
+    out[n] = (ks_entry >> 8) as u8;
+    out[n + 1] = (ks_entry & 0xff) as u8;
+    n += 2;
+    out[n] = 0x00;
+    out[n + 1] = 0x1d;
+    out[n + 2] = 0x00;
+    out[n + 3] = 0x20;
+    n += 4;
+    out[n..n + 32].copy_from_slice(pubkey);
+    n += 32;
+
+    let ext_total = n - ext_start;
+    out[ext_len_pos] = (ext_total >> 8) as u8;
+    out[ext_len_pos + 1] = (ext_total & 0xff) as u8;
+
+    // handshake header: type client_hello (1), length
+    let hs_len = n - body;
+    out[5] = 0x01;
+    out[6] = (hs_len >> 16) as u8;
+    out[7] = (hs_len >> 8) as u8;
+    out[8] = (hs_len & 0xff) as u8;
+
+    // record header: handshake (22), legacy 0x0301, length
+    let rec_len = 4 + hs_len;
+    out[0] = 0x16;
+    out[1] = 0x03;
+    out[2] = 0x01;
+    out[3] = (rec_len >> 8) as u8;
+    out[4] = (rec_len & 0xff) as u8;
+
+    (5 + rec_len, 5, 4 + hs_len)
+}
+
+/// Extract the server's X25519 key_share (32 bytes) from a ServerHello
+/// handshake message (the bytes after the record header, i.e. hs_type..end).
+fn parse_server_key_share(sh: &[u8]) -> Option<[u8; 32]> {
+    // sh: type(1)=2, len(3), version(2), random(32), sid_len(1)+sid, suite(2), comp(1), ext_len(2), exts
+    let mut p = 4 + 2 + 32;
+    if p >= sh.len() {
+        return None;
+    }
+    let sid_len = sh[p] as usize;
+    p += 1 + sid_len;
+    p += 2 + 1; // cipher suite + compression
+    if p + 2 > sh.len() {
+        return None;
+    }
+    let ext_len = ((sh[p] as usize) << 8) | sh[p + 1] as usize;
+    p += 2;
+    let end = (p + ext_len).min(sh.len());
+    while p + 4 <= end {
+        let et = ((sh[p] as usize) << 8) | sh[p + 1] as usize;
+        let el = ((sh[p + 2] as usize) << 8) | sh[p + 3] as usize;
+        p += 4;
+        if et == 0x0033 && el >= 4 {
+            // KeyShareEntry: group(2) + key_len(2) + key
+            let klen = ((sh[p + 2] as usize) << 8) | sh[p + 3] as usize;
+            if klen == 32 && p + 4 + 32 <= sh.len() {
+                let mut k = [0u8; 32];
+                k.copy_from_slice(&sh[p + 4..p + 36]);
+                return Some(k);
+            }
+        }
+        p += el;
+    }
+    None
+}
+
+// ── Handshake driver ────────────────────────────────────────────────────────
+
+static mut RX: [u8; 32 * 1024] = [0; 32 * 1024];
+static mut TXBUF: [u8; 4096] = [0; 4096];
+
+/// Perform a TLS 1.3 handshake to `host:port`, GET `path`, and write the
+/// decrypted HTTP response into `out`. `log(msg)` receives progress/errors.
+pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dyn FnMut(&[u8])) -> Result<usize, &'static str> {
+    let ip = netstack::dns_resolve(host).ok_or("could not resolve host")?;
+    if !netstack::tcp_connect(ip, port) {
+        return Err("connect failed");
+    }
+
+    let mut secret = [0u8; 32];
+    if !random_bytes(&mut secret) {
+        return Err("no entropy (RDRAND)");
+    }
+    let pubkey = x25519_public(secret);
+
+    let tx = unsafe { &mut *&raw mut TXBUF };
+    let (ch_rec, ch_off, ch_len) = build_client_hello(host, &pubkey, tx);
+    if !netstack::tcp_write(&tx[..ch_rec]) {
+        return Err("write ClientHello failed");
+    }
+    log(b"tls: ClientHello sent\n");
+
+    // Transcript hash: running SHA-256 over handshake messages.
+    let mut transcript = Sha256::new();
+    transcript.update(&tx[ch_off..ch_off + ch_len]);
+
+    // Read the server's first flight into RX.
+    let rx = unsafe { &mut *&raw mut RX };
+    let mut rxlen = netstack::tcp_read_some(rx, 5_000_000);
+    if rxlen == 0 {
+        return Err("no ServerHello");
+    }
+
+    // Parse records. First record must be ServerHello (plaintext handshake).
+    let mut pos = 0usize;
+    let mut server_hs: Option<Keys> = None;
+    let mut client_hs: Option<Keys> = None;
+    let mut handshake_secret = [0u8; 32];
+    let mut c_hs_secret = [0u8; 32];
+    let mut th_ch_sf = [0u8; 32];
+    let mut got_server_finished = false;
+
+    // For decrypted handshake, plaintext may hold several messages; we buffer.
+    let mut hs_acc = [0u8; 16 * 1024];
+    let mut hs_accn = 0usize;
+
+    let empty_hash = sha256(b"");
+
+    let mut guard = 0;
+    while !got_server_finished {
+        guard += 1;
+        if guard > 4000 {
+            return Err("handshake stalled");
+        }
+        // Ensure a full record is available (5-byte header + body).
+        if pos + 5 > rxlen {
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            if n == 0 {
+                return Err("truncated handshake");
+            }
+            rxlen += n;
+            continue;
+        }
+        let rtype = rx[pos];
+        let rlen = ((rx[pos + 1 + 2] as usize) << 8) | rx[pos + 4] as usize;
+        if pos + 5 + rlen > rxlen {
+            if rxlen >= rx.len() {
+                return Err("record too large");
+            }
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            if n == 0 {
+                return Err("truncated record");
+            }
+            rxlen += n;
+            continue;
+        }
+        let mut hdr = [0u8; 5];
+        hdr.copy_from_slice(&rx[pos..pos + 5]);
+        let body_start = pos + 5;
+        let body_end = body_start + rlen;
+
+        if rtype == 0x14 {
+            // ChangeCipherSpec -- ignore in TLS 1.3.
+            pos = body_end;
+            continue;
+        }
+
+        if rtype == 0x16 {
+            // Plaintext handshake -- the ServerHello.
+            let sh = &rx[body_start..body_end];
+            transcript.update(sh);
+            let server_pub = parse_server_key_share(sh).ok_or("no server key_share")?;
+            log(b"tls: ServerHello parsed\n");
+
+            let th: [u8; 32] = transcript.clone().finalize().into();
+            let ecdhe = x25519(secret, server_pub);
+            let zero = [0u8; 32];
+            let early = hkdf_extract(&zero, &zero);
+            let derived = derive_secret(&early, b"derived", &empty_hash);
+            handshake_secret = hkdf_extract(&derived, &ecdhe);
+            let c_hs = derive_secret(&handshake_secret, b"c hs traffic", &th);
+            let s_hs = derive_secret(&handshake_secret, b"s hs traffic", &th);
+            server_hs = Some(traffic_keys(&s_hs));
+            client_hs = Some(traffic_keys(&c_hs));
+            c_hs_secret = c_hs;
+            pos = body_end;
+            continue;
+        }
+
+        if rtype == 0x17 {
+            // Encrypted record under server handshake keys.
+            let keys = server_hs.as_mut().ok_or("encrypted record before keys")?;
+            let mut tmp = [0u8; 18 * 1024];
+            if rlen > tmp.len() {
+                return Err("enc record too big");
+            }
+            tmp[..rlen].copy_from_slice(&rx[body_start..body_end]);
+            let (ctype, plen) = decrypt_record(keys, &hdr, &mut tmp[..rlen]).ok_or("decrypt failed (bad keys?)")?;
+            pos = body_end;
+            if ctype != 0x16 {
+                continue; // alerts / app data during handshake: skip
+            }
+            // Accumulate handshake messages; process complete ones.
+            if hs_accn + plen > hs_acc.len() {
+                return Err("handshake too large");
+            }
+            hs_acc[hs_accn..hs_accn + plen].copy_from_slice(&tmp[..plen]);
+            hs_accn += plen;
+            // Walk complete handshake messages in hs_acc.
+            let mut hp = 0usize;
+            while hp + 4 <= hs_accn {
+                let mlen = ((hs_acc[hp + 1] as usize) << 8 << 8) | ((hs_acc[hp + 2] as usize) << 8) | hs_acc[hp + 3] as usize;
+                if hp + 4 + mlen > hs_accn {
+                    break;
+                }
+                let mtype = hs_acc[hp];
+                let msg = &hs_acc[hp..hp + 4 + mlen];
+                // Server Finished is type 0x14.
+                if mtype == 0x14 {
+                    // th up to and including server Finished -> app secrets.
+                    transcript.update(msg);
+                    th_ch_sf = transcript.clone().finalize().into();
+                    got_server_finished = true;
+                } else {
+                    transcript.update(msg);
+                }
+                hp += 4 + mlen;
+                if got_server_finished {
+                    break;
+                }
+            }
+            // Shift any leftover partial message to the front.
+            if hp > 0 {
+                let rem = hs_accn - hp;
+                for i in 0..rem {
+                    hs_acc[i] = hs_acc[hp + i];
+                }
+                hs_accn = rem;
+            }
+            continue;
+        }
+
+        // Unknown record type.
+        pos = body_end;
+    }
+
+    log(b"tls: server Finished; keys derived\n");
+
+    // Application secrets from the master secret.
+    let zero = [0u8; 32];
+    let derived2 = derive_secret(&handshake_secret, b"derived", &empty_hash);
+    let master = hkdf_extract(&derived2, &zero);
+    let c_ap = derive_secret(&master, b"c ap traffic", &th_ch_sf);
+    let s_ap = derive_secret(&master, b"s ap traffic", &th_ch_sf);
+
+    // Client Finished: verify_data = HMAC(finished_key, Transcript(CH..server
+    // Finished)); finished_key = HKDF-Expand-Label(c hs traffic, "finished", "").
+    {
+        let c_hs_keys = client_hs.as_mut().ok_or("no client hs keys")?;
+        let mut fkey = [0u8; 32];
+        hkdf_expand_label(&c_hs_secret, b"finished", &[], &mut fkey);
+        let verify = hmac_sha256(&fkey, &th_ch_sf);
+        let mut finmsg = [0u8; 36];
+        finmsg[0] = 0x14;
+        finmsg[3] = 32;
+        finmsg[4..36].copy_from_slice(&verify);
+        // Dummy ChangeCipherSpec (middlebox compatibility), then the Finished.
+        let _ = netstack::tcp_write(&[0x14, 0x03, 0x03, 0x00, 0x01, 0x01]);
+        let m = encrypt_record(c_hs_keys, 0x16, &finmsg, tx);
+        if !netstack::tcp_write(&tx[..m]) {
+            return Err("write Finished failed");
+        }
+    }
+    log(b"tls: client Finished sent\n");
+
+    // Switch to application traffic keys and send the GET.
+    let mut c_app = traffic_keys(&c_ap);
+    let mut s_app = traffic_keys(&s_ap);
+    let mut req = [0u8; 512];
+    let rn = build_get(host, path, &mut req);
+    let m = encrypt_record(&mut c_app, 0x17, &req[..rn], tx);
+    if !netstack::tcp_write(&tx[..m]) {
+        return Err("write GET failed");
+    }
+    log(b"tls: GET sent (encrypted)\n");
+
+    // Read + decrypt the response records under the server app key. Post-
+    // handshake NewSessionTickets (inner type 0x16) are skipped; application
+    // data (0x17) is collected; an alert (0x15) ends the stream.
+    let mut total = 0usize;
+    let mut guard2 = 0;
+    loop {
+        guard2 += 1;
+        if guard2 > 8000 {
+            break;
+        }
+        if pos + 5 > rxlen {
+            if rxlen >= rx.len() {
+                break;
+            }
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            if n == 0 {
+                break;
+            }
+            rxlen += n;
+            continue;
+        }
+        let rlen = ((rx[pos + 3] as usize) << 8) | rx[pos + 4] as usize;
+        if pos + 5 + rlen > rxlen {
+            if rxlen >= rx.len() {
+                break;
+            }
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            if n == 0 {
+                break;
+            }
+            rxlen += n;
+            continue;
+        }
+        if rx[pos] == 0x14 {
+            pos += 5 + rlen;
+            continue; // ChangeCipherSpec
+        }
+        let mut hdr = [0u8; 5];
+        hdr.copy_from_slice(&rx[pos..pos + 5]);
+        let mut tmp = [0u8; 18 * 1024];
+        if rlen > tmp.len() {
+            break;
+        }
+        tmp[..rlen].copy_from_slice(&rx[pos + 5..pos + 5 + rlen]);
+        pos += 5 + rlen;
+        let Some((ctype, plen)) = decrypt_record(&mut s_app, &hdr, &mut tmp[..rlen]) else {
+            break;
+        };
+        if ctype == 0x17 {
+            let take = plen.min(out.len() - total);
+            out[total..total + take].copy_from_slice(&tmp[..take]);
+            total += take;
+            if total >= out.len() {
+                break;
+            }
+        } else if ctype == 0x15 {
+            break; // alert (close_notify)
+        }
+    }
+    Ok(total)
+}
+
+fn build_get(host: &str, path: &str, out: &mut [u8]) -> usize {
+    let mut n = 0;
+    let mut put = |s: &[u8]| {
+        out[n..n + s.len()].copy_from_slice(s);
+        n += s.len();
+    };
+    put(b"GET ");
+    put(path.as_bytes());
+    put(b" HTTP/1.1\r\nHost: ");
+    put(host.as_bytes());
+    put(b"\r\nConnection: close\r\nUser-Agent: LingOS\r\n\r\n");
+    n
+}
