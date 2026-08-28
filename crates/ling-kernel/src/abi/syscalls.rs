@@ -88,8 +88,14 @@ pub fn dispatch(frame: &mut TrapFrame) {
             // in the child's real exit code once it exits.
             uproc::WaitOutcome::Blocked => {}
         },
-        SYS_READ | SYS_OPEN | SYS_CLOSE | SYS_LSEEK | SYS_MMAP | SYS_MUNMAP | SYS_POLL_INPUT
-        | SYS_FB_MAP | SYS_UNAME => frame.set_return(ENOSYS),
+        SYS_FB_MAP => {
+            let ret = sys_fb_map(pml4, arg0);
+            frame.set_return(ret);
+        }
+        SYS_POLL_INPUT => frame.set_return(sys_poll_input()),
+        SYS_READ | SYS_OPEN | SYS_CLOSE | SYS_LSEEK | SYS_MMAP | SYS_MUNMAP | SYS_UNAME => {
+            frame.set_return(ENOSYS)
+        }
         _ => frame.set_return(ENOSYS),
     }
 }
@@ -150,4 +156,67 @@ fn sys_spawn(pml4: u64, path_ptr: u64, path_len: u64) -> u64 {
         let _ = path;
         ENOSYS
     }
+}
+
+/// Where the framebuffer gets mapped in a process's address space — well
+/// above the app's code (0x80_0000_0000) and stack (0x80_1000_0000), still in
+/// the canonical lower (user) half.
+const FB_USER_BASE: u64 = 0x0000_00A0_0000_0000;
+
+/// Map the hardware framebuffer into the calling process's address space so a
+/// native app can draw pixels directly (the fast path — no per-pixel syscall).
+/// `info_ptr`, if non-null, receives `[width, height, pitch_bytes, bpp]` as
+/// four u64s. Returns the user virtual base of the framebuffer, or an errno.
+#[cfg(target_arch = "x86_64")]
+fn sys_fb_map(pml4: u64, info_ptr: u64) -> u64 {
+    let fb = match crate::drivers::framebuffer::get() {
+        Some(f) => f,
+        None => return ENOSYS,
+    };
+    let size = fb.pitch as u64 * fb.height as u64;
+    let phys_base = fb.addr & !0xFFF;
+    let off = fb.addr & 0xFFF;
+    let pages = (off + size + 0xFFF) / 0x1000;
+    let flags = paging::PRESENT | paging::WRITABLE | paging::USER | paging::NX;
+    let mut i = 0;
+    while i < pages {
+        paging::map4k(pml4, FB_USER_BASE + i * 0x1000, phys_base + i * 0x1000, flags);
+        i += 1;
+    }
+    if info_ptr != 0 {
+        if !paging::user_range_ok(pml4, info_ptr, 32, true) {
+            return EFAULT;
+        }
+        let p = info_ptr as *mut u64;
+        unsafe {
+            p.write(fb.width as u64);
+            p.add(1).write(fb.height as u64);
+            p.add(2).write(fb.pitch as u64);
+            p.add(3).write(fb.bpp as u64);
+        }
+    }
+    FB_USER_BASE + off
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn sys_fb_map(_pml4: u64, _info_ptr: u64) -> u64 {
+    ENOSYS
+}
+
+/// Poll input for a native app. Returns a packed word:
+/// `key<<40 | buttons<<32 | mouse_y<<16 | mouse_x`. `key` is a consumed
+/// keycode (0 if none) — safe because the desktop loop is paused while a
+/// spawned app runs to completion.
+#[cfg(target_arch = "x86_64")]
+fn sys_poll_input() -> u64 {
+    let key = crate::drivers::keyboard::poll_char() as u64;
+    let mx = (crate::drivers::mouse::x().max(0) as u64) & 0xFFFF;
+    let my = (crate::drivers::mouse::y().max(0) as u64) & 0xFFFF;
+    let btn = crate::drivers::mouse::buttons() as u64 & 0xFF;
+    (key << 40) | (btn << 32) | (my << 16) | mx
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn sys_poll_input() -> u64 {
+    0
 }

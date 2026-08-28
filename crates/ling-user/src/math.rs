@@ -74,68 +74,82 @@ pub unsafe extern "C" fn ling_f64_ge(a: u64, b: u64) -> u64 {
     bool_val(to_f64(a) >= to_f64(b))
 }
 
+// NOTE: sqrt/abs/floor/ceil/round/sin/cos take and return a *bare f64*, not a
+// NaN-boxed u64. The Cranelift AOT backend declares them with F64 params/return
+// (see codegen jit.rs: `("__ling_sin", &[F64], F64)`) and calls them after
+// unboxing the argument, so their ABI must be (f64) -> f64 -- a u64 signature
+// would read the argument from the wrong register (RDI vs XMM0) and return
+// garbage. The `ling_f64_*` arithmetic helpers above stay u64 (NaN-boxed): the
+// backend calls *those* with boxed values.
+
 #[no_mangle]
-pub unsafe extern "C" fn ling_sqrt(a: u64) -> u64 {
-    let x = to_f64(a);
+pub unsafe extern "C" fn ling_sqrt(x: f64) -> f64 {
     if x <= 0.0 {
-        return from_f64(0.0);
+        return 0.0;
     }
-    // Newton-Raphson approximation
     let mut guess = x;
-    for _ in 0..12 {
+    let mut i = 0;
+    while i < 20 {
         guess = 0.5 * (guess + x / guess);
+        i += 1;
     }
-    from_f64(guess)
+    guess
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_abs(a: u64) -> u64 {
-    let v = to_f64(a);
-    from_f64(if v < 0.0 { -v } else { v })
+pub unsafe extern "C" fn ling_abs(x: f64) -> f64 {
+    if x < 0.0 {
+        -x
+    } else {
+        x
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_floor(a: u64) -> u64 {
-    let v = to_f64(a);
-    let i = v as i64;
-    let fi = i as f64;
-    from_f64(if v < fi { fi - 1.0 } else { fi })
+pub unsafe extern "C" fn ling_floor(x: f64) -> f64 {
+    let i = x as i64 as f64;
+    if x < i {
+        i - 1.0
+    } else {
+        i
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_ceil(a: u64) -> u64 {
-    let v = to_f64(a);
-    let i = v as i64;
-    let fi = i as f64;
-    from_f64(if v > fi { fi + 1.0 } else { fi })
+pub unsafe extern "C" fn ling_ceil(x: f64) -> f64 {
+    let i = x as i64 as f64;
+    if x > i {
+        i + 1.0
+    } else {
+        i
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_round(a: u64) -> u64 {
-    let v = to_f64(a);
-    ling_floor(from_f64(v + 0.5))
+pub unsafe extern "C" fn ling_round(x: f64) -> f64 {
+    ling_floor(x + 0.5)
 }
 
 const PI: f64 = 3.14159265358979323846;
 const TWO_PI: f64 = 2.0 * PI;
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_sin(a: u64) -> u64 {
-    let mut x = to_f64(a);
-    x -= (x / TWO_PI) as i64 as f64 * TWO_PI;
+pub unsafe extern "C" fn ling_sin(a: f64) -> f64 {
+    // Range-reduce to [-PI, PI] so the Taylor series stays accurate for the
+    // large, ever-growing angles a spinning animation feeds in.
+    let mut x = a - (a / TWO_PI) as i64 as f64 * TWO_PI;
     if x > PI {
         x -= TWO_PI;
     } else if x < -PI {
         x += TWO_PI;
     }
     let x2 = x * x;
-    let sin = x * (1.0 - x2 * (1.0 / 6.0 - x2 * (1.0 / 120.0 - x2 * (1.0 / 5040.0 - x2 / 362880.0))));
-    from_f64(sin)
+    x * (1.0 - x2 * (1.0 / 6.0 - x2 * (1.0 / 120.0 - x2 * (1.0 / 5040.0 - x2 / 362880.0))))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_cos(a: u64) -> u64 {
-    ling_sin(from_f64(to_f64(a) + PI * 0.5))
+pub unsafe extern "C" fn ling_cos(a: f64) -> f64 {
+    ling_sin(a + PI * 0.5)
 }
 
 #[no_mangle]

@@ -233,7 +233,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
             push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
-            push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run <app.elf>|demo");
+            push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run demo|donut|<app.elf>");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
             push(Cls::Dim, b"  up/down: command history");
         },
@@ -599,6 +599,14 @@ fn run_ling(arg: &str) {
 /// is the real native-app path (Cranelift AOT -> ling-user -> ELF loader ->
 /// ring 3 -> syscalls), distinct from `ling run` (the in-kernel interpreter).
 fn run_native(arg: &str) {
+    // The donut is a graphics app: it maps the framebuffer and draws straight
+    // to the screen (no text output to capture), then returns when it exits.
+    if arg == "donut" {
+        push(Cls::Dim, b"spinning up the donut (press any key to exit)...");
+        let result = crate::run_app_bytes(crate::DONUT_APP_ELF);
+        report_exit(result);
+        return;
+    }
     push(Cls::Dim, b"launching native app (ring 3)...");
     crate::console_capture_begin();
     let result = if arg.is_empty() || arg == "demo" {
@@ -614,6 +622,10 @@ fn run_native(arg: &str) {
             push_wrapped(Cls::Normal, line);
         }
     }
+    report_exit(result);
+}
+
+fn report_exit(result: Result<i32, &'static str>) {
     match result {
         Ok(code) => {
             let mut b = [0u8; 32];

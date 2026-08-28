@@ -132,6 +132,56 @@ pub unsafe extern "C" fn ling_builtin(
             crate::syscall::ling_sys_exit(code);
             0
         }
-        _ => 0x7F00_0000_0000_0000,
+        // ── Framebuffer graphics (see crate::gfx) ──────────────────────────
+        "open_window" => {
+            crate::gfx::open();
+            UNIT
+        }
+        "window_is_open" => TRUE, // the app decides when to stop (frame count / key)
+        "present" => UNIT,        // we draw straight to the framebuffer
+        "fb_w" => (crate::gfx::width() as f64).to_bits(),
+        "fb_h" => (crate::gfx::height() as f64).to_bits(),
+        "clear" => {
+            crate::gfx::clear(arg_u32(args, 0));
+            UNIT
+        }
+        "plot" => {
+            crate::gfx::plot(
+                arg_f64(args, 0) as i32,
+                arg_f64(args, 1) as i32,
+                arg_f64(args, 2) as f32,
+                arg_f64(args, 3),
+                arg_f64(args, 4),
+                arg_f64(args, 5),
+            );
+            UNIT
+        }
+        "poll_key" => (crate::gfx::poll_key() as f64).to_bits(),
+        // Math, in case the AOT lowers these through the generic builtin path
+        // rather than the direct __ling_* FFI (both are covered this way).
+        "sin" => crate::math::ling_sin(arg_f64(args, 0)).to_bits(),
+        "cos" => crate::math::ling_cos(arg_f64(args, 0)).to_bits(),
+        "sqrt" => crate::math::ling_sqrt(arg_f64(args, 0)).to_bits(),
+        "abs" => crate::math::ling_abs(arg_f64(args, 0)).to_bits(),
+        "floor" => crate::math::ling_floor(arg_f64(args, 0)).to_bits(),
+        "ceil" => crate::math::ling_ceil(arg_f64(args, 0)).to_bits(),
+        "round" => crate::math::ling_round(arg_f64(args, 0)).to_bits(),
+        _ => UNIT,
     }
+}
+
+const UNIT: u64 = 0x7F00_0000_0000_0000;
+const TRUE: u64 = 0x7F02_0000_0000_0000;
+
+/// Decode a NaN-boxed argument as f64 (0.0 if it's a tagged non-number or
+/// missing).
+fn arg_f64(args: &[u64], i: usize) -> f64 {
+    match args.get(i) {
+        Some(&a) if (a >> 56) != 0x7F => f64::from_bits(a),
+        _ => 0.0,
+    }
+}
+
+fn arg_u32(args: &[u64], i: usize) -> u32 {
+    arg_f64(args, i) as i64 as u32
 }

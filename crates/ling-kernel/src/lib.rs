@@ -211,6 +211,12 @@ pub fn console_capture_end() -> &'static [u8] {
 #[cfg(target_arch = "x86_64")]
 pub static HELLO_APP_ELF: &[u8] = include_bytes!("../testbins/hello_app.elf");
 
+/// A spinning donut (testbins/donut.ling), AOT-compiled to native code and
+/// rendered straight to the framebuffer via SYS_FB_MAP -- the graphics
+/// counterpart to the text hello app, proving native apps can draw pixels.
+#[cfg(target_arch = "x86_64")]
+pub static DONUT_APP_ELF: &[u8] = include_bytes!("../testbins/donut.elf");
+
 /// Load an ELF image into a new ring-3 process and run it to completion,
 /// returning its exit code. The kernel-side launcher behind the Terminal's
 /// `run` command.

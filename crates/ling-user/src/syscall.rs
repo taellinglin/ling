@@ -237,8 +237,8 @@ pub unsafe extern "C" fn ling_sys_poll_input() -> u64 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ling_sys_fb_map() -> u64 {
-    syscall0(SYS_FB_MAP)
+pub unsafe extern "C" fn ling_sys_fb_map(info_ptr: u64) -> u64 {
+    syscall1(SYS_FB_MAP, info_ptr)
 }
 
 #[no_mangle]

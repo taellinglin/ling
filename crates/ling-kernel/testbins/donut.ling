@@ -1,0 +1,78 @@
+// A spinning donut, native ring-3 app in LingOS, drawing straight to the
+// framebuffer via SYS_FB_MAP. Trig is computed in pure Ling (a range-reduced
+// Taylor series) rather than the sin/cos builtins, and colors avoid floor --
+// both of those builtins mis-lower on the AOT userspace path, so we stick to
+// plain arithmetic, which is solid. Classic torus math with a per-pixel depth
+// buffer living in ling-user's plot().
+
+fn mysin(x) {
+    bind t = x
+    while t > 3.14159265 { bind t = t - 6.28318531 }
+    while t < -3.14159265 { bind t = t + 6.28318531 }
+    bind t2 = t * t
+    return t * (1.0 - t2 * (0.16666667 - t2 * (0.00833333 - t2 * (0.00019841 - t2 * 0.0000027557))))
+}
+
+fn mycos(x) {
+    return mysin(x + 1.57079633)
+}
+
+bind start = do {
+    open_window(0.0, 0.0)
+    bind cx = 512.0
+    bind cy = 384.0
+    bind R1 = 1.0
+    bind R2 = 2.0
+    bind K2 = 5.0
+    bind K1 = 480.0
+    bind TWO_PI = 6.2831853
+
+    bind A = 0.0
+    bind B = 0.0
+    bind frame = 0.0
+
+    while frame < 100000.0 {
+        clear(657944.0)
+
+        bind cA = mycos(A)
+        bind sA = mysin(A)
+        bind cB = mycos(B)
+        bind sB = mysin(B)
+
+        bind theta = 0.0
+        while theta < TWO_PI {
+            bind ct = mycos(theta)
+            bind st = mysin(theta)
+            bind circlex = R2 + R1 * ct
+            bind circley = R1 * st
+
+            bind phi = 0.0
+            while phi < TWO_PI {
+                bind cp = mycos(phi)
+                bind sp = mysin(phi)
+
+                bind x = circlex * (cB * cp + sA * sB * sp) - circley * cA * sB
+                bind y = circlex * (sB * cp - sA * cB * sp) + circley * cA * cB
+                bind z = K2 + cA * circlex * sp + circley * sA
+                bind ooz = 1.0 / z
+
+                bind xp = cx + K1 * ooz * x
+                bind yp = cy - K1 * ooz * y
+
+                bind L = cp * ct * sB - cA * ct * sp - sA * st + cB * (cA * st - ct * sA * sp)
+                if L > 0.0 {
+                    bind lum = L * 0.7071
+                    plot(xp, yp, ooz, 70.0 + lum * 185.0, 35.0 + lum * 150.0, 12.0 + lum * 70.0)
+                }
+                bind phi = phi + 0.02
+            }
+            bind theta = theta + 0.06
+        }
+
+        present()
+        bind A = A + 0.055
+        bind B = B + 0.028
+        bind frame = frame + 1.0
+        if poll_key() > 0.0 { bind frame = 999999.0 }
+    }
+}
