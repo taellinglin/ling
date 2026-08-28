@@ -132,6 +132,29 @@ pub fn plot(x: i32, y: i32, ooz: f32, r: f64, g: f64, b: f64) {
     }
 }
 
+/// Depth-tested filled disc of radius `rad` at (x,y) -- used to draw a torus
+/// knot as a solid glowing tube rather than a thin wire.
+pub fn plot_disc(x: i32, y: i32, ooz: f32, rad: i32, r: f64, g: f64, b: f64) {
+    unsafe {
+        if FB_BASE == 0 {
+            return;
+        }
+        let color = (chan(r) << 16) | (chan(g) << 8) | chan(b);
+        let r2 = rad * rad;
+        let mut dy = -rad;
+        while dy <= rad {
+            let mut dx = -rad;
+            while dx <= rad {
+                if dx * dx + dy * dy <= r2 {
+                    plot_px(x + dx, y + dy, ooz, color);
+                }
+                dx += 1;
+            }
+            dy += 1;
+        }
+    }
+}
+
 /// The last key pressed (0 if none), so an app can exit on a keypress.
 pub fn poll_key() -> u64 {
     unsafe { (ling_sys_poll_input() >> 40) & 0xFF }

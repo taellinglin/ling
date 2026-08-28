@@ -156,6 +156,18 @@ pub unsafe extern "C" fn ling_builtin(
             );
             UNIT
         }
+        "plot_disc" => {
+            crate::gfx::plot_disc(
+                arg_f64(args, 0) as i32,
+                arg_f64(args, 1) as i32,
+                arg_f64(args, 2) as f32,
+                arg_f64(args, 3) as i32,
+                arg_f64(args, 4),
+                arg_f64(args, 5),
+                arg_f64(args, 6),
+            );
+            UNIT
+        }
         "poll_key" => (crate::gfx::poll_key() as f64).to_bits(),
         // Math, in case the AOT lowers these through the generic builtin path
         // rather than the direct __ling_* FFI (both are covered this way).

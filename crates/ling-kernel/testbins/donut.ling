@@ -1,9 +1,11 @@
-// A spinning donut, native ring-3 app in LingOS, drawing straight to the
-// framebuffer via SYS_FB_MAP. Trig is computed in pure Ling (a range-reduced
-// Taylor series) rather than the sin/cos builtins, and colors avoid floor --
-// both of those builtins mis-lower on the AOT userspace path, so we stick to
-// plain arithmetic, which is solid. Classic torus math with a per-pixel depth
-// buffer living in ling-user's plot().
+// A crypto-flavored knotwork donut, native ring-3 app in LingOS. Like the
+// original crypto_donut_physics, the visible shape is a (p,q) torus KNOT --
+// "the knot curve IS the donut" -- rendered as a glowing tube, with a colour
+// seeded from a number (the original derives (p,q) and the colour from a
+// SHA3-256 hash of a text seed; SHA3 needs a crypto builtin the userspace
+// runtime doesn't have yet, so here (p,q) are fixed and the colour comes from
+// a plain seed). Trig is pure Ling (a range-reduced Taylor series), since the
+// sin/cos/floor builtins mis-lower on the AOT userspace path.
 
 fn mysin(x) {
     bind t = x
@@ -24,8 +26,18 @@ bind start = do {
     bind R1 = 1.0
     bind R2 = 2.0
     bind K2 = 5.0
-    bind K1 = 480.0
+    bind K1 = 470.0
     bind TWO_PI = 6.2831853
+
+    // (p,q) torus knot: major winds P times, tube winds Q times.
+    bind P = 2.0
+    bind Q = 5.0
+
+    // Seed -> colour (phase-shifted sines, like the original's hash colour).
+    bind seed = 2.35
+    bind cr = (mysin(seed) * 0.5 + 0.5) * 190.0 + 55.0
+    bind cg = (mysin(seed + 2.094) * 0.5 + 0.5) * 190.0 + 55.0
+    bind cb = (mysin(seed + 4.188) * 0.5 + 0.5) * 190.0 + 55.0
 
     bind A = 0.0
     bind B = 0.0
@@ -39,38 +51,38 @@ bind start = do {
         bind cB = mycos(B)
         bind sB = mysin(B)
 
-        bind theta = 0.0
-        while theta < TWO_PI {
+        bind t = 0.0
+        while t < TWO_PI {
+            bind phi = P * t
+            bind theta = Q * t
             bind ct = mycos(theta)
             bind st = mysin(theta)
             bind circlex = R2 + R1 * ct
             bind circley = R1 * st
+            bind cp = mycos(phi)
+            bind sp = mysin(phi)
 
-            bind phi = 0.0
-            while phi < TWO_PI {
-                bind cp = mycos(phi)
-                bind sp = mysin(phi)
+            bind x = circlex * (cB * cp + sA * sB * sp) - circley * cA * sB
+            bind y = circlex * (sB * cp - sA * cB * sp) + circley * cA * cB
+            bind z = K2 + cA * circlex * sp + circley * sA
+            bind ooz = 1.0 / z
 
-                bind x = circlex * (cB * cp + sA * sB * sp) - circley * cA * sB
-                bind y = circlex * (sB * cp - sA * cB * sp) + circley * cA * cB
-                bind z = K2 + cA * circlex * sp + circley * sA
-                bind ooz = 1.0 / z
+            bind xp = cx + K1 * ooz * x
+            bind yp = cy - K1 * ooz * y
 
-                bind xp = cx + K1 * ooz * x
-                bind yp = cy - K1 * ooz * y
+            // Rounded-tube shading: torus normal . light, with a glow floor so
+            // the whole knot stays visible (it's an emissive crypto donut).
+            bind L = cp * ct * sB - cA * ct * sp - sA * st + cB * (cA * st - ct * sA * sp)
+            bind lum = L * 0.7071
+            if lum < 0.25 { bind lum = 0.25 }
+            bind sh = 0.35 + lum * 0.65
+            plot_disc(xp, yp, ooz, 3.0, cr * sh, cg * sh, cb * sh)
 
-                bind L = cp * ct * sB - cA * ct * sp - sA * st + cB * (cA * st - ct * sA * sp)
-                if L > 0.0 {
-                    bind lum = L * 0.7071
-                    plot(xp, yp, ooz, 70.0 + lum * 185.0, 35.0 + lum * 150.0, 12.0 + lum * 70.0)
-                }
-                bind phi = phi + 0.02
-            }
-            bind theta = theta + 0.06
+            bind t = t + 0.0025
         }
 
         present()
-        bind A = A + 0.055
+        bind A = A + 0.05
         bind B = B + 0.028
         bind frame = frame + 1.0
         if poll_key() > 0.0 { bind frame = 999999.0 }
