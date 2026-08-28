@@ -75,15 +75,25 @@ fn prompt_ssh() {
     font8x8::draw_str(cx + 26, cy + 62, b"Start the SSH server at boot?", 0xeae8f4, 0x1c1c38);
     font8x8::draw_str(cx + 26, cy + 92, b"Y = enable      N = keep it off", 0x9a98b4, 0x1c1c38);
     framebuffer::present();
-    loop {
-        let k = keyboard::read_char();
-        if k == b'y' || k == b'Y' {
-            set_ssh(true);
-            return;
+    // Wait up to 30s for an answer, then default to off -- so a headless or
+    // automated boot (no keyboard) proceeds instead of hanging here forever.
+    let mut on = false;
+    let mut answered = false;
+    crate::arch::timer::poll_until(30_000_000, || {
+        let k = keyboard::poll_char();
+        match k {
+            b'y' | b'Y' => {
+                on = true;
+                answered = true;
+                true
+            },
+            b'n' | b'N' | b'\r' | b'\n' | 0x1b => {
+                answered = true;
+                true
+            },
+            _ => false,
         }
-        if k == b'n' || k == b'N' || k == b'\r' || k == b'\n' {
-            set_ssh(false);
-            return;
-        }
-    }
+    });
+    let _ = answered;
+    set_ssh(on);
 }

@@ -147,7 +147,7 @@ static mut HOVER_DOCK: i32 = -1;
 // Rows: UI theme / Sound theme / Wallpaper / Display / Window spring /
 // Keyboard / Language / Clock / DNS. Changes apply live as you arrow; the
 // Apply/OK buttons persist them to lingfs so they survive a reboot.
-const SETTINGS_ROWS: usize = 9;
+const SETTINGS_ROWS: usize = 10;
 static mut SETTINGS_CURSOR: usize = 0;
 static mut CLOCK_24H: bool = true;
 
@@ -527,7 +527,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
     // against screen height directly).
     let s = (framebuffer::height() as f64 / 600.0).max(0.5);
     let (w, h) = match kind {
-        KIND_SETTINGS => (470.0, 430.0),
+        KIND_SETTINGS => (470.0, 470.0),
         KIND_FILES => (470.0, 370.0),
         KIND_WEB => (620.0, 460.0),
         KIND_EDIT => (600.0, 440.0),
@@ -1114,11 +1114,15 @@ fn settings_key(k: u8) {
                         locale::select(((cur + dir + n) % n) as usize);
                     },
                     7 => CLOCK_24H = !CLOCK_24H,
-                    _ => {
+                    8 => {
                         // DNS server preset.
                         let n = DNS_PRESETS.len() as i32;
                         DNS_PRESET = ((DNS_PRESET as i32 + dir + n) % n) as usize;
                         apply_dns_preset();
+                    },
+                    _ => {
+                        // SSH server at boot (on/off) -- persisted to /services.
+                        crate::services::set_ssh(!crate::services::ssh_enabled());
                     },
                 }
             },
@@ -1703,6 +1707,7 @@ pub fn draw_content(slot: usize) {
                 b"Language",
                 b"Clock",
                 b"DNS server",
+                b"SSH at boot",
             ];
             for (i, label) in labels.iter().enumerate() {
                 let ry = y + i as u32 * row_h;
@@ -1770,9 +1775,13 @@ pub fn draw_content(slot: usize) {
                         let v: &[u8] = if unsafe { CLOCK_24H } { b"24-hour" } else { b"12-hour" };
                         font8x8::draw_str(vx, ry, v, accent, panel);
                     },
-                    _ => {
+                    8 => {
                         let (name, _) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
                         font8x8::draw_str(vx, ry, name.as_bytes(), accent, panel);
+                    },
+                    _ => {
+                        let v: &[u8] = if crate::services::ssh_enabled() { b"on" } else { b"off" };
+                        font8x8::draw_str(vx, ry, v, accent, panel);
                     },
                 }
             }
