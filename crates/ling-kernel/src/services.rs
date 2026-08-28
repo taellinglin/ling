@@ -1,0 +1,89 @@
+//! Boot-time service configuration. Right now the only managed service is the
+//! SSH server; the choice ("start sshd at boot?") is asked once on first boot
+//! via a small graphical prompt and persisted to lingfs `/services`, then
+//! honored (and reported) on every subsequent boot.
+//!
+//! Honest scope: this is the *service-management* half. A working sshd also
+//! needs server-side TCP (accept/listen -- netstack is client-only today) and
+//! the SSH transport itself (KEX/auth/channels -- a large protocol like TLS,
+//! built on `crypto.rs`). So an "enabled" service here is configured and
+//! announced at boot; the listener/protocol is the remaining work.
+
+use crate::drivers::{font8x8, framebuffer, keyboard};
+use crate::fs::lingfs;
+
+fn read_services(buf: &mut [u8; lingfs::BLOCK_SIZE]) -> Option<usize> {
+    lingfs::read_file("services", buf).ok().flatten()
+}
+
+/// Has the user been asked about services yet (does `/services` exist)?
+pub fn is_configured() -> bool {
+    let mut buf = [0u8; lingfs::BLOCK_SIZE];
+    read_services(&mut buf).is_some()
+}
+
+/// Is the SSH server marked to start at boot?
+pub fn ssh_enabled() -> bool {
+    let mut buf = [0u8; lingfs::BLOCK_SIZE];
+    if let Some(len) = read_services(&mut buf) {
+        for line in buf[..len].split(|&b| b == b'\n') {
+            let mut f = line.split(|&b| b == b' ' || b == b'\t').filter(|x| !x.is_empty());
+            if let (Some(name), Some(val)) = (f.next(), f.next()) {
+                if name == b"ssh" {
+                    return val == b"1";
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Persist whether SSH should start at boot.
+pub fn set_ssh(on: bool) {
+    let line: &[u8] = if on { b"ssh 1\n" } else { b"ssh 0\n" };
+    let _ = lingfs::write_file("services", line);
+}
+
+/// Run once at boot: on first boot (no `/services` yet) ask whether to enable
+/// SSH, persist the answer, then report the SSH service state.
+pub fn boot_configure() {
+    if !is_configured() && framebuffer::available() {
+        prompt_ssh();
+    }
+    if ssh_enabled() {
+        crate::console_write(b"services: sshd enabled at boot (SSH transport is WIP)\n");
+    } else {
+        crate::console_write(b"services: sshd off (enable with 'services enable ssh')\n");
+    }
+}
+
+/// A one-time first-boot prompt: "Start the SSH server at boot? (y/n)".
+fn prompt_ssh() {
+    let w = framebuffer::width();
+    let h = framebuffer::height();
+    if w == 0 || h == 0 {
+        set_ssh(false);
+        return;
+    }
+    let cw = 540u32;
+    let ch = 150u32;
+    let cx = w.saturating_sub(cw) / 2;
+    let cy = h.saturating_sub(ch) / 2;
+    framebuffer::back_fill_rect(0, 0, w, h, 0x0a0a18);
+    framebuffer::back_fill_rounded_rect(cx, cy, cw, ch, 12, 0x1c1c38);
+    font8x8::draw_str(cx + 26, cy + 26, b"LingOS  -  Services", 0xffb733, 0x1c1c38);
+    font8x8::draw_str(cx + 26, cy + 62, b"Start the SSH server at boot?", 0xeae8f4, 0x1c1c38);
+    font8x8::draw_str(cx + 26, cy + 92, b"Y = enable      N = keep it off", 0x9a98b4, 0x1c1c38);
+    framebuffer::present();
+    loop {
+        let k = keyboard::read_char();
+        if k == b'y' || k == b'Y' {
+            set_ssh(true);
+            return;
+        }
+        if k == b'n' || k == b'N' || k == b'\r' || k == b'\n' {
+            set_ssh(false);
+            return;
+        }
+    }
+}

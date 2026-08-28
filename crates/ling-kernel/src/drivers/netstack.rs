@@ -325,6 +325,34 @@ pub fn tcp_read_to_end(sink: &mut [u8]) -> usize {
     got
 }
 
+/// Read whatever arrives next, returning as soon as *any* in-order payload is
+/// received (or `budget_us` elapses). Unlike `tcp_read_to_end` it does not
+/// wait for the peer to FIN -- for line/banner protocols (SSH) where the
+/// server sends data then waits for the client.
+pub fn tcp_read_some(sink: &mut [u8], budget_us: u64) -> usize {
+    let mut got = 0usize;
+    let mut seg = [0u8; 2048];
+    timer::poll_until(budget_us, || {
+        while let Some((flags, seq, _ack, n)) = tcp_poll(&mut seg) {
+            let expected = unsafe { (*&raw const CONN).rcv_nxt };
+            if n > 0 && seq == expected {
+                let take = n.min(sink.len() - got);
+                sink[got..got + take].copy_from_slice(&seg[..take]);
+                got += take;
+                unsafe {
+                    (*&raw mut CONN).rcv_nxt = expected.wrapping_add(n as u32);
+                }
+                tcp_send(TCP_ACK, &[]);
+            }
+            if flags & (TCP_FIN | TCP_RST) != 0 {
+                return true;
+            }
+        }
+        got > 0
+    });
+    got
+}
+
 // -- UDP + DNS ---------------------------------------------------------------
 
 /// Send one UDP datagram (gateway-routed, like everything here).

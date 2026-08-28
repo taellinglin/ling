@@ -37,6 +37,9 @@ pub mod mm;
 pub mod crypto;
 pub mod ed25519;
 pub mod hash;
+// Boot-time service configuration (SSH-at-boot prompt + persistence).
+#[cfg(target_arch = "x86_64")]
+pub mod services;
 // In-kernel tree-walking interpreter for a subset of Ling (`ling run` in the
 // Terminal); built on the global allocator above.
 pub mod ling;
@@ -2505,6 +2508,8 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
     } else {
         serial::write(b"net: DHCP unavailable, using static SLIRP fallback\n");
     }
+    // First-boot: ask whether to start SSH at boot, then report service state.
+    services::boot_configure();
     1
 }
 #[cfg(target_arch = "x86_64")]

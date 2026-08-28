@@ -235,6 +235,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
             push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run demo|donut|<app.elf>");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
+            push(Cls::Normal, b"  ssh [user@]host   services [enable|disable ssh]   cryptotest");
             push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
@@ -369,6 +370,8 @@ fn run(line: &str) {
         "lingfu" => run_lingfu(arg),
         "ling" => run_ling(arg),
         "run" => run_native(arg),
+        "ssh" => run_ssh(arg),
+        "services" => run_services(arg),
         "cd" => {
             if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
                 unsafe { CWD_LEN = 0 };
@@ -672,6 +675,82 @@ fn report_exit(result: Result<i32, &'static str>) {
             b[p.len()..p.len() + k].copy_from_slice(&e.as_bytes()[..k]);
             push(Cls::Err, &b[..p.len() + k]);
         },
+    }
+}
+
+/// `ssh [user@]host[:port]` -- connect over TCP and do the SSH version-banner
+/// exchange (RFC 4253's first step), showing the server's banner. The full
+/// SSH transport (KEX/auth/shell) is the large protocol work that builds on
+/// crypto.rs; this proves the client reaches and speaks to a real sshd.
+fn run_ssh(arg: &str) {
+    if arg.is_empty() {
+        push(Cls::Err, b"usage: ssh [user@]host[:port]");
+        return;
+    }
+    let hostport = match arg.rfind('@') {
+        Some(i) => &arg[i + 1..],
+        None => arg,
+    };
+    let (host, port) = match hostport.rfind(':') {
+        Some(i) => (&hostport[..i], hostport[i + 1..].parse::<u16>().unwrap_or(22)),
+        None => (hostport, 22u16),
+    };
+    push(Cls::Dim, b"resolving...");
+    let Some(ip) = netstack::dns_resolve(host) else {
+        push(Cls::Err, b"ssh: could not resolve host");
+        return;
+    };
+    push(Cls::Dim, b"connecting...");
+    if !netstack::tcp_connect(ip, port) {
+        push(Cls::Err, b"ssh: connection refused / no route");
+        return;
+    }
+    netstack::tcp_write(b"SSH-2.0-LingOS_0.1\r\n");
+    let mut buf = [0u8; 512];
+    let n = netstack::tcp_read_some(&mut buf, 3_000_000);
+    if n == 0 {
+        push(Cls::Err, b"ssh: connected, but no banner received");
+        return;
+    }
+    let mut end = 0;
+    while end < n && buf[end] != b'\r' && buf[end] != b'\n' {
+        end += 1;
+    }
+    push(Cls::Ok, &buf[..end]);
+    push(Cls::Dim, b"ssh: TCP + SSH version banner exchanged with the server.");
+    push(Cls::Dim, b"     KEX/auth/shell (the SSH transport) build on the crypto suite -- WIP.");
+}
+
+/// `services [list|enable ssh|disable ssh]` -- configure which services start
+/// at boot (persisted to lingfs /services, honored by services::boot_configure).
+fn run_services(arg: &str) {
+    let (sub, rest) = split_cmd(arg);
+    match sub {
+        "" | "list" | "status" => {
+            if crate::services::ssh_enabled() {
+                push(Cls::Ok, b"  ssh    enabled  (starts at boot)");
+            } else {
+                push(Cls::Dim, b"  ssh    disabled");
+            }
+            push(Cls::Dim, b"  services enable ssh | services disable ssh");
+        },
+        "enable" => {
+            if rest == "ssh" {
+                crate::services::set_ssh(true);
+                push(Cls::Ok, b"ssh enabled -- starts at next boot");
+            } else {
+                push(Cls::Err, b"services: unknown service (only 'ssh')");
+            }
+        },
+        "disable" => {
+            if rest == "ssh" {
+                crate::services::set_ssh(false);
+                push(Cls::Ok, b"ssh disabled");
+            } else {
+                push(Cls::Err, b"services: unknown service (only 'ssh')");
+            }
+        },
+        _ => push(Cls::Err, b"usage: services [list|enable ssh|disable ssh]"),
     }
 }
 
