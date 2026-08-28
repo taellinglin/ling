@@ -828,35 +828,44 @@ fn fetch_and_dump(url: &str, render: bool) {
         push(Cls::Err, b"bad URL");
         return;
     };
-    if tls {
-        push(Cls::Err, b"https not supported yet (http:// only)");
-        return;
-    }
-    let Some(ip) = netstack::dns_resolve(host) else {
-        push(Cls::Err, b"could not resolve host");
-        return;
-    };
     push(Cls::Dim, b"fetching...");
     static mut WEBBUF: [u8; 32 * 1024] = [0; 32 * 1024];
     let wb = unsafe { &mut *&raw mut WEBBUF };
-    match netstack::http_get(ip, port, path, host, wb) {
-        Some(len) => {
-            if render {
-                // Render via the bring engine into a small page, then dump
-                // its text lines (headings/links flattened).
-                use bring_browser::{layout, Page};
-                static mut PG: Page = Page::new();
-                let pg = unsafe { &mut *&raw mut PG };
-                layout(&wb[..len], COLS - 2, pg);
-                for l in pg.lines[..pg.line_count].iter() {
-                    let cls = if l.link != u8::MAX { Cls::Accent } else { Cls::Normal };
-                    push(cls, l.text());
-                }
-            } else {
-                push_wrapped(Cls::Normal, &wb[..len]);
-            }
-        },
-        None => push(Cls::Err, b"fetch failed (connect/non-200/timeout)"),
+    let (len, off) = if tls {
+        // HTTPS via the in-kernel TLS 1.3 client (cert validation not done yet).
+        let hport = if port == 0 { 443 } else { port };
+        let mut noop = |_: &[u8]| {};
+        match crate::tls::https_get(host, hport, path, wb, &mut noop) {
+            Ok(n) if n > 0 => (n, crate::tls::http_body_offset(&wb[..n])),
+            _ => {
+                push(Cls::Err, b"https fetch failed (handshake/timeout)");
+                return;
+            },
+        }
+    } else {
+        let Some(ip) = netstack::dns_resolve(host) else {
+            push(Cls::Err, b"could not resolve host");
+            return;
+        };
+        match netstack::http_get(ip, port, path, host, wb) {
+            Some(n) => (n, 0usize),
+            None => {
+                push(Cls::Err, b"fetch failed (connect/non-200/timeout)");
+                return;
+            },
+        }
+    };
+    if render {
+        use bring_browser::{layout, Page};
+        static mut PG: Page = Page::new();
+        let pg = unsafe { &mut *&raw mut PG };
+        layout(&wb[off..len], COLS - 2, pg);
+        for l in pg.lines[..pg.line_count].iter() {
+            let cls = if l.link != u8::MAX { Cls::Accent } else { Cls::Normal };
+            push(cls, l.text());
+        }
+    } else {
+        push_wrapped(Cls::Normal, &wb[off..len]);
     }
 }
 

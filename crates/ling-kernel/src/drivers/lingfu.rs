@@ -22,17 +22,6 @@ const CATALOG_MAX: usize = 16 * 1024;
 static mut CATALOG: [u8; CATALOG_MAX] = [0; CATALOG_MAX];
 static mut CATALOG_LEN: usize = 0;
 
-fn repo_addr() -> ([u8; 4], u16) {
-    // lingfs "/repo" holds "a.b.c.d:port"; absent/garbled -> SLIRP host.
-    let mut buf = [0u8; 4096];
-    if let Ok(Some(len)) = lingfs::read_file("repo", &mut buf) {
-        if let Some((ip, port)) = parse_addr(&buf[..len]) {
-            return (ip, port);
-        }
-    }
-    (netstack::gateway_ip(), 8000)
-}
-
 fn parse_addr(s: &[u8]) -> Option<([u8; 4], u16)> {
     let mut ip = [0u8; 4];
     let mut part = 0usize;
@@ -120,22 +109,48 @@ fn print(s: &[u8]) {
 
 /// Fetch the catalog from the repo. Returns the number of package lines,
 /// or 0 on any failure (each failure mode named on the console).
+/// The official package registry, fetched over HTTPS (TLS 1.3).
+const OFFICIAL_HOST: &str = "fu.ling-lang.org";
+
+/// Fetch `path` from the repo into `out`, returning the response BODY length
+/// (HTTP headers stripped). Uses the local HTTP override in lingfs /repo
+/// ("a.b.c.d:port") if present, otherwise fu.ling-lang.org over HTTPS.
+fn fetch(path: &str, out: &mut [u8]) -> Option<usize> {
+    let mut rb = [0u8; 4096];
+    if let Ok(Some(len)) = lingfs::read_file("repo", &mut rb) {
+        if let Some((ip, port)) = parse_addr(&rb[..len]) {
+            return netstack::http_get(ip, port, path, "lingos-repo", out);
+        }
+    }
+    let mut noop = |_: &[u8]| {};
+    match crate::tls::https_get(OFFICIAL_HOST, 443, path, out, &mut noop) {
+        Ok(n) if n > 0 => {
+            let off = crate::tls::http_body_offset(&out[..n]);
+            if off > 0 {
+                out.copy_within(off..n, 0);
+                Some(n - off)
+            } else {
+                Some(n)
+            }
+        },
+        _ => None,
+    }
+}
+
 pub fn sync() -> usize {
-    let (ip, port) = repo_addr();
-    print(b"lingfu: syncing catalog from repo...\n");
+    print(b"lingfu: syncing catalog from fu.ling-lang.org (HTTPS)...\n");
     let body = unsafe { &mut *&raw mut CATALOG };
-    match netstack::http_get(ip, port, "/catalog.txt", "lingos-repo", body) {
+    match fetch("/catalog.txt", body) {
         Some(len) => {
             unsafe { CATALOG_LEN = len };
             let n = count();
-            print(b"lingfu: catalog synced (real HTTP over the e1000)\n");
+            print(b"lingfu: catalog synced\n");
             n
         },
         None => {
             unsafe { CATALOG_LEN = 0 };
-            print(b"lingfu: sync failed (no route to repo, or no server at the repo address)\n");
-            print(b"lingfu: repo default is 10.0.2.2:8000 -- run an HTTP server on the QEMU host,\n");
-            print(b"lingfu: or write \"a.b.c.d:port\" into lingfs /repo to point elsewhere\n");
+            print(b"lingfu: sync failed (TLS/connect error, or no catalog served).\n");
+            print(b"lingfu: point elsewhere by writing \"a.b.c.d:port\" into lingfs /repo (HTTP).\n");
             0
         },
     }
@@ -219,12 +234,11 @@ pub fn install(name: &str) -> bool {
     print(b"lingfu: downloading ");
     print(fname.as_bytes());
     print(b" ...\n");
-    let (ip, port) = repo_addr();
     // Single-block lingfs cap, disclosed in the module doc: bodies bigger
     // than one block fail the write below rather than silently truncating.
     static mut BLOB: [u8; 64 * 1024] = [0; 64 * 1024];
     let blob = unsafe { &mut *&raw mut BLOB };
-    let Some(len) = netstack::http_get(ip, port, pathstr, "lingos-repo", blob) else {
+    let Some(len) = fetch(pathstr, blob) else {
         print(b"lingfu: download failed\n");
         return false;
     };

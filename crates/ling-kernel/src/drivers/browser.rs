@@ -70,22 +70,38 @@ pub fn go(url: &str, cols: usize) -> bool {
         return false;
     };
     loading_toast(url);
-    if tls {
-        unsafe {
-            STATUS = "https needs a TLS stack LingOS doesn't have yet -- try http://";
-        }
-        return false;
-    }
-    let Some(ip) = netstack::dns_resolve(host) else {
-        unsafe { STATUS = "DNS: no address for that host" };
-        return false;
-    };
     let body = unsafe { &mut *&raw mut BODY };
-    let Some(len) = netstack::http_get(ip, port, path, host, body) else {
-        unsafe { STATUS = "fetch failed (connect refused, non-200, or timeout)" };
-        return false;
+    let mut body_off = 0usize;
+    let len = if tls {
+        // HTTPS via the in-kernel TLS 1.3 client. Note: certificate validation
+        // isn't done yet -- encrypted but not authenticated. https_get returns
+        // the full response, so strip the HTTP headers before layout.
+        let hport = if port == 0 { 443 } else { port };
+        let mut noop = |_: &[u8]| {};
+        match crate::tls::https_get(host, hport, path, body, &mut noop) {
+            Ok(n) if n > 0 => {
+                body_off = crate::tls::http_body_offset(&body[..n]);
+                n
+            },
+            _ => {
+                unsafe { STATUS = "https fetch failed (handshake, timeout, or empty)" };
+                return false;
+            },
+        }
+    } else {
+        let Some(ip) = netstack::dns_resolve(host) else {
+            unsafe { STATUS = "DNS: no address for that host" };
+            return false;
+        };
+        match netstack::http_get(ip, port, path, host, body) {
+            Some(n) => n,
+            None => {
+                unsafe { STATUS = "fetch failed (connect refused, non-200, or timeout)" };
+                return false;
+            },
+        }
     };
-    layout(&body[..len], cols, page());
+    layout(&body[body_off..len], cols, page());
     unsafe {
         SCROLL = 0;
         STATUS = if page().truncated {

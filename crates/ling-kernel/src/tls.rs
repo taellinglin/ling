@@ -564,6 +564,20 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
     Ok(total)
 }
 
+/// Offset of the HTTP body within a raw response (past the CRLFCRLF header
+/// separator), or 0 if no header terminator is found. `https_get` returns the
+/// full response (headers included); callers wanting body-only use this.
+pub fn http_body_offset(resp: &[u8]) -> usize {
+    let mut i = 0;
+    while i + 4 <= resp.len() {
+        if &resp[i..i + 4] == b"\r\n\r\n" {
+            return i + 4;
+        }
+        i += 1;
+    }
+    0
+}
+
 fn build_get(host: &str, path: &str, out: &mut [u8]) -> usize {
     let mut n = 0;
     let mut put = |s: &[u8]| {
