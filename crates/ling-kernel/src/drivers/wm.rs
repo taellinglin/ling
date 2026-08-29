@@ -822,6 +822,11 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         if !SEED_DONE {
             SEED_DONE = media::seed_pelipo();
         }
+        // Service a pending package-manager sync here (not on the open path):
+        // the pkg window's "syncing…" frame was presented last frame, so the
+        // blocking fetch now runs with real on-screen feedback, and the mouse
+        // is resynced afterward. No-op on frames with nothing pending.
+        pkgman::service();
         // Serial diagnostic, once every 512 frames: proves whether IRQ12
         // bytes are flowing and where the driver thinks the cursor is --
         // the framebuffer regression lesson applied to input (a dead mouse

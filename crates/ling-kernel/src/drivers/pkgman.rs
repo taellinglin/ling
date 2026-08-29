@@ -11,6 +11,11 @@ use crate::drivers::{font8x8, framebuffer, lingfu, theme};
 
 static mut SEL: usize = 0;
 static mut SYNCED: bool = false;
+/// A sync has been requested but not yet run. Set by `open()`/`S`, serviced by
+/// `service()` from the WM loop one frame LATER -- so the window paints its
+/// "syncing…" state and presents it before the blocking network fetch begins,
+/// instead of freezing on a stale frame. See `service()`.
+static mut PENDING: bool = false;
 static mut STATUS: [u8; 96] = [0; 96];
 static mut STATUS_LEN: usize = 0;
 
@@ -23,24 +28,43 @@ fn set_status(s: &[u8]) {
     }
 }
 
-/// Called when the window opens: sync the catalog once (bounded HTTP -- the
-/// DNS/ARP fast-fail path keeps this from hanging when no repo is reachable).
+/// Called when the window opens: request a one-time catalog sync. The sync
+/// itself is deferred to `service()` (next frame) so the window can paint a
+/// "syncing…" state first -- a multi-second TLS fetch run inline here would
+/// freeze the desktop on a blank frame and, worse, drop enough PS/2 mouse
+/// bytes to desync the cursor. Bounded HTTP; DNS/ARP fast-fail if no repo.
 pub fn open() {
+    unsafe { SEL = 0 };
+    if unsafe { SYNCED } {
+        return;
+    }
+    set_status(b"syncing catalog from fu.ling-lang.org ...");
+    unsafe { PENDING = true };
+}
+
+/// Run a pending catalog sync, if any. Called once per frame by the WM loop
+/// AFTER the previous frame (showing "syncing…") was presented, so the
+/// blocking network fetch never freezes a stale screen. Cheap no-op when
+/// nothing is pending. Resyncs the mouse afterward: the fetch holds the loop
+/// off the CPU long enough to drop PS/2 bytes, so the packet framing needs
+/// realigning or the cursor jumps erratically.
+pub fn service() {
+    if !unsafe { PENDING } {
+        return;
+    }
     unsafe {
-        SEL = 0;
-        if SYNCED {
-            return;
-        }
+        PENDING = false;
         SYNCED = true;
     }
     lingfu::begin_capture();
     let n = lingfu::sync();
     lingfu::end_capture();
     if n == 0 {
-        set_status(b"no catalog -- is a repo reachable? (default 10.0.2.2:8000)");
+        set_status(b"no packages -- is a repo reachable? (S to retry)");
     } else {
-        set_status(b"catalog synced -- up/down to select, Enter to install");
+        set_status(b"catalog synced -- up/down select, Enter install, S resync");
     }
+    crate::drivers::mouse::resync();
 }
 
 fn line_count() -> usize {
@@ -51,30 +75,17 @@ fn nth_line(i: usize) -> Option<&'static [u8]> {
     lingfu::catalog_raw().split(|&b| b == b'\n').filter(|l| !l.is_empty()).nth(i)
 }
 
-/// The `idx`-th space-separated field of a catalog line ("name version
-/// filename desc...").
+/// The `idx`-th TAB-delimited field of a catalog line
+/// ("name \t meta \t filename \t description"). Empty fields are preserved so
+/// indices stay stable (a package with no filename still has a description at
+/// index 3).
 fn field(line: &[u8], idx: usize) -> &[u8] {
-    line.split(|&b| b == b' ').filter(|f| !f.is_empty()).nth(idx).unwrap_or(b"")
+    line.split(|&b| b == b'\t').nth(idx).unwrap_or(b"")
 }
 
-/// Everything after the first three fields (name/version/filename) -- the
-/// human description.
+/// The human description -- the 4th field.
 fn desc(line: &[u8]) -> &[u8] {
-    let mut i = 0;
-    let mut fields = 0;
-    while fields < 3 {
-        while i < line.len() && line[i] == b' ' {
-            i += 1;
-        }
-        while i < line.len() && line[i] != b' ' {
-            i += 1;
-        }
-        fields += 1;
-    }
-    while i < line.len() && line[i] == b' ' {
-        i += 1;
-    }
-    &line[i..]
+    field(line, 3)
 }
 
 pub fn draw(x: u32, y: u32, w: u32, h: u32) {
@@ -150,6 +161,8 @@ fn install_selected() {
     // Surface the last thing lingfu said as the status line.
     let last = cap.split(|&b| b == b'\n').filter(|l| !l.is_empty()).last().unwrap_or(b"install done");
     set_status(last);
+    // The download blocked the loop; realign the mouse packet framing.
+    crate::drivers::mouse::resync();
 }
 
 pub fn key(k: u8) {
@@ -163,6 +176,7 @@ pub fn key(k: u8) {
         }, // down
         b'\n' | b'\r' => install_selected(), // enter
         b's' | b'S' => {
+            // Request a fresh sync; service() runs it next frame (see open()).
             unsafe { SYNCED = false };
             open();
         },

@@ -106,12 +106,33 @@ pub(crate) fn irq_byte(byte: u8) {
     unsafe {
         BYTE_COUNT = BYTE_COUNT.wrapping_add(1);
         LAST_BYTE = byte;
+        // Self-correcting framing: the first byte of a standard 3-byte packet
+        // always has bit 3 ("always 1") set. If we're at packet-start and it
+        // isn't, we're reading mid-packet after a dropped byte (the single-byte
+        // 8042 output buffer silently overwrites when the WM loop is blocked
+        // long enough during a network sync). Skip such bytes until the framing
+        // realigns, instead of shifting every later packet by one and feeding
+        // garbage dx/dy to the cursor -- which looked "jumpy and skippy".
+        if PACKET_IDX == 0 && byte & 0x08 == 0 {
+            return;
+        }
         PACKET[PACKET_IDX] = byte;
         PACKET_IDX += 1;
         if PACKET_IDX == 3 {
             PACKET_IDX = 0;
             apply_packet(PACKET);
         }
+    }
+}
+
+/// Discard a partially-received packet so the framing realigns on the next
+/// byte's "always 1" bit. Call after a long blocking operation (e.g. a
+/// package-manager network sync) held the WM loop off the CPU long enough to
+/// drop mouse bytes -- without this the cursor darts erratically until a
+/// valid packet boundary happens to line up on its own.
+pub fn resync() {
+    unsafe {
+        PACKET_IDX = 0;
     }
 }
 
