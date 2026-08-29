@@ -11,10 +11,15 @@
 //! roadmap); pages over ~120KiB body are truncated with a marker.
 
 use crate::drivers::{font8x8, framebuffer, netstack, theme};
-use bring_browser::{layout, LineKind, Page, MAX_URL, NO_COLOR};
+use bring_browser::{layout_styled, LineKind, Page, MAX_URL, NO_COLOR};
 
 static mut PAGE: Page = Page::new();
 static mut BODY: [u8; 120 * 1024] = [0; 120 * 1024];
+/// Concatenated text of the page's external stylesheets, fed to the layout
+/// engine (it caps what it parses, so this need not be huge).
+static mut CSS_SHEETS: [u8; 24 * 1024] = [0; 24 * 1024];
+/// Scratch for one stylesheet fetch before its body is appended to CSS_SHEETS.
+static mut SHEET_TMP: [u8; 48 * 1024] = [0; 48 * 1024];
 static mut CUR_URL: [u8; MAX_URL] = [0; MAX_URL];
 static mut CUR_URL_LEN: usize = 0;
 static mut SCROLL: usize = 0;
@@ -108,7 +113,12 @@ pub fn go(url: &str, cols: usize) -> bool {
             },
         }
     };
-    layout(&body[body_off..len], cols, page());
+    // Fetch any external stylesheets the page links, so CSS applies to the
+    // whole document (not just inline <style>). Bounded: a few sheets, capped
+    // total size.
+    let css_len = fetch_stylesheets(&body[body_off..len], url);
+    let css = unsafe { &(&*&raw const CSS_SHEETS)[..css_len] };
+    layout_styled(&body[body_off..len], css, cols, page());
     unsafe {
         SCROLL = 0;
         STATUS = if page().truncated {
@@ -119,6 +129,119 @@ pub fn go(url: &str, cols: usize) -> bool {
     }
     set_url(url);
     true
+}
+
+/// Fetch a URL's response BODY (headers stripped) into `out`, returning the
+/// length. Used for sub-resources (stylesheets); one-shot per resource.
+fn fetch_body(url: &str, out: &mut [u8]) -> Option<usize> {
+    let (host, port, path, tls) = netstack::parse_url(url)?;
+    if tls {
+        let mut noop = |_: &[u8]| {};
+        match crate::tls::https_get(host, port, path, out, &mut noop) {
+            Ok(n) if n > 0 => {
+                let off = crate::tls::http_body_offset(&out[..n]);
+                if off > 0 {
+                    out.copy_within(off..n, 0);
+                    Some(n - off)
+                } else {
+                    Some(n)
+                }
+            },
+            _ => None,
+        }
+    } else {
+        let ip = netstack::dns_resolve(host)?;
+        netstack::http_get(ip, port, path, host, out)
+    }
+}
+
+/// Extract the value of attribute `attr` from a tag's bytes (quoted or bare).
+fn tag_attr<'t>(tag: &'t [u8], attr: &[u8]) -> Option<&'t [u8]> {
+    let mut i = 0;
+    while i + attr.len() + 1 < tag.len() {
+        let at_word_start = i == 0 || tag[i - 1] == b' ' || tag[i - 1] == b'\t' || tag[i - 1] == b'\n';
+        if at_word_start && tag[i..].len() > attr.len() {
+            let mut m = true;
+            for j in 0..attr.len() {
+                if tag[i + j].to_ascii_lowercase() != attr[j] {
+                    m = false;
+                    break;
+                }
+            }
+            if m && tag[i + attr.len()] == b'=' {
+                let v = &tag[i + attr.len() + 1..];
+                return Some(match v.first() {
+                    Some(&q) if q == b'"' || q == b'\'' => {
+                        let end = v[1..].iter().position(|&c| c == q).map(|p| p + 1).unwrap_or(v.len());
+                        &v[1..end]
+                    },
+                    _ => {
+                        let end = v.iter().position(|&c| c == b' ' || c == b'\t' || c == b'>').unwrap_or(v.len());
+                        &v[..end]
+                    },
+                });
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn contains_ci(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return needle.is_empty();
+    }
+    (0..=hay.len() - needle.len()).any(|i| {
+        (0..needle.len()).all(|j| hay[i + j].to_ascii_lowercase() == needle[j])
+    })
+}
+
+/// Scan `html` for `<link rel="stylesheet" href="...">`, fetch each sheet
+/// (resolved against `base`), and concatenate their bodies into CSS_SHEETS.
+/// Bounded to a few sheets and the buffer size. Returns bytes written.
+fn fetch_stylesheets(html: &[u8], base: &str) -> usize {
+    let sheets = unsafe { &mut *&raw mut CSS_SHEETS };
+    let tmp = unsafe { &mut *&raw mut SHEET_TMP };
+    let mut total = 0usize;
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while i + 5 < html.len() && count < 6 && total < sheets.len() {
+        // Find the next "<link".
+        if !(html[i] == b'<'
+            && html[i + 1].to_ascii_lowercase() == b'l'
+            && html[i + 2].to_ascii_lowercase() == b'i'
+            && html[i + 3].to_ascii_lowercase() == b'n'
+            && html[i + 4].to_ascii_lowercase() == b'k')
+        {
+            i += 1;
+            continue;
+        }
+        let Some(rel_end) = html[i..].iter().position(|&c| c == b'>') else { break };
+        let tag = &html[i..i + rel_end];
+        i += rel_end + 1;
+        // Only stylesheet links.
+        let is_sheet = tag_attr(tag, b"rel").map(|r| contains_ci(r, b"stylesheet")).unwrap_or(false);
+        let Some(href) = tag_attr(tag, b"href") else { continue };
+        if !is_sheet {
+            continue;
+        }
+        let Ok(hstr) = core::str::from_utf8(href) else { continue };
+        let mut url_buf = [0u8; MAX_URL * 2];
+        let Some(ulen) = resolve_url(base, hstr, &mut url_buf) else { continue };
+        let Ok(sheet_url) = core::str::from_utf8(&url_buf[..ulen]) else { continue };
+        count += 1;
+        if let Some(blen) = fetch_body(sheet_url, tmp) {
+            let take = blen.min(sheets.len() - total);
+            sheets[total..total + take].copy_from_slice(&tmp[..take]);
+            total += take;
+            // A newline between sheets so rules never run together.
+            if total < sheets.len() {
+                sheets[total] = b'\n';
+                total += 1;
+            }
+        }
+    }
+    total
 }
 
 /// Navigate from the URL/search bar: if `input` looks like a URL, go to
@@ -405,15 +528,20 @@ fn line_color(kind: LineKind, link: u8, bold: bool) -> u32 {
 /// at `y`. The WM draws the URL/search bar above this itself (it owns the
 /// editable input). `y` is already below that bar.
 pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
-    let panel = theme::color(theme::SLOT_PANEL);
     let dim = theme::color(theme::SLOT_DIM);
     let row_h = 14u32;
     let rows = (h.saturating_sub(20) / row_h) as usize;
     unsafe { VISIBLE_ROWS = rows };
 
+    let p = page();
+    // CSS page background (from a body/html rule), else the theme panel.
+    let panel = if p.bg != NO_COLOR { p.bg } else { theme::color(theme::SLOT_PANEL) };
+    if p.bg != NO_COLOR {
+        framebuffer::back_fill_rect(x, y, w, h, panel);
+    }
+
     font8x8::draw_str(x, y, status().as_bytes(), dim, panel);
 
-    let p = page();
     let scroll = unsafe { SCROLL };
     let mut link_counter = 0usize;
     // Count links appearing before the viewport so numbers stay stable.
@@ -430,6 +558,11 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
         let l = &p.lines[idx];
         let ry = y + 18 + r as u32 * row_h;
         let mut cx = x;
+        // Per-line CSS background (element background), else the page bg.
+        let lbg = if l.bg != NO_COLOR { l.bg } else { panel };
+        if l.bg != NO_COLOR {
+            framebuffer::back_fill_rect(x, ry.saturating_sub(1), w, row_h, lbg);
+        }
         if l.kind == LineKind::ListItem {
             framebuffer::back_fill_circle(x + 3, ry + 4, 2, dim);
             cx += 12;
@@ -449,7 +582,7 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
             nb[n] = b'0' + (d % 10) as u8;
             nb[n + 1] = b']';
             n += 2;
-            font8x8::draw_str(cx, ry, &nb[..n], theme::color(theme::SLOT_ERROR), panel);
+            font8x8::draw_str(cx, ry, &nb[..n], theme::color(theme::SLOT_ERROR), lbg);
             cx += n as u32 * 8 + 4;
         }
         // CSS color wins over the kind/link default when set.
@@ -468,7 +601,7 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
                 _ => cx,
             };
         }
-        font8x8::draw_str(cx, ry, l.text(), color, panel);
+        font8x8::draw_str(cx, ry, l.text(), color, lbg);
         if matches!(l.kind, LineKind::Heading1) {
             // Underline h1 -- the one embellishment font8x8 can afford.
             framebuffer::back_fill_rect(cx, ry + 10, (l.len as u32) * 8, 1, color);
