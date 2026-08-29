@@ -56,6 +56,10 @@ hkdf = { version = "0.12", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
 x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets"] }
 
+# PNG decode: DEFLATE/zlib inflate, no_std + alloc (no std, no C). PNG chunk
+# parsing + scanline unfiltering are done in-tree (drivers/image.rs).
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+
 # The browser's layout engine ("bring": browser-in-ling) -- its own
 # package/repo (../../../bring-browser) so it host-tests with plain
 # `cargo test` and stays reusable outside the kernel. no_std, zero deps,

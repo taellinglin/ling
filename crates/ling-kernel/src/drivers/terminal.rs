@@ -236,6 +236,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run demo|donut|<app.elf>");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
             push(Cls::Normal, b"  ssh [user@]host   services [enable|disable ssh]   cryptotest");
+            push(Cls::Normal, b"  https <url>   imgview demo|demosvg|<url>");
             push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
@@ -373,6 +374,7 @@ fn run(line: &str) {
         "ssh" => run_ssh(arg),
         "services" => run_services(arg),
         "https" => run_https(arg),
+        "imgview" => run_imgview(arg),
         "cd" => {
             if arg.is_empty() || arg == "/" || arg == "~" || arg == ".." {
                 unsafe { CWD_LEN = 0 };
@@ -720,6 +722,71 @@ fn run_ssh(arg: &str) {
     push(Cls::Ok, &buf[..end]);
     push(Cls::Dim, b"ssh: TCP + SSH version banner exchanged with the server.");
     push(Cls::Dim, b"     KEX/auth/shell (the SSH transport) build on the crypto suite -- WIP.");
+}
+
+const PNG_SIG: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+
+/// `imgview [demo|<url>]` -- fetch (http/https) and decode an image, then show
+/// it fullscreen (press a key to return). PNG (8-bit) and subset SVG.
+fn run_imgview(arg: &str) {
+    static mut IMGBUF: [u8; 512 * 1024] = [0; 512 * 1024];
+    let ib = unsafe { &mut *&raw mut IMGBUF };
+    let (len, off): (usize, usize) = if arg.is_empty() || arg == "demo" {
+        static TEST_PNG: &[u8] = include_bytes!("../../testbins/test.png");
+        let n = TEST_PNG.len().min(ib.len());
+        ib[..n].copy_from_slice(&TEST_PNG[..n]);
+        (n, 0)
+    } else if arg == "demosvg" {
+        static TEST_SVG: &[u8] = include_bytes!("../../testbins/test.svg");
+        let n = TEST_SVG.len().min(ib.len());
+        ib[..n].copy_from_slice(&TEST_SVG[..n]);
+        (n, 0)
+    } else {
+        let Some((host, port, path, tls)) = netstack::parse_url(arg) else {
+            push(Cls::Err, b"imgview: bad URL");
+            return;
+        };
+        push(Cls::Dim, b"imgview: fetching...");
+        if tls {
+            let hport = if port == 0 { 443 } else { port };
+            let mut noop = |_: &[u8]| {};
+            match crate::tls::https_get(host, hport, path, ib, &mut noop) {
+                Ok(n) if n > 0 => (n, crate::tls::http_body_offset(&ib[..n])),
+                _ => {
+                    push(Cls::Err, b"imgview: https fetch failed");
+                    return;
+                },
+            }
+        } else {
+            let Some(ip) = netstack::dns_resolve(host) else {
+                push(Cls::Err, b"imgview: DNS failed");
+                return;
+            };
+            match netstack::http_get(ip, port, path, host, ib) {
+                Some(n) => (n, 0),
+                None => {
+                    push(Cls::Err, b"imgview: fetch failed");
+                    return;
+                },
+            }
+        }
+    };
+    let bytes = &ib[off..len];
+    let img = if bytes.len() >= 8 && bytes[..8] == PNG_SIG {
+        crate::drivers::image::decode_png(bytes)
+    } else if crate::drivers::image::looks_svg(bytes) {
+        crate::drivers::image::decode_svg(bytes)
+    } else {
+        None
+    };
+    match img {
+        Some(im) => {
+            push(Cls::Ok, b"imgview: decoded -- showing (press a key)");
+            crate::drivers::image::show_fullscreen(&im);
+            crate::arch::timer::poll_until(20_000_000, || crate::drivers::keyboard::poll_char() != 0);
+        },
+        None => push(Cls::Err, b"imgview: could not decode (PNG 8-bit or subset SVG)"),
+    }
 }
 
 /// `https <host[:port][/path]>` -- a real TLS 1.3 handshake (X25519 +

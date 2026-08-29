@@ -41,6 +41,8 @@ pub mod lingfu;
 #[cfg(target_arch = "x86_64")]
 pub mod locale;
 #[cfg(target_arch = "x86_64")]
+pub mod image;
+#[cfg(target_arch = "x86_64")]
 pub mod media;
 #[cfg(target_arch = "x86_64")]
 pub mod pkgman;
