@@ -11,7 +11,7 @@
 //! roadmap); pages over ~120KiB body are truncated with a marker.
 
 use crate::drivers::{font8x8, framebuffer, netstack, theme};
-use bring_browser::{layout, LineKind, Page, MAX_URL};
+use bring_browser::{layout, LineKind, Page, MAX_URL, NO_COLOR};
 
 static mut PAGE: Page = Page::new();
 static mut BODY: [u8; 120 * 1024] = [0; 120 * 1024];
@@ -404,7 +404,7 @@ fn line_color(kind: LineKind, link: u8, bold: bool) -> u32 {
 /// Render just the page body into a content rect (real pixels), starting
 /// at `y`. The WM draws the URL/search bar above this itself (it owns the
 /// editable input). `y` is already below that bar.
-pub fn draw_page(x: u32, y: u32, _w: u32, h: u32) {
+pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
     let panel = theme::color(theme::SLOT_PANEL);
     let dim = theme::color(theme::SLOT_DIM);
     let row_h = 14u32;
@@ -452,7 +452,22 @@ pub fn draw_page(x: u32, y: u32, _w: u32, h: u32) {
             font8x8::draw_str(cx, ry, &nb[..n], theme::color(theme::SLOT_ERROR), panel);
             cx += n as u32 * 8 + 4;
         }
-        let color = line_color(l.kind, l.link, l.bold);
+        // CSS color wins over the kind/link default when set.
+        let color = if l.color != NO_COLOR {
+            l.color
+        } else {
+            line_color(l.kind, l.link, l.bold)
+        };
+        // Honor text-align (center/right) for plain lines with no link/list
+        // prefix, where a shifted start column is unambiguous.
+        let text_px = l.len as u32 * 8;
+        if l.align != 0 && l.link == u8::MAX && l.kind != LineKind::ListItem && text_px < w {
+            cx = match l.align {
+                1 => x + (w - text_px) / 2, // center
+                2 => x + (w - text_px),     // right
+                _ => cx,
+            };
+        }
         font8x8::draw_str(cx, ry, l.text(), color, panel);
         if matches!(l.kind, LineKind::Heading1) {
             // Underline h1 -- the one embellishment font8x8 can afford.
