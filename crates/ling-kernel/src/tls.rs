@@ -297,6 +297,61 @@ fn parse_server_key_share(sh: &[u8]) -> Option<[u8; 32]> {
 static mut RX: [u8; 32 * 1024] = [0; 32 * 1024];
 static mut TXBUF: [u8; 4096] = [0; 4096];
 
+/// Format `n` as decimal ASCII into `buf`, returning the number of bytes.
+fn u_to_dec(mut n: usize, buf: &mut [u8]) -> usize {
+    if n == 0 {
+        if !buf.is_empty() {
+            buf[0] = b'0';
+        }
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    while n > 0 {
+        tmp[i] = b'0' + (n % 10) as u8;
+        n /= 10;
+        i += 1;
+    }
+    let mut k = 0;
+    while i > 0 && k < buf.len() {
+        i -= 1;
+        buf[k] = tmp[i];
+        k += 1;
+    }
+    k
+}
+
+/// Emit a "tls: <label> rtype=.. rlen=.. rxlen=.. pos=..\n" diagnostic line.
+fn log_trunc(log: &mut dyn FnMut(&[u8]), label: &[u8], rtype: usize, rlen: usize, rxlen: usize, pos: usize) {
+    let mut m = [0u8; 96];
+    let mut k = 0;
+    let mut push = |src: &[u8]| {
+        for &b in src {
+            if k < m.len() {
+                m[k] = b;
+                k += 1;
+            }
+        }
+    };
+    push(b"tls: ");
+    push(label);
+    push(b" rtype=");
+    let mut d = [0u8; 20];
+    let n = u_to_dec(rtype, &mut d);
+    push(&d[..n]);
+    push(b" rlen=");
+    let n = u_to_dec(rlen, &mut d);
+    push(&d[..n]);
+    push(b" rxlen=");
+    let n = u_to_dec(rxlen, &mut d);
+    push(&d[..n]);
+    push(b" pos=");
+    let n = u_to_dec(pos, &mut d);
+    push(&d[..n]);
+    push(b"\n");
+    log(&m[..k]);
+}
+
 /// Perform a TLS 1.3 handshake to `host:port`, GET `path`, and write the
 /// decrypted HTTP response into `out`. `log(msg)` receives progress/errors.
 pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dyn FnMut(&[u8])) -> Result<usize, &'static str> {
@@ -354,6 +409,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         if pos + 5 > rxlen {
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
+                log_trunc(log, b"trunc-hdr", 0, 0, rxlen, pos);
                 return Err("truncated handshake");
             }
             rxlen += n;
@@ -363,10 +419,12 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         let rlen = ((rx[pos + 1 + 2] as usize) << 8) | rx[pos + 4] as usize;
         if pos + 5 + rlen > rxlen {
             if rxlen >= rx.len() {
+                log_trunc(log, b"too-large", rtype as usize, rlen, rxlen, pos);
                 return Err("record too large");
             }
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
+                log_trunc(log, b"trunc-rec", rtype as usize, rlen, rxlen, pos);
                 return Err("truncated record");
             }
             rxlen += n;

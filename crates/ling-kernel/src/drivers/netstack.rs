@@ -6,10 +6,11 @@
 //! `python -m http.server` on the host is a reachable package repo).
 //!
 //! Honest scope, per driver-idiom: one TCP connection at a time, client
-//! only, in-order segments only (out-of-order data is dropped and the
-//! peer's retransmit is relied on), no local retransmit queue (requests
-//! are sent once; against SLIRP's local, lossless link this is fine and
-//! is disclosed rather than hidden), no window management beyond a fixed
+//! only, out-of-order segments reassembled via a small reorder buffer (a
+//! duplicate ACK prompts the peer to fast-retransmit the gap), no local
+//! retransmit queue (requests are sent once; against SLIRP's local, lossless
+//! link this is fine and is disclosed rather than hidden), no window
+//! management beyond a fixed
 //! receive window, no TLS (a public HTTPS repo needs a real TLS stack --
 //! see packages/README.md; the repo URL is plain HTTP by design until
 //! then). This is a real wire-protocol implementation, not a simulation:
@@ -229,6 +230,7 @@ pub fn tcp_connect(ip: [u8; 4], port: u16) -> bool {
         c.rcv_nxt = 0;
         c.established = false;
     }
+    ooo_reset();
     if !tcp_send(TCP_SYN, &[]) {
         return false;
     }
@@ -275,76 +277,163 @@ pub fn tcp_write(data: &[u8]) -> bool {
     true
 }
 
-/// Read the response body stream until the peer FINs, the sink is full,
-/// or the budget expires. Every in-order segment is ACKed; out-of-order
-/// segments are dropped (disclosed above). Returns bytes written to
-/// `sink`.
+// -- Out-of-order reassembly --------------------------------------------------
+// A small reorder buffer so a large multi-segment flight (e.g. a TLS
+// certificate chain) survives the reordering that's normal over the real
+// internet, instead of dropping the future segment and stalling on the peer's
+// retransmit timeout. Future segments are buffered and an immediate duplicate
+// ACK is sent to trigger the peer's fast retransmit of the gap; buffered
+// segments are drained in order once the gap fills.
+const OOO_SLOTS: usize = 24;
+const OOO_SEG: usize = 1600; // > one MSS
+
+struct OooSeg {
+    seq: u32,
+    len: usize,
+    used: bool,
+    data: [u8; OOO_SEG],
+}
+
+static mut OOO: [OooSeg; OOO_SLOTS] =
+    [const { OooSeg { seq: 0, len: 0, used: false, data: [0; OOO_SEG] } }; OOO_SLOTS];
+
+fn ooo_reset() {
+    unsafe {
+        for s in (&mut *&raw mut OOO).iter_mut() {
+            s.used = false;
+        }
+    }
+}
+
+/// `a` is at or after `b` in sequence space (mod 2^32).
+fn seq_ge(a: u32, b: u32) -> bool {
+    a.wrapping_sub(b) < 0x8000_0000
+}
+
+/// Buffer an out-of-order segment (dropped if it's a duplicate or the buffer
+/// is full -- the peer will retransmit).
+fn ooo_store(seq: u32, data: &[u8]) {
+    if data.is_empty() || data.len() > OOO_SEG {
+        return;
+    }
+    unsafe {
+        let o = &mut *&raw mut OOO;
+        for s in o.iter() {
+            if s.used && s.seq == seq {
+                return;
+            }
+        }
+        for s in o.iter_mut() {
+            if !s.used {
+                s.used = true;
+                s.seq = seq;
+                s.len = data.len();
+                s.data[..data.len()].copy_from_slice(data);
+                return;
+            }
+        }
+    }
+}
+
+/// Deliver any buffered segments now contiguous with `rcv_nxt` into `sink`.
+fn ooo_drain(sink: &mut [u8], got: &mut usize) {
+    unsafe {
+        let o = &mut *&raw mut OOO;
+        loop {
+            let expected = (*&raw const CONN).rcv_nxt;
+            let mut idx = None;
+            for (i, s) in o.iter().enumerate() {
+                if s.used && s.seq == expected {
+                    idx = Some(i);
+                    break;
+                }
+            }
+            let Some(i) = idx else { break };
+            let len = o[i].len;
+            let take = len.min(sink.len().saturating_sub(*got));
+            sink[*got..*got + take].copy_from_slice(&o[i].data[..take]);
+            *got += take;
+            (*&raw mut CONN).rcv_nxt = expected.wrapping_add(len as u32);
+            o[i].used = false;
+        }
+    }
+}
+
+/// Process one received segment into `sink`: deliver in-order data (plus any
+/// now-contiguous buffered data), buffer out-of-order data (+ dup-ACK), ACK
+/// old/retransmitted data. Returns (saw_fin, saw_rst).
+fn recv_segment(sink: &mut [u8], got: &mut usize, flags: u8, seq: u32, data: &[u8]) -> (bool, bool) {
+    let n = data.len();
+    if n > 0 {
+        let expected = unsafe { (*&raw const CONN).rcv_nxt };
+        if seq == expected {
+            let take = n.min(sink.len().saturating_sub(*got));
+            sink[*got..*got + take].copy_from_slice(&data[..take]);
+            *got += take;
+            unsafe {
+                (*&raw mut CONN).rcv_nxt = expected.wrapping_add(n as u32);
+            }
+            ooo_drain(sink, got);
+            tcp_send(TCP_ACK, &[]);
+        } else if seq_ge(seq, expected) {
+            // Future data: buffer it and send a duplicate ACK for the gap.
+            ooo_store(seq, data);
+            tcp_send(TCP_ACK, &[]);
+        } else {
+            // Already-received (a retransmit): re-ACK so the peer moves on.
+            tcp_send(TCP_ACK, &[]);
+        }
+    }
+    let mut fin = false;
+    let mut rst = false;
+    if flags & TCP_FIN != 0 {
+        unsafe {
+            (*&raw mut CONN).rcv_nxt = (*&raw const CONN).rcv_nxt.wrapping_add(1);
+        }
+        tcp_send(TCP_ACK | TCP_FIN, &[]);
+        unsafe {
+            (*&raw mut CONN).established = false;
+        }
+        fin = true;
+    }
+    if flags & TCP_RST != 0 {
+        unsafe {
+            (*&raw mut CONN).established = false;
+        }
+        rst = true;
+    }
+    (fin, rst)
+}
+
+/// Read the response body stream until the peer FINs, the sink is full, or the
+/// budget expires. In-order data is delivered and ACKed; out-of-order data is
+/// buffered and reassembled (see the reorder buffer above).
 pub fn tcp_read_to_end(sink: &mut [u8]) -> usize {
     let mut got = 0usize;
     let mut seg = [0u8; 2048];
-    let mut finished = false;
     timer::poll_until(WAIT_BUDGET_US, || {
         while let Some((flags, seq, _ack, n)) = tcp_poll(&mut seg) {
-            let expected = unsafe { (*&raw const CONN).rcv_nxt };
-            if n > 0 && seq == expected {
-                let take = n.min(sink.len() - got);
-                sink[got..got + take].copy_from_slice(&seg[..take]);
-                got += take;
-                unsafe {
-                    (*&raw mut CONN).rcv_nxt = expected.wrapping_add(n as u32);
-                }
-                tcp_send(TCP_ACK, &[]);
-                if got >= sink.len() {
-                    finished = true;
-                    return true;
-                }
-            }
-            if flags & TCP_FIN != 0 {
-                unsafe {
-                    let c = &mut *&raw mut CONN;
-                    c.rcv_nxt = c.rcv_nxt.wrapping_add(1);
-                }
-                tcp_send(TCP_ACK | TCP_FIN, &[]);
-                unsafe {
-                    (*&raw mut CONN).established = false;
-                }
-                finished = true;
-                return true;
-            }
-            if flags & TCP_RST != 0 {
-                unsafe {
-                    (*&raw mut CONN).established = false;
-                }
-                finished = true;
+            let (fin, rst) = recv_segment(sink, &mut got, flags, seq, &seg[..n]);
+            if got >= sink.len() || fin || rst {
                 return true;
             }
         }
         false
     });
-    let _ = finished;
     got
 }
 
 /// Read whatever arrives next, returning as soon as *any* in-order payload is
 /// received (or `budget_us` elapses). Unlike `tcp_read_to_end` it does not
-/// wait for the peer to FIN -- for line/banner protocols (SSH) where the
-/// server sends data then waits for the client.
+/// wait for the peer to FIN -- for line/banner protocols (SSH) and reading a
+/// TLS handshake flight incrementally.
 pub fn tcp_read_some(sink: &mut [u8], budget_us: u64) -> usize {
     let mut got = 0usize;
     let mut seg = [0u8; 2048];
     timer::poll_until(budget_us, || {
         while let Some((flags, seq, _ack, n)) = tcp_poll(&mut seg) {
-            let expected = unsafe { (*&raw const CONN).rcv_nxt };
-            if n > 0 && seq == expected {
-                let take = n.min(sink.len() - got);
-                sink[got..got + take].copy_from_slice(&seg[..take]);
-                got += take;
-                unsafe {
-                    (*&raw mut CONN).rcv_nxt = expected.wrapping_add(n as u32);
-                }
-                tcp_send(TCP_ACK, &[]);
-            }
-            if flags & (TCP_FIN | TCP_RST) != 0 {
+            let (fin, rst) = recv_segment(sink, &mut got, flags, seq, &seg[..n]);
+            if fin || rst {
                 return true;
             }
         }
@@ -807,7 +896,12 @@ pub fn parse_url(url: &str) -> Option<(&str, u16, &str, bool)> {
             }
             (&hostport[..i], p as u16)
         },
-        None => (hostport, 80),
+        // No explicit port: default by scheme (443 for https, 80 for http).
+        // Returning the scheme default here -- rather than a fixed 80 -- means
+        // every caller connects to the right port even if it forgets to
+        // special-case the TLS default. (A TLS handshake against port 80 gets
+        // a plaintext HTTP 400 back, which the record parser then chokes on.)
+        None => (hostport, if tls { 443 } else { 80 }),
     };
     if host.is_empty() {
         return None;
