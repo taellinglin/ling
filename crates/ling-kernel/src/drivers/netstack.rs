@@ -29,7 +29,13 @@ pub fn gateway_ip() -> [u8; 4] {
     nic::gateway_ip()
 }
 const MSS: usize = 1400;
-const RX_WINDOW: u16 = 8192;
+// Advertised receive window. Sized to let several MSS-sized segments be in
+// flight per round trip (large bodies -- the ~84KiB package avatars, bigger
+// web pages -- otherwise trickle one window per RTT). 32KiB: fits the TLS rx
+// buffer (64KiB) with room to spare, and stays under the e1000 RX ring's
+// capacity (32 descriptors x 2KiB = 64KiB) so a brief non-drain can't drop
+// segments. Halves the round trips for an 84KiB image versus a 16KiB window.
+const RX_WINDOW: u16 = 32768;
 /// Kernel-time poll budget. This bounds how long a *failed* fetch blocks
 /// the (single-threaded) desktop loop -- a healthy fetch returns as soon
 /// as the data arrives, well under this. Kept modest (8s) because the
@@ -38,6 +44,65 @@ const RX_WINDOW: u16 = 8192;
 /// second in practice (verified: curl example.com over the real
 /// internet), so this only bites on genuine failure.
 const WAIT_BUDGET_US: u64 = 8_000_000;
+
+// -- Cooperative net lock --------------------------------------------------
+// The netstack has one shared TCP connection (`CONN`) and shared UDP/DNS
+// state, so two cooperative tasks must not run overlapping network
+// transactions -- the desktop's background icon fetcher (a spawned task) and
+// task 0 (browser/installer/terminal fetches). This is a re-entrant
+// cooperative mutex: a task that already owns it can re-enter (https_get owns
+// it while its own dns_resolve re-acquires), a different task yields until
+// it's free. Safe without atomics because context switches only ever happen
+// at a `yield_now` point, and the claim below has none between test and set.
+static mut NET_OWNER: i64 = -1;
+static mut NET_DEPTH: u32 = 0;
+
+/// Acquire the net lock (re-entrant per task). Yields until free. x86_64 only
+/// -- aarch64 has no cooperative kernel scheduler (no concurrent netstack
+/// users there), so the lock is a no-op.
+#[cfg(target_arch = "x86_64")]
+pub fn net_acquire() {
+    let me = crate::proc::sched::getpid() as i64;
+    unsafe {
+        while NET_OWNER != -1 && NET_OWNER != me {
+            crate::proc::sched::yield_now();
+        }
+        NET_OWNER = me;
+        NET_DEPTH += 1;
+    }
+}
+#[cfg(not(target_arch = "x86_64"))]
+pub fn net_acquire() {}
+
+/// Release one level of the net lock.
+#[cfg(target_arch = "x86_64")]
+pub fn net_release() {
+    unsafe {
+        if NET_DEPTH > 0 {
+            NET_DEPTH -= 1;
+        }
+        if NET_DEPTH == 0 {
+            NET_OWNER = -1;
+        }
+    }
+}
+#[cfg(not(target_arch = "x86_64"))]
+pub fn net_release() {}
+
+/// RAII guard for `net_acquire`/`net_release` -- covers the many early returns
+/// in a fetch path without a manual release at each.
+pub struct NetGuard;
+impl NetGuard {
+    pub fn new() -> Self {
+        net_acquire();
+        NetGuard
+    }
+}
+impl Drop for NetGuard {
+    fn drop(&mut self) {
+        net_release();
+    }
+}
 
 static mut GW_MAC: [u8; 6] = [0; 6];
 static mut GW_MAC_KNOWN: bool = false;
@@ -367,20 +432,49 @@ fn recv_segment(sink: &mut [u8], got: &mut usize, flags: u8, seq: u32, data: &[u
     if n > 0 {
         let expected = unsafe { (*&raw const CONN).rcv_nxt };
         if seq == expected {
-            let take = n.min(sink.len().saturating_sub(*got));
+            // In-order. Take only what the sink can hold and advance rcv_nxt
+            // by exactly that -- ACKing only what we actually kept. If the
+            // sink is full we leave the tail unacked; the peer retransmits it
+            // once the caller drains and calls us again with room. (Advancing
+            // by the full segment length while dropping the overflow -- the
+            // old behavior -- silently lost bytes on any transfer bigger than
+            // the receive buffer's free space, truncating large responses.)
+            let free = sink.len().saturating_sub(*got);
+            let take = n.min(free);
             sink[*got..*got + take].copy_from_slice(&data[..take]);
             *got += take;
             unsafe {
-                (*&raw mut CONN).rcv_nxt = expected.wrapping_add(n as u32);
+                (*&raw mut CONN).rcv_nxt = expected.wrapping_add(take as u32);
             }
-            ooo_drain(sink, got);
+            if take == n {
+                ooo_drain(sink, got);
+            }
             tcp_send(TCP_ACK, &[]);
         } else if seq_ge(seq, expected) {
             // Future data: buffer it and send a duplicate ACK for the gap.
             ooo_store(seq, data);
             tcp_send(TCP_ACK, &[]);
         } else {
-            // Already-received (a retransmit): re-ACK so the peer moves on.
+            // seq < rcv_nxt: a retransmit. If it overlaps past rcv_nxt (a peer
+            // resending from the original boundary after we ACKed only part of
+            // a segment), deliver the still-missing tail; otherwise just re-ACK.
+            let end = seq.wrapping_add(n as u32);
+            if seq_ge(end, expected) {
+                let skip = expected.wrapping_sub(seq) as usize;
+                if skip < n {
+                    let tail = &data[skip..];
+                    let free = sink.len().saturating_sub(*got);
+                    let take = tail.len().min(free);
+                    sink[*got..*got + take].copy_from_slice(&tail[..take]);
+                    *got += take;
+                    unsafe {
+                        (*&raw mut CONN).rcv_nxt = expected.wrapping_add(take as u32);
+                    }
+                    if take == tail.len() {
+                        ooo_drain(sink, got);
+                    }
+                }
+            }
             tcp_send(TCP_ACK, &[]);
         }
     }
@@ -604,6 +698,10 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
     if let Some(ip) = parse_ipv4(host) {
         return Some(ip);
     }
+    // Re-entrant: no-op cost when https_get/http_get already hold the lock,
+    // real acquisition when called standalone (terminal `dns`) concurrently
+    // with the background icon fetcher.
+    let _net = NetGuard::new();
     // Resolve the gateway MAC ONCE. Every server below routes through the
     // same gateway, so if the gateway is unreachable there's no point paying
     // the ARP timeout three times over -- bail immediately. `arp_gateway`
@@ -914,6 +1012,7 @@ pub fn parse_url(url: &str) -> Option<(&str, u16, &str, bool)> {
 /// failure. HTTP/1.0 keeps it simple: no chunked encoding, connection
 /// closes at end-of-body -- exactly the framing `tcp_read_to_end` gives.
 pub fn http_get(ip: [u8; 4], port: u16, path: &str, host: &str, body: &mut [u8]) -> Option<usize> {
+    let _net = NetGuard::new();
     if !tcp_connect(ip, port) {
         return None;
     }

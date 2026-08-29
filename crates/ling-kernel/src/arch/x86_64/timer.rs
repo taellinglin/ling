@@ -153,9 +153,31 @@ pub fn start_periodic(hz: u32) {
 /// with no drive/controller present, `cond` may simply never become true
 /// (a floating I/O bus reads back with status bits stuck set), and without
 /// a deadline that hangs the caller — and everything after it — forever.
+/// Last time (us) any `poll_until` handed the CPU to another cooperative task.
+/// Global so yields are throttled to ~frame cadence across back-to-back
+/// poll_until calls (a streaming download makes many), not per spin.
+static mut LAST_YIELD_US: u64 = 0;
+/// ~60 Hz: yield to other tasks at most this often. Short enough that the
+/// desktop still renders smoothly while a background fetch runs, long enough
+/// that a fast download isn't throttled to one segment per frame render.
+const YIELD_EVERY_US: u64 = 16_000;
+
 pub fn poll_until(timeout_us: u64, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = now_us() + timeout_us;
     loop {
+        // Hand the CPU to any other cooperative task at most ~every 16ms --
+        // this is what lets a background network fetch (the package manager's
+        // icon loader) run while the desktop keeps rendering, WITHOUT paying a
+        // full frame render on every microsecond spin (which made downloads
+        // crawl). Time-based, and checked even when data is ready, so a
+        // fast-streaming fetch still yields ~60x/sec. No-op when nothing else
+        // is Ready. Uses wrapping compare so the first call (LAST_YIELD_US=0)
+        // yields once immediately, then settles into cadence.
+        let t = now_us();
+        if t.wrapping_sub(unsafe { LAST_YIELD_US }) >= YIELD_EVERY_US {
+            crate::proc::sched::yield_now();
+            unsafe { LAST_YIELD_US = now_us() };
+        }
         if cond() {
             return true;
         }

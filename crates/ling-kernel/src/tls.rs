@@ -294,7 +294,12 @@ fn parse_server_key_share(sh: &[u8]) -> Option<[u8; 32]> {
 
 // ── Handshake driver ────────────────────────────────────────────────────────
 
-static mut RX: [u8; 32 * 1024] = [0; 32 * 1024];
+// Receive staging buffer for TLS records. 64KiB so a full ~32KiB advertised
+// window's worth of in-flight data (plus records mid-decrypt) fits without
+// the response loop having to compact on every read -- large bodies (the
+// ~84KiB package avatars, bigger web pages) stream through with far fewer
+// round trips.
+static mut RX: [u8; 64 * 1024] = [0; 64 * 1024];
 static mut TXBUF: [u8; 4096] = [0; 4096];
 
 /// Format `n` as decimal ASCII into `buf`, returning the number of bytes.
@@ -355,6 +360,10 @@ fn log_trunc(log: &mut dyn FnMut(&[u8]), label: &[u8], rtype: usize, rlen: usize
 /// Perform a TLS 1.3 handshake to `host:port`, GET `path`, and write the
 /// decrypted HTTP response into `out`. `log(msg)` receives progress/errors.
 pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dyn FnMut(&[u8])) -> Result<usize, &'static str> {
+    // Serialize network use across cooperative tasks (background icon fetcher
+    // vs. task 0). Re-entrant, so the dns_resolve just below re-acquires
+    // harmlessly. Released on every return via Drop.
+    let _net = netstack::NetGuard::new();
     let ip = netstack::dns_resolve(host).ok_or("could not resolve host")?;
     if !netstack::tcp_connect(ip, port) {
         return Err("connect failed");
@@ -407,6 +416,11 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         }
         // Ensure a full record is available (5-byte header + body).
         if pos + 5 > rxlen {
+            if rxlen >= rx.len() && pos > 0 {
+                rx.copy_within(pos..rxlen, 0);
+                rxlen -= pos;
+                pos = 0;
+            }
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
                 log_trunc(log, b"trunc-hdr", 0, 0, rxlen, pos);
@@ -419,8 +433,16 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         let rlen = ((rx[pos + 1 + 2] as usize) << 8) | rx[pos + 4] as usize;
         if pos + 5 + rlen > rxlen {
             if rxlen >= rx.len() {
-                log_trunc(log, b"too-large", rtype as usize, rlen, rxlen, pos);
-                return Err("record too large");
+                // Compact consumed handshake bytes to make room for a large
+                // cert flight instead of failing outright.
+                if pos > 0 {
+                    rx.copy_within(pos..rxlen, 0);
+                    rxlen -= pos;
+                    pos = 0;
+                } else {
+                    log_trunc(log, b"too-large", rtype as usize, rlen, rxlen, pos);
+                    return Err("record too large");
+                }
             }
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
@@ -571,8 +593,18 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
             break;
         }
         if pos + 5 > rxlen {
+            // Compact the already-consumed prefix to the front before every
+            // read, so the receive sink stays as large as possible. A small
+            // sink forces the netstack into frequent partial-takes and
+            // retransmit waits, which can exhaust the read budget mid-body and
+            // truncate large responses (e.g. the ~84KiB package avatars).
+            if pos > 0 {
+                rx.copy_within(pos..rxlen, 0);
+                rxlen -= pos;
+                pos = 0;
+            }
             if rxlen >= rx.len() {
-                break;
+                break; // a single record larger than rx -- give up
             }
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
@@ -583,6 +615,11 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         }
         let rlen = ((rx[pos + 3] as usize) << 8) | rx[pos + 4] as usize;
         if pos + 5 + rlen > rxlen {
+            if pos > 0 {
+                rx.copy_within(pos..rxlen, 0);
+                rxlen -= pos;
+                pos = 0;
+            }
             if rxlen >= rx.len() {
                 break;
             }

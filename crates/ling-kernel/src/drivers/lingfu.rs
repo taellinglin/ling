@@ -156,6 +156,25 @@ fn fetch(path: &str, out: &mut [u8]) -> Option<usize> {
     }
 }
 
+/// Fetch `path`'s response body from the official registry over HTTPS,
+/// ignoring any local `/repo` override -- for assets like package avatars
+/// that only the public host serves. Returns the body length in `out`.
+pub fn fetch_official(path: &str, out: &mut [u8]) -> Option<usize> {
+    let mut noop = |_: &[u8]| {};
+    match crate::tls::https_get(OFFICIAL_HOST, 443, path, out, &mut noop) {
+        Ok(n) if n > 0 => {
+            let off = crate::tls::http_body_offset(&out[..n]);
+            if off > 0 {
+                out.copy_within(off..n, 0);
+                Some(n - off)
+            } else {
+                Some(n)
+            }
+        },
+        _ => None,
+    }
+}
+
 /// Append one printable-ASCII byte to CATALOG at `w`, returning the new `w`.
 /// Non-ASCII (the registry carries Thai/CJK descriptions) is dropped -- the
 /// font is 8x8 ASCII, and the layout/list renderers skip it anyway.

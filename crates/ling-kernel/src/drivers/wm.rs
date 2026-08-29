@@ -827,6 +827,13 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         // blocking fetch now runs with real on-screen feedback, and the mouse
         // is resynced afterward. No-op on frames with nothing pending.
         pkgman::service();
+        // Package icons load in a background cooperative task rather than
+        // inline: spawn it once, then yield to it each frame so it can fetch +
+        // decode avatars while the desktop keeps rendering. The network waits
+        // inside the fetch yield back to us (timer::poll_until), so a large
+        // download never freezes the loop -- only a brief PNG decode does.
+        pkgman::ensure_icon_task();
+        crate::proc::sched::yield_now();
         // Serial diagnostic, once every 512 frames: proves whether IRQ12
         // bytes are flowing and where the driver thinks the cursor is --
         // the framebuffer regression lesson applied to input (a dead mouse
