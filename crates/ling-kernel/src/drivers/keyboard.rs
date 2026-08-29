@@ -31,10 +31,20 @@ const EXT_UP: u8 = 0x48;
 const EXT_DOWN: u8 = 0x50;
 const EXT_LEFT: u8 = 0x4B;
 const EXT_RIGHT: u8 = 0x4D;
+const EXT_HOME: u8 = 0x47;
+const EXT_END: u8 = 0x4F;
+const EXT_PGUP: u8 = 0x49;
+const EXT_PGDN: u8 = 0x51;
 pub const UP_ARROW: u8 = 0x11;
 pub const DOWN_ARROW: u8 = 0x12;
 pub const LEFT_ARROW: u8 = 0x13;
 pub const RIGHT_ARROW: u8 = 0x14;
+// Paging/navigation keys, reported as DC-range control codes nothing else
+// uses (0x15..0x18) -- same rationale as the arrows above.
+pub const HOME_KEY: u8 = 0x15;
+pub const END_KEY: u8 = 0x16;
+pub const PGUP_KEY: u8 = 0x17;
+pub const PGDN_KEY: u8 = 0x18;
 
 // Ctrl-chords, reported in a dedicated 0x80+ range: raw ASCII control
 // codes (letter & 0x1F) would collide with the arrows above (Ctrl+Q/R/S/T
@@ -276,6 +286,18 @@ pub fn read_char() -> u8 {
                 if code == EXT_RIGHT {
                     return RIGHT_ARROW;
                 }
+                if code == EXT_HOME {
+                    return HOME_KEY;
+                }
+                if code == EXT_END {
+                    return END_KEY;
+                }
+                if code == EXT_PGUP {
+                    return PGUP_KEY;
+                }
+                if code == EXT_PGDN {
+                    return PGDN_KEY;
+                }
                 continue;
             }
             if code == LCTRL {
@@ -369,6 +391,18 @@ pub fn poll_char() -> u8 {
                 }
                 if code == EXT_RIGHT {
                     return RIGHT_ARROW;
+                }
+                if code == EXT_HOME {
+                    return HOME_KEY;
+                }
+                if code == EXT_END {
+                    return END_KEY;
+                }
+                if code == EXT_PGUP {
+                    return PGUP_KEY;
+                }
+                if code == EXT_PGDN {
+                    return PGDN_KEY;
                 }
                 return 0;
             }

@@ -18,7 +18,10 @@ static mut BODY: [u8; 120 * 1024] = [0; 120 * 1024];
 static mut CUR_URL: [u8; MAX_URL] = [0; MAX_URL];
 static mut CUR_URL_LEN: usize = 0;
 static mut SCROLL: usize = 0;
-static mut STATUS: &'static str = "press u for a URL, 1-9 follow links, arrows scroll";
+/// Visible content rows, captured by `draw_page` so the scroll helpers can
+/// page and clamp against the real viewport height.
+static mut VISIBLE_ROWS: usize = 20;
+static mut STATUS: &'static str = "arrows/PgUp/PgDn/Home/End scroll, 1-9 follow links";
 
 fn page() -> &'static mut Page {
     unsafe { &mut *&raw mut PAGE }
@@ -120,8 +123,9 @@ pub fn go(url: &str, cols: usize) -> bool {
 
 /// Navigate from the URL/search bar: if `input` looks like a URL, go to
 /// it (prepending http:// when it has no scheme); otherwise treat it as a
-/// search and route through frogfind.com -- a plain-HTTP search proxy
-/// built for vintage browsers, so search works without a TLS stack.
+/// search and route through DuckDuckGo's HTML endpoint over HTTPS. DDG's
+/// `lite` view is server-rendered plain HTML (no JavaScript), so it lays out
+/// cleanly in the text-flow engine and its result links follow normally.
 pub fn navigate(input: &str, cols: usize) -> bool {
     let s = input.trim();
     if s.is_empty() {
@@ -132,9 +136,9 @@ pub fn navigate(input: &str, cols: usize) -> bool {
     if looks_url {
         return go(s, cols);
     }
-    // Search: http://frogfind.com/?q=<url-encoded input>
+    // Search: https://lite.duckduckgo.com/lite/?q=<url-encoded input>
     let mut url = [0u8; 400];
-    let prefix = b"http://frogfind.com/?q=";
+    let prefix = b"https://lite.duckduckgo.com/lite/?q=";
     let mut n = prefix.len();
     url[..n].copy_from_slice(prefix);
     for &b in s.as_bytes() {
@@ -164,45 +168,218 @@ pub fn navigate(input: &str, cols: usize) -> bool {
     go(target, cols)
 }
 
-/// Follow link number `n` (1-based, as displayed). Root-relative and
-/// absolute http URLs work; https and protocol-relative are refused with
-/// a status message.
+/// Copy `s` into `out` at `w`, advancing `w`; false if it wouldn't fit.
+fn push_bytes(out: &mut [u8], w: &mut usize, s: &[u8]) -> bool {
+    if *w + s.len() > out.len() {
+        return false;
+    }
+    out[*w..*w + s.len()].copy_from_slice(s);
+    *w += s.len();
+    true
+}
+
+/// Normalize a path's `.`/`..` segments, writing the result (leading '/',
+/// trailing '/' preserved) to `out` at `w`. `path` is the path only (no query).
+fn normalize_path(path: &[u8], out: &mut [u8], w: &mut usize) -> bool {
+    let mut segs: [(usize, usize); 64] = [(0, 0); 64];
+    let mut n = 0usize;
+    let plen = path.len();
+    let mut i = 0usize;
+    while i < plen {
+        while i < plen && path[i] == b'/' {
+            i += 1;
+        }
+        let s = i;
+        while i < plen && path[i] != b'/' {
+            i += 1;
+        }
+        if i > s {
+            let seg = &path[s..i];
+            if seg == b"." {
+                // current dir: drop
+            } else if seg == b".." {
+                if n > 0 {
+                    n -= 1;
+                }
+            } else if n < segs.len() {
+                segs[n] = (s, i - s);
+                n += 1;
+            }
+        }
+    }
+    if n == 0 {
+        return push_bytes(out, w, b"/");
+    }
+    for &(s, l) in &segs[..n] {
+        if !push_bytes(out, w, b"/") || !push_bytes(out, w, &path[s..s + l]) {
+            return false;
+        }
+    }
+    if plen > 0 && path[plen - 1] == b'/' {
+        return push_bytes(out, w, b"/");
+    }
+    true
+}
+
+/// Resolve `href` against absolute `base` into `out`, returning the length.
+/// Handles absolute, protocol-relative (`//host/p`), root-relative (`/p`),
+/// query-only (`?q`), fragment-only (`#f`), and dot-relative (`x`, `./x`,
+/// `../x`) references -- enough for real intra-site navigation.
+fn resolve_url(base: &str, href: &str, out: &mut [u8]) -> Option<usize> {
+    let mut w = 0usize;
+    // Already absolute.
+    if href.starts_with("http://") || href.starts_with("https://") {
+        return push_bytes(out, &mut w, href.as_bytes()).then_some(w);
+    }
+    // Split base into scheme, host, and path (path begins with '/').
+    let (scheme, rest) = if let Some(r) = base.strip_prefix("https://") {
+        ("https://", r)
+    } else if let Some(r) = base.strip_prefix("http://") {
+        ("http://", r)
+    } else {
+        ("http://", base)
+    };
+    // Protocol-relative: keep base's scheme, take href's host+path.
+    if let Some(rel) = href.strip_prefix("//") {
+        let colon = &scheme[..scheme.len() - 2]; // "https:" / "http:"
+        if !push_bytes(out, &mut w, colon.as_bytes())
+            || !push_bytes(out, &mut w, b"//")
+            || !push_bytes(out, &mut w, rel.as_bytes())
+        {
+            return None;
+        }
+        return Some(w);
+    }
+    let host_end = rest.find('/').unwrap_or(rest.len());
+    let host = &rest[..host_end];
+    let raw_path = if host_end < rest.len() { &rest[host_end..] } else { "/" };
+    // Base path without its own query/fragment.
+    let base_path = {
+        let b = raw_path.as_bytes();
+        let mut e = b.len();
+        for (i, &c) in b.iter().enumerate() {
+            if c == b'?' || c == b'#' {
+                e = i;
+                break;
+            }
+        }
+        &raw_path[..e]
+    };
+    // Split href into a path part and a query/fragment tail.
+    let (href_path, tail) = {
+        let b = href.as_bytes();
+        let mut cut = b.len();
+        for (i, &c) in b.iter().enumerate() {
+            if c == b'?' || c == b'#' {
+                cut = i;
+                break;
+            }
+        }
+        (&href[..cut], &href[cut..])
+    };
+
+    // Everything below is scheme://host + normalized path + tail.
+    if !push_bytes(out, &mut w, scheme.as_bytes()) || !push_bytes(out, &mut w, host.as_bytes()) {
+        return None;
+    }
+
+    if href.starts_with('#') || href.starts_with('?') {
+        // Same document: reuse the base path, apply href's tail (the fragment
+        // is dropped -- our engine has no in-page anchors, so it just reloads).
+        if !push_bytes(out, &mut w, base_path.as_bytes()) {
+            return None;
+        }
+        if href.starts_with('?') && !push_bytes(out, &mut w, tail.as_bytes()) {
+            return None;
+        }
+        return Some(w);
+    }
+
+    if href_path.starts_with('/') {
+        // Root-relative.
+        if !normalize_path(href_path.as_bytes(), out, &mut w) {
+            return None;
+        }
+    } else {
+        // Dot-relative: resolve against the base path's directory.
+        let bp = base_path.as_bytes();
+        let dir_end = bp.iter().rposition(|&c| c == b'/').map(|i| i + 1).unwrap_or(0);
+        let mut combined = [0u8; 512];
+        let mut cn = 0usize;
+        if !push_bytes(&mut combined, &mut cn, &bp[..dir_end])
+            || !push_bytes(&mut combined, &mut cn, href_path.as_bytes())
+        {
+            return None;
+        }
+        if !normalize_path(&combined[..cn], out, &mut w) {
+            return None;
+        }
+    }
+    // Preserve a query string from the href (fragment dropped).
+    if tail.starts_with('?') && !push_bytes(out, &mut w, tail.as_bytes()) {
+        return None;
+    }
+    Some(w)
+}
+
+/// Follow link number `n` (1-based, as displayed), resolving its href against
+/// the current page URL. Absolute, root-relative, and dot-relative links all
+/// navigate; https works too now.
 pub fn follow(n: usize, cols: usize) -> bool {
     let p = page();
     if n == 0 || n > p.link_count {
         return false;
     }
-    let href = p.links[n - 1];
-    let href = core::str::from_utf8(href.href()).unwrap_or("");
+    let mut href_buf = [0u8; MAX_URL];
+    let hb = p.links[n - 1].href();
+    let hn = hb.len().min(href_buf.len());
+    href_buf[..hn].copy_from_slice(&hb[..hn]);
+    let Ok(href) = core::str::from_utf8(&href_buf[..hn]) else { return false };
+
+    let mut cur_buf = [0u8; MAX_URL];
+    let cb = current_url().as_bytes();
+    let cn = cb.len().min(cur_buf.len());
+    cur_buf[..cn].copy_from_slice(&cb[..cn]);
+    let Ok(base) = core::str::from_utf8(&cur_buf[..cn]) else { return false };
+
     let mut url_buf = [0u8; MAX_URL * 2];
-    let target: &str = if href.starts_with("http://") || href.starts_with("https://") {
-        href
-    } else if href.starts_with('/') {
-        // Same host: splice scheme+host[:port] from the current URL.
-        let cur = current_url();
-        let after_scheme = cur.strip_prefix("http://").unwrap_or(cur);
-        let host_end = after_scheme.find('/').unwrap_or(after_scheme.len());
-        let prefix_len = 7 + host_end;
-        let total = prefix_len + href.len();
-        if total > url_buf.len() {
-            return false;
-        }
-        url_buf[..prefix_len].copy_from_slice(&cur.as_bytes()[..prefix_len]);
-        url_buf[prefix_len..total].copy_from_slice(href.as_bytes());
-        core::str::from_utf8(&url_buf[..total]).unwrap_or("")
-    } else {
-        unsafe { STATUS = "relative links beyond '/' aren't resolved yet" };
+    let Some(len) = resolve_url(base, href, &mut url_buf) else {
+        unsafe { STATUS = "link URL too long to resolve" };
         return false;
     };
+    let Ok(target) = core::str::from_utf8(&url_buf[..len]) else { return false };
     go(target, cols)
 }
 
-pub fn scroll(delta: i32, visible_rows: usize) {
+/// Largest valid scroll offset: keep at least a couple of lines on screen.
+fn scroll_max() -> usize {
+    let vis = unsafe { VISIBLE_ROWS }.max(1);
+    page().line_count.saturating_sub(vis.saturating_sub(2))
+}
+
+/// Scroll by `delta` lines (negative = up).
+pub fn scroll(delta: i32) {
     unsafe {
-        let max = page().line_count.saturating_sub(visible_rows / 2);
-        let s = SCROLL as i64 + delta as i64;
-        SCROLL = s.clamp(0, max as i64) as usize;
+        let s = (SCROLL as i64 + delta as i64).clamp(0, scroll_max() as i64);
+        SCROLL = s as usize;
     }
+}
+
+/// Scroll by one viewport (dir -1 = up, +1 = down), keeping a couple of lines
+/// of overlap for continuity.
+pub fn scroll_page(dir: i32) {
+    let step = (unsafe { VISIBLE_ROWS }.max(3) - 2) as i32;
+    scroll(dir * step);
+}
+
+/// Jump to the top of the page.
+pub fn scroll_home() {
+    unsafe { SCROLL = 0 };
+}
+
+/// Jump to the bottom of the page.
+pub fn scroll_end() {
+    unsafe { SCROLL = scroll_max() };
 }
 
 fn line_color(kind: LineKind, link: u8, bold: bool) -> u32 {
@@ -232,6 +409,7 @@ pub fn draw_page(x: u32, y: u32, _w: u32, h: u32) {
     let dim = theme::color(theme::SLOT_DIM);
     let row_h = 14u32;
     let rows = (h.saturating_sub(20) / row_h) as usize;
+    unsafe { VISIBLE_ROWS = rows };
 
     font8x8::draw_str(x, y, status().as_bytes(), dim, panel);
 

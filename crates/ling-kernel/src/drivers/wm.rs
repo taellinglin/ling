@@ -459,8 +459,12 @@ fn web_key(k: u8) {
             return;
         }
         match k {
-            0x11 => browser::scroll(-3, 24),
-            0x12 => browser::scroll(3, 24),
+            0x11 => browser::scroll(-3),                              // up
+            0x12 => browser::scroll(3),                               // down
+            crate::drivers::keyboard::PGUP_KEY => browser::scroll_page(-1),
+            crate::drivers::keyboard::PGDN_KEY => browser::scroll_page(1),
+            crate::drivers::keyboard::HOME_KEY => browser::scroll_home(),
+            crate::drivers::keyboard::END_KEY => browser::scroll_end(),
             b'1'..=b'9' => {
                 browser::follow((k - b'0') as usize, WEB_COLS);
             },
