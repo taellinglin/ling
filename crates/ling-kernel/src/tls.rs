@@ -294,6 +294,10 @@ fn parse_server_key_share(sh: &[u8]) -> Option<[u8; 32]> {
 
 // ── Handshake driver ────────────────────────────────────────────────────────
 
+/// Diagnostic timing of the last https_get: handshake vs. download microseconds.
+pub static mut LAST_HS_US: u64 = 0;
+pub static mut LAST_DL_US: u64 = 0;
+
 // Receive staging buffer for TLS records. 64KiB so a full ~32KiB advertised
 // window's worth of in-flight data (plus records mid-decrypt) fits without
 // the response loop having to compact on every read -- large bodies (the
@@ -324,6 +328,11 @@ fn u_to_dec(mut n: usize, buf: &mut [u8]) -> usize {
         k += 1;
     }
     k
+}
+
+/// Public decimal formatter for diagnostics in other modules.
+pub fn u_to_dec_pub(n: usize, buf: &mut [u8]) -> usize {
+    u_to_dec(n, buf)
 }
 
 /// Emit a "tls: <label> rtype=.. rlen=.. rxlen=.. pos=..\n" diagnostic line.
@@ -357,13 +366,39 @@ fn log_trunc(log: &mut dyn FnMut(&[u8]), label: &[u8], rtype: usize, rlen: usize
     log(&m[..k]);
 }
 
-/// Perform a TLS 1.3 handshake to `host:port`, GET `path`, and write the
-/// decrypted HTTP response into `out`. `log(msg)` receives progress/errors.
+/// One-shot: TLS 1.3 handshake to `host:port`, GET `path` with `Connection:
+/// close`, and write the full decrypted HTTP response (headers + body) into
+/// `out`. `log(msg)` receives progress/errors. For fetching several resources
+/// from one host, prefer the keep-alive session API (`https_open` /
+/// `https_next` / `https_close`) -- it pays the ~190ms handshake once.
 pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dyn FnMut(&[u8])) -> Result<usize, &'static str> {
     // Serialize network use across cooperative tasks (background icon fetcher
-    // vs. task 0). Re-entrant, so the dns_resolve just below re-acquires
+    // vs. task 0). Re-entrant, so tls_handshake's dns_resolve re-acquires
     // harmlessly. Released on every return via Drop.
     let _net = netstack::NetGuard::new();
+    let t0 = crate::arch::timer::now_us();
+    let (mut c_app, mut s_app, pos, rxlen) = tls_handshake(host, port, log)?;
+    let tx = unsafe { &mut *&raw mut TXBUF };
+    let rx = unsafe { &mut *&raw mut RX };
+    let mut req = [0u8; 512];
+    let rn = build_get(host, path, false, &mut req);
+    let m = encrypt_record(&mut c_app, 0x17, &req[..rn], tx);
+    if !netstack::tcp_write(&tx[..m]) {
+        return Err("write GET failed");
+    }
+    log(b"tls: GET sent (encrypted)\n");
+    let t_get = crate::arch::timer::now_us();
+    unsafe { LAST_HS_US = t_get.wrapping_sub(t0) };
+    let (total, _p, _r) = read_response(&mut s_app, rx, pos, rxlen, out, false);
+    unsafe { LAST_DL_US = crate::arch::timer::now_us().wrapping_sub(t_get) };
+    Ok(total)
+}
+
+/// Run a full TLS 1.3 handshake to `host:port` and derive application traffic
+/// keys. Returns `(client_app_keys, server_app_keys, pos, rxlen)` where
+/// pos/rxlen mark bytes already buffered in the static RX after the handshake.
+/// The caller holds the net lock and then sends its GET(s).
+fn tls_handshake(host: &str, port: u16, log: &mut dyn FnMut(&[u8])) -> Result<(Keys, Keys, usize, usize), &'static str> {
     let ip = netstack::dns_resolve(host).ok_or("could not resolve host")?;
     if !netstack::tcp_connect(ip, port) {
         return Err("connect failed");
@@ -571,40 +606,41 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
     }
     log(b"tls: client Finished sent\n");
 
-    // Switch to application traffic keys and send the GET.
-    let mut c_app = traffic_keys(&c_ap);
-    let mut s_app = traffic_keys(&s_ap);
-    let mut req = [0u8; 512];
-    let rn = build_get(host, path, &mut req);
-    let m = encrypt_record(&mut c_app, 0x17, &req[..rn], tx);
-    if !netstack::tcp_write(&tx[..m]) {
-        return Err("write GET failed");
-    }
-    log(b"tls: GET sent (encrypted)\n");
+    let c_app = traffic_keys(&c_ap);
+    let s_app = traffic_keys(&s_ap);
+    Ok((c_app, s_app, pos, rxlen))
+}
 
-    // Read + decrypt the response records under the server app key. Post-
-    // handshake NewSessionTickets (inner type 0x16) are skipped; application
-    // data (0x17) is collected; an alert (0x15) ends the stream.
+/// Read + decrypt the HTTP response into `out`, returning `(bytes_written,
+/// new_pos, new_rxlen)`. With `keep_alive`, stops once the Content-Length body
+/// is fully received (leaving the connection open for the next request);
+/// otherwise reads until the peer closes. Post-handshake NewSessionTickets
+/// (inner type 0x16) are skipped; application data (0x17) is collected; an
+/// alert (0x15) ends the stream. rx is compacted before each read so the
+/// receive sink stays large (avoids partial-take/retransmit stalls on big
+/// bodies -- the ~84KiB package avatars).
+fn read_response(s_app: &mut Keys, rx: &mut [u8], mut pos: usize, mut rxlen: usize, out: &mut [u8], keep_alive: bool) -> (usize, usize, usize) {
     let mut total = 0usize;
+    let mut want: Option<usize> = None; // headers_end + content_length
     let mut guard2 = 0;
     loop {
         guard2 += 1;
         if guard2 > 8000 {
             break;
         }
+        if let Some(w) = want {
+            if total >= w {
+                break; // keep-alive: full body received
+            }
+        }
         if pos + 5 > rxlen {
-            // Compact the already-consumed prefix to the front before every
-            // read, so the receive sink stays as large as possible. A small
-            // sink forces the netstack into frequent partial-takes and
-            // retransmit waits, which can exhaust the read budget mid-body and
-            // truncate large responses (e.g. the ~84KiB package avatars).
             if pos > 0 {
                 rx.copy_within(pos..rxlen, 0);
                 rxlen -= pos;
                 pos = 0;
             }
             if rxlen >= rx.len() {
-                break; // a single record larger than rx -- give up
+                break;
             }
             let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
@@ -642,13 +678,20 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         }
         tmp[..rlen].copy_from_slice(&rx[pos + 5..pos + 5 + rlen]);
         pos += 5 + rlen;
-        let Some((ctype, plen)) = decrypt_record(&mut s_app, &hdr, &mut tmp[..rlen]) else {
+        let Some((ctype, plen)) = decrypt_record(s_app, &hdr, &mut tmp[..rlen]) else {
             break;
         };
         if ctype == 0x17 {
             let take = plen.min(out.len() - total);
             out[total..total + take].copy_from_slice(&tmp[..take]);
             total += take;
+            // Once headers are complete, learn Content-Length for keep-alive framing.
+            if keep_alive && want.is_none() {
+                let he = http_body_offset(&out[..total]);
+                if he > 0 {
+                    want = Some(he + parse_content_length(&out[..he]).unwrap_or(0));
+                }
+            }
             if total >= out.len() {
                 break;
             }
@@ -656,7 +699,92 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
             break; // alert (close_notify)
         }
     }
-    Ok(total)
+    (total, pos, rxlen)
+}
+
+// -- Keep-alive session: one handshake, many GETs -------------------------
+// For fetching several resources from one host (the package manager's avatar
+// icons; a web page's sub-resources) without paying the ~190ms TLS handshake
+// each time. The net lock is held for the whole session (open..close) so no
+// other cooperative task disturbs the shared TCP connection mid-session.
+struct Session {
+    active: bool,
+    c_app: Keys,
+    s_app: Keys,
+    pos: usize,
+    rxlen: usize,
+}
+static mut SESSION: Session = Session {
+    active: false,
+    c_app: Keys { key: [0; 32], iv: [0; 12], seq: 0 },
+    s_app: Keys { key: [0; 32], iv: [0; 12], seq: 0 },
+    pos: 0,
+    rxlen: 0,
+};
+
+/// Open a keep-alive TLS session to `host:port` (one handshake). Acquires the
+/// net lock for the whole session. Returns false (and releases) on failure.
+pub fn https_open(host: &str, port: u16, log: &mut dyn FnMut(&[u8])) -> bool {
+    netstack::net_acquire();
+    match tls_handshake(host, port, log) {
+        Ok((c_app, s_app, pos, rxlen)) => {
+            unsafe {
+                let s = &mut *&raw mut SESSION;
+                s.c_app = c_app;
+                s.s_app = s_app;
+                s.pos = pos;
+                s.rxlen = rxlen;
+                s.active = true;
+            }
+            true
+        },
+        Err(_) => {
+            netstack::net_release();
+            false
+        },
+    }
+}
+
+/// Fetch `path` over the open session (HTTP/1.1 keep-alive), writing the full
+/// response (headers + body) to `out`. Returns the byte count, or None if
+/// there's no active session or the request failed (the session is then
+/// marked closed). Framed by Content-Length so the connection stays open.
+pub fn https_next(host: &str, path: &str, out: &mut [u8]) -> Option<usize> {
+    unsafe {
+        let s = &mut *&raw mut SESSION;
+        if !s.active {
+            return None;
+        }
+        let tx = &mut *&raw mut TXBUF;
+        let rx = &mut *&raw mut RX;
+        let mut req = [0u8; 512];
+        let rn = build_get(host, path, true, &mut req);
+        let m = encrypt_record(&mut s.c_app, 0x17, &req[..rn], tx);
+        if !netstack::tcp_write(&tx[..m]) {
+            s.active = false;
+            return None;
+        }
+        let (spos, srxlen) = (s.pos, s.rxlen);
+        let (total, pos, rxlen) = read_response(&mut s.s_app, rx, spos, srxlen, out, true);
+        s.pos = pos;
+        s.rxlen = rxlen;
+        if total == 0 {
+            s.active = false;
+            return None;
+        }
+        Some(total)
+    }
+}
+
+/// Close the keep-alive session and release the net lock. Idempotent.
+pub fn https_close() {
+    unsafe {
+        let s = &mut *&raw mut SESSION;
+        if s.active {
+            s.active = false;
+            netstack::net_release();
+        }
+    }
 }
 
 /// Offset of the HTTP body within a raw response (past the CRLFCRLF header
@@ -673,7 +801,7 @@ pub fn http_body_offset(resp: &[u8]) -> usize {
     0
 }
 
-fn build_get(host: &str, path: &str, out: &mut [u8]) -> usize {
+fn build_get(host: &str, path: &str, keep_alive: bool, out: &mut [u8]) -> usize {
     let mut n = 0;
     let mut put = |s: &[u8]| {
         out[n..n + s.len()].copy_from_slice(s);
@@ -683,6 +811,45 @@ fn build_get(host: &str, path: &str, out: &mut [u8]) -> usize {
     put(path.as_bytes());
     put(b" HTTP/1.1\r\nHost: ");
     put(host.as_bytes());
-    put(b"\r\nConnection: close\r\nUser-Agent: LingOS\r\n\r\n");
+    if keep_alive {
+        put(b"\r\nConnection: keep-alive\r\nUser-Agent: LingOS\r\n\r\n");
+    } else {
+        put(b"\r\nConnection: close\r\nUser-Agent: LingOS\r\n\r\n");
+    }
     n
+}
+
+/// Parse a `Content-Length:` value out of HTTP response headers (case-
+/// insensitive), or None if absent. Used for keep-alive response framing.
+fn parse_content_length(headers: &[u8]) -> Option<usize> {
+    let key = b"content-length:";
+    let n = headers.len();
+    let mut i = 0;
+    while i + key.len() <= n {
+        let mut m = true;
+        for j in 0..key.len() {
+            if headers[i + j].to_ascii_lowercase() != key[j] {
+                m = false;
+                break;
+            }
+        }
+        if m {
+            let mut k = i + key.len();
+            while k < n && (headers[k] == b' ' || headers[k] == b'\t') {
+                k += 1;
+            }
+            let mut v = 0usize;
+            let mut any = false;
+            while k < n && headers[k].is_ascii_digit() {
+                v = v * 10 + (headers[k] - b'0') as usize;
+                any = true;
+                k += 1;
+            }
+            if any {
+                return Some(v);
+            }
+        }
+        i += 1;
+    }
+    None
 }

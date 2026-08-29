@@ -175,6 +175,34 @@ pub fn fetch_official(path: &str, out: &mut [u8]) -> Option<usize> {
     }
 }
 
+/// Open a keep-alive session to the official registry (one TLS handshake for a
+/// whole batch of fetches, e.g. package icons). Pair with `close_official`.
+pub fn open_official() -> bool {
+    let mut noop = |_: &[u8]| {};
+    crate::tls::https_open(OFFICIAL_HOST, 443, &mut noop)
+}
+
+/// Fetch `path`'s body over the open official session. Returns body length.
+pub fn next_official(path: &str, out: &mut [u8]) -> Option<usize> {
+    match crate::tls::https_next(OFFICIAL_HOST, path, out) {
+        Some(n) if n > 0 => {
+            let off = crate::tls::http_body_offset(&out[..n]);
+            if off > 0 {
+                out.copy_within(off..n, 0);
+                Some(n - off)
+            } else {
+                Some(n)
+            }
+        },
+        _ => None,
+    }
+}
+
+/// Close the official keep-alive session (releases the net lock).
+pub fn close_official() {
+    crate::tls::https_close();
+}
+
 /// Append one printable-ASCII byte to CATALOG at `w`, returning the new `w`.
 /// Non-ASCII (the registry carries Thai/CJK descriptions) is dropped -- the
 /// font is 8x8 ASCII, and the layout/list renderers skip it anyway.

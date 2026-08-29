@@ -100,14 +100,32 @@ pub fn service() {
 }
 
 /// Background icon loader task. Spawned once (see `ensure_icon_task`), it runs
-/// on the cooperative scheduler: it fetches one on-screen package icon at a
-/// time and yields between, so the desktop keeps rendering while avatars stream
-/// in. The network waits inside the fetch yield too (see timer::poll_until), so
-/// even a single 84KiB download doesn't freeze the UI -- only the brief PNG
-/// decode is CPU-bound.
+/// on the cooperative scheduler. When any on-screen icon still needs loading it
+/// opens ONE keep-alive TLS session and fetches the whole visible batch over it
+/// -- paying the ~190ms handshake once, then ~60ms per image -- yielding
+/// between each so the desktop keeps rendering while avatars stream in. The
+/// network waits inside each fetch also yield (see timer::poll_until), so even
+/// a large download never freezes the UI; only the brief PNG decode is
+/// CPU-bound. Loaded/failed icons are never re-fetched, so this never loops on
+/// the network once the visible set is resolved.
 extern "C" fn icon_task() {
     loop {
-        fetch_one_icon();
+        if next_pending_icon().is_some() {
+            if lingfu::open_official() {
+                while let Some(idx) = next_pending_icon() {
+                    fetch_icon(idx);
+                    crate::proc::sched::yield_now();
+                }
+                lingfu::close_official();
+            } else {
+                // Handshake failed (host unreachable): mark the visible batch
+                // failed so we don't retry an expensive connect every frame.
+                // A manual resync (S) clears icon state and tries again.
+                while let Some(idx) = next_pending_icon() {
+                    unsafe { ICON_STATE[idx] = ICON_FAILED };
+                }
+            }
+        }
         crate::proc::sched::yield_now();
     }
 }
@@ -126,30 +144,38 @@ pub fn ensure_icon_task() {
     crate::proc::sched::spawn(icon_task as *const () as usize as u64);
 }
 
-/// Fetch and cache the next not-yet-loaded on-screen package icon, if any.
-/// Runs in the background task; a cheap no-op when the Packages catalog isn't
-/// synced or every visible icon is already loaded.
-fn fetch_one_icon() {
+/// The next visible package index whose icon hasn't been fetched yet, or None.
+/// Cheap: a no-op scan when the catalog isn't synced or all visible icons are
+/// already resolved.
+fn next_pending_icon() -> Option<usize> {
     if !unsafe { SYNCED } {
-        return;
+        return None;
     }
     let count = line_count();
     if count == 0 {
-        return;
+        return None;
     }
     let (start, end) = unsafe { (VIS_START, VIS_END.min(count).min(MAX_ICONS)) };
-    // Find the next visible package whose icon hasn't been fetched yet.
-    let mut target = None;
     let mut i = start;
     while i < end {
         if unsafe { ICON_STATE[i] } == ICON_EMPTY {
-            target = Some(i);
-            break;
+            return Some(i);
         }
         i += 1;
     }
-    let Some(idx) = target else { return };
-    let Some(line) = nth_line(idx) else { return };
+    None
+}
+
+/// Fetch + decode the avatar for catalog index `idx` over the open session,
+/// caching the thumbnail. Decodes into ICON_PX first, then flips state to
+/// READY last -- the draw task only reads pixels once state is READY, and no
+/// yield happens between the decode and the flip, so it never sees a
+/// half-written thumbnail.
+fn fetch_icon(idx: usize) {
+    let Some(line) = nth_line(idx) else {
+        unsafe { ICON_STATE[idx] = ICON_FAILED };
+        return;
+    };
     let name = field(line, 0);
 
     // Build "/avatars/pkg-<name>.auto.png".
@@ -178,11 +204,7 @@ fn fetch_one_icon() {
     };
 
     let dl = unsafe { &mut *&raw mut ICON_DL };
-    // Decode into ICON_PX first, then flip the state to READY as the last
-    // step -- the draw task only reads the pixels once state is READY, and no
-    // yield happens between the decode and the flip, so it never sees a
-    // half-written thumbnail.
-    let ok = match lingfu::fetch_official(pathstr, dl) {
+    let ok = match lingfu::next_official(pathstr, dl) {
         Some(len) if len > 8 => decode_into_icon(&dl[..len], idx),
         _ => false,
     };
