@@ -83,8 +83,12 @@ pub fn go(url: &str, cols: usize) -> bool {
                 body_off = crate::tls::http_body_offset(&body[..n]);
                 n
             },
-            _ => {
-                unsafe { STATUS = "https fetch failed (handshake, timeout, or empty)" };
+            Ok(_) => {
+                unsafe { STATUS = "https: empty response" };
+                return false;
+            },
+            Err(e) => {
+                unsafe { STATUS = e };
                 return false;
             },
         }

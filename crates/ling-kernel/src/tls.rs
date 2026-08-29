@@ -324,7 +324,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
 
     // Read the server's first flight into RX.
     let rx = unsafe { &mut *&raw mut RX };
-    let mut rxlen = netstack::tcp_read_some(rx, 5_000_000);
+    let mut rxlen = netstack::tcp_read_some(rx, 8_000_000);
     if rxlen == 0 {
         return Err("no ServerHello");
     }
@@ -352,7 +352,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
         }
         // Ensure a full record is available (5-byte header + body).
         if pos + 5 > rxlen {
-            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
                 return Err("truncated handshake");
             }
@@ -365,7 +365,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
             if rxlen >= rx.len() {
                 return Err("record too large");
             }
-            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
                 return Err("truncated record");
             }
@@ -516,7 +516,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
             if rxlen >= rx.len() {
                 break;
             }
-            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
                 break;
             }
@@ -528,7 +528,7 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
             if rxlen >= rx.len() {
                 break;
             }
-            let n = netstack::tcp_read_some(&mut rx[rxlen..], 3_000_000);
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 6_000_000);
             if n == 0 {
                 break;
             }
