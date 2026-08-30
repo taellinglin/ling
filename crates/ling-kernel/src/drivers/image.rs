@@ -297,6 +297,163 @@ fn fill_poly(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32) {
 }
 
 /// Parse a path `d` string into filled polygons (subpaths), sampling curves.
+// ── Affine transforms (SVG transform= + viewBox mapping) ────────────────────
+// A 2x3 affine matrix [a,b,c,d,e,f]: x' = a*x + c*y + e, y' = b*x + d*y + f.
+type Mat = [f64; 6];
+const MAT_ID: Mat = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+
+/// Compose `m` after `n` (apply n first, then m): result = m * n.
+fn mat_mul(m: Mat, n: Mat) -> Mat {
+    [
+        m[0] * n[0] + m[2] * n[1],
+        m[1] * n[0] + m[3] * n[1],
+        m[0] * n[2] + m[2] * n[3],
+        m[1] * n[2] + m[3] * n[3],
+        m[0] * n[4] + m[2] * n[5] + m[4],
+        m[1] * n[4] + m[3] * n[5] + m[5],
+    ]
+}
+
+fn mat_apply(m: &Mat, x: f64, y: f64) -> (f64, f64) {
+    (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
+}
+
+/// Parse an SVG `transform` attribute (translate/scale/rotate/matrix, possibly
+/// several, applied left to right) into a single matrix.
+fn parse_transform(s: &str) -> Mat {
+    let mut m = MAT_ID;
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        // function name
+        while i < b.len() && !(b[i] as char).is_ascii_alphabetic() {
+            i += 1;
+        }
+        let ns = i;
+        while i < b.len() && (b[i] as char).is_ascii_alphabetic() {
+            i += 1;
+        }
+        if i >= b.len() || ns == i {
+            break;
+        }
+        let name = &s[ns..i];
+        // args in ( ... )
+        while i < b.len() && b[i] != b'(' {
+            i += 1;
+        }
+        if i >= b.len() {
+            break;
+        }
+        i += 1;
+        let as_ = i;
+        while i < b.len() && b[i] != b')' {
+            i += 1;
+        }
+        let args = &s[as_..i.min(b.len())];
+        if i < b.len() {
+            i += 1;
+        }
+        let mut nums = [0f64; 6];
+        let mut n = 0;
+        for tok in args.split(|c| c == ' ' || c == ',' || c == '\t' || c == '\n').filter(|x| !x.is_empty()) {
+            if n < 6 {
+                nums[n] = svg_num(tok);
+                n += 1;
+            }
+        }
+        let t = match name {
+            "translate" => [1.0, 0.0, 0.0, 1.0, nums[0], if n > 1 { nums[1] } else { 0.0 }],
+            "scale" => [nums[0], 0.0, 0.0, if n > 1 { nums[1] } else { nums[0] }, 0.0, 0.0],
+            "rotate" => {
+                let a = nums[0] * 0.017453292519943295;
+                let (c, s) = (cos(a), sin(a));
+                if n >= 3 {
+                    // rotate(a, cx, cy) = translate(cx,cy) rot translate(-cx,-cy)
+                    let (cx, cy) = (nums[1], nums[2]);
+                    let rot = [c, s, -s, c, 0.0, 0.0];
+                    let t1 = [1.0, 0.0, 0.0, 1.0, cx, cy];
+                    let t2 = [1.0, 0.0, 0.0, 1.0, -cx, -cy];
+                    mat_mul(mat_mul(t1, rot), t2)
+                } else {
+                    [c, s, -s, c, 0.0, 0.0]
+                }
+            },
+            "matrix" => [nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]],
+            _ => MAT_ID,
+        };
+        m = mat_mul(m, t);
+    }
+    m
+}
+
+/// Find the element with `id="wanted"` and return its full text span (open tag
+/// through matching close, or the self-closing tag). For `<use>` resolution.
+fn find_element_by_id<'a>(text: &'a str, wanted: &str) -> Option<&'a str> {
+    let b = text.as_bytes();
+    // Look for id="wanted" or id='wanted'.
+    let mut search = 0usize;
+    let idpos = loop {
+        let rest = text.get(search..)?;
+        let p = rest.find("id=")? + search;
+        let after = &b[p + 3..];
+        let q = *after.first()?;
+        let val = if q == b'"' || q == b'\'' {
+            let end = after[1..].iter().position(|&c| c == q)? + 1;
+            core::str::from_utf8(&after[1..end]).ok()?
+        } else {
+            ""
+        };
+        if val == wanted {
+            break p;
+        }
+        search = p + 3;
+    };
+    // Back up to the enclosing '<'.
+    let mut lt = idpos;
+    while lt > 0 && b[lt] != b'<' {
+        lt -= 1;
+    }
+    if b[lt] != b'<' {
+        return None;
+    }
+    // Tag name.
+    let name_start = lt + 1;
+    let mut ne = name_start;
+    while ne < b.len() && !(b[ne] == b' ' || b[ne] == b'\t' || b[ne] == b'\n' || b[ne] == b'>' || b[ne] == b'/') {
+        ne += 1;
+    }
+    let name = &text[name_start..ne];
+    // End of the open tag.
+    let gt = text[lt..].find('>')? + lt;
+    if gt > 0 && b[gt - 1] == b'/' {
+        return Some(&text[lt..=gt]); // self-closing
+    }
+    // Find matching close, honoring nesting of same-name tags.
+    let mut depth = 1i32;
+    let mut j = gt + 1;
+    let mut close_buf = [0u8; 32];
+    let cl = name.len().min(30);
+    close_buf[0] = b'<';
+    close_buf[1] = b'/';
+    close_buf[2..2 + cl].copy_from_slice(&name.as_bytes()[..cl]);
+    let open0 = name.as_bytes()[0];
+    while j < b.len() && depth > 0 {
+        if b[j] == b'<' {
+            if b.get(j + 1) == Some(&b'/') && text[j..].as_bytes().get(2..2 + cl) == Some(&close_buf[2..2 + cl]) {
+                depth -= 1;
+                if depth == 0 {
+                    let end = text[j..].find('>')? + j;
+                    return Some(&text[lt..=end]);
+                }
+            } else if b.get(j + 1) == Some(&open0) && text[j + 1..].starts_with(name) {
+                depth += 1;
+            }
+        }
+        j += 1;
+    }
+    None
+}
+
 fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
     let b = d.as_bytes();
     let mut i = 0;
@@ -440,53 +597,149 @@ pub fn decode_svg(data: &[u8]) -> Option<Image> {
 /// O(canvas x paths) -- a 1024px canvas can take seconds).
 pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
     let text = core::str::from_utf8(data).ok()?;
-    // Find the <svg ...> tag for the canvas size.
     let svg_pos = text.find("<svg")?;
     let svg_tag_end = text[svg_pos..].find('>')? + svg_pos;
     let svg_tag = &text[svg_pos..svg_tag_end];
-    let (mut w, mut h) = (0u32, 0u32);
+    // The user-space rect: viewBox if present, else width/height at origin.
+    let (mut vx, mut vy, mut vw, mut vh) = (0f64, 0f64, 0f64, 0f64);
     if let Some(vb) = attr(svg_tag, "viewBox") {
         let mut it = vb.split(|c| c == ' ' || c == ',').filter(|x| !x.is_empty());
-        let _ = it.next();
-        let _ = it.next();
-        if let (Some(a), Some(b)) = (it.next(), it.next()) {
-            w = svg_num(a) as u32;
-            h = svg_num(b) as u32;
+        if let (Some(a), Some(b), Some(c), Some(d)) = (it.next(), it.next(), it.next(), it.next()) {
+            vx = svg_num(a);
+            vy = svg_num(b);
+            vw = svg_num(c);
+            vh = svg_num(d);
         }
     }
-    if w == 0 || h == 0 {
+    if vw <= 0.0 || vh <= 0.0 {
         if let (Some(ws), Some(hs)) = (attr(svg_tag, "width"), attr(svg_tag, "height")) {
-            w = svg_num(ws) as u32;
-            h = svg_num(hs) as u32;
+            vw = svg_num(ws);
+            vh = svg_num(hs);
+            vx = 0.0;
+            vy = 0.0;
         }
     }
+    if vw <= 0.0 || vh <= 0.0 {
+        return None;
+    }
+    // Output size follows the viewBox aspect, capped on the long side.
+    let (mut w, mut h) = (vw as u32, vh as u32);
     if w == 0 || h == 0 {
         return None;
     }
-    // Cap resolution to bound memory/time (scanline fill is O(canvas x paths)).
     if w > cap || h > cap {
         let s = if w >= h { cap as f64 / w as f64 } else { cap as f64 / h as f64 };
-        w = (w as f64 * s) as u32;
-        h = (h as f64 * s) as u32;
+        w = ((w as f64 * s) as u32).max(1);
+        h = ((h as f64 * s) as u32).max(1);
     }
-    let scale_from_vb = 1.0; // we render in viewBox space at (w,h); shapes use user units
-    let _ = scale_from_vb;
-    let mut px = vec![0xffffffu32; (w * h) as usize];
+    // Anti-aliasing: rasterize at SSx and box-downsample to (w,h). The whole
+    // document renders through one affine transform (viewBox -> canvas), so
+    // shapes, groups, and <use>d symbols land in the right place at the right
+    // size -- and coordinates are baked into canvas space once, up front,
+    // rather than re-scaled per shape.
+    const SS: u32 = 2;
+    let (cw, ch) = (w * SS, h * SS);
+    let mut buf = vec![0xffffffu32; (cw * ch) as usize];
+    let sx = cw as f64 / vw;
+    let sy = ch as f64 / vh;
+    let root: Mat = [sx, 0.0, 0.0, sy, -vx * sx, -vy * sy];
 
-    // Wall-clock budget: a complex real-world SVG (symbol/use/clip-heavy, many
-    // filled paths) can accumulate enough rasterization work to stall the UI.
-    // Bail out with a partial render rather than hang. x86_64 only (the SVG
-    // path isn't exercised on the rpi build).
+    // Wall-clock budget: a complex real-world SVG can accumulate enough
+    // rasterization work to stall the UI. Bail out with a partial render
+    // rather than hang. x86_64 only (the SVG path isn't exercised on rpi).
     #[cfg(target_arch = "x86_64")]
     let deadline = crate::arch::timer::now_us() + 1_500_000;
+    #[cfg(not(target_arch = "x86_64"))]
+    let deadline = 0u64;
 
-    // Walk element tags after the opening <svg>.
-    let mut rest = &text[svg_tag_end + 1..];
+    let content = &text[svg_tag_end + 1..];
+    svg_render(content, text, root, &mut buf, cw, ch, 0, deadline);
+
+    // Box-downsample SSxSS -> (w,h) for anti-aliased edges.
+    let mut px = vec![0u32; (w * h) as usize];
+    let n = SS * SS;
+    for oy in 0..h {
+        for ox in 0..w {
+            let (mut r, mut g, mut b) = (0u32, 0u32, 0u32);
+            for dy in 0..SS {
+                for dx in 0..SS {
+                    let c = buf[(((oy * SS + dy) * cw) + (ox * SS + dx)) as usize];
+                    r += (c >> 16) & 0xff;
+                    g += (c >> 8) & 0xff;
+                    b += c & 0xff;
+                }
+            }
+            px[(oy * w + ox) as usize] = ((r / n) << 16) | ((g / n) << 8) | (b / n);
+        }
+    }
+    Some(Image { w, h, px })
+}
+
+/// Resolve a shape's `fill` attribute to a color, following `url(#grad)`
+/// gradient references (approximated as the average of their stops).
+fn shape_fill(full: &str, fill_attr: Option<&str>) -> Option<u32> {
+    let f = fill_attr?.trim();
+    if let Some(rest) = f.strip_prefix("url(") {
+        let id = rest.trim_start_matches(|c| c == '#' || c == ' ');
+        let id = id.split(|c| c == ')' || c == ' ').next()?.trim_start_matches('#');
+        return gradient_color(full, id);
+    }
+    parse_color(f)
+}
+
+/// Average the stop colors of the gradient with `id` (a linear/radial gradient
+/// rendered as a representative flat color -- we don't do real gradients).
+fn gradient_color(full: &str, id: &str) -> Option<u32> {
+    let el = find_element_by_id(full, id)?;
+    let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+    let mut rest = el;
+    while let Some(p) = rest.find("stop-color") {
+        let after = &rest[p + "stop-color".len()..];
+        // Value follows a ':' (style) or '="' (attribute).
+        let mut i = 0;
+        let ab = after.as_bytes();
+        while i < ab.len() && (ab[i] == b':' || ab[i] == b'=' || ab[i] == b'"' || ab[i] == b'\'' || ab[i] == b' ') {
+            i += 1;
+        }
+        let vs = i;
+        while i < ab.len() && !(ab[i] == b'"' || ab[i] == b'\'' || ab[i] == b';' || ab[i] == b' ' || ab[i] == b'>') {
+            i += 1;
+        }
+        if let Some(c) = parse_color(&after[vs..i]) {
+            r += (c >> 16) & 0xff;
+            g += (c >> 8) & 0xff;
+            b += c & 0xff;
+            n += 1;
+        }
+        rest = &after[i..];
+    }
+    if n > 0 {
+        Some(((r / n) << 16) | ((g / n) << 8) | (b / n))
+    } else {
+        None
+    }
+}
+
+/// Recursively rasterize an SVG fragment `text` (part of the whole `full`
+/// document, used for id lookups) under transform `base`, into `buf` (w x h).
+/// Handles nested `<g transform>` via a matrix stack, skips `<defs>`/`<symbol>`
+/// content, expands `<use>` by rendering the referenced element, and bakes
+/// every coordinate through the current transform before filling.
+fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32, depth: u32, deadline: u64) {
+    if depth > 6 {
+        return;
+    }
+    let _ = deadline;
+    let mut gstack = [MAT_ID; 24];
+    gstack[0] = base;
+    let mut gtop = 0usize;
+    let mut skip = 0i32;
+    let mut rest = text;
     let mut guard = 0u32;
     loop {
         guard += 1;
-        if guard > 8000 {
-            break; // defensive: never spin on a pathological document
+        if guard > 12000 {
+            break;
         }
         #[cfg(target_arch = "x86_64")]
         if crate::arch::timer::now_us() > deadline {
@@ -496,20 +749,86 @@ pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
         let after = &rest[lt + 1..];
         let Some(gt) = after.find('>') else { break };
         let tag = &after[..gt];
+        let self_close = tag.ends_with('/');
         rest = &after[gt + 1..];
-        let name_end = tag.find(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '/').unwrap_or(tag.len());
-        let name = &tag[..name_end];
-        let fill = attr(tag, "fill").and_then(parse_color);
+        if tag.starts_with("!--") || tag.starts_with('?') || tag.starts_with('!') {
+            continue;
+        }
+        let closing = tag.starts_with('/');
+        let name_part = if closing { &tag[1..] } else { tag };
+        let name_end = name_part
+            .find(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '/' || c == '>')
+            .unwrap_or(name_part.len());
+        let name = &name_part[..name_end];
+        if closing {
+            match name {
+                "g" => {
+                    if gtop > 0 {
+                        gtop -= 1;
+                    }
+                },
+                "defs" | "symbol" | "clipPath" | "mask" => {
+                    if skip > 0 {
+                        skip -= 1;
+                    }
+                },
+                _ => {},
+            }
+            continue;
+        }
+        match name {
+            "defs" | "symbol" | "clipPath" | "mask" => {
+                if !self_close {
+                    skip += 1;
+                }
+                continue;
+            },
+            "g" => {
+                let t = attr(tag, "transform").map(parse_transform).unwrap_or(MAT_ID);
+                let m = mat_mul(gstack[gtop], t);
+                if !self_close && gtop + 1 < gstack.len() {
+                    gstack[gtop + 1] = m;
+                    gtop += 1;
+                }
+                continue;
+            },
+            _ => {},
+        }
+        if skip > 0 {
+            continue;
+        }
+        let own = attr(tag, "transform").map(parse_transform).unwrap_or(MAT_ID);
+        let ctm = mat_mul(gstack[gtop], own);
+        let fill = shape_fill(full, attr(tag, "fill"));
         let stroke = attr(tag, "stroke").and_then(parse_color);
         match name {
+            "use" => {
+                let href = attr(tag, "href").or_else(|| attr(tag, "xlink:href"));
+                if let Some(href) = href {
+                    let id = href.trim_start_matches('#');
+                    let ux = attr(tag, "x").map(svg_num).unwrap_or(0.0);
+                    let uy = attr(tag, "y").map(svg_num).unwrap_or(0.0);
+                    let ctm2 = mat_mul(ctm, [1.0, 0.0, 0.0, 1.0, ux, uy]);
+                    if let Some(el) = find_element_by_id(full, id) {
+                        // If the target is a container the walker would skip
+                        // (symbol/svg) or descend (g), render its inner content
+                        // directly under the use's transform.
+                        let inner = container_inner(el).unwrap_or(el);
+                        svg_render(inner, full, ctm2, buf, w, h, depth + 1, deadline);
+                    }
+                }
+            },
             "rect" => {
                 if let Some(col) = fill {
                     let x = attr(tag, "x").map(svg_num).unwrap_or(0.0);
                     let y = attr(tag, "y").map(svg_num).unwrap_or(0.0);
                     let rw = attr(tag, "width").map(svg_num).unwrap_or(0.0);
                     let rh = attr(tag, "height").map(svg_num).unwrap_or(0.0);
-                    let verts = [(x, y), (x + rw, y), (x + rw, y + rh), (x, y + rh)];
-                    fill_poly(&mut px, w, h, &verts, col);
+                    let mut v = [(x, y), (x + rw, y), (x + rw, y + rh), (x, y + rh)];
+                    for p in v.iter_mut() {
+                        *p = mat_apply(&ctm, p.0, p.1);
+                    }
+                    fill_poly(buf, w, h, &v, col);
                 }
             },
             "circle" | "ellipse" => {
@@ -522,14 +841,14 @@ pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
                     } else {
                         (attr(tag, "rx").map(svg_num).unwrap_or(0.0), attr(tag, "ry").map(svg_num).unwrap_or(0.0))
                     };
-                    let mut verts: Vec<(f64, f64)> = Vec::new();
+                    let mut verts: Vec<(f64, f64)> = Vec::with_capacity(48);
                     let mut a = 0;
                     while a < 48 {
                         let t = a as f64 / 48.0 * 6.2831853;
-                        verts.push((cx + rx * cos(t), cy + ry * sin(t)));
+                        verts.push(mat_apply(&ctm, cx + rx * cos(t), cy + ry * sin(t)));
                         a += 1;
                     }
-                    fill_poly(&mut px, w, h, &verts, col);
+                    fill_poly(buf, w, h, &verts, col);
                 }
             },
             "polygon" | "polyline" => {
@@ -537,34 +856,36 @@ pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
                     let mut it = pts.split(|c| c == ' ' || c == ',' || c == '\n').filter(|x| !x.is_empty());
                     let mut verts: Vec<(f64, f64)> = Vec::new();
                     while let (Some(a), Some(b)) = (it.next(), it.next()) {
-                        verts.push((svg_num(a), svg_num(b)));
+                        verts.push(mat_apply(&ctm, svg_num(a), svg_num(b)));
                     }
                     if let Some(col) = fill {
-                        fill_poly(&mut px, w, h, &verts, col);
+                        fill_poly(buf, w, h, &verts, col);
                     } else if let Some(col) = stroke {
-                        stroke_path(&mut px, w, h, &verts, col);
+                        stroke_path(buf, w, h, &verts, col);
                     }
                 }
             },
             "line" => {
                 if let Some(col) = stroke {
                     let verts = [
-                        (attr(tag, "x1").map(svg_num).unwrap_or(0.0), attr(tag, "y1").map(svg_num).unwrap_or(0.0)),
-                        (attr(tag, "x2").map(svg_num).unwrap_or(0.0), attr(tag, "y2").map(svg_num).unwrap_or(0.0)),
+                        mat_apply(&ctm, attr(tag, "x1").map(svg_num).unwrap_or(0.0), attr(tag, "y1").map(svg_num).unwrap_or(0.0)),
+                        mat_apply(&ctm, attr(tag, "x2").map(svg_num).unwrap_or(0.0), attr(tag, "y2").map(svg_num).unwrap_or(0.0)),
                     ];
-                    stroke_path(&mut px, w, h, &verts, col);
+                    stroke_path(buf, w, h, &verts, col);
                 }
             },
             "path" => {
                 if let Some(d) = attr(tag, "d") {
                     let mut polys: Vec<Vec<(f64, f64)>> = Vec::new();
                     path_polys(d, &mut polys);
-                    let col = fill.unwrap_or(0x333333);
-                    for p in &polys {
-                        if fill.is_some() {
-                            fill_poly(&mut px, w, h, p, col);
-                        } else if let Some(sc) = stroke {
-                            stroke_path(&mut px, w, h, p, sc);
+                    for p in polys.iter_mut() {
+                        for pt in p.iter_mut() {
+                            *pt = mat_apply(&ctm, pt.0, pt.1);
+                        }
+                        if let Some(col) = fill {
+                            fill_poly(buf, w, h, p, col);
+                        } else if let Some(col) = stroke {
+                            stroke_path(buf, w, h, p, col);
                         }
                     }
                 }
@@ -572,7 +893,30 @@ pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
             _ => {},
         }
     }
-    Some(Image { w, h, px })
+}
+
+/// If `el` is a container (`<g>`, `<symbol>`, `<svg>`), return its inner
+/// content (between the open tag's `>` and its closing tag); else None.
+fn container_inner(el: &str) -> Option<&str> {
+    let nb = el.as_bytes();
+    if nb.first() != Some(&b'<') {
+        return None;
+    }
+    let name_end = el[1..].find(|c: char| c == ' ' || c == '\t' || c == '\n' || c == '>' || c == '/')? + 1;
+    let name = &el[1..name_end];
+    if name != "g" && name != "symbol" && name != "svg" {
+        return None;
+    }
+    let open_end = el.find('>')?;
+    if el.as_bytes().get(open_end.wrapping_sub(1)) == Some(&b'/') {
+        return Some(""); // self-closing container: nothing inside
+    }
+    let close = el.rfind("</")?;
+    if close > open_end + 1 {
+        Some(&el[open_end + 1..close])
+    } else {
+        Some("")
+    }
 }
 
 fn stroke_path(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32) {

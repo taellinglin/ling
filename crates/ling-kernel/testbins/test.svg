@@ -1,7 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200">
-  <rect x="0" y="0" width="240" height="200" fill="#0a0a18"/>
-  <circle cx="80" cy="70" r="45" fill="#ffb733"/>
-  <rect x="140" y="30" width="70" height="70" fill="#6aa0ff"/>
-  <polygon points="120,190 60,120 180,120" fill="#ff4488"/>
-  <path d="M20 150 L60 110 L100 150 L140 110 L180 150 Z" fill="#5ad18f"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="grad">
+      <stop offset="0" stop-color="#ffb733"/>
+      <stop offset="1" stop-color="#ff4488"/>
+    </linearGradient>
+    <circle id="dot" cx="0" cy="0" r="16" fill="#6aa0ff"/>
+    <g id="star">
+      <polygon points="0,-22 6,-7 22,-7 10,3 14,20 0,10 -14,20 -10,3 -22,-7 -6,-7" fill="#5ad18f"/>
+    </g>
+  </defs>
+  <rect x="0" y="0" width="200" height="200" fill="#0a0a18"/>
+  <rect x="20" y="18" width="160" height="34" fill="url(#grad)"/>
+  <use href="#dot" x="45" y="100"/>
+  <use href="#dot" x="100" y="100"/>
+  <use href="#dot" x="155" y="100"/>
+  <g transform="translate(120,160) rotate(18)">
+    <use href="#star"/>
+  </g>
+  <use href="#star" transform="translate(55,165) scale(0.75)"/>
 </svg>
