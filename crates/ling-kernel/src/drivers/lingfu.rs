@@ -17,8 +17,11 @@
 
 use crate::drivers::netstack;
 use crate::fs::{lingfs, packages};
+use alloc::vec::Vec;
 
 const CATALOG_MAX: usize = 16 * 1024;
+/// Download scratch for a package tarball from the registry (source `.tgz`).
+static mut TGZ: [u8; 256 * 1024] = [0; 256 * 1024];
 static mut CATALOG: [u8; CATALOG_MAX] = [0; CATALOG_MAX];
 static mut CATALOG_LEN: usize = 0;
 /// Scratch for the raw HTTP response body before it's normalized into the
@@ -201,6 +204,215 @@ pub fn next_official(path: &str, out: &mut [u8]) -> Option<usize> {
 /// Close the official keep-alive session (releases the net lock).
 pub fn close_official() {
     crate::tls::https_close();
+}
+
+/// Extract a JSON string field `"key":"value"` from `json`, or None.
+fn json_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    let n = json.len();
+    let mut i = 0;
+    while i + key.len() + 3 < n {
+        if json[i] == b'"' && json[i + 1..].starts_with(key) && json[i + 1 + key.len()] == b'"' {
+            let mut j = i + 2 + key.len();
+            while j < n && (json[j] == b' ' || json[j] == b':') {
+                j += 1;
+            }
+            if j < n && json[j] == b'"' {
+                j += 1;
+                let s = j;
+                while j < n && json[j] != b'"' {
+                    j += 1;
+                }
+                return Some(&json[s..j]);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Decompress a gzip stream (skips the header, raw-inflates the body).
+fn gunzip(gz: &[u8]) -> Option<Vec<u8>> {
+    if gz.len() < 18 || gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
+        return None;
+    }
+    let flg = gz[3];
+    let mut off = 10usize;
+    if flg & 4 != 0 {
+        // FEXTRA
+        if off + 2 > gz.len() {
+            return None;
+        }
+        let xlen = gz[off] as usize | ((gz[off + 1] as usize) << 8);
+        off += 2 + xlen;
+    }
+    if flg & 8 != 0 {
+        // FNAME (zero-terminated)
+        while off < gz.len() && gz[off] != 0 {
+            off += 1;
+        }
+        off += 1;
+    }
+    if flg & 16 != 0 {
+        // FCOMMENT
+        while off < gz.len() && gz[off] != 0 {
+            off += 1;
+        }
+        off += 1;
+    }
+    if flg & 2 != 0 {
+        off += 2; // FHCRC
+    }
+    if off >= gz.len() {
+        return None;
+    }
+    // Raw inflate stops at the end of the deflate stream, ignoring the trailer.
+    miniz_oxide::inflate::decompress_to_vec(&gz[off..]).ok()
+}
+
+/// Parse an octal field (tar header numbers), stopping at NUL/space.
+fn tar_oct(b: &[u8]) -> usize {
+    let mut v = 0usize;
+    for &c in b {
+        if (b'0'..=b'7').contains(&c) {
+            v = v * 8 + (c - b'0') as usize;
+        } else {
+            break;
+        }
+    }
+    v
+}
+
+/// Unpack a POSIX tar image, writing each regular file (by basename) into
+/// `pkg_dir` in lingfs. Returns the number of files installed.
+fn untar_install(tar: &[u8], pkg_dir: &str) -> usize {
+    let mut off = 0usize;
+    let mut count = 0usize;
+    while off + 512 <= tar.len() {
+        let hdr = &tar[off..off + 512];
+        if hdr.iter().all(|&b| b == 0) {
+            break; // end-of-archive marker
+        }
+        let name_end = hdr[..100].iter().position(|&b| b == 0).unwrap_or(100);
+        let fullname = &hdr[..name_end];
+        let size = tar_oct(&hdr[124..136]);
+        let typ = hdr[156];
+        off += 512;
+        let data_end = off + size;
+        if data_end > tar.len() {
+            break;
+        }
+        // Regular file ('0' or NUL typeflag). Skip dirs/links/metadata.
+        if (typ == b'0' || typ == 0) && size > 0 {
+            let base = fullname.rsplit(|&b| b == b'/').next().unwrap_or(fullname);
+            if !base.is_empty() && base != b"." {
+                if let Ok(bn) = core::str::from_utf8(base) {
+                    if lingfs::write_in_dir(pkg_dir, bn, &tar[off..data_end]).is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        off = data_end;
+        off += (512 - (size % 512)) % 512; // pad to 512
+    }
+    count
+}
+
+/// Install a package from the official registry: resolve its latest version via
+/// `/api/package?name=`, download `/dl/<name>-<version>.tgz`, gunzip + untar it,
+/// and land the source files in lingfs under `pkg-<name>/`. Returns true on a
+/// completed install. (Source packages -- running them still needs the `ling`
+/// toolchain; this makes `lingfu install` fetch + unpack real registry packages.)
+pub fn install_from_registry(name: &str) -> bool {
+    // 1. Resolve the latest version.
+    print(b"lingfu: resolving ");
+    print(name.as_bytes());
+    print(b" ...\n");
+    let mut apipath = [0u8; 160];
+    let mut p = 0usize;
+    for &b in b"/api/package?name=" {
+        apipath[p] = b;
+        p += 1;
+    }
+    for &b in name.as_bytes() {
+        if p < apipath.len() {
+            apipath[p] = b;
+            p += 1;
+        }
+    }
+    let raw = unsafe { &mut *&raw mut RAW };
+    let Ok(apistr) = core::str::from_utf8(&apipath[..p]) else { return false };
+    let Some(alen) = fetch_official(apistr, raw) else {
+        print(b"lingfu: could not reach the registry\n");
+        return false;
+    };
+    let Some(ver) = json_field(&raw[..alen], b"version") else {
+        print(b"lingfu: package not found or has no published version\n");
+        return false;
+    };
+    let mut verbuf = [0u8; 48];
+    let vlen = ver.len().min(verbuf.len());
+    verbuf[..vlen].copy_from_slice(&ver[..vlen]);
+
+    // 2. Download /dl/<name>-<version>.tgz.
+    let mut dlpath = [0u8; 200];
+    let mut d = 0usize;
+    let mut put = |s: &[u8], d: &mut usize| {
+        for &b in s {
+            if *d < dlpath.len() {
+                dlpath[*d] = b;
+                *d += 1;
+            }
+        }
+    };
+    put(b"/dl/", &mut d);
+    put(name.as_bytes(), &mut d);
+    put(b"-", &mut d);
+    put(&verbuf[..vlen], &mut d);
+    put(b".tgz", &mut d);
+    let Ok(dlstr) = core::str::from_utf8(&dlpath[..d]) else { return false };
+    print(b"lingfu: downloading ");
+    print(dlstr.as_bytes());
+    print(b" ...\n");
+    let tgz = unsafe { &mut *&raw mut TGZ };
+    let Some(glen) = fetch_official(dlstr, tgz) else {
+        print(b"lingfu: download failed\n");
+        return false;
+    };
+
+    // 3. Gunzip + untar into lingfs under pkg-<name>/.
+    let Some(tar) = gunzip(&tgz[..glen]) else {
+        print(b"lingfu: could not decompress the package (truncated?)\n");
+        return false;
+    };
+    let mut pkgdir = [0u8; 64];
+    let mut pd = 0usize;
+    for &b in b"pkg-" {
+        pkgdir[pd] = b;
+        pd += 1;
+    }
+    for &b in name.as_bytes() {
+        if pd < pkgdir.len() {
+            pkgdir[pd] = b;
+            pd += 1;
+        }
+    }
+    let Ok(pkgdirs) = core::str::from_utf8(&pkgdir[..pd]) else { return false };
+    let files = untar_install(&tar, pkgdirs);
+    if files == 0 {
+        print(b"lingfu: package unpacked to no installable files\n");
+        return false;
+    }
+    // Record the installed version so `lingfu list` / `ls packages` shows it.
+    let _ = lingfs::write_in_dir("packages", name, &verbuf[..vlen]);
+    print(b"lingfu: installed ");
+    print(name.as_bytes());
+    print(b" (");
+    print(&verbuf[..vlen]);
+    print(b") -- source in pkg-");
+    print(name.as_bytes());
+    print(b"/\n");
+    true
 }
 
 /// Append one printable-ASCII byte to CATALOG at `w`, returning the new `w`.
@@ -544,6 +756,12 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 /// from the synced catalog, HTTP-GET it, land the blob in lingfs, unpack
 /// via the existing `.lpkg` path. Returns true on a completed install.
 pub fn install(name: &str) -> bool {
+    // Official registry (no local /repo override): resolve the version and pull
+    // the source tarball from /dl, unpacking it into lingfs. A local /repo
+    // still serves the catalog.txt-listed `.lpkg` blobs (the branch below).
+    if repo_override().is_none() {
+        return install_from_registry(name);
+    }
     if unsafe { CATALOG_LEN } == 0 && sync() == 0 {
         return false;
     }
