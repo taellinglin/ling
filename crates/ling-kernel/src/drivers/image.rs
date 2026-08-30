@@ -431,6 +431,14 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
 
 /// Decode a subset of SVG to a raster Image (white ground).
 pub fn decode_svg(data: &[u8]) -> Option<Image> {
+    decode_svg_capped(data, 1024)
+}
+
+/// Decode a subset SVG, rasterizing at a canvas capped to `cap` px on its
+/// longest side. Inline browser thumbnails pass a small cap so a complex
+/// coat-of-arms doesn't rasterize at full resolution (scanline fill is
+/// O(canvas x paths) -- a 1024px canvas can take seconds).
+pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
     let text = core::str::from_utf8(data).ok()?;
     // Find the <svg ...> tag for the canvas size.
     let svg_pos = text.find("<svg")?;
@@ -455,8 +463,7 @@ pub fn decode_svg(data: &[u8]) -> Option<Image> {
     if w == 0 || h == 0 {
         return None;
     }
-    // Cap resolution to bound memory/time.
-    let cap = 1024u32;
+    // Cap resolution to bound memory/time (scanline fill is O(canvas x paths)).
     if w > cap || h > cap {
         let s = if w >= h { cap as f64 / w as f64 } else { cap as f64 / h as f64 };
         w = (w as f64 * s) as u32;
@@ -466,9 +473,25 @@ pub fn decode_svg(data: &[u8]) -> Option<Image> {
     let _ = scale_from_vb;
     let mut px = vec![0xffffffu32; (w * h) as usize];
 
+    // Wall-clock budget: a complex real-world SVG (symbol/use/clip-heavy, many
+    // filled paths) can accumulate enough rasterization work to stall the UI.
+    // Bail out with a partial render rather than hang. x86_64 only (the SVG
+    // path isn't exercised on the rpi build).
+    #[cfg(target_arch = "x86_64")]
+    let deadline = crate::arch::timer::now_us() + 1_500_000;
+
     // Walk element tags after the opening <svg>.
     let mut rest = &text[svg_tag_end + 1..];
+    let mut guard = 0u32;
     loop {
+        guard += 1;
+        if guard > 8000 {
+            break; // defensive: never spin on a pathological document
+        }
+        #[cfg(target_arch = "x86_64")]
+        if crate::arch::timer::now_us() > deadline {
+            break;
+        }
         let Some(lt) = rest.find('<') else { break };
         let after = &rest[lt + 1..];
         let Some(gt) = after.find('>') else { break };
@@ -561,7 +584,10 @@ fn stroke_path(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32)
 fn draw_line(px: &mut [u32], w: u32, h: u32, a: (f64, f64), b: (f64, f64), color: u32) {
     let dx = (b.0 - a.0).abs();
     let dy = (b.1 - a.1).abs();
-    let steps = dx.max(dy).max(1.0) as i32;
+    // Cap steps: a stroke coordinate far outside the (already small) canvas
+    // would otherwise spin this loop millions of times. Anything past the
+    // canvas is clipped anyway, so a generous cap costs nothing.
+    let steps = dx.max(dy).max(1.0).min(8192.0) as i32;
     let mut t = 0;
     while t <= steps {
         let u = t as f64 / steps as f64;

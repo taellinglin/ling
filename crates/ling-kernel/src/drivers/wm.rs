@@ -1598,12 +1598,20 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
         return false;
     }
     if w.kind == KIND_WEB {
-        // The URL bar sits at the top of the content; clicking it focuses
-        // the bar for editing, clicking the page hands focus back to it.
+        // The URL bar sits at the top of the content; clicking it focuses the
+        // bar for editing. Clicking the page below defocuses the bar and, if
+        // the click lands on a link, follows it (mouse-clickable links).
         let cx = wx.max(0) + 16;
-        let cy = wy.max(0) + TITLEBAR_H as i64 + 14;
-        let bar = (cx as u32, cy as u32, dw.saturating_sub(24), 22u32);
-        unsafe { WEB_EDITING = pt_in(mx, my, bar) };
+        let bar_y = wy.max(0) + TITLEBAR_H as i64 + 14;
+        let bar = (cx as u32, bar_y as u32, dw.saturating_sub(24), 22u32);
+        if pt_in(mx, my, bar) {
+            unsafe { WEB_EDITING = true };
+            return true;
+        }
+        unsafe { WEB_EDITING = false };
+        // draw_page's origin y = bar_y + bar_h(22) + 6; map the click into it.
+        let page_y0 = bar_y + 22 + 6;
+        browser::click_page(my - page_y0, unsafe { WEB_COLS });
         return true;
     }
     false

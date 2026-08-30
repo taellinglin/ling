@@ -10,16 +10,70 @@
 //! renders the documented HTML subset (see bring-browser's README and
 //! roadmap); pages over ~120KiB body are truncated with a marker.
 
-use crate::drivers::{font8x8, framebuffer, netstack, theme};
-use bring_browser::{layout_styled, LineKind, Page, MAX_URL, NO_COLOR};
+use crate::drivers::{font8x8, framebuffer, image, netstack, theme};
+use alloc::vec::Vec;
+use bring_browser::{layout_styled, LineKind, Page, MAX_IMAGES, MAX_URL, NO_COLOR};
 
 static mut PAGE: Page = Page::new();
 static mut BODY: [u8; 120 * 1024] = [0; 120 * 1024];
 /// Concatenated text of the page's external stylesheets, fed to the layout
 /// engine (it caps what it parses, so this need not be huge).
 static mut CSS_SHEETS: [u8; 24 * 1024] = [0; 24 * 1024];
-/// Scratch for one stylesheet fetch before its body is appended to CSS_SHEETS.
-static mut SHEET_TMP: [u8; 48 * 1024] = [0; 48 * 1024];
+/// Scratch for one stylesheet or image download before it's used. Sized to
+/// hold a full image response (the registry's avatars are ~84KiB) so images
+/// don't truncate and fail to decode.
+static mut SHEET_TMP: [u8; 160 * 1024] = [0; 160 * 1024];
+
+// Decoded inline-image cache, parallel to the current page's `images` table.
+// Each entry is a thumbnail scaled to fit the reserved inline box; heap-backed
+// so a page with no images costs nothing, and cleared on each navigation.
+const IMG_EMPTY: u8 = 0;
+const IMG_READY: u8 = 1;
+const IMG_FAILED: u8 = 2;
+/// Inline image box: scaled to fit within these bounds (px). Height matches the
+/// ~7 rows the engine reserves per image (IMG_RESERVE_ROWS + the image line).
+const IMG_BOX_W: u32 = 560;
+const IMG_BOX_H: u32 = 96;
+static mut IMG_STATE: [u8; MAX_IMAGES] = [IMG_EMPTY; MAX_IMAGES];
+static mut IMG_PX: [Option<Vec<u32>>; MAX_IMAGES] = [const { None }; MAX_IMAGES];
+static mut IMG_W: [u32; MAX_IMAGES] = [0; MAX_IMAGES];
+static mut IMG_H: [u32; MAX_IMAGES] = [0; MAX_IMAGES];
+
+// A keep-alive session for the sub-resource phase (stylesheets + images):
+// same-host, same-scheme resources reuse one TLS handshake instead of paying
+// one each. Opened after the main page loads, closed when the page is done.
+static mut SESS_ACTIVE: bool = false;
+static mut SESS_HOST: [u8; 128] = [0; 128];
+static mut SESS_HOST_LEN: usize = 0;
+
+fn subresource_open(host: &str) {
+    let hb = host.as_bytes();
+    if hb.len() >= 128 {
+        return;
+    }
+    let mut noop = |_: &[u8]| {};
+    if crate::tls::https_open(host, 443, &mut noop) {
+        unsafe {
+            let sh = &mut *&raw mut SESS_HOST;
+            sh[..hb.len()].copy_from_slice(hb);
+            SESS_HOST_LEN = hb.len();
+            SESS_ACTIVE = true;
+        }
+    }
+}
+
+fn subresource_close() {
+    unsafe {
+        if SESS_ACTIVE {
+            crate::tls::https_close();
+            SESS_ACTIVE = false;
+        }
+    }
+}
+
+fn sess_host_matches(host: &str) -> bool {
+    unsafe { SESS_ACTIVE && host.as_bytes() == &(&*&raw const SESS_HOST)[..SESS_HOST_LEN] }
+}
 static mut CUR_URL: [u8; MAX_URL] = [0; MAX_URL];
 static mut CUR_URL_LEN: usize = 0;
 static mut SCROLL: usize = 0;
@@ -116,9 +170,17 @@ pub fn go(url: &str, cols: usize) -> bool {
     // Fetch any external stylesheets the page links, so CSS applies to the
     // whole document (not just inline <style>). Bounded: a few sheets, capped
     // total size.
+    // Open one keep-alive session to the page host for the sub-resource phase
+    // (stylesheets + images) so they share a single TLS handshake.
+    if tls {
+        subresource_open(host);
+    }
     let css_len = fetch_stylesheets(&body[body_off..len], url);
     let css = unsafe { &(&*&raw const CSS_SHEETS)[..css_len] };
     layout_styled(&body[body_off..len], css, cols, page());
+    // Fetch + decode inline images the layout referenced (bounded).
+    fetch_page_images(url);
+    subresource_close();
     unsafe {
         SCROLL = 0;
         STATUS = if page().truncated {
@@ -135,18 +197,29 @@ pub fn go(url: &str, cols: usize) -> bool {
 /// length. Used for sub-resources (stylesheets); one-shot per resource.
 fn fetch_body(url: &str, out: &mut [u8]) -> Option<usize> {
     let (host, port, path, tls) = netstack::parse_url(url)?;
+    let strip = |out: &mut [u8], n: usize| -> usize {
+        let off = crate::tls::http_body_offset(&out[..n]);
+        if off > 0 {
+            out.copy_within(off..n, 0);
+            n - off
+        } else {
+            n
+        }
+    };
     if tls {
+        // Reuse the open sub-resource session for same-host fetches (one
+        // handshake for all of a page's stylesheets + images).
+        if sess_host_matches(host) {
+            if let Some(n) = crate::tls::https_next(host, path, out) {
+                if n > 0 {
+                    return Some(strip(out, n));
+                }
+            }
+            return None;
+        }
         let mut noop = |_: &[u8]| {};
         match crate::tls::https_get(host, port, path, out, &mut noop) {
-            Ok(n) if n > 0 => {
-                let off = crate::tls::http_body_offset(&out[..n]);
-                if off > 0 {
-                    out.copy_within(off..n, 0);
-                    Some(n - off)
-                } else {
-                    Some(n)
-                }
-            },
+            Ok(n) if n > 0 => Some(strip(out, n)),
             _ => None,
         }
     } else {
@@ -474,6 +547,151 @@ pub fn follow(n: usize, cols: usize) -> bool {
     go(target, cols)
 }
 
+/// Nearest-neighbor scale an image to fit within (max_w, max_h) preserving
+/// aspect ratio; returns (w, h, pixels).
+fn scale_to_box(img: &image::Image, max_w: u32, max_h: u32) -> (u32, u32, Vec<u32>) {
+    let iw = img.w.max(1);
+    let ih = img.h.max(1);
+    let mut sw = max_w;
+    let mut sh = (ih * max_w) / iw;
+    if sh > max_h {
+        sh = max_h;
+        sw = (iw * max_h) / ih;
+    }
+    sw = sw.clamp(1, max_w);
+    sh = sh.clamp(1, max_h);
+    let mut out = Vec::with_capacity((sw * sh) as usize);
+    for oy in 0..sh {
+        let syy = (oy * ih / sh).min(ih - 1);
+        for ox in 0..sw {
+            let sxx = (ox * iw / sw).min(iw - 1);
+            out.push(img.px[(syy * iw + sxx) as usize]);
+        }
+    }
+    (sw, sh, out)
+}
+
+/// Fetch, decode (PNG or subset-SVG), and cache each of the page's inline
+/// images as a scaled thumbnail. Bounded to the first several images so a
+/// gallery page can't stall the load indefinitely. JPEG has no decoder, so
+/// those fall back to their alt text.
+fn fetch_page_images(base: &str) {
+    // Drop any images cached from the previous page.
+    unsafe {
+        let px = &mut *&raw mut IMG_PX;
+        for i in 0..MAX_IMAGES {
+            IMG_STATE[i] = IMG_EMPTY;
+            px[i] = None;
+        }
+    }
+    let count = page().image_count.min(MAX_IMAGES);
+    let tmp = unsafe { &mut *&raw mut SHEET_TMP };
+    for i in 0..count.min(10) {
+        // Copy the src out of the page before any fetch (which reuses buffers).
+        let mut sb = [0u8; MAX_URL];
+        let src = page().images[i].src();
+        let sn = src.len().min(sb.len());
+        sb[..sn].copy_from_slice(&src[..sn]);
+        // Dedup: if an earlier image has the identical src and already loaded,
+        // reuse its decoded thumbnail instead of fetching + rasterizing again
+        // (pages reference the same logo/emblem repeatedly).
+        let mut duped = false;
+        for j in 0..i {
+            if page().images[j].src() == &sb[..sn] && unsafe { IMG_STATE[j] } == IMG_READY {
+                unsafe {
+                    IMG_W[i] = IMG_W[j];
+                    IMG_H[i] = IMG_H[j];
+                    let px = &mut *&raw mut IMG_PX;
+                    px[i] = px[j].clone();
+                    IMG_STATE[i] = IMG_READY;
+                }
+                duped = true;
+                break;
+            }
+        }
+        if duped {
+            continue;
+        }
+        let Ok(srcs) = core::str::from_utf8(&sb[..sn]) else {
+            unsafe { IMG_STATE[i] = IMG_FAILED };
+            continue;
+        };
+        let mut url_buf = [0u8; MAX_URL * 2];
+        let Some(ulen) = resolve_url(base, srcs, &mut url_buf) else {
+            unsafe { IMG_STATE[i] = IMG_FAILED };
+            continue;
+        };
+        let Ok(iu) = core::str::from_utf8(&url_buf[..ulen]) else {
+            unsafe { IMG_STATE[i] = IMG_FAILED };
+            continue;
+        };
+        let Some(blen) = fetch_body(iu, tmp) else {
+            unsafe { IMG_STATE[i] = IMG_FAILED };
+            continue;
+        };
+        let decoded = if image::looks_svg(&tmp[..blen]) {
+            // Rasterize SVG at a small canvas -- it's only a thumbnail, and a
+            // full-resolution complex SVG can take seconds to scanline-fill.
+            image::decode_svg_capped(&tmp[..blen], 160)
+        } else {
+            image::decode_png(&tmp[..blen])
+        };
+        match decoded {
+            Some(img) if img.w > 0 && img.h > 0 => {
+                let (sw, sh, px) = scale_to_box(&img, IMG_BOX_W, IMG_BOX_H);
+                unsafe {
+                    IMG_W[i] = sw;
+                    IMG_H[i] = sh;
+                    (&mut *&raw mut IMG_PX)[i] = Some(px);
+                    IMG_STATE[i] = IMG_READY;
+                }
+            },
+            _ => unsafe { IMG_STATE[i] = IMG_FAILED },
+        }
+    }
+}
+
+/// Blit cached image `ii` at (x, ry), clamped to `max_w` wide and not past
+/// `bottom` (the content rect's lower edge).
+fn blit_image(ii: usize, x: u32, ry: u32, max_w: u32, bottom: u32) {
+    if ii >= MAX_IMAGES || unsafe { IMG_STATE[ii] } != IMG_READY {
+        return;
+    }
+    let (iw, ih) = unsafe { (IMG_W[ii], IMG_H[ii]) };
+    let Some(px) = (unsafe { &(&*&raw const IMG_PX)[ii] }) else { return };
+    let cols = iw.min(max_w);
+    for oy in 0..ih {
+        let py = ry + oy;
+        if py >= bottom {
+            break;
+        }
+        for ox in 0..cols {
+            framebuffer::back_set_pixel(x + ox, py, px[(oy * iw + ox) as usize]);
+        }
+    }
+}
+
+/// Handle a click in the page content at `rel_y` pixels below the draw_page
+/// origin: if it lands on a link line, follow that link. Returns true if a
+/// link was followed. `rel_y` uses the same geometry draw_page lays out with
+/// (an 18px status band, then 14px rows).
+pub fn click_page(rel_y: i64, cols: usize) -> bool {
+    if rel_y < 18 {
+        return false;
+    }
+    let row = ((rel_y - 18) / 14) as usize;
+    let idx = unsafe { SCROLL } + row;
+    let p = page();
+    if idx >= p.line_count {
+        return false;
+    }
+    let link = p.lines[idx].link;
+    if link != u8::MAX {
+        return follow(link as usize + 1, cols);
+    }
+    false
+}
+
 /// Largest valid scroll offset: keep at least a couple of lines on screen.
 fn scroll_max() -> usize {
     let vis = unsafe { VISIBLE_ROWS }.max(1);
@@ -563,6 +781,17 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
         if l.bg != NO_COLOR {
             framebuffer::back_fill_rect(x, ry.saturating_sub(1), w, row_h, lbg);
         }
+        if l.kind == LineKind::Image {
+            // Blit the decoded picture over its reserved rows, or show the alt
+            // text if it isn't available (still loading elsewhere, or a format
+            // with no decoder such as JPEG).
+            if l.img != u8::MAX && unsafe { IMG_STATE[l.img as usize] } == IMG_READY {
+                blit_image(l.img as usize, x, ry, w, y + h);
+            } else {
+                font8x8::draw_str(x, ry, l.text(), dim, lbg);
+            }
+            continue;
+        }
         if l.kind == LineKind::ListItem {
             framebuffer::back_fill_circle(x + 3, ry + 4, 2, dim);
             cx += 12;
@@ -585,9 +814,18 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
             font8x8::draw_str(cx, ry, &nb[..n], theme::color(theme::SLOT_ERROR), lbg);
             cx += n as u32 * 8 + 4;
         }
-        // CSS color wins over the kind/link default when set.
+        // CSS color wins over the kind/link default when set. If a background
+        // is set but no text color, pick black/white for legibility (a CSS
+        // background must never leave text unreadable against it).
         let color = if l.color != NO_COLOR {
             l.color
+        } else if l.bg != NO_COLOR {
+            let (r, g, b) = ((l.bg >> 16) & 0xff, (l.bg >> 8) & 0xff, l.bg & 0xff);
+            if (r * 30 + g * 59 + b * 11) / 100 > 140 {
+                0x101014
+            } else {
+                0xf0f0f0
+            }
         } else {
             line_color(l.kind, l.link, l.bold)
         };
