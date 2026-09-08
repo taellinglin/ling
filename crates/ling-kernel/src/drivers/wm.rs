@@ -72,6 +72,7 @@ pub const KIND_MEDIA: u8 = 7;
 pub const KIND_PKG: u8 = 8;
 pub const KIND_HORIZON: u8 = 9;
 pub const KIND_MESSENGER: u8 = 10;
+pub const KIND_WALLPICK: u8 = 11;
 const DOCK_APPS: [u8; 8] = [
     KIND_ABOUT,
     KIND_SETTINGS,
@@ -943,6 +944,149 @@ static mut FM_VIEW_NAME: [u8; FM_NAME_MAX * 2 + 1] = [0; FM_NAME_MAX * 2 + 1];
 static mut FM_VIEW_NAME_LEN: usize = 0;
 const FM_VISIBLE_ROWS: usize = 10;
 
+// -- Wallpaper picker (KIND_WALLPICK) --------------------------------------
+// Two panes: shortcuts (drives/common folders) on the left, the current
+// folder's entries on the right. Tab switches panes; Enter opens a folder or
+// sets a .bmp as the wallpaper. lingfs is one "drive" (root), so the shortcuts
+// are the root + the common top-level folders.
+const WP_SHORTCUTS: [(&str, &str); 5] = [
+    ("Root /", ""),
+    ("Users", "users"),
+    ("Music", "music"),
+    ("Dev", "dev"),
+    ("Packages", "packages"),
+];
+static mut WP_DIR: [u8; FM_NAME_MAX] = [0; FM_NAME_MAX]; // "" = root
+static mut WP_DIR_LEN: usize = 0;
+static mut WP_PANE: u8 = 0; // 0 = shortcuts (left), 1 = files (right)
+static mut WP_LEFT: usize = 0; // left-pane cursor
+static mut WP_RIGHT: usize = 0; // right-pane cursor
+static mut WP_SCROLL: usize = 0; // right-pane scroll
+static mut WP_STATUS: &str = "";
+const WP_VISIBLE: usize = 12;
+
+fn wp_dir() -> &'static str {
+    unsafe { core::str::from_utf8(&(&*&raw const WP_DIR)[..WP_DIR_LEN]).unwrap_or("") }
+}
+
+fn wp_set_dir(name: &str) {
+    unsafe {
+        let n = name.len().min(FM_NAME_MAX);
+        (&mut *&raw mut WP_DIR)[..n].copy_from_slice(&name.as_bytes()[..n]);
+        WP_DIR_LEN = n;
+        WP_RIGHT = 0;
+        WP_SCROLL = 0;
+    }
+}
+
+fn wp_entry_count() -> usize {
+    let mut n = 0;
+    let mut buf = [0u8; FM_NAME_MAX];
+    while n < 128 {
+        if lingfs::list_entry(wp_dir(), n, &mut buf).is_none() {
+            break;
+        }
+        n += 1;
+    }
+    n
+}
+
+/// Open the wallpaper picker (from Settings > Wallpaper). Resets to root.
+pub fn open_wallpaper_picker() {
+    unsafe {
+        WP_DIR_LEN = 0;
+        WP_PANE = 0;
+        WP_LEFT = 0;
+        WP_RIGHT = 0;
+        WP_SCROLL = 0;
+        WP_STATUS = "tab: pane   enter: open / set   backspace: up";
+    }
+    open(KIND_WALLPICK);
+}
+
+fn wallpick_key(k: u8) {
+    unsafe {
+        match k {
+            0x09 => WP_PANE = 1 - WP_PANE, // Tab: switch pane
+            0x11 => {
+                if WP_PANE == 0 {
+                    WP_LEFT = WP_LEFT.saturating_sub(1);
+                } else {
+                    WP_RIGHT = WP_RIGHT.saturating_sub(1);
+                }
+            },
+            0x12 => {
+                if WP_PANE == 0 {
+                    WP_LEFT = (WP_LEFT + 1).min(WP_SHORTCUTS.len() - 1);
+                } else {
+                    let c = wp_entry_count();
+                    if c > 0 {
+                        WP_RIGHT = (WP_RIGHT + 1).min(c - 1);
+                    }
+                }
+            },
+            0x08 | 0x13 => {
+                // Backspace / left: up to root (lingfs dirs are one level deep).
+                if WP_PANE == 1 && WP_DIR_LEN > 0 {
+                    WP_DIR_LEN = 0;
+                    WP_RIGHT = 0;
+                    WP_SCROLL = 0;
+                } else {
+                    WP_PANE = 0;
+                }
+            },
+            10 => {
+                if WP_PANE == 0 {
+                    // Jump the right pane to the chosen shortcut folder.
+                    wp_set_dir(WP_SHORTCUTS[WP_LEFT].1);
+                    WP_PANE = 1;
+                } else {
+                    let mut name = [0u8; FM_NAME_MAX];
+                    if let Some((len, is_dir)) = lingfs::list_entry(wp_dir(), WP_RIGHT, &mut name) {
+                        if is_dir && WP_DIR_LEN == 0 {
+                            wp_set_dir(core::str::from_utf8(&name[..len]).unwrap_or(""));
+                        } else if !is_dir && len >= 4 && &name[len - 4..len] == b".bmp" {
+                            // Compose "dir/name" (or "name" at root) + set it.
+                            let mut full = [0u8; FM_NAME_MAX * 2 + 1];
+                            let mut off = 0;
+                            let dir = wp_dir();
+                            if !dir.is_empty() {
+                                full[..dir.len()].copy_from_slice(dir.as_bytes());
+                                off = dir.len();
+                                full[off] = b'/';
+                                off += 1;
+                            }
+                            full[off..off + len].copy_from_slice(&name[..len]);
+                            let path = core::str::from_utf8(&full[..off + len]).unwrap_or("");
+                            if set_wallpaper_image(path) {
+                                settings_save();
+                                // Close the picker window.
+                                for i in 0..MAX_WINDOWS {
+                                    if windows()[i].used && windows()[i].kind == KIND_WALLPICK {
+                                        close(i);
+                                    }
+                                }
+                            } else {
+                                WP_STATUS = "couldn't load that BMP";
+                            }
+                        } else {
+                            WP_STATUS = "select a .bmp (or a folder)";
+                        }
+                    }
+                }
+            },
+            _ => {},
+        }
+        // Keep the right-pane cursor visible.
+        if WP_RIGHT < WP_SCROLL {
+            WP_SCROLL = WP_RIGHT;
+        }
+        if WP_RIGHT >= WP_SCROLL + WP_VISIBLE {
+            WP_SCROLL = WP_RIGHT + 1 - WP_VISIBLE;
+        }
+    }
+}
+
 fn windows() -> &'static mut [Window; MAX_WINDOWS] {
     unsafe { &mut *&raw mut WINDOWS }
 }
@@ -974,6 +1118,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_TERM => "Terminal",
         KIND_MEDIA => "Media Player",
         KIND_PKG => "Packages",
+        KIND_WALLPICK => "Choose wallpaper",
         _ => "?",
     }
 }
@@ -994,6 +1139,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_TERM => (620.0, 420.0),
         KIND_MEDIA => (480.0, 300.0),
         KIND_PKG => (560.0, 440.0),
+        KIND_WALLPICK => (640.0, 460.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -1866,6 +2012,7 @@ pub fn key(k: u8) {
         KIND_TERM => terminal::key(k),
         KIND_MEDIA => media::key(k),
         KIND_PKG => pkgman::key(k),
+        KIND_WALLPICK => wallpick_key(k),
         _ => {},
     }
 }
@@ -1914,11 +2061,13 @@ fn settings_key(k: u8) {
                 settings_scroll_to_cursor();
             },
             10 => {
-                // Enter commits the current row. On General only Display needs
-                // an explicit commit (a live resolution switch -- arrowing just
-                // previews the label so the screen doesn't thrash). Persist.
+                // Enter commits the current row. On General: Display switches
+                // resolution live; Wallpaper opens the image browse picker.
                 if SETTINGS_TAB == SETTINGS_TAB_GENERAL && SETTINGS_CURSOR == 3 {
                     display::apply(display::selected());
+                } else if SETTINGS_TAB == SETTINGS_TAB_GENERAL && SETTINGS_CURSOR == 2 {
+                    open_wallpaper_picker();
+                    return;
                 }
                 settings_save();
             },
@@ -2985,6 +3134,41 @@ fn draw_content_inner(slot: usize) {
                     locale::render_daemon(),
                 );
             }
+        },
+        KIND_WALLPICK => {
+            let pane = unsafe { WP_PANE };
+            let left_w = 170u32;
+            // Left pane: places (drives / common folders).
+            font8x8::draw_str(x, y, b"Places", dim, panel);
+            for (i, (label, _)) in WP_SHORTCUTS.iter().enumerate() {
+                let ry = y + 24 + i as u32 * 26;
+                let sel = pane == 0 && unsafe { WP_LEFT } == i;
+                draw_row_ring(x, ry.saturating_sub(5), left_w, 22, sel);
+                font8x8::draw_str(x + 10, ry, label.as_bytes(), if sel { accent } else { text }, panel);
+            }
+            // Divider between the panes.
+            framebuffer::back_fill_rect(x + left_w + 8, y, 1, dh.saturating_sub(TITLEBAR_H + 44), theme::color(theme::SLOT_PANEL_BORDER));
+            // Right pane: the current folder's entries.
+            let rx = x + left_w + 22;
+            let rw = dw.saturating_sub(left_w + 44);
+            let header: &[u8] = if unsafe { WP_DIR_LEN } == 0 { b"/" } else { wp_dir().as_bytes() };
+            font8x8::draw_str(rx, y, header, accent, panel);
+            let row_h = 22u32;
+            let scroll = unsafe { WP_SCROLL };
+            let mut buf = [0u8; FM_NAME_MAX];
+            for vis in 0..WP_VISIBLE {
+                let i = scroll + vis;
+                let Some((len, is_dir)) = lingfs::list_entry(wp_dir(), i, &mut buf) else { break };
+                let ry = y + 24 + vis as u32 * row_h;
+                let sel = pane == 1 && unsafe { WP_RIGHT } == i;
+                draw_row_ring(rx, ry.saturating_sub(4), rw, row_h - 3, sel);
+                let is_bmp = len >= 4 && &buf[len - 4..len] == b".bmp";
+                let ic = if is_dir { accent } else if is_bmp { 0x5AC06A } else { dim };
+                framebuffer::back_fill_rounded_rect(rx + 6, ry + 1, 12, 10, 2, ic);
+                font8x8::draw_str(rx + 26, ry, &buf[..len], if sel { accent } else { text }, panel);
+            }
+            let hy = y + 24 + WP_VISIBLE as u32 * row_h + 8;
+            font8x8::draw_str(x, hy, unsafe { WP_STATUS }.as_bytes(), dim, panel);
         },
         _ => {},
     }
