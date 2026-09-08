@@ -54,6 +54,13 @@ sha2 = { version = "0.10", default-features = false }
 hmac = { version = "0.12", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
+# Raw ChaCha20 (legacy 64-bit-nonce variant) + Poly1305 for the SSH server's
+# `chacha20-poly1305@openssh.com` cipher, whose two-key/separately-encrypted-
+# length construction the RFC-8439 AEAD above can't express. Both are already
+# in the tree as `chacha20poly1305`'s own deps, so this adds no new crate risk;
+# `legacy` exposes `ChaCha20Legacy` (8-byte nonce = the SSH sequence number).
+chacha20 = { version = "0.9", default-features = false }
+poly1305 = { version = "0.8", default-features = false }
 x25519-dalek = { version = "2.0", default-features = false, features = ["static_secrets"] }
 
 # PNG decode: DEFLATE/zlib inflate, no_std + alloc (no std, no C). PNG chunk
@@ -66,6 +73,23 @@ miniz_oxide = { version = "0.8", default-features = false, features = ["with-all
 # pure functions: HTML-subset in, styled wrapped lines + a link table
 # out. The kernel side (drivers/browser.rs) only fetches, scrolls, draws.
 bring-browser = { path = "../../../bring-browser" }
+
+# horizon: LingOS's second web engine, sibling to bring-browser -- a real
+# DOM + CSS box-model layout with a <canvas> 2D surface, producing a pixel
+# display list instead of wrapped text lines. no_std + alloc (a DOM tree
+# and dynamic display list don't fit fixed buffers the way bring's do),
+# zero third-party deps. The kernel side (drivers/horizon.rs) only
+# fetches, scrolls, draws -- same division of labor as bring-browser.
+horizon-browser = { path = "../../../horizon-browser" }
+
+# ling-messenger: P2P end-to-end-encrypted chat core -- identity, an
+# authenticated handshake, and encrypted framing. no_std + alloc, real
+# crypto (the same x25519-dalek/chacha20poly1305/ed25519-dalek/hkdf/sha2
+# already vendored above for TLS). The kernel side (drivers/messenger.rs)
+# does LAN discovery, UDP I/O, and the desktop UI -- see its own README
+# for exactly what security properties the handshake does and doesn't
+# provide.
+ling-messenger = { path = "../../../ling-messenger" }
 
 [profile.release]
 lto = "fat"

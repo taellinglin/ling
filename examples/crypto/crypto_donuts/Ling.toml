@@ -1,0 +1,18 @@
+[spirit]
+name = "crypto_donuts"
+kind = "bin"
+version = "2030.0.0"
+
+[author]
+ling-lin = { email = "taellinglin@gmail.com" }
+
+[realm]
+language = "en"
+level    = "铁"
+source   = "src"
+
+[root]
+core = { version = "2030.0", language = "en" }
+
+[depends]
+ling-mic { version = "2030.0.9" }

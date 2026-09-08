@@ -19,6 +19,10 @@ pub mod display;
 #[cfg(target_arch = "x86_64")]
 pub mod editor;
 #[cfg(target_arch = "x86_64")]
+pub mod horizon;
+#[cfg(target_arch = "x86_64")]
+pub mod messenger;
+#[cfg(target_arch = "x86_64")]
 pub mod mixer;
 #[cfg(target_arch = "x86_64")]
 pub mod wallpaper;
@@ -54,6 +58,8 @@ pub mod net_e1000;
 pub mod netstack;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
+#[cfg(target_arch = "x86_64")]
+pub mod sshd;
 #[cfg(target_arch = "x86_64")]
 pub mod term;
 #[cfg(target_arch = "x86_64")]

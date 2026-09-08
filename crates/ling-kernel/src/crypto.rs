@@ -9,7 +9,7 @@
 //! module just exposes the primitives and proves each one against a known
 //! test vector via `selftest()`.
 
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 /// Fill `out` with hardware random bytes (RDRAND). Returns false if the CPU
 /// has no RDRAND -- callers must treat that as "no secure randomness" rather
@@ -32,6 +32,15 @@ pub fn random_bytes(out: &mut [u8]) -> bool {
 /// SHA-256 of `data`.
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut h = Sha256::new();
+    h.update(data);
+    h.finalize().into()
+}
+
+/// SHA-512 of `data`. Needed by Ed25519 (RFC 8032 uses SHA-512 internally) and
+/// available to the SSH transport for the `diffie-hellman-group*-sha512` and
+/// `hmac-sha2-512` code points if we ever negotiate them.
+pub fn sha512(data: &[u8]) -> [u8; 64] {
+    let mut h = Sha512::new();
     h.update(data);
     h.finalize().into()
 }
@@ -94,15 +103,24 @@ pub fn chachapoly_open(key: &[u8; 32], nonce: &[u8; 12], aad: &[u8], buf: &mut [
 pub struct SelfTest {
     pub rdrand: bool,
     pub sha256: bool,
+    pub sha512: bool,
     pub hmac: bool,
     pub hkdf: bool,
     pub chachapoly: bool,
     pub x25519: bool,
+    pub ed25519: bool,
 }
 
 impl SelfTest {
     pub fn all_ok(&self) -> bool {
-        self.rdrand && self.sha256 && self.hmac && self.hkdf && self.chachapoly && self.x25519
+        self.rdrand
+            && self.sha256
+            && self.sha512
+            && self.hmac
+            && self.hkdf
+            && self.chachapoly
+            && self.x25519
+            && self.ed25519
     }
 }
 
@@ -189,12 +207,35 @@ pub fn selftest() -> SelfTest {
             ]
     };
 
+    // SHA-512("abc") -- FIPS 180-4 example.
+    let sha512_ok = sha512(b"abc")
+        == [
+            0xdd, 0xaf, 0x35, 0xa1, 0x93, 0x61, 0x7a, 0xba, 0xcc, 0x41, 0x73, 0x49, 0xae, 0x20,
+            0x41, 0x31, 0x12, 0xe6, 0xfa, 0x4e, 0x89, 0xa9, 0x7e, 0xa2, 0x0a, 0x9e, 0xee, 0xe6,
+            0x4b, 0x55, 0xd3, 0x9a, 0x21, 0x92, 0x99, 0x2a, 0x27, 0x4f, 0xc1, 0xa8, 0x36, 0xba,
+            0x3c, 0x23, 0xa3, 0xfe, 0xeb, 0xbd, 0x45, 0x4d, 0x44, 0x23, 0x64, 0x3c, 0xe8, 0x0e,
+            0x2a, 0x9a, 0xc9, 0x4f, 0xa5, 0x4c, 0xa4, 0x9f,
+        ];
+
+    // Ed25519 seed-based keygen + deterministic sign + verify round-trip, with
+    // a tampered message rejected -- proves signing (new) and verification
+    // agree end to end, which is what the SSH host key relies on.
+    let ed25519_ok = {
+        let seed = [0x9du8; 32];
+        let pk = crate::ed25519::public_from_seed(&seed);
+        let sig = crate::ed25519::sign(&seed, b"the quick brown fox");
+        crate::ed25519::verify(&pk, b"the quick brown fox", &sig)
+            && !crate::ed25519::verify(&pk, b"the quick brown fix", &sig)
+    };
+
     SelfTest {
         rdrand,
         sha256: sha256_ok,
+        sha512: sha512_ok,
         hmac: hmac_ok,
         hkdf: hkdf_ok,
         chachapoly: chachapoly_ok,
         x25519: x25519_ok,
+        ed25519: ed25519_ok,
     }
 }

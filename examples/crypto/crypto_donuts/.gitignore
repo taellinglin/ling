@@ -1,0 +1,5 @@
+build/
+.lock/
+*.ling-build/
+.ling-build/
+dist/

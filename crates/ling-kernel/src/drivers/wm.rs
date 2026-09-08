@@ -27,8 +27,8 @@
 
 use crate::arch::{rtc, timer};
 use crate::drivers::{
-    browser, display, editor, framebuffer, font8x8, font_unicode, gallery, kbdlayout, locale,
-    media, mixer, netstack, pkgman, terminal, theme, wallpaper,
+    browser, display, editor, framebuffer, font8x8, font_unicode, gallery, horizon, kbdlayout,
+    locale, media, messenger, mixer, netstack, pkgman, terminal, theme, ui_scale, wallpaper,
 };
 use crate::fs::lingfs;
 
@@ -70,6 +70,8 @@ pub const KIND_GALLERY: u8 = 5;
 pub const KIND_TERM: u8 = 6;
 pub const KIND_MEDIA: u8 = 7;
 pub const KIND_PKG: u8 = 8;
+pub const KIND_HORIZON: u8 = 9;
+pub const KIND_MESSENGER: u8 = 10;
 const DOCK_APPS: [u8; 8] = [
     KIND_ABOUT,
     KIND_SETTINGS,
@@ -107,6 +109,14 @@ struct Window {
     // and `step` frees it at 1.0.
     closing: bool,
     dissolve: f64,
+    // Maximize: when true the window fills the workspace (below the top bar,
+    // above the dock). `sx/sy/sw/sh` remember the floating geometry so
+    // un-maximizing restores it.
+    maximized: bool,
+    sx: f64,
+    sy: f64,
+    sw: u32,
+    sh: u32,
 }
 
 const EMPTY_WINDOW: Window = Window {
@@ -126,6 +136,11 @@ const EMPTY_WINDOW: Window = Window {
     bend: 0.0,
     closing: false,
     dissolve: 0.0,
+    maximized: false,
+    sx: 0.0,
+    sy: 0.0,
+    sw: 0,
+    sh: 0,
 };
 
 static mut WINDOWS: [Window; MAX_WINDOWS] = [EMPTY_WINDOW; MAX_WINDOWS];
@@ -138,34 +153,78 @@ static mut FRAME_NO: u32 = 0;
 static mut DRAG_WIN: i32 = -1;
 static mut GRAB_DX: f64 = 0.0;
 static mut GRAB_DY: f64 = 0.0;
+// Edge-resize drag: which window, which edge(s), and the geometry+cursor
+// captured at press so the resize is computed as a delta from the grab point.
+static mut RESIZE_WIN: i32 = -1;
+static mut RESIZE_EDGE: u8 = 0;
+static mut RES_MX0: f64 = 0.0;
+static mut RES_MY0: f64 = 0.0;
+static mut RES_PX0: f64 = 0.0;
+static mut RES_PY0: f64 = 0.0;
+static mut RES_W0: u32 = 0;
+static mut RES_H0: u32 = 0;
 static mut PREV_BUTTONS: u8 = 0;
 static mut LAST_STEP_MS: u64 = 0;
 static mut SPAWN_COUNT: u32 = 0;
 static mut HOVER_DOCK: i32 = -1;
 
 // -- Settings window state -------------------------------------------------
-// Rows: UI theme / Sound theme / Wallpaper / Display / Window spring /
-// Keyboard / Language / Clock / DNS. Changes apply live as you arrow; the
-// Apply/OK buttons persist them to lingfs so they survive a reboot.
-const SETTINGS_ROWS: usize = 10;
+// Two tabs (Tab key switches):
+//   General: UI theme / Sound theme / Wallpaper / Display / Window spring /
+//            Keyboard / Language / Clock / DPI / Refresh
+//   Network: IP mode / Nameserver / SSH at boot  (+ read-only IP/gw/DNS status)
+// Most changes apply live as you arrow; Display applies on Enter/Apply/OK (a
+// live resolution switch on DISPI adapters). Apply/OK persist everything to
+// lingfs so it survives a reboot. General scrolls when it overflows (the cursor
+// keeps itself visible; SETTINGS_SCROLL is the first visible row).
+const SETTINGS_TAB_GENERAL: usize = 0;
+const SETTINGS_TAB_NETWORK: usize = 1;
+const SETTINGS_TAB_COUNT: usize = 2;
+const GENERAL_ROWS: usize = 11;
+const NETWORK_ROWS: usize = 3;
+const SETTINGS_VISIBLE: usize = 8;
+static mut SETTINGS_TAB: usize = 0;
 static mut SETTINGS_CURSOR: usize = 0;
+static mut SETTINGS_SCROLL: usize = 0;
+// Network tab IP mode: 0 = DHCP, 1 = static (MAC-derived).
+static mut NET_IP_MODE: usize = 0;
+
+fn settings_tab_rows(tab: usize) -> usize {
+    if tab == SETTINGS_TAB_NETWORK {
+        NETWORK_ROWS
+    } else {
+        GENERAL_ROWS
+    }
+}
 static mut CLOCK_24H: bool = true;
 
 // Network: a DNS-server preset cycler (the Settings "DNS" row). Each preset
 // is the primary resolver; the NAT resolver stays the guaranteed fallback
 // (see netstack). Cutting-edge, privacy-first options first.
-const DNS_PRESETS: [(&str, [u8; 4]); 5] = [
-    ("Cloudflare 1.1.1.1", [1, 1, 1, 1]),
-    ("Quad9 9.9.9.9", [9, 9, 9, 9]),
-    ("AdGuard 94.140.14.14", [94, 140, 14, 14]),
-    ("LAN 192.168.0.2", [192, 168, 0, 2]),
-    ("NAT 10.0.2.3", [10, 0, 2, 3]),
+// Each preset is (label, ip, hostname). A non-empty hostname is a DNS server
+// addressed by name (e.g. Ling's own dns.linglin.art) -- resolved via the
+// current resolver at apply time, since you can't send DNS queries to a name.
+const DNS_PRESETS: [(&str, [u8; 4], &str); 6] = [
+    ("Cloudflare 1.1.1.1", [1, 1, 1, 1], ""),
+    ("Quad9 9.9.9.9", [9, 9, 9, 9], ""),
+    ("AdGuard 94.140.14.14", [94, 140, 14, 14], ""),
+    ("Ling dns.linglin.art", [0, 0, 0, 0], "dns.linglin.art"),
+    ("LAN 192.168.0.2", [192, 168, 0, 2], ""),
+    ("NAT 10.0.2.3", [10, 0, 2, 3], ""),
 ];
 static mut DNS_PRESET: usize = 0;
 
 fn apply_dns_preset() {
-    let (_, ip) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
-    netstack::set_dns(ip, netstack::NAT_RESOLVER);
+    let (_, ip, host) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
+    // A hostname preset resolves the server's name via whatever resolver is
+    // live now; if that fails (offline, or it IS the resolver being changed),
+    // fall back to the NAT resolver rather than setting 0.0.0.0.
+    let primary = if !host.is_empty() {
+        netstack::dns_resolve(host).unwrap_or(netstack::NAT_RESOLVER)
+    } else {
+        ip
+    };
+    netstack::set_dns(primary, netstack::NAT_RESOLVER);
 }
 
 /// Persist the live settings to lingfs `/settings` (one line of small
@@ -183,6 +242,9 @@ pub fn settings_save() {
         locale::selected().unwrap_or(0) as u32,
         unsafe { CLOCK_24H as u32 },
         unsafe { DNS_PRESET as u32 },
+        ui_scale::dpi_index() as u32,
+        hz_index() as u32,
+        wallpaper::scale_mode() as u32,
     ];
     let mut n = 0;
     for (i, v) in vals.iter().enumerate() {
@@ -230,6 +292,16 @@ pub fn settings_load() {
         unsafe { DNS_PRESET = (v as usize) % DNS_PRESETS.len() };
         apply_dns_preset();
     }
+    if let Some(v) = next() {
+        ui_scale::set_dpi_index(v as usize);
+        font8x8::set_scale(ui_scale::dpi_font_scale());
+    }
+    if let Some(v) = next() {
+        set_hz_index(v as usize);
+    }
+    if let Some(v) = next() {
+        wallpaper::set_scale_mode(v as u8);
+    }
 }
 
 fn write_u32_into(buf: &mut [u8], mut v: u32) -> usize {
@@ -261,6 +333,8 @@ pub const WALL_SOLID: u32 = 2;
 pub const WALL_IMAGE: u32 = 3;
 const WALL_MODES: u32 = 4;
 static mut WALLPAPER: u32 = 0;
+/// Set once the built-in wallpaper has been baked into the decode cache.
+static mut WALLPAPER_INIT: bool = false;
 
 pub fn wallpaper() -> u32 {
     unsafe { WALLPAPER }
@@ -292,6 +366,8 @@ fn wallpaper_name(mode: u32) -> &'static str {
 pub fn set_wallpaper_image(name: &str) -> bool {
     if wallpaper::load(name) {
         unsafe { WALLPAPER = WALL_IMAGE };
+        // Persist the choice so it survives a reboot (read in draw_wallpaper).
+        let _ = lingfs::write_file("/wallpaper", name.as_bytes());
         true
     } else {
         false
@@ -316,6 +392,25 @@ pub fn set_wallpaper_current() {
 const ACT_LOGOUT: u8 = 200;
 const ACT_RESTART: u8 = 201;
 const ACT_SHUTDOWN: u8 = 202;
+const ACT_LAUNCH_PKG: u8 = 203;
+
+// Installed lingfu packages that are runnable on LingOS (have a `main.ling`)
+// appear in the start menu grouped by category. The list is rebuilt each time
+// the menu opens (cheap; packages are few) by scanning lingfs `packages/`,
+// checking each `pkg-<name>/main.ling`, and reading its category from
+// `pkg-<name>/Ling.toml` (default "Applications"). Rust-only source packages
+// (no `main.ling`) are intentionally omitted -- they can't run here.
+const MAX_MENU_PKGS: usize = 16;
+// menu_walk encodes a clicked package row as this base + the package index, so
+// it stays distinct from the real window kinds (0..=10) and ACT_* (200..).
+const PKG_ACTION: u32 = 0x1000;
+const MENU_HEADER: u32 = 0xFFFF;
+static mut PKG_NAME: [[u8; 40]; MAX_MENU_PKGS] = [[0; 40]; MAX_MENU_PKGS];
+static mut PKG_NAME_LEN: [usize; MAX_MENU_PKGS] = [0; MAX_MENU_PKGS];
+static mut PKG_CAT: [[u8; 20]; MAX_MENU_PKGS] = [[0; 20]; MAX_MENU_PKGS];
+static mut PKG_CAT_LEN: [usize; MAX_MENU_PKGS] = [0; MAX_MENU_PKGS];
+static mut PKG_COUNT: usize = 0;
+static mut PKG_LAUNCH: usize = 0;
 
 static mut LOGOUT_REQUESTED: bool = false;
 
@@ -333,9 +428,11 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 17] = [
+const MENU: [MenuRow; 19] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
+    MenuRow { header: "", app: "horizon (box-model browser)", kind: KIND_HORIZON },
+    MenuRow { header: "", app: "Messenger", kind: KIND_MESSENGER },
     MenuRow { header: "Accessories", app: "", kind: 255 },
     MenuRow { header: "", app: "Terminal", kind: KIND_TERM },
     MenuRow { header: "", app: "Editor", kind: KIND_EDIT },
@@ -355,13 +452,259 @@ const MENU: [MenuRow; 17] = [
 const MENU_W: u32 = 210;
 const MENU_ROW_H: u32 = 22;
 static mut MENU_OPEN: bool = false;
+/// Keyboard selection cursor into the menu's *selectable* (non-header) rows,
+/// in `menu_walk` order. Only meaningful while `MENU_OPEN`; the mouse path
+/// ignores it (it hit-tests the pointer directly).
+static mut MENU_SEL: usize = 0;
 
 pub fn menu_open() -> bool {
     unsafe { MENU_OPEN }
 }
 
+/// Act on a chosen menu row (shared by the mouse click path and the keyboard
+/// Enter path so both route identically). `255` is "nothing / a header".
+fn menu_activate(kind: u8) {
+    match kind {
+        255 => {},
+        ACT_LOGOUT => unsafe { LOGOUT_REQUESTED = true },
+        ACT_RESTART => crate::arch::power::reboot(),
+        ACT_SHUTDOWN => crate::arch::power::poweroff(),
+        ACT_LAUNCH_PKG => launch_pkg(unsafe { PKG_LAUNCH }),
+        k => open(k),
+    }
+}
+
+/// How many selectable (non-header) rows the menu currently has.
+fn menu_selectable_count() -> usize {
+    let mut n = 0usize;
+    menu_walk(|_r, _l, header, _a| {
+        if !header {
+            n += 1;
+        }
+    });
+    n
+}
+
+/// The action code of the `sel`-th selectable row (sets `PKG_LAUNCH` and
+/// returns `ACT_LAUNCH_PKG` for a package row, mirroring `menu_click`).
+fn menu_nth_action(sel: usize) -> Option<u8> {
+    let mut i = 0usize;
+    let mut found: Option<u32> = None;
+    menu_walk(|_row, _label, header, action| {
+        if header {
+            return;
+        }
+        if i == sel {
+            found = Some(action);
+        }
+        i += 1;
+    });
+    let action = found?;
+    if action >= PKG_ACTION {
+        unsafe { PKG_LAUNCH = (action - PKG_ACTION) as usize };
+        return Some(ACT_LAUNCH_PKG);
+    }
+    Some(action as u8)
+}
+
+/// Move the keyboard selection cursor, clamped to the selectable rows.
+fn menu_move(delta: i32) {
+    let n = menu_selectable_count() as i32;
+    if n == 0 {
+        return;
+    }
+    let cur = unsafe { MENU_SEL } as i32;
+    unsafe { MENU_SEL = (cur + delta).clamp(0, n - 1) as usize };
+}
+
+/// Open the Applications menu from the keyboard: refresh the installed-package
+/// rows (same as the brand-corner click) and reset the selection to the top.
+fn menu_open_kbd() {
+    load_installed_packages();
+    unsafe {
+        MENU_OPEN = true;
+        MENU_SEL = 0;
+    }
+    mixer::jingle(mixer::EVENT_CLICK);
+}
+
+// -- Installed-package launchers -------------------------------------------
+
+/// Does `dir` contain a file named `fname`? Tells a runnable package (one with
+/// a `main.ling`) from a Rust/source-only one.
+fn dir_has_file(dir: &str, fname: &[u8]) -> bool {
+    let mut i = 0usize;
+    loop {
+        let mut nb = [0u8; 40];
+        let Some((n, _)) = lingfs::list_entry(dir, i, &mut nb) else { return false };
+        if &nb[..n] == fname {
+            return true;
+        }
+        i += 1;
+        if i > 256 {
+            return false;
+        }
+    }
+}
+
+/// Extract a TOML `category = "..."` value from `toml` into `out`, returning
+/// its length (0 if absent). Tolerates leading whitespace and a missing space
+/// around `=`; won't false-match `categories`/`keywords`.
+fn parse_toml_category(toml: &[u8], out: &mut [u8]) -> usize {
+    let key = b"category";
+    let n = toml.len();
+    let mut i = 0usize;
+    while i < n {
+        let mut j = i;
+        while j < n && (toml[j] == b' ' || toml[j] == b'\t') {
+            j += 1;
+        }
+        if toml[j..].starts_with(key) {
+            let mut k = j + key.len();
+            while k < n && (toml[k] == b' ' || toml[k] == b'\t') {
+                k += 1;
+            }
+            if k < n && toml[k] == b'=' {
+                k += 1;
+                while k < n && (toml[k] == b' ' || toml[k] == b'\t' || toml[k] == b'"') {
+                    k += 1;
+                }
+                let s = k;
+                while k < n && toml[k] != b'"' && toml[k] != b'\n' && toml[k] != b'\r' {
+                    k += 1;
+                }
+                let val = &toml[s..k];
+                let m = val.len().min(out.len());
+                out[..m].copy_from_slice(&val[..m]);
+                return m;
+            }
+        }
+        while i < n && toml[i] != b'\n' {
+            i += 1;
+        }
+        i += 1;
+    }
+    0
+}
+
+/// Read `<dir>/Ling.toml`'s category into `out` (0 if none/unreadable).
+fn read_pkg_category(dir: &str, out: &mut [u8]) -> usize {
+    let mut path = [0u8; 64];
+    let mut p = 0usize;
+    for &b in dir.as_bytes() {
+        if p < path.len() {
+            path[p] = b;
+            p += 1;
+        }
+    }
+    for &b in b"/Ling.toml" {
+        if p < path.len() {
+            path[p] = b;
+            p += 1;
+        }
+    }
+    let Ok(ps) = core::str::from_utf8(&path[..p]) else { return 0 };
+    let mut buf = [0u8; lingfs::BLOCK_SIZE];
+    let Ok(Some(len)) = lingfs::read_file(ps, &mut buf) else { return 0 };
+    parse_toml_category(&buf[..len], out)
+}
+
+/// Rebuild the installed-package launcher list from lingfs. Called when the
+/// start menu opens (cheap; packages are few).
+fn load_installed_packages() {
+    let mut count = 0usize;
+    let mut i = 0usize;
+    while count < MAX_MENU_PKGS {
+        let mut nb = [0u8; 40];
+        let Some((nlen, _)) = lingfs::list_entry("packages", i, &mut nb) else { break };
+        i += 1;
+        if nlen == 0 {
+            continue;
+        }
+        let mut dir = [0u8; 48];
+        let mut d = 0usize;
+        for &b in b"pkg-" {
+            dir[d] = b;
+            d += 1;
+        }
+        for &b in &nb[..nlen] {
+            if d < dir.len() {
+                dir[d] = b;
+                d += 1;
+            }
+        }
+        let Ok(dirs) = core::str::from_utf8(&dir[..d]) else { continue };
+        if !dir_has_file(dirs, b"main.ling") {
+            continue; // source-only (Rust) package -- not runnable here
+        }
+        let mut cat = [0u8; 20];
+        let mut clen = read_pkg_category(dirs, &mut cat);
+        if clen == 0 {
+            let def = b"Applications";
+            clen = def.len().min(cat.len());
+            cat[..clen].copy_from_slice(&def[..clen]);
+        }
+        unsafe {
+            let nn = nlen.min(40);
+            PKG_NAME[count][..nn].copy_from_slice(&nb[..nn]);
+            PKG_NAME_LEN[count] = nn;
+            PKG_CAT[count][..clen].copy_from_slice(&cat[..clen]);
+            PKG_CAT_LEN[count] = clen;
+        }
+        count += 1;
+    }
+    unsafe { PKG_COUNT = count };
+}
+
+/// Walk every visible menu row in order -- the static built-ins with the
+/// installed-package section (grouped by category) injected just before
+/// "Power" -- invoking `f(row, label, is_header, action)`. `action` is
+/// MENU_HEADER for a header, a window kind (<256) for a built-in app, or
+/// PKG_ACTION+idx for a package. Shared by draw/click/height so they agree.
+fn menu_walk(mut f: impl FnMut(usize, &[u8], bool, u32)) {
+    let mut row = 0usize;
+    for m in MENU.iter() {
+        if m.header == "Power" {
+            let pc = unsafe { PKG_COUNT };
+            let mut drawn = [false; MAX_MENU_PKGS];
+            for a in 0..pc {
+                if drawn[a] {
+                    continue;
+                }
+                let cat_a = unsafe { &PKG_CAT[a][..PKG_CAT_LEN[a]] };
+                f(row, cat_a, true, MENU_HEADER);
+                row += 1;
+                for b in a..pc {
+                    if drawn[b] {
+                        continue;
+                    }
+                    let cat_b = unsafe { &PKG_CAT[b][..PKG_CAT_LEN[b]] };
+                    if cat_b == cat_a {
+                        drawn[b] = true;
+                        let name = unsafe { &PKG_NAME[b][..PKG_NAME_LEN[b]] };
+                        f(row, name, false, PKG_ACTION + b as u32);
+                        row += 1;
+                    }
+                }
+            }
+        }
+        if m.header.is_empty() {
+            f(row, m.app.as_bytes(), false, m.kind as u32);
+        } else {
+            f(row, m.header.as_bytes(), true, MENU_HEADER);
+        }
+        row += 1;
+    }
+}
+
+fn menu_total_rows() -> usize {
+    let mut rows = 0usize;
+    menu_walk(|_r, _l, _h, _a| rows += 1);
+    rows
+}
+
 fn menu_rect() -> (u32, u32, u32, u32) {
-    let h = MENU.len() as u32 * MENU_ROW_H + 30;
+    let h = menu_total_rows() as u32 * MENU_ROW_H + 30;
     (6, 31, MENU_W, h)
 }
 
@@ -370,8 +713,8 @@ fn brand_hit(mx: i64, my: i64) -> bool {
     my >= 0 && my < 30 && mx >= 0 && mx < 84
 }
 
-/// Returns the app kind if the press landed on an app row, else 255.
-/// Also closes the menu on any click (inside picks, outside dismisses).
+/// Returns the app kind if the press landed on an app row, ACT_LAUNCH_PKG for
+/// a package row (with PKG_LAUNCH set), else 255. Closes the menu on any click.
 fn menu_click(mx: i64, my: i64) -> u8 {
     let (rx, ry, rw, rh) = menu_rect();
     let inside = mx >= rx as i64 && mx < (rx + rw) as i64 && my >= ry as i64 && my < (ry + rh) as i64;
@@ -379,18 +722,25 @@ fn menu_click(mx: i64, my: i64) -> u8 {
     if !inside {
         return 255;
     }
-    let mut yy = ry + 22;
-    for row in MENU.iter() {
-        if row.header.is_empty() {
-            if my >= yy as i64 && my < (yy + MENU_ROW_H) as i64 {
-                return row.kind;
-            }
-            yy += MENU_ROW_H;
-        } else {
-            yy += MENU_ROW_H;
+    let y0 = ry + 22;
+    let mut hit: u32 = MENU_HEADER;
+    menu_walk(|row, _label, header, action| {
+        if header {
+            return;
         }
+        let yy = y0 + row as u32 * MENU_ROW_H;
+        if my >= yy as i64 && my < (yy + MENU_ROW_H) as i64 {
+            hit = action;
+        }
+    });
+    if hit == MENU_HEADER {
+        return 255;
     }
-    255
+    if hit >= PKG_ACTION {
+        unsafe { PKG_LAUNCH = (hit - PKG_ACTION) as usize };
+        return ACT_LAUNCH_PKG;
+    }
+    hit as u8
 }
 
 /// Draw the applications menu (call last, over windows and dock).
@@ -405,15 +755,57 @@ pub fn draw_menu() {
     framebuffer::back_fill_rounded_rect(rx, ry, rw, rh, 10, theme::color(theme::SLOT_PANEL_BORDER));
     framebuffer::back_fill_rounded_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, panel);
     font8x8::draw_str(rx + 12, ry + 6, b"Applications", accent, panel);
-    let mut yy = ry + 22;
-    for row in MENU.iter() {
-        if row.header.is_empty() {
-            font8x8::draw_str(rx + 24, yy + 6, row.app.as_bytes(), theme::color(theme::SLOT_TEXT), panel);
-            yy += MENU_ROW_H;
+    let y0 = ry + 22;
+    let text = theme::color(theme::SLOT_TEXT);
+    let dim = theme::color(theme::SLOT_DIM);
+    let sel = unsafe { MENU_SEL };
+    let mut sidx = 0usize;
+    menu_walk(|row, label, header, _action| {
+        let yy = y0 + row as u32 * MENU_ROW_H;
+        if header {
+            font8x8::draw_str(rx + 10, yy + 6, label, dim, panel);
         } else {
-            font8x8::draw_str(rx + 10, yy + 6, row.header.as_bytes(), theme::color(theme::SLOT_DIM), panel);
-            yy += MENU_ROW_H;
+            if sidx == sel {
+                // Keyboard selection: an accent pill behind the row, text
+                // recolored to the panel background for contrast on it.
+                framebuffer::back_fill_rounded_rect(rx + 4, yy + 2, rw - 8, MENU_ROW_H - 3, 5, accent);
+                font8x8::draw_str(rx + 24, yy + 6, label, panel, accent);
+            } else {
+                font8x8::draw_str(rx + 24, yy + 6, label, text, panel);
+            }
+            sidx += 1;
         }
+    });
+}
+
+/// Launch installed package `idx`: open a Terminal and run its `main.ling`
+/// through the in-kernel Ling interpreter.
+fn launch_pkg(idx: usize) {
+    if idx >= unsafe { PKG_COUNT } {
+        return;
+    }
+    open(KIND_TERM);
+    let mut line = [0u8; 80];
+    let mut w = 0usize;
+    for &b in b"ling run pkg-" {
+        line[w] = b;
+        w += 1;
+    }
+    let name = unsafe { &PKG_NAME[idx][..PKG_NAME_LEN[idx]] };
+    for &b in name {
+        if w < line.len() {
+            line[w] = b;
+            w += 1;
+        }
+    }
+    for &b in b"/main.ling" {
+        if w < line.len() {
+            line[w] = b;
+            w += 1;
+        }
+    }
+    if let Ok(s) = core::str::from_utf8(&line[..w]) {
+        terminal::run_command(s);
     }
 }
 
@@ -481,6 +873,65 @@ fn web_key(k: u8) {
     }
 }
 
+// -- Horizon window state ---------------------------------------------------
+// Same shape as the bring browser's URL bar above (WEB_*): HZ_EDITING =
+// the bar has focus; false = the page has focus (arrows scroll, digits
+// follow links).
+const HZ_INPUT_MAX: usize = 200;
+static mut HZ_EDITING: bool = true;
+static mut HZ_INPUT: [u8; HZ_INPUT_MAX] = [0; HZ_INPUT_MAX];
+static mut HZ_INPUT_LEN: usize = 0;
+/// Content width (px) of the currently-focused horizon window, captured at
+/// draw time so key-driven fetches lay out at the right viewport width.
+static mut HZ_VIEWPORT_W: u32 = 560;
+
+fn horizon_key(k: u8) {
+    unsafe {
+        if HZ_EDITING {
+            match k {
+                10 => {
+                    let url = core::str::from_utf8(&(&*&raw const HZ_INPUT)[..HZ_INPUT_LEN]).unwrap_or("");
+                    if horizon::navigate(url, HZ_VIEWPORT_W) {
+                        HZ_EDITING = false;
+                    }
+                },
+                0x1B => HZ_EDITING = false,
+                0x08 => {
+                    if HZ_INPUT_LEN > 0 {
+                        HZ_INPUT_LEN -= 1;
+                    }
+                },
+                0x20..=0x7E => {
+                    if HZ_INPUT_LEN < HZ_INPUT_MAX {
+                        (&mut *&raw mut HZ_INPUT)[HZ_INPUT_LEN] = k;
+                        HZ_INPUT_LEN += 1;
+                    }
+                },
+                _ => {},
+            }
+            return;
+        }
+        match k {
+            0x11 => horizon::scroll(-3),
+            0x12 => horizon::scroll(3),
+            crate::drivers::keyboard::PGUP_KEY => horizon::scroll_page(-1),
+            crate::drivers::keyboard::PGDN_KEY => horizon::scroll_page(1),
+            crate::drivers::keyboard::HOME_KEY => horizon::scroll_home(),
+            crate::drivers::keyboard::END_KEY => horizon::scroll_end(),
+            b'1'..=b'9' => {
+                horizon::follow((k - b'0') as usize, HZ_VIEWPORT_W);
+            },
+            0x20..=0x7E => {
+                HZ_EDITING = true;
+                HZ_INPUT_LEN = 0;
+                (&mut *&raw mut HZ_INPUT)[0] = k;
+                HZ_INPUT_LEN = 1;
+            },
+            _ => {},
+        }
+    }
+}
+
 // -- Files window state ----------------------------------------------------
 const FM_NAME_MAX: usize = 60;
 static mut FM_DIR: [u8; FM_NAME_MAX] = [0; FM_NAME_MAX]; // "" = root
@@ -516,6 +967,8 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_SETTINGS => "Settings",
         KIND_FILES => "Files",
         KIND_WEB => "bring - browser in ling",
+        KIND_HORIZON => "horizon - box-model browser",
+        KIND_MESSENGER => "Messenger",
         KIND_EDIT => "Editor",
         KIND_GALLERY => "Gallery",
         KIND_TERM => "Terminal",
@@ -534,6 +987,8 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_SETTINGS => (470.0, 470.0),
         KIND_FILES => (470.0, 370.0),
         KIND_WEB => (620.0, 460.0),
+        KIND_HORIZON => (620.0, 460.0),
+        KIND_MESSENGER => (560.0, 420.0),
         KIND_EDIT => (600.0, 440.0),
         KIND_GALLERY => (560.0, 440.0),
         KIND_TERM => (620.0, 420.0),
@@ -544,18 +999,65 @@ fn kind_size(kind: u8) -> (u32, u32) {
     ((w * s) as u32, (h * s) as u32)
 }
 
+/// Single-glyph dock abbreviation, in the current UI language's script where a
+/// baked glyph exists (Chinese/Korean), else the Latin initial. `bring` (the
+/// web browser) stays "W" -- it's a product name, not a translatable word.
 pub fn dock_letter(i: usize) -> &'static str {
-    match DOCK_APPS.get(i) {
-        Some(&KIND_ABOUT) => "i",
-        Some(&KIND_SETTINGS) => "S",
-        Some(&KIND_FILES) => "F",
-        Some(&KIND_WEB) => "W",
-        Some(&KIND_EDIT) => "E",
-        Some(&KIND_GALLERY) => "G",
-        Some(&KIND_TERM) => "T",
-        Some(&KIND_MEDIA) => "M",
-        _ => "",
+    let kind = DOCK_APPS.get(i).copied();
+    let id = locale::selected().and_then(|s| locale::get(s)).map(|l| l.id).unwrap_or("en-US");
+    match id {
+        "zh-CN" => match kind {
+            Some(KIND_ABOUT) => "关",
+            Some(KIND_SETTINGS) => "设",
+            Some(KIND_FILES) => "文",
+            Some(KIND_WEB) => "W",
+            Some(KIND_EDIT) => "编",
+            Some(KIND_GALLERY) => "图",
+            Some(KIND_TERM) => "终",
+            Some(KIND_MEDIA) => "媒",
+            _ => "",
+        },
+        "ko-KR" => match kind {
+            Some(KIND_ABOUT) => "정",
+            Some(KIND_SETTINGS) => "설",
+            Some(KIND_FILES) => "파",
+            Some(KIND_WEB) => "W",
+            Some(KIND_EDIT) => "편",
+            Some(KIND_GALLERY) => "갤",
+            Some(KIND_TERM) => "터",
+            Some(KIND_MEDIA) => "미",
+            _ => "",
+        },
+        _ => match kind {
+            Some(KIND_ABOUT) => "i",
+            Some(KIND_SETTINGS) => "S",
+            Some(KIND_FILES) => "F",
+            Some(KIND_WEB) => "W",
+            Some(KIND_EDIT) => "E",
+            Some(KIND_GALLERY) => "G",
+            Some(KIND_TERM) => "T",
+            Some(KIND_MEDIA) => "M",
+            _ => "",
+        },
     }
+}
+
+/// Draw the dock abbreviation centered in the icon, kernel-side so CJK glyphs
+/// (16px, via `font_unicode`) and Latin initials (8px * DPI) are both centered
+/// correctly -- `.ling` can't measure a UTF-8 string's pixel width to center
+/// it itself.
+pub fn draw_dock_glyph(i: usize, dx: u32, dy: u32, sz: u32) {
+    let s = dock_letter(i);
+    let b = s.as_bytes();
+    if b.is_empty() {
+        return;
+    }
+    let wide = b[0] >= 0x80; // a baked 16px CJK/Hangul glyph vs an ASCII initial
+    let gw = if wide { 16 } else { font8x8::advance() };
+    let gh = if wide { 16 } else { 8 * font8x8::scale() };
+    let gx = dx + sz.saturating_sub(gw) / 2;
+    let gy = dy + sz.saturating_sub(gh) / 2;
+    font_unicode::draw_utf8_str(gx, gy, b, theme::color(3), theme::color(1), false);
 }
 
 // -- Dock geometry (real pixels, computed from the live fb size) -----------
@@ -656,6 +1158,11 @@ pub fn open(kind: u8) {
         bend: 0.0,
         closing: false,
         dissolve: 0.0,
+        maximized: false,
+        sx: 0.0,
+        sy: 0.0,
+        sw: 0,
+        sh: 0,
     };
     z_raise(idx);
     // The package manager syncs its catalog when it first appears (bounded
@@ -678,6 +1185,9 @@ pub fn close(idx: usize) {
             if DRAG_WIN == idx as i32 {
                 DRAG_WIN = -1;
             }
+            if RESIZE_WIN == idx as i32 {
+                RESIZE_WIN = -1;
+            }
         }
         mixer::jingle(mixer::EVENT_CLOSE);
     }
@@ -696,6 +1206,9 @@ fn minimize(idx: usize) {
         unsafe {
             if DRAG_WIN == idx as i32 {
                 DRAG_WIN = -1;
+            }
+            if RESIZE_WIN == idx as i32 {
+                RESIZE_WIN = -1;
             }
         }
     }
@@ -737,6 +1250,156 @@ fn hit_minimize(w: &Window, mx: i64, my: i64) -> bool {
     let (x, y, dw, _) = deformed_rect(w);
     let bx = x + dw as i64 - 2 * TITLEBAR_H as i64;
     mx >= bx && mx < x + dw as i64 - TITLEBAR_H as i64 && my >= y && my < y + TITLEBAR_H as i64
+}
+
+fn hit_maximize(w: &Window, mx: i64, my: i64) -> bool {
+    // Third button in from the right (green), left of minimize.
+    let (x, y, dw, _) = deformed_rect(w);
+    let bx = x + dw as i64 - 3 * TITLEBAR_H as i64;
+    mx >= bx && mx < x + dw as i64 - 2 * TITLEBAR_H as i64 && my >= y && my < y + TITLEBAR_H as i64
+}
+
+// Resize edge bitmask.
+const RESIZE_LEFT: u8 = 1;
+const RESIZE_RIGHT: u8 = 2;
+const RESIZE_BOTTOM: u8 = 8;
+const RESIZE_MARGIN: i64 = 6;
+const WIN_MIN_W: u32 = 240;
+const WIN_MIN_H: u32 = 160;
+
+/// Which resize edge(s) the cursor is on, or 0. Grabbable band is the inner
+/// `RESIZE_MARGIN` px of the left/right/bottom borders (top is the titlebar,
+/// which drags). A maximized or dissolving window isn't resizable.
+fn hit_resize(w: &Window, mx: i64, my: i64) -> u8 {
+    if w.closing || w.maximized {
+        return 0;
+    }
+    let (x, y, dw, dh) = deformed_rect(w);
+    let (dw, dh) = (dw as i64, dh as i64);
+    if mx < x || mx > x + dw || my < y || my > y + dh {
+        return 0;
+    }
+    let mut m = 0u8;
+    if mx - x <= RESIZE_MARGIN {
+        m |= RESIZE_LEFT;
+    }
+    if (x + dw) - mx <= RESIZE_MARGIN {
+        m |= RESIZE_RIGHT;
+    }
+    if (y + dh) - my <= RESIZE_MARGIN {
+        m |= RESIZE_BOTTOM;
+    }
+    // The bottom band must be below the titlebar to be a resize (not a
+    // titlebar-height sliver on a tiny window).
+    if m & RESIZE_BOTTOM != 0 && my < y + TITLEBAR_H as i64 {
+        m &= !RESIZE_BOTTOM;
+    }
+    m
+}
+
+/// Maximize fills the workspace (below the top bar, above the dock); toggling
+/// again restores the saved floating geometry.
+fn toggle_maximize(idx: usize) {
+    let fw = framebuffer::width();
+    let top = TITLEBAR_MARGIN_TOP;
+    let wsh = dock_y().saturating_sub(top).saturating_sub(12).max(WIN_MIN_H);
+    let w = &mut windows()[idx];
+    if w.maximized {
+        w.w = w.sw;
+        w.h = w.sh;
+        w.px = w.sx;
+        w.py = w.sy;
+        w.tx = w.sx;
+        w.ty = w.sy;
+        w.maximized = false;
+    } else {
+        w.sx = w.px;
+        w.sy = w.py;
+        w.sw = w.w;
+        w.sh = w.h;
+        w.px = 0.0;
+        w.py = top as f64;
+        w.tx = 0.0;
+        w.ty = top as f64;
+        w.w = fw;
+        w.h = wsh;
+        w.maximized = true;
+    }
+    w.vx = 0.0;
+    w.vy = 0.0;
+    w.scale_w = 1.0;
+    w.scale_h = 1.0;
+    z_raise(idx);
+}
+
+/// Top of the workspace: below the 30px top bar + 1px divider.
+const TITLEBAR_MARGIN_TOP: u32 = 31;
+
+/// Live snap-zone preview: where the currently-dragged window would dock if
+/// released now (`None` = not in a zone). Drawn as a translucent ghost under
+/// the dragged window (see `draw_window`).
+static mut SNAP_PREVIEW: Option<(u32, u32, u32, u32)> = None;
+
+/// Aero-snap target for a titlebar drag whose cursor is at `(mx, my)`: screen
+/// edges dock to half the workspace, corners to a quarter, the very top edge
+/// maximizes. Returns `(rect, is_full_maximize)` or `None` outside any zone.
+fn snap_target(mx: i64, my: i64) -> Option<((f64, f64, u32, u32), bool)> {
+    let fw = framebuffer::width();
+    let top = TITLEBAR_MARGIN_TOP;
+    let dock = dock_y();
+    if dock <= top + 60 {
+        return None;
+    }
+    let workh = dock.saturating_sub(top).saturating_sub(6); // gap above the dock
+    let halfw = fw / 2;
+    let halfh = workh / 2;
+    let e: i64 = 14; // edge trigger band
+    let corner: i64 = 90; // how far along an edge still counts as a corner
+    let near_left = mx <= e;
+    let near_right = mx >= fw as i64 - e;
+    let near_top = my <= top as i64 + corner;
+    let near_bottom = my >= (top + workh) as i64 - corner;
+    let r = |x: u32, y: u32, w: u32, h: u32, full: bool| Some(((x as f64, y as f64, w, h), full));
+    if near_left && near_top {
+        return r(0, top, halfw, halfh, false); // top-left quarter
+    }
+    if near_left && near_bottom {
+        return r(0, top + halfh, halfw, workh - halfh, false); // bottom-left quarter
+    }
+    if near_right && near_top {
+        return r(halfw, top, fw - halfw, halfh, false); // top-right quarter
+    }
+    if near_right && near_bottom {
+        return r(halfw, top + halfh, fw - halfw, workh - halfh, false); // bottom-right quarter
+    }
+    if near_left {
+        return r(0, top, halfw, workh, false); // left half
+    }
+    if near_right {
+        return r(halfw, top, fw - halfw, workh, false); // right half
+    }
+    if my <= top as i64 + e {
+        return r(0, top, fw, workh, true); // top edge -> maximize
+    }
+    None
+}
+
+/// Move+resize a window into a snap rect. `full` marks a maximize (so it
+/// reflows on a live resolution change; half/quarter snaps stay put).
+fn snap_apply(idx: usize, rect: (f64, f64, u32, u32), full: bool) {
+    let w = &mut windows()[idx];
+    w.px = rect.0;
+    w.py = rect.1;
+    w.tx = rect.0;
+    w.ty = rect.1;
+    w.w = rect.2;
+    w.h = rect.3;
+    w.maximized = full;
+    w.vx = 0.0;
+    w.vy = 0.0;
+    w.scale_w = 1.0;
+    w.scale_h = 1.0;
+    z_raise(idx);
 }
 
 fn dock_hit(mx: i64, my: i64) -> i32 {
@@ -820,6 +1483,9 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             SETTINGS_LOADED = true;
             settings_load();
             load_dns_config();
+            // Re-apply the persisted live resolution (DISPI adapters) so an
+            // installed system comes back up in the mode you last chose.
+            display::restore();
         }
         // Seed the music library incrementally -- at most one song per
         // frame, so the ~1.5MiB write never freezes a single frame.
@@ -864,17 +1530,12 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             // windows.
             if MENU_OPEN {
                 let kind = menu_click(mx, my);
-                match kind {
-                    255 => {},
-                    ACT_LOGOUT => LOGOUT_REQUESTED = true,
-                    ACT_RESTART => crate::arch::power::reboot(),
-                    ACT_SHUTDOWN => crate::arch::power::poweroff(),
-                    k => open(k),
-                }
+                menu_activate(kind);
                 PREV_BUTTONS = buttons;
                 return;
             }
             if brand_hit(mx, my) {
+                load_installed_packages();
                 MENU_OPEN = true;
                 mixer::jingle(mixer::EVENT_CLICK);
                 PREV_BUTTONS = buttons;
@@ -914,9 +1575,32 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
                         close(idx);
                     } else if hit_minimize(&windows()[idx], mx, my) {
                         minimize(idx);
+                    } else if hit_maximize(&windows()[idx], mx, my) {
+                        toggle_maximize(idx);
                     } else {
                         z_raise(idx);
-                        if hit_titlebar(&windows()[idx], mx, my) {
+                        let edge = hit_resize(&windows()[idx], mx, my);
+                        if edge != 0 {
+                            // Begin an edge/corner resize: remember the grab.
+                            RESIZE_WIN = idx as i32;
+                            RESIZE_EDGE = edge;
+                            RES_MX0 = mx as f64;
+                            RES_MY0 = my as f64;
+                            RES_PX0 = windows()[idx].px;
+                            RES_PY0 = windows()[idx].py;
+                            RES_W0 = windows()[idx].w;
+                            RES_H0 = windows()[idx].h;
+                        } else if hit_titlebar(&windows()[idx], mx, my) {
+                            // Dragging a maximized window un-maximizes it and
+                            // re-anchors the restored window under the cursor.
+                            if windows()[idx].maximized {
+                                toggle_maximize(idx);
+                                let neww = windows()[idx].w as f64;
+                                windows()[idx].px = (mx as f64 - neww / 2.0).max(0.0);
+                                windows()[idx].py = TITLEBAR_MARGIN_TOP as f64 + 3.0;
+                                windows()[idx].tx = windows()[idx].px;
+                                windows()[idx].ty = windows()[idx].py;
+                            }
                             DRAG_WIN = idx as i32;
                             GRAB_DX = mx as f64 - windows()[idx].px;
                             GRAB_DY = my as f64 - windows()[idx].py;
@@ -932,9 +1616,57 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             }
         }
 
+        // Release: a titlebar drag let go in an edge/corner snap zone docks
+        // the window (aero-snap); otherwise the drag/resize just ends.
         if !left {
+            if DRAG_WIN >= 0 {
+                let idx = DRAG_WIN as usize;
+                if let Some((rect, full)) = snap_target(mx, my) {
+                    snap_apply(idx, rect, full);
+                }
+            }
             DRAG_WIN = -1;
+            RESIZE_WIN = -1;
+            RESIZE_EDGE = 0;
+            SNAP_PREVIEW = None;
         }
+
+        // Edge/corner resize tracking: compute the new geometry as a delta from
+        // the grab, keeping the opposite edge anchored.
+        if RESIZE_WIN >= 0 && left {
+            let idx = RESIZE_WIN as usize;
+            let edge = RESIZE_EDGE;
+            let fw = framebuffer::width() as f64;
+            let dxp = mx as f64 - RES_MX0;
+            let dyp = my as f64 - RES_MY0;
+            let mut new_px = RES_PX0;
+            let mut new_w = RES_W0 as f64;
+            let mut new_h = RES_H0 as f64;
+            if edge & RESIZE_RIGHT != 0 {
+                new_w = (RES_W0 as f64 + dxp).max(WIN_MIN_W as f64);
+            }
+            if edge & RESIZE_LEFT != 0 {
+                new_w = (RES_W0 as f64 - dxp).max(WIN_MIN_W as f64);
+                new_px = RES_PX0 + (RES_W0 as f64 - new_w); // keep right edge fixed
+            }
+            if edge & RESIZE_BOTTOM != 0 {
+                new_h = (RES_H0 as f64 + dyp).max(WIN_MIN_H as f64);
+            }
+            new_px = new_px.max(0.0);
+            new_w = new_w.min(fw - new_px);
+            let wref = &mut windows()[idx];
+            wref.w = new_w as u32;
+            wref.h = new_h as u32;
+            wref.px = new_px;
+            wref.tx = new_px;
+            wref.vx = 0.0;
+            wref.vy = 0.0;
+            wref.scale_w = 1.0;
+            wref.scale_h = 1.0;
+            wref.maximized = false; // a manual resize un-docks
+        }
+
+        // Titlebar move tracking + live snap preview.
         if DRAG_WIN >= 0 {
             let idx = DRAG_WIN as usize;
             let w = windows()[idx].w as f64;
@@ -945,6 +1677,27 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             let max_y = framebuffer::height() as f64 - TITLEBAR_H as f64;
             windows()[idx].tx = (mx as f64 - GRAB_DX).max(60.0 - w).min(max_x);
             windows()[idx].ty = (my as f64 - GRAB_DY).max(34.0).min(max_y);
+            SNAP_PREVIEW = snap_target(mx, my).map(|(r, _)| (r.0 as u32, r.1 as u32, r.2, r.3));
+        }
+
+        // Keep maximized windows filling the (possibly just-resized live)
+        // workspace -- also how a live resolution change reflows them.
+        {
+            let fw = framebuffer::width();
+            let top = TITLEBAR_MARGIN_TOP;
+            let wsh = dock_y().saturating_sub(top).saturating_sub(12).max(WIN_MIN_H);
+            for w in windows().iter_mut() {
+                if w.used && w.maximized {
+                    w.px = 0.0;
+                    w.py = top as f64;
+                    w.tx = 0.0;
+                    w.ty = top as f64;
+                    w.w = fw;
+                    w.h = wsh;
+                    w.scale_w = 1.0;
+                    w.scale_h = 1.0;
+                }
+            }
         }
 
         // Spring advance, shared dt. Clamped like wm_liquid, but ALSO
@@ -1064,6 +1817,34 @@ pub fn slot_focused(slot: usize) -> bool {
 /// driver's DC1/DC2/etc. control bytes, same encoding the pickers use
 /// (0x11 up, 0x12 down, 0x13 left, 0x14 right per `drivers/keyboard.rs`).
 pub fn key(k: u8) {
+    // The Super key is the global Applications-menu launcher (the keyboard
+    // path the mouse-only dock/menu never had): toggles the menu open/closed.
+    if k == crate::drivers::keyboard::SUPER_KEY {
+        if unsafe { MENU_OPEN } {
+            unsafe { MENU_OPEN = false };
+        } else {
+            menu_open_kbd();
+        }
+        return;
+    }
+    // While open, the menu captures navigation keys ahead of everything else.
+    if unsafe { MENU_OPEN } {
+        match k {
+            0x11 => menu_move(-1), // up
+            0x12 => menu_move(1),  // down
+            10 => {
+                // Enter: activate the selected row, then close.
+                let sel = unsafe { MENU_SEL };
+                unsafe { MENU_OPEN = false };
+                if let Some(kind) = menu_nth_action(sel) {
+                    menu_activate(kind);
+                }
+            },
+            0x1B => unsafe { MENU_OPEN = false }, // Esc closes
+            _ => {},
+        }
+        return;
+    }
     // An open tray popover captures keys ahead of the focused window.
     if tray_key(k) {
         return;
@@ -1078,6 +1859,8 @@ pub fn key(k: u8) {
         KIND_SETTINGS => settings_key(k),
         KIND_FILES => files_key(k),
         KIND_WEB => web_key(k),
+        KIND_HORIZON => horizon_key(k),
+        KIND_MESSENGER => messenger::key(k),
         KIND_EDIT => editor::key(k, crate::drivers::keyboard::shift_down()),
         KIND_GALLERY => gallery::key(k),
         KIND_TERM => terminal::key(k),
@@ -1087,63 +1870,153 @@ pub fn key(k: u8) {
     }
 }
 
+/// Present-rate ("Hz") presets for the Display refresh row. 0 == uncapped.
+/// In a VM this caps the desktop's back-buffer present rate, not the host's
+/// real refresh (honest -- see `framebuffer::set_present_hz`).
+const HZ_PRESETS: [u32; 4] = [30, 60, 90, 0];
+
+fn hz_index() -> usize {
+    let cur = framebuffer::present_hz();
+    HZ_PRESETS.iter().position(|&h| h == cur).unwrap_or(1)
+}
+fn set_hz_index(i: usize) {
+    framebuffer::set_present_hz(HZ_PRESETS[i % HZ_PRESETS.len()]);
+}
+
+/// Keep the selected settings row inside the visible scroll window.
+fn settings_scroll_to_cursor() {
+    unsafe {
+        if SETTINGS_CURSOR < SETTINGS_SCROLL {
+            SETTINGS_SCROLL = SETTINGS_CURSOR;
+        } else if SETTINGS_CURSOR >= SETTINGS_SCROLL + SETTINGS_VISIBLE {
+            SETTINGS_SCROLL = SETTINGS_CURSOR + 1 - SETTINGS_VISIBLE;
+        }
+    }
+}
+
 fn settings_key(k: u8) {
     unsafe {
+        // Tab switches between the General and Network settings tabs.
+        if k == 0x09 {
+            SETTINGS_TAB = (SETTINGS_TAB + 1) % SETTINGS_TAB_COUNT;
+            SETTINGS_CURSOR = 0;
+            SETTINGS_SCROLL = 0;
+            return;
+        }
+        let rows = settings_tab_rows(SETTINGS_TAB);
         match k {
-            0x11 => SETTINGS_CURSOR = SETTINGS_CURSOR.saturating_sub(1),
-            0x12 => SETTINGS_CURSOR = (SETTINGS_CURSOR + 1).min(SETTINGS_ROWS - 1),
+            0x11 => {
+                SETTINGS_CURSOR = SETTINGS_CURSOR.saturating_sub(1);
+                settings_scroll_to_cursor();
+            },
+            0x12 => {
+                SETTINGS_CURSOR = (SETTINGS_CURSOR + 1).min(rows.saturating_sub(1));
+                settings_scroll_to_cursor();
+            },
+            10 => {
+                // Enter commits the current row. On General only Display needs
+                // an explicit commit (a live resolution switch -- arrowing just
+                // previews the label so the screen doesn't thrash). Persist.
+                if SETTINGS_TAB == SETTINGS_TAB_GENERAL && SETTINGS_CURSOR == 3 {
+                    display::apply(display::selected());
+                }
+                settings_save();
+            },
             0x13 | 0x14 => {
                 let dir: i32 = if k == 0x13 { -1 } else { 1 };
-                match SETTINGS_CURSOR {
-                    0 => {
-                        let n = theme::count() as i32;
-                        let cur = theme::current() as i32;
-                        theme::set(((cur + dir + n) % n) as usize);
-                    },
-                    1 => {
-                        let n = mixer::sound_theme_count() as i32;
-                        let cur = mixer::sound_theme() as i32;
-                        mixer::set_sound_theme(((cur + dir + n) % n) as usize);
-                        // Audition the theme you just landed on.
-                        mixer::jingle(mixer::EVENT_LOGIN);
-                    },
-                    2 => {
-                        let n = WALL_MODES as i32;
-                        let cur = WALLPAPER as i32;
-                        set_wallpaper(((cur + dir + n) % n) as u32);
-                    },
-                    3 => {
-                        // Display: persist a next-boot mode preference.
-                        let n = display::mode_count() as i32;
-                        let cur = display::preferred() as i32;
-                        display::set_preferred(((cur + dir + n) % n) as usize);
-                    },
-                    4 => spring_adjust(dir * 2), // window spring stiffness
-                    5 => {
-                        let n = kbdlayout::count() as i32;
-                        let cur = kbdlayout::current() as i32;
-                        kbdlayout::set_current(((cur + dir + n) % n) as usize);
-                    },
-                    6 => {
-                        let n = locale::count() as i32;
-                        let cur = locale::selected().unwrap_or(0) as i32;
-                        locale::select(((cur + dir + n) % n) as usize);
-                    },
-                    7 => CLOCK_24H = !CLOCK_24H,
-                    8 => {
-                        // DNS server preset.
-                        let n = DNS_PRESETS.len() as i32;
-                        DNS_PRESET = ((DNS_PRESET as i32 + dir + n) % n) as usize;
-                        apply_dns_preset();
-                    },
-                    _ => {
-                        // SSH server at boot (on/off) -- persisted to /services.
-                        crate::services::set_ssh(!crate::services::ssh_enabled());
-                    },
+                if SETTINGS_TAB == SETTINGS_TAB_NETWORK {
+                    settings_network_adjust(SETTINGS_CURSOR, dir);
+                } else {
+                    settings_general_adjust(SETTINGS_CURSOR, dir);
                 }
             },
             _ => {},
         }
+    }
+}
+
+fn settings_general_adjust(row: usize, dir: i32) {
+    match row {
+        0 => {
+            let n = theme::count() as i32;
+            let cur = theme::current() as i32;
+            theme::set(((cur + dir + n) % n) as usize);
+        },
+        1 => {
+            let n = mixer::sound_theme_count() as i32;
+            let cur = mixer::sound_theme() as i32;
+            mixer::set_sound_theme(((cur + dir + n) % n) as usize);
+            mixer::jingle(mixer::EVENT_LOGIN); // audition it
+        },
+        2 => {
+            let n = WALL_MODES as i32;
+            let cur = unsafe { WALLPAPER } as i32;
+            set_wallpaper(((cur + dir + n) % n) as u32);
+        },
+        3 => {
+            // Display: cycle the target mode (applied on Enter/Apply/OK).
+            let n = display::mode_count() as i32;
+            let cur = display::selected() as i32;
+            display::set_selected(((cur + dir + n) % n) as usize);
+        },
+        4 => spring_adjust(dir * 2),
+        5 => {
+            let n = kbdlayout::count() as i32;
+            let cur = kbdlayout::current() as i32;
+            kbdlayout::set_current(((cur + dir + n) % n) as usize);
+        },
+        6 => {
+            let n = locale::count() as i32;
+            let cur = locale::selected().unwrap_or(0) as i32;
+            locale::select(((cur + dir + n) % n) as usize);
+        },
+        7 => unsafe { CLOCK_24H = !CLOCK_24H },
+        8 => {
+            // DPI: UI text scale preset (live).
+            let n = ui_scale::DPI_PRESETS.len() as i32;
+            let cur = ui_scale::dpi_index() as i32;
+            ui_scale::set_dpi_index(((cur + dir + n) % n) as usize);
+            font8x8::set_scale(ui_scale::dpi_font_scale());
+        },
+        9 => {
+            // Refresh (Hz): desktop present-rate cap (live).
+            let n = HZ_PRESETS.len() as i32;
+            let cur = hz_index() as i32;
+            set_hz_index(((cur + dir + n) % n) as usize);
+        },
+        _ => {
+            // Wallpaper scale mode (cover/fit/stretch/tile/center), applied live.
+            let n = wallpaper::SCALE_MODES as i32;
+            let cur = wallpaper::scale_mode() as i32;
+            wallpaper::set_scale_mode(((cur + dir + n) % n) as u8);
+        },
+    }
+}
+
+fn settings_network_adjust(row: usize, dir: i32) {
+    match row {
+        0 => {
+            // IP mode: DHCP <-> static (MAC-derived), applied immediately.
+            let mode = unsafe {
+                NET_IP_MODE = (NET_IP_MODE + 1) % 2;
+                NET_IP_MODE
+            };
+            if mode == 0 {
+                netstack::dhcp_configure();
+            } else {
+                netstack::apply_static_ip_from_mac();
+            }
+        },
+        1 => {
+            // Nameserver preset (Cloudflare / Quad9 / AdGuard / Ling / LAN / NAT).
+            let n = DNS_PRESETS.len() as i32;
+            unsafe { DNS_PRESET = ((DNS_PRESET as i32 + dir + n) % n) as usize };
+            apply_dns_preset();
+        },
+        _ => {
+            // SSH server at boot (on/off) -- persisted to /services.
+            crate::services::set_ssh(!crate::services::ssh_enabled());
+        },
     }
 }
 
@@ -1265,6 +2138,29 @@ fn files_key(k: u8) {
                         open(KIND_EDIT);
                     } else {
                         FM_VIEWING = true;
+                    }
+                }
+            },
+            0x77 | 0x57 => {
+                // 'w' / 'W': set the highlighted .bmp as the desktop wallpaper.
+                let mut name = [0u8; FM_NAME_MAX];
+                if let Some((len, is_dir)) = lingfs::list_entry(fm_dir(), FM_CURSOR, &mut name) {
+                    if !is_dir && len >= 4 && &name[len - 4..len] == b".bmp" {
+                        // Compose "dir/name" (or "name" at root), same as view.
+                        let mut full = [0u8; FM_NAME_MAX * 2 + 1];
+                        let mut off = 0;
+                        let dir = fm_dir();
+                        if !dir.is_empty() {
+                            full[..dir.len()].copy_from_slice(dir.as_bytes());
+                            off = dir.len();
+                            full[off] = b'/';
+                            off += 1;
+                        }
+                        full[off..off + len].copy_from_slice(&name[..len]);
+                        let path = core::str::from_utf8(&full[..off + len]).unwrap_or("");
+                        if set_wallpaper_image(path) {
+                            settings_save();
+                        }
                     }
                 }
             },
@@ -1484,6 +2380,26 @@ pub fn draw_wallpaper() {
     if h == 0 {
         return;
     }
+    // One-time init: bake in the built-in "Ling Country" wallpaper (embedded,
+    // pre-rasterized from assets/ling_country.svg) and make it the default
+    // background. The Settings > Wallpaper row still cycles to the gradient/etc.
+    unsafe {
+        if !WALLPAPER_INIT {
+            WALLPAPER_INIT = true;
+            // A user-picked wallpaper path persisted to "/wallpaper" wins;
+            // otherwise fall back to the built-in embedded "Ling Country".
+            let mut pb = [0u8; 128];
+            let loaded_user = match lingfs::read_file_all("/wallpaper", &mut pb) {
+                Ok(Some(n)) if n > 0 => {
+                    core::str::from_utf8(&pb[..n]).ok().map(|p| p.trim()).filter(|p| !p.is_empty()).map(|p| wallpaper::load(p)).unwrap_or(false)
+                },
+                _ => false,
+            };
+            if loaded_user || wallpaper::load_embedded() {
+                WALLPAPER = WALL_IMAGE;
+            }
+        }
+    }
     match unsafe { WALLPAPER } {
         WALL_IMAGE => {
             if wallpaper::loaded() {
@@ -1575,6 +2491,28 @@ fn settings_apply_rect(wx: i64, wy: i64, dw: u32, dh: u32) -> (u32, u32, u32, u3
     (ox.saturating_sub(bw + 10), oy, bw, bh)
 }
 
+/// Rect of the `tab`-th settings tab button (General=0, Network=1), at the top
+/// of the content area. Matches the draw + the click hit-test.
+fn settings_tab_rect(wx: i64, wy: i64, _dw: u32, tab: usize) -> (u32, u32, u32, u32) {
+    let tx = (wx.max(0) as u32) + 16 + tab as u32 * 110;
+    let ty = (wy.max(0) as u32) + TITLEBAR_H + 14;
+    (tx, ty, 100, 26)
+}
+
+/// Draw a dotted-quad IP address at (x, y).
+fn draw_ip(x: u32, y: u32, ip: [u8; 4], color: u32, bg: u32) {
+    let mut b = [0u8; 16];
+    let mut n = 0;
+    for (k, oct) in ip.iter().enumerate() {
+        if k > 0 && n < b.len() {
+            b[n] = b'.';
+            n += 1;
+        }
+        n += write_u32_into(&mut b[n..], *oct as u32);
+    }
+    font8x8::draw_str(x, y, &b[..n], color, bg);
+}
+
 fn pt_in(px: i64, py: i64, r: (u32, u32, u32, u32)) -> bool {
     px >= r.0 as i64 && px < (r.0 + r.2) as i64 && py >= r.1 as i64 && py < (r.1 + r.3) as i64
 }
@@ -1586,12 +2524,25 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
     let w = windows()[idx];
     let (wx, wy, dw, dh) = deformed_rect(&w);
     if w.kind == KIND_SETTINGS {
+        // Tab buttons switch tabs.
+        for t in 0..SETTINGS_TAB_COUNT {
+            if pt_in(mx, my, settings_tab_rect(wx, wy, dw, t)) {
+                unsafe {
+                    SETTINGS_TAB = t;
+                    SETTINGS_CURSOR = 0;
+                    SETTINGS_SCROLL = 0;
+                }
+                return true;
+            }
+        }
         if pt_in(mx, my, settings_ok_rect(wx, wy, dw, dh)) {
+            display::apply(display::selected()); // live resolution switch
             settings_save();
             close(idx);
             return true;
         }
         if pt_in(mx, my, settings_apply_rect(wx, wy, dw, dh)) {
+            display::apply(display::selected());
             settings_save();
             return true;
         }
@@ -1614,6 +2565,32 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
         browser::click_page(my - page_y0, unsafe { WEB_COLS });
         return true;
     }
+    if w.kind == KIND_HORIZON {
+        let cx = wx.max(0) + 16;
+        let bar_y = wy.max(0) + TITLEBAR_H as i64 + 14;
+        let bar = (cx as u32, bar_y as u32, dw.saturating_sub(24), 22u32);
+        if pt_in(mx, my, bar) {
+            unsafe { HZ_EDITING = true };
+            return true;
+        }
+        unsafe { HZ_EDITING = false };
+        let page_x0 = cx;
+        let page_y0 = bar_y + 22 + 6;
+        horizon::click_page(mx - page_x0, my - page_y0, unsafe { HZ_VIEWPORT_W });
+        return true;
+    }
+    if w.kind == KIND_MESSENGER {
+        // Geometry must track messenger::draw's SIDEBAR_W / LIST_TOP / ROW_H.
+        let cx = wx.max(0) + 16;
+        let cy = wy.max(0) + TITLEBAR_H as i64 + 14;
+        if mx >= cx && mx < cx + 190 {
+            let rel_y = my - cy - 34;
+            if rel_y >= 0 {
+                messenger::click_row((rel_y / 40) as usize);
+            }
+        }
+        return true;
+    }
     false
 }
 
@@ -1621,6 +2598,21 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
 /// The `.ling` side has already drawn the shadow/frame/titlebar; `x..y`
 /// here is the content origin (below the titlebar).
 pub fn draw_content(slot: usize) {
+    let Some(w) = slot_window(slot) else { return };
+    let (wx, wy, dw, dh) = deformed_rect(w);
+    // Scissor to the visible window body (below the titlebar) so an app's
+    // content -- long text, wide tables, oversized DPI glyphs -- is cut off at
+    // the window edge instead of bleeding onto the desktop or other windows.
+    let x0 = wx.max(0);
+    let x1 = (wx + dw as i64).max(0);
+    let y0 = (wy + TITLEBAR_H as i64).max(0);
+    let y1 = (wy + dh as i64).max(0);
+    framebuffer::set_clip(x0 as u32, y0 as u32, (x1 - x0).max(0) as u32, (y1 - y0).max(0) as u32);
+    draw_content_inner(slot);
+    framebuffer::clear_clip();
+}
+
+fn draw_content_inner(slot: usize) {
     let Some(w) = slot_window(slot) else { return };
     let (wx, wy, dw, dh) = deformed_rect(w);
     let x = (wx.max(0) as u32) + 16;
@@ -1643,6 +2635,10 @@ pub fn draw_content(slot: usize) {
     }
     if w.kind == KIND_PKG {
         pkgman::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
+    if w.kind == KIND_MESSENGER {
+        messenger::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
         return;
     }
     if w.kind == KIND_WEB {
@@ -1680,6 +2676,41 @@ pub fn draw_content(slot: usize) {
         }
         // Page body below the bar.
         browser::draw_page(x, y + bar_h + 6, bar_w, dh.saturating_sub(TITLEBAR_H + bar_h + 26));
+        return;
+    }
+    if w.kind == KIND_HORIZON {
+        if slot_focused(slot) {
+            unsafe { HZ_VIEWPORT_W = dw.saturating_sub(40).max(160) };
+        }
+        let bar_w = dw.saturating_sub(24);
+        let bar_h = 22u32;
+        let editing = unsafe { HZ_EDITING };
+        let border = if editing {
+            theme::color(theme::SLOT_ACCENT)
+        } else {
+            theme::color(theme::SLOT_PANEL_BORDER)
+        };
+        framebuffer::back_fill_rounded_rect(x, y, bar_w, bar_h, 6, border);
+        framebuffer::back_fill_rounded_rect(x + 2, y + 2, bar_w - 4, bar_h - 4, 5, theme::color(theme::SLOT_BG));
+        let text = theme::color(theme::SLOT_TEXT);
+        let bgc = theme::color(theme::SLOT_BG);
+        if editing {
+            let buf = unsafe { &(&*&raw const HZ_INPUT)[..HZ_INPUT_LEN] };
+            let maxch = ((bar_w - 16) / 8) as usize;
+            let shown = buf.len().min(maxch);
+            font8x8::draw_str(x + 8, y + 7, &buf[buf.len() - shown..], text, bgc);
+            framebuffer::back_fill_rect(x + 8 + shown as u32 * 8, y + 5, 2, 12, theme::color(theme::SLOT_ACCENT));
+        } else {
+            let url = horizon::current_url();
+            if url.is_empty() {
+                font8x8::draw_str(x + 8, y + 7, b"search or enter a URL", theme::color(theme::SLOT_DIM), bgc);
+            } else {
+                let ub = url.as_bytes();
+                let maxch = ((bar_w - 16) / 8) as usize;
+                font8x8::draw_str(x + 8, y + 7, &ub[..ub.len().min(maxch)], theme::color(theme::SLOT_ACCENT), bgc);
+            }
+        }
+        horizon::draw_page(x, y + bar_h + 6, bar_w, dh.saturating_sub(TITLEBAR_H + bar_h + 26));
         return;
     }
     let text = theme::color(theme::SLOT_TEXT);
@@ -1721,105 +2752,165 @@ pub fn draw_content(slot: usize) {
         KIND_SETTINGS => {
             let row_h = 34u32;
             let row_w = dw.saturating_sub(32).max(40);
-            let labels: [&[u8]; SETTINGS_ROWS] = [
-                b"UI theme",
-                b"Sound theme",
-                b"Wallpaper",
-                b"Display",
-                b"Window spring",
-                b"Keyboard",
-                b"Language",
-                b"Clock",
-                b"DNS server",
-                b"SSH at boot",
-            ];
-            for (i, label) in labels.iter().enumerate() {
-                let ry = y + i as u32 * row_h;
-                draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe {
-                    SETTINGS_CURSOR == i
-                });
-                font8x8::draw_str(x + 10, ry, label, text, panel);
-                let vx = x + 130;
-                match i {
-                    0 => font8x8::draw_str(vx, ry, theme::name(theme::current()).as_bytes(), accent, panel),
-                    1 => font8x8::draw_str(
-                        vx,
-                        ry,
-                        mixer::sound_theme_name(mixer::sound_theme()).as_bytes(),
-                        accent,
-                        panel,
-                    ),
-                    2 => font8x8::draw_str(vx, ry, wallpaper_name(unsafe { WALLPAPER }).as_bytes(), accent, panel),
-                    3 => {
-                        font8x8::draw_str(vx, ry, display::mode_label(display::preferred()).as_bytes(), accent, panel);
-                        if display::persistable() {
-                            font8x8::draw_str(vx + 130, ry, b"(next boot)", dim, panel);
-                        } else {
-                            font8x8::draw_str(vx + 130, ry, display::current_str().as_bytes(), dim, panel);
-                        }
-                    },
-                    4 => {
-                        // Spring stiffness as a small bar + numeric milli.
-                        let milli = spring_stiffness_milli();
-                        let mut nb = [0u8; 8];
-                        let mut nn = 0;
-                        nb[nn] = b'0'; nb[nn + 1] = b'.'; nn += 2;
-                        nb[nn] = b'0' + ((milli / 10) % 10) as u8; nn += 1;
-                        nb[nn] = b'0' + (milli % 10) as u8; nn += 1;
-                        font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
-                        let bx = vx + 60;
-                        framebuffer::back_fill_rounded_rect(bx, ry + 2, 100, 6, 3, theme::color(theme::SLOT_DOT_DIM));
-                        let fill = (milli.saturating_sub(SPRING_K_MIN)) * 100 / (SPRING_K_MAX - SPRING_K_MIN);
-                        framebuffer::back_fill_rounded_rect(bx, ry + 2, fill.max(1), 6, 3, accent);
-                    },
-                    5 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
-                    6 => {
-                        let li = locale::selected().unwrap_or(0);
-                        if let Some(l) = locale::get(li) {
-                            // Daemon-script locales carry Latin names (e.g.
-                            // "Ling Country") that would render through the
-                            // 16px daemon atlas -- oversized next to the 8px
-                            // rows. Show those in the 8px Latin font; keep
-                            // the real 16px native script for CJK/Thai etc.
-                            if l.uses_daemon_script {
-                                font8x8::draw_str(vx, ry, l.latin_name.as_bytes(), accent, panel);
-                            } else {
-                                font_unicode::draw_utf8_str(
-                                    vx,
-                                    ry,
-                                    l.native_name.as_bytes(),
-                                    accent,
-                                    panel,
-                                    false,
-                                );
+            let tab = unsafe { SETTINGS_TAB };
+            // Tab bar: General | Network.
+            let tab_names = [locale::tr("General"), locale::tr("Network")];
+            for (t, name) in tab_names.iter().enumerate() {
+                let (tx, ty, tw, th) = settings_tab_rect(wx, wy, dw, t);
+                let active = t == tab;
+                let bg = if active { accent } else { theme::color(theme::SLOT_PANEL_BORDER) };
+                framebuffer::back_fill_rounded_rect(tx, ty, tw, th, 6, bg);
+                framebuffer::back_fill_rounded_rect(tx + 1, ty + 1, tw - 2, th - 2, 5, if active { theme::color(theme::SLOT_TITLEBAR) } else { panel });
+                let fg = if active { theme::color(theme::SLOT_TITLEBAR_TEXT) } else { dim };
+                font_unicode::draw_utf8_str(tx + 12, ty + 6, name.as_bytes(), fg, if active { theme::color(theme::SLOT_TITLEBAR) } else { panel }, locale::render_daemon());
+            }
+            let rows_y = y + 40; // below the tab bar
+
+            if tab == SETTINGS_TAB_NETWORK {
+                // -- Network tab: interactive rows + read-only status. --------
+                let net_labels = [locale::tr("IP mode"), locale::tr("Nameserver"), locale::tr("SSH at boot")];
+                for (i, label) in net_labels.iter().enumerate() {
+                    let ry = rows_y + i as u32 * row_h;
+                    draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe { SETTINGS_CURSOR == i });
+                    font_unicode::draw_utf8_str(x + 10, ry, label.as_bytes(), text, panel, false);
+                    let vx = x + 150 * font8x8::scale();
+                    match i {
+                        0 => {
+                            let v: &[u8] = if unsafe { NET_IP_MODE } == 0 { b"DHCP" } else { b"Static (from MAC)" };
+                            font8x8::draw_str(vx, ry, v, accent, panel);
+                        },
+                        1 => {
+                            let (name, _, _) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
+                            font8x8::draw_str(vx, ry, name.as_bytes(), accent, panel);
+                        },
+                        _ => {
+                            let v: &[u8] = if crate::services::ssh_enabled() { b"on" } else { b"off" };
+                            font8x8::draw_str(vx, ry, v, accent, panel);
+                        },
+                    }
+                }
+                // Read-only status block.
+                let mut sy = rows_y + NETWORK_ROWS as u32 * row_h + 10;
+                font8x8::draw_str(x + 10, sy, b"Status", dim, panel);
+                sy += 20;
+                let ip = netstack::self_ip();
+                let gw = netstack::gateway_ip();
+                let (dns1, _dns2) = netstack::dns_servers();
+                font8x8::draw_str(x + 10, sy, b"IP", dim, panel);
+                draw_ip(x + 120, sy, ip, accent, panel);
+                let link: &[u8] = if ip != [0, 0, 0, 0] { b"link up" } else { b"no link" };
+                font8x8::draw_str(x + 260, sy, link, if ip != [0, 0, 0, 0] { accent } else { dim }, panel);
+                sy += 18;
+                font8x8::draw_str(x + 10, sy, b"Gateway", dim, panel);
+                draw_ip(x + 120, sy, gw, text, panel);
+                sy += 18;
+                font8x8::draw_str(x + 10, sy, b"DNS", dim, panel);
+                draw_ip(x + 120, sy, dns1, text, panel);
+            } else {
+                // -- General tab: scrollable list. ----------------------------
+                let labels: [&[u8]; GENERAL_ROWS] = [
+                    b"UI theme",
+                    b"Sound theme",
+                    b"Wallpaper",
+                    b"Display",
+                    b"Window spring",
+                    b"Keyboard",
+                    b"Language",
+                    b"Clock",
+                    b"DPI",
+                    b"Refresh",
+                    b"Wall scale",
+                ];
+                let scroll = unsafe { SETTINGS_SCROLL };
+                for vis in 0..SETTINGS_VISIBLE {
+                    let i = scroll + vis;
+                    if i >= GENERAL_ROWS {
+                        break;
+                    }
+                    let label = labels[i];
+                    let ry = rows_y + vis as u32 * row_h;
+                    draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe { SETTINGS_CURSOR == i });
+                    font8x8::draw_str(x + 10, ry, label, text, panel);
+                    let vx = x + 130 * font8x8::scale();
+                    match i {
+                        0 => font8x8::draw_str(vx, ry, theme::name(theme::current()).as_bytes(), accent, panel),
+                        1 => font8x8::draw_str(vx, ry, mixer::sound_theme_name(mixer::sound_theme()).as_bytes(), accent, panel),
+                        2 => font8x8::draw_str(vx, ry, wallpaper_name(unsafe { WALLPAPER }).as_bytes(), accent, panel),
+                        3 => {
+                            font8x8::draw_str(vx, ry, display::mode_label(display::selected()).as_bytes(), accent, panel);
+                            let sx = vx + 130 * font8x8::scale();
+                            font8x8::draw_str(sx, ry, display::current_str().as_bytes(), dim, panel);
+                            let note: &[u8] = if framebuffer::dispi_capable() { b"(Enter=apply)" } else { b"(next boot)" };
+                            font8x8::draw_str(sx, ry + 14 * font8x8::scale(), note, dim, panel);
+                        },
+                        4 => {
+                            let milli = spring_stiffness_milli();
+                            let mut nb = [0u8; 8];
+                            let mut nn = 0;
+                            nb[nn] = b'0'; nb[nn + 1] = b'.'; nn += 2;
+                            nb[nn] = b'0' + ((milli / 10) % 10) as u8; nn += 1;
+                            nb[nn] = b'0' + (milli % 10) as u8; nn += 1;
+                            font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                            let bx = vx + 60;
+                            framebuffer::back_fill_rounded_rect(bx, ry + 2, 100, 6, 3, theme::color(theme::SLOT_DOT_DIM));
+                            let fill = (milli.saturating_sub(SPRING_K_MIN)) * 100 / (SPRING_K_MAX - SPRING_K_MIN);
+                            framebuffer::back_fill_rounded_rect(bx, ry + 2, fill.max(1), 6, 3, accent);
+                        },
+                        5 => font8x8::draw_str(vx, ry, kbdlayout::name(kbdlayout::current()).as_bytes(), accent, panel),
+                        6 => {
+                            let li = locale::selected().unwrap_or(0);
+                            if let Some(l) = locale::get(li) {
+                                if l.uses_daemon_script {
+                                    font8x8::draw_str(vx, ry, l.latin_name.as_bytes(), accent, panel);
+                                } else {
+                                    font_unicode::draw_utf8_str(vx, ry, l.native_name.as_bytes(), accent, panel, false);
+                                }
                             }
-                        }
-                    },
-                    7 => {
-                        let v: &[u8] = if unsafe { CLOCK_24H } { b"24-hour" } else { b"12-hour" };
-                        font8x8::draw_str(vx, ry, v, accent, panel);
-                    },
-                    8 => {
-                        let (name, _) = DNS_PRESETS[unsafe { DNS_PRESET } % DNS_PRESETS.len()];
-                        font8x8::draw_str(vx, ry, name.as_bytes(), accent, panel);
-                    },
-                    _ => {
-                        let v: &[u8] = if crate::services::ssh_enabled() { b"on" } else { b"off" };
-                        font8x8::draw_str(vx, ry, v, accent, panel);
-                    },
+                        },
+                        7 => {
+                            let v: &[u8] = if unsafe { CLOCK_24H } { b"24-hour" } else { b"12-hour" };
+                            font8x8::draw_str(vx, ry, v, accent, panel);
+                        },
+                        8 => {
+                            let mut nb = [0u8; 8];
+                            let mut nn = write_u32_into(&mut nb, ui_scale::dpi_pct());
+                            if nn < nb.len() { nb[nn] = b'%'; nn += 1; }
+                            font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                        },
+                        9 => {
+                            let hz = framebuffer::present_hz();
+                            if hz == 0 {
+                                font8x8::draw_str(vx, ry, b"uncapped", accent, panel);
+                            } else {
+                                let mut nb = [0u8; 10];
+                                let mut nn = write_u32_into(&mut nb, hz);
+                                for &c in b" Hz" { if nn < nb.len() { nb[nn] = c; nn += 1; } }
+                                font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                            }
+                        },
+                        _ => font8x8::draw_str(vx, ry, wallpaper::scale_mode_name(wallpaper::scale_mode()).as_bytes(), accent, panel),
+                    }
+                }
+                let sb_x = x + row_w.saturating_sub(6);
+                if scroll > 0 {
+                    font8x8::draw_str(sb_x, rows_y, b"^", dim, panel);
+                }
+                if scroll + SETTINGS_VISIBLE < GENERAL_ROWS {
+                    font8x8::draw_str(sb_x, rows_y + (SETTINGS_VISIBLE as u32 - 1) * row_h, b"v", dim, panel);
                 }
             }
-            let hint_y = y + SETTINGS_ROWS as u32 * row_h + 8;
-            font8x8::draw_str(x, hint_y, b"up/down: row   left/right: change", dim, panel);
-            // Apply / OK buttons (mouse-clickable; see settings_content_click).
+
+            let hint_y = rows_y + SETTINGS_VISIBLE as u32 * row_h + 8;
+            font8x8::draw_str(x, hint_y, b"tab: switch tab   arrows: change   enter: apply", dim, panel);
+            // Apply / OK buttons (mouse-clickable; see content_click).
             let (ax, ay, aw, ah) = settings_apply_rect(wx, wy, dw, dh);
             framebuffer::back_fill_rounded_rect(ax, ay, aw, ah, 6, theme::color(theme::SLOT_PANEL_BORDER));
             framebuffer::back_fill_rounded_rect(ax + 1, ay + 1, aw - 2, ah - 2, 5, panel);
-            font8x8::draw_str(ax + 18, ay + 9, b"Apply", text, panel);
+            font_unicode::draw_utf8_str(ax + 18, ay + 9, locale::tr("Apply").as_bytes(), text, panel, locale::render_daemon());
             let (ox, oy, ow, oh) = settings_ok_rect(wx, wy, dw, dh);
             framebuffer::back_fill_rounded_rect(ox, oy, ow, oh, 6, accent);
             framebuffer::back_fill_rounded_rect(ox + 1, oy + 1, ow - 2, oh - 2, 5, theme::color(theme::SLOT_TITLEBAR));
-            font8x8::draw_str(ox + 28, oy + 9, b"OK", theme::color(theme::SLOT_TITLEBAR_TEXT), theme::color(theme::SLOT_TITLEBAR));
+            font_unicode::draw_utf8_str(ox + 28, oy + 9, locale::tr("OK").as_bytes(), theme::color(theme::SLOT_TITLEBAR_TEXT), theme::color(theme::SLOT_TITLEBAR), locale::render_daemon());
         },
         KIND_FILES => {
             unsafe {
@@ -1853,9 +2944,11 @@ pub fn draw_content(slot: usize) {
                                 col += 1;
                             }
                         },
-                        _ => font8x8::draw_str(x, y + 20, b"(unreadable)", dim, panel),
+                        _ => {
+                            font_unicode::draw_utf8_str(x, y + 20, locale::tr("(unreadable)").as_bytes(), dim, panel, locale::render_daemon());
+                        },
                     }
-                    font8x8::draw_str(x, y + 20 + 13 * 14, b"backspace: back", dim, panel);
+                    font_unicode::draw_utf8_str(x, y + 20 + 13 * 14, locale::tr("backspace: back").as_bytes(), dim, panel, locale::render_daemon());
                     return;
                 }
                 // Directory listing.
@@ -1863,7 +2956,7 @@ pub fn draw_content(slot: usize) {
                 font8x8::draw_str(x, y, header, accent, panel);
                 let count = fm_entry_count();
                 if count == 0 {
-                    font8x8::draw_str(x, y + 22, b"(empty)", dim, panel);
+                    font_unicode::draw_utf8_str(x, y + 22, locale::tr("(empty)").as_bytes(), dim, panel, locale::render_daemon());
                 }
                 let row_h = 24u32;
                 let row_w = dw.saturating_sub(32).max(40);
@@ -1883,12 +2976,13 @@ pub fn draw_content(slot: usize) {
                         font8x8::draw_str(x + 28, ry, &buf[..len], text, panel);
                     }
                 }
-                font8x8::draw_str(
+                font_unicode::draw_utf8_str(
                     x,
                     y + 22 + FM_VISIBLE_ROWS as u32 * row_h + 6,
-                    b"enter: open   backspace: up",
+                    locale::tr("enter: open   backspace: up").as_bytes(),
                     dim,
                     panel,
+                    locale::render_daemon(),
                 );
             }
         },
@@ -1917,6 +3011,25 @@ fn cell_hash(cx: u32, cy: u32) -> f64 {
 /// once per z slot.
 pub fn draw_window(slot: usize) {
     let Some(w) = slot_window(slot) else { return };
+    // Aero-snap ghost: while this window is the one being dragged near an
+    // edge, show where it would dock. Drawn before the window so it sits
+    // behind it (the ghost is at the edge, the window at the cursor).
+    unsafe {
+        let z = &*&raw const Z;
+        if slot < Z_LEN && z[slot] as i32 == DRAG_WIN {
+            if let Some((sx, sy, sw, sh)) = SNAP_PREVIEW {
+                framebuffer::back_blend_rounded_rect(
+                    sx,
+                    sy,
+                    sw,
+                    sh,
+                    10,
+                    theme::color(theme::SLOT_ACCENT),
+                    70,
+                );
+            }
+        }
+    }
     let (x0, y0, dw, dh) = deformed_rect(w);
     if dw < 8 || dh < 8 {
         return;
@@ -2007,11 +3120,15 @@ pub fn draw_window(slot: usize) {
         } else {
             theme::color(theme::SLOT_DIM)
         };
-        font8x8::draw_str(tx, (y0 + 8).max(0) as u32, title.as_bytes(), ttext, title_bg);
-        // minimize (amber) + close (red) at the right end.
+        font_unicode::draw_utf8_str(tx, (y0 + 8).max(0) as u32, locale::tr(title).as_bytes(), ttext, title_bg, locale::render_daemon());
+        // maximize (green) + minimize (amber) + close (red) at the right end.
         let cyb = (y0 + tb as i64 / 2).max(0) as u32;
         let close_x = x0 + dw as i64 - tb as i64 / 2 + shear(tb / 2);
         let min_x = x0 + dw as i64 - tb as i64 - tb as i64 / 2 + shear(tb / 2);
+        let max_x = x0 + dw as i64 - 2 * tb as i64 - tb as i64 / 2 + shear(tb / 2);
+        if max_x >= 0 {
+            framebuffer::back_fill_circle(max_x as u32, cyb, 6, 0x5AC06A);
+        }
         if min_x >= 0 {
             framebuffer::back_fill_circle(min_x as u32, cyb, 6, 0xE0A44A);
         }

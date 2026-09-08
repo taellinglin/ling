@@ -207,6 +207,7 @@ pub const EVENT_OPEN: usize = 2;
 pub const EVENT_CLOSE: usize = 3;
 pub const EVENT_ERROR: usize = 4;
 pub const EVENT_LOGIN: usize = 5;
+pub const EVENT_PING: usize = 6; // Messenger attention nudge
 
 /// One jingle note: (pentatonic index, start delay ms, duration ms).
 type JingleNote = (usize, u32, u32);
@@ -214,7 +215,7 @@ type JingleNote = (usize, u32, u32);
 struct SoundTheme {
     name: &'static str,
     /// Indexed by EVENT_*; a slice of scheduled notes (empty = silent).
-    events: [&'static [JingleNote]; 6],
+    events: [&'static [JingleNote]; 7],
 }
 
 static SOUND_THEMES: [SoundTheme; 3] = [
@@ -228,6 +229,7 @@ static SOUND_THEMES: [SoundTheme; 3] = [
             &[(5, 0, 140), (3, 70, 220)],             // close: two falling
             &[(1, 0, 260), (1, 180, 380)],            // error: low double-knock
             &[(2, 0, 200), (4, 130, 200), (7, 260, 500)], // login: triad up
+            &[(8, 0, 130), (9, 110, 260)],            // ping: bright quick two-note
         ],
     },
     SoundTheme {
@@ -239,11 +241,12 @@ static SOUND_THEMES: [SoundTheme; 3] = [
             &[(8, 0, 180), (5, 90, 260)],
             &[(0, 0, 300), (0, 220, 420)],
             &[(4, 0, 240), (7, 150, 240), (9, 300, 600)],
+            &[(9, 0, 140), (9, 120, 280)],
         ],
     },
     SoundTheme {
         name: "Silent",
-        events: [&[], &[], &[], &[], &[], &[]],
+        events: [&[], &[], &[], &[], &[], &[], &[]],
     },
 ];
 

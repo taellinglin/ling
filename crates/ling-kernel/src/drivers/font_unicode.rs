@@ -85,6 +85,27 @@ fn draw_glyph16(x: u32, y: u32, g: &Glyph16, fg: u32, bg: u32) {
     }
 }
 
+/// Draw a glyph with a TRANSPARENT background (only set pixels), so a combining
+/// mark composited onto the consonant beneath it doesn't erase the consonant.
+fn draw_glyph16_overlay(x: u32, y: u32, g: &Glyph16, fg: u32) {
+    for row in 0..16u32 {
+        let word = ((g[row as usize * 2] as u16) << 8) | g[row as usize * 2 + 1] as u16;
+        for col in 0..16u32 {
+            if (word >> (15 - col)) & 1 != 0 {
+                framebuffer::back_set_pixel(x + col, y + row, fg);
+            }
+        }
+    }
+}
+
+/// Thai combining vowel/tone marks (above + below). They carry zero advance and
+/// stack on the preceding consonant -- our stand-in for Thai shaping (no GSUB/
+/// GPOS engine here). The atlas bakes above-marks at the cell top, below-marks
+/// at the bottom (see `blit_glyph16`).
+fn is_thai_combining(cp: u32) -> bool {
+    cp == 0x0E31 || (0x0E34..=0x0E3A).contains(&cp) || (0x0E47..=0x0E4E).contains(&cp)
+}
+
 /// Draw a UTF-8 byte string left-to-right, no wrapping/shaping (a
 /// primitive, same discipline as `font8x8::draw_str`). ASCII bytes render
 /// via `font8x8` at 8px advance; anything else looks up `daemon` ?
@@ -93,25 +114,38 @@ fn draw_glyph16(x: u32, y: u32, g: &Glyph16, fg: u32, bg: u32) {
 /// next (e.g. center text, or place a flag glyph after it).
 pub fn draw_utf8_str(x: u32, y: u32, bytes: &[u8], fg: u32, bg: u32, daemon: bool) -> u32 {
     let mut cursor = 0u32;
+    let mut last_base = 0u32; // cursor x of the last base glyph (for mark overlay)
     let mut i = 0usize;
     while i < bytes.len() {
         let (cp, len) = decode_utf8_at(bytes, i);
         i += len;
-        if cp < 0x80 && !daemon {
-            super::font8x8::draw_char(x + cursor, y, cp as u8, fg, bg);
-            cursor += 8;
-            continue;
-        }
         let atlas = if daemon {
             unsafe { DAEMON_ATLAS }
         } else {
             unsafe { UNICODE_ATLAS }
         };
+        // Thai combining mark: composite onto the previous consonant, no advance.
+        if is_thai_combining(cp) {
+            if let Some(g) = find(atlas, cp) {
+                draw_glyph16_overlay(x + last_base, y, g, fg);
+            }
+            continue;
+        }
+        if cp < 0x80 && !daemon {
+            super::font8x8::draw_char(x + cursor, y, cp as u8, fg, bg);
+            // Honor the DPI font scale so mixed/ASCII strings don't overlap at
+            // 2x (draw_char scales; the advance must too). CJK below stays 16px
+            // -- the atlas isn't scaled, a disclosed limit of this module.
+            last_base = cursor;
+            cursor += super::font8x8::advance();
+            continue;
+        }
         if let Some(g) = find(atlas, cp) {
             draw_glyph16(x + cursor, y, g, fg, bg);
         } else {
             framebuffer::back_fill_rect(x + cursor, y, 16, 16, bg);
         }
+        last_base = cursor;
         cursor += 16;
     }
     cursor

@@ -26,6 +26,33 @@ use crate::drivers::framebuffer;
 const VIRTUAL_W: f64 = 960.0;
 const VIRTUAL_H: f64 = 600.0;
 
+/// User "DPI" preference (Settings "DPI" row): the factor the desktop
+/// multiplies its bitmap-font glyph size by, so text on a large
+/// high-resolution panel isn't hair-thin. 100 = native 8px. Deliberately
+/// SEPARATE from the auto letterbox `scale()` above (which fits full-screen
+/// `.ling` layouts to the panel and must not be user-inflated, or they'd
+/// spill off-screen). The desktop applies `dpi_font_scale()` to `font8x8`.
+///
+/// Only integer steps because the font is an 8x8 bitmap atlas -- 1.5x
+/// nearest-neighbor turns text to mush (see `font8x8::draw_char_scaled`), so
+/// we offer honest crisp 1x/2x rather than fake fractional DPI.
+pub const DPI_PRESETS: [u32; 2] = [100, 200];
+static mut DPI_IDX: usize = 0;
+
+pub fn dpi_index() -> usize {
+    unsafe { DPI_IDX }
+}
+pub fn set_dpi_index(i: usize) {
+    unsafe { DPI_IDX = i.min(DPI_PRESETS.len() - 1) };
+}
+pub fn dpi_pct() -> u32 {
+    DPI_PRESETS[dpi_index()]
+}
+/// The integer glyph scale the desktop feeds `font8x8::set_scale`.
+pub fn dpi_font_scale() -> u32 {
+    (dpi_pct() / 100).max(1)
+}
+
 fn scale() -> f64 {
     let w = framebuffer::width() as f64;
     let h = framebuffer::height() as f64;

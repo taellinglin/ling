@@ -19,6 +19,13 @@ pub struct CraneliftBackend {
     module: Option<ObjectModule>,
     builder_ctx: FunctionBuilderContext,
     progress: bool,
+    /// Whether to declare the `ling_kernel_*`/`ling_sys_*` runtime imports
+    /// (bare-metal kernel and LingOS userspace intrinsics — see
+    /// `declare_runtime_functions`). On by default so the kernel/LingOS build
+    /// paths keep working unchanged; the desktop AOT path opts out via
+    /// `without_kernel_symbols()` since nothing provides those symbols when
+    /// linking a normal Windows/Linux/macOS executable.
+    include_kernel: bool,
 }
 
 /// Render a single-line tqdm-style progress bar to stderr (overwriting in place
@@ -51,7 +58,10 @@ struct RuntimeDecl {
     id: FuncId,
 }
 
-fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, RuntimeDecl> {
+fn declare_runtime_functions(
+    module: &mut ObjectModule,
+    include_kernel: bool,
+) -> HashMap<String, RuntimeDecl> {
     let mut decls = HashMap::new();
 
     let runtime_fns: &[(&str, &[types::Type], types::Type)] = &[
@@ -192,6 +202,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_theme_dark", &[], types::I64),
         ("ling_kernel_theme_light", &[], types::I64),
         ("ling_kernel_fb_available", &[], types::I64),
+        ("ling_kernel_fb_try_mode", &[types::I64, types::I64], types::I64),
         ("ling_kernel_fb_width", &[], types::I64),
         ("ling_kernel_ui_x", &[types::I64], types::I64),
         ("ling_kernel_ui_y", &[types::I64], types::I64),
@@ -313,6 +324,7 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_wm_dock_y", &[], types::I64),
         ("ling_kernel_wm_dock_size", &[], types::I64),
         ("ling_kernel_wm_dock_letter", &[types::I64], types::I64),
+        ("ling_kernel_wm_draw_dock_glyph", &[types::I64, types::I64, types::I64, types::I64], types::I64),
         ("ling_kernel_wm_dock_running", &[types::I64], types::I64),
         ("ling_kernel_wm_dock_hover", &[types::I64], types::I64),
         ("ling_kernel_wm_clock_str", &[], types::I64),
@@ -460,6 +472,8 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_locale_id", &[types::I64], types::I64),
         ("ling_kernel_locale_native_name", &[types::I64], types::I64),
         ("ling_kernel_locale_latin_name", &[types::I64], types::I64),
+        ("ling_kernel_tr", &[types::I64], types::I64),
+        ("ling_kernel_render_daemon", &[], types::I64),
         ("ling_kernel_locale_utc_offset_min", &[types::I64], types::I64),
         ("ling_kernel_locale_is_celestial", &[types::I64], types::I64),
         ("ling_kernel_locale_uses_daemon", &[types::I64], types::I64),
@@ -472,10 +486,17 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
         ("ling_kernel_net_gateway_ip_byte", &[types::I64], types::I64),
         ("ling_kernel_net_arp_selftest", &[], types::I64),
         ("ling_kernel_net_arp_reply_mac_byte", &[types::I64], types::I64),
+        ("ling_kernel_services_set_ssh", &[types::I64], types::I64),
+        ("ling_kernel_services_boot_configure", &[], types::I64),
+        ("ling_kernel_sshd_serve", &[], types::I64),
+        ("ling_kernel_sshd_start", &[], types::I64),
+        ("ling_kernel_services_ssh_enabled", &[], types::I64),
+        ("ling_kernel_messenger_start", &[], types::I64),
         ("ling_kernel_locale_selected", &[], types::I64),
         ("ling_kernel_locale_index_of_id", &[types::I64], types::I64),
         ("ling_kernel_locale_select", &[types::I64], types::I64),
         ("ling_kernel_locale_reset", &[], types::I64),
+        ("ling_kernel_locale_restore", &[], types::I64),
         ("ling_kernel_kbd_layout_count", &[], types::I64),
         ("ling_kernel_kbd_layout_name", &[types::I64], types::I64),
         ("ling_kernel_kbd_layout_current", &[], types::I64),
@@ -515,6 +536,13 @@ fn declare_runtime_functions(module: &mut ObjectModule) -> HashMap<String, Runti
     ];
 
     for &(name, params, ret) in runtime_fns {
+        // `ling_kernel_*` (bare-metal kernel) and `ling_sys_*` (LingOS
+        // userspace) are only ever implemented for those two no_std targets
+        // — desktop builds have nothing to link them against.
+        if !include_kernel && (name.starts_with("ling_kernel_") || name.starts_with("ling_sys_"))
+        {
+            continue;
+        }
         let mut sig = module.make_signature();
         for &pt in params {
             sig.params.push(AbiParam::new(pt));
@@ -766,6 +794,7 @@ impl CraneliftBackend {
             module: Some(module),
             builder_ctx: FunctionBuilderContext::new(),
             progress: false,
+            include_kernel: true,
         }
     }
 
@@ -773,6 +802,17 @@ impl CraneliftBackend {
     /// Off by default so library/test use stays silent.
     pub fn with_progress(mut self, on: bool) -> Self {
         self.progress = on;
+        self
+    }
+
+    /// Skip declaring the `ling_kernel_*`/`ling_sys_*` runtime imports. Use
+    /// this for desktop (win/lin/mac) AOT builds: those symbols are only ever
+    /// implemented for the bare-metal kernel and LingOS userspace targets, so
+    /// declaring them unconditionally made every desktop AOT build require
+    /// ~200 unresolved externals at link time even though the compiled
+    /// program never calls any of them.
+    pub fn without_kernel_symbols(mut self) -> Self {
+        self.include_kernel = false;
         self
     }
 }
@@ -784,7 +824,7 @@ impl CodegenBackend for CraneliftBackend {
         let num_types = numtype::analyze(&program.mir.functions);
 
         // Phase 0: declare all runtime functions as imports
-        let runtime_decls = declare_runtime_functions(module);
+        let runtime_decls = declare_runtime_functions(module, self.include_kernel);
 
         // Phase 1: collect and declare string/builtin data objects
         let (string_ids, builtin_ids) = collect_string_constants(&program.mir.functions, module);

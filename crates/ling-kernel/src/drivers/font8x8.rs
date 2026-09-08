@@ -129,7 +129,30 @@ fn glyph(c: u8) -> &'static [u8; 8] {
 /// matching `framebuffer::back_set_pixel`). Call `framebuffer::present()`
 /// once after a batch of draws, same discipline as the fill/clear
 /// primitives it's built on.
+/// Global integer glyph scale for `draw_char`/`draw_str` -- the desktop's
+/// "DPI"/large-text setting (see `ui_scale::dpi_font_scale`). 1 = native 8px.
+/// It's set only after login (`wm::settings_load`), so the greeter/installer,
+/// which draw before that, stay crisp at 1x. Content is clipped to window
+/// bodies (`framebuffer` scissor), so 2x text that outgrows a tight box is cut
+/// off cleanly rather than corrupting neighbours.
+static mut SCALE: u32 = 1;
+pub fn set_scale(s: u32) {
+    unsafe { SCALE = s.clamp(1, 4) };
+}
+pub fn scale() -> u32 {
+    unsafe { SCALE }
+}
+/// Horizontal advance per character at the current scale (8px * scale).
+pub fn advance() -> u32 {
+    8 * scale()
+}
+
 pub fn draw_char(x: u32, y: u32, c: u8, fg: u32, bg: u32) {
+    let s = unsafe { SCALE };
+    if s > 1 {
+        draw_char_scaled(x, y, c, fg, bg, s);
+        return;
+    }
     let rows = glyph(c);
     for (row, bits) in rows.iter().enumerate() {
         for col in 0..8u32 {
@@ -139,12 +162,13 @@ pub fn draw_char(x: u32, y: u32, c: u8, fg: u32, bg: u32) {
     }
 }
 
-/// Draw a byte string left-to-right, 8px per character, no wrapping (the
-/// caller picks `x`/`y` per line -- this is a primitive, not a text-layout
-/// engine).
+/// Draw a byte string left-to-right (8px per character times the current
+/// scale), no wrapping (the caller picks `x`/`y` per line -- this is a
+/// primitive, not a text-layout engine).
 pub fn draw_str(x: u32, y: u32, s: &[u8], fg: u32, bg: u32) {
+    let adv = advance();
     for (i, &c) in s.iter().enumerate() {
-        draw_char(x + i as u32 * 8, y, c, fg, bg);
+        draw_char(x + i as u32 * adv, y, c, fg, bg);
     }
 }
 

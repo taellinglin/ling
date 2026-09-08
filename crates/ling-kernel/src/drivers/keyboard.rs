@@ -35,6 +35,11 @@ const EXT_HOME: u8 = 0x47;
 const EXT_END: u8 = 0x4F;
 const EXT_PGUP: u8 = 0x49;
 const EXT_PGDN: u8 = 0x51;
+/// Left "GUI"/Super key (the Windows/Command key). QEMU `sendkey meta_l`
+/// produces its `E0 5B` make code. Surfaced so the desktop can use it as the
+/// Applications-menu launcher — the keyboard path to opening apps that the
+/// mouse-only dock/menu never had.
+const EXT_SUPER: u8 = 0x5B;
 pub const UP_ARROW: u8 = 0x11;
 pub const DOWN_ARROW: u8 = 0x12;
 pub const LEFT_ARROW: u8 = 0x13;
@@ -45,6 +50,9 @@ pub const HOME_KEY: u8 = 0x15;
 pub const END_KEY: u8 = 0x16;
 pub const PGUP_KEY: u8 = 0x17;
 pub const PGDN_KEY: u8 = 0x18;
+/// The Super/GUI key, reported as the next free DC-range control code. The
+/// desktop treats it as "open the Applications menu".
+pub const SUPER_KEY: u8 = 0x19;
 
 // Ctrl-chords, reported in a dedicated 0x80+ range: raw ASCII control
 // codes (letter & 0x1F) would collide with the arrows above (Ctrl+Q/R/S/T
@@ -403,6 +411,9 @@ pub fn poll_char() -> u8 {
                 }
                 if code == EXT_PGDN {
                     return PGDN_KEY;
+                }
+                if code == EXT_SUPER {
+                    return SUPER_KEY;
                 }
                 return 0;
             }

@@ -251,6 +251,11 @@ struct SampleVoice {
     z: f32,
     w: f32,
     vol: f32,
+    /// Playback rate multiplier (1.0 = recorded pitch, 2.0 = up an octave,
+    /// 0.5 = down an octave) — resampling-based pitch shift, so it also
+    /// scales duration (a higher pitch plays faster), same trade-off as
+    /// classic sample-rate-based pitch shifting (tape/turntable speed).
+    pitch: f32,
     looping: bool,
     active: bool,
     /// false ⇒ skip `spatial_gains` entirely and mix at flat `vol` (both
@@ -766,7 +771,7 @@ impl AudioState {
                 };
                 l += s * v.vol * lg;
                 r += s * v.vol * rg;
-                v.pos += *src_rate as f64 / out_rate;
+                v.pos += (*src_rate as f64 / out_rate) * v.pitch as f64;
                 if v.pos as usize >= n - 1 {
                     if v.looping {
                         v.pos = 0.0;
@@ -952,7 +957,8 @@ impl AudioEngine {
         }
     }
 
-    /// Play a loaded sample at a world position (looping or one-shot). Returns a voice id.
+    /// Play a loaded sample at a world position (looping or one-shot).
+    /// `pitch` is a playback-rate multiplier (1.0 = unchanged). Returns a voice id.
     #[allow(clippy::too_many_arguments)]
     pub fn play_sample(
         &self,
@@ -963,6 +969,7 @@ impl AudioEngine {
         w: f32,
         vol: f32,
         looping: bool,
+        pitch: f32,
     ) -> u32 {
         if let Ok(mut s) = self.state.lock() {
             if id >= s.samples.len() {
@@ -982,6 +989,7 @@ impl AudioEngine {
                 z,
                 w,
                 vol,
+                pitch: if pitch > 0.0 { pitch } else { 1.0 },
                 looping,
                 active: true,
                 positional: true,
@@ -995,8 +1003,9 @@ impl AudioEngine {
     /// Play a loaded sample at a flat, non-positional volume (no distance
     /// falloff, no stereo pan) — for VO/narration/UI cues that should read at
     /// a consistent level regardless of where the camera/listener currently
-    /// is, unlike `play_sample`'s world-space sound effects. Returns a voice id.
-    pub fn play_sample_flat(&self, id: usize, vol: f32, looping: bool) -> u32 {
+    /// is, unlike `play_sample`'s world-space sound effects. `pitch` is a
+    /// playback-rate multiplier (1.0 = unchanged). Returns a voice id.
+    pub fn play_sample_flat(&self, id: usize, vol: f32, looping: bool, pitch: f32) -> u32 {
         if let Ok(mut s) = self.state.lock() {
             if id >= s.samples.len() {
                 return 0;
@@ -1015,6 +1024,7 @@ impl AudioEngine {
                 z: 0.0,
                 w: 1.0,
                 vol,
+                pitch: if pitch > 0.0 { pitch } else { 1.0 },
                 looping,
                 active: true,
                 positional: false,
@@ -1307,6 +1317,7 @@ mod tests {
             z: 0.0,
             w: 1.0,
             vol: 1.0,
+            pitch: 1.0,
             looping: true,
             active: true,
             positional: true,
@@ -1329,6 +1340,7 @@ mod tests {
             z: 0.0,
             w: 1.0,
             vol: 1.0,
+            pitch: 1.0,
             looping: false,
             active: true,
             positional: true,
@@ -1422,6 +1434,7 @@ mod tests {
             z: 0.0,
             w: 1.0,
             vol: 0.6,
+            pitch: 1.0,
             looping: true,
             active: true,
             positional: true,

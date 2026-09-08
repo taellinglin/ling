@@ -21,7 +21,7 @@ extern "C" {
     static _kernel_end: u8;
 }
 
-/// Top of the 64 KiB stack `_start` switched onto before `kernel_entry` —
+/// Top of the 512 KiB stack `_start` switched onto before `kernel_entry` —
 /// the only stack that exists this early, so it's what `gdt::init` points
 /// the TSS's `RSP0` at (used if a future ring-3 interrupt/syscall needs a
 /// known-good kernel stack; unused while everything still runs in ring 0).
@@ -264,7 +264,16 @@ pd3:
     .skip 4096
 .align 16
 stack_bottom:
-    .skip 65536
+    // 512KiB. Slot 0 (the desktop loop / main task) never gets one of
+    // sched.rs's spawned STACKS -- it keeps running on THIS stack. It does far
+    // more than early boot now: the whole window-manager frame loop plus, on
+    // demand, post-quantum crypto (opening Messenger calls `my_ling_id()` ->
+    // `Identity::from_seed`, an ML-DSA-87 keygen that expands a ~57KiB matrix,
+    // if the background task hasn't cached the identity first; browser TLS is
+    // similar). The old 64KiB silently overflowed the moment a second, richer
+    // window (Messenger) was opened -- a corrupted return address faulted with
+    // a non-canonical rip. This is BSS (zero-filled at boot, not on disk).
+    .skip 524288
 .global stack_top
 stack_top:
 "#

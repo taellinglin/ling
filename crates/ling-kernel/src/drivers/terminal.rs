@@ -124,6 +124,28 @@ fn input_str() -> &'static str {
     unsafe { core::str::from_utf8(&(&*&raw const INPUT)[..INPUT_LEN]).unwrap_or("") }
 }
 
+/// Run `line` in this terminal exactly as if the user typed and submitted it:
+/// echo the prompt, record it in history, dispatch. The WM uses this to launch
+/// an installed package (`ling run pkg-<name>/main.ling`) into a Terminal
+/// window from the start menu, reusing all the terminal's rendering + the
+/// in-kernel Ling interpreter rather than duplicating an app runner.
+pub fn run_command(line: &str) {
+    unsafe {
+        if !STARTED {
+            STARTED = true;
+            banner();
+        }
+        let mut echo = [0u8; INPUT_MAX + 8];
+        echo[0] = b'>';
+        echo[1] = b' ';
+        let n = line.len().min(INPUT_MAX);
+        echo[2..2 + n].copy_from_slice(&line.as_bytes()[..n]);
+        push(Cls::Accent, &echo[..2 + n]);
+        history_push(&line.as_bytes()[..n]);
+        run(&line[..n]);
+    }
+}
+
 fn cwd_str() -> &'static str {
     unsafe { core::str::from_utf8(&(&*&raw const CWD)[..CWD_LEN]).unwrap_or("") }
 }
@@ -460,12 +482,14 @@ fn run(line: &str) {
             push(Cls::Accent, b"TLS crypto self-test (known-answer vectors):");
             row(t.rdrand, b"RDRAND entropy");
             row(t.sha256, b"SHA-256          (FIPS 180-4)");
+            row(t.sha512, b"SHA-512          (FIPS 180-4)");
             row(t.hmac, b"HMAC-SHA256      (RFC 4231)");
             row(t.hkdf, b"HKDF-SHA256      (RFC 5869)");
             row(t.chachapoly, b"ChaCha20-Poly1305 (RFC 8439)");
             row(t.x25519, b"X25519 ECDHE     (RFC 7748)");
+            row(t.ed25519, b"Ed25519 sign+vfy (RFC 8032)");
             if t.all_ok() {
-                push(Cls::Ok, b"all primitives pass -- ready for the TLS handshake");
+                push(Cls::Ok, b"all primitives pass -- ready for TLS + SSH");
             } else {
                 push(Cls::Err, b"some primitives failed");
             }

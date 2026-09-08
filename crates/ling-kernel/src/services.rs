@@ -12,8 +12,15 @@
 use crate::drivers::{font8x8, framebuffer, keyboard};
 use crate::fs::lingfs;
 
+// Absolute path: a bare "services" resolves relative to the current working
+// directory (see lingfs::resolve), so a non-empty CWD at boot would write it
+// somewhere the next read (under a different CWD) can't find it -- which
+// silently dropped the SSH-at-boot choice. "/hostname" etc. already use the
+// leading-slash (root) form for exactly this reason.
+const SERVICES_PATH: &str = "/services";
+
 fn read_services(buf: &mut [u8; lingfs::BLOCK_SIZE]) -> Option<usize> {
-    lingfs::read_file("services", buf).ok().flatten()
+    lingfs::read_file(SERVICES_PATH, buf).ok().flatten()
 }
 
 /// Has the user been asked about services yet (does `/services` exist)?
@@ -41,7 +48,7 @@ pub fn ssh_enabled() -> bool {
 /// Persist whether SSH should start at boot.
 pub fn set_ssh(on: bool) {
     let line: &[u8] = if on { b"ssh 1\n" } else { b"ssh 0\n" };
-    let _ = lingfs::write_file("services", line);
+    let _ = lingfs::write_file(SERVICES_PATH, line);
 }
 
 /// Run once at boot: on first boot (no `/services` yet) ask whether to enable
@@ -75,6 +82,13 @@ fn prompt_ssh() {
     font8x8::draw_str(cx + 26, cy + 62, b"Start the SSH server at boot?", 0xeae8f4, 0x1c1c38);
     font8x8::draw_str(cx + 26, cy + 92, b"Y = enable      N = keep it off", 0x9a98b4, 0x1c1c38);
     framebuffer::present();
+    // Drain keystrokes buffered before this prompt (notably the Enter that just
+    // selected the locale) so a leftover keypress can't silently auto-answer
+    // the question -- only the user's actual Y/N below should count.
+    let mut drain = 0;
+    while keyboard::poll_char() != 0 && drain < 256 {
+        drain += 1;
+    }
     // Wait up to 30s for an answer, then default to off -- so a headless or
     // automated boot (no keyboard) proceeds instead of hanging here forever.
     let mut on = false;

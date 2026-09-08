@@ -1,13 +1,13 @@
-//! Ed25519 signature *verification* for the kernel — no signing, no key
-//! generation. Both of those need a real CSPRNG (RFC 8032 signing is
-//! deterministic and doesn't strictly need one per-signature, but generating
-//! the private key in the first place does), and this kernel doesn't have
-//! one: `users.rs` currently seeds its password salt from `rdtsc()`, which
-//! its own doc comment already flags as not good enough for secret key
-//! material. Verification needs no secrets and no randomness at all, so it's
-//! safe to expose today; signing/keygen are future work once there's a real
-//! entropy source (see `packages/README.md`'s no_std `ling-crypto` port
-//! item, which this is the first slice of).
+//! Ed25519 signatures for the kernel: verification, plus (now that a real
+//! CSPRNG exists) seed-based key generation and deterministic RFC 8032
+//! signing. When this was verify-only the blocker was entropy -- key
+//! generation needs a real CSPRNG and `users.rs`'s `rdtsc()` salt was
+//! explicitly not good enough. `crypto::random_bytes` (RDRAND, see crypto.rs)
+//! is that CSPRNG now, so a caller draws one 32-byte seed, persists it, and
+//! derives a stable keypair from it here (`public_from_seed` / `sign`). Signing
+//! itself is deterministic and needs no per-signature randomness. This is what
+//! an in-kernel SSH *server* host key is built on (it must sign the key-exchange
+//! hash, or a real OpenSSH client refuses the connection).
 //!
 //! This wraps `ed25519-dalek` (audited, the same crate `ling-crypto::Ed25519Keypair`
 //! uses in userland) rather than hand-rolling curve arithmetic — confirmed by
@@ -18,7 +18,19 @@
 //! backend — the default x86_64 backend emits AVX2 codegen a freestanding
 //! target can't lower.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+
+/// The Ed25519 public (verifying) key, 32 bytes, for a secret `seed`.
+pub fn public_from_seed(seed: &[u8; 32]) -> [u8; 32] {
+    SigningKey::from_bytes(seed).verifying_key().to_bytes()
+}
+
+/// A deterministic RFC 8032 Ed25519 signature (64 bytes) over `msg` by the key
+/// derived from `seed`. The seed is the only secret; the caller sources it from
+/// RDRAND once and persists it so the identity/host key stays stable.
+pub fn sign(seed: &[u8; 32], msg: &[u8]) -> [u8; 64] {
+    SigningKey::from_bytes(seed).sign(msg).to_bytes()
+}
 
 /// `true` iff `sig` is a valid Ed25519 signature over `msg` by the holder of
 /// `pubkey`. `false` on any malformed input (wrong-length key/signature,

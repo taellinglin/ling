@@ -100,6 +100,105 @@ pub fn init() {
     }
 }
 
+// -- Live resolution switching (bochs/QEMU/VirtualBox DISPI) -----------------
+// VBE's mode-set is a real-mode BIOS call we can't make in long mode -- but the
+// bochs VBE "DISPI" register interface (used by QEMU's std VGA and VirtualBox's
+// VBoxVGA) reprograms width/height/bpp at runtime with plain port I/O, and the
+// linear framebuffer stays at the same aperture. So on those adapters we CAN
+// change resolution live; elsewhere `set_mode` reports false and the caller
+// falls back to persist-and-reboot.
+#[cfg(target_arch = "x86_64")]
+mod dispi {
+    use crate::arch::io::{inw, outw};
+    const INDEX: u16 = 0x01CE;
+    const DATA: u16 = 0x01CF;
+    const I_ID: u16 = 0;
+    const I_XRES: u16 = 1;
+    const I_YRES: u16 = 2;
+    const I_BPP: u16 = 3;
+    const I_ENABLE: u16 = 4;
+    const I_VIRT_WIDTH: u16 = 6;
+    const ENABLED: u16 = 0x01;
+    const GETCAPS: u16 = 0x02;
+    const LFB: u16 = 0x40;
+
+    unsafe fn read(idx: u16) -> u16 {
+        outw(INDEX, idx);
+        inw(DATA)
+    }
+    unsafe fn write(idx: u16, val: u16) {
+        outw(INDEX, idx);
+        outw(DATA, val);
+    }
+    /// A bochs-DISPI-capable adapter reports an id of 0xB0C0..=0xB0CF.
+    pub fn present() -> bool {
+        let id = unsafe { read(I_ID) };
+        (0xB0C0..=0xB0CF).contains(&id)
+    }
+    /// Query the adapter's maximum supported width/height. The DISPI spec:
+    /// with the GETCAPS bit set in ENABLE, reading XRES/YRES returns the max
+    /// the card can do (bounded by its VRAM), then GETCAPS is cleared. This is
+    /// how we offer only the modes the actual card supports instead of a
+    /// hardcoded guess.
+    pub fn max_caps() -> Option<(u32, u32)> {
+        if !present() {
+            return None;
+        }
+        unsafe {
+            let prev = read(I_ENABLE);
+            write(I_ENABLE, GETCAPS);
+            let mw = read(I_XRES) as u32;
+            let mh = read(I_YRES) as u32;
+            write(I_ENABLE, prev); // restore whatever mode was live
+            if mw == 0 || mh == 0 {
+                None
+            } else {
+                Some((mw, mh))
+            }
+        }
+    }
+    pub fn set(w: u16, h: u16) {
+        unsafe {
+            write(I_ENABLE, 0); // must disable before changing geometry
+            write(I_XRES, w);
+            write(I_YRES, h);
+            write(I_BPP, 32);
+            write(I_VIRT_WIDTH, w); // pitch = w * 4
+            write(I_ENABLE, ENABLED | LFB);
+        }
+    }
+}
+
+/// Change the display resolution live (32bpp), reusing the existing linear
+/// framebuffer aperture. Returns false if the adapter isn't DISPI-capable
+/// (real hardware / a mode too big for the back buffer) -- the caller then
+/// persists a next-boot preference instead. Keeps `FB.addr`; updates
+/// width/height/pitch/bpp and clears the new surface.
+#[cfg(target_arch = "x86_64")]
+pub fn set_mode(w: u32, h: u32) -> bool {
+    if w == 0 || h == 0 || (w as usize) * (h as usize) * 4 > BACKBUFFER_MAX {
+        return false;
+    }
+    let Some(mut fb) = get() else { return false };
+    if !dispi::present() {
+        return false;
+    }
+    dispi::set(w as u16, h as u16);
+    fb.width = w;
+    fb.height = h;
+    fb.bpp = 32;
+    fb.pitch = w * 4;
+    unsafe { ptr::write(&raw mut FB, Some(fb)) };
+    back_clear(0x10_10_18);
+    present();
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn set_mode(_w: u32, _h: u32) -> bool {
+    false
+}
+
 pub fn get() -> Option<FbInfo> {
     unsafe { ptr::read(&raw const FB) }
 }
@@ -178,9 +277,84 @@ pub fn clear(color: u32) {
     fill_rect(0, 0, w, h, color);
 }
 
+/// Is the display a bochs-DISPI adapter we can resize live? (QEMU std VGA /
+/// VirtualBox VBoxVGA.) Settings uses this to label the Display row.
+pub fn dispi_capable() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        dispi::present()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// The adapter's maximum supported (width, height), queried from the card via
+/// DISPI GETCAPS -- `None` if not a DISPI adapter. Settings uses this to list
+/// only the modes the card can actually do.
+pub fn dispi_max() -> Option<(u32, u32)> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        dispi::max_caps()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        None
+    }
+}
+
+/// How many 32bpp pixels the back buffer can hold -- the other ceiling on a
+/// live mode (a mode must fit both the card's caps and this buffer).
+pub fn max_pixels() -> usize {
+    BACKBUFFER_MAX / 4
+}
+
+// -- Clip rectangle (scissor) ------------------------------------------------
+// Every primitive that funnels through back_set_pixel / back_fill_rect /
+// back_blend_pixel respects this. A window sets it to its body rect while
+// drawing content, so text/widgets can't spill past the window edges (or over
+// neighbouring windows). `None` = draw to the whole screen.
+static mut CLIP: Option<(u32, u32, u32, u32)> = None;
+
+pub fn set_clip(x: u32, y: u32, w: u32, h: u32) {
+    unsafe { CLIP = Some((x, y, w, h)) };
+}
+pub fn clear_clip() {
+    unsafe { CLIP = None };
+}
+#[inline]
+fn clip_ok(x: u32, y: u32) -> bool {
+    match unsafe { CLIP } {
+        Some((cx, cy, cw, ch)) => x >= cx && y >= cy && x < cx + cw && y < cy + ch,
+        None => true,
+    }
+}
+/// Intersect a rect with the active clip; None if fully clipped out.
+#[inline]
+fn clip_rect(x: u32, y: u32, w: u32, h: u32) -> Option<(u32, u32, u32, u32)> {
+    match unsafe { CLIP } {
+        None => Some((x, y, w, h)),
+        Some((cx, cy, cw, ch)) => {
+            let x0 = x.max(cx);
+            let y0 = y.max(cy);
+            let x1 = (x + w).min(cx + cw);
+            let y1 = (y + h).min(cy + ch);
+            if x1 <= x0 || y1 <= y0 {
+                None
+            } else {
+                Some((x0, y0, x1 - x0, y1 - y0))
+            }
+        }
+    }
+}
+
 pub fn back_set_pixel(x: u32, y: u32, color: u32) {
     let Some(fb) = get() else { return };
     if x >= fb.width || y >= fb.height {
+        return;
+    }
+    if !clip_ok(x, y) {
         return;
     }
     let bypp = fb.bpp as u32 / 8;
@@ -210,6 +384,10 @@ pub fn back_fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     if w == 0 || h == 0 {
         return;
     }
+    let (x, y, w, h) = match clip_rect(x, y, w, h) {
+        Some(r) => r,
+        None => return,
+    };
     let bypp = fb.bpp as u32 / 8;
     let buf = back_buf();
     if bypp == 4 {
@@ -354,6 +532,9 @@ fn back_blend_pixel(x: u32, y: u32, color: u32, alpha: u32) {
     if x >= fb.width || y >= fb.height {
         return;
     }
+    if !clip_ok(x, y) {
+        return;
+    }
     let bypp = fb.bpp as u32 / 8;
     let offset = y as usize * fb.pitch as usize + x as usize * bypp as usize;
     if offset + bypp as usize > BACKBUFFER_MAX || (bypp != 3 && bypp != 4) {
@@ -401,7 +582,37 @@ pub fn back_blend_rounded_rect(x: u32, y: u32, w: u32, h: u32, radius: u32, colo
     }
 }
 
+/// Target present rate ("Hz" in Settings). In a VM the guest can't drive the
+/// host's real refresh, so this caps how often the desktop copies the back
+/// buffer to the screen -- a genuine, honest frame-rate limit (and it saves
+/// CPU). 0 = uncapped.
+static mut PRESENT_HZ: u32 = 60;
+static mut LAST_PRESENT_US: u64 = 0;
+
+pub fn set_present_hz(hz: u32) {
+    unsafe { PRESENT_HZ = hz };
+}
+pub fn present_hz() -> u32 {
+    unsafe { PRESENT_HZ }
+}
+
 pub fn present() {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        let hz = PRESENT_HZ;
+        if hz > 0 {
+            let interval = 1_000_000u64 / hz as u64;
+            let next = LAST_PRESENT_US.wrapping_add(interval);
+            // Yield to other cooperative tasks until this frame's slot; also
+            // guard against a backwards/zero clock so we can't spin forever.
+            let mut spins = 0u32;
+            while crate::arch::timer::now_us() < next && spins < 100_000 {
+                crate::proc::sched::yield_now();
+                spins += 1;
+            }
+            LAST_PRESENT_US = crate::arch::timer::now_us();
+        }
+    }
     unsafe {
         let Some(fb) = get() else { return };
         let total = (fb.pitch as usize * fb.height as usize).min(BACKBUFFER_MAX);

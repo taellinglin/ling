@@ -15864,10 +15864,15 @@ impl Interpreter {
                 let w = self.arg_num(&args, 4, 1.0)? as f32;
                 let vol = self.arg_num(&args, 5, 1.0)? as f32;
                 let looping = self.arg_num(&args, 6, 0.0)? > 0.5;
+                // pitch: playback-rate multiplier (1.0 = recorded pitch, 2.0 = up an
+                // octave, 0.5 = down an octave) — lets a loaded voice sample glide to
+                // match a synthesized intonation contour instead of always playing
+                // back flat.
+                let pitch = self.arg_num(&args, 7, 1.0)? as f32;
                 let v = self
                     .audio
                     .as_ref()
-                    .map(|a| a.play_sample(id, x, y, z, w, vol, looping))
+                    .map(|a| a.play_sample(id, x, y, z, w, vol, looping, pitch))
                     .unwrap_or(0);
                 return Ok(Value::Number(v as f64));
             },
@@ -15884,10 +15889,11 @@ impl Interpreter {
                 let id = self.arg_num(&args, 0, 0.0)? as usize;
                 let vol = self.arg_num(&args, 1, 1.0)? as f32;
                 let looping = self.arg_num(&args, 2, 0.0)? > 0.5;
+                let pitch = self.arg_num(&args, 3, 1.0)? as f32;
                 let v = self
                     .audio
                     .as_ref()
-                    .map(|a| a.play_sample_flat(id, vol, looping))
+                    .map(|a| a.play_sample_flat(id, vol, looping, pitch))
                     .unwrap_or(0);
                 return Ok(Value::Number(v as f64));
             },

@@ -1,0 +1,293 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRYPTO DONUT  —  type a string (or record your voice) → a knotwork donut
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# The seed is SHA3-256 hashed into a (p,q) torus knot (geo crypto module). The
+# knot curve IS the donut; its collider is the (invisible) orientation-aware
+# torus the knot wraps. Shape, bounce, spin & colour all come from the hash.
+#
+#   ⌨  type to edit the seed        [ DROP ] rebuild donut from the seed
+#   🎙 hold [ MIC ] to record sound → the audio's hash becomes the donut
+#   ⏺  [ REC ] toggles PPM frame capture → ./recordings/
+#   ␣  SPACE re-drop      R re-roll velocity
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+bind seed = "灵 · ling · my cryptographic donut"
+
+bind BOX     = 5.5
+bind DONUT_R = 1.8
+bind GRAVITY = 15.0
+bind DT      = 0.016
+bind DAMP    = 0.997
+
+bind start = do {
+    open_window(1100, 760)
+    set_ambient(0.2)
+    set_zdist(18.0)        # pull the camera back outside the box for a full view
+    text_set(seed)
+    mic_open()
+    audio_volume(0.55)
+
+    # professional per-language UI font (Orbitron — holographic Latin display).
+    # font_load resolves the path against both the cwd and the script's directory,
+    # so this works whether you run from the repo root or the example folder.
+    # weight 600 pins the variable wght axis → bold, solid strokes (not thin/hollow)
+    bind uiFont = font_load("assets/fonts/Orbitron.ttf", 600.0)
+    if uiFont < 0.0 { bind uiFont = font_load("../../assets/fonts/Orbitron.ttf", 600.0) }
+    # Noto Sans SC covers Latin + CJK + Thai, so the seed line renders 灵 and any language
+    bind bodyFont = font_load("assets/fonts/NotoSansSC.ttf", 500.0)
+    if bodyFont < 0.0 { bind bodyFont = font_load("../../assets/fonts/NotoSansSC.ttf", 500.0) }
+
+    bind needBuild = 1.0
+    bind recording = 0.0
+    bind micRec = 0.0
+    bind wasDown = 0.0
+
+    while window_is_open() {
+        bind t = time_now()
+        # ── input ──
+        bind typed = text_poll()
+        bind mx = mouse_x()
+        bind my = mouse_y()
+        bind nd = 0.0
+        if mouse_down() { bind nd = 1.0 }
+        bind clicked = 0.0
+        if nd > 0.5 { if wasDown < 0.5 { bind clicked = 1.0 } }
+
+        # ── (re)build the donut from the current seed ──
+        if needBuild > 0.5 {
+            bind src = text_get()
+            bind label = knot_label(src)
+            bind pts = knot_points(src)
+            bind n = len(pts) / 3.0
+            bind maxRad = 0.0
+            bind minRad = 9999.0
+            bind bi = 0.0
+            while bi < n {
+                bind bk = bi * 3.0
+                bind bx = pts[bk]
+                bind bz = pts[bk + 2.0]
+                bind brad = sqrt(bx * bx + bz * bz)
+                if brad > maxRad { bind maxRad = brad }
+                if brad < minRad { bind minRad = brad }
+                bind bi = bi + 1.0
+            }
+            bind s = DONUT_R / maxRad
+            bind majR = (maxRad + minRad) * 0.5 * s
+            bind tubeR = (maxRad - minRad) * 0.5 * s
+            if tubeR < 0.15 { bind tubeR = 0.15 }
+            bind hh1 = sin(pts[0] * 12.9898 + pts[1] * 4.1414) * 43758.5453
+            bind f1 = hh1 - floor(hh1)
+            bind hh2 = sin(pts[3] * 19.19 + pts[5] * 7.77) * 31718.13
+            bind f2 = hh2 - floor(hh2)
+            bind hh3 = sin(maxRad * 8.8 + minRad * 3.3) * 12345.678
+            bind f3 = hh3 - floor(hh3)
+            bind restitution = 0.6 + f1 * 0.35
+            bind cr = (sin(f1 * 6.2831 + 0.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind cg = (sin(f1 * 6.2831 + 2.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind cb = (sin(f1 * 6.2831 + 4.0) * 0.5 + 0.5) * 215.0 + 40.0
+            bind px = 0.0
+            bind py = 0.0 - BOX + DONUT_R + 0.3
+            bind pz = 0.0
+            bind vx = (f2 - 0.5) * 11.0
+            bind vy = 0.0
+            bind vz = (f3 - 0.5) * 11.0
+            bind ax = 0.0  bind ay = 0.0  bind az = 0.0
+            bind wx = (f1 - 0.5) * 4.5  bind wy = (f2 - 0.5) * 4.5  bind wz = (f3 - 0.5) * 4.5
+            bind flash = 0.0
+            # ── crypto-seeded audio: the hash chooses the donut's "voice" ──
+            # f1 picks a root note on a pentatonic-ish ladder (low, warm range);
+            # f2 sets the 4D shimmer; f3 sets the resting vibrato speed.
+            bind baseFreq = 98.0 + floor(f1 * 10.0) * 24.0   # 98–314 Hz, quantized steps
+            bind voiceW   = 0.5 + f2 * 3.5                    # 4D cross-mod depth
+            bind lfoBase  = 0.8 + f3 * 3.0                    # resting vibrato Hz
+            # initialise the two tones (carrier + a fifth) at their resting voice
+            audio_tone(0.0, px, py, pz, voiceW, baseFreq,        0.05, lfoBase, 0.02)
+            audio_tone(1.0, px, py, pz, voiceW, baseFreq * 1.5,  0.03, lfoBase * 0.7, 0.015)
+            bind needBuild = 0.0
+        }
+
+        # ── physics ──
+        bind vy = vy + GRAVITY * DT
+        bind vx = vx * DAMP  bind vy = vy * DAMP  bind vz = vz * DAMP
+        bind px = px + vx * DT  bind py = py + vy * DT  bind pz = pz + vz * DT
+        bind ax = ax + wx * DT  bind ay = ay + wy * DT  bind az = az + wz * DT
+
+        bind cax = cos(ax)  bind sax = sin(ax)
+        bind cay = cos(ay)  bind say = sin(ay)
+        bind caz = cos(az)  bind saz = sin(az)
+
+        bind nx = sax * say * caz - cax * saz
+        bind ny = sax * say * saz + cax * caz
+        bind nz = sax * cay
+
+        bind gx = 1.0 - nx * nx
+        if gx < 0.0 { bind gx = 0.0 }
+        bind gy = 1.0 - ny * ny
+        if gy < 0.0 { bind gy = 0.0 }
+        bind gz = 1.0 - nz * nz
+        if gz < 0.0 { bind gz = 0.0 }
+        bind hwx = majR * sqrt(gx) + tubeR
+        bind hwy = majR * sqrt(gy) + tubeR
+        bind hwz = majR * sqrt(gz) + tubeR
+        bind clx = BOX - hwx
+        bind cly = BOX - hwy
+        bind clz = BOX - hwz
+        if px > clx       { bind px = clx          bind vx = 0.0 - vx * restitution  bind flash = 1.0  bind wy = wy + vz * 0.5 }
+        if px < 0.0 - clx { bind px = 0.0 - clx    bind vx = 0.0 - vx * restitution  bind flash = 1.0 }
+        if py > cly       { bind py = cly          bind vy = 0.0 - vy * restitution  bind flash = 1.0  bind wx = wx + vx * 0.6 }
+        if py < 0.0 - cly { bind py = 0.0 - cly    bind vy = 0.0 - vy * restitution  bind flash = 1.0 }
+        if pz > clz       { bind pz = clz          bind vz = 0.0 - vz * restitution  bind flash = 1.0  bind wx = wx + vx * 0.5 }
+        if pz < 0.0 - clz { bind pz = 0.0 - clz    bind vz = 0.0 - vz * restitution  bind flash = 1.0 }
+        bind flash = flash * 0.86
+
+        bind sp = vx * vx + vy * vy + vz * vz
+        if sp < 1.0 { if py > cly - 0.5 { bind vy = 0.0 - 11.0 - f2 * 6.0  bind vx = (f3 - 0.5) * 9.0  bind vz = (f1 - 0.5) * 9.0 } }
+        if key_pressed("space") { bind px = 0.0  bind pz = 0.0  bind py = 0.0 - cly  bind vx = (f2-0.5)*11.0  bind vy = 0.0  bind vz = (f3-0.5)*11.0 }
+        if key_pressed("r") { bind vx = sin(t * 7.0) * 10.0  bind vz = cos(t * 5.0) * 10.0  bind vy = 0.0 - 8.0 }
+
+        # ── audio: the crypto voice reacts to the physics ──
+        # The hash set the resting pitch/shimmer/vibrato; motion now bends them:
+        #   • height       → pitch glides up as the donut rises (theremin-like)
+        #   • impact flash  → tone swells loud on every wall bounce
+        #   • linear speed  → vibrato depth deepens with velocity
+        #   • spin rate     → vibrato (LFO) speeds up with tumbling
+        #   • world x/y/z   → spatial pan/attenuation follows the donut in the box
+        bind spd     = sqrt(sp)
+        bind spinMag = sqrt(wx * wx + wy * wy + wz * wz)
+        bind topness = (cly - py) / (cly * 2.0 + 0.001)
+        bind fNow    = baseFreq * (1.0 + topness * 0.5 + flash * 0.35)
+        bind ampNow  = 0.04 + flash * 0.45 + spd * 0.010
+        if ampNow > 0.5 { bind ampNow = 0.5 }
+        bind lfoNow  = lfoBase + spinMag * 0.6
+        bind depNow  = 0.01 + spd * 0.004
+        if depNow > 0.08 { bind depNow = 0.08 }
+        audio_tone(0.0, px, py, pz, voiceW, fNow,       ampNow,       lfoNow,       depNow)
+        audio_tone(1.0, px, py, pz, voiceW, fNow * 1.5, ampNow * 0.6, lfoNow * 0.7, depNow * 0.7)
+        audio_listener(cos(t * 0.22), sin(t * 0.22), cos(0.5), sin(0.5))
+
+        # ── draw 3-D scene ──
+        set_color(7, 8, 14)
+        fill()
+        set_camera(cos(t * 0.22), sin(t * 0.22), cos(0.5), sin(0.5))
+        set_ambient(0.2)
+
+        set_color(44, 62, 100)
+        draw_line_3d(0.0-BOX,0.0-BOX,0.0-BOX,  BOX,0.0-BOX,0.0-BOX)
+        draw_line_3d(BOX,0.0-BOX,0.0-BOX,  BOX,BOX,0.0-BOX)
+        draw_line_3d(BOX,BOX,0.0-BOX,  0.0-BOX,BOX,0.0-BOX)
+        draw_line_3d(0.0-BOX,BOX,0.0-BOX,  0.0-BOX,0.0-BOX,0.0-BOX)
+        draw_line_3d(0.0-BOX,0.0-BOX,BOX,  BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,0.0-BOX,BOX,  BOX,BOX,BOX)
+        draw_line_3d(BOX,BOX,BOX,  0.0-BOX,BOX,BOX)
+        draw_line_3d(0.0-BOX,BOX,BOX,  0.0-BOX,0.0-BOX,BOX)
+        draw_line_3d(0.0-BOX,0.0-BOX,0.0-BOX,  0.0-BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,0.0-BOX,0.0-BOX,  BOX,0.0-BOX,BOX)
+        draw_line_3d(BOX,BOX,0.0-BOX,  BOX,BOX,BOX)
+        draw_line_3d(0.0-BOX,BOX,0.0-BOX,  0.0-BOX,BOX,BOX)
+
+        # knotwork donut
+        bind plx = pts[0]  bind ply = pts[1]  bind plz = pts[2]
+        bind a1 = ply * cax - plz * sax
+        bind b1 = ply * sax + plz * cax
+        bind a2 = plx * cay + b1 * say
+        bind b2 = (0.0 - plx) * say + b1 * cay
+        bind a3 = a2 * caz - a1 * saz
+        bind c3 = a2 * saz + a1 * caz
+        bind pwx = px + a3 * s
+        bind pwy = py + c3 * s
+        bind pwz = pz + b2 * s
+        bind i = 1.0
+        while i < n {
+            bind k = i * 3.0
+            bind qlx = pts[k]  bind qly = pts[k + 1.0]  bind qlz = pts[k + 2.0]
+            bind d1 = qly * cax - qlz * sax
+            bind e1 = qly * sax + qlz * cax
+            bind d2 = qlx * cay + e1 * say
+            bind e2 = (0.0 - qlx) * say + e1 * cay
+            bind d3 = d2 * caz - d1 * saz
+            bind f3b = d2 * saz + d1 * caz
+            bind cwx = px + d3 * s
+            bind cwy = py + f3b * s
+            bind cwz = pz + e2 * s
+            bind br = sin(i / n * 14.0 + t * 2.5) * 0.35 + 0.65
+            set_color(cr*br + (255.0-cr*br)*flash, cg*br + (255.0-cg*br)*flash, cb*br + (255.0-cb*br)*flash)
+            draw_line_3d(pwx, pwy, pwz, cwx, cwy, cwz)
+            bind pwx = cwx  bind pwy = cwy  bind pwz = cwz
+            bind i = i + 1.0
+        }
+
+        # 3-D vector label floating above the box — same Orbitron outlines as the
+        # UI, now emitted as depth-sorted 3D lines so it tumbles with the scene (and
+        # projects through the 4D camera). Colour pulses with the donut's voice.
+        if uiFont < 0.0 { } else {
+            bind lw = font_width(uiFont, 0.62, label)
+            set_color(0, 200 + flash*55.0, 255)
+            font_text_3d(uiFont, 0.0-lw*0.5, 0.0-BOX*0.5, 0.0,  1.0,0.0,0.0,  0.0,0.0-1.0,0.0, 0.62, label)
+        }
+
+        flush_3d()
+
+        # ── 2-D holographic UI on top ──
+        set_blend(1)
+        set_color(0, 210, 255)
+        if uiFont < 0.0 { ui_text(40.0, 22.0, 22.0, "CRYPTO DONUT") } else { font_text_fill(uiFont, 40.0, 20.0, 26.0, "CRYPTO DONUT") }
+
+        # live "voice" readout — shows the crypto-seeded frequency reacting to physics
+        set_color(70, 160, 200)
+        if uiFont < 0.0 { ui_text(330.0, 26.0, 13.0, "VOICE") } else { font_text_fill(uiFont, 360.0, 26.0, 15.0, "VOICE") }
+        bind hzBar = fNow * 0.6
+        set_color(0, 200, 255)
+        draw_line(360.0, 48.0, 360.0 + hzBar, 48.0)
+
+        # seed input box (Noto Sans SC → renders 灵 / any language)
+        set_color(40, 110, 150)
+        ui_bevel(40.0, 60.0, 720.0, 40.0, 10.0)
+        set_color(160, 220, 245)
+        if bodyFont < 0.0 { ui_text(54.0, 70.0, 16.0, typed) } else { font_text_fill(bodyFont, 54.0, 66.0, 22.0, typed) }
+
+        # DROP button
+        bind overDrop = 0.0
+        if ui_hot(780.0, 60.0, 130.0, 40.0) { bind overDrop = 1.0 }
+        set_color(40 + overDrop*60.0, 200, 150 + overDrop*80.0)
+        ui_bevel(780.0, 60.0, 130.0, 40.0, 10.0)
+        if uiFont < 0.0 { ui_text(800.0, 70.0, 18.0, "DROP") } else { font_text_fill(uiFont, 808.0, 70.0, 20.0, "DROP") }
+        if clicked > 0.5 { if overDrop > 0.5 { bind needBuild = 1.0 } }
+
+        # MIC button (hold to record sound → donut)
+        bind overMic = 0.0
+        if ui_hot(930.0, 60.0, 130.0, 40.0) { bind overMic = 1.0 }
+        if micRec > 0.5 { set_color(255, 80, 90) } else { set_color(40 + overMic*60.0, 160, 230) }
+        ui_bevel(930.0, 60.0, 130.0, 40.0, 10.0)
+        if uiFont < 0.0 { ui_text(950.0, 70.0, 18.0, "MIC") } else { font_text_fill(uiFont, 962.0, 70.0, 20.0, "MIC") }
+        # while held over MIC: capture; on release: build donut from the sound
+        if nd > 0.5 { if overMic > 0.5 { mic_capture()  bind micRec = 1.0 } }
+        if nd < 0.5 { if micRec > 0.5 { text_set(mic_seed())  mic_clear()  bind micRec = 1.0  bind needBuild = 1.0  bind micRec = 0.0 } }
+        # live level meter while recording
+        if micRec > 0.5 {
+            bind lvl = mic_rms() * 600.0
+            set_color(255, 90, 90)
+            draw_line(930.0, 112.0, 930.0 + lvl, 112.0)
+        }
+
+        # REC toggle (PPM frame capture)
+        bind overRec = 0.0
+        if ui_hot(40.0, 700.0, 130.0, 44.0) { bind overRec = 1.0 }
+        if clicked > 0.5 { if overRec > 0.5 { bind recording = 1.0 - recording } }
+        set_color(60, 90, 120)
+        ui_frame(40.0, 700.0, 130.0, 44.0, 12.0)
+        if recording > 0.5 {
+            bind blink = sin(t * 6.0) * 0.5 + 0.5
+            set_color(255, 40 + blink*60.0, 40 + blink*60.0)
+            draw_disc(64.0, 722.0, 8.0)
+            if uiFont < 0.0 { ui_text(82.0, 712.0, 16.0, "REC") } else { font_text_fill(uiFont, 84.0, 712.0, 18.0, "REC") }
+            record_frame()
+        } else {
+            set_color(120, 120, 140)
+            if uiFont < 0.0 { ui_text(60.0, 712.0, 16.0, "REC OFF") } else { font_text_fill(uiFont, 60.0, 712.0, 16.0, "REC OFF") }
+        }
+
+        set_blend(0)
+        bind wasDown = nd
+        present()
+    }
+}

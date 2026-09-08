@@ -1088,9 +1088,15 @@ fn build_native(
     // Kernel & LingOS app builds always use AOT (compiling the .ling to a .o and linking it)
     let use_aot = aot || is_kernel || is_lingos;
 
-    // Copy all .ling files from source_dir (recurse one level for ling-fu 灵源/)
+    // Copy sibling .ling modules the entry might `use` — relative to the
+    // ENTRY's own directory (matching `use` resolution in runtime/mod.rs's
+    // `load_module`, which resolves against the importing file's directory,
+    // not the project root), not the whole project source_dir. Walking from
+    // source_dir swept in unrelated sibling scripts and anything under a
+    // `cache/` directory that happens to use a `.ling`-suffixed filename.
+    let module_root = project.entry.parent().unwrap_or(&project.source_dir);
     if !use_aot {
-        copy_ling_sources(&project.source_dir, build_dir);
+        copy_ling_sources(module_root, build_dir);
     }
 
     // ── 2. Write generated Cargo.toml + src/main.rs ──────────────────────────
@@ -1239,9 +1245,28 @@ fn build_native(
         // Chinese/Korean/Thai; the target project's own `font/i18n/Daemon.*`
         // (LingOS-specific, not a general `ling` asset) for Daemon.
         let unicode_font_mod = if !is_rpi {
-            const ZH_CHARS: &str = "简体中文你好欢迎语言灵源月宫龙嫦娥";
-            const KO_CHARS: &str = "한국어안녕하세요환영합니다언어";
-            const TH_CHARS: &str = "ภาษาไทยสวัสดียินดีต้อนรับ";
+            // Language names + greetings, plus the app-UI vocabulary the
+            // desktop localizes (window titles, file-browser labels/hints,
+            // Apply/OK) so `locale::tr` has real glyphs to render. Product
+            // names (LingOS, bring, horizon) stay Latin on purpose.
+            const ZH_CHARS: &str = "简体中文你好欢迎语言灵源月宫龙嫦娥\
+件设置空无法读取回车打开退格上级返应用确定终端编辑器信使图库媒播放软包关于\
+键盘区域磁管理员户网络完成选择布局系统和时安装下一步清除并正在移动\
+确认清除选择安装磁盘管理员账户正在完成设置密码输入清除此磁盘并安装此系统的主机名\
+创建用户留空跳过此账户的密码设置管理员密码开机启动服务软件包组软件包名选择要安装的\
+检测到的磁盘目前仅支持一个安装将清除此磁盘的一切正在清除引导扇区和文件系统正在挂载\
+正在设置网络正在安装引导程序完成请移除安装介质并重启软件包已安装";
+            const KO_CHARS: &str = "한국어안녕하세요환영합니다언어\
+파일설정비었음읽기실패엔터열백스페이위로뒤적용확인미널편집메신저갤러리디플레패키지정보\
+키보드배열선택시스템지역및간대아래이동치다음디를우고중에오신것을루트네워완료사자\
+지우기확인설치디스크선택루트계정사용자마무리설정비밀번호입력하여지우고호스트이름\
+만들기비우면건너뜀부팅시시작패키지세트이름할감지된현재하나만지원는이모두웁니다\
+부트섹터와파일시스템마운트네트워크로더완료미디어를빼고재부팅설치됨";
+            const TH_CHARS: &str = "ภาษาไทยสวัสดียินดีต้อนรับ\
+ฟล์งค่เมแกขชพ็จปึใ\
+ปนพมะบภูผชครือขยเสจลกแตวดถไำ\
+ยืนยันการล้างเลือกดิสก์ติดตั้งบัญชีรูทผู้ใช้กำลังเสร็จ\
+รหัสผ่านโฮสต์เซกเตอร์โหลดเดอร์ทั้งหมดหนึ่ง";
             let mut unicode_glyphs = Vec::new();
             for (chars, rel_path) in [
                 (ZH_CHARS, "assets/fonts/NotoSansSC.ttf"),
@@ -1312,7 +1337,9 @@ fn build_native(
             "    compiling {} functions to native code…",
             mir_prog.mir.functions.len()
         );
-        let mut backend = ling_codegen::CraneliftBackend::new().with_progress(true);
+        let mut backend = ling_codegen::CraneliftBackend::new()
+            .with_progress(true)
+            .without_kernel_symbols();
         let obj_path = build_dir.join("entry.o");
         use ling_codegen::CodegenBackend;
         backend.emit(&mir_prog, &obj_path).unwrap_or_else(|e| {
@@ -1539,7 +1566,7 @@ rustflags = ["-C", "relocation-model=static", {extra_flags}]
     // next to the sources copy_ling_sources placed in build_dir itself.
     // Harmless for single-file projects (nothing to copy beyond the exe).
     if !is_kernel && !is_lingos {
-        copy_ling_sources(&project.source_dir, &platform_dir);
+        copy_ling_sources(module_root, &platform_dir);
     }
 
     // ── 6. Copy included resources next to the exe (unless packed inside it) ──
@@ -1773,7 +1800,22 @@ fn blit_glyph16(font: &fontdue::Font, ch: char) -> Option<[u8; 32]> {
         return None;
     }
     let mut out = [0u8; 32];
-    let y_off = ((16i32 - metrics.height as i32) / 2).max(0) as usize;
+    // Thai has no real shaping engine here, but its combining vowel/tone marks
+    // must sit ABOVE (or BELOW) the consonant, not float in the centre of their
+    // own cell. Bake above-marks at the top of the cell and below-marks at the
+    // bottom; the renderer then overlays them on the preceding consonant with
+    // zero advance (see `font_unicode::draw_utf8_str`). Readable, not perfect.
+    let cp = ch as u32;
+    let thai_above = cp == 0x0E31 || (0x0E34..=0x0E37).contains(&cp) || (0x0E47..=0x0E4E).contains(&cp);
+    let thai_below = (0x0E38..=0x0E3A).contains(&cp);
+    let gh = (metrics.height.min(16)) as i32;
+    let y_off = if thai_above {
+        0usize
+    } else if thai_below {
+        (16 - gh).max(0) as usize
+    } else {
+        ((16i32 - metrics.height as i32) / 2).max(0) as usize
+    };
     let x_off = ((16i32 - metrics.width as i32) / 2).max(0) as usize;
     for row in 0..metrics.height.min(16) {
         let mut word = 0u16;
@@ -1851,7 +1893,7 @@ fn copy_ling_sources(src: &Path, dst: &Path) {
             if !dname.starts_with('.')
                 && !matches!(
                     dname.as_ref(),
-                    "灵碑" | "target" | "dist" | "node_modules" | "AST"
+                    "灵碑" | "target" | "dist" | "node_modules" | "AST" | "cache"
                 )
             {
                 copy_ling_sources(&path, dst);

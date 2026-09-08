@@ -15,7 +15,29 @@
 use core::arch::global_asm;
 
 pub const MAX_TASKS: usize = 4;
-const STACK_SIZE: usize = 65536;
+/// 2MiB per spawned task. Post-quantum crypto on RustCrypto's `ml-dsa` is a
+/// heavy stack user: Messenger's `messenger_task` (via `ling-messenger`) runs
+/// ML-DSA-87 keygen at first beacon and then, on a real chat handshake, an
+/// ML-DSA-87 *sign* (responder) and *verify* (both sides) plus ML-KEM-768 —
+/// each expands a 56-polynomial matrix (~57KiB) and layers vectors,
+/// rejection-loop temporaries, and by-value key/signature structs on top.
+/// The original 64KiB overflowed even on keygen; 512KiB survived keygen but
+/// still overflowed on the sign/verify handshake (a corrupted return address
+/// → `ret` into a non-canonical rip → #GP). These stacks are a plain BSS array
+/// with NO guard page, so an overflow silently smashes whatever's adjacent
+/// (the slab free-list, or a neighbouring task's saved return address). 2MiB
+/// gives ample headroom; × 4 tasks = 8MiB of BSS, zero-filled at boot and not
+/// stored on disk — nothing against real RAM. [`STACK_CANARY`] still guards
+/// the bottom so a *downward* overrun that survives to a yield is reported
+/// cleanly rather than silently corrupting memory.
+const STACK_SIZE: usize = 2 * 1024 * 1024;
+
+/// Sentinel written at the lowest 8 bytes of every spawned stack (the end a
+/// downward-growing stack hits first on overflow). Checked on every context
+/// switch; if it's been clobbered, the task overran its stack and we halt
+/// with a named error rather than letting the corruption propagate into some
+/// unrelated allocation and fault there.
+const STACK_CANARY: u64 = 0x5354_4143_4B_5F4744; // "STAC K_GD"
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TaskState {
@@ -41,6 +63,10 @@ static mut STACKS: [[u8; STACK_SIZE]; MAX_TASKS] = [[0; STACK_SIZE]; MAX_TASKS];
 /// no register-argument convention across a fabricated initial stack, so
 /// this is the handoff instead, indexed by slot like everything else here.
 static mut TASK_ENTRY: [u64; MAX_TASKS] = [0; MAX_TASKS];
+/// Lowest address (canary location) of each spawned task's stack, or 0 for
+/// slots that never got a fabricated stack (slot 0, the boot/main task, keeps
+/// running on the bootloader's stack — see `init_main_task`).
+static mut STACK_GUARD: [u64; MAX_TASKS] = [0; MAX_TASKS];
 static mut CURRENT: usize = 0;
 static mut STARTED: bool = false;
 
@@ -115,6 +141,10 @@ pub fn spawn(entry: u64) -> u64 {
             {
                 TASK_ENTRY[i] = entry;
                 let stack_base = (&raw mut STACKS[i]) as *mut u8;
+                // Plant the overflow canary at the lowest 8 bytes — the first
+                // thing a downward-growing stack overwrites if it overruns.
+                *(stack_base as *mut u64) = STACK_CANARY;
+                STACK_GUARD[i] = stack_base as u64;
                 let top = (stack_base as u64 + STACK_SIZE as u64) & !0xF;
 
                 // Fabricate the frame `switch_to`'s pop sequence expects:
@@ -139,11 +169,26 @@ pub fn spawn(entry: u64) -> u64 {
 /// Round-robin to the next `Ready` task, if any; returns immediately (no-op)
 /// if nothing else is runnable. Safe to call from any task, including one
 /// that's about to fall through into `exit`.
+/// Verify no spawned task has overrun its stack into the canary. Called on
+/// every context switch: cheap (at most `MAX_TASKS` word compares) and it
+/// converts a silent BSS-smashing overflow into an immediate, named halt.
+fn check_stack_guards() {
+    unsafe {
+        for i in 0..MAX_TASKS {
+            let g = STACK_GUARD[i];
+            if g != 0 && *(g as *const u64) != STACK_CANARY {
+                panic!("stack overflow: task slot {} overran its {}KiB stack", i, STACK_SIZE / 1024);
+            }
+        }
+    }
+}
+
 pub fn yield_now() {
     unsafe {
         if !STARTED {
             return;
         }
+        check_stack_guards();
         let prev = CURRENT;
         let mut next = (prev + 1) % MAX_TASKS;
         while next != prev && TASKS[next].state != TaskState::Ready {

@@ -1,0 +1,7 @@
+# Consulted by `lingfu seed` and `lingfu publish` -- keep keyfiles,
+# recovery shares, and other sensitive or oversized local-only files
+# out of both, in one place. One glob pattern per line.
+seed.wav
+*.share
+*.key
+*.pem

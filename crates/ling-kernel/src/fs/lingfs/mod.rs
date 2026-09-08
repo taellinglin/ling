@@ -60,7 +60,55 @@ pub fn mount() -> Result<(), ()> {
     }
 }
 
+// Serializes root-modifying writes across cooperative tasks. Each commit is a
+// read-root -> modify -> commit sequence, and the ATA writes inside it yield --
+// so without this, two tasks could both read the same root, both commit on top
+// of it, and the later one would silently drop the earlier's change (e.g. the
+// Messenger task's roster write vanishing under the desktop's writes). The
+// guard is re-entrant per task and yields until free, exactly like the net
+// lock. x86_64 only -- aarch64 has no cooperative scheduler.
+#[cfg(target_arch = "x86_64")]
+static mut FS_OWNER: i64 = -1;
+#[cfg(target_arch = "x86_64")]
+static mut FS_DEPTH: u32 = 0;
+
+pub struct FsGuard;
+impl FsGuard {
+    #[cfg(target_arch = "x86_64")]
+    pub fn new() -> Self {
+        let me = crate::proc::sched::getpid() as i64;
+        unsafe {
+            while FS_OWNER != -1 && FS_OWNER != me {
+                crate::proc::sched::yield_now();
+            }
+            FS_OWNER = me;
+            FS_DEPTH += 1;
+        }
+        FsGuard
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    pub fn new() -> Self {
+        FsGuard
+    }
+}
+impl Drop for FsGuard {
+    #[cfg(target_arch = "x86_64")]
+    fn drop(&mut self) {
+        unsafe {
+            if FS_DEPTH > 0 {
+                FS_DEPTH -= 1;
+            }
+            if FS_DEPTH == 0 {
+                FS_OWNER = -1;
+            }
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    fn drop(&mut self) {}
+}
+
 pub fn upsert_root_entry(name: &str, hash: Hash, kind: Kind, default_meta: Meta) -> Result<(), ()> {
+    let _g = FsGuard::new();
     let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
     let mut count = 0usize;
     let current_root = root();
@@ -106,6 +154,10 @@ pub fn upsert_root_entry(name: &str, hash: Hash, kind: Kind, default_meta: Meta)
 }
 
 pub fn write_file(name: &str, content: &[u8]) -> Result<(), ()> {
+    // Hold the FS lock across the WHOLE write (object store + root commit), not
+    // just the commit -- otherwise the object-allocation step (next_free_block)
+    // races another task and two writes clobber each other's blocks/root.
+    let _g = FsGuard::new();
     let mut rbuf = [0u8; RESOLVE_BUF];
     let name = resolve(name, &mut rbuf);
     if let Some((dirname, fname)) = split_path(name) {
@@ -190,6 +242,7 @@ fn store_content_hash(content: &[u8]) -> Result<Hash, ()> {
 /// blob, larger content is chunked behind manifests. For a one-level
 /// dir/file path use `write_in_dir_any`.
 pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
+    let _g = FsGuard::new(); // whole write atomic (object store + commit)
     let mut rbuf = [0u8; RESOLVE_BUF];
     let name = resolve(name, &mut rbuf);
     if let Some((dirname, fname)) = split_path(name) {
@@ -204,6 +257,7 @@ pub fn write_file_any(name: &str, content: &[u8]) -> Result<(), ()> {
 /// `read_file_all("dir/file")` transparently reassembles it. One level
 /// only, matching lingfs's directory model.
 pub fn write_in_dir_any(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()> {
+    let _g = FsGuard::new();
     let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
     let mut count = match lookup_dir(dirname)? {
         Some((existing, n)) => {
@@ -335,6 +389,7 @@ pub fn write_dir(dirname: &str, files: &[(&str, &[u8])]) -> Result<(), ()> {
 }
 
 pub fn write_in_dir(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()> {
+    let _g = FsGuard::new();
     let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
     let mut count = match lookup_dir(dirname)? {
         Some((existing, n)) => {

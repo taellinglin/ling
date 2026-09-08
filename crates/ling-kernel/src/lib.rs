@@ -500,6 +500,28 @@ pub unsafe extern "C" fn ling_kernel_locale_native_name(i: u64) -> u64 {
     let s = locale::get(i as usize).map(|l| l.native_name).unwrap_or("");
     strings::ling_str_new(s.as_ptr(), s.len())
 }
+
+/// Translate a UI string to the current locale (echoes the input if there's no
+/// translation). Lets `.ling` screens -- the installer, greeter -- follow the
+/// chosen language. Draw the result with `ling_kernel_fb_draw_utf8_str` (+
+/// `ling_kernel_render_daemon`) since translations may be CJK/Thai/daemon.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_tr(key: u64) -> u64 {
+    let s = arg_str(key);
+    match locale::tr_lookup(s) {
+        Some(t) => strings::ling_str_new(t.as_ptr(), t.len()),
+        None => strings::ling_str_new(s.as_ptr(), s.len()),
+    }
+}
+
+/// Whether the current locale's UI text should be painted through the Daemon
+/// reskin (Ling Country) -- pass as the `daemon` arg to fb_draw_utf8_str.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_render_daemon() -> u64 {
+    locale::render_daemon() as u64
+}
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_locale_latin_name(i: u64) -> u64 {
@@ -570,6 +592,15 @@ pub unsafe extern "C" fn ling_kernel_locale_select(i: u64) -> u64 {
 pub unsafe extern "C" fn ling_kernel_locale_reset() -> u64 {
     locale::reset();
     0
+}
+
+/// Restore the installer-persisted locale (`/locale`) so the greeter + desktop
+/// use the language chosen at install. Returns 1 if a saved locale was found
+/// and applied, 0 otherwise (caller then falls back to the default).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_locale_restore() -> u64 {
+    locale::restore() as u64
 }
 
 /// See `drivers::kbdlayout`'s module doc for what's actually covered
@@ -916,6 +947,16 @@ pub unsafe extern "C" fn ling_kernel_fb_available() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fb_width() -> u64 {
     framebuffer::width() as u64
+}
+
+/// Try to switch the live framebuffer to (w, h) over DISPI (QEMU std VGA /
+/// VirtualBox VBoxVGA). Returns 1 if it took effect, 0 otherwise (not a DISPI
+/// adapter, or the mode is too big for the card / back buffer). The installer
+/// uses this to come up at 1920x1080 when the hardware allows.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_fb_try_mode(w: u64, h: u64) -> u64 {
+    framebuffer::set_mode(w as u32, h as u32) as u64
 }
 
 /// Map a virtual-canvas coordinate/length (see `drivers::ui_scale`'s module
@@ -1334,6 +1375,15 @@ pub unsafe extern "C" fn ling_kernel_wm_dock_letter(i: u64) -> u64 {
     strings::ling_str_new(s.as_ptr(), s.len())
 }
 
+/// Draw the dock abbreviation centered in its icon (kernel-side so CJK and
+/// Latin glyphs both center correctly). Replaces the `.ling` draw_str call.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_dock_glyph(i: u64, dx: u64, dy: u64, sz: u64) -> u64 {
+    wm::draw_dock_glyph(i as usize, dx as u32, dy as u32, sz as u32);
+    0
+}
+
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_dock_running(i: u64) -> u64 {
@@ -1724,6 +1774,16 @@ pub unsafe extern "C" fn ling_kernel_lingfu_fetch_install(name: u64) -> u64 {
     lingfu::install(arg_str(name)) as u64
 }
 
+/// Persist whether the SSH server starts at boot (writes `/services`, which
+/// also marks services as configured so first boot won't re-prompt). Used by
+/// the installer's SSH step. Non-zero = enable.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_services_set_ssh(on: u64) -> u64 {
+    services::set_ssh(on != 0);
+    0
+}
+
 /// 1 when this kernel was loaded by the installed-disk boot path
 /// (stage1/stage2, no GRUB/Multiboot2 info) -- the desktop's cue to show
 /// the login greeter instead of the Live auto-login flow.
@@ -1941,6 +2001,10 @@ pub unsafe extern "C" fn ling_kernel_user_login(username: u64, password: u64) ->
     let group_len = users::group_of(username, &mut group_buf).unwrap_or(0);
     let group = core::str::from_utf8(&group_buf[..group_len]).unwrap_or("users");
     lingfs::set_current_user(username, group);
+    // Unlock encrypted chat history with a key derived from this password, so
+    // past conversations load only after a real sign-in (and stay unreadable
+    // to anyone who just has the disk).
+    crate::drivers::messenger::set_chat_key(password.as_bytes());
     1
 }
 
@@ -2509,10 +2573,85 @@ pub unsafe extern "C" fn ling_kernel_net_init() -> u64 {
         }
         serial::write(b"\n");
     } else {
-        serial::write(b"net: DHCP unavailable, using static SLIRP fallback\n");
+        // No DHCP (e.g. a QEMU socket/mcast peer-to-peer segment): fall back to
+        // a MAC-derived static IP so two LingOS instances on the same segment
+        // get distinct addresses instead of both defaulting to 10.0.2.15.
+        netstack::apply_static_ip_from_mac();
+        let ip = net_e1000::self_ip();
+        serial::write(b"net: no DHCP -- static ip=");
+        for (i, b) in ip.iter().enumerate() {
+            if i > 0 {
+                serial::write(b".");
+            }
+            print_decimal(*b as u64);
+        }
+        serial::write(b"\n");
     }
-    // First-boot: ask whether to start SSH at boot, then report service state.
+    // Note: bringing up the NIC deliberately does NOT ask about SSH-at-boot.
+    // That first-boot question belongs to the installed/live system's boot
+    // (call `ling_kernel_services_boot_configure` there), not to every
+    // `net_init` -- the installer configures SSH explicitly via its own
+    // prompt, and a second phantom prompt here would eat the first keystroke
+    // of the installer's answer (it fires whenever `/services` is absent,
+    // which is exactly a freshly-erased install target).
+    1
+}
+/// First-boot service configuration: on a system with no `/services` yet, ask
+/// (graphically) whether to start SSH at boot and persist the answer, then
+/// report the SSH service state. Call this once from the live/installed boot
+/// path (the desktop), NOT from `net_init` -- see that function for why.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_services_boot_configure() -> u64 {
     services::boot_configure();
+    0
+}
+/// Rescue/text-shell `sshd` command: listen once (30s) for an inbound SSH
+/// connection, do the SSH-2.0 version exchange, and report the client's banner.
+/// Proves TCP accept + identification works against a real `ssh` client; the
+/// encrypted transport (KEX/cipher/auth) and a shell are the remaining stages
+/// (see `drivers::sshd`). Returns 1 if a client connected, else 0.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sshd_serve() -> u64 {
+    console_write(b"sshd: listening on port 22 for one connection (30s)...\n");
+    match crate::drivers::sshd::serve(30_000_000) {
+        Ok(()) => 1,
+        Err(e) => {
+            console_write(b"sshd: ");
+            console_write(e.as_bytes());
+            console_write(b"\n");
+            0
+        },
+    }
+}
+/// Start the SSH server as a background task (idempotent). The desktop calls
+/// this at boot when SSH is enabled, so an external `ssh` client can reach the
+/// running system without anyone typing a command first.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_sshd_start() -> u64 {
+    crate::drivers::sshd::start();
+    1
+}
+/// Whether the SSH server is marked to start at boot (lingfs `/services`,
+/// written by the installer or the first-boot prompt). Lets the desktop decide
+/// whether to `ling_kernel_sshd_start`.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_services_ssh_enabled() -> u64 {
+    if services::ssh_enabled() {
+        1
+    } else {
+        0
+    }
+}
+/// Start the Messenger background listener (idempotent). The desktop calls this
+/// at boot so chats can be received even when the Messenger window is closed.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_messenger_start() -> u64 {
+    crate::drivers::messenger::start();
     1
 }
 #[cfg(target_arch = "x86_64")]

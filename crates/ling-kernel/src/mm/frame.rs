@@ -17,7 +17,15 @@ use core::ptr;
 
 const FRAME_SIZE: usize = 4096;
 const FRAME_SHIFT: u32 = 12;
-const MAX_ORDER: usize = 10; // orders 0..=10 => 4KiB..=4MiB blocks
+const MAX_ORDER: usize = 14; // orders 0..=14 => 4KiB..=64MiB blocks
+// Raised from 10 (4MiB max block) so a single contiguous allocation can hold a
+// multi-megabyte package's decompressed tar (`lingfu install` gunzips the
+// registry .tgz into one heap Vec -- see drivers::lingfu). ling-lang's source
+// tarball alone decompresses well past 4MiB, and the old ceiling made its Vec
+// allocation fail, surfacing as "could not decompress the package". The bitmap
+// and free-list arrays are all const-derived from MAX_ORDER, so this only adds
+// ~120 bytes of bitmap; nothing requires a 64MiB block to actually exist
+// (alloc_frames searches upward from the requested order).
 /// Matches `boot.rs`'s identity-mapped ceiling (4 PDs of 2MiB pages = 4GiB).
 /// Allocating physical memory this allocator can't address would be a
 /// correctness bug, not a missed optimization — this cap keeps the two in

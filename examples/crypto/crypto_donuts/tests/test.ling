@@ -1,0 +1,8 @@
+# tests/test.ling — Spirit Mirror
+
+bind test = do {
+    if 1 + 1 == 2 {
+        print("✨ All mirrors are clear ✨")
+    }
+    print("🔮 Ling tests passed for crypto_donuts")
+}

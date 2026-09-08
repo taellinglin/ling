@@ -10,18 +10,26 @@
 //! Catalog format, deliberately trivial (one line per package):
 //! `name version filename.lpkg description words...`
 //!
-//! Real limits, disclosed: package payloads are capped by lingfs's
-//! single-block file size today (~4KiB) -- multi-block files are queued
-//! work; a too-big download fails cleanly rather than truncating. No
-//! signatures yet (packages/README step 5); the catalog says so.
+//! Real limits, disclosed: a registry install downloads the source `.tgz`
+//! into a heap buffer capped at `MAX_PKG_TGZ` (8 MiB) and unpacks each file
+//! through lingfs's multi-block writer (`write_in_dir_any`, ~64 MiB/file), so
+//! multi-megabyte packages (e.g. ling-lang) install for real -- a package
+//! whose download exceeds the cap (e.g. the 2.6 GB soul-symphony blob) is
+//! rejected cleanly rather than truncated. No signatures yet (packages/README
+//! step 5); the catalog says so.
 
 use crate::drivers::netstack;
 use crate::fs::{lingfs, packages};
 use alloc::vec::Vec;
 
 const CATALOG_MAX: usize = 16 * 1024;
-/// Download scratch for a package tarball from the registry (source `.tgz`).
-static mut TGZ: [u8; 256 * 1024] = [0; 256 * 1024];
+/// Largest registry `.tgz` the in-kernel installer will download+unpack. The
+/// download lands in a heap buffer this size (freed after install); a body that
+/// fills it is treated as over-cap and rejected (the TLS reader stops at buffer
+/// capacity, so a truncated stream would otherwise reach gunzip as garbage --
+/// exactly the old "could not decompress" failure). 8 MiB comfortably covers
+/// ling-lang (~2.9 MiB) with headroom while still rejecting pathological blobs.
+const MAX_PKG_TGZ: usize = 8 * 1024 * 1024;
 static mut CATALOG: [u8; CATALOG_MAX] = [0; CATALOG_MAX];
 static mut CATALOG_LEN: usize = 0;
 /// Scratch for the raw HTTP response body before it's normalized into the
@@ -306,7 +314,13 @@ fn untar_install(tar: &[u8], pkg_dir: &str) -> usize {
             let base = fullname.rsplit(|&b| b == b'/').next().unwrap_or(fullname);
             if !base.is_empty() && base != b"." {
                 if let Ok(bn) = core::str::from_utf8(base) {
-                    if lingfs::write_in_dir(pkg_dir, bn, &tar[off..data_end]).is_ok() {
+                    // `_any` (manifest-backed) writer: a package's source files
+                    // routinely exceed one 4KiB block, and the plain
+                    // `write_in_dir` caps at a single block -- so larger files
+                    // were silently dropped (part of why ling-lang "installed"
+                    // but was unusable). This lifts each file to lingfs's
+                    // ~64MiB multi-block ceiling.
+                    if lingfs::write_in_dir_any(pkg_dir, bn, &tar[off..data_end]).is_ok() {
                         count += 1;
                     }
                 }
@@ -342,7 +356,14 @@ pub fn install_from_registry(name: &str) -> bool {
     }
     let raw = unsafe { &mut *&raw mut RAW };
     let Ok(apistr) = core::str::from_utf8(&apipath[..p]) else { return false };
-    let Some(alen) = fetch_official(apistr, raw) else {
+    // One retry: the first HTTPS attempt to the registry occasionally fails to
+    // connect (transient TLS/connect), and a second almost always succeeds --
+    // this is the "could not reach the registry" the user hit on a first try.
+    let alen_opt = match fetch_official(apistr, raw) {
+        some @ Some(_) => some,
+        None => fetch_official(apistr, raw),
+    };
+    let Some(alen) = alen_opt else {
         print(b"lingfu: could not reach the registry\n");
         return false;
     };
@@ -374,14 +395,22 @@ pub fn install_from_registry(name: &str) -> bool {
     print(b"lingfu: downloading ");
     print(dlstr.as_bytes());
     print(b" ...\n");
-    let tgz = unsafe { &mut *&raw mut TGZ };
-    let Some(glen) = fetch_official(dlstr, tgz) else {
+    let mut dl: Vec<u8> = Vec::new();
+    dl.resize(MAX_PKG_TGZ, 0);
+    let Some(glen) = fetch_official(dlstr, &mut dl) else {
         print(b"lingfu: download failed\n");
         return false;
     };
+    if glen >= MAX_PKG_TGZ {
+        // Body filled the whole cap -> it's over the limit (or exactly at it),
+        // so what we hold is a truncated prefix. Reject cleanly rather than
+        // decompress garbage.
+        print(b"lingfu: package too large for the in-kernel installer (>8MB) -- skipped\n");
+        return false;
+    }
 
     // 3. Gunzip + untar into lingfs under pkg-<name>/.
-    let Some(tar) = gunzip(&tgz[..glen]) else {
+    let Some(tar) = gunzip(&dl[..glen]) else {
         print(b"lingfu: could not decompress the package (truncated?)\n");
         return false;
     };
