@@ -1480,6 +1480,18 @@ pub unsafe extern "C" fn ling_kernel_display_count() -> u64 {
     display::mode_count() as u64
 }
 
+/// Apply the persisted live resolution (or max-native if none) NOW, over DISPI.
+/// Called before the greeter so the login screen matches the last resolution
+/// the desktop used, instead of GRUB's boot mode. Requires lingfs mounted (to
+/// read the saved mode); the max-native fallback works regardless. Returns the
+/// current framebuffer width so the caller can rebind its cached dimensions.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_display_boot_apply() -> u64 {
+    display::restore();
+    framebuffer::width() as u64
+}
+
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_display_preferred() -> u64 {
@@ -1802,6 +1814,119 @@ pub unsafe extern "C" fn ling_kernel_boot_is_disk() -> u64 {
 pub unsafe extern "C" fn ling_kernel_disk_name() -> u64 {
     let n = fs::blockdev::active_driver_name();
     strings::ling_str_new(n.as_ptr(), n.len())
+}
+
+#[cfg(target_arch = "x86_64")]
+fn part_type_name(t: u8) -> &'static str {
+    match t {
+        0x07 => "NTFS/exFAT",
+        0x0B | 0x0C => "FAT32",
+        0x04 | 0x06 | 0x0E => "FAT16",
+        0x01 => "FAT12",
+        0x83 => "Linux",
+        0x82 => "Linux swap",
+        0x05 | 0x0F => "Extended",
+        0xEE => "GPT",
+        0xAF => "HFS",
+        _ => "partition",
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn u32_dec(buf: &mut [u8], mut v: u32) -> usize {
+    if v == 0 {
+        if !buf.is_empty() {
+            buf[0] = b'0';
+        }
+        return 1;
+    }
+    let mut tmp = [0u8; 10];
+    let mut n = 0;
+    while v > 0 && n < 10 {
+        tmp[n] = b'0' + (v % 10) as u8;
+        v /= 10;
+        n += 1;
+    }
+    let m = n.min(buf.len());
+    for i in 0..m {
+        buf[i] = tmp[n - 1 - i];
+    }
+    m
+}
+
+/// Number of non-empty primary partitions in the target disk's MBR table --
+/// the installer's "what's already on this disk" list. 0 on a blank/raw disk
+/// (no boot signature, or an all-zero table like a fresh LingOS install).
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_part_count() -> u64 {
+    let mut sec = [0u8; 512];
+    if fs::blockdev::read_sector(0, &mut sec).is_err() {
+        return 0;
+    }
+    if sec[510] != 0x55 || sec[511] != 0xAA {
+        return 0;
+    }
+    let mut n = 0u64;
+    for i in 0..4 {
+        if sec[0x1BE + i * 16 + 4] != 0 {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// Label for the `idx`-th non-empty partition: "[*] NTFS/exFAT  40960 MB"
+/// ([*] marks the active/bootable one). For the installer's disk-contents list.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_part_label(idx: u64) -> u64 {
+    let mut sec = [0u8; 512];
+    if fs::blockdev::read_sector(0, &mut sec).is_err() {
+        return strings::ling_str_new(b"".as_ptr(), 0);
+    }
+    let mut n = 0u64;
+    for i in 0..4 {
+        let e = 0x1BE + i * 16;
+        let t = sec[e + 4];
+        if t == 0 {
+            continue;
+        }
+        if n == idx {
+            let active = sec[e] == 0x80;
+            let size_sectors =
+                u32::from_le_bytes([sec[e + 12], sec[e + 13], sec[e + 14], sec[e + 15]]);
+            let size_mb = size_sectors / 2048;
+            let mut buf = [0u8; 48];
+            let mut p = 0;
+            for &c in if active { b"[*] " } else { b"    " } {
+                buf[p] = c;
+                p += 1;
+            }
+            for &c in part_type_name(t).as_bytes() {
+                if p < buf.len() {
+                    buf[p] = c;
+                    p += 1;
+                }
+            }
+            for &c in b"  " {
+                if p < buf.len() {
+                    buf[p] = c;
+                    p += 1;
+                }
+            }
+            p += u32_dec(&mut buf[p..], size_mb);
+            for &c in b" MB" {
+                if p < buf.len() {
+                    buf[p] = c;
+                    p += 1;
+                }
+            }
+            return strings::ling_str_new(buf.as_ptr(), p);
+        }
+        n += 1;
+    }
+    strings::ling_str_new(b"".as_ptr(), 0)
 }
 
 /// Erase the target disk's boot-critical regions for a clean install:

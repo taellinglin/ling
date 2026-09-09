@@ -125,31 +125,40 @@ fn persist_mode(w: u32, h: u32) {
     let _ = crate::fs::lingfs::write_file(MODE_FILE, &buf[..n]);
 }
 
-/// Re-apply the persisted live mode at desktop boot (DISPI adapters only --
-/// non-DISPI relies on the stage2 header). No-op if nothing was saved or the
-/// saved mode no longer fits the current card.
+/// Re-apply the persisted live mode (DISPI adapters only -- non-DISPI relies
+/// on the stage2 header). Called both before the greeter and at desktop start,
+/// so the login screen comes up at the same resolution the desktop last used.
+/// If nothing was ever saved, comes up at the card's largest supported mode
+/// (max native) so a big panel is filled by default. Idempotent.
 pub fn restore() {
     if !framebuffer::dispi_capable() {
         return;
     }
+    // Prefer the last resolution the user applied (Settings > Display).
     let mut buf = [0u8; 16];
-    let Ok(Some(n)) = crate::fs::lingfs::read_file_all(MODE_FILE, &mut buf) else {
-        return;
-    };
-    let Ok(s) = core::str::from_utf8(&buf[..n]) else {
-        return;
-    };
-    let s = s.trim();
-    let Some((ws, hs)) = s.split_once('x') else {
-        return;
-    };
-    let (Ok(w), Ok(h)) = (ws.parse::<u32>(), hs.parse::<u32>()) else {
-        return;
-    };
-    if fits(w, h) {
-        framebuffer::set_mode(w, h);
-        if let Some(i) = index_of_dims(w, h) {
-            set_selected(i);
+    if let Ok(Some(n)) = crate::fs::lingfs::read_file_all(MODE_FILE, &mut buf) {
+        if let Ok(s) = core::str::from_utf8(&buf[..n]) {
+            if let Some((ws, hs)) = s.trim().split_once('x') {
+                if let (Ok(w), Ok(h)) = (ws.parse::<u32>(), hs.parse::<u32>()) {
+                    if fits(w, h) {
+                        framebuffer::set_mode(w, h);
+                        if let Some(i) = index_of_dims(w, h) {
+                            set_selected(i);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // No saved choice: use the largest mode the card supports. CANDIDATES is
+    // small->large, so the last *available* one is the max the adapter + back
+    // buffer allow.
+    let c = mode_count();
+    if c > 0 {
+        let (w, h) = mode_dims(c - 1);
+        if w > 0 && framebuffer::set_mode(w, h) {
+            set_selected(c - 1);
         }
     }
 }
