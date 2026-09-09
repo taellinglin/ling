@@ -1,11 +1,14 @@
 //! Authenticated encryption: AES-256-GCM and XChaCha20-Poly1305.
 
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
 };
+use alloc::vec::Vec;
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use zeroize::Zeroizing;
+
+use crate::rng;
 
 pub struct AesGcm256 {
     key: Zeroizing<[u8; 32]>,
@@ -17,17 +20,18 @@ impl AesGcm256 {
     }
 
     pub fn generate_key() -> [u8; 32] {
-        Aes256Gcm::generate_key(OsRng).into()
+        rng::random_bytes::<32>()
     }
 
     /// Returns nonce (12 bytes) + ciphertext + tag.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
         let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&*self.key));
-        let nonce = Aes256Gcm::generate_nonce(OsRng);
+        let nonce_bytes = rng::random_bytes::<12>();
+        let nonce = Nonce::from_slice(&nonce_bytes);
         let ct = cipher
-            .encrypt(&nonce, plaintext)
+            .encrypt(nonce, plaintext)
             .map_err(|_| "encryption failed")?;
-        let mut out = nonce.to_vec();
+        let mut out = nonce_bytes.to_vec();
         out.extend_from_slice(&ct);
         Ok(out)
     }
@@ -56,17 +60,18 @@ impl XChaCha20 {
     }
 
     pub fn generate_key() -> [u8; 32] {
-        XChaCha20Poly1305::generate_key(OsRng).into()
+        rng::random_bytes::<32>()
     }
 
     /// Returns nonce (24 bytes) + ciphertext + tag.
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
         let cipher = XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&*self.key));
-        let nonce = XChaCha20Poly1305::generate_nonce(OsRng);
+        let nonce_bytes = rng::random_bytes::<24>();
+        let nonce = XNonce::from_slice(&nonce_bytes);
         let ct = cipher
-            .encrypt(&nonce, plaintext)
+            .encrypt(nonce, plaintext)
             .map_err(|_| "encryption failed")?;
-        let mut out = nonce.to_vec();
+        let mut out = nonce_bytes.to_vec();
         out.extend_from_slice(&ct);
         Ok(out)
     }

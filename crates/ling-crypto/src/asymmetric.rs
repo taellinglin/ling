@@ -1,9 +1,10 @@
 //! Ed25519 digital signatures and X25519 Diffie-Hellman key exchange.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
+
+use crate::rng;
 
 // ── Ed25519 ───────────────────────────────────────────────────────────────────
 
@@ -13,7 +14,9 @@ pub struct Ed25519Keypair {
 
 impl Ed25519Keypair {
     pub fn generate() -> Self {
-        Self { signing_key: SigningKey::generate(&mut OsRng) }
+        // Byte-identical to `SigningKey::generate(rng)`, which just draws a
+        // 32-byte seed and expands it — we draw the seed from the crate RNG.
+        Self { signing_key: SigningKey::from_bytes(&rng::random_bytes::<32>()) }
     }
 
     pub fn from_seed(seed: [u8; 32]) -> Self {
@@ -47,7 +50,8 @@ pub struct X25519Secret {
 
 impl X25519Secret {
     pub fn generate() -> Self {
-        Self { secret: StaticSecret::random_from_rng(OsRng) }
+        // `random_from_rng` just fills 32 bytes into a StaticSecret; do the same.
+        Self { secret: StaticSecret::from(rng::random_bytes::<32>()) }
     }
 
     pub fn from_bytes(bytes: [u8; 32]) -> Self {

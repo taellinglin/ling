@@ -26,7 +26,9 @@
 //! - A "you need every shard" **holographic split** that is a sound AONT.
 
 use crate::hybrid::{self, HybridKeypair};
+use crate::rng;
 use crate::symmetric::XChaCha20;
+use alloc::{format, string::String, vec::Vec};
 use sha3::{Digest, Sha3_256};
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -101,18 +103,18 @@ impl KnotShape {
         // Radii and a decorative "volume" from later digest bytes.
         let major_r = 2.0 + (d[2] as f32 / 255.0) * 1.5;
         let minor_r = 0.4 + (d[3] as f32 / 255.0) * 0.8;
-        let phase = (u16::from_le_bytes([d[4], d[5]]) as f32 / 65535.0) * std::f32::consts::TAU;
+        let phase = (u16::from_le_bytes([d[4], d[5]]) as f32 / 65535.0) * core::f32::consts::TAU;
         let volume =
             1.0 + (u32::from_le_bytes([d[6], d[7], d[8], d[9]]) as f32 / u32::MAX as f32) * 11.0;
 
         let mut points = Vec::with_capacity(Self::SAMPLES);
         for i in 0..Self::SAMPLES {
-            let t = (i as f32 / Self::SAMPLES as f32) * std::f32::consts::TAU + phase;
-            let qc = (q as f32 * t).cos();
+            let t = (i as f32 / Self::SAMPLES as f32) * core::f32::consts::TAU + phase;
+            let qc = libm::cosf(q as f32 * t);
             let r = major_r + minor_r * qc;
-            let x = r * (p as f32 * t).cos();
-            let y = r * (p as f32 * t).sin();
-            let z = minor_r * (q as f32 * t).sin();
+            let x = r * libm::cosf(p as f32 * t);
+            let y = r * libm::sinf(p as f32 * t);
+            let z = minor_r * libm::sinf(q as f32 * t);
             points.push([x, y, z]);
         }
         Self { p, q, major_r, minor_r, volume, points }
@@ -217,9 +219,8 @@ fn ks_block(k: &[u8; 32], i: u32) -> [u8; 32] {
 /// stores `k ⊕ H(all masked blocks)`. Lose any fragment and `H(...)` changes, so
 /// `k` — and therefore everything — is unrecoverable.
 pub fn scatter(data: &[u8]) -> Vec<HoloFragment> {
-    use rand::RngCore;
     let mut k = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut k);
+    rng::fill(&mut k);
 
     // Length-prefix so we can trim padding on the way back.
     let mut msg = (data.len() as u64).to_le_bytes().to_vec();
@@ -312,14 +313,15 @@ pub fn gather(fragments: &[HoloFragment]) -> Option<Vec<u8>> {
 
 /// Map a fragment to a point on the unit 3-sphere in 4-D (visualization only).
 fn sphere4_point(index: u32, block: &[u8; 32]) -> [f32; 4] {
-    let a = (u16::from_le_bytes([block[0], block[1]]) as f32 / 65535.0) * std::f32::consts::PI;
-    let b = (u16::from_le_bytes([block[2], block[3]]) as f32 / 65535.0) * std::f32::consts::TAU;
-    let c = ((index as f32) * 0.618_034).fract() * std::f32::consts::TAU;
+    let a = (u16::from_le_bytes([block[0], block[1]]) as f32 / 65535.0) * core::f32::consts::PI;
+    let b = (u16::from_le_bytes([block[2], block[3]]) as f32 / 65535.0) * core::f32::consts::TAU;
+    let ci = (index as f32) * 0.618_034;
+    let c = (ci - libm::truncf(ci)) * core::f32::consts::TAU;
     [
-        a.sin() * b.cos(),
-        a.sin() * b.sin(),
-        a.cos() * c.cos(),
-        a.cos() * c.sin(),
+        libm::sinf(a) * libm::cosf(b),
+        libm::sinf(a) * libm::sinf(b),
+        libm::cosf(a) * libm::cosf(c),
+        libm::cosf(a) * libm::sinf(c),
     ]
 }
 

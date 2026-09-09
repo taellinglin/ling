@@ -23,7 +23,8 @@
 //! hybrid KEM combiner assumption.
 
 use crate::pq::{self, MlKem768Keypair};
-use rand::rngs::OsRng;
+use crate::rng;
+use alloc::vec::Vec;
 use sha3::{Digest, Sha3_256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
@@ -59,7 +60,7 @@ pub struct HybridKeypair {
 impl HybridKeypair {
     /// Generate a fresh hybrid keypair from the system CSPRNG.
     pub fn generate() -> Self {
-        let x25519_secret = StaticSecret::random_from_rng(OsRng);
+        let x25519_secret = StaticSecret::from(rng::random_bytes::<32>());
         let x25519_public = PublicKey::from(&x25519_secret).to_bytes();
         Self {
             x25519_secret,
@@ -113,7 +114,7 @@ pub fn encapsulate(
     x_pk_arr.copy_from_slice(x_pk_bytes);
 
     // X25519 leg: ephemeral DH against the recipient's static X25519 key.
-    let eph_secret = StaticSecret::random_from_rng(OsRng);
+    let eph_secret = StaticSecret::from(rng::random_bytes::<32>());
     let eph_public = PublicKey::from(&eph_secret).to_bytes();
     let mut ss_x = eph_secret
         .diffie_hellman(&PublicKey::from(x_pk_arr))

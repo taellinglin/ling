@@ -3,48 +3,68 @@ name = "ling-crypto"
 version = "2030.1.11"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
-description = "Post-quantum and classical cryptography for Ling — real ML-KEM-768 (FIPS 203), X25519+ML-KEM hybrid KEM, AES-GCM, XChaCha20, Blake3, SHA3, Argon2id, Shamir over GF(2^8), Ristretto Schnorr ZKP, VRF"
+description = "Post-quantum and classical cryptography for Ling — real ML-KEM-768 (FIPS 203), X25519+ML-KEM hybrid KEM, AES-GCM, XChaCha20, Blake3, SHA3, Argon2id, Shamir over GF(2^8), Ristretto Schnorr ZKP, VRF. no_std-capable (std on by default) so the same crate links into the LingOS kernel."
 license = "Apache-2.0 OR MIT"
 readme = "README.md"
 repository = "https://github.com/taellinglin/ling"
 
 [features]
-default = []
+# `std` (default) = OS CSPRNG entropy + Argon2 PHC password strings.
+# Turn it off (`--no-default-features --features alloc`) for a no_std target
+# such as the LingOS kernel; then supply entropy via `rng::set_entropy_source`.
+default = ["std"]
+# The dalek crates have no `std` feature (they are always no_std + alloc); their
+# `alloc`/`precomputed-tables` are enabled unconditionally below. `std` here only
+# turns on the OS entropy default, Argon2 PHC strings, and SIMD Blake3.
+std = [
+    "alloc",
+    "dep:rand",
+    "argon2/std",
+    "argon2/password-hash",
+    "blake3/std",
+]
+# no_std + heap. All algorithms are present; only the OS-entropy default and the
+# Argon2 PHC (`hash_password`/`verify_password`) string helpers are std-gated.
+alloc = []
 
 [dependencies]
 # Core
-zeroize  = { version = "1.8", features = ["derive"] }
-rand     = { version = "0.8", features = ["std"] }
-rand_core = { version = "0.6", features = ["getrandom"] }
-subtle   = "2.6"
+zeroize  = { version = "1.8", default-features = false, features = ["derive", "alloc"] }
+subtle   = { version = "2.6", default-features = false }
 
 # Hashing
-blake3          = "1.5"
-sha3            = "0.10"
+blake3          = { version = "1.5", default-features = false }
+sha3            = { version = "0.10", default-features = false }
 
-# Symmetric AEAD
-aes-gcm         = { version = "0.10", features = ["aes"] }
-chacha20poly1305 = "0.10"
+# Symmetric AEAD — `alloc` gives the Vec-returning encrypt/decrypt; key/nonce
+# come from `rng` (no getrandom).
+aes-gcm          = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
-# Asymmetric / ECDH / EdDSA
-ed25519-dalek   = { version = "2.1", features = ["rand_core"] }
-x25519-dalek    = { version = "2.0", features = ["static_secrets"] }
-curve25519-dalek = { version = "4.1", features = ["rand_core"] }
+# Asymmetric / ECDH / EdDSA — keys built from `rng` seeds (no rand_core methods).
+# `alloc` + `precomputed-tables` are no_std-safe and enabled everywhere.
+ed25519-dalek    = { version = "2.1", default-features = false, features = ["alloc"] }
+x25519-dalek     = { version = "2.0", default-features = false, features = ["static_secrets", "alloc", "precomputed-tables"] }
+curve25519-dalek = { version = "4.1", default-features = false, features = ["alloc", "precomputed-tables"] }
 
 # Key derivation
-argon2  = "0.5"
-hkdf    = "0.12"
-hmac    = "0.12"
+argon2  = { version = "0.5", default-features = false, features = ["alloc"] }
+hkdf    = { version = "0.12", default-features = false }
 
-# Post-quantum (pure Rust, FIPS 203 ML-KEM)
-ml-kem  = { version = "0.3", features = ["getrandom"] }
-# Post-quantum (pure Rust, FIPS 204 ML-DSA / ex-Dilithium)
-ml-dsa  = { version = "0.1", features = ["getrandom"] }
+# Post-quantum (pure Rust). No getrandom: keygen/encaps go through the public
+# deterministic/seed APIs (`from_seed`, `encapsulate_deterministic`) fed by `rng`.
+ml-kem  = { version = "0.3", default-features = false, features = ["alloc"] } # FIPS 203 ML-KEM
+ml-dsa  = { version = "0.1", default-features = false, features = ["alloc"] } # FIPS 204 ML-DSA
+
+# Floating-point transcendentals for geo.rs, portable across std and no_std.
+libm    = { version = "0.2", default-features = false }
+
+# std-only OS entropy source for the default `rng` backend.
+rand    = { version = "0.8", features = ["std"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# Enable browser-compatible entropy source for wasm32-unknown-unknown.
+# Browser-compatible entropy for wasm32 std builds.
 getrandom = { version = "0.2", features = ["js"] }
-# ml-kem pulls getrandom 0.4 via crypto-common; enable its web backend too.
 getrandom_04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
 
 [lib]

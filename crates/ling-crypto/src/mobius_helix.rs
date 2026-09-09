@@ -43,6 +43,7 @@
 //! from the reactor seed via [`crate::kdf::hkdf_sha3`] under distinct labels,
 //! so a break in one sub-layer's key doesn't hand over the others.
 
+use alloc::{vec, vec::Vec};
 use subtle::ConstantTimeEq;
 
 /// The proper name of this cascade suite, for handshake capability strings,

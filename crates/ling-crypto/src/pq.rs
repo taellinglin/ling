@@ -30,9 +30,12 @@
 //! assert_eq!(ss_send, ss_recv);                 // shared 32-byte secret
 //! ```
 
+use alloc::vec::Vec;
 use ml_kem::array::Array;
-use ml_kem::{Decapsulate, Encapsulate};
-use ml_kem::{DecapsulationKey, EncapsulationKey, Kem, KeyExport, MlKem768};
+use ml_kem::Decapsulate;
+use ml_kem::{DecapsulationKey, EncapsulationKey, KeyExport, MlKem768};
+
+use crate::rng;
 
 /// Byte length of an ML-KEM-768 encapsulation (public) key.
 pub const ENCAPS_KEY_LEN: usize = 1184;
@@ -54,10 +57,13 @@ pub struct MlKem768Keypair {
 }
 
 impl MlKem768Keypair {
-    /// Generate a fresh keypair from the system CSPRNG.
+    /// Generate a fresh keypair from the crate CSPRNG.
     pub fn generate() -> Self {
-        let (dk, ek) = MlKem768::generate_keypair();
-        Self { dk, ek }
+        // ML-KEM keygen is deterministic in a 64-byte seed (d‖z). Drawing the
+        // seed from the crate RNG and expanding it is exactly what the crate's
+        // own `generate_keypair()` does internally — identical distribution,
+        // but with no getrandom dependency so it works in the kernel too.
+        Self::from_seed(rng::random_bytes::<SEED_LEN>())
     }
 
     /// Reconstruct a keypair from its 64-byte private seed (deterministic).
@@ -104,7 +110,11 @@ impl MlKem768Keypair {
 pub fn encapsulate(encaps_key: &[u8]) -> Result<(Vec<u8>, [u8; SHARED_SECRET_LEN]), &'static str> {
     let ek_arr = Array::try_from(encaps_key).map_err(|_| "encapsulation key wrong length")?;
     let ek = EncapsulationKey::<MlKem768>::new(&ek_arr).map_err(|_| "invalid encapsulation key")?;
-    let (ct, ss) = ek.encapsulate();
+    // ML-KEM encapsulation is deterministic in a fresh 32-byte message `m`;
+    // `encapsulate(rng)` simply samples `m` and calls this. Sample `m` from the
+    // crate RNG so encapsulation is available with no getrandom dependency.
+    let m = Array::from(rng::random_bytes::<32>());
+    let (ct, ss) = ek.encapsulate_deterministic(&m);
     let mut secret = [0u8; SHARED_SECRET_LEN];
     secret.copy_from_slice(ss.as_slice());
     Ok((ct.as_slice().to_vec(), secret))

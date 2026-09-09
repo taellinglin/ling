@@ -1,5 +1,6 @@
 //! Cryptographic hashing: BLAKE3, SHA3-256, SHA3-512, SHAKE-256.
 
+use alloc::{vec, vec::Vec};
 use sha3::digest::{ExtendableOutput, Update as XofUpdate};
 use sha3::{Digest, Sha3_256 as Sha3_256Inner, Sha3_512 as Sha3_512Inner};
 

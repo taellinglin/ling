@@ -12,6 +12,8 @@
 //!
 //! This is a one-way function — you cannot recover the parameters from the key.
 
+use alloc::{vec, vec::Vec};
+
 const DOMAIN: &str = "ling-mandala-v1";
 
 /// Parameters describing a mandala visual pattern.

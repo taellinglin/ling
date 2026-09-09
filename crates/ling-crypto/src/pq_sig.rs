@@ -12,11 +12,14 @@
 //! dependency already pulled in for -65; -87 is just its other type
 //! parameter, not a new crate.
 
+use alloc::vec::Vec;
 use ml_dsa::{
-    EncodedSignature, EncodedVerifyingKey, Generate, Keypair, MlDsa65, MlDsa87, Seed, Signature,
-    Signer, SigningKey, Verifier, VerifyingKey,
+    EncodedSignature, EncodedVerifyingKey, Keypair, MlDsa65, MlDsa87, Seed, Signature, Signer,
+    SigningKey, Verifier, VerifyingKey,
 };
 use zeroize::Zeroizing;
+
+use crate::rng;
 
 pub struct MlDsa65Keypair {
     signing_key: SigningKey<MlDsa65>,
@@ -24,7 +27,9 @@ pub struct MlDsa65Keypair {
 
 impl MlDsa65Keypair {
     pub fn generate() -> Self {
-        Self { signing_key: SigningKey::<MlDsa65>::generate() }
+        // ML-DSA keygen expands a 32-byte seed ξ; draw it from the crate RNG
+        // (same as the crate's own `generate()`, minus the getrandom dependency).
+        Self::from_seed(rng::random_bytes::<32>())
     }
 
     pub fn from_seed(seed: [u8; 32]) -> Self {
@@ -64,7 +69,9 @@ pub struct MlDsa87Keypair {
 
 impl MlDsa87Keypair {
     pub fn generate() -> Self {
-        Self { signing_key: SigningKey::<MlDsa87>::generate() }
+        // ML-DSA keygen expands a 32-byte seed ξ; draw it from the crate RNG
+        // (same as the crate's own `generate()`, minus the getrandom dependency).
+        Self::from_seed(rng::random_bytes::<32>())
     }
 
     pub fn from_seed(seed: [u8; 32]) -> Self {

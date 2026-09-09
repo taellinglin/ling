@@ -6,9 +6,11 @@
 //!
 //! Construction: ECVRF-EDWARDS25519-SHA512-TAI (simplified, not full RFC 9381).
 
+use alloc::vec::Vec;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use rand::rngs::OsRng;
 use sha3::{Digest, Sha3_512};
+
+use crate::rng;
 
 pub struct VrfKeypair {
     signing_key: SigningKey,
@@ -22,7 +24,7 @@ pub struct VrfProof {
 
 impl VrfKeypair {
     pub fn generate() -> Self {
-        Self { signing_key: SigningKey::generate(&mut OsRng) }
+        Self { signing_key: SigningKey::from_bytes(&rng::random_bytes::<32>()) }
     }
 
     pub fn from_seed(seed: [u8; 32]) -> Self {

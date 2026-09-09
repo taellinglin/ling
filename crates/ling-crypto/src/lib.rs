@@ -1,5 +1,14 @@
 //! Ling cryptography — classical + post-quantum primitives.
 //!
+//! # `std` vs `no_std`
+//! This crate is `no_std`-capable. With the default `std` feature it uses the
+//! OS CSPRNG and offers Argon2 PHC password strings, exactly as before. Built
+//! `--no-default-features --features alloc` (e.g. inside the LingOS kernel) it
+//! needs only `core` + `alloc`; the caller must first install an entropy source
+//! with [`rng::set_entropy_source`] (the kernel wires this to RDRAND). Every
+//! algorithm is byte-identical across both builds — the only difference is where
+//! random bytes come from and whether the two Argon2 *PHC-string* helpers exist.
+//!
 //! # Modules
 //! - [`hash`] — BLAKE3, SHA3-256/512, SHAKE-256
 //! - [`symmetric`] — AES-256-GCM, XChaCha20-Poly1305
@@ -18,6 +27,12 @@
 //!   dice/torus/helix cascade layer for `lingtp://`, meant to wrap the AEAD
 //!   frame layer for defense-in-depth (not a replacement for
 //!   ML-DSA-87/ML-KEM-768/XChaCha20)
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+pub mod rng;
 
 pub mod asymmetric;
 pub mod geo;

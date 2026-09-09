@@ -5,8 +5,9 @@
 //! Uses Fiat-Shamir transform (non-interactive via BLAKE3).
 
 use curve25519_dalek::{constants::RISTRETTO_BASEPOINT_POINT as G, RistrettoPoint, Scalar};
-use rand::rngs::OsRng;
 use zeroize::Zeroizing;
+
+use crate::rng;
 
 pub struct SchnorrKeypair {
     secret: Zeroizing<Scalar>,
@@ -15,7 +16,8 @@ pub struct SchnorrKeypair {
 
 impl SchnorrKeypair {
     pub fn generate() -> Self {
-        let secret = Scalar::random(&mut OsRng);
+        // Uniform scalar via wide (64-byte) reduction — matches `Scalar::random`.
+        let secret = Scalar::from_bytes_mod_order_wide(&rng::random_bytes::<64>());
         let public = secret * G;
         Self { secret: Zeroizing::new(secret), public }
     }
@@ -32,7 +34,7 @@ impl SchnorrKeypair {
 
     /// Create a proof of knowledge of the secret key, bound to `msg`.
     pub fn prove(&self, msg: &[u8]) -> SchnorrProof {
-        let r = Scalar::random(&mut OsRng);
+        let r = Scalar::from_bytes_mod_order_wide(&rng::random_bytes::<64>());
         let r_point = r * G;
         let c = challenge(&self.public, &r_point, msg);
         let s = r + c * *self.secret;

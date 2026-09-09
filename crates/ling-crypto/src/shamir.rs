@@ -4,7 +4,9 @@
 //! suffice to reconstruct the original. Uses the AES field polynomial
 //! (x⁸ + x⁴ + x³ + x + 1) for Galois Field arithmetic.
 
-use rand::Rng;
+use alloc::{vec, vec::Vec};
+
+use crate::rng;
 
 const POLY: u16 = 0x11b; // x^8 + x^4 + x^3 + x + 1
 
@@ -70,14 +72,13 @@ pub fn split_secret(secret: &[u8], threshold: u8, n: u8) -> Vec<Share> {
     assert!(n >= threshold, "n must be >= threshold");
     assert!(!secret.is_empty(), "secret must be non-empty");
 
-    let mut rng = rand::thread_rng();
     let mut shares: Vec<Share> = (1..=n).map(|x| Share { x, y: Vec::new() }).collect();
 
     for &byte in secret {
         // Build random polynomial of degree (threshold-1) with constant term = byte
         let mut coeffs = vec![byte];
         for _ in 1..threshold {
-            coeffs.push(rng.gen::<u8>());
+            coeffs.push(rng::next_u8());
         }
         for share in &mut shares {
             share.y.push(eval_poly(&coeffs, share.x));

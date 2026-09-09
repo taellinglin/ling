@@ -1,13 +1,22 @@
 //! Key derivation: Argon2id (password hashing) and HKDF-SHA3-256.
 
-use argon2::{
-    password_hash::{PasswordHash, SaltString},
-    Argon2, PasswordHasher, PasswordVerifier,
-};
+use alloc::vec;
+use alloc::vec::Vec;
+use argon2::Argon2;
 use hkdf::Hkdf;
-use rand::rngs::OsRng;
 use sha3::Sha3_256;
 use zeroize::Zeroizing;
+
+// PHC password strings need Argon2's `password-hash` stack and an OS salt RNG,
+// which are std-only. The raw KDF (`derive_key`) and HKDF stay available in
+// no_std — those are what the kernel/lingtp actually use.
+#[cfg(feature = "std")]
+use argon2::{
+    password_hash::{PasswordHash, SaltString},
+    PasswordHasher, PasswordVerifier,
+};
+#[cfg(feature = "std")]
+use rand::rngs::OsRng;
 
 // ── Argon2id ──────────────────────────────────────────────────────────────────
 
@@ -25,6 +34,9 @@ impl Default for Argon2idParams {
 
 impl Argon2idParams {
     /// Hash a password. Returns a PHC-formatted string (includes salt).
+    ///
+    /// Requires the `std` feature (PHC salt generation + string formatting).
+    #[cfg(feature = "std")]
     pub fn hash_password(&self, password: &[u8]) -> Result<String, &'static str> {
         let params = argon2::Params::new(self.m_cost, self.t_cost, self.p_cost, None)
             .map_err(|_| "invalid argon2 params")?;
@@ -37,6 +49,9 @@ impl Argon2idParams {
     }
 
     /// Verify a password against a PHC hash string.
+    ///
+    /// Requires the `std` feature (PHC parsing).
+    #[cfg(feature = "std")]
     pub fn verify_password(password: &[u8], hash_str: &str) -> Result<(), &'static str> {
         let parsed = PasswordHash::new(hash_str).map_err(|_| "invalid hash string")?;
         Argon2::default()
