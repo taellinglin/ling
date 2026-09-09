@@ -115,6 +115,8 @@ struct Voice {
     sine: bool,      // false = triangle
     /// Samples until this voice starts (scheduler delay for jingle notes).
     delay: u32,
+    /// Stereo pan: -1.0 hard left, 0 center, +1.0 hard right.
+    pan: f64,
 }
 
 const SILENT_VOICE: Voice = Voice {
@@ -128,9 +130,70 @@ const SILENT_VOICE: Voice = Voice {
     attacking: false,
     sine: false,
     delay: 0,
+    pan: 0.0,
 };
 
 static mut VOICES: [Voice; MAX_VOICES] = [SILENT_VOICE; MAX_VOICES];
+
+// Downmix everything to centre (Settings > Audio > Channels = Mono).
+static mut MONO: bool = false;
+// Output level meter (0..100 per channel), fast attack / slow decay.
+static mut PEAK_L: u32 = 0;
+static mut PEAK_R: u32 = 0;
+
+pub fn set_mono(m: bool) {
+    unsafe { MONO = m };
+}
+pub fn mono() -> bool {
+    unsafe { MONO }
+}
+pub fn output_level_l() -> u32 {
+    unsafe { PEAK_L }
+}
+pub fn output_level_r() -> u32 {
+    unsafe { PEAK_R }
+}
+
+// Honest device facts (the AC'97 driver is fixed 48kHz/16-bit stereo, PCM-out
+// only -- see its module doc), surfaced read-only in the Audio settings tab.
+pub fn sample_rate() -> u32 {
+    SAMPLE_RATE
+}
+pub fn bit_depth() -> u32 {
+    16
+}
+pub fn buffer_frames() -> u32 {
+    ac97::FRAMES_PER_BUFFER as u32
+}
+pub fn ring_buffers() -> u32 {
+    ac97::NUM_BUFFERS as u32
+}
+pub fn has_capture() -> bool {
+    false
+}
+
+/// Play a short test ding panned to one side: -1 left, 0 centre, +1 right.
+pub fn test_tone(pan: i32) {
+    let p = pan.clamp(-1, 1) as f64;
+    unsafe {
+        let voices = &mut *&raw mut VOICES;
+        let Some(v) = voices.iter_mut().find(|v| !v.active) else { return };
+        let dur_samples = 0.28 * SAMPLE_RATE as f64;
+        *v = Voice {
+            active: true,
+            stream: APP_SETTINGS,
+            phase: 0.0,
+            phase_inc: 880.0 / SAMPLE_RATE as f64, // A5
+            level: 0.0,
+            attack: 1.0 / (0.004 * SAMPLE_RATE as f64),
+            decay: libm_free_exp_decay(dur_samples),
+            attacking: true,
+            sine: true,
+            delay: 0,
+            pan: p,
+        };
+    }
+}
 
 /// Bhaskara I's sine approximation over 0..pi, mirrored for the full
 /// cycle. Input phase 0..1, output -1..1.
@@ -175,6 +238,7 @@ pub fn note(stream: usize, freq_centihz: u32, dur_ms: u32, delay_ms: u32, sine: 
             attacking: true,
             sine,
             delay: (delay_ms as u64 * SAMPLE_RATE as u64 / 1000) as u32,
+            pan: 0.0,
         };
     }
 }
@@ -535,8 +599,12 @@ fn render(buf: &mut [i16]) {
     unsafe {
         let voices = &mut *&raw mut VOICES;
         let excl = EXCLUSIVE;
+        let mono = MONO;
+        let mut buf_peak_l = 0i16;
+        let mut buf_peak_r = 0i16;
         for f in 0..frames {
-            let mut acc = 0.0f64;
+            let mut accl = 0.0f64;
+            let mut accr = 0.0f64;
             for v in voices.iter_mut() {
                 if !v.active {
                     continue;
@@ -570,7 +638,13 @@ fn render(buf: &mut [i16]) {
                 } else {
                     STREAM_VOL[v.stream] as f64 / 100.0
                 };
-                acc += s * v.level * stream_gain * 0.22; // headroom for ~4 voices
+                let contrib = s * v.level * stream_gain * 0.22; // headroom for ~4 voices
+                // Pan: centre stays full-volume on both channels; extremes hard
+                // pan. Mono forces centre.
+                let pan = if mono { 0.0 } else { v.pan };
+                let (lg, rg) = if pan <= 0.0 { (1.0, 1.0 + pan) } else { (1.0 - pan, 1.0) };
+                accl += contrib * lg;
+                accr += contrib * rg;
             }
             // Real PCM (WAV) on the player stream, honoring exclusive mode.
             let pcm = pcm_next();
@@ -580,13 +654,26 @@ fn render(buf: &mut [i16]) {
                 } else {
                     STREAM_VOL[APP_PLAYER] as f64 / 100.0
                 };
-                acc += pcm * pgain * 0.9;
+                accl += pcm * pgain * 0.9;
+                accr += pcm * pgain * 0.9;
             }
             let master = MASTER_VOL as f64 / 100.0;
-            let sample = (acc * master * 32767.0).clamp(-32767.0, 32767.0) as i16;
-            buf[f * 2] = sample;
-            buf[f * 2 + 1] = sample;
+            let sl = (accl * master * 32767.0).clamp(-32767.0, 32767.0) as i16;
+            let sr = (accr * master * 32767.0).clamp(-32767.0, 32767.0) as i16;
+            buf[f * 2] = sl;
+            buf[f * 2 + 1] = sr;
+            if sl.abs() > buf_peak_l {
+                buf_peak_l = sl.abs();
+            }
+            if sr.abs() > buf_peak_r {
+                buf_peak_r = sr.abs();
+            }
         }
+        // Update the meter: instant rise to this buffer's peak, slow fall.
+        let tl = (buf_peak_l as u32 * 100) / 32767;
+        let tr = (buf_peak_r as u32 * 100) / 32767;
+        PEAK_L = tl.max(PEAK_L.saturating_sub(4));
+        PEAK_R = tr.max(PEAK_R.saturating_sub(4));
     }
 }
 

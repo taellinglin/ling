@@ -180,9 +180,11 @@ static mut HOVER_DOCK: i32 = -1;
 // keeps itself visible; SETTINGS_SCROLL is the first visible row).
 const SETTINGS_TAB_GENERAL: usize = 0;
 const SETTINGS_TAB_NETWORK: usize = 1;
-const SETTINGS_TAB_COUNT: usize = 2;
+const SETTINGS_TAB_AUDIO: usize = 2;
+const SETTINGS_TAB_COUNT: usize = 3;
 const GENERAL_ROWS: usize = 11;
 const NETWORK_ROWS: usize = 3;
+const AUDIO_ROWS: usize = 3;
 const SETTINGS_VISIBLE: usize = 8;
 static mut SETTINGS_TAB: usize = 0;
 static mut SETTINGS_CURSOR: usize = 0;
@@ -191,10 +193,10 @@ static mut SETTINGS_SCROLL: usize = 0;
 static mut NET_IP_MODE: usize = 0;
 
 fn settings_tab_rows(tab: usize) -> usize {
-    if tab == SETTINGS_TAB_NETWORK {
-        NETWORK_ROWS
-    } else {
-        GENERAL_ROWS
+    match tab {
+        SETTINGS_TAB_NETWORK => NETWORK_ROWS,
+        SETTINGS_TAB_AUDIO => AUDIO_ROWS,
+        _ => GENERAL_ROWS,
     }
 }
 static mut CLOCK_24H: bool = true;
@@ -2073,10 +2075,10 @@ fn settings_key(k: u8) {
             },
             0x13 | 0x14 => {
                 let dir: i32 = if k == 0x13 { -1 } else { 1 };
-                if SETTINGS_TAB == SETTINGS_TAB_NETWORK {
-                    settings_network_adjust(SETTINGS_CURSOR, dir);
-                } else {
-                    settings_general_adjust(SETTINGS_CURSOR, dir);
+                match SETTINGS_TAB {
+                    SETTINGS_TAB_NETWORK => settings_network_adjust(SETTINGS_CURSOR, dir),
+                    SETTINGS_TAB_AUDIO => settings_audio_adjust(SETTINGS_CURSOR, dir),
+                    _ => settings_general_adjust(SETTINGS_CURSOR, dir),
                 }
             },
             _ => {},
@@ -2165,6 +2167,21 @@ fn settings_network_adjust(row: usize, dir: i32) {
         _ => {
             // SSH server at boot (on/off) -- persisted to /services.
             crate::services::set_ssh(!crate::services::ssh_enabled());
+        },
+    }
+}
+
+fn settings_audio_adjust(row: usize, dir: i32) {
+    match row {
+        0 => {
+            // Master volume, +/- 10%.
+            let cur = mixer::master_volume() as i32;
+            mixer::set_master_volume((cur + dir * 10).clamp(0, 100) as u32);
+        },
+        1 => mixer::set_mono(!mixer::mono()), // Channels: Stereo <-> Mono
+        _ => {
+            // Test speakers: left arrow -> left ding, right arrow -> right ding.
+            mixer::test_tone(dir);
         },
     }
 }
@@ -2903,7 +2920,7 @@ fn draw_content_inner(slot: usize) {
             let row_w = dw.saturating_sub(32).max(40);
             let tab = unsafe { SETTINGS_TAB };
             // Tab bar: General | Network.
-            let tab_names = [locale::tr("General"), locale::tr("Network")];
+            let tab_names = [locale::tr("General"), locale::tr("Network"), locale::tr("Audio")];
             for (t, name) in tab_names.iter().enumerate() {
                 let (tx, ty, tw, th) = settings_tab_rect(wx, wy, dw, t);
                 let active = t == tab;
@@ -2955,6 +2972,56 @@ fn draw_content_inner(slot: usize) {
                 sy += 18;
                 font8x8::draw_str(x + 10, sy, b"DNS", dim, panel);
                 draw_ip(x + 120, sy, dns1, text, panel);
+            } else if tab == SETTINGS_TAB_AUDIO {
+                // -- Audio tab: rows + read-only device info + output meter. --
+                let aud_labels = [locale::tr("Master volume"), locale::tr("Channels"), locale::tr("Test speakers")];
+                for (i, label) in aud_labels.iter().enumerate() {
+                    let ry = rows_y + i as u32 * row_h;
+                    draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe { SETTINGS_CURSOR == i });
+                    font_unicode::draw_utf8_str(x + 10, ry, label.as_bytes(), text, panel, false);
+                    let vx = x + 160 * font8x8::scale();
+                    match i {
+                        0 => {
+                            let mut nb = [0u8; 6];
+                            let mut nn = write_u32_into(&mut nb, mixer::master_volume());
+                            if nn < nb.len() { nb[nn] = b'%'; nn += 1; }
+                            font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                        },
+                        1 => {
+                            let v: &[u8] = if mixer::mono() { b"Mono" } else { b"Stereo" };
+                            font8x8::draw_str(vx, ry, v, accent, panel);
+                        },
+                        _ => font8x8::draw_str(vx, ry, b"left = L ding   right = R ding", accent, panel),
+                    }
+                }
+                // Live output-level meter (L / R).
+                let mut sy = rows_y + AUDIO_ROWS as u32 * row_h + 12;
+                font8x8::draw_str(x + 10, sy, b"Output level", dim, panel);
+                sy += 20;
+                let mw = 200u32;
+                let dotd = theme::color(theme::SLOT_DOT_DIM);
+                font8x8::draw_str(x + 10, sy, b"L", dim, panel);
+                framebuffer::back_fill_rounded_rect(x + 40, sy, mw, 8, 3, dotd);
+                framebuffer::back_fill_rounded_rect(x + 40, sy, (mixer::output_level_l().min(100) * mw / 100).max(1), 8, 3, accent);
+                sy += 16;
+                font8x8::draw_str(x + 10, sy, b"R", dim, panel);
+                framebuffer::back_fill_rounded_rect(x + 40, sy, mw, 8, 3, dotd);
+                framebuffer::back_fill_rounded_rect(x + 40, sy, (mixer::output_level_r().min(100) * mw / 100).max(1), 8, 3, accent);
+                // Honest read-only device facts.
+                sy += 28;
+                font8x8::draw_str(x + 10, sy, b"Device: AC'97   48000 Hz   16-bit   stereo", dim, panel);
+                sy += 18;
+                let mut bb = [0u8; 56];
+                let mut bn = 0;
+                for &c in b"Buffer: " { bb[bn] = c; bn += 1; }
+                bn += write_u32_into(&mut bb[bn..], mixer::buffer_frames());
+                for &c in b" frames x " { if bn < bb.len() { bb[bn] = c; bn += 1; } }
+                bn += write_u32_into(&mut bb[bn..], mixer::ring_buffers());
+                for &c in b" ring (gap-free)" { if bn < bb.len() { bb[bn] = c; bn += 1; } }
+                font8x8::draw_str(x + 10, sy, &bb[..bn], dim, panel);
+                sy += 18;
+                let inp: &[u8] = if mixer::has_capture() { b"Input: capture device present" } else { b"Input: none (this AC'97 is playback-only)" };
+                font8x8::draw_str(x + 10, sy, inp, dim, panel);
             } else {
                 // -- General tab: scrollable list. ----------------------------
                 let labels: [&[u8]; GENERAL_ROWS] = [
