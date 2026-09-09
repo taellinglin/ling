@@ -1171,8 +1171,12 @@ fn handle_arp(buf: &[u8]) {
     let _ = nic::transmit(&f);
 }
 
-pub const PRIMARY_DNS: [u8; 4] = [192, 168, 0, 2];
-pub const SECONDARY_DNS: [u8; 4] = [1, 1, 1, 1]; // Cloudflare
+// Public resolvers reachable from real hardware AND QEMU/VBox NAT (SLIRP
+// forwards them). The old default primary was a LAN guess (192.168.0.2) that
+// isn't reachable anywhere but that one network, so every first lookup ate a
+// 1.5s timeout before failing over -- and it failed outright on real metal.
+pub const PRIMARY_DNS: [u8; 4] = [1, 1, 1, 1]; // Cloudflare
+pub const SECONDARY_DNS: [u8; 4] = [8, 8, 8, 8]; // Google
 static mut DNS1: [u8; 4] = PRIMARY_DNS;
 static mut DNS2: [u8; 4] = SECONDARY_DNS;
 

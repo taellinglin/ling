@@ -5,12 +5,17 @@
 //! - `websocket` — tokio-tungstenite
 //! - `quic`      — quinn (QUIC/HTTP-3)
 //! - `grpc`      — tonic + prost
+//! - `lingtp`    — lingtp:// (raw-TCP, PQ-secure: ML-DSA-87 + hybrid KEM
+//!   handshake, XChaCha20-Poly1305 + DICE-42 cascade record layer)
 
 pub mod error;
 pub mod types;
 
 #[cfg(feature = "http")]
 pub mod http;
+
+#[cfg(feature = "lingtp")]
+pub mod lingtp;
 
 pub use error::NetError;
 pub use types::{HttpMethod, Request, Response};

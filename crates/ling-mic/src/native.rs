@@ -29,10 +29,54 @@ impl NativeMic {
 
     pub fn start<F>(&self, callback: F) -> Result<(), MicError>
     where
-        F: Fn(&[f32]) + Send + 'static,
+        F: Fn(&[f32]) + Send + Sync + 'static,
     {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or(MicError::NoDevice)?;
+        let callback = Arc::new(callback);
+
+        // Try the default input device first, then fall back through every
+        // other enumerated input device. A device can enumerate and report a
+        // config fine but still fail at build/play time — e.g. an audio
+        // interface already opened exclusively by another app (or another
+        // Ling process) — so falling back keeps the mic usable instead of
+        // silently going dead just because the default happens to be busy.
+        let default_name = host.default_input_device().and_then(|d| d.name().ok());
+        let mut candidates: Vec<cpal::Device> = Vec::new();
+        if let Some(d) = host.default_input_device() {
+            candidates.push(d);
+        }
+        if let Ok(devices) = host.input_devices() {
+            for d in devices {
+                let is_default = d
+                    .name()
+                    .ok()
+                    .is_some_and(|n| default_name.as_deref() == Some(n.as_str()));
+                if !is_default {
+                    candidates.push(d);
+                }
+            }
+        }
+        if candidates.is_empty() {
+            return Err(MicError::NoDevice);
+        }
+
+        let mut last_err = MicError::NoDevice;
+        for device in candidates {
+            match self.try_start_on(&device, Arc::clone(&callback)) {
+                Ok(stream) => {
+                    *self.stream.lock().unwrap() = Some(stream);
+                    return Ok(());
+                },
+                Err(e) => last_err = e,
+            }
+        }
+        Err(last_err)
+    }
+
+    fn try_start_on<F>(&self, device: &cpal::Device, callback: Arc<F>) -> Result<cpal::Stream, MicError>
+    where
+        F: Fn(&[f32]) + Send + Sync + 'static,
+    {
         let config = device
             .default_input_config()
             .map_err(|e| MicError::StreamError(e.to_string()))?;
@@ -76,8 +120,7 @@ impl NativeMic {
         stream
             .play()
             .map_err(|e| MicError::StreamError(e.to_string()))?;
-        *self.stream.lock().unwrap() = Some(stream);
-        Ok(())
+        Ok(stream)
     }
 
     pub fn stop(&self) {

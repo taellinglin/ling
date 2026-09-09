@@ -126,60 +126,125 @@ fn loading_toast(url: &str) {
     framebuffer::present();
 }
 
-pub fn go(url: &str, cols: usize) -> bool {
-    let Some((host, port, path, tls)) = netstack::parse_url(url) else {
-        unsafe { STATUS = "bad URL (want http://host[:port]/path)" };
-        return false;
-    };
-    loading_toast(url);
-    let body = unsafe { &mut *&raw mut BODY };
-    let mut body_off = 0usize;
-    let len = if tls {
-        // HTTPS via the in-kernel TLS 1.3 client. Note: certificate validation
-        // isn't done yet -- encrypted but not authenticated. https_get returns
-        // the full response, so strip the HTTP headers before layout.
-        let hport = if port == 0 { 443 } else { port };
-        let mut noop = |_: &[u8]| {};
-        match crate::tls::https_get(host, hport, path, body, &mut noop) {
-            Ok(n) if n > 0 => {
-                body_off = crate::tls::http_body_offset(&body[..n]);
-                n
-            },
-            Ok(_) => {
-                unsafe { STATUS = "https: empty response" };
-                return false;
-            },
-            Err(e) => {
-                unsafe { STATUS = e };
-                return false;
-            },
+/// Max HTTP redirects to follow before giving up (loop guard).
+const MAX_REDIRECTS: usize = 6;
+
+/// Case-insensitive header lookup in a raw HTTP response (header block only).
+fn find_header<'a>(resp: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let end = crate::tls::http_body_offset(resp);
+    let headers = if end > 0 { &resp[..end] } else { resp };
+    for line in headers.split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if let Some(colon) = line.iter().position(|&b| b == b':') {
+            let (k, v) = (&line[..colon], &line[colon + 1..]);
+            if k.eq_ignore_ascii_case(name) {
+                return Some(v.strip_prefix(b" ").unwrap_or(v));
+            }
         }
-    } else {
-        let Some(ip) = netstack::dns_resolve(host) else {
-            unsafe { STATUS = "DNS: no address for that host" };
+    }
+    None
+}
+
+pub fn go(url: &str, cols: usize) -> bool {
+    let body = unsafe { &mut *&raw mut BODY };
+    // Current URL, rewritten in place as we follow redirects. Almost every
+    // real site 301/302s the bare/http URL to its canonical https one, so
+    // without redirect following bring only loaded rare 200-direct pages.
+    let mut cur = [0u8; 512];
+    let s0 = url.trim();
+    let mut cur_len = s0.len().min(cur.len());
+    cur[..cur_len].copy_from_slice(&s0.as_bytes()[..cur_len]);
+
+    let mut len = 0usize;
+    let mut got = false;
+    for _ in 0..MAX_REDIRECTS {
+        let curs = core::str::from_utf8(&cur[..cur_len]).unwrap_or("");
+        let Some((host, port, path, tls)) = netstack::parse_url(curs) else {
+            unsafe { STATUS = "bad URL (want http://host[:port]/path)" };
             return false;
         };
-        match netstack::http_get(ip, port, path, host, body) {
-            Some(n) => n,
-            None => {
-                unsafe { STATUS = "fetch failed (connect refused, non-200, or timeout)" };
+        loading_toast(curs);
+        // Fetch the FULL raw response (headers + body) so we can read status
+        // + Location. https_get already returns the full response.
+        let n = if tls {
+            let hport = if port == 0 { 443 } else { port };
+            let mut noop = |_: &[u8]| {};
+            match crate::tls::https_get(host, hport, path, body, &mut noop) {
+                Ok(n) if n > 0 => n,
+                Ok(_) => {
+                    unsafe { STATUS = "https: empty response" };
+                    return false;
+                },
+                Err(e) => {
+                    unsafe { STATUS = e };
+                    return false;
+                },
+            }
+        } else {
+            let Some(ip) = netstack::dns_resolve(host) else {
+                unsafe { STATUS = "DNS: no address for that host" };
                 return false;
-            },
+            };
+            match netstack::http_get_raw(ip, port, path, host, body) {
+                Some(n) => n,
+                None => {
+                    unsafe { STATUS = "fetch failed (connect refused or timeout)" };
+                    return false;
+                },
+            }
+        };
+        if n < 12 {
+            unsafe { STATUS = "malformed response" };
+            return false;
         }
-    };
-    // Fetch any external stylesheets the page links, so CSS applies to the
-    // whole document (not just inline <style>). Bounded: a few sheets, capped
-    // total size.
-    // Open one keep-alive session to the page host for the sub-resource phase
-    // (stylesheets + images) so they share a single TLS handshake.
+        let code = (body[9] - b'0') as u32 * 100
+            + (body[10] - b'0') as u32 * 10
+            + (body[11] - b'0') as u32;
+        if (300..400).contains(&code) {
+            // Resolve Location into a scratch buffer (still borrowing `curs`),
+            // then rewrite `cur` after those borrows end.
+            let mut nb = [0u8; 512];
+            let nlen = find_header(&body[..n], b"Location")
+                .and_then(|loc| core::str::from_utf8(loc).ok())
+                .and_then(|loc| resolve_url(curs, loc.trim(), &mut nb));
+            match nlen {
+                Some(nn) => {
+                    let nn = nn.min(cur.len());
+                    cur[..nn].copy_from_slice(&nb[..nn]);
+                    cur_len = nn;
+                    continue;
+                },
+                None => {
+                    unsafe { STATUS = "redirect with no usable Location" };
+                    return false;
+                },
+            }
+        }
+        if code != 200 {
+            unsafe { STATUS = "fetch failed (non-200 status)" };
+            return false;
+        }
+        len = n;
+        got = true;
+        break;
+    }
+    if !got {
+        unsafe { STATUS = "too many redirects" };
+        return false;
+    }
+
+    // Render the final 200 response.
+    let body_off = crate::tls::http_body_offset(&body[..len]);
+    let final_url = core::str::from_utf8(&cur[..cur_len]).unwrap_or("");
+    let (host, _port, _path, tls) = netstack::parse_url(final_url).unwrap_or(("", 0, "", false));
+    // Keep-alive session to the page host for sub-resources (CSS + images).
     if tls {
         subresource_open(host);
     }
-    let css_len = fetch_stylesheets(&body[body_off..len], url);
+    let css_len = fetch_stylesheets(&body[body_off..len], final_url);
     let css = unsafe { &(&*&raw const CSS_SHEETS)[..css_len] };
     layout_styled(&body[body_off..len], css, cols, page());
-    // Fetch + decode inline images the layout referenced (bounded).
-    fetch_page_images(url);
+    fetch_page_images(final_url);
     subresource_close();
     unsafe {
         SCROLL = 0;
@@ -189,7 +254,7 @@ pub fn go(url: &str, cols: usize) -> bool {
             "loaded"
         };
     }
-    set_url(url);
+    set_url(final_url);
     true
 }
 

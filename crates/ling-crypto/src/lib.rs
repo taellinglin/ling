@@ -14,6 +14,10 @@
 //! - [`zkp`] — Schnorr zero-knowledge proof of knowledge
 //! - [`vrf`] — Verifiable Random Function (Ed25519-based)
 //! - [`mandala`] — Mandala Hash — custom geometric key derivation
+//! - [`mobius_helix`] — DICE-42, the Möbius-Helix Reactor — keyed
+//!   dice/torus/helix cascade layer for `lingtp://`, meant to wrap the AEAD
+//!   frame layer for defense-in-depth (not a replacement for
+//!   ML-DSA-87/ML-KEM-768/XChaCha20)
 
 pub mod asymmetric;
 pub mod geo;
@@ -21,6 +25,7 @@ pub mod hash;
 pub mod hybrid;
 pub mod kdf;
 pub mod mandala;
+pub mod mobius_helix;
 pub mod pq;
 pub mod pq_sig;
 pub mod shamir;
@@ -37,6 +42,9 @@ pub use hash::{Blake3, Sha3_256, Sha3_512, Shake256};
 pub use hybrid::{encapsulate as hybrid_encapsulate, HybridKeypair};
 pub use kdf::{hkdf_sha3, Argon2idParams};
 pub use mandala::{MandalaHash, MandalaParams};
+pub use mobius_helix::{
+    DieType as MobiusDieType, MobiusHelixParams, MobiusHelixReactor, NAME as DICE_42,
+};
 pub use pq::{encapsulate as mlkem768_encapsulate, MlKem768Keypair};
 pub use pq_sig::{MlDsa65Keypair, MlDsa87Keypair};
 pub use shamir::{reconstruct_secret, split_secret, Share};

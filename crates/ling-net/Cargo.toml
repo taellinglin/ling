@@ -14,6 +14,10 @@ http      = ["dep:axum", "dep:reqwest", "dep:tokio"]
 websocket = ["dep:tokio-tungstenite", "dep:tokio"]
 quic      = ["dep:quinn", "dep:tokio"]
 grpc      = ["dep:tonic", "dep:prost", "dep:tokio"]
+# lingtp:// — raw-TCP, post-quantum secure transport (ML-DSA-87 + hybrid KEM
+# handshake, XChaCha20-Poly1305 + DICE-42 cascade record layer). Not HTTP —
+# its own framing, so it only needs `rand`/`subtle` on top of the base deps.
+lingtp    = ["dep:rand", "dep:subtle"]
 
 [dependencies]
 ling-core   = { workspace = true }
@@ -30,6 +34,8 @@ tokio-tungstenite = { version = "0.21", optional = true }
 quinn             = { version = "0.11", optional = true }
 tonic             = { version = "0.11", optional = true }
 prost             = { version = "0.12", optional = true }
+rand              = { version = "0.8", features = ["std"], optional = true }
+subtle            = { version = "2.6", optional = true }
 
 [lib]
 name = "ling_net"
