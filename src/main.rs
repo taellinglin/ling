@@ -1014,7 +1014,9 @@ impl NativePlatform {
                     "x86_64-apple-darwin"
                 }
             },
-            Self::BareMetal | Self::Lingos => "x86_64-unknown-none",
+            // Custom hardware-SSE target spec (see LINGOS_X86_64_TARGET_JSON);
+            // emitted + resolved via RUST_TARGET_PATH in the kernel build below.
+            Self::BareMetal | Self::Lingos => LINGOS_X86_64_TARGET,
             Self::Rpi => "aarch64-unknown-none",
         }
     }
@@ -1261,7 +1263,7 @@ fn build_native(
 키보드배열선택시스템지역및간대아래이동치다음디를우고중에오신것을루트네워완료사자\
 지우기확인설치디스크선택루트계정사용자마무리설정비밀번호입력하여지우고호스트이름\
 만들기비우면건너뜀부팅시시작패키지세트이름할감지된현재하나만지원는이모두웁니다\
-부트섹터와파일시스템마운트네트워크로더완료미디어를빼고재부팅설치됨";
+부트섹터와파일시스템마운트네트워크로더완료미디어를빼고재부팅설치됨웹";
             const TH_CHARS: &str = "ภาษาไทยสวัสดียินดีต้อนรับ\
 ฟล์งค่เมแกขชพ็จปึใ\
 ปนพมะบภูผชครือขยเสจลกแตวดถไำ\
@@ -1442,8 +1444,22 @@ fn build_native(
         // arch-generic, not x86-specific.
         let cargo_dir = build_dir.join(".cargo");
         std::fs::create_dir_all(&cargo_dir).expect("create .cargo dir");
+        // For the x86_64 kernel/app target, emit our custom hardware-SSE target
+        // spec next to the build so cargo (and build-std) resolve it via
+        // RUST_TARGET_PATH. aarch64 (rpi) keeps its stock rustup triple.
+        if triple == LINGOS_X86_64_TARGET {
+            std::fs::write(
+                build_dir.join(format!("{triple}.json")),
+                LINGOS_X86_64_TARGET_JSON,
+            )
+            .expect("write custom target spec");
+        }
+        // `--cfg curve25519_dalek_backend="serial"` is needed on BOTH kernel and
+        // .ling app builds now that either may link ling-crypto: dalek's default
+        // x86_64 backend emits AVX2 the freestanding target can't lower (AVX is
+        // off in our spec). `-C code-model=large` stays app-only.
         let extra_flags = if is_lingos {
-            r#""-C", "code-model=large","#
+            r#""-C", "code-model=large", "--cfg", "curve25519_dalek_backend=\"serial\"","#
         } else {
             r#""--cfg", "curve25519_dalek_backend=\"serial\"","#
         };
@@ -1455,7 +1471,7 @@ build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
 [target.{triple}]
-rustflags = ["-C", "relocation-model=static", {extra_flags}]
+rustflags = ["-C", "relocation-model=static", "-Z", "unstable-options", {extra_flags}]
 "#
             ),
         )
@@ -1476,6 +1492,9 @@ rustflags = ["-C", "relocation-model=static", {extra_flags}]
         let status = Command::new(nightly)
             .args(&cargo_args)
             .current_dir(build_dir)
+            // Lets cargo/rustc find `x86_64-lingos.json` written above (custom
+            // target specs aren't rustup components).
+            .env("RUST_TARGET_PATH", build_dir)
             .status()
             .unwrap_or_else(|e| {
                 eprintln!("  {nightly}: {e}");
@@ -2729,7 +2748,60 @@ fn write_packed_resources(build_dir: &Path, resources: &[(String, PathBuf)]) {
     let _ = std::fs::write(build_dir.join("src/resources.rs"), module);
 }
 
+/// Custom target-spec name for the hardware-SSE LingOS x86_64 kernel/app target.
+const LINGOS_X86_64_TARGET: &str = "x86_64-lingos";
+
+/// The `x86_64-lingos.json` target spec: `x86_64-unknown-none` with hardware
+/// SSE/SSE2 float instead of softfloat. The kernel enables SSE at boot
+/// (CR4.OSFXSR | OSXMMEXCPT, see `arch/x86_64/boot.rs`), so hardware float is
+/// safe here AND is required for the RustCrypto AEAD-MAC crates (poly1305 for
+/// XChaCha20-Poly1305, polyval for AES-GCM) that LLVM cannot legalize on a
+/// no-SSE softfloat target ("Do not know how to split the result of this
+/// operator!"). Derived verbatim from
+/// `rustc --print target-spec-json --target x86_64-unknown-none`, then dropping
+/// `"rustc-abi": "softfloat"` and setting `features` to `+sse,+sse2` (AVX stays
+/// off — the boot code does not enable XSAVE/AVX state).
+const LINGOS_X86_64_TARGET_JSON: &str = r#"{
+  "arch": "x86_64",
+  "code-model": "kernel",
+  "cpu": "x86-64",
+  "crt-objects-fallback": "false",
+  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+  "disable-redzone": true,
+  "features": "+sse,+sse2",
+  "linker": "rust-lld",
+  "linker-flavor": "gnu-lld",
+  "llvm-target": "x86_64-unknown-none-elf",
+  "max-atomic-width": 64,
+  "metadata": {
+    "description": "LingOS freestanding x86_64, hardware SSE/SSE2 (boot sets CR4.OSFXSR)",
+    "host_tools": false,
+    "std": false,
+    "tier": 2
+  },
+  "panic-strategy": "abort",
+  "plt-by-default": false,
+  "position-independent-executables": true,
+  "relro-level": "full",
+  "stack-probes": {
+    "kind": "inline"
+  },
+  "static-position-independent-executables": true,
+  "supported-sanitizers": [
+    "kcfi",
+    "kernel-address"
+  ],
+  "target-pointer-width": 64
+}
+"#;
+
 fn ensure_rustup_target(triple: &str) {
+    // Custom target-spec JSONs (e.g. our hardware-SSE `x86_64-lingos`) are not
+    // rustup components — `rustup target add x86_64-lingos` would just fail.
+    // build-std compiles core/alloc/compiler_builtins from source for them.
+    if triple == LINGOS_X86_64_TARGET {
+        return;
+    }
     let Ok(out) = Command::new("rustup")
         .args(["target", "list", "--installed"])
         .output()

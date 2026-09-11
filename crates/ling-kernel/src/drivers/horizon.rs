@@ -483,10 +483,19 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
 
     for item in &p.items {
         let iy = match item {
-            DisplayItem::Rect { y, .. } | DisplayItem::Text { y, .. } | DisplayItem::Image { y, .. } | DisplayItem::Canvas { y, .. } => *y,
+            DisplayItem::Rect { y, .. }
+            | DisplayItem::Text { y, .. }
+            | DisplayItem::Image { y, .. }
+            | DisplayItem::Canvas { y, .. }
+            | DisplayItem::Input { y, .. }
+            | DisplayItem::Button { y, .. } => *y,
         };
         let ih = match item {
-            DisplayItem::Rect { h, .. } | DisplayItem::Image { h, .. } | DisplayItem::Canvas { h, .. } => *h,
+            DisplayItem::Rect { h, .. }
+            | DisplayItem::Image { h, .. }
+            | DisplayItem::Canvas { h, .. }
+            | DisplayItem::Input { h, .. }
+            | DisplayItem::Button { h, .. } => *h,
             DisplayItem::Text { .. } => LINE_H,
         };
         let ry = content_y as i64 + iy as i64 - scroll;
@@ -562,6 +571,47 @@ pub fn draw_page(x: u32, y: u32, w: u32, h: u32) {
                     framebuffer::back_fill_rect(x + ix, ry, *iw, *ih2, theme::color(theme::SLOT_PANEL_BORDER));
                     font8x8::draw_str(x + ix + 4, ry + 4, b"[img]", dim, theme::color(theme::SLOT_PANEL_BORDER));
                 }
+            },
+            // A form <input>: draw a bordered field showing the embedder-owned
+            // live value (masked for password fields), or the placeholder when
+            // empty. horizon-browser is a stateless layout pass, so the actual
+            // typed text lives in Page::inputs, which we render each frame.
+            DisplayItem::Input { x: ix, w: iw, h: ih2, input, background, color, .. } => {
+                let border = theme::color(theme::SLOT_PANEL_BORDER);
+                let bg = background.unwrap_or(theme::color(theme::SLOT_PANEL));
+                framebuffer::back_fill_rect(x + ix, ry, *iw, *ih2, border);
+                if *iw > 2 && *ih2 > 2 {
+                    framebuffer::back_fill_rect(x + ix + 1, ry + 1, *iw - 2, *ih2 - 2, bg);
+                }
+                if let Some(inp) = p.inputs.get(*input) {
+                    let has_value = !inp.value.is_empty();
+                    let col = if has_value { color.unwrap_or(text_color) } else { dim };
+                    let shown: Vec<u8> = if has_value
+                        && inp.input_type == horizon_browser::InputKind::Password
+                    {
+                        inp.value.bytes().map(|_| b'*').collect()
+                    } else if has_value {
+                        inp.value.clone().into_bytes()
+                    } else {
+                        inp.placeholder.clone().into_bytes()
+                    };
+                    let ty = ry + (*ih2).saturating_sub(8) / 2;
+                    font8x8::draw_str(x + ix + 4, ty, &shown, col, bg);
+                }
+            },
+            // A <button>: a filled plate with its centered label.
+            DisplayItem::Button { x: ix, w: iw, h: ih2, text, background, color, .. } => {
+                let border = theme::color(theme::SLOT_PANEL_BORDER);
+                let bg = background.unwrap_or(accent);
+                framebuffer::back_fill_rect(x + ix, ry, *iw, *ih2, border);
+                if *iw > 2 && *ih2 > 2 {
+                    framebuffer::back_fill_rect(x + ix + 1, ry + 1, *iw - 2, *ih2 - 2, bg);
+                }
+                let col = color.unwrap_or(panel);
+                let tw = text.len() as u32 * 8;
+                let tx = x + ix + (*iw).saturating_sub(tw) / 2;
+                let ty = ry + (*ih2).saturating_sub(8) / 2;
+                font8x8::draw_str(tx, ty, text.as_bytes(), col, bg);
             },
         }
     }
