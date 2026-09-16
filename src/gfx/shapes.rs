@@ -1018,10 +1018,13 @@ pub fn canon(name: &str) -> Option<&'static str> {
     })
 }
 
-/// Build a transformed, world-space mesh for `kind`.
-/// `c` = [cx,cy,cz, sx,sy,sz, rx,ry,rz]; `e0..e2` = shape-specific extras.
-pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh> {
-    let mut m = match kind {
+/// Builds the LOCAL-space (untransformed, unit-scale) mesh for `kind` —
+/// the actual vertex-generation work (nested sin/cos loops for round
+/// shapes). Separated from `build()` so its result can be cached: for a
+/// given (kind, e0, e1, e2), this always produces the exact same mesh —
+/// only the transform in `build()` varies call to call.
+fn build_base(kind: &str, e0: f32, e1: f32, e2: f32) -> Option<Mesh> {
+    Some(match kind {
         "cube" | "box" => cube(),
         "sphere" => uv_sphere(iarg(e0, 16), iarg(e1, 12)),
         "icosphere" => icosphere(iarg(e0, 1)),
@@ -1057,7 +1060,44 @@ pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh>
         "capsule_chain" => capsule_chain(iarg(e0, 3)),
         "mobius" => mobius(iarg(e0, 60), farg(e1, 0.3)),
         _ => return None,
-    };
+    })
+}
+
+// Cache of local-space base meshes, keyed on (kind, e0, e1, e2) — the exact
+// inputs `build_base` is a pure function of (float bits, not values: these
+// are only ever used as opaque cache keys, never arithmetic'd on, so NaN/
+// exact-bits equality is exactly right, not a footgun here). One entry per
+// DISTINCT shape actually used by a program — typically a handful (a
+// monster's body/head/eyes/feet each reuse the same segs/rings every call).
+// Thread-local, not behind a Mutex: all drawing happens on the single
+// interpreter thread.
+thread_local! {
+    static BASE_MESH_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<(String, u32, u32, u32), Mesh>> =
+        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+}
+
+/// Build a transformed, world-space mesh for `kind`.
+/// `c` = [cx,cy,cz, sx,sy,sz, rx,ry,rz]; `e0..e2` = shape-specific extras.
+///
+/// The expensive half — `build_base`'s vertex-generation loops — runs at
+/// most once per distinct (kind,e0,e1,e2); every subsequent call for the
+/// same shape clones the cached local-space mesh instead. `transform` and
+/// `compute_smooth_normals` still run every call (they depend on `c`, which
+/// varies every call — the whole point of a per-frame draw), so this only
+/// removes the part of the cost that was pure repeated, deterministic work.
+/// Confirmed real: monster/figure primitives (ball3d/tube3d/efan → sphere/
+/// cylinder/…) call this with the SAME segs/rings dozens of times per
+/// frame, per monster, at 60fps.
+pub fn build(kind: &str, c: [f32; 9], e0: f32, e1: f32, e2: f32) -> Option<Mesh> {
+    let key = (kind.to_string(), e0.to_bits(), e1.to_bits(), e2.to_bits());
+    let mut m = BASE_MESH_CACHE.with(|cache| -> Option<Mesh> {
+        if let Some(cached) = cache.borrow().get(&key) {
+            return Some(cached.clone());
+        }
+        let fresh = build_base(kind, e0, e1, e2)?;
+        cache.borrow_mut().insert(key, fresh.clone());
+        Some(fresh)
+    })?;
     m.transform(c);
     m.compute_smooth_normals();
     Some(m)

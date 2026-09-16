@@ -9,6 +9,8 @@ mod input_web;
 pub(crate) mod jit_abi;
 #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
 mod llm;
+#[cfg(not(target_arch = "wasm32"))]
+mod terrain_bg;
 #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
 mod vision;
 
@@ -1932,6 +1934,12 @@ pub struct Interpreter {
     /// lingtp only depends on ling-crypto, already unconditional here.
     #[cfg(not(target_arch = "wasm32"))]
     lingtp_routes: Vec<(String, Value)>,
+    /// Background jobs started by `terrain_grid_start`, polled by
+    /// `terrain_grid_poll` — see runtime::terrain_bg. Plain OS threads, not
+    /// gated on `feature = "web"`: this is CPU-bound compute, not I/O, and
+    /// should be available in every desktop build.
+    #[cfg(not(target_arch = "wasm32"))]
+    terrain_grid_jobs: terrain_bg::TerrainGridJobs,
     /// Status of the last `lingtp_get` call — paired accessor, same shape as
     /// `http_get_status()`. 1 = ok, 0 = connect/handshake error, -1 =
     /// signature invalid, -2 = host key changed (refused).
@@ -2033,6 +2041,8 @@ impl Interpreter {
             lingtp_routes: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             last_lingtp_status: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            terrain_grid_jobs: terrain_bg::TerrainGridJobs::new(),
         }
     }
 
@@ -9397,6 +9407,52 @@ impl Interpreter {
             #[cfg(not(target_arch = "wasm32"))]
             "lingtp_get_status" => {
                 return Ok(Value::Number(self.last_lingtp_status as f64));
+            },
+            // terrain_grid_start(bx, bz, cell, rad) — kicks off the
+            // corner-elevation + per-corner-normal grid computation (see
+            // runtime::terrain_bg, a Rust port of draw_ground's own
+            // terrain_elev math) on a background OS thread; returns a job
+            // id immediately. Poll with terrain_grid_poll. Lets a caller
+            // keep drawing with the last-good grid instead of blocking the
+            // whole frame while a fresh one computes.
+            #[cfg(not(target_arch = "wasm32"))]
+            "terrain_grid_start" => {
+                let bx = self.arg_num(&args, 0, 0.0)?;
+                let bz = self.arg_num(&args, 1, 0.0)?;
+                let cell = self.arg_num(&args, 2, 1.35)?;
+                let rad = self.arg_num(&args, 3, 36.0)?;
+                let id = self.terrain_grid_jobs.start(bx, bz, cell, rad);
+                return Ok(Value::Str(id));
+            },
+            // terrain_grid_poll(jobId) — non-blocking. While the job named
+            // by terrain_grid_start is still running (or the id is unknown/
+            // already consumed), returns an empty list; a caller checks
+            // len(result) == 0 to tell "not ready" apart from real data.
+            // Once ready: [bx, bz, corners, normNx, normNy, normNz] — bx/bz
+            // echoed back so the caller can adopt them as its new cache key
+            // without having to have kept its own copy of what it asked for.
+            #[cfg(not(target_arch = "wasm32"))]
+            "terrain_grid_poll" => {
+                let id = self.arg_str(&args, 0, "");
+                match self.terrain_grid_jobs.poll(&id) {
+                    Some(r) => {
+                        let to_list = |v: Vec<f64>| {
+                            Value::List(v.into_iter().map(Value::Number).collect::<Vec<_>>().into())
+                        };
+                        return Ok(Value::List(
+                            vec![
+                                Value::Number(r.bx),
+                                Value::Number(r.bz),
+                                to_list(r.corners),
+                                to_list(r.norm_nx),
+                                to_list(r.norm_ny),
+                                to_list(r.norm_nz),
+                            ]
+                            .into(),
+                        ));
+                    },
+                    None => return Ok(Value::List(vec![].into())),
+                }
             },
             // The wire protocol has no method/body concept of its own --
             // every request is just one opaque string in, one opaque
