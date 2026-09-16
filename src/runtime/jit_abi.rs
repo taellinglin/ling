@@ -367,14 +367,18 @@ pub unsafe extern "C" fn ling_not(a: u64) -> u64 {
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_print_val(val: u64) -> u64 {
+    use std::io::Write;
     let v = decode_value(val);
     print!("{}", v);
+    std::io::stdout().flush().ok();
     TAG_UNIT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_print_newline() -> u64 {
+    use std::io::Write;
     println!();
+    std::io::stdout().flush().ok();
     TAG_UNIT
 }
 

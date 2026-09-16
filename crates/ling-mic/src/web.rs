@@ -13,7 +13,7 @@ impl WebMic {
 
     pub fn start<F>(&self, _cb: F) -> Result<(), MicError>
     where
-        F: Fn(&[f32]) + Send + 'static,
+        F: Fn(&[f32]) + Send + Sync + 'static,
     {
         Ok(())
     }

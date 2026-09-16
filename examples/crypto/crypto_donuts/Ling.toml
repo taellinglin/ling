@@ -1,7 +1,8 @@
 [spirit]
 name = "crypto_donuts"
 kind = "bin"
-version = "2030.0.0"
+version = "2030.0.1"
+icon = "assets/icon.svg"
 
 [author]
 ling-lin = { email = "taellinglin@gmail.com" }
@@ -15,4 +16,4 @@ source   = "src"
 core = { version = "2030.0", language = "en" }
 
 [depends]
-ling-mic { version = "2030.0.9" }
+ling-mic = { version = "2030.0.9" }

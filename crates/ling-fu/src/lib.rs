@@ -891,6 +891,18 @@ fn print_help(lang: &InvocationLanguage, tr: &CommandTranslations) {
         )
     );
     println!(
+        "  --crates               {}",
+        t(
+            lang,
+            "With add/search: use crates.io via cargo instead of the ling registry",
+            "配合 add/search 使用：通过 cargo 使用 crates.io，而不是 ling 注册处",
+            "add/search と併用：ling レジストリではなく cargo 経由で crates.io を使用",
+            "add/search와 함께 사용: ling 레지스트리 대신 cargo를 통해 crates.io 사용",
+            "ใช้กับ add/search: ใช้ crates.io ผ่าน cargo แทนทะเบียน ling",
+            "With add/search: use crates.io via cargo instead of the ling registry",
+        )
+    );
+    println!(
         "  --version, -V          {}",
         t(
             lang,
@@ -1796,6 +1808,60 @@ fn cmd_update(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> 
 // ─── cmd_add ─────────────────────────────────────────────────────────────────
 
 fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
+    let use_crates = args.iter().any(|a| a == "--crates");
+
+    if use_crates {
+        // `--crates` opts back into the original behavior: shell out to
+        // `cargo add` against crates.io/ambient Cargo config, for the Ling
+        // projects that really do need a Rust/Cargo dependency. Everything
+        // below this branch is unchanged from before fu.ling-lang.org support
+        // existed, other than stripping the `--crates` flag itself out of the
+        // args forwarded to cargo (which doesn't know that flag).
+        let cargo_args: Vec<String> =
+            args.iter().filter(|a| a.as_str() != "--crates").cloned().collect();
+        if cargo_args.is_empty() {
+            say(
+                lang,
+                "Please specify a package to add",
+                "请指定要添加的包",
+                "追加するパッケージを指定してください",
+                "추가할 패키지를 지정하세요",
+            );
+            return Ok(());
+        }
+        let package = &cargo_args[0];
+        say(
+            lang,
+            &format!("Adding package: {}", package),
+            &format!("正在添包: {}", package),
+            &format!("パッケージを追加中: {}", package),
+            &format!("패키지 추가 중: {}", package),
+        );
+        let status = std::process::Command::new("cargo")
+            .arg("add")
+            .args(&cargo_args)
+            .status()
+            .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
+        if !status.success() {
+            anyhow::bail!("add failed");
+        }
+        println!(
+            "{}",
+            t(
+                lang,
+                "✓ Added!",
+                "✓ 已添！",
+                "✓ 追加完了！",
+                "✓ 추가 완료！",
+                "✓ เพิ่มเสร็จ！",
+                "✓ Added!"
+            )
+            .green()
+            .bold()
+        );
+        return Ok(());
+    }
+
     if args.is_empty() {
         say(
             lang,
@@ -1809,39 +1875,115 @@ fn cmd_add(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     let package = &args[0];
     say(
         lang,
-        &format!("Adding package: {}", package),
-        &format!("正在添包: {}", package),
-        &format!("パッケージを追加中: {}", package),
-        &format!("패키지 추가 중: {}", package),
+        &format!("Installing package: {} (from {})", package, registry::active_registry()),
+        &format!("正在安装包: {}", package),
+        &format!("パッケージをインストール中: {}", package),
+        &format!("패키지 설치 중: {}", package),
     );
-    let status = std::process::Command::new("cargo")
-        .arg("add")
-        .args(args)
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("add failed");
-    }
+    let result = registry::install(package)?;
     println!(
         "{}",
         t(
             lang,
-            "✓ Added!",
-            "✓ 已添！",
-            "✓ 追加完了！",
-            "✓ 추가 완료！",
-            "✓ เพิ่มเสร็จ！",
-            "✓ Added!"
+            "✓ Installed!",
+            "✓ 已安装！",
+            "✓ インストール完了！",
+            "✓ 설치 완료！",
+            "✓ ติดตั้งเสร็จ！",
+            "✓ Installed!"
         )
         .green()
         .bold()
     );
+    let dir_display = result.dir.display().to_string().replace('\\', "/");
+    println!("  {} v{} -> {}", result.name, result.version, dir_display);
+    match &result.entry {
+        Some(entry) => {
+            let entry_path = format!("{}/{}", dir_display, entry.display()).replace('\\', "/");
+            println!(
+                "  {}",
+                t(
+                    lang,
+                    "entry file:",
+                    "入口文件:",
+                    "エントリファイル:",
+                    "진입 파일:",
+                    "ไฟล์เริ่มต้น:",
+                    "entry file:"
+                )
+            );
+            println!("    {}", entry_path);
+            println!(
+                "  {}",
+                t(
+                    lang,
+                    "add this to your project:",
+                    "把这行加到你的项目里:",
+                    "プロジェクトに追加してください:",
+                    "프로젝트에 추가하세요:",
+                    "เพิ่มบรรทัดนี้ในโปรเจคของคุณ:",
+                    "add this to your project:"
+                )
+            );
+            println!("    use \"{}\";", entry_path);
+        },
+        None => {
+            println!(
+                "  {}",
+                t(
+                    lang,
+                    "note: no .ling entry file was found — check the package's own README",
+                    "注意：未找到 .ling 入口文件——请查看包自带的 README",
+                    "注意：.ling のエントリファイルが見つかりませんでした — パッケージの README を確認してください",
+                    "참고: .ling 진입 파일을 찾지 못했습니다 — 패키지 자체 README를 확인하세요",
+                    "หมายเหตุ: ไม่พบไฟล์เริ่มต้น .ling — โปรดดู README ของแพ็กเกจ",
+                    "note: no .ling entry file was found — check the package's own README"
+                )
+            );
+        },
+    }
     Ok(())
 }
 
 // ─── cmd_search ──────────────────────────────────────────────────────────────
 
 fn cmd_search(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
+    let use_crates = args.iter().any(|a| a == "--crates");
+
+    if use_crates {
+        // `--crates` opts back into the original behavior: shell out to
+        // `cargo search` against crates.io. Unchanged other than stripping
+        // the `--crates` flag itself before forwarding to cargo.
+        let cargo_args: Vec<String> =
+            args.iter().filter(|a| a.as_str() != "--crates").cloned().collect();
+        if cargo_args.is_empty() {
+            say(
+                lang,
+                "Please provide a search query",
+                "请提供搜索词",
+                "検索クエリを入力してください",
+                "검색어를 입력하세요",
+            );
+            return Ok(());
+        }
+        say(
+            lang,
+            &format!("Searching: {}", cargo_args[0]),
+            &format!("正在寻找: {}", cargo_args[0]),
+            &format!("検索中: {}", cargo_args[0]),
+            &format!("검색 중: {}", cargo_args[0]),
+        );
+        let status = std::process::Command::new("cargo")
+            .arg("search")
+            .args(&cargo_args)
+            .status()
+            .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
+        if !status.success() {
+            anyhow::bail!("search failed");
+        }
+        return Ok(());
+    }
+
     if args.is_empty() {
         say(
             lang,
@@ -1852,20 +1994,46 @@ fn cmd_search(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> 
         );
         return Ok(());
     }
+    let query = &args[0];
     say(
         lang,
-        &format!("Searching: {}", args[0]),
-        &format!("正在寻找: {}", args[0]),
-        &format!("検索中: {}", args[0]),
-        &format!("검색 중: {}", args[0]),
+        &format!("Searching {}: {}", registry::active_registry(), query),
+        &format!("正在寻找: {}", query),
+        &format!("検索中: {}", query),
+        &format!("검색 중: {}", query),
     );
-    let status = std::process::Command::new("cargo")
-        .arg("search")
-        .args(args)
-        .status()
-        .map_err(|e| anyhow::anyhow!("cargo: {e}"))?;
-    if !status.success() {
-        anyhow::bail!("search failed");
+    let results = registry::search(query)?;
+    if results.is_empty() {
+        println!(
+            "{}",
+            t(
+                lang,
+                "No packages found.",
+                "未找到匹配的包。",
+                "パッケージが見つかりませんでした。",
+                "패키지를 찾을 수 없습니다.",
+                "ไม่พบแพ็กเกจที่ตรงกัน",
+                "No packages found."
+            )
+        );
+        return Ok(());
+    }
+    for pkg in &results {
+        println!(
+            "{:<24} {:>8} {}  {}",
+            pkg.name.green(),
+            pkg.downloads,
+            t(
+                lang,
+                "downloads",
+                "下载",
+                "ダウンロード",
+                "다운로드",
+                "ดาวน์โหลด",
+                "downloads"
+            ),
+            pkg.description
+        );
     }
     Ok(())
 }

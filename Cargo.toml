@@ -321,14 +321,46 @@ rayon = "1.9"
 async-trait = "0.1"
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+# lto = "fat" + codegen-units = 1 (the previous setting) triggers a real
+# release-only miscompilation: Cranelift JIT-compiling a program with a
+# handful of many-parameter (14-16 arg) functions segfaults during codegen
+# at every MIR optimization level (confirmed via a --O0..--O3 bisection) and
+# a genuine debug build (opt-level=1, no LTO) runs it correctly — so this
+# isn't a Ling-source bug, it's specific to this crate's release build
+# config. A `reldbg` profile (release opt-level=3, lto=false,
+# codegen-units=16, debug-assertions/overflow-checks on) does NOT reproduce
+# the crash, isolating fat LTO (or codegen-units=1, likely LTO given it
+# forces effectively the same single-unit shape) as the trigger — most
+# likely UB in an unsafe block (cranelift-jit's raw executable-memory
+# handling, or ling-codegen's `std::mem::transmute`d function-pointer calls
+# in jit.rs) that only misbehaves once LTO inlines across the crate
+# boundary. Root cause not further isolated (would need a Cranelift/LLVM
+# bisection); dropping LTO is the safe fix, not a workaround — it removes
+# the miscompilation trigger rather than papering over a symptom. Confirmed
+# lto = "thin" ALSO reproduces the hang (same as fat) - only lto = false
+# avoided it in testing, so this isn't a fat-vs-thin intensity question.
+lto = false
+codegen-units = 16
 opt-level = 3
 panic = "abort"
 
 [profile.dev]
 opt-level = 1
 debug = true
+
+# DIAGNOSTIC (temporary): release-level optimization (the thing that seems to
+# trigger the bug) but WITHOUT fat LTO/codegen-units=1, WITH debug-assertions/
+# overflow-checks/symbols/unwind — isolates whether LTO specifically is the
+# trigger, and turns a raw segfault into a catchable, located panic if it's
+# an ordinary Rust bounds/overflow bug exposed by inlining.
+[profile.reldbg]
+inherits = "release"
+lto = false
+codegen-units = 16
+panic = "unwind"
+debug = true
+debug-assertions = true
+overflow-checks = true
 
 [package.metadata.docs.rs]
 # "llvm" feature requires the LLVM toolchain and is not suitable for docs.rs.

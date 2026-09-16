@@ -40,12 +40,24 @@ fn main() {
             // tree-walker (kept as the semantic reference / fallback).
             let wasm = args.iter().any(|a| a == "--wasm" || a == "--web");
             let use_interp = args.iter().any(|a| a == "--interp");
+            // Escape hatch for pathological O2/O3 compile-time blowups (e.g. the
+            // inliner splicing a many-call-site UI function back into a giant
+            // caller, then LICM/vectorizer/unroll chewing on the result) — lets a
+            // single file opt into a cheaper opt level without changing `ling
+            // run`'s O3 default for everything else. --O0/--O1/--O2/--O3.
+            let opt_override = args.iter().find_map(|a| match a.as_str() {
+                "--O0" => Some(ling::core::OptimizationLevel::None),
+                "--O1" => Some(ling::core::OptimizationLevel::O1),
+                "--O2" => Some(ling::core::OptimizationLevel::O2),
+                "--O3" => Some(ling::core::OptimizationLevel::O3),
+                _ => None,
+            });
             let file = args[2..]
                 .iter()
                 .map(|s| s.as_str())
                 .find(|a| is_ling_source(a))
                 .unwrap_or_else(|| {
-                    eprintln!("Usage: ling run [--wasm|--interp] <file.ling>");
+                    eprintln!("Usage: ling run [--wasm|--interp|--O0|--O1|--O2|--O3] <file.ling>");
                     std::process::exit(1);
                 });
             if wasm {
@@ -74,7 +86,7 @@ fn main() {
                 if is_server {
                     run_file(file);
                 } else {
-                    run_file_jit(file);
+                    run_file_jit(file, opt_override);
                 }
             }
         },
@@ -98,7 +110,7 @@ fn main() {
             let aot = args.iter().any(|a| a == "--aot");
             run_build(target, &out, &platforms, icon, pack, aot);
         },
-        Some(file) if is_ling_source(file) => run_file_jit(file),
+        Some(file) if is_ling_source(file) => run_file_jit(file, None),
         _ => {
             println!("ling {} — The Omniglot Systems Language", ling::VERSION);
             println!("Usage:");
@@ -151,7 +163,7 @@ fn run_file(path: &str) {
     }
 }
 
-fn run_file_jit(path: &str) {
+fn run_file_jit(path: &str, opt_override: Option<ling::core::OptimizationLevel>) {
     let resolved = std::path::Path::new(path);
     if !resolved.exists() {
         eprintln!("[ling] error: file does not exist: {}", resolved.display());
@@ -188,7 +200,9 @@ fn run_file_jit(path: &str) {
     // already uses — `ling run`'s default used to leave them off entirely
     // (OptimizationLevel::None), so every JIT run paid full call overhead on
     // every helper-function call and skipped loop-invariant hoisting.
-    let config = CompilerConfig { optimization: ling::core::OptimizationLevel::O3 };
+    let config = CompilerConfig {
+        optimization: opt_override.unwrap_or(ling::core::OptimizationLevel::O3),
+    };
     let compiler = ling::LingCompiler::new(config);
     if let Err(e) = compiler.compile_and_run_jit(path) {
         use ling::core::LingError;

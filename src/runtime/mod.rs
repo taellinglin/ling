@@ -3403,6 +3403,8 @@ impl Interpreter {
                     .collect::<Vec<_>>()
                     .join("");
                 println!("{s}");
+                use std::io::Write;
+                std::io::stdout().flush().ok();
                 return Ok(Value::Unit);
             },
             // print_color(colorIdx, text...) — ANSI-coloured console line.
@@ -9396,6 +9398,31 @@ impl Interpreter {
             "lingtp_get_status" => {
                 return Ok(Value::Number(self.last_lingtp_status as f64));
             },
+            // The wire protocol has no method/body concept of its own --
+            // every request is just one opaque string in, one opaque
+            // string back (see runtime::lingtp::fetch), and `lingtp_serve`
+            // matches routes by prefix against that raw string (a route
+            // registered at "/" is meant to catch every request, since every
+            // path starts with "/"). POST therefore can NOT prefix the
+            // string with e.g. "POST " -- that would stop it starting with
+            // "/" and break routing entirely. Instead the path stays in
+            // front, unchanged, with the body appended after a newline:
+            // path + "\n" + body. A GET's path is a URL path/query string
+            // and never legitimately contains a raw newline (callers percent-
+            // encode one if a field value has one), so "contains a newline"
+            // is an unambiguous, route-safe POST marker for a handler to
+            // check before splitting path from body.
+            #[cfg(not(target_arch = "wasm32"))]
+            "lingtp_post" => {
+                let host = self.arg_str(&args, 0, "");
+                let port = self.arg_num(&args, 1, 7780.0)? as u16;
+                let path = self.arg_str(&args, 2, "/");
+                let body = self.arg_str(&args, 3, "");
+                let combined = format!("{path}\n{body}");
+                let (status, resp_body) = lingtp::get(&host, port, &combined);
+                self.last_lingtp_status = status;
+                return Ok(Value::Str(resp_body));
+            },
             // Server: stage config (port + where to persist the host's
             // ML-DSA-87 identity key — generated once on first serve() and
             // reused after, so returning clients' TOFU pin stays meaningful).
@@ -9433,7 +9460,20 @@ impl Interpreter {
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     };
-                    let matched = routes.iter().find(|(p, _)| p == &pending.path);
+                    // Longest-matching-prefix, not exact equality: a request's
+                    // path routinely carries a `?query=string` (or, for a
+                    // dynamic app, a sub-path) that a fixed registered route
+                    // string was never going to equal exactly. A route
+                    // registered at "/" therefore acts as a catch-all —
+                    // every request path starts with "/" — while a more
+                    // specific registered prefix still wins over it. The
+                    // handler always receives the *full* original path
+                    // (query string included), same as before; it's up to
+                    // the handler to split on "?" itself if it cares.
+                    let matched = routes
+                        .iter()
+                        .filter(|(p, _)| pending.path.starts_with(p.as_str()))
+                        .max_by_key(|(p, _)| p.len());
                     let body = match matched {
                         Some((_, handler)) => match self.call_value(handler.clone(), vec![Value::Str(pending.path.clone())]) {
                             Ok(v) => v.to_string(),

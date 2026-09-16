@@ -27,12 +27,20 @@
 //   Server -> Client   ServerFinished { server_finished[32] }
 //   [client checks it — confirms the server actually derived the same key]
 //
-// Both sides then hold four independent keys, each an HKDF-SHA3 output of
-// the raw KEM shared secret under a distinct label: two AEAD data keys (one
-// per direction: client-writes/server-writes) and the two Finished keys
-// already used above. Ephemeral KEM keypair per connection => forward
-// secrecy; every AEAD frame carries its own fresh 24-byte nonce (see
+// Both sides then hold six independent keys, each an HKDF-SHA3 output of the
+// raw KEM shared secret under a distinct label: two AEAD data keys (one per
+// direction), the two Finished keys already used above, and two DICE-42
+// reactor seeds (one per direction). Ephemeral KEM keypair per connection =>
+// forward secrecy; every AEAD frame carries its own fresh 24-byte nonce (see
 // ling_crypto::symmetric::XChaCha20) => no nonce-reuse bookkeeping needed.
+//
+// Every data frame is then wrapped a second time by DICE-42 (the
+// Möbius-Helix Reactor, see ling_crypto::mobius_helix) under its own
+// independently-derived seed — Encrypt-then-Encrypt with independent keys,
+// a cascade that can only add work factor for an attacker, never subtract
+// it. The baseline confidentiality/integrity guarantee is still the
+// ML-DSA-87-authenticated hybrid handshake plus XChaCha20-Poly1305; DICE-42
+// is defense-in-depth on top, not a replacement for either.
 //
 // ── Application layer ──────────────────────────────────────────────────
 //
@@ -60,7 +68,7 @@ use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use ling_crypto::hybrid::{self, HybridKeypair};
-use ling_crypto::{Blake3, MlDsa87Keypair, Sha3_256};
+use ling_crypto::{Blake3, MlDsa87Keypair, MobiusHelixReactor, Sha3_256};
 
 const MAX_QUEUE: usize = 4096;
 const MAX_EVENTS: usize = 256;
@@ -124,6 +132,14 @@ struct SessionKeys {
     server_finished_key: [u8; 32],
     c2s_key: [u8; 32],
     s2c_key: [u8; 32],
+    /// Seeds for DICE-42 (the Möbius-Helix Reactor, see
+    /// `ling_crypto::mobius_helix`) — an independently-keyed cascade layer
+    /// wrapped *around* the XChaCha20-Poly1305 frame below. Defense-in-depth
+    /// on top of the vetted AEAD, not a replacement for it: breaking this
+    /// channel now requires breaking both layers, since each is keyed from a
+    /// distinct HKDF label off the same handshake shared secret.
+    c2s_reactor_seed: [u8; 32],
+    s2c_reactor_seed: [u8; 32],
 }
 
 fn derive_session_keys(shared_secret: &[u8; 32], client_random: &[u8; 32], server_random: &[u8; 32]) -> SessionKeys {
@@ -140,17 +156,24 @@ fn derive_session_keys(shared_secret: &[u8; 32], client_random: &[u8; 32], serve
         server_finished_key: derive(b"lingtp-v1 server-finished"),
         c2s_key: derive(b"lingtp-v1 client-to-server"),
         s2c_key: derive(b"lingtp-v1 server-to-client"),
+        c2s_reactor_seed: derive(b"lingtp-v1 dice42-client-to-server"),
+        s2c_reactor_seed: derive(b"lingtp-v1 dice42-server-to-client"),
     }
 }
 
-fn encrypt_frame(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
-    ling_crypto::XChaCha20::new(*key)
+/// Cascade seal: XChaCha20-Poly1305 (the real AEAD) first, then DICE-42
+/// wraps the entire AEAD output under an independently-derived key —
+/// textbook Encrypt-then-Encrypt with independent keys.
+fn encrypt_frame(key: &[u8; 32], reactor_seed: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
+    let inner = ling_crypto::XChaCha20::new(*key)
         .encrypt(plaintext)
-        .expect("XChaCha20 encrypt with a freshly generated nonce never fails")
+        .expect("XChaCha20 encrypt with a freshly generated nonce never fails");
+    MobiusHelixReactor::derive(reactor_seed).seal(&random_24(), &inner)
 }
 
-fn decrypt_frame(key: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-    ling_crypto::XChaCha20::new(*key).decrypt(ciphertext)
+fn decrypt_frame(key: &[u8; 32], reactor_seed: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+    let inner = MobiusHelixReactor::derive(reactor_seed).open(ciphertext)?;
+    ling_crypto::XChaCha20::new(*key).decrypt(&inner)
 }
 
 // ── known_hosts (TOFU) ───────────────────────────────────────────────────
@@ -191,6 +214,13 @@ fn to_hex(bytes: &[u8]) -> String {
 fn random_32() -> [u8; 32] {
     use rand::RngCore;
     let mut buf = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut buf);
+    buf
+}
+
+fn random_24() -> [u8; 24] {
+    use rand::RngCore;
+    let mut buf = [0u8; 24];
     rand::rngs::OsRng.fill_bytes(&mut buf);
     buf
 }
@@ -278,7 +308,7 @@ fn fetch(host: &str, port: u16, path: &str) -> (i32, String) {
         },
     };
 
-    let req = encrypt_frame(&session.keys.c2s_key, path.as_bytes());
+    let req = encrypt_frame(&session.keys.c2s_key, &session.keys.c2s_reactor_seed, path.as_bytes());
     if write_frame(&mut session.stream, &req).is_err() {
         return (0, String::new());
     }
@@ -286,7 +316,7 @@ fn fetch(host: &str, port: u16, path: &str) -> (i32, String) {
         Ok(r) => r,
         Err(_) => return (0, String::new()),
     };
-    match decrypt_frame(&session.keys.s2c_key, &resp) {
+    match decrypt_frame(&session.keys.s2c_key, &session.keys.s2c_reactor_seed, &resp) {
         Ok(body) => (1, String::from_utf8_lossy(&body).into_owned()),
         Err(_) => (0, String::new()),
     }
@@ -448,7 +478,7 @@ fn handle_connection(mut stream: TcpStream, id: u64, shared: Arc<ServeShared>) {
             Ok(f) => f,
             Err(_) => break,
         };
-        let path = match decrypt_frame(&keys.c2s_key, &req_frame) {
+        let path = match decrypt_frame(&keys.c2s_key, &keys.c2s_reactor_seed, &req_frame) {
             Ok(p) => String::from_utf8_lossy(&p).into_owned(),
             Err(_) => break,
         };
@@ -461,7 +491,7 @@ fn handle_connection(mut stream: TcpStream, id: u64, shared: Arc<ServeShared>) {
             q.push_back((id, PendingRequest { path, respond_to: resp_tx }));
         }
         let body = resp_rx.recv().unwrap_or_default();
-        let resp_frame = encrypt_frame(&keys.s2c_key, body.as_bytes());
+        let resp_frame = encrypt_frame(&keys.s2c_key, &keys.s2c_reactor_seed, body.as_bytes());
         if write_frame(&mut stream, &resp_frame).is_err() {
             break;
         }

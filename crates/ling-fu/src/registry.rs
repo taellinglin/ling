@@ -529,6 +529,192 @@ pub fn active_registry() -> String {
     registry_url()
 }
 
+// ─── install / search (read-only, public — no auth required) ─────────────────
+//
+// `lingfu install <name>` / `lingfu search <query>` default to querying
+// fu.ling-lang.org (the real Ling package registry) instead of shelling out
+// to `cargo add`/`cargo search` against crates.io. Browsing and installing
+// public packages needs no API key: the server already excludes private
+// packages from these endpoints (see `แพ็กเกจดูได้`/`เอพีไอแพ็กเกจเดี่ยว` in
+// fu.ling-lang.org's controllers/packages.ling), so a plain unauthenticated
+// GET is correct and sufficient.
+
+/// A package record as returned by the registry's JSON API — shared shape
+/// for `/api/packages`, `/api/packages/search`, and `/api/package` (the
+/// latter two also populate `version`/`checksum`, the former two omit them).
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct PackageInfo {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub checksum: String,
+    #[serde(default)]
+    pub downloads: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct PackagesEnvelope {
+    packages: Vec<PackageInfo>,
+}
+
+/// Minimal percent-encoding for a single query-string value. Package names
+/// and search terms are almost always plain ASCII, but this keeps spaces,
+/// non-ASCII text, and reserved characters (`&`, `=`, `?`, `#`) from
+/// corrupting the query string without pulling in a dedicated crate just for
+/// this one use. Encodes UTF-8 bytes individually, which is the correct way
+/// to percent-encode non-ASCII text in a URL.
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            },
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// `lingfu search <query>` (default mode) — `GET /api/packages/search?q=...`
+/// against the active registry. The server does the substring match against
+/// name/description (see `เอพีไอแพ็กเกจค้นหา`), so this never downloads the
+/// full package list just to filter it client-side.
+pub fn search(query: &str) -> Result<Vec<PackageInfo>> {
+    let registry = registry_url();
+    let url = format!("{registry}/api/packages/search?q={}", urlencode(query));
+    match ureq::get(&url).call() {
+        Ok(r) => {
+            let envelope: PackagesEnvelope =
+                r.into_json().context("parsing registry search response")?;
+            Ok(envelope.packages)
+        },
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            bail!("registry search failed ({code}): {body}");
+        },
+        Err(e) => bail!("could not reach registry {registry}: {e}"),
+    }
+}
+
+/// `GET /api/package?name=...` — the single-package lookup, returning the
+/// latest non-yanked version and its checksum. 404 (package not found, or
+/// private/unpublished) surfaces as a descriptive error.
+pub fn lookup(name: &str) -> Result<PackageInfo> {
+    let registry = registry_url();
+    let url = format!("{registry}/api/package?name={}", urlencode(name));
+    match ureq::get(&url).call() {
+        Ok(r) => r.into_json().context("parsing registry package response"),
+        Err(ureq::Error::Status(404, _)) => {
+            bail!("package '{name}' was not found on {registry}")
+        },
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            bail!("registry lookup failed ({code}): {body}");
+        },
+        Err(e) => bail!("could not reach registry {registry}: {e}"),
+    }
+}
+
+/// Downloads `<name>-<version>.tgz` from the registry's static `/dl` mount
+/// straight to `dest`, streaming the response body to disk.
+fn download_tarball(name: &str, version: &str, dest: &Path) -> Result<()> {
+    let registry = registry_url();
+    let url = format!(
+        "{registry}/dl/{}-{}.tgz",
+        urlencode(name),
+        urlencode(version)
+    );
+    match ureq::get(&url).call() {
+        Ok(r) => {
+            let mut file = std::fs::File::create(dest)
+                .with_context(|| format!("creating {}", dest.display()))?;
+            std::io::copy(&mut r.into_reader(), &mut file)
+                .context("downloading package tarball")?;
+            Ok(())
+        },
+        Err(ureq::Error::Status(code, _)) => {
+            bail!("could not download {name}-{version}.tgz from {registry} ({code})")
+        },
+        Err(e) => bail!("could not reach registry {registry}: {e}"),
+    }
+}
+
+/// Extracts a gzip-tar package archive into `dest_dir` (created if missing).
+/// Mirrors the flat-root layout `publish`'s `build_tarball` produces: the
+/// manifest and source sit directly at the tar root, no wrapping directory.
+fn extract_tarball(tarball: &Path, dest_dir: &Path) -> Result<()> {
+    use flate2::read::GzDecoder;
+    std::fs::create_dir_all(dest_dir)
+        .with_context(|| format!("creating {}", dest_dir.display()))?;
+    let file = std::fs::File::open(tarball)
+        .with_context(|| format!("opening downloaded {}", tarball.display()))?;
+    let gz = GzDecoder::new(file);
+    let mut archive = tar::Archive::new(gz);
+    archive
+        .unpack(dest_dir)
+        .with_context(|| format!("extracting package into {}", dest_dir.display()))?;
+    Ok(())
+}
+
+/// Looks for a package's entry file inside an extracted `ling_modules/<name>`
+/// directory, relative to that directory. Same candidate names and
+/// subdirectory search order as `auto_entry` in `ling`'s own `src/main.rs`
+/// (`main.ling`/`start.ling`/`启.灵`/`เริ่ม.ลิง` at the root, then
+/// `ต้นกำเนิด`/`灵源`/`src`), falling back to the first `.ling` file found.
+fn find_entry(dir: &Path) -> Option<PathBuf> {
+    fn search_in(dir: &Path, base: &Path) -> Option<PathBuf> {
+        for name in ["main.ling", "start.ling", "启.灵", "เริ่ม.ลิง"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return p.strip_prefix(base).ok().map(Path::to_path_buf);
+            }
+        }
+        for subdir in ["ต้นกำเนิด", "灵源", "src"] {
+            let sub = dir.join(subdir);
+            if sub.is_dir() {
+                if let Some(e) = search_in(&sub, base) {
+                    return Some(e);
+                }
+            }
+        }
+        std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .find(|e| e.path().extension().is_some_and(|x| x == "ling"))
+            .and_then(|e| e.path().strip_prefix(base).ok().map(Path::to_path_buf))
+    }
+    search_in(dir, dir)
+}
+
+/// Result of a successful `install`: where the package landed, and (if one
+/// could be found) its entry file relative to that directory.
+pub struct InstallResult {
+    pub name: String,
+    pub version: String,
+    pub dir: PathBuf,
+    pub entry: Option<PathBuf>,
+}
+
+/// `lingfu install <name>` (default mode) — looks the package up on the
+/// registry, downloads its latest non-yanked version's tarball, and extracts
+/// it into `ling_modules/<name>/` under the current directory.
+pub fn install(name: &str) -> Result<InstallResult> {
+    let info = lookup(name)?;
+    if info.version.is_empty() {
+        bail!("package '{name}' has no published versions");
+    }
+    let dest_dir = PathBuf::from("ling_modules").join(&info.name);
+    let tmp = tempfile::NamedTempFile::new().context("creating temp file for download")?;
+    download_tarball(&info.name, &info.version, tmp.path())?;
+    extract_tarball(tmp.path(), &dest_dir)?;
+    let entry = find_entry(&dest_dir);
+    Ok(InstallResult { name: info.name, version: info.version, dir: dest_dir, entry })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

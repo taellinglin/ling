@@ -61,7 +61,7 @@ impl MicInput {
     /// Begin streaming; `callback` is called with each buffer of f32 PCM samples.
     pub fn start<F>(&self, callback: F) -> Result<(), MicError>
     where
-        F: Fn(&[f32]) + Send + 'static,
+        F: Fn(&[f32]) + Send + Sync + 'static,
     {
         self.inner.start(callback)
     }
