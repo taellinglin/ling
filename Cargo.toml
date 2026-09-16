@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.47"
+version = "2030.1.48"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -175,7 +175,7 @@ ling-ai = { path = "crates/ling-ai", version = "2030.0.8" }
 ling-icon = { path = "crates/ling-icon", version = "2030.0.8" }
 ling-audio = { workspace = true }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic = { path = "crates/ling-mic", version = "2030.0.9" }
+ling-mic = { path = "crates/ling-mic", version = "2030.0.10" }
 ling-crypto = { path = "crates/ling-crypto", version = "2030.1.11" }
 subtle = "2.6"   # constant-time compare for lingtp_*'s handshake Finished-MAC check
 ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
@@ -263,7 +263,7 @@ winresource = "0.1"
 ling-core     = { path = "crates/ling-core", version = "2030.0.8" }
 ling-lex      = { path = "crates/ling-lex", version = "2030.0.7" }
 ling-ast      = { path = "crates/ling-ast", version = "2030.0.7" }
-ling-mir      = { path = "crates/ling-mir", version = "2030.0.10" }
+ling-mir      = { path = "crates/ling-mir", version = "2030.0.11" }
 ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.10" }
 ling-runtime  = { path = "crates/ling-runtime", version = "2030.0.7" }
 ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.7" }
@@ -288,7 +288,7 @@ blake3        = "1.5"
 # Audio
 ling-audio = { path = "crates/ling-audio", version = "2030.0.11" }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic   = { path = "crates/ling-mic", version = "2030.0.9" }
+ling-mic   = { path = "crates/ling-mic", version = "2030.0.10" }
 cpal       = "0.15"
 hound      = "3.5"
 half       = "2"
