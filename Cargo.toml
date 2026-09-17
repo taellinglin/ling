@@ -264,7 +264,7 @@ ling-core     = { path = "crates/ling-core", version = "2030.0.8" }
 ling-lex      = { path = "crates/ling-lex", version = "2030.0.7" }
 ling-ast      = { path = "crates/ling-ast", version = "2030.0.7" }
 ling-mir      = { path = "crates/ling-mir", version = "2030.0.11" }
-ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.10" }
+ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.11" }
 ling-runtime  = { path = "crates/ling-runtime", version = "2030.0.7" }
 ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.7" }
 ling-macro    = { path = "crates/ling-macro", version = "2030.0.7" }
