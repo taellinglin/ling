@@ -1,6 +1,6 @@
 [package]
 name = "ling-user"
-version = "2030.1.2"
+version = "2030.1.3"
 edition = "2021"
 authors = ["vinceswu"]
 description = "Userland runtime for Ling programs on LingOS"

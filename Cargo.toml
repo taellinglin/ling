@@ -171,7 +171,7 @@ fontdue = "0.9"   # rasterizes a kernel project's idle-timeout font (font/*.otf)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 minifb = "0.27"
 rayon = { workspace = true }   # parallel software rasteriser (banded flush)
-ling-ai = { path = "crates/ling-ai", version = "2030.0.8" }
+ling-ai = { path = "crates/ling-ai", version = "2030.0.9" }
 ling-icon = { path = "crates/ling-icon", version = "2030.0.8" }
 ling-audio = { workspace = true }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
@@ -277,7 +277,7 @@ ling-animation = { path = "crates/ling-animation", version = "2030.0.7" }
 ling-input    = { path = "crates/ling-input", version = "2030.0.8" }
 
 # AI
-ling-ai = { path = "crates/ling-ai", version = "2030.0.8" }
+ling-ai = { path = "crates/ling-ai", version = "2030.0.9" }
 
 # Crypto
 ling-crypto   = { path = "crates/ling-crypto", version = "2030.1.12" }
@@ -310,7 +310,7 @@ wasm-bindgen = "0.2.95"
 
 
 # Physics & math
-ling-physics = { path = "crates/ling-physics", version = "2030.1.16" }
+ling-physics = { path = "crates/ling-physics", version = "2030.1.17" }
 glam         = "0.33"
 
 # Shared

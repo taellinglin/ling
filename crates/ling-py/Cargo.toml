@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.22", features = ["extension-module"] }
 ling-audio   = { path = "../ling-audio", version = "2030.0.12" }
-ling-physics = { path = "../ling-physics", version = "2030.1.16" }
+ling-physics = { path = "../ling-physics", version = "2030.1.17" }
 glam         = "0.33"
 
 # Async WebSocket for netplay

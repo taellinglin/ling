@@ -105,9 +105,13 @@ pub struct GltfAnimation {
 
 /// A procedurally-generated bone for auto-rigging a mesh that shipped with no
 /// skeleton. `head`/`tail` are rest positions in mesh-local space; `parent` is
-/// an index into the bone list (or -1 for the root).
+/// an index into the bone list (or -1 for the root). `name` matches this
+/// project's real Flyff-derived rig naming convention (3ds Max Biped scheme
+/// — "Bip01 ...") — see the doc comment on `autorig` for where that's
+/// verified from, not guessed.
 #[derive(Clone, Debug)]
 pub struct SimpleBone {
+    pub name: String,
     pub head: Vec3,
     pub tail: Vec3,
     pub parent: i32,
@@ -222,9 +226,28 @@ impl GltfModel {
         Err("compile with feature 'with-gltf' to load glTF files".to_string())
     }
 
-    /// Procedurally rig a mesh that has no skeleton: build a 12-bone humanoid
-    /// skeleton from the model's bounding box and weight-paint every vertex to
-    /// its nearest two bones (envelope skinning). Returns the bone count.
+    /// Procedurally rig a mesh that has no skeleton: build a 20-bone humanoid
+    /// skeleton from the model's bounding box and weight-paint every vertex
+    /// to its nearest four bones (envelope skinning). Returns the bone
+    /// count.
+    ///
+    /// Bone names/hierarchy match this project's real Flyff-derived rig —
+    /// not a guess at Flyff's convention, a direct read of it: this repo's
+    /// own `models/all/rig/mvr_NpcAchaben.ling` (generated from an actual
+    /// ripped `.chr` by `tools/chr2ling.py`) carries the real
+    /// `mvr_NpcAchaben_bone_names` list, which uses exactly this "Bip01 ..."
+    /// 3ds Max Biped scheme:
+    ///   Bip01, Bip01 Pelvis, Bip01 Spine, Bip01 Spine1, Bip01 Neck,
+    ///   Bip01 Head, Bip01 L/R Clavicle, Bip01 L/R UpperArm,
+    ///   Bip01 L/R ForeArm, Bip01 L/R Hand, Bip01 L/R Thigh, Bip01 L/R Calf,
+    ///   Bip01 L/R Foot — plus a few things specific to that one NPC
+    ///   (Ponytail1/11, Bone01-04 for a cloth chain) that aren't part of the
+    ///   base humanoid skeleton, so aren't reproduced here.
+    /// This engine has no separate "vertex group" concept (no Blender/Maya-
+    /// style named weight layer distinct from the skinning data itself) —
+    /// joint index + weight IS the vertex group assignment, so naming the
+    /// bones this way already gives every vertex's group membership the
+    /// same names a real Flyff rig would.
     pub fn autorig(&mut self) -> usize {
         let mut lo = Vec3::splat(f32::INFINITY);
         let mut hi = Vec3::splat(f32::NEG_INFINITY);
@@ -241,45 +264,88 @@ impl GltfModel {
         let cx = (lo.x + hi.x) * 0.5;
         let cz = (lo.z + hi.z) * 0.5;
         let aw = (hi.x - lo.x).max(1e-3) * 0.5; // half-width, for arm/leg spread
+        let ad = (hi.z - lo.z).max(1e-3) * 0.5; // half-depth, for the feet's forward offset
         let y = |f: f32| lo.y + f * h;
-        let bone = |hx: f32, hy: f32, tx: f32, ty: f32, p: i32| SimpleBone {
-            head: Vec3::new(hx, hy, cz),
-            tail: Vec3::new(tx, ty, cz),
+        let bone = |name: &str, hx: f32, hy: f32, hz: f32, tx: f32, ty: f32, tz: f32, p: i32| SimpleBone {
+            name: name.to_string(),
+            head: Vec3::new(hx, hy, hz),
+            tail: Vec3::new(tx, ty, tz),
             parent: p,
         };
         self.bones = vec![
-            bone(cx, y(0.50), cx, y(0.62), -1), // 0 hips
-            bone(cx, y(0.62), cx, y(0.74), 0),  // 1 spine
-            bone(cx, y(0.74), cx, y(0.84), 1),  // 2 chest
-            bone(cx, y(0.86), cx, y(1.00), 2),  // 3 head
-            bone(cx + aw * 0.28, y(0.80), cx + aw * 0.60, y(0.78), 2), // 4 L upper arm
-            bone(cx + aw * 0.60, y(0.78), cx + aw * 0.95, y(0.70), 4), // 5 L forearm
-            bone(cx - aw * 0.28, y(0.80), cx - aw * 0.60, y(0.78), 2), // 6 R upper arm
-            bone(cx - aw * 0.60, y(0.78), cx - aw * 0.95, y(0.70), 6), // 7 R forearm
-            bone(cx + aw * 0.18, y(0.50), cx + aw * 0.18, y(0.26), 0), // 8 L thigh
-            bone(cx + aw * 0.18, y(0.26), cx + aw * 0.18, y(0.02), 8), // 9 L shin
-            bone(cx - aw * 0.18, y(0.50), cx - aw * 0.18, y(0.26), 0), // 10 R thigh
-            bone(cx - aw * 0.18, y(0.26), cx - aw * 0.18, y(0.02), 10), // 11 R shin
+            // 0 root — a zero-length hierarchy anchor, coincident with the
+            // pelvis, same as a real Biped's Bip01. Excluded from weight
+            // painting below: a real Biped never skins geometry to the
+            // root either, and leaving it in the nearest-bone search would
+            // just steal weight from Pelvis for anything close to the hips.
+            bone("Bip01", cx, y(0.50), cz, cx, y(0.50), cz, -1),
+            bone("Bip01 Pelvis", cx, y(0.50), cz, cx, y(0.58), cz, 0),           // 1
+            bone("Bip01 Spine", cx, y(0.58), cz, cx, y(0.68), cz, 1),           // 2
+            bone("Bip01 Spine1", cx, y(0.68), cz, cx, y(0.78), cz, 2),          // 3
+            bone("Bip01 Neck", cx, y(0.78), cz, cx, y(0.86), cz, 3),            // 4
+            bone("Bip01 Head", cx, y(0.86), cz, cx, y(1.00), cz, 4),            // 5
+            bone("Bip01 L Clavicle", cx, y(0.80), cz, cx + aw * 0.25, y(0.79), cz, 3), // 6
+            bone("Bip01 L UpperArm", cx + aw * 0.25, y(0.79), cz, cx + aw * 0.58, y(0.76), cz, 6), // 7
+            bone("Bip01 L ForeArm", cx + aw * 0.58, y(0.76), cz, cx + aw * 0.88, y(0.68), cz, 7),  // 8
+            bone("Bip01 L Hand", cx + aw * 0.88, y(0.68), cz, cx + aw * 1.02, y(0.62), cz, 8),     // 9
+            bone("Bip01 R Clavicle", cx, y(0.80), cz, cx - aw * 0.25, y(0.79), cz, 3), // 10
+            bone("Bip01 R UpperArm", cx - aw * 0.25, y(0.79), cz, cx - aw * 0.58, y(0.76), cz, 10), // 11
+            bone("Bip01 R ForeArm", cx - aw * 0.58, y(0.76), cz, cx - aw * 0.88, y(0.68), cz, 11),  // 12
+            bone("Bip01 R Hand", cx - aw * 0.88, y(0.68), cz, cx - aw * 1.02, y(0.62), cz, 12),     // 13
+            bone("Bip01 L Thigh", cx + aw * 0.18, y(0.50), cz, cx + aw * 0.18, y(0.27), cz, 1),     // 14
+            bone("Bip01 L Calf", cx + aw * 0.18, y(0.27), cz, cx + aw * 0.18, y(0.06), cz, 14),     // 15
+            // feet get a forward (+Z) tail offset — real feet extend
+            // forward from the ankle, not straight down like another calf
+            // segment — so forward-most vertices (toes) actually bind
+            // nearest to the foot bone instead of the calf.
+            bone("Bip01 L Foot", cx + aw * 0.18, y(0.06), cz, cx + aw * 0.18, y(0.0), cz + ad * 0.55, 15), // 16
+            bone("Bip01 R Thigh", cx - aw * 0.18, y(0.50), cz, cx - aw * 0.18, y(0.27), cz, 1),     // 17
+            bone("Bip01 R Calf", cx - aw * 0.18, y(0.27), cz, cx - aw * 0.18, y(0.06), cz, 17),     // 18
+            bone("Bip01 R Foot", cx - aw * 0.18, y(0.06), cz, cx - aw * 0.18, y(0.0), cz + ad * 0.55, 18), // 19
         ];
-        // weight each vertex to its nearest two bones (inverse-square falloff)
+        // Weight each vertex to its nearest FOUR bones (inverse-square
+        // falloff), not just two — GltfVertex already carries 4 joint/
+        // weight slots (real skinned .glb imports use all 4; only autorig's
+        // own envelope skinning was leaving 2 of them zeroed), and
+        // skin_local() below now blends across all 4. Two-bone blending is
+        // fine mid-limb but pinches/hinges unnaturally right at a joint
+        // (knee, ankle, elbow, shoulder) where a vertex actually sits
+        // between three or more bone influences — a standard reason real
+        // rigs use 4-bone skinning, not a hypothetical one.
         for m in &mut self.meshes {
             for v in &mut m.verts {
-                let mut best0 = (f32::INFINITY, 0usize);
-                let mut best1 = (f32::INFINITY, 0usize);
+                let mut best: [(f32, usize); 4] =
+                    [(f32::INFINITY, 0); 4];
                 for (i, b) in self.bones.iter().enumerate() {
+                    if i == 0 {
+                        continue; // root: not skinned, see autorig's doc comment
+                    }
                     let d = point_seg_dist(v.pos, b.head, b.tail);
-                    if d < best0.0 {
-                        best1 = best0;
-                        best0 = (d, i);
-                    } else if d < best1.0 {
-                        best1 = (d, i);
+                    if d < best[0].0 {
+                        best[3] = best[2];
+                        best[2] = best[1];
+                        best[1] = best[0];
+                        best[0] = (d, i);
+                    } else if d < best[1].0 {
+                        best[3] = best[2];
+                        best[2] = best[1];
+                        best[1] = (d, i);
+                    } else if d < best[2].0 {
+                        best[3] = best[2];
+                        best[2] = (d, i);
+                    } else if d < best[3].0 {
+                        best[3] = (d, i);
                     }
                 }
-                let w0 = 1.0 / (best0.0 * best0.0 + 1e-4);
-                let w1 = 1.0 / (best1.0 * best1.0 + 1e-4);
-                let s = w0 + w1;
-                v.joints = [best0.1 as u16, best1.1 as u16, 0, 0];
-                v.weights = [w0 / s, w1 / s, 0.0, 0.0];
+                let w: [f32; 4] = [
+                    1.0 / (best[0].0 * best[0].0 + 1e-4),
+                    1.0 / (best[1].0 * best[1].0 + 1e-4),
+                    1.0 / (best[2].0 * best[2].0 + 1e-4),
+                    1.0 / (best[3].0 * best[3].0 + 1e-4),
+                ];
+                let s = w[0] + w[1] + w[2] + w[3];
+                v.joints = [best[0].1 as u16, best[1].1 as u16, best[2].1 as u16, best[3].1 as u16];
+                v.weights = [w[0] / s, w[1] / s, w[2] / s, w[3] / s];
             }
         }
         self.bones.len()
@@ -339,10 +405,21 @@ impl GltfModel {
                     .iter()
                     .map(|v| {
                         let p = v.pos.extend(1.0);
-                        let j0 = v.joints[0] as usize;
-                        let j1 = v.joints[1] as usize;
-                        let sp = (mats[j0] * p).truncate() * v.weights[0]
-                            + (mats[j1] * p).truncate() * v.weights[1];
+                        // 4-bone linear-blend skinning — a weight of 0.0 for
+                        // an unused slot (real .glb imports and autorig's
+                        // own bounding-box rig alike, when fewer than 4
+                        // bones are actually in range) contributes nothing,
+                        // so this is exactly the old 2-bone behavior when
+                        // only 2 slots are populated, and real 4-bone
+                        // blending when they are.
+                        let mut sp = Vec3::ZERO;
+                        for k in 0..4 {
+                            let w = v.weights[k];
+                            if w != 0.0 {
+                                let j = v.joints[k] as usize;
+                                sp += (mats[j] * p).truncate() * w;
+                            }
+                        }
                         [sp.x, sp.y, sp.z]
                     })
                     .collect()
