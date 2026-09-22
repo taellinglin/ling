@@ -45,6 +45,18 @@ impl ArchWeights {
             ArchWeights::Qwen3(w) => w.forward(input, offset),
         }
     }
+
+    /// Must be called before each generation. glm4 resets its own KV cache
+    /// whenever it sees offset 0, but qwen3 leaves that to the caller — a
+    /// second generation on the same handle otherwise appends onto the
+    /// previous conversation's cache at wrong positions and instantly
+    /// produces EOS/garbage (empty replies from request #2 onward).
+    fn reset_state(&mut self) {
+        match self {
+            ArchWeights::Glm4(_) => {}
+            ArchWeights::Qwen3(w) => w.clear_kv_cache(),
+        }
+    }
 }
 
 pub struct LoadedModel {
@@ -282,6 +294,7 @@ impl LoadedModel {
             Ok(w) => w,
             Err(_) => return,
         };
+        weights.reset_state();
         let mut stream = TokenOutputStream::new(&self.tokenizer);
 
         for index in 0..max_tokens.max(1) {
