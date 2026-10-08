@@ -369,6 +369,67 @@ pub unsafe extern "C" fn ling_kernel_vga_write_str(s: u64) -> u64 {
     0
 }
 
+/// aarch64/Raspberry Pi idle loop with a live uptime clock painted on the boot
+/// banner. The minimal Pi kernel calls this instead of a bare `wfi`, so there's
+/// visible proof the system is actually running — important on Pi 5, which has
+/// no serial console and, until the GIC-400 is wired, no timer interrupts. It
+/// polls the ARM generic timer (`CNTPCT_EL0`, a CPU register that works on every
+/// Pi) rather than relying on an IRQ tick. Never returns.
+#[cfg(target_arch = "aarch64")]
+#[no_mangle]
+pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
+    use crate::drivers::{font8x8, framebuffer};
+    console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n");
+    const BAR: u32 = 0x6C_3A_FF;
+    let mut last = u64::MAX;
+    loop {
+        let secs = arch::timer::now_ms() / 1000;
+        if secs != last {
+            last = secs;
+            if framebuffer::available() {
+                let mut buf = [0u8; 28];
+                let mut n = 0;
+                for &b in b"uptime: " {
+                    buf[n] = b;
+                    n += 1;
+                }
+                n += write_decimal(&mut buf[n..], secs);
+                buf[n] = b's';
+                n += 1;
+                let tw = n as u32 * 8;
+                let x = framebuffer::width().saturating_sub(tw + 20);
+                framebuffer::fill_rect(x.saturating_sub(4), 8, tw + 12, 24, BAR);
+                font8x8::draw_str(x, 12, &buf[..n], 0xFF_FF_FF, BAR);
+            }
+        }
+        arch::timer::delay_us(50_000);
+    }
+}
+
+/// Write `v` as decimal digits into `buf`, returning how many bytes were used.
+#[cfg(target_arch = "aarch64")]
+fn write_decimal(buf: &mut [u8], mut v: u64) -> usize {
+    if buf.is_empty() {
+        return 0;
+    }
+    if v == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    while v > 0 {
+        tmp[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        i += 1;
+    }
+    let n = i.min(buf.len());
+    for j in 0..n {
+        buf[j] = tmp[i - 1 - j];
+    }
+    n
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_vga_write_char(c: u64) -> u64 {
     console_write(&[c as u8]);

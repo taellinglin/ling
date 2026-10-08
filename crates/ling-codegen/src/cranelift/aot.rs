@@ -140,6 +140,10 @@ fn declare_runtime_functions(
             types::I64,
         ),
         ("ling_kernel_halt", &[], types::I64),
+        // aarch64/Raspberry Pi idle loop with a live on-screen uptime clock
+        // (proof-of-life substitute for `wfi` on Pi 5, which has no serial and
+        // no timer IRQs yet). No-op import on x86_64 (never called there).
+        ("ling_kernel_rpi_idle", &[], types::I64),
         ("ling_kernel_cli", &[], types::I64),
         ("ling_kernel_sti", &[], types::I64),
         ("ling_kernel_inb", &[types::I64], types::I64),
