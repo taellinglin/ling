@@ -1571,6 +1571,7 @@ fn dock_hit(mx: i64, my: i64) -> i32 {
 /// before reading any slot getter.
 static mut SETTINGS_LOADED: bool = false;
 static mut SEED_DONE: bool = false;
+static mut BOOT_MUSIC_STARTED: bool = false;
 
 /// Read lingfs `/dns` (two dotted-quad lines: primary, secondary) and
 /// apply it, so DNS is configurable without a rebuild. Absent/garbled =
@@ -1639,6 +1640,13 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         // frame, so the ~1.5MiB write never freezes a single frame.
         if !SEED_DONE {
             SEED_DONE = media::seed_pelipo();
+        }
+        // Start the Seraph startup loop once, as the desktop comes up (the mixer
+        // + AC97 pump are live by the first frame). Loops as background music
+        // until the Media player takes over the PCM channel.
+        if !BOOT_MUSIC_STARTED {
+            BOOT_MUSIC_STARTED = true;
+            media::play_boot_loop();
         }
         // Service a pending package-manager sync here (not on the open path):
         // the pkg window's "syncing…" frame was presented last frame, so the

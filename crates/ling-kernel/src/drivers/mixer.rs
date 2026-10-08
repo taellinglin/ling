@@ -508,6 +508,7 @@ static mut PCM_BITS: u8 = 8;
 static mut PCM_POS: u64 = 0; // 16.16 fixed-point source frame index
 static mut PCM_STEP: u64 = 0; // src frames per output frame, 16.16
 static mut PCM_STATE: u32 = PCM_STOPPED;
+static mut PCM_LOOP: bool = false; // wrap to start at end instead of stopping
 
 /// Point the PCM player at a raw sample buffer. `frames` is the number of
 /// whole sample frames (already accounting for channels). The buffer must
@@ -522,7 +523,14 @@ pub fn pcm_load(ptr: *const u8, frames: u64, rate: u32, channels: u8, bits: u8) 
         PCM_POS = 0;
         PCM_STEP = ((rate as u64) << 16) / SAMPLE_RATE as u64;
         PCM_STATE = PCM_STOPPED;
+        PCM_LOOP = false;
     }
+}
+
+/// Enable/disable seamless looping (wrap to the start at end-of-buffer rather
+/// than stopping). Used by the boot/startup music.
+pub fn pcm_set_loop(on: bool) {
+    unsafe { PCM_LOOP = on };
 }
 
 pub fn pcm_play() {
@@ -563,11 +571,16 @@ unsafe fn pcm_next() -> f64 {
     if PCM_STATE != PCM_PLAYING || PCM_PTR.is_null() {
         return 0.0;
     }
-    let idx = PCM_POS >> 16;
+    let mut idx = PCM_POS >> 16;
     if idx >= PCM_FRAMES {
-        PCM_STATE = PCM_STOPPED;
-        PCM_POS = 0;
-        return 0.0;
+        if PCM_LOOP && PCM_FRAMES > 0 {
+            PCM_POS = 0;
+            idx = 0;
+        } else {
+            PCM_STATE = PCM_STOPPED;
+            PCM_POS = 0;
+            return 0.0;
+        }
     }
     let ch = PCM_CH as u64;
     let bytes_per_sample = (PCM_BITS / 8) as u64;

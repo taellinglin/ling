@@ -28,6 +28,14 @@ pub static ANTHEM_WAV: &[u8] = include_bytes!("../../assets/anthem.wav");
 #[cfg(not(feature = "request_framebuffer"))]
 pub static ANTHEM_WAV: &[u8] = &[];
 
+/// "Seraph" boot/startup loop — a 32s mono 22kHz 8-bit clip of the track that
+/// plays, looping, from early boot (see `play_boot_loop`). Same baking
+/// rationale as Pelipo/Anthem.
+#[cfg(feature = "request_framebuffer")]
+pub static SERAPH_BOOT_WAV: &[u8] = include_bytes!("../../assets/seraph_boot.wav");
+#[cfg(not(feature = "request_framebuffer"))]
+pub static SERAPH_BOOT_WAV: &[u8] = &[];
+
 const BUF_MAX: usize = 4 * 1024 * 1024; // room for a few minutes of 8-bit mono
 static mut MEDIA_BUF: [u8; BUF_MAX] = [0; BUF_MAX];
 static mut LOADED: bool = false;
@@ -114,6 +122,28 @@ pub fn open(path: &str) -> bool {
 #[allow(non_snake_case)]
 unsafe fn PCM_data_ptr(off: usize) -> *const u8 {
     (&*&raw const MEDIA_BUF).as_ptr().add(off)
+}
+
+/// Start the Seraph boot loop on the mixer (looping). Points the PCM player
+/// straight at the baked `'static` clip — no copy needed since it lives forever.
+/// No-op if the clip isn't baked in (non-graphics kernels) or can't be parsed.
+/// Call once the mixer/AC97 are up.
+pub fn play_boot_loop() {
+    if SERAPH_BOOT_WAV.is_empty() {
+        return;
+    }
+    let Some((doff, dlen, rate, ch, bits)) = parse_wav(SERAPH_BOOT_WAV, SERAPH_BOOT_WAV.len())
+    else {
+        return;
+    };
+    let frame_bytes = (ch.max(1) as usize) * (bits.max(8) as usize / 8);
+    let frames = (dlen / frame_bytes.max(1)) as u64;
+    unsafe {
+        let ptr = SERAPH_BOOT_WAV.as_ptr().add(doff);
+        mixer::pcm_load(ptr, frames, rate, ch, bits);
+        mixer::pcm_set_loop(true);
+        mixer::pcm_play();
+    }
 }
 
 pub fn key(k: u8) {
