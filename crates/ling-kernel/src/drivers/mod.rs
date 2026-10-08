@@ -26,7 +26,9 @@ pub mod messenger;
 pub mod mixer;
 #[cfg(target_arch = "x86_64")]
 pub mod wallpaper;
-#[cfg(target_arch = "x86_64")]
+// font8x8 + framebuffer are shared: x86_64 (Multiboot2/DISPI) and aarch64
+// (Raspberry Pi VideoCore-mailbox framebuffer, incl. the Pi boot banner).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod font8x8;
 #[cfg(target_arch = "x86_64")]
 pub mod flags;
@@ -34,7 +36,7 @@ pub mod flags;
 pub mod font_unicode;
 #[cfg(target_arch = "x86_64")]
 pub mod gallery;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod framebuffer;
 #[cfg(target_arch = "x86_64")]
 pub mod kbdlayout;

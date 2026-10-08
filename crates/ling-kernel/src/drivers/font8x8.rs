@@ -147,6 +147,23 @@ pub fn advance() -> u32 {
     8 * scale()
 }
 
+// x86_64 draws into the back buffer and `present()`s it; aarch64 (Raspberry Pi)
+// has no back-buffer compositor, so text goes straight to the live framebuffer.
+#[inline]
+fn put_pixel(x: u32, y: u32, color: u32) {
+    #[cfg(target_arch = "x86_64")]
+    framebuffer::back_set_pixel(x, y, color);
+    #[cfg(not(target_arch = "x86_64"))]
+    framebuffer::set_pixel(x, y, color);
+}
+#[inline]
+fn put_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
+    #[cfg(target_arch = "x86_64")]
+    framebuffer::back_fill_rect(x, y, w, h, color);
+    #[cfg(not(target_arch = "x86_64"))]
+    framebuffer::fill_rect(x, y, w, h, color);
+}
+
 pub fn draw_char(x: u32, y: u32, c: u8, fg: u32, bg: u32) {
     let s = unsafe { SCALE };
     if s > 1 {
@@ -157,7 +174,7 @@ pub fn draw_char(x: u32, y: u32, c: u8, fg: u32, bg: u32) {
     for (row, bits) in rows.iter().enumerate() {
         for col in 0..8u32 {
             let set = (bits >> col) & 1 != 0;
-            framebuffer::back_set_pixel(x + col, y + row as u32, if set { fg } else { bg });
+            put_pixel(x + col, y + row as u32, if set { fg } else { bg });
         }
     }
 }
@@ -187,7 +204,7 @@ pub fn draw_char_scaled(x: u32, y: u32, c: u8, fg: u32, bg: u32, scale: u32) {
     for (row, bits) in rows.iter().enumerate() {
         for col in 0..8u32 {
             let set = (bits >> col) & 1 != 0;
-            framebuffer::back_fill_rect(x + col * s, y + row as u32 * s, s, s, if set { fg } else { bg });
+            put_rect(x + col * s, y + row as u32 * s, s, s, if set { fg } else { bg });
         }
     }
 }

@@ -140,25 +140,71 @@ pub fn init() {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        uart::init();
+        // Detect Pi 3/4/5 from the CPU core (MIDR_EL1) before touching any MMIO:
+        // the peripheral base, VideoCore mailbox, UART and interrupt controller
+        // all moved between generations, and everything below reads this.
+        arch::mmio::init_board();
+
+        uart::init(); // no-op on Pi 5 (its GPIO UART is on RP1/PCIe)
         uart::write(b"ling-kernel initialized\n");
 
-        // Same ordering discipline as the x86_64 side: install the vector
-        // table before anything can be routed to it (`arch::intc::init`),
-        // and finish every one-time setup before the first `cpu::sti`
-        // (`daifclr`) actually lets an IRQ land.
+        // Bring up the HDMI framebuffer via the VideoCore mailbox and paint a
+        // boot banner. On Pi 5 this is the only visible output (no serial
+        // without the debug-UART cable), so do it early — before the Pi 3-only
+        // interrupt wiring below (skipped on Pi 5) — as the first sign of life.
+        crate::drivers::framebuffer::init();
+        rpi_boot_screen();
+
         arch::vectors::init();
-        arch::intc::init();
         arch::timer::calibrate();
-        arch::timer::start_periodic(100);
-        unsafe { cpu::sti() };
-        uart::write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
+
+        // Pi 5 uses a GIC-400, not the legacy BCM VC/QA7 controllers this
+        // kernel drives, so interrupt routing is skipped there for now. Arming
+        // the generic timer + unmasking IRQs without a controller that can
+        // acknowledge the line would just storm the core, so the Pi 5 path
+        // stays IRQ-free (the minimal kernel draws its banner and idles).
+        if arch::mmio::board() != arch::mmio::RpiBoard::Pi5 {
+            // Same ordering discipline as the x86_64 side: vector table before
+            // anything routes to it, every one-time setup before the first
+            // `cpu::sti` (`daifclr`) lets an IRQ land.
+            arch::intc::init();
+            arch::timer::start_periodic(100);
+            unsafe { cpu::sti() };
+            uart::write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
+        }
 
         mm::init_physical_memory();
         console_write(b"mm: ");
         print_decimal((mm::frame::free_frame_count() * 4) as u64);
         console_write(b" KiB free (frame allocator)\n");
     }
+}
+
+/// Paint a one-time boot banner to the Raspberry Pi HDMI framebuffer so there's
+/// a visible sign of life even on boards (Pi 5) whose serial console this
+/// kernel can't yet drive. Harmless no-op if the mailbox didn't hand back a
+/// framebuffer.
+#[cfg(target_arch = "aarch64")]
+fn rpi_boot_screen() {
+    use crate::drivers::{font8x8, framebuffer};
+    let Some(fb) = framebuffer::get() else { return };
+    let w = fb.width;
+    let board = match arch::mmio::board() {
+        arch::mmio::RpiBoard::Pi3 => &b"Raspberry Pi 3 (BCM2837, Cortex-A53)"[..],
+        arch::mmio::RpiBoard::Pi4 => &b"Raspberry Pi 4 (BCM2711, Cortex-A72)"[..],
+        arch::mmio::RpiBoard::Pi5 => &b"Raspberry Pi 5 (BCM2712, Cortex-A76)"[..],
+        arch::mmio::RpiBoard::Unknown => &b"Raspberry Pi (unrecognized SoC)"[..],
+    };
+    const BG: u32 = 0x14_14_20;
+    const BAR: u32 = 0x6C_3A_FF;
+    framebuffer::clear(BG);
+    framebuffer::fill_rect(0, 0, w, 48, BAR);
+    font8x8::set_scale(2);
+    font8x8::draw_str(16, 12, b"LingOS", 0xFF_FF_FF, BAR);
+    font8x8::set_scale(1);
+    font8x8::draw_str(16, 72, b"a from-scratch OS written in Ling", 0xC8_C8_D8, BG);
+    font8x8::draw_str(16, 96, b"kernel alive -- HDMI up via VideoCore mailbox", 0x66_CC_FF, BG);
+    font8x8::draw_str(16, 120, board, 0xFF_FF_FF, BG);
 }
 
 /// Write a byte string to the kernel's primary console (the active terminal

@@ -1,23 +1,42 @@
-//! PL011 UART driver (BCM2837/Pi3 register layout — see `mmio::PERIPHERAL_BASE`).
-//! This is the aarch64/Raspberry Pi console: no VGA text buffer exists on
-//! this hardware, so `ling_kernel_vga_*` intrinsics route here instead.
-use crate::arch::mmio::{read32, write32, PERIPHERAL_BASE};
+//! PL011 UART driver (BCM2837/Pi 3, BCM2711/Pi 4 register layout — see
+//! `mmio::peripheral_base`). This is the aarch64/Raspberry Pi serial console:
+//! no VGA text buffer exists on this hardware, so `ling_kernel_vga_*`
+//! intrinsics route here (and, on Pi 5, to the HDMI framebuffer).
+//!
+//! On Pi 5 (BCM2712) the GPIO 14/15 UART lives on the RP1 southbridge behind
+//! PCIe — not reachable with this BCM283x GPIO/PL011 sequence — so every entry
+//! point here is a no-op on Pi 5 rather than touching MMIO that would hang or
+//! fault. Pi 5 output goes to the HDMI framebuffer instead.
+use crate::arch::mmio::{board, peripheral_base, read32, write32, RpiBoard};
 
-const GPIO_BASE: usize = PERIPHERAL_BASE + 0x0020_0000;
-const UART0_BASE: usize = PERIPHERAL_BASE + 0x0020_1000;
+// Register offsets within the GPIO / UART0 blocks.
+const O_GPFSEL1: usize = 0x04;
+const O_GPPUD: usize = 0x94;
+const O_GPPUDCLK0: usize = 0x98;
+const O_DR: usize = 0x00;
+const O_FR: usize = 0x18;
+const O_IBRD: usize = 0x24;
+const O_FBRD: usize = 0x28;
+const O_LCRH: usize = 0x2C;
+const O_CR: usize = 0x30;
+const O_IMSC: usize = 0x38;
+const O_ICR: usize = 0x44;
 
-const GPFSEL1: usize = GPIO_BASE + 0x04;
-const GPPUD: usize = GPIO_BASE + 0x94;
-const GPPUDCLK0: usize = GPIO_BASE + 0x98;
+#[inline]
+fn gpio_base() -> usize {
+    peripheral_base() + 0x0020_0000
+}
+#[inline]
+fn uart0_base() -> usize {
+    peripheral_base() + 0x0020_1000
+}
 
-const UART_DR: usize = UART0_BASE + 0x00;
-const UART_FR: usize = UART0_BASE + 0x18;
-const UART_IBRD: usize = UART0_BASE + 0x24;
-const UART_FBRD: usize = UART0_BASE + 0x28;
-const UART_LCRH: usize = UART0_BASE + 0x2C;
-const UART_CR: usize = UART0_BASE + 0x30;
-const UART_IMSC: usize = UART0_BASE + 0x38;
-const UART_ICR: usize = UART0_BASE + 0x44;
+/// True on a board whose GPIO-header UART this driver can't drive directly
+/// (Pi 5's is on RP1/PCIe). Every public entry point short-circuits on it.
+#[inline]
+fn unsupported() -> bool {
+    board() == RpiBoard::Pi5
+}
 
 const FR_TXFF: u32 = 1 << 5; // transmit FIFO full
 const FR_RXFE: u32 = 1 << 4; // receive FIFO empty
@@ -42,54 +61,65 @@ fn delay(cycles: u32) {
 
 /// Initialize UART0 on GPIO 14/15 (TXD0/RXD0, ALT0) at 115200 baud.
 pub fn init() {
+    if unsupported() {
+        return;
+    }
+    let g = gpio_base();
+    let u = uart0_base();
     unsafe {
-        write32(UART_CR, 0); // disable UART0
+        write32(u + O_CR, 0); // disable UART0
 
         // Route GPIO 14/15 to UART0 (ALT0) instead of GPIO.
-        let mut sel = read32(GPFSEL1);
+        let mut sel = read32(g + O_GPFSEL1);
         sel &= !((0b111 << 12) | (0b111 << 15));
         sel |= (0b100 << 12) | (0b100 << 15);
-        write32(GPFSEL1, sel);
+        write32(g + O_GPFSEL1, sel);
 
         // Disable pull-up/down on GPIO 14/15 (BCM2837 two-step sequence).
-        write32(GPPUD, 0);
+        write32(g + O_GPPUD, 0);
         delay(150);
-        write32(GPPUDCLK0, (1 << 14) | (1 << 15));
+        write32(g + O_GPPUDCLK0, (1 << 14) | (1 << 15));
         delay(150);
-        write32(GPPUDCLK0, 0);
+        write32(g + O_GPPUDCLK0, 0);
 
-        write32(UART_ICR, 0x7FF); // clear pending interrupts
+        write32(u + O_ICR, 0x7FF); // clear pending interrupts
 
         // 115200 baud assuming a 48MHz UART clock (default firmware config).
-        write32(UART_IBRD, 26);
-        write32(UART_FBRD, 3);
+        write32(u + O_IBRD, 26);
+        write32(u + O_FBRD, 3);
 
-        write32(UART_LCRH, (1 << 4) | (3 << 5)); // FIFOs enabled, 8N1
-                                                 // Only RX + RX-timeout unmasked: TX is still polled (`write_byte`),
-                                                 // and unmasking TXIM here would fire continuously any time the TX
-                                                 // FIFO isn't full — which, for a byte-at-a-time console, is nearly
-                                                 // always — flooding the IRQ line with nothing to service.
-        write32(UART_IMSC, RXIC_RTIC);
-        write32(UART_CR, (1 << 0) | (1 << 8) | (1 << 9)); // UARTEN | TXE | RXE
+        write32(u + O_LCRH, (1 << 4) | (3 << 5)); // FIFOs enabled, 8N1
+                                                  // Only RX + RX-timeout unmasked: TX is still polled (`write_byte`),
+                                                  // and unmasking TXIM here would fire continuously any time the TX
+                                                  // FIFO isn't full — which, for a byte-at-a-time console, is nearly
+                                                  // always — flooding the IRQ line with nothing to service.
+        write32(u + O_IMSC, RXIC_RTIC);
+        write32(u + O_CR, (1 << 0) | (1 << 8) | (1 << 9)); // UARTEN | TXE | RXE
     }
 }
 
 fn tx_ready() -> bool {
-    unsafe { read32(UART_FR) & FR_TXFF == 0 }
+    unsafe { read32(uart0_base() + O_FR) & FR_TXFF == 0 }
 }
 
 fn rx_ready() -> bool {
-    unsafe { read32(UART_FR) & FR_RXFE == 0 }
+    unsafe { read32(uart0_base() + O_FR) & FR_RXFE == 0 }
 }
 
 pub fn write_byte(byte: u8) {
+    if unsupported() {
+        return;
+    }
     while !tx_ready() {
         core::hint::spin_loop();
     }
-    unsafe { write32(UART_DR, byte as u32) };
+    unsafe { write32(uart0_base() + O_DR, byte as u32) };
 }
 
 pub fn write(bytes: &[u8]) {
+    if unsupported() {
+        return;
+    }
     for &b in bytes {
         if b == b'\n' {
             write_byte(b'\r');
@@ -120,15 +150,18 @@ fn ring_pop() -> Option<u8> {
 /// below the FIFO's trigger level long enough to need flushing) and clears
 /// both serviced interrupt sources.
 pub(crate) fn irq_drain() {
+    if unsupported() {
+        return;
+    }
     while rx_ready() {
-        let byte = unsafe { read32(UART_DR) as u8 };
+        let byte = unsafe { read32(uart0_base() + O_DR) as u8 };
         let next = unsafe { RING_HEAD.wrapping_add(1) };
         if next != unsafe { RING_TAIL } {
             unsafe { RING[RING_HEAD as usize] = byte };
             unsafe { RING_HEAD = next };
         }
     }
-    unsafe { write32(UART_ICR, RXIC_RTIC) };
+    unsafe { write32(uart0_base() + O_ICR, RXIC_RTIC) };
 }
 
 /// Blocking single-byte read: parks in `wfi` between interrupts instead of

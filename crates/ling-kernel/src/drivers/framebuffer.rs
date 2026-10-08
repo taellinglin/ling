@@ -91,7 +91,7 @@ pub fn init() {
     #[cfg(target_arch = "aarch64")]
     {
         if let Some((addr, pitch, width, height, bpp)) =
-            crate::arch::aarch64::mailbox::allocate_framebuffer(1024, 768, 32)
+            crate::arch::mailbox::allocate_framebuffer(1024, 768, 32)
         {
             unsafe {
                 ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));

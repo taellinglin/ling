@@ -22,7 +22,7 @@
 //! controller `intc.rs` programs — is Device-nGnRnE. Mapping the peripheral
 //! range as cacheable Normal memory would silently break the UART and
 //! mailbox (reordered/cached MMIO accesses), not just cost performance.
-use crate::arch::mmio::PERIPHERAL_BASE;
+use crate::arch::mmio::peripheral_base;
 use core::arch::asm;
 
 pub const WRITABLE: u64 = 1 << 0;
@@ -143,7 +143,7 @@ fn leaf_attrs(flags: u64, device: bool) -> u64 {
 /// [`NX`].
 pub fn map4k(l0_phys: u64, virt: u64, phys: u64, flags: u64) {
     let (i0, i1, i2, i3) = indices(virt);
-    let device = phys >= PERIPHERAL_BASE as u64;
+    let device = phys >= peripheral_base() as u64;
     unsafe {
         let l1 = next_level(l0_phys, i0);
         let l2 = next_level(l1, i1);
@@ -209,7 +209,7 @@ pub fn init() {
                 page += PAGE_SIZE;
             }
         } else {
-            let device = addr >= PERIPHERAL_BASE as u64;
+            let device = addr >= peripheral_base() as u64;
             map2m(l0, addr, addr, WRITABLE | NX, device);
         }
         addr += BLOCK_SIZE;
