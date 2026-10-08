@@ -144,16 +144,18 @@ pub fn init() {
         // the peripheral base, VideoCore mailbox, UART and interrupt controller
         // all moved between generations, and everything below reads this.
         arch::mmio::init_board();
-
         uart::init(); // no-op on Pi 5 (its GPIO UART is on RP1/PCIe)
-        uart::write(b"ling-kernel initialized\n");
 
-        // Bring up the HDMI framebuffer via the VideoCore mailbox and paint a
-        // boot banner. On Pi 5 this is the only visible output (no serial
-        // without the debug-UART cable), so do it early — before the Pi 3-only
-        // interrupt wiring below (skipped on Pi 5) — as the first sign of life.
+        // HDMI first: bring up the framebuffer via the VideoCore mailbox, paint
+        // the boot banner, and open the scrolling text console — so every
+        // console_write below is visible on screen. On Pi 5 this is the only
+        // output path (no serial without the debug-UART cable), and it comes up
+        // before the Pi 3-only interrupt wiring (skipped on Pi 5) as first life.
         crate::drivers::framebuffer::init();
         rpi_boot_screen();
+        crate::drivers::fbcon::init();
+
+        console_write(b"ling-kernel initialized\n");
 
         arch::vectors::init();
         arch::timer::calibrate();
@@ -170,7 +172,7 @@ pub fn init() {
             arch::intc::init();
             arch::timer::start_periodic(100);
             unsafe { cpu::sti() };
-            uart::write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
+            console_write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
         }
 
         mm::init_physical_memory();
@@ -236,7 +238,8 @@ pub(crate) fn console_write(bytes: &[u8]) {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        uart::write(bytes);
+        uart::write(bytes); // serial (Pi 3/4; no-op on Pi 5)
+        crate::drivers::fbcon::write(bytes); // HDMI framebuffer console
     }
 }
 

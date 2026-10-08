@@ -78,4 +78,6 @@ pub mod wm;
 pub mod wm_liquid;
 
 #[cfg(target_arch = "aarch64")]
+pub mod fbcon;
+#[cfg(target_arch = "aarch64")]
 pub mod uart;
