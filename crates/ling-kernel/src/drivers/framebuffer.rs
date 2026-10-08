@@ -231,6 +231,7 @@ pub fn set_pixel(x: u32, y: u32, color: u32) {
                 ptr::write_volatile(p.add(1), ((color >> 8) & 0xFF) as u8);
                 ptr::write_volatile(p.add(2), ((color >> 16) & 0xFF) as u8);
             },
+            2 => ptr::write_volatile(p as *mut u16, rgb565(color)),
             _ => {},
         }
     }
@@ -269,7 +270,25 @@ pub fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
                 }
             }
         }
+    } else if bypp == 2 {
+        let p16 = rgb565(color);
+        for row in y..y + h {
+            let row_start = (fb.addr + row as u64 * fb.pitch as u64 + x as u64 * 2) as *mut u16;
+            for col in 0..w as usize {
+                unsafe { ptr::write_volatile(row_start.add(col), p16) };
+            }
+        }
     }
+}
+
+/// Pack a 0xRRGGBB color into 16-bit RGB565, for the 16bpp framebuffer the
+/// Pi 5 firmware sometimes hands back regardless of the requested depth.
+#[inline]
+fn rgb565(color: u32) -> u16 {
+    let r = (color >> 16) & 0xFF;
+    let g = (color >> 8) & 0xFF;
+    let b = color & 0xFF;
+    ((((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)) & 0xFFFF) as u16
 }
 
 pub fn clear(color: u32) {

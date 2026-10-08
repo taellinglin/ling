@@ -133,7 +133,17 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
             let pitch = BUFFER.0[28];
             // Convert VC bus address (0xC0000000.. or 0x40000000..) to ARM physical (0x00000000..)
             let arm_addr = bus_addr & 0x3FFF_FFFF;
-            Some((arm_addr, pitch, w, h, depth as u8))
+            // Pi 5 firmware is known to ignore the requested depth and hand back
+            // a 16bpp surface while still reporting 32 (raspberrypi/firmware#1904).
+            // Trust the pitch, not `depth`: bytes-per-pixel = pitch / width, so
+            // addressing (and the chosen 16/24/32bpp write path) stays correct.
+            let byppx = if w > 0 { pitch / w } else { 0 };
+            let actual_bpp = if (2..=4).contains(&byppx) {
+                (byppx * 8) as u8
+            } else {
+                depth as u8
+            };
+            Some((arm_addr, pitch, w, h, actual_bpp))
         } else {
             None
         }
