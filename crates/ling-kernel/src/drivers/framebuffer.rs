@@ -18,6 +18,17 @@ pub struct FbInfo {
 
 static mut FB: Option<FbInfo> = None;
 
+// Overscan safe-area margin. The logical origin is inset by (OX, OY) from the
+// real top-left, and width()/height() report the reduced drawable area, so UI
+// laid out against those bounds lands fully inside a display that crops the
+// signal edges (common on HDMI panels/TVs — on the Pi 5 the visible area can
+// start a couple % in, so content at a true (0,0) gets clipped off the top-left
+// corner). aarch64/Pi sets this after framebuffer init; it stays 0 on x86_64
+// (VMs present the whole surface, no overscan), so set_pixel/fill_rect/width/
+// height are unchanged there.
+static mut OX: u32 = 0;
+static mut OY: u32 = 0;
+
 const BACKBUFFER_MAX: usize = 1920 * 1080 * 4;
 static mut BACKBUFFER: [u8; BACKBUFFER_MAX] = [0u8; BACKBUFFER_MAX];
 
@@ -100,6 +111,11 @@ pub fn init() {
             unsafe {
                 ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
             }
+            // Overscan safe area: pull all rendering in from the edges so a
+            // monitor that crops the HDMI signal (reported ~10px off the top-
+            // left on real Pi 5 hardware) doesn't clip the UI. Proportional
+            // (~2%) so it scales with resolution; the config screen can nudge it.
+            set_safe_margin(width / 48, height / 48);
         }
     }
 }
@@ -212,16 +228,34 @@ pub fn available() -> bool {
 }
 
 pub fn width() -> u32 {
-    get().map(|f| f.width).unwrap_or(0)
+    get().map(|f| f.width).unwrap_or(0).saturating_sub(unsafe { OX } * 2)
 }
 
 pub fn height() -> u32 {
-    get().map(|f| f.height).unwrap_or(0)
+    get().map(|f| f.height).unwrap_or(0).saturating_sub(unsafe { OY } * 2)
+}
+
+/// Set the overscan safe-area margin (pixels inset on each edge). All direct
+/// framebuffer drawing shifts in by this and width()/height() shrink by twice
+/// it, so UI laid out against those bounds stays within a display that crops
+/// its edges. The Pi config screen exposes this as a live alignment nudge.
+pub fn set_safe_margin(ox: u32, oy: u32) {
+    unsafe {
+        OX = ox;
+        OY = oy;
+    }
+}
+
+/// Current overscan safe-area margin (pixels inset per edge).
+pub fn safe_margin() -> (u32, u32) {
+    unsafe { (OX, OY) }
 }
 
 pub fn set_pixel(x: u32, y: u32, color: u32) {
     unsafe {
         let Some(fb) = get() else { return };
+        let x = x + OX;
+        let y = y + OY;
         if x >= fb.width || y >= fb.height {
             return;
         }
@@ -243,6 +277,7 @@ pub fn set_pixel(x: u32, y: u32, color: u32) {
 
 pub fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     let Some(fb) = get() else { return };
+    let (x, y) = unsafe { (x + OX, y + OY) };
     if x >= fb.width || y >= fb.height {
         return;
     }

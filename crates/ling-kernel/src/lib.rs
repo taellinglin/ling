@@ -402,7 +402,13 @@ pub unsafe extern "C" fn ling_kernel_vga_write_str(s: u64) -> u64 {
 pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
     use crate::drivers::{font8x8, framebuffer, uart};
     console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n\n");
-    console_write(b"serial console ready -- type 'help'.\n");
+    // Auto-run the USB probe once at boot. Without a serial adapter the only
+    // way to see its output (and the only way to drive it at all, since typing
+    // needs USB) is on the HDMI console, so print it here rather than only
+    // behind the `usb` command. On a Pi 5 this reports the xHCI/DWC3 controller
+    // identity; on other boards it's a one-line note.
+    arch::rp1::usb_probe();
+    console_write(b"\nserial console ready -- type 'help'.\n");
     console_write(b"lingos$ ");
     const BAR: u32 = 0x6C_3A_FF;
     let mut last = u64::MAX;
