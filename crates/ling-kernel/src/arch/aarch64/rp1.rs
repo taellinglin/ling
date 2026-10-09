@@ -31,8 +31,7 @@
 //! did not leave the window up (`pciex4_reset=0` is reportedly insufficient on
 //! some setups) and a full BCM2712 PCIe root-complex bring-up is required first.
 
-use crate::arch::mmio::read32;
-use crate::arch::mmio::{board, RpiBoard};
+use crate::arch::mmio::{board, read32, write32, RpiBoard};
 
 /// RP1-internal address the window's base maps to.
 const RP1_PERIPH_BASE: usize = 0x4000_0000;
@@ -49,6 +48,131 @@ const USB1_RP1: usize = 0x4030_0000; // DWC3 #1
 /// Synopsys ID register (GSNPSID) is at +0xC120. Its high half is 0x5533 for a
 /// DesignWare USB3 core.
 const DWC3_GSNPSID: usize = 0xC120;
+
+// ── xHCI register map (host-mode view of the DWC3) ───────────────────────────
+// Capability registers are at the controller base; operational registers start
+// at base + CAPLENGTH; each root-hub port's PORTSC is at op + 0x400 + (n-1)*0x10.
+const OP_USBCMD: usize = 0x00;
+const OP_USBSTS: usize = 0x04;
+const OP_PORTSC0: usize = 0x400;
+const OP_PORT_STRIDE: usize = 0x10;
+
+const CMD_RUN: u32 = 1 << 0;
+const CMD_HCRST: u32 = 1 << 1;
+const STS_HCH: u32 = 1 << 0; // HCHalted
+const STS_CNR: u32 = 1 << 11; // Controller Not Ready
+
+const PORTSC_CCS: u32 = 1 << 0; // Current Connect Status
+const PORTSC_PED: u32 = 1 << 1; // Port Enabled/Disabled
+const PORTSC_PP: u32 = 1 << 9; // Port Power
+const PORTSC_SPEED_SHIFT: u32 = 10; // bits [13:10]
+
+/// The RP1 outbound-window base found live by the last `usb_probe` scan, for
+/// later USB stages to reuse instead of re-scanning.
+static mut RP1_WINDOW: Option<usize> = None;
+
+#[allow(dead_code)]
+pub(crate) fn rp1_window() -> Option<usize> {
+    unsafe { core::ptr::read(&raw const RP1_WINDOW) }
+}
+
+fn wait_clear(addr: usize, mask: u32, tries: u32) -> bool {
+    for _ in 0..tries {
+        if unsafe { read32(addr) } & mask == 0 {
+            return true;
+        }
+        crate::arch::timer::delay_us(50);
+    }
+    false
+}
+
+fn usb_speed_name(s: u32) -> &'static [u8] {
+    match s {
+        1 => b"Full-speed (USB1)",
+        2 => b"Low-speed (USB1)",
+        3 => b"High-speed (USB2)",
+        4 => b"SuperSpeed (USB3)",
+        5 => b"SuperSpeed+ (USB3.1)",
+        _ => b"unknown",
+    }
+}
+
+/// Stage 2 (DMA-free): reset one xHCI controller and report its root-hub ports.
+/// Powers each port and prints whether a device is connected and at what speed —
+/// which tells us if the keyboard/mouse are seen at the hardware level before we
+/// build the DMA rings + enumeration. Everything here is MMIO register access
+/// (outbound, CPU→RP1); no controller DMA, so no inbound-window setup needed yet.
+fn xhci_reset_and_ports(name: &[u8], window: usize, usb_rp1: usize) {
+    let cap = at(window, usb_rp1);
+    let caplength = (unsafe { read32(cap) } & 0xFF) as usize;
+    let op = cap + caplength;
+    let hcs1 = unsafe { read32(cap + 0x04) };
+    let max_ports = (hcs1 >> 24) & 0xFF;
+
+    crate::console_write(name);
+    crate::console_write(b" xHCI reset:\n");
+
+    // Halt the controller if it's running, then wait for HCHalted.
+    let cmd = unsafe { read32(op + OP_USBCMD) };
+    if cmd & CMD_RUN != 0 {
+        unsafe { write32(op + OP_USBCMD, cmd & !CMD_RUN) };
+        let _ = wait_set(op + OP_USBSTS, STS_HCH, 20_000);
+    }
+    // Host controller reset, then wait for HCRST to self-clear and CNR to clear.
+    unsafe { write32(op + OP_USBCMD, CMD_HCRST) };
+    let reset_ok =
+        wait_clear(op + OP_USBCMD, CMD_HCRST, 20_000) && wait_clear(op + OP_USBSTS, STS_CNR, 20_000);
+    crate::console_write(if reset_ok {
+        b"  HCRST complete, controller ready\n"
+    } else {
+        b"  HCRST TIMEOUT (controller did not come ready)\n"
+    });
+
+    // Power each root-hub port and report connection status.
+    let mut p = 1u32;
+    while p <= max_ports {
+        let psc_off = op + OP_PORTSC0 + (p as usize - 1) * OP_PORT_STRIDE;
+        let mut psc = unsafe { read32(psc_off) };
+        if psc & PORTSC_PP == 0 {
+            unsafe { write32(psc_off, psc | PORTSC_PP) };
+            crate::arch::timer::delay_us(20_000); // power stabilization
+            psc = unsafe { read32(psc_off) };
+        }
+        crate::console_write(b"  port ");
+        print_dec(p);
+        hexln(b" PORTSC=", psc as u64, 8);
+        if psc & PORTSC_CCS != 0 {
+            let speed = (psc >> PORTSC_SPEED_SHIFT) & 0xF;
+            crate::console_write(b"    device CONNECTED, ");
+            crate::console_write(usb_speed_name(speed));
+            crate::console_write(if psc & PORTSC_PED != 0 { b" (enabled)\n" } else { b"\n" });
+        } else {
+            crate::console_write(b"    (empty)\n");
+        }
+        p += 1;
+    }
+}
+
+fn wait_set(addr: usize, mask: u32, tries: u32) -> bool {
+    for _ in 0..tries {
+        if unsafe { read32(addr) } & mask != 0 {
+            return true;
+        }
+        crate::arch::timer::delay_us(50);
+    }
+    false
+}
+
+fn print_dec(mut v: u32) {
+    if v >= 100 {
+        crate::console_write(&[b'0' + (v / 100) as u8]);
+        v %= 100;
+    }
+    if v >= 10 {
+        crate::console_write(&[b'0' + (v / 10) as u8]);
+    }
+    crate::console_write(&[b'0' + (v % 10) as u8]);
+}
 
 /// Map an RP1-internal address to CPU-physical through a given window base.
 #[inline]
@@ -88,7 +212,8 @@ fn window_live(window: usize) -> bool {
 }
 
 /// Read and report one DWC3/xHCI controller's identity at a live window base.
-fn probe_controller(name: &[u8], window: usize, usb_rp1: usize) {
+/// Returns true if it looks like a usable DWC3/xHCI controller.
+fn probe_controller(name: &[u8], window: usize, usb_rp1: usize) -> bool {
     let base = at(window, usb_rp1);
     crate::console_write(name);
     hexln(b" @ phys=", base as u64, 10);
@@ -110,14 +235,17 @@ fn probe_controller(name: &[u8], window: usize, usb_rp1: usize) {
     hexln(b"  max_ports=", max_ports as u64, 2);
     hexln(b"  dwc3_gsnpsid=", gsnpsid as u64, 8);
 
-    if (gsnpsid >> 16) == 0x5533 {
+    let is_dwc3 = (gsnpsid >> 16) == 0x5533;
+    let xhci_ok =
+        (0x18..=0x40).contains(&caplength) && (hciversion == 0x0100 || hciversion == 0x0110);
+    if is_dwc3 {
         crate::console_write(b"  -> DesignWare USB3 (DWC3) core confirmed\n");
-    } else if (0x18..=0x40).contains(&caplength) && (hciversion == 0x0100 || hciversion == 0x0110)
-    {
+    } else if xhci_ok {
         crate::console_write(b"  -> xHCI capability registers look valid\n");
     } else {
         crate::console_write(b"  -> no sane xHCI/DWC3 id (controller gated, or window wrong)\n");
     }
+    is_dwc3 || xhci_ok
 }
 
 /// Stage-1 USB probe: find a working RP1 window base, then report the USB
@@ -144,9 +272,14 @@ pub fn usb_probe() {
 
     match live {
         Some(w) => {
+            unsafe { core::ptr::write(&raw mut RP1_WINDOW, Some(w)) };
             hexln(b"RP1 window = ", w as u64, 10);
-            probe_controller(b"usb0", w, USB0_RP1);
-            probe_controller(b"usb1", w, USB1_RP1);
+            if probe_controller(b"usb0", w, USB0_RP1) {
+                xhci_reset_and_ports(b"usb0", w, USB0_RP1);
+            }
+            if probe_controller(b"usb1", w, USB1_RP1) {
+                xhci_reset_and_ports(b"usb1", w, USB1_RP1);
+            }
         },
         None => {
             crate::console_write(b"RP1 unreachable at every candidate base.\n");
