@@ -210,55 +210,25 @@ fn rpi_boot_screen() {
     const BG: u32 = 0x14_14_20;
     const BAR: u32 = 0x6C_3A_FF;
     framebuffer::clear(BG);
-    framebuffer::fill_rect(0, 0, w, 48, BAR);
+    framebuffer::fill_rect(0, 0, w, 64, BAR);
+    font8x8::set_scale(3);
+    font8x8::draw_str(28, 20, b"LingOS", 0xFF_FF_FF, BAR);
     font8x8::set_scale(2);
-    font8x8::draw_str(16, 12, b"LingOS", 0xFF_FF_FF, BAR);
+    font8x8::draw_str(28, 104, b"Welcome -- first boot", 0xFF_FF_FF, BG);
     font8x8::set_scale(1);
-    font8x8::draw_str(16, 72, b"a from-scratch OS written in Ling", 0xC8_C8_D8, BG);
-    font8x8::draw_str(16, 96, b"kernel alive -- HDMI up via VideoCore mailbox", 0x66_CC_FF, BG);
-    font8x8::draw_str(16, 120, board, 0xFF_FF_FF, BG);
+    font8x8::draw_str(28, 152, b"a from-scratch OS written in Ling", 0xC8_C8_D8, BG);
+    font8x8::draw_str(28, 176, board, 0x66_CC_FF, BG);
 
-    // Framebuffer-format diagnostics (for Pi 5 color/format debugging): the
-    // actual bpp/pitch the firmware set, and a labelled R/G/B/W swatch row so a
-    // photo reveals the real channel mapping.
+    // Auto-detected display resolution (EDID, with firmware/size fallbacks).
     let mut line = [0u8; 56];
     let mut n = 0usize;
-    append_bytes(&mut line, &mut n, b"fb ");
+    append_bytes(&mut line, &mut n, b"display: ");
     n += write_decimal(&mut line[n..], fb.width as u64);
-    append_bytes(&mut line, &mut n, b"x");
+    append_bytes(&mut line, &mut n, b" x ");
     n += write_decimal(&mut line[n..], fb.height as u64);
-    append_bytes(&mut line, &mut n, b" bpp=");
-    n += write_decimal(&mut line[n..], fb.bpp as u64);
-    append_bytes(&mut line, &mut n, b" pitch=");
-    n += write_decimal(&mut line[n..], fb.pitch as u64);
-    font8x8::draw_str(16, 132, &line[..n], 0xFF_FF_FF, BG);
-
-    // Raw firmware geometry [phys_w, phys_h, virt_w, virt_h, reported_pitch, size].
-    let d = unsafe { crate::arch::mailbox::FB_DIAG };
-    let mut l2 = [0u8; 72];
-    let mut m = 0usize;
-    append_bytes(&mut l2, &mut m, b"ph ");
-    m += write_decimal(&mut l2[m..], d[0] as u64);
-    append_bytes(&mut l2, &mut m, b"x");
-    m += write_decimal(&mut l2[m..], d[1] as u64);
-    append_bytes(&mut l2, &mut m, b" vt ");
-    m += write_decimal(&mut l2[m..], d[2] as u64);
-    append_bytes(&mut l2, &mut m, b"x");
-    m += write_decimal(&mut l2[m..], d[3] as u64);
-    append_bytes(&mut l2, &mut m, b" rptch ");
-    m += write_decimal(&mut l2[m..], d[4] as u64);
-    append_bytes(&mut l2, &mut m, b" sz ");
-    m += write_decimal(&mut l2[m..], d[5] as u64);
-    font8x8::draw_str(16, 142, &l2[..m], 0xFF_FF_00, BG);
-
-    let swatches: [(u32, u8); 4] =
-        [(0xFF_00_00, b'R'), (0x00_FF_00, b'G'), (0x00_00_FF, b'B'), (0xFF_FF_FF, b'W')];
-    let (sw, sh, sy) = (64u32, 22u32, 158u32);
-    for (i, (col, label)) in swatches.iter().enumerate() {
-        let sx = 16 + i as u32 * (sw + 8);
-        framebuffer::fill_rect(sx, sy, sw, sh, *col);
-        font8x8::draw_char(sx + sw / 2 - 4, sy + sh / 2 - 4, *label, 0x00_00_00, *col);
-    }
+    append_bytes(&mut line, &mut n, b"  (auto-detected)");
+    font8x8::draw_str(28, 200, &line[..n], 0xC8_C8_D8, BG);
+    font8x8::set_scale(1);
 }
 
 /// Write a byte string to the kernel's primary console (the active terminal
@@ -290,7 +260,7 @@ pub(crate) fn console_write(bytes: &[u8]) {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        uart::write(bytes); // serial (Pi 3/4; no-op on Pi 5)
+        crate::drivers::uart::write(bytes); // serial (UART0 on Pi 3/4, debug UART10 on Pi 5)
         crate::drivers::fbcon::write(bytes); // HDMI framebuffer console
     }
 }
@@ -430,21 +400,51 @@ pub unsafe extern "C" fn ling_kernel_vga_write_str(s: u64) -> u64 {
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
-    use crate::drivers::{font8x8, framebuffer};
-    console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n");
+    use crate::drivers::{font8x8, framebuffer, uart};
+    console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n\n");
+    console_write(b"serial console ready -- type 'help'.\n");
+    console_write(b"lingos$ ");
     const BAR: u32 = 0x6C_3A_FF;
     let mut last = u64::MAX;
+    let mut line = [0u8; 128];
+    let mut len = 0usize;
     loop {
+        // Interactive input: drain the UART, echo + line-edit, run on Enter.
+        // console_write fans out to both serial and the HDMI console, so typing
+        // shows up on both.
+        while let Some(c) = uart::poll_byte() {
+            match c {
+                b'\r' | b'\n' => {
+                    console_write(b"\n");
+                    rpi_shell_exec(&line[..len]);
+                    len = 0;
+                    console_write(b"lingos$ ");
+                },
+                0x08 | 0x7F => {
+                    if len > 0 {
+                        len -= 1;
+                        console_write(b"\x08 \x08"); // erase last char (serial + fbcon)
+                    }
+                },
+                0x20..=0x7E => {
+                    if len < line.len() {
+                        line[len] = c;
+                        len += 1;
+                        console_write(&[c]); // echo
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        // Live uptime clock on the banner (once a second).
         let secs = arch::timer::now_ms() / 1000;
         if secs != last {
             last = secs;
             if framebuffer::available() {
                 let mut buf = [0u8; 28];
                 let mut n = 0;
-                for &b in b"uptime: " {
-                    buf[n] = b;
-                    n += 1;
-                }
+                append_bytes(&mut buf, &mut n, b"uptime: ");
                 n += write_decimal(&mut buf[n..], secs);
                 buf[n] = b's';
                 n += 1;
@@ -454,7 +454,50 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
                 font8x8::draw_str(x, 12, &buf[..n], 0xFF_FF_FF, BAR);
             }
         }
-        arch::timer::delay_us(50_000);
+        arch::timer::delay_us(3_000); // ~3ms: responsive to typing
+    }
+}
+
+/// Minimal line-oriented shell for the Raspberry Pi serial console. Output goes
+/// through `console_write` (serial + HDMI). Grows as the Pi gains features.
+#[cfg(target_arch = "aarch64")]
+fn rpi_shell_exec(line: &[u8]) {
+    // Trim ASCII whitespace (incl. a trailing CR).
+    let mut s = line;
+    while let [b' ' | b'\t' | b'\r', rest @ ..] = s {
+        s = rest;
+    }
+    while let [rest @ .., b' ' | b'\t' | b'\r'] = s {
+        s = rest;
+    }
+    if s.is_empty() {
+        return;
+    }
+    if s == b"help" {
+        console_write(b"commands: help, uptime, board, echo <text>\n");
+    } else if s == b"uptime" {
+        let secs = arch::timer::now_ms() / 1000;
+        let mut b = [0u8; 24];
+        let mut n = 0;
+        append_bytes(&mut b, &mut n, b"uptime: ");
+        n += write_decimal(&mut b[n..], secs);
+        append_bytes(&mut b, &mut n, b"s\n");
+        console_write(&b[..n]);
+    } else if s == b"board" {
+        let name = match arch::mmio::board() {
+            arch::mmio::RpiBoard::Pi3 => &b"Raspberry Pi 3 (BCM2837, Cortex-A53)\n"[..],
+            arch::mmio::RpiBoard::Pi4 => &b"Raspberry Pi 4 (BCM2711, Cortex-A72)\n"[..],
+            arch::mmio::RpiBoard::Pi5 => &b"Raspberry Pi 5 (BCM2712, Cortex-A76)\n"[..],
+            arch::mmio::RpiBoard::Unknown => &b"Raspberry Pi (unrecognized SoC)\n"[..],
+        };
+        console_write(name);
+    } else if let Some(rest) = s.strip_prefix(b"echo ") {
+        console_write(rest);
+        console_write(b"\n");
+    } else {
+        console_write(b"unknown command: ");
+        console_write(s);
+        console_write(b"\n");
     }
 }
 

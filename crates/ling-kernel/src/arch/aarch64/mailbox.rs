@@ -23,6 +23,7 @@ const TAG_ALLOCATE_BUFFER: u32 = 0x0004_0001;
 const TAG_GET_PITCH: u32 = 0x0004_0008;
 const TAG_GET_PHYS_WH: u32 = 0x0004_0003;
 const TAG_GET_VIRT_WH: u32 = 0x0004_0004;
+const TAG_GET_EDID: u32 = 0x0003_0020;
 const TAG_END: u32 = 0;
 
 /// Pixel channel order: 0 = BGR, 1 = RGB. Our `framebuffer::set_pixel` writes a
@@ -178,34 +179,43 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
                 // SIZE. At 16bpp total pixels = size/2, so recover the true mode
                 // by matching that against standard display resolutions.
                 let total_px = alloc_size / 2;
-                const MODES: [(u32, u32); 12] = [
-                    (1920, 1080),
-                    (1280, 720),
-                    (3840, 2160),
-                    (2560, 1440),
-                    (1920, 1200),
-                    (1600, 900),
-                    (1680, 1050),
-                    (1440, 900),
-                    (1366, 768),
-                    (1280, 1024),
-                    (1024, 768),
-                    (800, 600),
-                ];
-                let mut mw = 0u32;
-                let mut mh = 0u32;
-                for &(cw, ch) in MODES.iter() {
-                    if cw * ch == total_px {
-                        mw = cw;
-                        mh = ch;
-                        break;
+                // Auto-detect: ask the DISPLAY via EDID (robust for any panel),
+                // accept it only if consistent with the allocated buffer;
+                // otherwise match the pixel count against standard modes.
+                let edid_match = match edid_preferred_resolution() {
+                    Some((ew, eh)) if ew > 0 && eh > 0 && ew * eh == total_px => Some((ew, eh)),
+                    _ => None,
+                };
+                let (mw, mh) = if let Some(res) = edid_match {
+                    res
+                } else {
+                    const MODES: [(u32, u32); 12] = [
+                        (1920, 1080),
+                        (1280, 720),
+                        (3840, 2160),
+                        (2560, 1440),
+                        (1920, 1200),
+                        (1600, 900),
+                        (1680, 1050),
+                        (1440, 900),
+                        (1366, 768),
+                        (1280, 1024),
+                        (1024, 768),
+                        (800, 600),
+                    ];
+                    let mut m = (0u32, 0u32);
+                    for &(cw, ch) in MODES.iter() {
+                        if cw * ch == total_px {
+                            m = (cw, ch);
+                            break;
+                        }
                     }
-                }
-                if mw == 0 {
-                    // No standard match — fall back to the reported virtual size.
-                    mw = if rw > 0 { rw } else { w };
-                    mh = if rh > 0 { rh } else { h };
-                }
+                    if m.0 == 0 {
+                        // No match — last-resort reported virtual size.
+                        m = (if rw > 0 { rw } else { w }, if rh > 0 { rh } else { h });
+                    }
+                    m
+                };
                 rw = mw;
                 rh = mh;
                 (16u8, mw * 2)
@@ -218,6 +228,51 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
                 }
             };
             Some((arm_addr, pitch, rw, rh, bpp))
+        } else {
+            None
+        }
+    }
+}
+
+/// Read the connected display's preferred (native) resolution straight from its
+/// EDID over the HDMI DDC, via the mailbox. This is the robust way to auto-detect
+/// resolution for ANY panel — it goes to the monitor itself, bypassing the Pi 5
+/// firmware's unreliable framebuffer-geometry reports. Returns (width, height)
+/// in pixels from the first detailed timing descriptor, or None if no/invalid
+/// EDID. Uses the shared BUFFER, so call it when no other mailbox op is in
+/// flight (allocate_framebuffer calls it after extracting its own results).
+pub fn edid_preferred_resolution() -> Option<(u32, u32)> {
+    unsafe {
+        BUFFER.0[0] = 40 * 4;
+        BUFFER.0[1] = 0;
+        BUFFER.0[2] = TAG_GET_EDID;
+        BUFFER.0[3] = 136; // value buffer: 4 (block#) + 4 (status) + 128 (EDID)
+        BUFFER.0[4] = 4; // request length (the block number)
+        BUFFER.0[5] = 0; // block number 0  -> response: echoed block number
+        BUFFER.0[6] = 0; //                 -> response: status (0 = success)
+        for i in 0..32 {
+            BUFFER.0[7 + i] = 0; // 128 EDID bytes
+        }
+        BUFFER.0[39] = TAG_END;
+
+        if !call(CHANNEL_PROPERTY) {
+            return None;
+        }
+        if BUFFER.0[6] != 0 {
+            return None; // non-zero status: EDID read failed
+        }
+        // EDID bytes live little-endian in BUFFER.0[7..7+32].
+        let edid_byte = |n: usize| -> u8 { ((BUFFER.0[7 + n / 4] >> (8 * (n % 4))) & 0xFF) as u8 };
+        // Header must be 00 FF FF FF FF FF FF 00.
+        if edid_byte(0) != 0x00 || edid_byte(1) != 0xFF || edid_byte(7) != 0x00 {
+            return None;
+        }
+        // First detailed timing descriptor is at offset 54; horizontal/vertical
+        // active pixels are split across low byte + the high nibble of a shared byte.
+        let h = edid_byte(56) as u32 | (((edid_byte(58) as u32) >> 4) << 8);
+        let v = edid_byte(59) as u32 | (((edid_byte(61) as u32) >> 4) << 8);
+        if (320..=7680).contains(&h) && (240..=4320).contains(&v) {
+            Some((h, v))
         } else {
             None
         }
