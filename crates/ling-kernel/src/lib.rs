@@ -187,6 +187,16 @@ pub fn init() {
 /// kernel can't yet drive. Harmless no-op if the mailbox didn't hand back a
 /// framebuffer.
 #[cfg(target_arch = "aarch64")]
+fn append_bytes(buf: &mut [u8], n: &mut usize, s: &[u8]) {
+    for &b in s {
+        if *n < buf.len() {
+            buf[*n] = b;
+            *n += 1;
+        }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
 fn rpi_boot_screen() {
     use crate::drivers::{font8x8, framebuffer};
     let Some(fb) = framebuffer::get() else { return };
@@ -207,6 +217,48 @@ fn rpi_boot_screen() {
     font8x8::draw_str(16, 72, b"a from-scratch OS written in Ling", 0xC8_C8_D8, BG);
     font8x8::draw_str(16, 96, b"kernel alive -- HDMI up via VideoCore mailbox", 0x66_CC_FF, BG);
     font8x8::draw_str(16, 120, board, 0xFF_FF_FF, BG);
+
+    // Framebuffer-format diagnostics (for Pi 5 color/format debugging): the
+    // actual bpp/pitch the firmware set, and a labelled R/G/B/W swatch row so a
+    // photo reveals the real channel mapping.
+    let mut line = [0u8; 56];
+    let mut n = 0usize;
+    append_bytes(&mut line, &mut n, b"fb ");
+    n += write_decimal(&mut line[n..], fb.width as u64);
+    append_bytes(&mut line, &mut n, b"x");
+    n += write_decimal(&mut line[n..], fb.height as u64);
+    append_bytes(&mut line, &mut n, b" bpp=");
+    n += write_decimal(&mut line[n..], fb.bpp as u64);
+    append_bytes(&mut line, &mut n, b" pitch=");
+    n += write_decimal(&mut line[n..], fb.pitch as u64);
+    font8x8::draw_str(16, 132, &line[..n], 0xFF_FF_FF, BG);
+
+    // Raw firmware geometry [phys_w, phys_h, virt_w, virt_h, reported_pitch, size].
+    let d = unsafe { crate::arch::mailbox::FB_DIAG };
+    let mut l2 = [0u8; 72];
+    let mut m = 0usize;
+    append_bytes(&mut l2, &mut m, b"ph ");
+    m += write_decimal(&mut l2[m..], d[0] as u64);
+    append_bytes(&mut l2, &mut m, b"x");
+    m += write_decimal(&mut l2[m..], d[1] as u64);
+    append_bytes(&mut l2, &mut m, b" vt ");
+    m += write_decimal(&mut l2[m..], d[2] as u64);
+    append_bytes(&mut l2, &mut m, b"x");
+    m += write_decimal(&mut l2[m..], d[3] as u64);
+    append_bytes(&mut l2, &mut m, b" rptch ");
+    m += write_decimal(&mut l2[m..], d[4] as u64);
+    append_bytes(&mut l2, &mut m, b" sz ");
+    m += write_decimal(&mut l2[m..], d[5] as u64);
+    font8x8::draw_str(16, 142, &l2[..m], 0xFF_FF_00, BG);
+
+    let swatches: [(u32, u8); 4] =
+        [(0xFF_00_00, b'R'), (0x00_FF_00, b'G'), (0x00_00_FF, b'B'), (0xFF_FF_FF, b'W')];
+    let (sw, sh, sy) = (64u32, 22u32, 158u32);
+    for (i, (col, label)) in swatches.iter().enumerate() {
+        let sx = 16 + i as u32 * (sw + 8);
+        framebuffer::fill_rect(sx, sy, sw, sh, *col);
+        font8x8::draw_char(sx + sw / 2 - 4, sy + sh / 2 - 4, *label, 0x00_00_00, *col);
+    }
 }
 
 /// Write a byte string to the kernel's primary console (the active terminal

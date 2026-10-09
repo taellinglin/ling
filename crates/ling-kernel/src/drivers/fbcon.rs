@@ -16,8 +16,9 @@ const MAX_ROWS: usize = 120;
 const CELL_W: u32 = 8; // font8x8 advance at scale 1
 const CELL_H: u32 = 10; // 8px glyph + 2px leading
 const MARGIN: u32 = 8;
-/// Pixels reserved at the top for the boot banner (see `lib.rs::rpi_boot_screen`).
-const TOP: u32 = 140;
+/// Pixels reserved at the top for the boot banner + format diagnostics
+/// (see `lib.rs::rpi_boot_screen`).
+const TOP: u32 = 190;
 
 const FG: u32 = 0xC8_D0_E0;
 const BG: u32 = 0x10_10_18;

@@ -91,7 +91,11 @@ pub fn init() {
     #[cfg(target_arch = "aarch64")]
     {
         if let Some((addr, pitch, width, height, bpp)) =
-            crate::arch::mailbox::allocate_framebuffer(1024, 768, 32)
+            // 1280x720 (720p): a standard HDMI/TV mode. TVs often won't cleanly
+            // scan out the 4:3 1024x768 computer mode, and the firmware may give
+            // an odd surface for it. The firmware clamps to the display's real
+            // mode anyway, and we read the actual geometry back.
+            crate::arch::mailbox::allocate_framebuffer(1280, 720, 32)
         {
             unsafe {
                 ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
