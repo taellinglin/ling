@@ -15,6 +15,7 @@ pub mod cpu;
 pub mod intc;
 pub mod mailbox;
 pub mod mmio;
+pub mod rp1;
 pub mod timer;
 pub mod paging;
 pub mod vectors;

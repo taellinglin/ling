@@ -474,7 +474,9 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, uptime, board, echo <text>\n");
+        console_write(b"commands: help, uptime, board, usb, echo <text>\n");
+    } else if s == b"usb" {
+        arch::rp1::usb_probe();
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
         let mut b = [0u8; 24];
