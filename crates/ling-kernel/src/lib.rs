@@ -54,6 +54,12 @@ pub mod history;
 #[cfg(target_arch = "x86_64")]
 pub mod life;
 
+// First-boot setup wizard: a framebuffer form (language, time zone, hostname,
+// passwords, SSH) driven by the serial console today and by USB keyboard/mouse
+// once that lands. aarch64/Raspberry Pi only (no WM there to host it).
+#[cfg(target_arch = "aarch64")]
+pub mod setup;
+
 use core::ptr;
 
 // Bring the moved-under-`arch`/`drivers`/`fs`/`proc` modules back into scope
@@ -144,7 +150,7 @@ pub fn init() {
         // the peripheral base, VideoCore mailbox, UART and interrupt controller
         // all moved between generations, and everything below reads this.
         arch::mmio::init_board();
-        uart::init(); // no-op on Pi 5 (its GPIO UART is on RP1/PCIe)
+        uart::init(); // UART0+GPIO on Pi 3/4; the firmware-init debug UART10 on Pi 5
 
         // HDMI first: bring up the framebuffer via the VideoCore mailbox, paint
         // the boot banner, and open the scrolling text console — so every
@@ -480,7 +486,9 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, uptime, board, usb, echo <text>\n");
+        console_write(b"commands: help, setup, uptime, board, usb, echo <text>\n");
+    } else if s == b"setup" {
+        crate::setup::run();
     } else if s == b"usb" {
         arch::rp1::usb_probe();
     } else if s == b"uptime" {
