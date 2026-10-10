@@ -16,8 +16,12 @@
 use crate::arch::mmio::{read32, write32};
 use crate::mm::frame;
 
-/// System RAM appears to RP1/PCIe at this offset (firmware inbound window).
-const DMA_OFFSET: u64 = 0x10_0000_0000;
+/// Offset added to a CPU-physical address to get the bus address RP1's DMA uses
+/// to reach system RAM (the PCIe inbound window). smallkirby's board needed
+/// +0x10_0000_0000, but on this hardware that made the controller post events
+/// (EINT set) that never landed in our ring — so the firmware's inbound window
+/// is 1:1 here. Testing 0; if events now appear at the ring, this is correct.
+const DMA_OFFSET: u64 = 0x0;
 
 // Operational / runtime / doorbell register offsets.
 const OP_USBCMD: usize = 0x00;
