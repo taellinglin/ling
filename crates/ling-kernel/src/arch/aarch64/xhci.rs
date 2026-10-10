@@ -185,18 +185,22 @@ impl Xhci {
             core::ptr::write_volatile((x.erst + 8) as *mut u32, RING_TRBS as u32);
             core::ptr::write_volatile((x.erst + 12) as *mut u32, 0);
         }
-        // Interrupter 0 runtime regs: ERSTSZ@+0x28, ERSTBA@+0x30, ERDP@+0x38.
-        // Spec order: ERSTSZ, then ERDP, then ERSTBA LAST (writing ERSTBA arms
-        // the interrupter and latches the segment table).
+        hex(b"  rtsoff=", rtsoff as u64, 8);
+        hex(b"  dboff=", dboff as u64, 8);
+        // Interrupter 0 runtime regs: IMAN@+0x20, ERSTSZ@+0x28, ERSTBA@+0x30,
+        // ERDP@+0x38. Spec order: ERSTSZ, ERDP, then ERSTBA LAST (writing ERSTBA
+        // arms the interrupter). Enable the interrupter (IMAN.IE) — some
+        // controllers won't advance/post events until it's enabled.
         unsafe {
             write32(x.run + 0x28, 1);
             wr64(x.run + 0x38, dma(x.event_ring));
             wr64(x.run + 0x30, dma(x.erst));
+            write32(x.run + 0x20, 0x2); // IMAN.IE
         }
 
         dsb();
-        // Run.
-        x.op_wr(OP_USBCMD, CMD_RUN);
+        // Run (RUN | INTE: enable the controller's interrupter system).
+        x.op_wr(OP_USBCMD, CMD_RUN | (1 << 2));
         if !wait_clear(x.op + OP_USBSTS, STS_HCH, 20_000) {
             crate::console_write(b"  xhci: controller did not start (still halted)\n");
             return None;
@@ -280,6 +284,13 @@ impl Xhci {
         }
         let crcr = unsafe { read32(self.op + OP_CRCR) };
         hex(b"    CRCR.lo=", crcr as u64, 8);
+        // Interrupter 0 readback — confirms the runtime offset + that the event
+        // ring registers actually stuck.
+        hex(b"    USBCMD=", self.op_rd(OP_USBCMD) as u64, 8);
+        hex(b"    IMAN=", unsafe { read32(self.run + 0x20) } as u64, 8);
+        hex(b"    ERSTSZ=", unsafe { read32(self.run + 0x28) } as u64, 8);
+        hex(b"    ERSTBA.lo=", unsafe { read32(self.run + 0x30) } as u64, 8);
+        hex(b"    ERDP.lo=", unsafe { read32(self.run + 0x38) } as u64, 8);
         let a = self.event_ring;
         let p = unsafe { core::ptr::read_volatile(a as *const u64) };
         let s = unsafe { core::ptr::read_volatile((a + 8) as *const u32) };
