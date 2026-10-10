@@ -169,10 +169,12 @@ impl Xhci {
             core::ptr::write_volatile((x.erst + 12) as *mut u32, 0);
         }
         // Interrupter 0 runtime regs: ERSTSZ@+0x28, ERSTBA@+0x30, ERDP@+0x38.
+        // Spec order: ERSTSZ, then ERDP, then ERSTBA LAST (writing ERSTBA arms
+        // the interrupter and latches the segment table).
         unsafe {
             write32(x.run + 0x28, 1);
-            wr64(x.run + 0x30, dma(x.erst));
             wr64(x.run + 0x38, dma(x.event_ring));
+            wr64(x.run + 0x30, dma(x.erst));
         }
 
         dsb();
@@ -183,6 +185,8 @@ impl Xhci {
             return None;
         }
         crate::console_write(b"  xhci: running (rings up, DCBAA set)\n");
+        crate::arch::timer::delay_us(1_000);
+        x.dump_state(b"  after RUN");
         Some(x)
     }
 
@@ -222,16 +226,50 @@ impl Xhci {
 
     fn enable_slot(&mut self) -> Option<u8> {
         self.ring_command(0, TRB_ENABLE_SLOT << 10);
-        let (_p, status, control) = self.wait_event(20_000)?;
-        let ty = (control >> 10) & 0x3F;
-        let cc = (status >> 24) & 0xFF;
-        if ty != TRB_EV_CMD_COMPLETE || cc != 1 {
-            crate::console_write(b"  enable_slot: ");
-            report_cc(cc);
-            return None;
+        match self.wait_event(20_000) {
+            Some((_p, status, control)) => {
+                let ty = (control >> 10) & 0x3F;
+                let cc = (status >> 24) & 0xFF;
+                if ty != TRB_EV_CMD_COMPLETE || cc != 1 {
+                    crate::console_write(b"  enable_slot: unexpected event, ");
+                    report_cc(cc);
+                    return None;
+                }
+                Some(((control >> 24) & 0xFF) as u8)
+            },
+            None => {
+                crate::console_write(b"  enable_slot: NO completion event (timeout)\n");
+                self.dump_state(b"  at timeout");
+                None
+            },
         }
-        let slot = ((control >> 24) & 0xFF) as u8;
-        Some(slot)
+    }
+
+    /// Dump controller state for diagnosis: USBSTS (decoded), CRCR, and the raw
+    /// first event-ring TRB — tells us whether the controller faulted on DMA
+    /// (HSE), wrote an event we missed (EINT), or did nothing at all.
+    fn dump_state(&self, tag: &[u8]) {
+        let sts = self.op_rd(OP_USBSTS);
+        crate::console_write(tag);
+        hex(b" USBSTS=", sts as u64, 8);
+        if sts & (1 << 2) != 0 {
+            crate::console_write(b"    HSE set: host system error -> bad DMA address\n");
+        }
+        if sts & (1 << 3) != 0 {
+            crate::console_write(b"    EINT set: an event WAS written (poll/cycle bug)\n");
+        }
+        if sts & STS_HCH != 0 {
+            crate::console_write(b"    HCH set: controller halted\n");
+        }
+        let crcr = unsafe { read32(self.op + OP_CRCR) };
+        hex(b"    CRCR.lo=", crcr as u64, 8);
+        let a = self.event_ring;
+        let p = unsafe { core::ptr::read_volatile(a as *const u64) };
+        let s = unsafe { core::ptr::read_volatile((a + 8) as *const u32) };
+        let c = unsafe { core::ptr::read_volatile((a + 12) as *const u32) };
+        hex(b"    evt[0].param=", p, 16);
+        hex(b"    evt[0].status=", s as u64, 8);
+        hex(b"    evt[0].control=", c as u64, 8);
     }
 }
 
@@ -285,7 +323,12 @@ fn reset_connected_port(x: &Xhci) -> Option<(u32, u32)> {
     let mut p = 1u32;
     while p <= max_ports {
         let off = x.op + OP_PORTSC0 + (p as usize - 1) * OP_PORT_STRIDE;
-        let psc = unsafe { read32(off) };
+        let mut psc = unsafe { read32(off) };
+        if psc & PORTSC_PP == 0 {
+            unsafe { write32(off, (psc & !PORTSC_RW1CS) | PORTSC_PP) };
+            crate::arch::timer::delay_us(20_000);
+            psc = unsafe { read32(off) };
+        }
         if psc & PORTSC_CCS != 0 {
             // Reset the port (USB2): write PR, keep PP, clear RW1C change bits.
             let base = (psc & !PORTSC_RW1CS) | PORTSC_PP;
