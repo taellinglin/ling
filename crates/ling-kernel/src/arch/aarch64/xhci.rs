@@ -210,8 +210,6 @@ impl Xhci {
             return None;
         }
         crate::console_write(b"  xhci: running (rings up, DCBAA set)\n");
-        crate::arch::timer::delay_us(1_000);
-        x.dump_state(b"  after RUN");
         Some(x)
     }
 
@@ -392,9 +390,38 @@ fn reset_connected_port(x: &Xhci) -> Option<(u32, u32)> {
     None
 }
 
+/// Quick check (no full init) for any powered port with a device connected — so
+/// usb_probe can skip the verbose enumerate on an empty controller and keep the
+/// populated one's output on screen.
+fn has_device(cap: usize) -> bool {
+    let caplength = (unsafe { read32(cap) } & 0xFF) as usize;
+    let op = cap + caplength;
+    let max_ports = (unsafe { read32(cap + 0x04) } >> 24) & 0xFF;
+    let mut p = 1u32;
+    while p <= max_ports {
+        let off = op + OP_PORTSC0 + (p as usize - 1) * OP_PORT_STRIDE;
+        let mut psc = unsafe { read32(off) };
+        if psc & PORTSC_PP == 0 {
+            unsafe { write32(off, (psc & !PORTSC_RW1CS) | PORTSC_PP) };
+            crate::arch::timer::delay_us(20_000);
+            psc = unsafe { read32(off) };
+        }
+        if psc & PORTSC_CCS != 0 {
+            return true;
+        }
+        p += 1;
+    }
+    false
+}
+
 /// Enumerate a single device: reset its port, enable a slot, address it, and
 /// read its device descriptor. Prints progress at every step.
 pub fn enumerate(cap_base: usize, name: &[u8]) {
+    if !has_device(cap_base) {
+        crate::console_write(name);
+        crate::console_write(b": no device connected\n");
+        return;
+    }
     crate::console_write(name);
     crate::console_write(b" xHCI enumerate:\n");
 
