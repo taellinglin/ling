@@ -17,6 +17,7 @@ pub mod mailbox;
 pub mod mmio;
 pub mod rp1;
 pub mod timer;
+pub mod xhci;
 pub mod paging;
 pub mod vectors;
 pub mod trap;
