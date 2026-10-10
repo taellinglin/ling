@@ -154,6 +154,23 @@ impl Xhci {
         x.event_ring = alloc_page()?;
         x.erst = alloc_page()?;
 
+        // Scratchpad buffers. If HCSPARAMS2 asks for any, DCBAA[0] MUST point to
+        // an array of page pointers the controller uses for internal state —
+        // without it the controller silently never completes a command (exactly
+        // our symptom: command ring not running, no events). HCSPARAMS2:
+        // Max Scratchpad Bufs = (bits[31:27] << 5) | bits[25:21].
+        let hcs2 = unsafe { read32(cap + 0x08) };
+        let max_sp = (((hcs2 >> 27) & 0x1F) << 5) | ((hcs2 >> 21) & 0x1F);
+        hex(b"  max_scratchpad_bufs=", max_sp as u64, 2);
+        if max_sp > 0 {
+            let sp_array = alloc_page()?;
+            for i in 0..max_sp as u64 {
+                let buf = alloc_page()?;
+                unsafe { core::ptr::write_volatile((sp_array + i * 8) as *mut u64, dma(buf)) };
+            }
+            unsafe { core::ptr::write_volatile(x.dcbaa as *mut u64, dma(sp_array)) };
+        }
+
         let max_slots = unsafe { read32(cap + 0x04) } & 0xFF;
         x.op_wr(OP_CONFIG, max_slots); // MaxSlotsEn
 
