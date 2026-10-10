@@ -225,10 +225,14 @@ impl Xhci {
         unsafe { write32(self.db, 0) }; // doorbell 0 = command ring
     }
 
-    /// Poll the event ring for the next event; returns (param, status, control)
-    /// or None on timeout.
-    fn wait_event(&mut self, tries: u32) -> Option<(u64, u32, u32)> {
-        for _ in 0..tries {
+    /// Drain the event ring until an event of type `want` arrives, returning
+    /// (param, status, control), or None on timeout. Events of other types
+    /// (notably Port Status Change, which the controller posts as ports come up)
+    /// are consumed and skipped — otherwise a stale PSC event is mistaken for the
+    /// command/transfer completion we're actually waiting on.
+    fn wait_for(&mut self, want: u32, tries: u32) -> Option<(u64, u32, u32)> {
+        let mut spins = 0u32;
+        while spins < tries {
             let a = self.event_ring + (self.event_deq * 16) as u64;
             let control = unsafe { core::ptr::read_volatile((a + 12) as *const u32) };
             if (control & 1) == self.event_cycle {
@@ -239,24 +243,26 @@ impl Xhci {
                     self.event_deq = 0;
                     self.event_cycle ^= 1;
                 }
-                // Update ERDP to the new dequeue position.
                 let erdp = dma(self.event_ring + (self.event_deq * 16) as u64) | (1 << 3);
                 unsafe { wr64(self.run + 0x38, erdp) };
-                return Some((param, status, control));
+                if ((control >> 10) & 0x3F) == want {
+                    return Some((param, status, control));
+                }
+                continue; // consumed another event type; keep looking
             }
             crate::arch::timer::delay_us(50);
+            spins += 1;
         }
         None
     }
 
     fn enable_slot(&mut self) -> Option<u8> {
         self.ring_command(0, TRB_ENABLE_SLOT << 10);
-        match self.wait_event(20_000) {
+        match self.wait_for(TRB_EV_CMD_COMPLETE, 40_000) {
             Some((_p, status, control)) => {
-                let ty = (control >> 10) & 0x3F;
                 let cc = (status >> 24) & 0xFF;
-                if ty != TRB_EV_CMD_COMPLETE || cc != 1 {
-                    crate::console_write(b"  enable_slot: unexpected event, ");
+                if cc != 1 {
+                    crate::console_write(b"  enable_slot: ");
                     report_cc(cc);
                     return None;
                 }
@@ -428,12 +434,12 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     dsb();
 
     x.ring_command(dma(input_ctx), (TRB_ADDRESS_DEVICE << 10) | ((slot as u32) << 24));
-    let Some((_p, status, control)) = x.wait_event(20_000) else {
-        crate::console_write(b"  address_device: no completion event (DMA path?)\n");
+    let Some((_p, status, _control)) = x.wait_for(TRB_EV_CMD_COMPLETE, 40_000) else {
+        crate::console_write(b"  address_device: no completion event\n");
         return;
     };
     let cc = (status >> 24) & 0xFF;
-    if ((control >> 10) & 0x3F) != TRB_EV_CMD_COMPLETE || cc != 1 {
+    if cc != 1 {
         crate::console_write(b"  address_device: ");
         report_cc(cc);
         return;
@@ -456,12 +462,12 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     dsb();
     unsafe { write32(x.db + slot as usize * 4, 1) }; // EP0 doorbell (DCI 1)
 
-    let Some((_p2, status2, control2)) = x.wait_event(20_000) else {
+    let Some((_p2, status2, _control2)) = x.wait_for(TRB_EV_TRANSFER, 40_000) else {
         crate::console_write(b"  get_descriptor: no transfer event\n");
         return;
     };
     let cc2 = (status2 >> 24) & 0xFF;
-    if ((control2 >> 10) & 0x3F) != TRB_EV_TRANSFER || (cc2 != 1 && cc2 != 13) {
+    if cc2 != 1 && cc2 != 13 {
         crate::console_write(b"  get_descriptor: ");
         report_cc(cc2);
         return;
