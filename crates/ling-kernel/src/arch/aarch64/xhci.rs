@@ -103,6 +103,10 @@ struct Xhci {
     event_deq: usize,
     event_cycle: u32,
     erst: u64,
+    // Set once a device is addressed:
+    slot: u8,
+    ep0_ring: u64,
+    ep0_enq: usize,
 }
 
 impl Xhci {
@@ -136,6 +140,9 @@ impl Xhci {
             event_deq: 0,
             event_cycle: 1,
             erst: 0,
+            slot: 0,
+            ep0_ring: 0,
+            ep0_enq: 0,
         };
 
         // Halt, then reset.
@@ -272,6 +279,54 @@ impl Xhci {
                 None
             },
         }
+    }
+
+    /// A control transfer on EP0 (Setup/Data/Status). For an IN request the data
+    /// lands in `buf_dma`. Returns bytes transferred, or None on failure. The EP0
+    /// ring doesn't wrap during enumeration (a handful of TRBs), so cycle stays 1.
+    fn control(
+        &mut self,
+        bm_rt: u8,
+        b_req: u8,
+        w_val: u16,
+        w_idx: u16,
+        buf_dma: u64,
+        len: u16,
+    ) -> Option<u32> {
+        let c = 1u32;
+        let is_in = bm_rt & 0x80 != 0;
+        let setup = (bm_rt as u64)
+            | ((b_req as u64) << 8)
+            | ((w_val as u64) << 16)
+            | ((w_idx as u64) << 32)
+            | ((len as u64) << 48);
+        let trt = if len == 0 {
+            0u32
+        } else if is_in {
+            3
+        } else {
+            2
+        };
+        trb_write(self.ep0_ring, self.ep0_enq, setup, 8, (TRB_SETUP << 10) | (trt << 16) | (1 << 6) | c);
+        self.ep0_enq += 1;
+        if len > 0 {
+            let dir = if is_in { 1u32 } else { 0 };
+            trb_write(self.ep0_ring, self.ep0_enq, buf_dma, len as u32, (TRB_DATA << 10) | (dir << 16) | c);
+            self.ep0_enq += 1;
+        }
+        let status_dir = if len > 0 && is_in { 0u32 } else { 1 };
+        trb_write(self.ep0_ring, self.ep0_enq, 0, 0, (TRB_STATUS << 10) | (status_dir << 16) | (1 << 5) | c);
+        self.ep0_enq += 1;
+        dsb();
+        unsafe { write32(self.db + self.slot as usize * 4, 1) }; // EP0 doorbell, DCI 1
+        let (_p, status, _ctl) = self.wait_for(TRB_EV_TRANSFER, 40_000)?;
+        let code = (status >> 24) & 0xFF;
+        if code != 1 && code != 13 {
+            crate::console_write(b"    control xfer ");
+            report_cc(code);
+            return None;
+        }
+        Some(len as u32 - (status & 0xFF_FFFF))
     }
 
     /// Dump controller state for diagnosis: USBSTS (decoded), CRCR, and the raw
@@ -434,11 +489,14 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     crate::console_write(b"  slot assigned: ");
     crate::console_write(&[b'0' + (slot % 10)]);
     crate::console_write(b"\n");
+    x.slot = slot;
 
     // --- Address Device -----------------------------------------------------
     let Some(input_ctx) = alloc_page() else { return };
     let Some(dev_ctx) = alloc_page() else { return };
     let Some(ep0_ring) = alloc_page() else { return };
+    x.ep0_ring = ep0_ring;
+    x.ep0_enq = 0;
     let cs = x.ctx_size as u64;
 
     // Input Control Context: add slot (A0) + EP0 (A1).
@@ -465,52 +523,96 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         crate::console_write(b"  address_device: no completion event\n");
         return;
     };
-    let cc = (status >> 24) & 0xFF;
-    if cc != 1 {
+    if (status >> 24) & 0xFF != 1 {
         crate::console_write(b"  address_device: ");
-        report_cc(cc);
+        report_cc((status >> 24) & 0xFF);
         return;
     }
     crate::console_write(b"  device addressed\n");
 
-    // --- GET_DESCRIPTOR(device, 18) on EP0 ----------------------------------
+    // --- GET_DESCRIPTOR(device, 18) ----------------------------------------
     let Some(buf) = alloc_page() else { return };
-    let mut e = 0usize; // ep0 ring enqueue
-    let c = 1u32; // ep0 ring cycle
-    // Setup stage: 8-byte packet 80 06 00 01 00 00 12 00 (GET_DESCRIPTOR dev, 18).
-    let setup: u64 = 0x80 | (6 << 8) | (0x0100u64 << 16) | (0u64 << 32) | (18u64 << 48);
-    trb_write(ep0_ring, e, setup, 8, (TRB_SETUP << 10) | (3 << 16) | (1 << 6) | c);
-    e += 1;
-    trb_write(ep0_ring, e, dma(buf), 18, (TRB_DATA << 10) | (1 << 16) | c); // IN
-    e += 1;
-    trb_write(ep0_ring, e, 0, 0, (TRB_STATUS << 10) | (1 << 5) | c); // OUT, IOC
-    e += 1;
-    let _ = e;
-    dsb();
-    unsafe { write32(x.db + slot as usize * 4, 1) }; // EP0 doorbell (DCI 1)
-
-    let Some((_p2, status2, _control2)) = x.wait_for(TRB_EV_TRANSFER, 40_000) else {
-        crate::console_write(b"  get_descriptor: no transfer event\n");
-        return;
-    };
-    let cc2 = (status2 >> 24) & 0xFF;
-    if cc2 != 1 && cc2 != 13 {
-        crate::console_write(b"  get_descriptor: ");
-        report_cc(cc2);
-        return;
-    }
-
     let rd = |o: usize| -> u32 {
         (unsafe { core::ptr::read_volatile((buf + o as u64) as *const u8) }) as u32
     };
-    let id_vendor = rd(8) | (rd(9) << 8);
-    let id_product = rd(10) | (rd(11) << 8);
-    let dev_class = rd(4);
-    let num_cfg = rd(17);
-    crate::console_write(b"  device descriptor read:\n");
-    hex(b"    idVendor=", id_vendor as u64, 4);
-    hex(b"    idProduct=", id_product as u64, 4);
-    hex(b"    bDeviceClass=", dev_class as u64, 2);
-    hex(b"    bNumConfigs=", num_cfg as u64, 2);
-    crate::console_write(b"  -> ENUMERATION OK (device talks!)\n");
+    if x.control(0x80, 6, 0x0100, 0, dma(buf), 18).is_none() {
+        crate::console_write(b"  get device descriptor failed\n");
+        return;
+    }
+    crate::console_write(b"  device descriptor:\n");
+    hex(b"    idVendor=", (rd(8) | (rd(9) << 8)) as u64, 4);
+    hex(b"    idProduct=", (rd(10) | (rd(11) << 8)) as u64, 4);
+
+    // --- GET_DESCRIPTOR(config): 9-byte header, then the full thing ---------
+    if x.control(0x80, 6, 0x0200, 0, dma(buf), 9).is_none() {
+        crate::console_write(b"  get config header failed\n");
+        return;
+    }
+    let total = (rd(2) | (rd(3) << 8)).min(4096) as u16;
+    let cfg_val = rd(5); // bConfigurationValue (from the 9-byte header)
+    if x.control(0x80, 6, 0x0200, 0, dma(buf), total).is_none() {
+        crate::console_write(b"  get full config failed\n");
+        return;
+    }
+
+    // Walk the config: find the first HID interface and its interrupt-IN endpoint.
+    let total = total as usize;
+    let mut off = 0usize;
+    let mut cur_is_hid = false;
+    let mut hid_iface = 0xFFu32;
+    let mut iface_proto = 0u32;
+    let mut ep_addr = 0u32;
+    let mut ep_mps = 0u32;
+    let mut ep_interval = 0u32;
+    let mut found_ep = false;
+    while off + 2 <= total {
+        let blen = rd(off) as usize;
+        let btype = rd(off + 1);
+        if blen == 0 {
+            break;
+        }
+        if btype == 4 {
+            // Interface descriptor: bInterfaceClass @ +5 (3 = HID).
+            cur_is_hid = rd(off + 5) == 3;
+            if cur_is_hid {
+                hid_iface = rd(off + 2); // bInterfaceNumber
+                iface_proto = rd(off + 7); // bInterfaceProtocol: 1=keyboard, 2=mouse
+            }
+        } else if btype == 5 && cur_is_hid && !found_ep {
+            // Endpoint descriptor: want IN (addr bit7) + interrupt (attr[1:0]=3).
+            let addr = rd(off + 2);
+            if addr & 0x80 != 0 && rd(off + 3) & 0x3 == 3 {
+                ep_addr = addr;
+                ep_mps = rd(off + 4) | (rd(off + 5) << 8);
+                ep_interval = rd(off + 6);
+                found_ep = true;
+            }
+        }
+        off += blen;
+    }
+
+    if hid_iface == 0xFF || !found_ep {
+        crate::console_write(b"  no HID interrupt-IN endpoint found in config\n");
+        return;
+    }
+    crate::console_write(b"  HID interface found:\n");
+    hex(b"    bInterfaceNumber=", hid_iface as u64, 2);
+    crate::console_write(if iface_proto == 1 {
+        b"    protocol=keyboard\n"
+    } else if iface_proto == 2 {
+        b"    protocol=mouse\n"
+    } else {
+        b"    protocol=other\n"
+    });
+    hex(b"    int-IN endpoint addr=", ep_addr as u64, 2);
+    hex(b"    wMaxPacketSize=", ep_mps as u64, 4);
+    hex(b"    bInterval=", ep_interval as u64, 2);
+
+    // --- SET_CONFIGURATION --------------------------------------------------
+    if x.control(0x00, 9, cfg_val as u16, 0, 0, 0).is_none() {
+        crate::console_write(b"  SET_CONFIGURATION failed\n");
+        return;
+    }
+    crate::console_write(b"  device configured\n");
+    crate::console_write(b"  -> HID endpoint identified; next: poll for reports\n");
 }
