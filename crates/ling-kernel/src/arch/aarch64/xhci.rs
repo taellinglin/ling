@@ -45,11 +45,13 @@ const PORTSC_PP: u32 = 1 << 9;
 const PORTSC_RW1CS: u32 = 0x00FE_0000; // CSC,PEC,WRC,OCC,PRC,PLC,CEC (bits 17..23)
 
 // TRB types.
+const TRB_NORMAL: u32 = 1;
 const TRB_SETUP: u32 = 2;
 const TRB_DATA: u32 = 3;
 const TRB_STATUS: u32 = 4;
 const TRB_ENABLE_SLOT: u32 = 9;
 const TRB_ADDRESS_DEVICE: u32 = 11;
+const TRB_CONFIGURE_ENDPOINT: u32 = 12;
 const TRB_EVALUATE_CONTEXT: u32 = 13;
 const TRB_EV_TRANSFER: u32 = 32;
 const TRB_EV_CMD_COMPLETE: u32 = 33;
@@ -423,6 +425,17 @@ fn hex(label: &[u8], val: u64, nibbles: usize) {
     crate::console_write(b"\n");
 }
 
+fn print_hexbyte(b: u32) {
+    let c = |n: u32| -> u8 {
+        if n < 10 {
+            b'0' + n as u8
+        } else {
+            b'a' + (n - 10) as u8
+        }
+    };
+    crate::console_write(&[c((b >> 4) & 0xF), c(b & 0xF), b' ']);
+}
+
 fn report_cc(cc: u32) {
     match cc {
         1 => crate::console_write(b"success\n"),
@@ -614,7 +627,10 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         if btype == 4 {
             // Interface descriptor: bInterfaceClass @ +5 (3 = HID).
             cur_is_hid = rd(off + 5) == 3;
-            if cur_is_hid {
+            // Record this interface only until an endpoint locks one in, so the
+            // reported interface/protocol matches the endpoint we keep (combo
+            // keyboard+mouse devices have two HID interfaces).
+            if cur_is_hid && !found_ep {
                 hid_iface = rd(off + 2); // bInterfaceNumber
                 iface_proto = rd(off + 7); // bInterfaceProtocol: 1=keyboard, 2=mouse
             }
@@ -654,5 +670,88 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         return;
     }
     crate::console_write(b"  device configured\n");
-    crate::console_write(b"  -> HID endpoint identified; next: poll for reports\n");
+
+    // --- Configure the interrupt-IN endpoint --------------------------------
+    let ep_num = ep_addr & 0x0F;
+    let dci = (ep_num * 2 + 1) as usize; // IN direction
+    let Some(int_ring) = alloc_page() else { return };
+    // Full/low-speed interrupt interval field = 3 + floor(log2(bInterval)).
+    let mut iv = 0u32;
+    let mut bi = ep_interval.max(1);
+    while bi > 1 {
+        bi >>= 1;
+        iv += 1;
+    }
+    let interval_field = (iv + 3).clamp(3, 15);
+
+    // Input context: add slot (A0) + this endpoint (A<dci>); slot ContextEntries=dci.
+    unsafe {
+        core::ptr::write_volatile(input_ctx as *mut u32, 0);
+        core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, 1 | (1 << dci));
+        let sctx = input_ctx + cs;
+        core::ptr::write_volatile(sctx as *mut u32, ((dci as u32) << 27) | (speed << 20));
+        core::ptr::write_volatile((sctx + 4) as *mut u32, port << 16);
+        let epc = input_ctx + dci as u64 * cs;
+        core::ptr::write_volatile(epc as *mut u32, interval_field << 16);
+        core::ptr::write_volatile((epc + 4) as *mut u32, (ep_mps << 16) | (7 << 3) | (3 << 1)); // Int-IN, CErr 3
+        core::ptr::write_volatile((epc + 8) as *mut u64, dma(int_ring) | 1); // TR deq | DCS
+        core::ptr::write_volatile((epc + 16) as *mut u32, (ep_mps << 16) | ep_mps.min(8));
+    }
+    dsb();
+    x.ring_command(dma(input_ctx), (TRB_CONFIGURE_ENDPOINT << 10) | ((slot as u32) << 24));
+    match x.wait_for(TRB_EV_CMD_COMPLETE, 40_000) {
+        Some((_p, s, _c)) if (s >> 24) & 0xFF == 1 => crate::console_write(b"  endpoint configured\n"),
+        Some((_p, s, _c)) => {
+            crate::console_write(b"  configure endpoint: ");
+            report_cc((s >> 24) & 0xFF);
+            return;
+        },
+        None => {
+            crate::console_write(b"  configure endpoint: no event\n");
+            return;
+        },
+    }
+
+    // --- SET_PROTOCOL(boot): best effort (gaming devices may STALL) ----------
+    if x.control(0x21, 0x0B, 0, hid_iface as u16, 0, 0).is_some() {
+        crate::console_write(b"  boot protocol set\n");
+    } else {
+        crate::console_write(b"  (no boot protocol; using report protocol)\n");
+    }
+
+    // --- Poll the interrupt-IN endpoint for HID reports ---------------------
+    crate::console_write(b"  polling -- MOVE THE MOUSE NOW:\n");
+    let Some(rbuf) = alloc_page() else { return };
+    let rd8 = |o: usize| -> u32 {
+        (unsafe { core::ptr::read_volatile((rbuf + o as u64) as *const u8) }) as u32
+    };
+    let mut ir_enq = 0usize;
+    let start = crate::arch::timer::now_ms();
+    let mut n = 0u32;
+    while crate::arch::timer::now_ms() - start < 8000 && n < 24 && ir_enq < RING_TRBS - 1 {
+        trb_write(int_ring, ir_enq, dma(rbuf), ep_mps, (TRB_NORMAL << 10) | (1 << 5) | 1); // IOC
+        ir_enq += 1;
+        dsb();
+        unsafe { write32(x.db + slot as usize * 4, dci as u32) }; // endpoint doorbell
+        match x.wait_for(TRB_EV_TRANSFER, 40_000) {
+            Some((_p, s, _c)) if matches!((s >> 24) & 0xFF, 1 | 13) => {
+                crate::console_write(b"    report: ");
+                for o in 0..4 {
+                    print_hexbyte(rd8(o));
+                }
+                crate::console_write(b"\n");
+                n += 1;
+            },
+            Some((_p, s, _c)) => {
+                crate::console_write(b"    xfer ");
+                report_cc((s >> 24) & 0xFF);
+                break;
+            },
+            None => {
+                crate::console_write(b"    (no report within timeout)\n");
+                break;
+            },
+        }
+    }
+    crate::console_write(b"  -> HID reports read -- USB input works!\n");
 }
