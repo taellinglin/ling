@@ -50,6 +50,7 @@ const TRB_DATA: u32 = 3;
 const TRB_STATUS: u32 = 4;
 const TRB_ENABLE_SLOT: u32 = 9;
 const TRB_ADDRESS_DEVICE: u32 = 11;
+const TRB_EVALUATE_CONTEXT: u32 = 13;
 const TRB_EV_TRANSFER: u32 = 32;
 const TRB_EV_CMD_COMPLETE: u32 = 33;
 
@@ -329,6 +330,31 @@ impl Xhci {
         Some(len as u32 - (status & 0xFF_FFFF))
     }
 
+    /// Update EP0's Max Packet Size in the device context via an Evaluate
+    /// Context command. Needed because Address Device sets a provisional MPS of 8
+    /// (safe for the first 8-byte descriptor read); the real value comes from
+    /// bMaxPacketSize0 and must be programmed before a larger control transfer,
+    /// or the device babbles. `input_ctx` is reused (only the EP0 add-flag set).
+    fn set_ep0_mps(&mut self, input_ctx: u64, mps: u32) -> bool {
+        let cs = self.ctx_size as u64;
+        unsafe {
+            core::ptr::write_volatile(input_ctx as *mut u32, 0); // drop flags
+            core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, 0b10); // add A1 = EP0 only
+        }
+        let ep0 = input_ctx + 2 * cs;
+        unsafe {
+            core::ptr::write_volatile((ep0 + 4) as *mut u32, (mps << 16) | (4 << 3) | (3 << 1));
+            core::ptr::write_volatile((ep0 + 8) as *mut u64, dma(self.ep0_ring) | 1);
+            core::ptr::write_volatile((ep0 + 16) as *mut u32, mps.min(8));
+        }
+        dsb();
+        self.ring_command(dma(input_ctx), (TRB_EVALUATE_CONTEXT << 10) | ((self.slot as u32) << 24));
+        match self.wait_for(TRB_EV_CMD_COMPLETE, 40_000) {
+            Some((_p, status, _c)) => (status >> 24) & 0xFF == 1,
+            None => false,
+        }
+    }
+
     /// Dump controller state for diagnosis: USBSTS (decoded), CRCR, and the raw
     /// first event-ring TRB — tells us whether the controller faulted on DMA
     /// (HSE), wrote an event we missed (EINT), or did nothing at all.
@@ -530,13 +556,27 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     }
     crate::console_write(b"  device addressed\n");
 
-    // --- GET_DESCRIPTOR(device, 18) ----------------------------------------
+    // --- GET_DESCRIPTOR(device): 8 bytes first to learn bMaxPacketSize0 ------
     let Some(buf) = alloc_page() else { return };
     let rd = |o: usize| -> u32 {
         (unsafe { core::ptr::read_volatile((buf + o as u64) as *const u8) }) as u32
     };
+    if x.control(0x80, 6, 0x0100, 0, dma(buf), 8).is_none() {
+        crate::console_write(b"  get device descriptor (8) failed\n");
+        return;
+    }
+    // bMaxPacketSize0 is byte 7. If the control endpoint is bigger than the
+    // provisional 8, re-program it (Evaluate Context) before reading more, or
+    // the device babbles.
+    let mps0 = rd(7);
+    hex(b"  bMaxPacketSize0=", mps0 as u64, 2);
+    if (mps0 == 16 || mps0 == 32 || mps0 == 64) && !x.set_ep0_mps(input_ctx, mps0) {
+        crate::console_write(b"  set EP0 max-packet failed\n");
+        return;
+    }
+    // Now read the full 18-byte descriptor at the correct max-packet size.
     if x.control(0x80, 6, 0x0100, 0, dma(buf), 18).is_none() {
-        crate::console_write(b"  get device descriptor failed\n");
+        crate::console_write(b"  get device descriptor (18) failed\n");
         return;
     }
     crate::console_write(b"  device descriptor:\n");
