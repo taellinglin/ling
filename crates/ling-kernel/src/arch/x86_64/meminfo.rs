@@ -29,6 +29,35 @@ const MAX_SEGMENTS: usize = 32;
 const FALLBACK_BASE: u64 = 16 * 1024 * 1024;
 const FALLBACK_LEN: u64 = 112 * 1024 * 1024;
 
+/// The disk-boot stage2's BIOS E820 handoff (`E820_INFO_ADDR` in
+/// bootloader/stage2.asm): magic "E820", entry count, then raw 24-byte
+/// entries {base u64, len u64, type u32, acpi u32}.
+const E820_INFO_ADDR: u64 = 0x5000;
+const E820_INFO_MAGIC: u32 = 0x3032_3845;
+const E820_MAX: u32 = 64;
+
+/// Register the usable (type 1) ranges from stage2's E820 handoff, if present.
+/// Returns false when there's no handoff (an older stage2), so the caller
+/// falls back to the fixed range.
+unsafe fn register_e820_handoff(kernel_end: u64) -> bool {
+    if ptr::read_volatile(E820_INFO_ADDR as *const u32) != E820_INFO_MAGIC {
+        return false;
+    }
+    let count = ptr::read_volatile((E820_INFO_ADDR + 4) as *const u32).min(E820_MAX);
+    let mut any = false;
+    for i in 0..count as u64 {
+        let e = E820_INFO_ADDR + 8 + i * 24;
+        let base = ptr::read_unaligned(e as *const u64);
+        let len = ptr::read_unaligned((e + 8) as *const u64);
+        let kind = ptr::read_unaligned((e + 16) as *const u32);
+        if kind == MEMORY_AVAILABLE && len > 0 {
+            crate::mm::frame::add_free_region(base, len, kernel_end);
+            any = true;
+        }
+    }
+    any
+}
+
 /// Register every usable range Multiboot2 reports (minus whatever's below
 /// `kernel_end` and any loaded module) with `mm::frame`. Call once, after
 /// `mm::frame`'s statics are zero-initialized (implicit — no explicit
@@ -37,7 +66,9 @@ pub fn detect_and_register(kernel_end: u64) {
     unsafe {
         let info_ptr = ptr::read_volatile(&raw const mb2_info_ptr);
         if info_ptr == 0 {
-            crate::mm::frame::add_free_region(FALLBACK_BASE, FALLBACK_LEN, kernel_end);
+            if !register_e820_handoff(kernel_end) {
+                crate::mm::frame::add_free_region(FALLBACK_BASE, FALLBACK_LEN, kernel_end);
+            }
             return;
         }
 

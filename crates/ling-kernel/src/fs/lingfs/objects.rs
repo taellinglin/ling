@@ -16,14 +16,16 @@ pub const COMMIT_ENTRY_BYTES: usize = 32 + 4;
 pub const MAX_COMMITS: usize = 1024;
 pub const COMMIT_BLOCKS: usize = (MAX_COMMITS * COMMIT_ENTRY_BYTES).div_ceil(BLOCK_SIZE);
 pub const DATA_REGION_START: u32 = 1 + INDEX_BLOCKS as u32 + COMMIT_BLOCKS as u32;
-// Start the lingfs volume at 16MiB (sector 32768). The disk-boot kernel image
+// Start the lingfs volume at 32MiB (sector 65536). The disk-boot kernel image
 // is loaded contiguously from sector 18, so lingfs MUST begin past the end of
 // that image or the two overlap and filesystem writes corrupt the kernel (and
 // vice versa) -- which wiped installed accounts once the embedded wallpaper
-// pushed the WM kernel past the old 4MiB (sector 8192) mark. 16MiB leaves the
-// kernel ~16MiB of room; `live/build-diskboot-x86_64.sh` hard-errors if a
-// build ever exceeds it, so this can't silently regress again.
-pub const LINGFS_BASE_LBA: u32 = 32768;
+// pushed the WM kernel past the old 4MiB (sector 8192) mark. Raised again from
+// 16MiB when the desktop started bundling LingStationX (~23MiB image); 32MiB
+// leaves ~10MiB headroom. Only a reinstall (which reformats lingfs) ever puts a
+// new kernel on a disk, so moving this never strands an installed volume.
+// `live/build-diskboot-x86_64.sh` hard-errors if a build ever exceeds it.
+pub const LINGFS_BASE_LBA: u32 = 65536;
 
 #[derive(Copy, Clone)]
 pub struct IndexEntry {

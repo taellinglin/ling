@@ -26,6 +26,10 @@ pub struct CraneliftBackend {
     /// `without_kernel_symbols()` since nothing provides those symbols when
     /// linking a normal Windows/Linux/macOS executable.
     include_kernel: bool,
+    /// `Some(sym)`: emit the program as a bundled app — every function gets
+    /// local linkage and `__main__` is exported as `sym` — so it can be linked
+    /// into an image next to another compiled program without symbol clashes.
+    app_entry: Option<String>,
 }
 
 /// Render a single-line tqdm-style progress bar to stderr (overwriting in place
@@ -806,7 +810,14 @@ impl CraneliftBackend {
             builder_ctx: FunctionBuilderContext::new(),
             progress: false,
             include_kernel: true,
+            app_entry: None,
         }
+    }
+
+    /// Emit as a bundled app: functions local, `__main__` exported as `entry_sym`.
+    pub fn as_app(mut self, entry_sym: &str) -> Self {
+        self.app_entry = Some(entry_sym.to_string());
+        self
     }
 
     /// Enable a tqdm-style progress bar over the per-function codegen loop.
@@ -849,9 +860,12 @@ impl CodegenBackend for CraneliftBackend {
                 sig.params.push(AbiParam::new(types::I64));
             }
             sig.returns.push(AbiParam::new(types::I64));
-            let id = module
-                .declare_function(&func.name, Linkage::Export, &sig)
-                .unwrap();
+            let id = match &self.app_entry {
+                Some(sym) if func.name == "__main__" => module.declare_function(sym, Linkage::Export, &sig),
+                Some(_) => module.declare_function(&func.name, Linkage::Local, &sig),
+                None => module.declare_function(&func.name, Linkage::Export, &sig),
+            }
+            .unwrap();
             func_ids.insert(func.name.clone(), id);
             func_arities.insert(func.name.clone(), func.arg_count);
         }

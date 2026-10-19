@@ -495,6 +495,11 @@ struct LingProject {
     /// the entry program as the whole kernel, boot LingOS (console, USB, setup)
     /// and offer the program as a built-in app of that name, auto-started once.
     kernel_app: Option<String>,
+    /// `bundle_app = "<name>:<path/to/main.ling>"` (kernel targets): compile a
+    /// second program into the image as a built-in app (its own object, local
+    /// symbols, entry `__ling_app_<name>`) next to the entry program — e.g.
+    /// LingStationX inside the x86 desktop, launched from the Applications menu.
+    bundle_app: Option<(String, PathBuf)>,
     /// `[project] graphics = true` (kernel targets only): request a
     /// Multiboot2 linear framebuffer instead of leaving VGA in text mode
     /// (see `ling-kernel`'s `request_framebuffer` Cargo feature). Off by
@@ -523,6 +528,7 @@ fn discover_project(target: &str) -> LingProject {
             includes: Vec::new(),
             embed_root: None,
             kernel_app: None,
+            bundle_app: None,
             graphics: false,
         }
     } else if path.is_dir() {
@@ -563,6 +569,7 @@ fn discover_project(target: &str) -> LingProject {
             includes: Vec::new(),
             embed_root: None,
             kernel_app: None,
+            bundle_app: None,
             graphics: false,
         }
     } else {
@@ -642,6 +649,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         includes,
         embed_root: None,
         kernel_app: None,
+        bundle_app: None,
         graphics: false,
     }
 }
@@ -669,6 +677,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut graphics = false;
     let mut embed_root: Option<PathBuf> = None;
     let mut kernel_app: Option<String> = None;
+    let mut bundle_app: Option<(String, PathBuf)> = None;
 
     for line in text.lines() {
         let line = line.trim();
@@ -701,6 +710,11 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         if let Some(v) = toml_kv(line, "kernel_app") {
             kernel_app = Some(v.to_string());
         }
+        if let Some(v) = toml_kv(line, "bundle_app") {
+            if let Some((name, path)) = v.split_once(':') {
+                bundle_app = Some((name.trim().to_string(), base.join(path.trim())));
+            }
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -721,6 +735,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         includes,
         embed_root,
         kernel_app,
+        bundle_app,
         graphics,
     }
 }
@@ -1265,6 +1280,28 @@ fn build_native(
 
         println!("    AOT object written to {}", obj_path.display());
 
+        // bundle_app: the second program, as its own object with local symbols.
+        let app_obj = build_dir.join("app.o");
+        let _ = std::fs::remove_file(&app_obj);
+        if let Some((app_name, app_entry)) = &project.bundle_app {
+            let app_mir = ling::mir::compile_path_standalone(app_entry, kernel_opt).unwrap_or_else(|e| {
+                eprintln!("    bundled app '{app_name}': MIR compilation failed: {e}");
+                std::process::exit(1);
+            });
+            let app_prog = ling_codegen::MirProgram::new(app_mir, app_entry.to_string_lossy().into_owned());
+            println!(
+                "    bundling app '{app_name}': compiling {} functions…",
+                app_prog.mir.functions.len()
+            );
+            let mut app_backend = ling_codegen::CraneliftBackend::new_for_arch(platform.cranelift_arch())
+                .with_progress(true)
+                .as_app(&format!("__ling_app_{app_name}"));
+            app_backend.emit(&app_prog, &app_obj).unwrap_or_else(|e| {
+                eprintln!("    bundled app '{app_name}': AOT codegen failed: {e}");
+                std::process::exit(1);
+            });
+        }
+
         // Generate kernel-specific Cargo.toml with ling-kernel dependency
         std::fs::write(
             build_dir.join("Cargo.toml"),
@@ -1408,9 +1445,21 @@ fn build_native(
             );
             println!("    kernel app: LingOS boots, '{app}' is a built-in app");
         }
+        let mut build_rs = gen_kernel_build_rs();
+        if let Some((app_name, _)) = &project.bundle_app {
+            let sym = format!("__ling_app_{app_name}");
+            main_rs = main_rs
+                .replacen("fn __main__() -> u64;", &format!("fn __main__() -> u64;\n    fn {sym}() -> u64;"), 1)
+                .replacen("__main__();", &format!("ling_kernel::register_app({app_name:?}, {sym});\n        __main__();"), 1);
+            build_rs = build_rs.replacen(
+                "    println!(\"cargo:rerun-if-changed=entry.o\");",
+                "    println!(\"cargo:rerun-if-changed=entry.o\");\n    println!(\"cargo:rustc-link-arg-bins={}/app.o\", manifest_dir);\n    println!(\"cargo:rerun-if-changed=app.o\");",
+                1,
+            );
+        }
         std::fs::write(build_dir.join("src/main.rs"), main_rs).expect("write src/main.rs");
 
-        std::fs::write(build_dir.join("build.rs"), gen_kernel_build_rs()).expect("write build.rs");
+        std::fs::write(build_dir.join("build.rs"), build_rs).expect("write build.rs");
 
         // Write linker script
         let linker_script = if is_rpi {

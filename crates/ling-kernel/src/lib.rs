@@ -460,6 +460,20 @@ pub fn register_app(name: &'static str, entry: AppEntry) {
     }
 }
 
+/// The first registered built-in app, if this image bundles one.
+pub fn first_app() -> Option<(&'static str, AppEntry)> {
+    unsafe { (*(&raw const APPS))[0] }
+}
+
+/// Desktop (x86 WM) launch: run the app full-screen in isolation; on return the
+/// desktop loop simply redraws over it.
+#[cfg(target_arch = "x86_64")]
+pub fn run_first_app() {
+    if let Some((_, entry)) = first_app() {
+        lingrt::run_isolated(entry);
+    }
+}
+
 fn app_named(name: &[u8]) -> Option<AppEntry> {
     let apps = unsafe { &*(&raw const APPS) };
     apps.iter().flatten().find(|(n, _)| n.as_bytes() == name).map(|&(_, e)| e)
@@ -472,7 +486,7 @@ fn run_app(name: &[u8], entry: AppEntry) {
     console_write(b"starting ");
     console_write(name);
     console_write(b" (Ctrl+Q returns to LingOS)...\n");
-    unsafe { entry() };
+    lingrt::run_isolated(entry);
     rpi_boot_screen();
     crate::drivers::fbcon::init();
     console_write(b"back in LingOS -- type 'apps' to list built-in apps.\n");
@@ -2285,7 +2299,8 @@ pub unsafe extern "C" fn ling_kernel_disk_erase_quick() -> u64 {
     }
     // lingfs superblocks: double-buffered at the base LBA (see
     // lingfs.rs's LINGFS_BASE_LBA reservation comment in packages/README).
-    for lba in 8192..8200u32 {
+    let base = fs::lingfs::LINGFS_BASE_LBA;
+    for lba in base..base + 8 {
         if fs::blockdev::write_sector(lba, &zero).is_err() {
             return 0;
         }

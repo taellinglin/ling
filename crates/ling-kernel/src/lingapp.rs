@@ -425,7 +425,39 @@ fn present() {
                 w.open = false;
             }
         }
+        // x86: PS/2 keyboard — Ctrl+Q (chord byte 0x80|17) returns to the
+        // desktop; printable keys, Enter and Backspace feed `text_poll`.
+        #[cfg(target_arch = "x86_64")]
+        {
+            crate::arch::idt::poll_drain_8042();
+            loop {
+                let c = crate::drivers::keyboard::poll_char();
+                match c {
+                    0 => break,
+                    0x91 => w.open = false,
+                    b'\n' | b'\r' | 0x08 | 0x20..=0x7E => unsafe { (*(&raw mut TEXT)).push(c as char) },
+                    _ => {},
+                }
+            }
+        }
     }
+}
+
+/// Keys typed since the app last called `text_poll` (x86 PS/2 for now).
+static mut TEXT: String = String::new();
+
+/// Pointer state in window coordinates: (x, y, buttons bit0 L / bit1 R / bit2 M).
+/// x86 reads the PS/2 mouse; boards without a pointer yet report it off-screen.
+fn mouse_state() -> (f64, f64, u8) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::arch::idt::poll_drain_8042();
+        let (ox, oy) = framebuffer::safe_margin();
+        use crate::drivers::mouse;
+        return ((mouse::x() - ox as i32) as f64, (mouse::y() - oy as i32) as f64, mouse::buttons());
+    }
+    #[allow(unreachable_code)]
+    (-10_000.0, -10_000.0, 0)
 }
 
 // ── Files (embedded, read-only until LingOS reads the SD card) ───────────────
@@ -565,12 +597,15 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             num(font(a(0, -1.0)).map(|f| measure(f, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
         },
 
-        // Input: nothing yet (USB HID → these is the next step).
-        b"mouse_x" | b"mouse_y" => num(-10_000.0),
-        b"mouse_down" | b"mouse_down_right" | b"mouse_down_middle" => FALSE,
+        // Input: the PS/2 mouse + typed text on x86; Pi USB HID is the next step.
+        b"mouse_x" => num(mouse_state().0),
+        b"mouse_y" => num(mouse_state().1),
+        b"mouse_down" => boolean(mouse_state().2 & 1 != 0),
+        b"mouse_down_right" => boolean(mouse_state().2 & 2 != 0),
+        b"mouse_down_middle" => boolean(mouse_state().2 & 4 != 0),
         b"mouse_scroll" | b"mouse_scroll_x" => num(0.0),
         b"key_down" | b"key_pressed" => FALSE,
-        b"text_poll" | b"text_get" => mk_str(""),
+        b"text_poll" | b"text_get" => mk_str(&core::mem::take(unsafe { &mut *(&raw mut TEXT) })),
         b"text_set" => UNIT,
 
         // Files.

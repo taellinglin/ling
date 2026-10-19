@@ -370,6 +370,18 @@ fn store() -> &'static mut BTreeMap<Vec<u8>, StEntry> {
     unsafe { &mut *(&raw mut STORE) }
 }
 
+/// Run a bundled app's entry with its own fresh globals and `st_*` store, then
+/// restore the host program's (e.g. the desktop's) — two compiled programs in
+/// one image must not see each other's module-level binds.
+pub fn run_isolated(entry: unsafe extern "C" fn() -> u64) -> u64 {
+    let saved_g = core::mem::take(globals());
+    let saved_s = core::mem::take(store());
+    let r = unsafe { entry() };
+    *globals() = saved_g;
+    *store() = saved_s;
+    r
+}
+
 /// The stored list for `key`, made private (unshared) and created empty if
 /// absent or not a list; returns its buffer so the caller can edit in place.
 fn st_private_list(key: Vec<u8>) -> &'static mut StEntry {

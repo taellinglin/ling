@@ -396,6 +396,9 @@ const ACT_LOGOUT: u8 = 200;
 const ACT_RESTART: u8 = 201;
 const ACT_SHUTDOWN: u8 = 202;
 const ACT_LAUNCH_PKG: u8 = 203;
+/// Run the image's bundled compiled `.ling` app (`bundle_app` in Ling.toml —
+/// LingStationX, LingOS Edition) full-screen; Ctrl+Q returns to the desktop.
+const ACT_RUN_APP: u8 = 204;
 
 // Installed lingfu packages that are runnable on LingOS (have a `main.ling`)
 // appear in the start menu grouped by category. The list is rebuilt each time
@@ -431,7 +434,7 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 19] = [
+const MENU: [MenuRow; 20] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "", app: "horizon (box-model browser)", kind: KIND_HORIZON },
@@ -443,6 +446,7 @@ const MENU: [MenuRow; 19] = [
     MenuRow { header: "Sound & Video", app: "", kind: 255 },
     MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
     MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
+    MenuRow { header: "", app: "LingStationX (LingOS Edition)", kind: ACT_RUN_APP },
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Packages", kind: KIND_PKG },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
@@ -473,6 +477,10 @@ fn menu_activate(kind: u8) {
         ACT_RESTART => crate::arch::power::reboot(),
         ACT_SHUTDOWN => crate::arch::power::poweroff(),
         ACT_LAUNCH_PKG => launch_pkg(unsafe { PKG_LAUNCH }),
+        ACT_RUN_APP => {
+            unsafe { MENU_OPEN = false };
+            crate::run_first_app();
+        },
         k => open(k),
     }
 }
@@ -667,6 +675,9 @@ fn load_installed_packages() {
 fn menu_walk(mut f: impl FnMut(usize, &[u8], bool, u32)) {
     let mut row = 0usize;
     for m in MENU.iter() {
+        if m.kind == ACT_RUN_APP && crate::first_app().is_none() {
+            continue; // this image bundles no compiled app
+        }
         if m.header == "Power" {
             let pc = unsafe { PKG_COUNT };
             let mut drawn = [false; MAX_MENU_PKGS];
