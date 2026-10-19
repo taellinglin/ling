@@ -397,6 +397,23 @@ pub unsafe extern "C" fn ling_kernel_vga_write_str(s: u64) -> u64 {
     0
 }
 
+/// Next input byte from any source — the serial console or the USB keyboard —
+/// non-blocking. USB keys arrive already encoded the way a serial terminal sends
+/// them (arrows as `ESC [ A..D`), so callers needn't care which one typed it.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn poll_input() -> Option<u8> {
+    uart::poll_byte().or_else(arch::xhci::kbd_poll_byte)
+}
+
+/// Run the first-boot setup wizard, then restore the boot banner and a clean
+/// console underneath it (the wizard owns the whole framebuffer while it runs).
+#[cfg(target_arch = "aarch64")]
+fn run_setup_wizard() {
+    crate::setup::run();
+    rpi_boot_screen();
+    crate::drivers::fbcon::init();
+}
+
 /// aarch64/Raspberry Pi idle loop with a live uptime clock painted on the boot
 /// banner. The minimal Pi kernel calls this instead of a bare `wfi`, so there's
 /// visible proof the system is actually running — important on Pi 5, which has
@@ -406,7 +423,7 @@ pub unsafe extern "C" fn ling_kernel_vga_write_str(s: u64) -> u64 {
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
-    use crate::drivers::{font8x8, framebuffer, uart};
+    use crate::drivers::{font8x8, framebuffer};
     console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n\n");
     // Auto-run the USB probe once at boot. Without a serial adapter the only
     // way to see its output (and the only way to drive it at all, since typing
@@ -414,7 +431,12 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
     // behind the `usb` command. On a Pi 5 this reports the xHCI/DWC3 controller
     // identity; on other boards it's a one-line note.
     arch::rp1::usb_probe();
-    console_write(b"\nserial console ready -- type 'help'.\n");
+    // A USB keyboard means a person is at the machine: go straight to the
+    // first-boot setup screen, then drop to the console when it's done.
+    if arch::xhci::keyboard_ready() {
+        run_setup_wizard();
+    }
+    console_write(b"\nconsole ready (USB keyboard or serial) -- type 'help'.\n");
     console_write(b"lingos$ ");
     const BAR: u32 = 0x6C_3A_FF;
     let mut last = u64::MAX;
@@ -424,7 +446,7 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
         // Interactive input: drain the UART, echo + line-edit, run on Enter.
         // console_write fans out to both serial and the HDMI console, so typing
         // shows up on both.
-        while let Some(c) = uart::poll_byte() {
+        while let Some(c) = poll_input() {
             match c {
                 b'\r' | b'\n' => {
                     console_write(b"\n");
@@ -488,7 +510,7 @@ fn rpi_shell_exec(line: &[u8]) {
     if s == b"help" {
         console_write(b"commands: help, setup, uptime, board, usb, echo <text>\n");
     } else if s == b"setup" {
-        crate::setup::run();
+        run_setup_wizard();
     } else if s == b"usb" {
         arch::rp1::usb_probe();
     } else if s == b"uptime" {

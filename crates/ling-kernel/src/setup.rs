@@ -7,7 +7,8 @@
 //! zone, hostname, root + user passwords, and SSH.
 //!
 //! **Input model.** `read_key()` turns raw bytes into [`Key`] events. Today the
-//! only source is the serial console (`uart::poll_byte`), which is what makes
+//! sources are the serial console and the USB keyboard (`crate::poll_input`
+//! merges both; USB keys arrive pre-encoded like a terminal's), which is what makes
 //! this testable in QEMU (scripted key input + screendump) *before* the USB HID
 //! stack exists. When USB keyboard/mouse land they feed the same [`Key`] stream
 //! (and, for the mouse, pointer/click events hit-testing the same widget rows —
@@ -20,7 +21,7 @@
 //! storage driver — the wizard says so on the final screen rather than
 //! pretending it persisted.
 
-use crate::drivers::{font8x8, framebuffer, uart};
+use crate::drivers::{font8x8, framebuffer};
 
 // ── Palette ────────────────────────────────────────────────────────────────
 const BG: u32 = 0x10_10_18;
@@ -150,7 +151,7 @@ enum Key {
 
 fn read_byte_blocking() -> u8 {
     loop {
-        if let Some(b) = uart::poll_byte() {
+        if let Some(b) = crate::poll_input() {
             return b;
         }
         core::hint::spin_loop();
@@ -162,7 +163,7 @@ fn read_byte_blocking() -> u8 {
 /// on a lone ESC.
 fn poll_soon() -> Option<u8> {
     for _ in 0..300_000 {
-        if let Some(b) = uart::poll_byte() {
+        if let Some(b) = crate::poll_input() {
             return Some(b);
         }
         core::hint::spin_loop();

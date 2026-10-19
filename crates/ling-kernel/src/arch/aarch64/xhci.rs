@@ -233,6 +233,25 @@ impl Xhci {
         unsafe { write32(self.db, 0) }; // doorbell 0 = command ring
     }
 
+    /// Non-blocking: dequeue one event if the controller has posted one.
+    fn poll_event(&mut self) -> Option<(u64, u32, u32)> {
+        let a = self.event_ring + (self.event_deq * 16) as u64;
+        let control = unsafe { core::ptr::read_volatile((a + 12) as *const u32) };
+        if (control & 1) != self.event_cycle {
+            return None;
+        }
+        let param = unsafe { core::ptr::read_volatile(a as *const u64) };
+        let status = unsafe { core::ptr::read_volatile((a + 8) as *const u32) };
+        self.event_deq += 1;
+        if self.event_deq >= RING_TRBS {
+            self.event_deq = 0;
+            self.event_cycle ^= 1;
+        }
+        let erdp = dma(self.event_ring + (self.event_deq * 16) as u64) | (1 << 3);
+        unsafe { wr64(self.run + 0x38, erdp) };
+        Some((param, status, control))
+    }
+
     /// Drain the event ring until an event of type `want` arrives, returning
     /// (param, status, control), or None on timeout. Events of other types
     /// (notably Port Status Change, which the controller posts as ports come up)
@@ -423,17 +442,6 @@ fn hex(label: &[u8], val: u64, nibbles: usize) {
     }
     crate::console_write(&buf[..n]);
     crate::console_write(b"\n");
-}
-
-fn print_hexbyte(b: u32) {
-    let c = |n: u32| -> u8 {
-        if n < 10 {
-            b'0' + n as u8
-        } else {
-            b'a' + (n - 10) as u8
-        }
-    };
-    crate::console_write(&[c((b >> 4) & 0xF), c(b & 0xF), b' ']);
 }
 
 fn report_cc(cc: u32) {
@@ -725,45 +733,187 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         crate::console_write(b"  (no boot protocol; using report protocol)\n");
     }
 
-    // --- Poll the interrupt-IN endpoint for HID reports ---------------------
-    crate::console_write(if iface_proto == 1 {
-        b"  polling -- PRESS SOME KEYS NOW:\n"
-    } else {
-        b"  polling -- MOVE THE MOUSE NOW:\n"
-    });
+    // --- Hand the keyboard to the persistent poller -------------------------
+    if iface_proto != 1 {
+        crate::console_write(b"  -> HID mouse found (pointer input not wired yet)\n");
+        return;
+    }
+    if keyboard_ready() {
+        return; // already have a keyboard on another controller
+    }
     let Some(rbuf) = alloc_page() else { return };
-    let rd8 = |o: usize| -> u32 {
-        (unsafe { core::ptr::read_volatile((rbuf + o as u64) as *const u8) }) as u32
+    let mut k = Kbd {
+        x,
+        ring: int_ring,
+        enq: 0,
+        cycle: 1,
+        rbuf,
+        dci: dci as u32,
+        mps: ep_mps,
+        prev: [0; 8],
     };
-    let mut ir_enq = 0usize;
-    let start = crate::arch::timer::now_ms();
-    let mut n = 0u32;
-    while crate::arch::timer::now_ms() - start < 8000 && n < 24 && ir_enq < RING_TRBS - 1 {
-        trb_write(int_ring, ir_enq, dma(rbuf), ep_mps, (TRB_NORMAL << 10) | (1 << 5) | 1); // IOC
-        ir_enq += 1;
-        dsb();
-        unsafe { write32(x.db + slot as usize * 4, dci as u32) }; // endpoint doorbell
-        // Keyboards only report on a key change, so allow the whole window for
-        // each report rather than a short per-report timeout.
-        match x.wait_for(TRB_EV_TRANSFER, 160_000) {
-            Some((_p, s, _c)) if matches!((s >> 24) & 0xFF, 1 | 13) => {
-                crate::console_write(b"    report: ");
-                for o in 0..(ep_mps.min(8) as usize) {
-                    print_hexbyte(rd8(o));
-                }
-                crate::console_write(b"\n");
-                n += 1;
-            },
-            Some((_p, s, _c)) => {
-                crate::console_write(b"    xfer ");
-                report_cc((s >> 24) & 0xFF);
-                break;
-            },
-            None => {
-                crate::console_write(b"    (no report within timeout)\n");
-                break;
-            },
+    kbd_queue(&mut k); // arm the first interrupt transfer
+    unsafe { core::ptr::write(&raw mut KBD, Some(k)) };
+    crate::console_write(b"  -> USB KEYBOARD READY\n");
+}
+
+// ── Persistent USB keyboard ──────────────────────────────────────────────────
+// After enumeration the keyboard's controller state moves here. One interrupt
+// TRB is kept outstanding; `kbd_poll_byte` (non-blocking) checks the event ring,
+// decodes each new boot report into bytes, and re-arms. Bytes come out exactly as
+// a serial terminal would send them (arrows as ESC [ A..D), so the shell and the
+// setup wizard consume USB and serial input through the same path.
+
+const TRB_LINK: u32 = 6;
+
+struct Kbd {
+    x: Xhci,
+    ring: u64,
+    enq: usize,
+    cycle: u32,
+    rbuf: u64,
+    dci: u32,
+    mps: u32,
+    prev: [u8; 8],
+}
+
+static mut KBD: Option<Kbd> = None;
+
+// Decoded-byte queue (a key press can yield several bytes, e.g. an arrow).
+const KQ_LEN: usize = 64;
+static mut KQ: [u8; KQ_LEN] = [0; KQ_LEN];
+static mut KQ_HEAD: usize = 0;
+static mut KQ_TAIL: usize = 0;
+
+fn kq_push(b: u8) {
+    unsafe {
+        let next = (KQ_HEAD + 1) % KQ_LEN;
+        if next != KQ_TAIL {
+            KQ[KQ_HEAD] = b;
+            KQ_HEAD = next;
         }
     }
-    crate::console_write(b"  -> HID reports read -- USB input works!\n");
+}
+
+fn kq_pop() -> Option<u8> {
+    unsafe {
+        if KQ_HEAD == KQ_TAIL {
+            return None;
+        }
+        let b = KQ[KQ_TAIL];
+        KQ_TAIL = (KQ_TAIL + 1) % KQ_LEN;
+        Some(b)
+    }
+}
+
+/// True once a USB keyboard has been enumerated and armed.
+pub fn keyboard_ready() -> bool {
+    unsafe { (*&raw const KBD).is_some() }
+}
+
+/// Queue the next interrupt-IN transfer and ring the endpoint doorbell. The ring
+/// is circular: when the producer reaches the last slot it writes a Link TRB
+/// (Toggle Cycle) back to the start and flips its cycle bit.
+fn kbd_queue(k: &mut Kbd) {
+    trb_write(k.ring, k.enq, dma(k.rbuf), k.mps, (TRB_NORMAL << 10) | (1 << 5) | k.cycle);
+    k.enq += 1;
+    if k.enq == RING_TRBS - 1 {
+        trb_write(k.ring, k.enq, dma(k.ring), 0, (TRB_LINK << 10) | (1 << 1) | k.cycle);
+        k.enq = 0;
+        k.cycle ^= 1;
+    }
+    dsb();
+    unsafe { write32(k.x.db + k.x.slot as usize * 4, k.dci) };
+}
+
+/// US-layout HID usage → ASCII (None for keys with no single-byte meaning).
+fn usage_to_ascii(u: u8, shift: bool) -> Option<u8> {
+    const DIGITS: &[u8; 10] = b"1234567890";
+    const SHIFTED: &[u8; 10] = b"!@#$%^&*()";
+    let pick = |plain: u8, shifted: u8| if shift { shifted } else { plain };
+    Some(match u {
+        0x04..=0x1d => {
+            let c = b'a' + (u - 0x04);
+            if shift {
+                c - 32
+            } else {
+                c
+            }
+        },
+        0x1e..=0x27 => {
+            let i = (u - 0x1e) as usize;
+            if shift {
+                SHIFTED[i]
+            } else {
+                DIGITS[i]
+            }
+        },
+        0x28 => b'\r',
+        0x29 => 0x1b,
+        0x2a => 0x08,
+        0x2b => b'\t',
+        0x2c => b' ',
+        0x2d => pick(b'-', b'_'),
+        0x2e => pick(b'=', b'+'),
+        0x2f => pick(b'[', b'{'),
+        0x30 => pick(b']', b'}'),
+        0x31 => pick(b'\\', b'|'),
+        0x33 => pick(b';', b':'),
+        0x34 => pick(b'\'', b'"'),
+        0x35 => pick(b'`', b'~'),
+        0x36 => pick(b',', b'<'),
+        0x37 => pick(b'.', b'>'),
+        0x38 => pick(b'/', b'?'),
+        _ => return None,
+    })
+}
+
+/// Turn a boot keyboard report into bytes: every key code present now but not in
+/// the previous report is a fresh press.
+fn decode_report(prev: &[u8; 8], cur: &[u8; 8]) {
+    let shift = cur[0] & 0x22 != 0; // LShift | RShift
+    for &u in &cur[2..8] {
+        if u < 4 || prev[2..8].contains(&u) {
+            continue; // 0 = none, 1..3 = error/rollover codes
+        }
+        let seq: &[u8] = match u {
+            0x4f => b"\x1b[C", // Right
+            0x50 => b"\x1b[D", // Left
+            0x51 => b"\x1b[B", // Down
+            0x52 => b"\x1b[A", // Up
+            _ => {
+                if let Some(a) = usage_to_ascii(u, shift) {
+                    kq_push(a);
+                }
+                continue;
+            },
+        };
+        for &b in seq {
+            kq_push(b);
+        }
+    }
+}
+
+/// Non-blocking: the next byte typed on the USB keyboard, if any.
+pub fn kbd_poll_byte() -> Option<u8> {
+    if let Some(b) = kq_pop() {
+        return Some(b);
+    }
+    let kbd = unsafe { &mut *(&raw mut KBD) };
+    let k = kbd.as_mut()?;
+    while let Some((_p, status, control)) = k.x.poll_event() {
+        if (control >> 10) & 0x3F != TRB_EV_TRANSFER {
+            continue; // port-status changes etc.
+        }
+        if matches!((status >> 24) & 0xFF, 1 | 13) {
+            let mut cur = [0u8; 8];
+            for (i, b) in cur.iter_mut().enumerate() {
+                *b = unsafe { core::ptr::read_volatile((k.rbuf + i as u64) as *const u8) };
+            }
+            decode_report(&k.prev, &cur);
+            k.prev = cur;
+        }
+        kbd_queue(k);
+    }
+    kq_pop()
 }
