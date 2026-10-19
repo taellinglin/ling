@@ -674,6 +674,8 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     // --- Configure the interrupt-IN endpoint --------------------------------
     let ep_num = ep_addr & 0x0F;
     let dci = (ep_num * 2 + 1) as usize; // IN direction
+    // A zero max-packet is invalid in an endpoint context; boot HID uses 8.
+    let ep_mps = if ep_mps == 0 { 8 } else { ep_mps };
     let Some(int_ring) = alloc_page() else { return };
     // Full/low-speed interrupt interval field = 3 + floor(log2(bInterval)).
     let mut iv = 0u32;
@@ -691,7 +693,11 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         let sctx = input_ctx + cs;
         core::ptr::write_volatile(sctx as *mut u32, ((dci as u32) << 27) | (speed << 20));
         core::ptr::write_volatile((sctx + 4) as *mut u32, port << 16);
-        let epc = input_ctx + dci as u64 * cs;
+        // Input-context index 0 is the Input Control Context, 1 the slot, so the
+        // endpoint with DCI n sits at index n+1 (EP0/DCI1 at 2*cs, matching
+        // Address Device). Writing it at dci*cs left the real slot all-zero →
+        // Parameter Error (completion code 0x11).
+        let epc = input_ctx + (dci as u64 + 1) * cs;
         core::ptr::write_volatile(epc as *mut u32, interval_field << 16);
         core::ptr::write_volatile((epc + 4) as *mut u32, (ep_mps << 16) | (7 << 3) | (3 << 1)); // Int-IN, CErr 3
         core::ptr::write_volatile((epc + 8) as *mut u64, dma(int_ring) | 1); // TR deq | DCS
@@ -720,7 +726,11 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     }
 
     // --- Poll the interrupt-IN endpoint for HID reports ---------------------
-    crate::console_write(b"  polling -- MOVE THE MOUSE NOW:\n");
+    crate::console_write(if iface_proto == 1 {
+        b"  polling -- PRESS SOME KEYS NOW:\n"
+    } else {
+        b"  polling -- MOVE THE MOUSE NOW:\n"
+    });
     let Some(rbuf) = alloc_page() else { return };
     let rd8 = |o: usize| -> u32 {
         (unsafe { core::ptr::read_volatile((rbuf + o as u64) as *const u8) }) as u32
@@ -733,10 +743,12 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         ir_enq += 1;
         dsb();
         unsafe { write32(x.db + slot as usize * 4, dci as u32) }; // endpoint doorbell
-        match x.wait_for(TRB_EV_TRANSFER, 40_000) {
+        // Keyboards only report on a key change, so allow the whole window for
+        // each report rather than a short per-report timeout.
+        match x.wait_for(TRB_EV_TRANSFER, 160_000) {
             Some((_p, s, _c)) if matches!((s >> 24) & 0xFF, 1 | 13) => {
                 crate::console_write(b"    report: ");
-                for o in 0..4 {
+                for o in 0..(ep_mps.min(8) as usize) {
                     print_hexbyte(rd8(o));
                 }
                 crate::console_write(b"\n");
