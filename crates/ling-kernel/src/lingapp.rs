@@ -417,6 +417,14 @@ fn open_window(req_w: f64, req_h: f64) {
 fn present() {
     if let Some(w) = win() {
         framebuffer::blit_rgb(&w.buf, w.w, w.h);
+        // Ctrl+Q (USB keyboard or serial) closes the app back to the LingOS
+        // console — the way out until the app's own input is wired to HID.
+        #[cfg(target_arch = "aarch64")]
+        while let Some(c) = crate::poll_input() {
+            if c == 0x11 {
+                w.open = false;
+            }
+        }
     }
 }
 

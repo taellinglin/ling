@@ -491,6 +491,10 @@ struct LingProject {
     /// app folder for a kernel that runs an app living elsewhere, so the app's
     /// own relative paths (`assets/font.ttf`) find its embedded files.
     embed_root: Option<PathBuf>,
+    /// `kernel_app = "<name>"` (Raspberry Pi kernel targets): instead of running
+    /// the entry program as the whole kernel, boot LingOS (console, USB, setup)
+    /// and offer the program as a built-in app of that name, auto-started once.
+    kernel_app: Option<String>,
     /// `[project] graphics = true` (kernel targets only): request a
     /// Multiboot2 linear framebuffer instead of leaving VGA in text mode
     /// (see `ling-kernel`'s `request_framebuffer` Cargo feature). Off by
@@ -518,6 +522,7 @@ fn discover_project(target: &str) -> LingProject {
             icon: None,
             includes: Vec::new(),
             embed_root: None,
+            kernel_app: None,
             graphics: false,
         }
     } else if path.is_dir() {
@@ -557,6 +562,7 @@ fn discover_project(target: &str) -> LingProject {
             icon: None,
             includes: Vec::new(),
             embed_root: None,
+            kernel_app: None,
             graphics: false,
         }
     } else {
@@ -635,6 +641,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         icon,
         includes,
         embed_root: None,
+        kernel_app: None,
         graphics: false,
     }
 }
@@ -661,6 +668,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut icon: Option<PathBuf> = None;
     let mut graphics = false;
     let mut embed_root: Option<PathBuf> = None;
+    let mut kernel_app: Option<String> = None;
 
     for line in text.lines() {
         let line = line.trim();
@@ -690,6 +698,9 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         if let Some(v) = toml_kv(line, "embed_root") {
             embed_root = Some(base.join(v));
         }
+        if let Some(v) = toml_kv(line, "kernel_app") {
+            kernel_app = Some(v.to_string());
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -709,6 +720,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         icon,
         includes,
         embed_root,
+        kernel_app,
         graphics,
     }
 }
@@ -1383,6 +1395,18 @@ fn build_native(
                 resources.len(),
                 total as f64 / 1_048_576.0
             );
+        }
+        // kernel_app = "<name>": LingOS boots as usual and the program becomes
+        // one of its built-in apps (launched from the console / autostarted).
+        if let (true, Some(app)) = (is_rpi, &project.kernel_app) {
+            main_rs = main_rs.replacen(
+                "__main__();",
+                &format!(
+                    "ling_kernel::init();\n        ling_kernel::register_app({app:?}, __main__);\n        ling_kernel::ling_kernel_rpi_idle();"
+                ),
+                1,
+            );
+            println!("    kernel app: LingOS boots, '{app}' is a built-in app");
         }
         std::fs::write(build_dir.join("src/main.rs"), main_rs).expect("write src/main.rs");
 

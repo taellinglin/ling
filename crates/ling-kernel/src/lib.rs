@@ -445,6 +445,59 @@ fn run_setup_wizard() {
     crate::drivers::fbcon::init();
 }
 
+/// Built-in apps: compiled `.ling` programs linked into this kernel image
+/// (`kernel_app` in the project's Ling.toml), launched from the console by name.
+type AppEntry = unsafe extern "C" fn() -> u64;
+static mut APPS: [Option<(&'static str, AppEntry)>; 8] = [None; 8];
+
+/// Register a built-in app. The first one registered is autostarted at boot.
+pub fn register_app(name: &'static str, entry: AppEntry) {
+    unsafe {
+        let apps = &mut *(&raw mut APPS);
+        if let Some(slot) = apps.iter_mut().find(|s| s.is_none()) {
+            *slot = Some((name, entry));
+        }
+    }
+}
+
+fn app_named(name: &[u8]) -> Option<AppEntry> {
+    let apps = unsafe { &*(&raw const APPS) };
+    apps.iter().flatten().find(|(n, _)| n.as_bytes() == name).map(|&(_, e)| e)
+}
+
+/// Run a built-in app full-screen until it closes (Ctrl+Q), then give the
+/// screen back to the LingOS console.
+#[cfg(target_arch = "aarch64")]
+fn run_app(name: &[u8], entry: AppEntry) {
+    console_write(b"starting ");
+    console_write(name);
+    console_write(b" (Ctrl+Q returns to LingOS)...\n");
+    unsafe { entry() };
+    rpi_boot_screen();
+    crate::drivers::fbcon::init();
+    console_write(b"back in LingOS -- type 'apps' to list built-in apps.\n");
+}
+
+/// Autostart the first built-in app after a short countdown; any key cancels
+/// to the console.
+#[cfg(target_arch = "aarch64")]
+fn autostart_app() {
+    let first = unsafe { (*(&raw const APPS))[0] };
+    let Some((name, entry)) = first else { return };
+    console_write(b"\n");
+    console_write(name.as_bytes());
+    console_write(b" starts in 3s -- press any key for the LingOS console.\n");
+    let deadline = arch::timer::now_ms() + 3000;
+    while arch::timer::now_ms() < deadline {
+        if poll_input().is_some() {
+            console_write(b"autostart cancelled.\n");
+            return;
+        }
+        arch::timer::delay_us(5_000);
+    }
+    run_app(name.as_bytes(), entry);
+}
+
 /// aarch64/Raspberry Pi idle loop with a live uptime clock painted on the boot
 /// banner. The minimal Pi kernel calls this instead of a bare `wfi`, so there's
 /// visible proof the system is actually running — important on Pi 5, which has
@@ -467,6 +520,7 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
     if arch::xhci::keyboard_ready() {
         run_setup_wizard();
     }
+    autostart_app();
     console_write(b"\nconsole ready (USB keyboard or serial) -- type 'help'.\n");
     console_write(b"lingos$ ");
     const BAR: u32 = 0x6C_3A_FF;
@@ -539,7 +593,17 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, setup, uptime, board, usb, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, echo <text>\n");
+    } else if s == b"apps" {
+        let apps = unsafe { &*(&raw const APPS) };
+        console_write(b"built-in apps:");
+        for (n, _) in apps.iter().flatten() {
+            console_write(b" ");
+            console_write(n.as_bytes());
+        }
+        console_write(b"\n");
+    } else if let Some(entry) = app_named(s) {
+        run_app(s, entry);
     } else if s == b"setup" {
         run_setup_wizard();
     } else if s == b"usb" {

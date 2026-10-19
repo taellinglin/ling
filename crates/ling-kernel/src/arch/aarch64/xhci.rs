@@ -874,6 +874,7 @@ fn usage_to_ascii(u: u8, shift: bool) -> Option<u8> {
 /// the previous report is a fresh press.
 fn decode_report(prev: &[u8; 8], cur: &[u8; 8]) {
     let shift = cur[0] & 0x22 != 0; // LShift | RShift
+    let ctrl = cur[0] & 0x11 != 0; // LCtrl | RCtrl
     for &u in &cur[2..8] {
         if u < 4 || prev[2..8].contains(&u) {
             continue; // 0 = none, 1..3 = error/rollover codes
@@ -885,7 +886,8 @@ fn decode_report(prev: &[u8; 8], cur: &[u8; 8]) {
             0x52 => b"\x1b[A", // Up
             _ => {
                 if let Some(a) = usage_to_ascii(u, shift) {
-                    kq_push(a);
+                    // Ctrl+letter → its control code (Ctrl+Q = 0x11), like a terminal.
+                    kq_push(if ctrl && a.is_ascii_alphabetic() { a & 0x1F } else { a });
                 }
                 continue;
             },
