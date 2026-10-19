@@ -64,6 +64,10 @@ pub mod setup;
 // semantics, module globals, the `st_*` store, maths, and the `ling_builtin`
 // by-name dispatcher — what lets a full app like LingStationX link in-kernel.
 pub mod lingrt;
+// App builtins for compiled programs (window, px_* drawing, fonts, input, files)
+// and the read-only files `ling build` bakes into the image ([includes]).
+pub mod lingapp;
+pub mod appfs;
 
 use core::ptr;
 
@@ -207,6 +211,11 @@ pub fn init() {
         console_write(b"mm: ");
         print_decimal((mm::frame::free_frame_count() * 4) as u64);
         console_write(b" KiB free (frame allocator)\n");
+
+        // MMU + caches: RAM cacheable, framebuffer/DMA pool uncached, MMIO Device.
+        let ram_end = arch::mailbox::arm_memory().map(|(b, s)| b + s).unwrap_or(128 << 20);
+        arch::paging::init_rpi(ram_end);
+        console_write(b"mmu: identity map on (caches enabled)\n");
     }
 }
 

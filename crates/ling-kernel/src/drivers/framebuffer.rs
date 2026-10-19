@@ -320,6 +320,50 @@ pub fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     }
 }
 
+/// Copy a whole `sw`×`sh` frame of 0xRRGGBB pixels to the live framebuffer at
+/// the safe-area origin, converting to the panel's format (32/24bpp, or the
+/// RGB565 the Pi 5 firmware scans out). One pass, row by row — the Ling app
+/// runtime's `present()`; far cheaper than per-pixel `set_pixel`.
+pub fn blit_rgb(src: &[u32], sw: usize, sh: usize) {
+    let Some(fb) = get() else { return };
+    let (ox, oy) = unsafe { (OX as usize, OY as usize) };
+    let (fw, fh) = (fb.width as usize, fb.height as usize);
+    if ox >= fw || oy >= fh || sw == 0 {
+        return;
+    }
+    let w = sw.min(fw - ox);
+    let h = sh.min(fh - oy).min(src.len() / sw);
+    let pitch = fb.pitch as usize;
+    for y in 0..h {
+        let row = &src[y * sw..y * sw + w];
+        let base = fb.addr as usize + (y + oy) * pitch;
+        unsafe {
+            match fb.bpp {
+                32 => {
+                    let dst = (base + ox * 4) as *mut u32;
+                    ptr::copy_nonoverlapping(row.as_ptr(), dst, w);
+                },
+                16 => {
+                    let dst = (base + ox * 2) as *mut u16;
+                    for (x, &c) in row.iter().enumerate() {
+                        ptr::write_volatile(dst.add(x), rgb565(c));
+                    }
+                },
+                24 => {
+                    let mut p = (base + ox * 3) as *mut u8;
+                    for &c in row {
+                        ptr::write_volatile(p, (c & 0xFF) as u8);
+                        ptr::write_volatile(p.add(1), ((c >> 8) & 0xFF) as u8);
+                        ptr::write_volatile(p.add(2), ((c >> 16) & 0xFF) as u8);
+                        p = p.add(3);
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+}
+
 /// Pack a 0xRRGGBB color into 16-bit RGB565, for the 16bpp framebuffer the
 /// Pi 5 firmware sometimes hands back regardless of the requested depth.
 #[inline]

@@ -30,6 +30,9 @@ blake3 = { version = "1.5", default-features = false, features = ["pure"] }
 # Pure-Rust no_std maths (sin/cos/pow/log10/exp/floor…) for the Ling value
 # runtime (`lingrt`) — compiled `.ling` code calls these through the AOT ABI.
 libm = "0.2"
+# TrueType/OpenType rasteriser (no_std + alloc) for the app runtime's px_text:
+# draws compiled apps' own fonts (embedded via [includes]) with host metrics.
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
 
 # Ed25519 signature *verification* only (no `alloc`, no `rand_core`/`std`,
 # no `precomputed-tables`/`fast` — those need alloc for their lookup

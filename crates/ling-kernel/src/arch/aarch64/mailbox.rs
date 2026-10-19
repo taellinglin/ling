@@ -49,6 +49,10 @@ unsafe fn call(channel: u32) -> bool {
 
     let addr = (&raw mut BUFFER) as u32;
     let msg = (addr & !0xF) | (channel & 0xF);
+    // The buffer is in cacheable RAM once the MMU is on: push our request out to
+    // memory for the VideoCore, and drop stale lines again before reading its reply.
+    let buf_len = core::mem::size_of::<MailboxBuffer>() as u64;
+    crate::arch::paging::dcache_flush(addr as u64, buf_len);
 
     let mut spins = 0u32;
     while read32(mbox_status) & MBOX_FULL != 0 {
@@ -71,6 +75,7 @@ unsafe fn call(channel: u32) -> bool {
         }
         let resp = read32(mbox_read);
         if resp == msg {
+            crate::arch::paging::dcache_flush(addr as u64, buf_len);
             return BUFFER.0[1] == 0x8000_0000;
         }
     }

@@ -246,6 +246,127 @@ pub fn init() {
     }
 }
 
+/// MAIR_EL1 index 2: Normal, inner+outer non-cacheable — for memory another
+/// bus master reads behind the CPU's back (the HDMI scanout framebuffer, the
+/// xHCI DMA pool) without any cache maintenance.
+const ATTR_NORMAL_NC: u64 = 2 << 2;
+
+/// Uncached DMA pool (next free, end) carved out by [`init_rpi`]; zero while
+/// the MMU is off, when every frame is already uncached.
+static mut DMA_POOL: (u64, u64) = (0, 0);
+
+/// One zeroed-on-request 4 KiB page that a DMA master can share with the CPU
+/// coherently: from the uncached pool once [`init_rpi`] has turned caches on,
+/// otherwise straight from the frame allocator (MMU off ⇒ uncached anyway).
+pub fn dma_alloc_page() -> Option<u64> {
+    unsafe {
+        let (next, end) = DMA_POOL;
+        if end == 0 {
+            return crate::mm::frame::alloc_frames(0);
+        }
+        if next >= end {
+            return None;
+        }
+        DMA_POOL.0 = next + PAGE_SIZE;
+        Some(next)
+    }
+}
+
+/// Clean+invalidate the data cache over `[addr, addr+len)` to the point of
+/// coherency — for buffers in cacheable RAM that the VideoCore reads/writes
+/// (the mailbox property buffer).
+pub fn dcache_flush(addr: u64, len: u64) {
+    let mut a = addr & !63;
+    unsafe {
+        while a < addr + len {
+            asm!("dc civac, {}", in(reg) a, options(nostack));
+            a += 64;
+        }
+        asm!("dsb sy", options(nostack));
+    }
+}
+
+/// Raspberry Pi (3/4/5) MMU bring-up: a flat identity map with RAM
+/// `[0, ram_end)` as cacheable Normal memory, the scanout framebuffer and a
+/// 2 MiB DMA pool as Normal non-cacheable, and everything else — every
+/// peripheral window up to 512 GiB, incl. the Pi 5's RP1 at `0x1C_0000_0000` —
+/// as Device-nGnRnE. Beyond speed (D/I caches), this is what makes compiled
+/// `.ling` code safe at all: with the MMU off every access is Device-typed, and
+/// Cranelift's 16-byte `str q` spills to 8-aligned stack slots alignment-fault.
+pub fn init_rpi(ram_end: u64) {
+    // 4 MiB buddy block, aligned up to 2 MiB inside it → one whole 2 MiB L2
+    // block for the uncached pool, whatever the allocator's own alignment.
+    let pool = crate::mm::frame::alloc_frames(10)
+        .map(|p| (p + BLOCK_SIZE - 1) & !(BLOCK_SIZE - 1))
+        .unwrap_or(0);
+    let fb = crate::drivers::framebuffer::get()
+        .map(|f| {
+            let end = f.addr + f.pitch as u64 * f.height as u64;
+            (f.addr & !(BLOCK_SIZE - 1), (end + BLOCK_SIZE - 1) & !(BLOCK_SIZE - 1))
+        })
+        .unwrap_or((0, 0));
+    const GIB: u64 = 1 << 30;
+
+    let l0 = alloc_table();
+    unsafe {
+        let l1 = next_level(l0, 0);
+        for gb in 0..512u64 {
+            let base = gb * GIB;
+            let needs_l2 = base < ram_end || (fb.1 > base && fb.0 < base + GIB);
+            let entry = table_entry(l1, gb as usize);
+            if !needs_l2 {
+                core::ptr::write_volatile(entry, base | BLOCK | AF | ATTR_DEVICE | UXN | PXN);
+                continue;
+            }
+            let l2 = alloc_table();
+            for i in 0..512u64 {
+                let a = base + i * BLOCK_SIZE;
+                let uncached = (pool != 0 && a == pool) || (a >= fb.0 && a < fb.1);
+                let desc = if uncached {
+                    a | BLOCK | AF | SH_INNER | ATTR_NORMAL_NC | UXN | PXN
+                } else if a < ram_end {
+                    a | BLOCK | AF | SH_INNER | ATTR_NORMAL | UXN // EL1 RWX
+                } else {
+                    a | BLOCK | AF | ATTR_DEVICE | UXN | PXN
+                };
+                core::ptr::write_volatile(table_entry(l2, i as usize), desc);
+            }
+            core::ptr::write_volatile(entry, (l2 & ADDR_MASK) | VALID | TABLE_OR_PAGE);
+        }
+        KERNEL_L0 = l0;
+        if pool != 0 {
+            DMA_POOL = (pool, pool + BLOCK_SIZE);
+        }
+
+        // idx0 Normal WB RW-allocate, idx1 Device-nGnRnE, idx2 Normal NC.
+        let mair: u64 = 0xFF | (0x00 << 8) | (0x44 << 16);
+        asm!("msr mair_el1, {}", in(reg) mair, options(nostack));
+
+        // Physical address size = whatever this core implements (Pi 5's RP1
+        // sits above 32 bits, so the reset IPS=0 / 4 GiB would address-fault).
+        let mmfr0: u64;
+        asm!("mrs {}, id_aa64mmfr0_el1", out(reg) mmfr0, options(nostack, nomem));
+        let ips = (mmfr0 & 0xF).min(0b101);
+        let tcr: u64 = 16
+            | (0b01 << 8)  // IRGN0 WB
+            | (0b01 << 10) // ORGN0 WB
+            | (0b11 << 12) // SH0 inner
+            | (0b00 << 14) // TG0 = 4KiB
+            | (1 << 23)    // EPD1
+            | (ips << 32);
+        asm!("msr tcr_el1, {}", in(reg) tcr, options(nostack));
+        asm!("dsb sy", "msr ttbr0_el1, {}", "isb", in(reg) l0, options(nostack));
+        tlb_flush_all();
+        asm!("ic iallu", "dsb sy", "isb", options(nostack));
+
+        let mut sctlr: u64;
+        asm!("mrs {}, sctlr_el1", out(reg) sctlr, options(nostack, nomem));
+        sctlr |= (1 << 0) | (1 << 2) | (1 << 12); // M, C, I
+        sctlr &= !(1 << 1); // A: no alignment checking on Normal memory
+        asm!("msr sctlr_el1, {}", "isb", in(reg) sctlr, options(nostack));
+    }
+}
+
 /// A fresh address space for a new process — its own L0 table, sharing the
 /// kernel's identity-mapped range by copying `KERNEL_L0`'s low entries
 /// (pointers to the same physical L1 tables, not a deep copy). Mirrors the

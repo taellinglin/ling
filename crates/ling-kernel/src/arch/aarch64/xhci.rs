@@ -73,10 +73,12 @@ unsafe fn wr64(addr: usize, val: u64) {
     write32(addr + 4, (val >> 32) as u32);
 }
 
-/// Allocate one zeroed 4 KiB page; returns its CPU-physical address (== virtual,
-/// MMU off). Pages are frame-aligned, satisfying every xHCI alignment.
+/// Allocate one zeroed 4 KiB page; returns its CPU-physical address (== virtual:
+/// identity map). Pages come from the uncached DMA pool once the MMU/caches are
+/// on, so the controller and CPU stay coherent without cache maintenance.
+/// Pages are frame-aligned, satisfying every xHCI alignment.
 fn alloc_page() -> Option<u64> {
-    let p = frame::alloc_frames(0)?;
+    let p = crate::arch::paging::dma_alloc_page()?;
     for i in 0..512u64 {
         unsafe { core::ptr::write_volatile((p + i * 8) as *mut u64, 0) };
     }
