@@ -56,6 +56,9 @@ pub(crate) unsafe fn bytes_of_ptr(p: *mut u8) -> &'static [u8] {
 }
 
 fn alloc_string(len: usize) -> *mut u8 {
+    // A compiled program's very first act can be building a string literal,
+    // before anything has called ling_kernel_init (LingStationX never does).
+    crate::lingrt::ensure_init();
     let buf = crate::mm::heap::alloc(4 + len);
     if buf.is_null() {
         crate::kernel_panic("out of memory (heap allocator exhausted)");
@@ -75,14 +78,31 @@ pub unsafe extern "C" fn ling_str_new(bytes: *const u8, len: usize) -> u64 {
     encode(buf)
 }
 
+/// `len(x)` — the compiler routes every `len` here, so it must handle lists as
+/// well as strings. Strings count *characters* (UTF-8), like the interpreter.
 #[no_mangle]
 pub unsafe extern "C" fn ling_str_len(val: u64) -> u64 {
-    let len = header_len(decode_ptr(val));
-    (len as f64).to_bits()
+    use crate::lingrt;
+    let n = if lingrt::is_str(val) {
+        lingrt::str_of(val).chars().count()
+    } else if lingrt::is_list(val) {
+        lingrt::list_items(val).len()
+    } else {
+        0
+    };
+    (n as f64).to_bits()
 }
 
+/// Concatenate; a non-string operand is formatted the interpreter's way.
 #[no_mangle]
 pub unsafe extern "C" fn ling_str_concat(a: u64, b: u64) -> u64 {
+    use crate::lingrt;
+    if !(lingrt::is_str(a) && lingrt::is_str(b)) {
+        let mut s = alloc::string::String::new();
+        lingrt::fmt_into(&mut s, a);
+        lingrt::fmt_into(&mut s, b);
+        return lingrt::mk_str(&s);
+    }
     let (pa, pb) = (decode_ptr(a), decode_ptr(b));
     let (la, lb) = (header_len(pa), header_len(pb));
     let buf = alloc_string(la + lb);

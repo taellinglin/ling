@@ -786,7 +786,11 @@ impl CraneliftBackend {
         flag_builder.set("is_pic", "true").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
         flag_builder.set("enable_alias_analysis", "true").unwrap();
-        flag_builder.set("enable_verifier", "false").unwrap();
+        // LING_AOT_VERIFY=1 turns Cranelift's IR verifier on: invalid IR from the
+        // translator then fails the build naming the function, instead of being
+        // encoded into instructions that fault at run time on the target.
+        let verify = std::env::var("LING_AOT_VERIFY").is_ok_and(|v| v == "1");
+        flag_builder.set("enable_verifier", if verify { "true" } else { "false" }).unwrap();
         let isa = isa_builder
             .finish(settings::Flags::new(flag_builder))
             .unwrap();
@@ -946,7 +950,9 @@ impl CodegenBackend for CraneliftBackend {
             };
             build_function_body(&mut builder, func, &blocks, &tctx);
             builder.finalize();
-            module.define_function(fid, &mut ctx).unwrap();
+            if let Err(e) = module.define_function(fid, &mut ctx) {
+                panic!("AOT codegen failed in function `{}`: {e:?}", func.name);
+            }
         }
         if show_progress {
             eprintln!();

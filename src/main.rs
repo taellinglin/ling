@@ -1131,7 +1131,7 @@ fn build_native(
         // ── LingOS userland path: AOT compile + ling-user runtime ───────────
         println!("    AOT-compiling {} for LingOS userspace…", entry_filename);
 
-        let mir = ling::mir::compile_path(&project.entry, ling::core::OptimizationLevel::O3)
+        let mir = ling::mir::compile_path_standalone(&project.entry, ling::core::OptimizationLevel::O3)
             .unwrap_or_else(|e| {
                 eprintln!("    MIR compilation failed: {e}");
                 std::process::exit(1);
@@ -1191,11 +1191,29 @@ fn build_native(
         // ── Kernel path: AOT compile + no_std runtime ──────────────────────
         println!("    AOT-compiling {} for kernel…", entry_filename);
 
-        let mir = ling::mir::compile_path(&project.entry, ling::core::OptimizationLevel::O3)
+        // Debug knobs for kernel AOT bring-up: LING_KERNEL_OPT=0..3 overrides the
+        // MIR optimisation level (isolates optimiser bugs); LING_DUMP_MIR=<fn>
+        // (or `*`) writes that function's MIR to <build_dir>/mir-<fn>.txt.
+        let kernel_opt = match std::env::var("LING_KERNEL_OPT").as_deref() {
+            Ok("0") => ling::core::OptimizationLevel::None,
+            Ok("1") => ling::core::OptimizationLevel::O1,
+            Ok("2") => ling::core::OptimizationLevel::O2,
+            _ => ling::core::OptimizationLevel::O3,
+        };
+        let mir = ling::mir::compile_path_standalone(&project.entry, kernel_opt)
             .unwrap_or_else(|e| {
                 eprintln!("    MIR compilation failed: {e}");
                 std::process::exit(1);
             });
+        if let Ok(want) = std::env::var("LING_DUMP_MIR") {
+            for f in &mir.functions {
+                if want == "*" || f.name == want {
+                    let path = build_dir.join(format!("mir-{}.txt", f.name.replace(['/', '\\'], "_")));
+                    let _ = std::fs::write(&path, format!("{f:#?}"));
+                    println!("    MIR of {} written to {}", f.name, path.display());
+                }
+            }
+        }
 
         let mir_prog = ling_codegen::MirProgram::new(mir, entry_filename.clone());
         println!(

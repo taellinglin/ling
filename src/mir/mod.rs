@@ -32,6 +32,18 @@ pub fn compile_path(entry: &Path, opt_level: OptimizationLevel) -> LingResult<Mi
     Ok(optimize(mir, opt_level))
 }
 
+/// Like [`compile_path`], for programs that run with no host interpreter behind
+/// them (LingOS kernel and userland images). Functions read module globals via
+/// `__ling_global`, which the hosted runtime answers from the interpreter's
+/// evaluated snapshot; standalone there is no such snapshot, so `__main__` first
+/// evaluates every global `bind` in source order and records it with
+/// `__ling_global_set` before running the entry.
+pub fn compile_path_standalone(entry: &Path, opt_level: OptimizationLevel) -> LingResult<MirProgram> {
+    let flat = flatten_path(entry)?;
+    let mir = lower_program_with(&flat, true);
+    Ok(optimize(mir, opt_level))
+}
+
 /// Resolve `use`/`mod` imports for `entry` and return the flattened AST. Used by
 /// the JIT to prime its fallback interpreter with the same program it compiles.
 pub fn flatten_path(entry: &Path) -> LingResult<parser::ast::Program> {
@@ -113,6 +125,10 @@ fn optimize(mut mir: MirProgram, opt_level: OptimizationLevel) -> MirProgram {
 // ─── AST → MIR lowering ──────────────────────────────────────────────────────
 
 fn lower_program(prog: &parser::ast::Program) -> MirProgram {
+    lower_program_with(prog, false)
+}
+
+fn lower_program_with(prog: &parser::ast::Program, init_globals: bool) -> MirProgram {
     let entry = crate::entry::entry_name(&prog.items);
 
     // Module globals: every top-level bind that is not the entry. Functions read
@@ -142,6 +158,21 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     // other top-level binds are globals (resolved at runtime, see above).
     // With no entry, every top-level bind is treated as the script body.
     let mut main_stmts: Vec<parser::ast::Stmt> = Vec::new();
+    if init_globals && entry.is_some() {
+        // Standalone images: evaluate each global in source order and record it,
+        // so `__ling_global` reads (from any function) find a value. A global's
+        // initialiser that names an earlier global reads it back the same way.
+        for item in &prog.items {
+            if let parser::ast::Item::Bind(name, body) = item {
+                if globals.contains(name) {
+                    main_stmts.push(parser::ast::Stmt::Expr(parser::ast::Expr::Call(
+                        Box::new(parser::ast::Expr::Ident("__ling_global_set".to_string())),
+                        vec![parser::ast::Expr::Str(name.clone()), body.clone()],
+                    )));
+                }
+            }
+        }
+    }
     for item in &prog.items {
         if let parser::ast::Item::Bind(name, body) = item {
             let is_main = match &entry {

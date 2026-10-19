@@ -60,6 +60,11 @@ pub mod life;
 #[cfg(target_arch = "aarch64")]
 pub mod setup;
 
+// The Ling value runtime for compiled `.ling` programs: lists, string/number
+// semantics, module globals, the `st_*` store, maths, and the `ling_builtin`
+// by-name dispatcher — what lets a full app like LingStationX link in-kernel.
+pub mod lingrt;
+
 use core::ptr;
 
 // Bring the moved-under-`arch`/`drivers`/`fs`/`proc` modules back into scope
@@ -82,9 +87,26 @@ use crate::fs::{blockdev, lingfs, packages, users};
 #[cfg(target_arch = "x86_64")]
 use crate::proc::sched;
 
+static mut KERNEL_INIT_DONE: bool = false;
+
+/// Has [`init`] run? The Ling value runtime (`lingrt`) initialises the kernel
+/// lazily on its first allocation, for programs (like LingStationX) whose entry
+/// never calls `ling_kernel_init` itself.
+pub fn is_initialized() -> bool {
+    unsafe { KERNEL_INIT_DONE }
+}
+
 /// Initialize the kernel: bring up the console (VGA+serial on x86_64, PL011
-/// UART on aarch64/Raspberry Pi) and print a ready banner.
+/// UART on aarch64/Raspberry Pi) and print a ready banner. Idempotent: a
+/// `.ling` kernel may call `ling_kernel_init()` and the value runtime may also
+/// trigger it on first allocation.
 pub fn init() {
+    unsafe {
+        if KERNEL_INIT_DONE {
+            return;
+        }
+        KERNEL_INIT_DONE = true;
+    }
     #[cfg(target_arch = "x86_64")]
     {
         serial::init();

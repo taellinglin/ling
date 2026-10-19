@@ -437,7 +437,7 @@ pub(crate) fn emit_condition(
 
             builder.switch_to_block(block_rhs);
             let r = emit_condition(rhs, builder, ctx);
-            let r_i8 = builder.ins().uextend(types::I8, r);
+            let r_i8 = cond_to_i8(builder, r);
             builder.ins().jump(block_done, &[BlockArg::Value(r_i8)]);
             builder.seal_block(block_rhs);
 
@@ -455,7 +455,7 @@ pub(crate) fn emit_condition(
 
             builder.switch_to_block(block_rhs);
             let r = emit_condition(rhs, builder, ctx);
-            let r_i8 = builder.ins().uextend(types::I8, r);
+            let r_i8 = cond_to_i8(builder, r);
             builder.ins().jump(block_done, &[BlockArg::Value(r_i8)]);
             builder.seal_block(block_rhs);
 
@@ -463,5 +463,19 @@ pub(crate) fn emit_condition(
             builder.seal_block(block_done);
             builder.block_params(block_done)[0]
         },
+    }
+}
+
+/// Normalise a branch condition to the `I8` the `&&`/`||` join block carries.
+/// A comparison already yields `I8`, but a `Leaf` condition comes back from
+/// `truthy_of` as a wider 0/1 integer. `uextend` can only *widen*, so the old
+/// `uextend.i8` on an `I64` was invalid IR — with the verifier off, Cranelift
+/// encoded it on aarch64 as `UBFM w,w,#0,#63`, an unallocated instruction that
+/// faults the moment `a && b` / `a || b` with a non-comparison `b` runs.
+fn cond_to_i8(builder: &mut FunctionBuilder, v: Value) -> Value {
+    if builder.func.dfg.value_type(v) == types::I8 {
+        v
+    } else {
+        builder.ins().icmp_imm(IntCC::NotEqual, v, 0)
     }
 }
