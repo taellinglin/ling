@@ -437,9 +437,112 @@ fn open_window(req_w: f64, req_h: f64) {
 fn app_run(name: &str) -> bool {
     let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
     let saved = unsafe { core::ptr::replace(&raw mut WIN, None) };
+    let dot = unsafe { core::mem::replace(&mut *(&raw mut CURSOR_DOT), false) };
     crate::lingrt::run_isolated(entry);
-    unsafe { core::ptr::write(&raw mut WIN, saved) };
+    unsafe {
+        core::ptr::write(&raw mut WIN, saved);
+        CURSOR_DOT = dot;
+    }
     true
+}
+
+/// `px_text8(x, y, colour, text [, scale])`: the kernel's 8x8 pixel font (the
+/// x86 desktop's UI font), transparent background, honours the clip.
+fn px_text8(args: &[u64]) {
+    let Some(w) = win() else { return };
+    let n = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+    let (x0, y0) = (n(0, 0.0) as i64, n(1, 0.0) as i64);
+    let color = n(2, 0.0) as u32 & 0xFF_FFFF;
+    let text = args.get(3).map(|&v| to_string(v)).unwrap_or_default();
+    let sc = (n(4, 1.0) as i64).max(1);
+    let (cx0, cy0, cx1, cy1) = match w.clip {
+        Some(c) => (c[0] as i64, c[1] as i64, c[2] as i64, c[3] as i64),
+        None => (0, 0, w.w as i64, w.h as i64),
+    };
+    let (cx0, cy0, cx1, cy1) = (cx0.max(0), cy0.max(0), cx1.min(w.w as i64), cy1.min(w.h as i64));
+    for (k, ch) in text.bytes().enumerate() {
+        let gx = x0 + k as i64 * 8 * sc;
+        let rows = crate::drivers::font8x8::glyph(ch);
+        for (r, bits) in rows.iter().enumerate() {
+            for c in 0..8i64 {
+                if (bits >> c) & 1 == 0 {
+                    continue;
+                }
+                for sy in 0..sc {
+                    for sx in 0..sc {
+                        let (x, y) = (gx + c * sc + sx, y0 + r as i64 * sc + sy);
+                        if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
+                            w.buf[y as usize * w.w + x as usize] = color;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The Ling Country wallpaper the x86 desktop uses (Pi image only: the x86
+/// kernel carries its own copy in `drivers::wallpaper`), decoded once and
+/// cover-scaled to the window, cached per size.
+#[cfg(target_arch = "aarch64")]
+static WALL_BMP: &[u8] = include_bytes!("../assets/ling_country_wallpaper.bmp");
+static mut WALL: Option<(usize, usize, Vec<u32>)> = None;
+
+#[cfg(target_arch = "aarch64")]
+fn wall_scaled(dw: usize, dh: usize) -> Option<Vec<u32>> {
+    let b = WALL_BMP;
+    let rd32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    if b.len() < 54 || &b[0..2] != b"BM" {
+        return None;
+    }
+    let off = rd32(10) as usize;
+    let sw = rd32(18) as i32;
+    let sh_raw = rd32(22) as i32;
+    let bpp = u16::from_le_bytes([b[28], b[29]]) as usize;
+    if sw <= 0 || sh_raw == 0 || (bpp != 24 && bpp != 32) {
+        return None;
+    }
+    let (sw, sh, top_down) = (sw as usize, sh_raw.unsigned_abs() as usize, sh_raw < 0);
+    let stride = (sw * bpp / 8 + 3) & !3;
+    // Cover: scale so the image fills the window, centre-crop the overflow.
+    let scale = f64::max(dw as f64 / sw as f64, dh as f64 / sh as f64);
+    let ox = (sw as f64 * scale - dw as f64) / 2.0;
+    let oy = (sh as f64 * scale - dh as f64) / 2.0;
+    let mut out = vec![0u32; dw * dh];
+    for y in 0..dh {
+        let syf = ((y as f64 + oy) / scale) as usize;
+        let sy = syf.min(sh - 1);
+        let row = if top_down { sy } else { sh - 1 - sy };
+        let base = off + row * stride;
+        for x in 0..dw {
+            let sx = (((x as f64 + ox) / scale) as usize).min(sw - 1);
+            let p = base + sx * bpp / 8;
+            if p + 2 < b.len() {
+                out[y * dw + x] = ((b[p + 2] as u32) << 16) | ((b[p + 1] as u32) << 8) | b[p] as u32;
+            }
+        }
+    }
+    Some(out)
+}
+
+/// `os_wallpaper()`: paint the desktop wallpaper over the whole window;
+/// false where this image has none.
+fn os_wallpaper() -> bool {
+    let Some(w) = win() else { return false };
+    let cache = unsafe { &mut *(&raw mut WALL) };
+    if !matches!(cache, Some((cw, ch, _)) if *cw == w.w && *ch == w.h) {
+        #[cfg(target_arch = "aarch64")]
+        {
+            *cache = wall_scaled(w.w, w.h).map(|v| (w.w, w.h, v));
+        }
+    }
+    match cache {
+        Some((_, _, px)) if px.len() == w.buf.len() => {
+            w.buf.copy_from_slice(px);
+            true
+        },
+        _ => false,
+    }
 }
 
 /// `os_info(key)`: facts about the running system for the desktop's About/tray.
@@ -476,9 +579,56 @@ fn os_info(key: &str) -> String {
     }
 }
 
+/// The mouse pointer, drawn by the runtime over every presented frame (apps
+/// built for a desktop OS rely on the OS cursor): `X` outline, `.` fill.
+const CURSOR: [&[u8]; 19] = [
+    b"X", b"XX", b"X.X", b"X..X", b"X...X", b"X....X", b"X.....X", b"X......X", b"X.......X",
+    b"X........X", b"X.........X", b"X......XXXXX", b"X...X..X", b"X..XX..X", b"X.X  X..X",
+    b"XX   X..X", b"X     X..X", b"      X..X", b"       XX",
+];
+
+/// Pointer style: false = arrow (apps), true = the x86 desktop's white dot with
+/// a dark ring (`os_cursor("dot")`). Launched apps always get the arrow.
+static mut CURSOR_DOT: bool = false;
+
 fn present() {
+    let (mx, my, _) = mouse_state();
     if let Some(w) = win() {
+        // Draw the pointer into the frame, blit, then put the pixels back so the
+        // app's own buffer is untouched.
+        let mut saved: Vec<(usize, u32)> = Vec::new();
+        if unsafe { CURSOR_DOT } && mx >= 0.0 && my >= 0.0 {
+            let (cx, cy) = (mx as i64, my as i64);
+            for dy in -5i64..=5 {
+                for dx in -5i64..=5 {
+                    let d2 = dx * dx + dy * dy;
+                    let (x, y) = (cx + dx, cy + dy);
+                    if d2 > 25 || x < 0 || y < 0 || x as usize >= w.w || y as usize >= w.h {
+                        continue;
+                    }
+                    let i = y as usize * w.w + x as usize;
+                    saved.push((i, w.buf[i]));
+                    w.buf[i] = if d2 <= 16 { 0xFFFFFF } else { 0x000000 };
+                }
+            }
+        } else if mx >= 0.0 && my >= 0.0 {
+            let (cx, cy) = (mx as usize, my as usize);
+            for (r, row) in CURSOR.iter().enumerate() {
+                for (c, &px) in row.iter().enumerate() {
+                    let (x, y) = (cx + c, cy + r);
+                    if px == b' ' || x >= w.w || y >= w.h {
+                        continue;
+                    }
+                    let i = y * w.w + x;
+                    saved.push((i, w.buf[i]));
+                    w.buf[i] = if px == b'X' { 0x000000 } else { 0xFFFFFF };
+                }
+            }
+        }
         framebuffer::blit_rgb(&w.buf, w.w, w.h);
+        for (i, v) in saved {
+            w.buf[i] = v;
+        }
     }
     // Input for the next frame. Ctrl+Q closes a launched app (never the
     // desktop itself) back to whatever started it.
@@ -843,6 +993,15 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"text_set" => UNIT,
 
         // LingOS: the desktop's view of the system.
+        b"px_text8" => {
+            px_text8(args);
+            UNIT
+        },
+        b"os_wallpaper" => boolean(os_wallpaper()),
+        b"os_cursor" => {
+            unsafe { CURSOR_DOT = path_arg(args, 0) == "dot" };
+            UNIT
+        },
         b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),

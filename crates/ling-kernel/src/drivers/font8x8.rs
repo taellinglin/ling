@@ -115,7 +115,7 @@ static FONT8X8_BASIC: [[u8; 8]; LAST - FIRST + 1] = [
     [0x6E,0x3B,0x00,0x00,0x00,0x00,0x00,0x00], // '~'
 ];
 
-fn glyph(c: u8) -> &'static [u8; 8] {
+pub fn glyph(c: u8) -> &'static [u8; 8] {
     static BLANK: [u8; 8] = [0; 8];
     let i = c as usize;
     if i < FIRST || i > LAST {
