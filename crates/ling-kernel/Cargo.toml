@@ -33,6 +33,10 @@ libm = "0.2"
 # TrueType/OpenType rasteriser (no_std + alloc) for the app runtime's px_text:
 # draws compiled apps' own fonts (embedded via [includes]) with host metrics.
 fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+# project.json for the in-kernel DAW engine (lingdaw): the same serde types as
+# ling-daw's project.rs, no_std + alloc.
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 # Ed25519 signature *verification* only (no `alloc`, no `rand_core`/`std`,
 # no `precomputed-tables`/`fast` — those need alloc for their lookup

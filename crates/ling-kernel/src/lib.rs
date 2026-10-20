@@ -68,6 +68,8 @@ pub mod lingrt;
 // and the read-only files `ling build` bakes into the image ([includes]).
 pub mod lingapp;
 pub mod appfs;
+// LingStationX's daw_* builtins: the project model (project.json), transport.
+pub mod lingdaw;
 
 use core::ptr;
 

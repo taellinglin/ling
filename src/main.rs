@@ -2759,10 +2759,11 @@ fn expand_includes(project: &LingProject) -> Vec<(String, PathBuf)> {
                     }
                 }
             } else if abs.is_file() {
+                // An exact file path is an explicit request: it's embedded even
+                // when an ignore file excludes it (e.g. a project folder kept
+                // out of git), unlike glob and directory matches.
                 let rel = pat.replace('\\', "/");
-                if is_ignored(&ignore, &rel) {
-                    skipped += 1;
-                } else if seen.insert(rel.clone()) {
+                if seen.insert(rel.clone()) {
                     all.push((rel, abs));
                 }
             } else {
