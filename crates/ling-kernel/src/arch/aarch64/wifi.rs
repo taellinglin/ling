@@ -169,13 +169,93 @@ const FORCE_HW_CLKREQ_OFF: u8 = 0x20;
 const ALP_AVAIL: u8 = 0x40;
 const CHIPCOMMON: u32 = 0x1800_0000;
 
-/// Read a 32-bit backplane register with four CMD52 byte reads through the
-/// function-1 window.
-fn backplane_read32(addr: u32) -> Option<u32> {
+const BLOCK: usize = 0x04; // block size (lo 16) + block count (hi 16)
+const BUF_DATA: usize = 0x20;
+/// Function-1 address flag for a 32-bit backplane access (SBSDIO_SB_ACCESS_2_4B_FLAG).
+const SB_ACCESS_4B: u32 = 0x8000;
+
+/// Reset the DAT line after a data error so the next transfer can go out.
+fn reset_dat() {
+    sd_wr(CLOCK_CTRL, sd_rd(CLOCK_CTRL) | (0x4 << 24));
+    wait(CLOCK_CTRL, 0x4 << 24, 0, 100);
+}
+
+/// CMD53 (IO_RW_EXTENDED), byte mode, read `buf.len()` (1..=512) bytes from
+/// function `func` at `addr` (incrementing), by PIO through the buffer port.
+fn cmd53_read(func: u32, addr: u32, buf: &mut [u8]) -> Option<()> {
+    let n = buf.len();
+    if n == 0 || n > 512 {
+        return None;
+    }
+    if !wait(PRESENT, 0x3, 0, 100) {
+        out(b"    CMD53: command/data line busy\n");
+        return None;
+    }
+    let arg = ((func & 7) << 28) | (1 << 26) | ((addr & 0x1_FFFF) << 9) | (n as u32 & 0x1FF);
+    sd_wr(INT_STATUS, 0xFFFF_FFFF);
+    sd_wr(BLOCK, (1 << 16) | n as u32);
+    sd_wr(ARG, arg);
+    // Transfer mode: read (bit 4), single block. Command: 53, data present
+    // (bit 5), 48-bit response with CRC + index check (R5).
+    sd_wr(XFER_CMD, (((53 << 8) | RESP_48_CHK | (1 << 5)) << 16) | (1 << 4));
+    let mut got = 0usize;
+    for _ in 0..4000 {
+        let st = sd_rd(INT_STATUS);
+        if st & (1 << 15) != 0 {
+            sd_wr(INT_STATUS, st);
+            sd_wr(CLOCK_CTRL, sd_rd(CLOCK_CTRL) | (0x2 << 24));
+            wait(CLOCK_CTRL, 0x2 << 24, 0, 100);
+            reset_dat();
+            hex(b"    CMD53 error, int status=", st as u64, 8);
+            return None;
+        }
+        if st & (1 << 5) != 0 {
+            // Buffer read ready: drain the block in 32-bit words.
+            sd_wr(INT_STATUS, 1 << 5);
+            while got < n {
+                let w = sd_rd(BUF_DATA).to_le_bytes();
+                for b in w {
+                    if got < n {
+                        buf[got] = b;
+                        got += 1;
+                    }
+                }
+            }
+        }
+        if st & (1 << 1) != 0 && got >= n {
+            sd_wr(INT_STATUS, 0x3);
+            return Some(());
+        }
+        delay_us(50);
+    }
+    reset_dat();
+    hex(b"    CMD53 timeout, int status=", sd_rd(INT_STATUS) as u64, 8);
+    None
+}
+
+/// Point the function-1 backplane window at `addr`'s 32 KiB page.
+fn set_window(addr: u32) -> Option<()> {
     let win = addr & !0x7FFF;
     cmd52(true, 1, SB_ADDR_LOW, ((win >> 8) & 0x80) as u8)?;
     cmd52(true, 1, SB_ADDR_MID, ((win >> 16) & 0xFF) as u8)?;
     cmd52(true, 1, SB_ADDR_HIGH, ((win >> 24) & 0xFF) as u8)?;
+    Some(())
+}
+
+/// Read a 32-bit backplane register: set the window, then one 4-byte CMD53
+/// with the 32-bit-access flag (what brcmfmac does); four CMD52 byte reads as
+/// a fallback. Each step reports where it fails.
+fn backplane_read32(addr: u32) -> Option<u32> {
+    if set_window(addr).is_none() {
+        out(b"  backplane window write failed\n");
+        return None;
+    }
+    out(b"  backplane window set\n");
+    let mut b4 = [0u8; 4];
+    if cmd53_read(1, (addr & 0x7FFF) | SB_ACCESS_4B, &mut b4).is_some() {
+        return Some(u32::from_le_bytes(b4));
+    }
+    out(b"  CMD53 read failed; trying CMD52 byte reads\n");
     let mut v = 0u32;
     for i in 0..4 {
         let b = cmd52(false, 1, (addr & 0x7FFF) + i, 0)?;
