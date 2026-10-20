@@ -854,7 +854,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         #[cfg(target_arch = "aarch64")]
         b"os_console" => {
-            crate::desktop_console();
+            crate::desktop_console(path_arg(args, 0).as_bytes());
             UNIT
         },
         #[cfg(target_arch = "aarch64")]

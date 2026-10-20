@@ -482,10 +482,16 @@ pub(crate) fn app_names() -> alloc::vec::Vec<&'static str> {
 
 /// Desktop → Console: the text console full-screen until `exit`.
 #[cfg(target_arch = "aarch64")]
-pub(crate) fn desktop_console() {
+pub(crate) fn desktop_console(first: &[u8]) {
     rpi_boot_screen();
     crate::drivers::fbcon::init();
     console_write(b"LingOS console -- type 'exit' to return to the desktop, 'help' for commands.\n");
+    if !first.is_empty() {
+        console_write(b"lingos$ ");
+        console_write(first);
+        console_write(b"\n");
+        rpi_shell_exec(first);
+    }
     rpi_console(true);
     crate::drivers::fbcon::suspend();
 }
@@ -653,7 +659,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -668,6 +674,8 @@ fn rpi_shell_exec(line: &[u8]) {
         run_setup_wizard();
     } else if s == b"usb" {
         arch::rp1::usb_probe();
+    } else if s == b"wifi" {
+        arch::wifi::probe();
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
         let mut b = [0u8; 24];

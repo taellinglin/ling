@@ -18,6 +18,7 @@ pub mod mmio;
 pub mod rp1;
 pub mod timer;
 pub mod xhci;
+pub mod wifi;
 pub mod paging;
 pub mod vectors;
 pub mod trap;
