@@ -518,6 +518,7 @@ pub(crate) fn desktop_boot() {
         DONE = true;
     }
     console_write(b"LingOS aarch64 (Raspberry Pi) -- starting the desktop\n");
+    crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
 }
 
@@ -2535,6 +2536,7 @@ pub unsafe extern "C" fn ling_kernel_user_login(username: u64, password: u64) ->
     let group_len = users::group_of(username, &mut group_buf).unwrap_or(0);
     let group = core::str::from_utf8(&group_buf[..group_len]).unwrap_or("users");
     lingfs::set_current_user(username, group);
+    users::ensure_home(username);
     // Unlock encrypted chat history with a key derived from this password, so
     // past conversations load only after a real sign-in (and stay unreadable
     // to anyone who just has the disk).

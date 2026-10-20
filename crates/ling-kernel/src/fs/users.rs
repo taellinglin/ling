@@ -144,7 +144,56 @@ pub fn create(
     append(&mut buf, &mut len, &hash_hex);
     append(&mut buf, &mut len, b"\n");
 
-    lingfs::write_in_dir(USERS_DIR, username, &buf[..len]).is_ok()
+    let ok = lingfs::write_in_dir(USERS_DIR, username, &buf[..len]).is_ok();
+    if ok {
+        ensure_home(username);
+    }
+    ok
+}
+
+/// The folders every home has, in the order the Files window shows them.
+pub const HOME_FOLDERS: [&str; 8] =
+    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Programs", "Scripts"];
+
+/// Create `home/<user>` and its standard folders if missing (existing folders
+/// and their files are kept). Called on account creation and at every login,
+/// so accounts made before homes existed get one too, plus a starter file in
+/// Scripts, Graphics and Documents so there is something to open.
+pub fn ensure_home(username: &str) {
+    if username.is_empty() {
+        return;
+    }
+    let mut path = [0u8; 96];
+    for folder in HOME_FOLDERS {
+        let p = join4(&mut path, "home/", username, "/", folder);
+        if lingfs::path_kind(p) != Some(true) {
+            let _ = lingfs::mkdir_p(p);
+        }
+    }
+    let starters: [(&str, &[u8]); 3] = [
+        ("Scripts/hello.ling", b"// A Ling script -- open it from Files to run it.\nprintln(\"Hello from LingOS!\")\nprintln(\"2 + 2 = \", 2 + 2)\n"),
+        ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
+        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts (open one to run it)\n"),
+    ];
+    for (rel, data) in starters {
+        let p = join4(&mut path, "home/", username, "/", rel);
+        if lingfs::path_kind(p).is_none() {
+            let _ = lingfs::write_path_any(p, data);
+        }
+    }
+}
+
+fn join4<'a>(buf: &'a mut [u8; 96], a: &str, b: &str, c: &str, d: &str) -> &'a str {
+    let mut n = 0usize;
+    for s in [a, b, c, d] {
+        for &ch in s.as_bytes() {
+            if n < buf.len() {
+                buf[n] = ch;
+                n += 1;
+            }
+        }
+    }
+    core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
 fn load_record(username: &str, out: &mut [u8; BLOCK_SIZE]) -> Option<usize> {

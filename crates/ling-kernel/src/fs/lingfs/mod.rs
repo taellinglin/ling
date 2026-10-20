@@ -442,7 +442,10 @@ pub fn write_in_dir(dirname: &str, fname: &str, content: &[u8]) -> Result<(), ()
 pub fn read_file(name: &str, out: &mut [u8; BLOCK_SIZE]) -> Result<Option<usize>, ()> {
     let mut rbuf = [0u8; RESOLVE_BUF];
     let name = resolve(name, &mut rbuf);
-    if let Some((dirname, fname)) = split_path(name) {
+    // Split at the LAST '/': `lookup_dir` walks nested folders, so this reads
+    // files at any depth (home/<user>/Music/song.wav); one-level paths are unchanged.
+    if let Some(slash) = name.rfind('/') {
+        let (dirname, fname) = (&name[..slash], &name[slash + 1..]);
         let Some((entries, count)) = lookup_dir(dirname)? else {
             return Ok(None);
         };
@@ -623,4 +626,130 @@ pub fn self_test() -> bool {
     }
     let ((name, name_len), entry_hash, kind, _) = entries[0];
     &name[..name_len] == b"hello.txt" && entry_hash == hash1 && kind == Kind::Blob
+}
+
+// -- Nested paths ------------------------------------------------------------
+// The writers above only reach one level (`dir/file`). Home folders need
+// `home/<user>/Music/song.wav`, so these rebuild every tree along a path of
+// any depth (each level re-hashed bottom-up, then one commit), the same
+// content-addressed way the one-level writers do. Each tree still holds at
+// most MAX_TREE_ENTRIES entries.
+
+/// Upsert `leaf` (hash, kind, meta) at `segs` under the tree `tree`
+/// (ZERO_HASH = empty), returning the new tree's hash. Intermediate
+/// directories are created as needed; with `keep_dir`, an existing directory
+/// at the leaf is kept as is (mkdir on an existing folder).
+fn upsert_deep(tree: Hash, segs: &[&str], leaf: (Hash, Kind, Meta), keep_dir: bool) -> Result<Hash, ()> {
+    let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+    let mut count = 0usize;
+    if tree != ZERO_HASH {
+        if let Some(n) = get_tree(&tree, &mut entries)? {
+            count = n;
+        }
+    }
+    let name = segs[0];
+    let at = (0..count).find(|&i| name_eq(&entries[i].0, name));
+    let (hash, kind, meta) = if segs.len() == 1 {
+        match at {
+            Some(i) if keep_dir && matches!(entries[i].2, Kind::Tree) && matches!(leaf.1, Kind::Tree) => return Ok(tree),
+            Some(i) => (leaf.0, leaf.1, Meta { modified_seq: next_seq(), ..entries[i].3 }),
+            None => leaf,
+        }
+    } else {
+        let child = match at {
+            Some(i) if matches!(entries[i].2, Kind::Tree) => entries[i].1,
+            Some(_) => return Err(()), // a file is in the way
+            None => ZERO_HASH,
+        };
+        let sub = upsert_deep(child, &segs[1..], leaf, keep_dir)?;
+        let meta = match at {
+            Some(i) => Meta { modified_seq: next_seq(), ..entries[i].3 },
+            None => make_meta(MODE_DIR_DEFAULT, next_seq()),
+        };
+        (sub, Kind::Tree, meta)
+    };
+    match at {
+        Some(i) => {
+            entries[i].1 = hash;
+            entries[i].2 = kind;
+            entries[i].3 = meta;
+        },
+        None => {
+            if count >= MAX_TREE_ENTRIES {
+                return Err(());
+            }
+            entries[count] = ((str_to_name_buf(name), name.len()), hash, kind, meta);
+            count += 1;
+        },
+    }
+    let mut refs = [("", ZERO_HASH, Kind::Blob, EMPTY_META); MAX_TREE_ENTRIES];
+    for i in 0..count {
+        let (buf, len) = &entries[i].0;
+        refs[i] = (core::str::from_utf8(&buf[..*len]).unwrap_or(""), entries[i].1, entries[i].2, entries[i].3);
+    }
+    put_tree(&refs[..count])
+}
+
+fn path_segments<'a>(path: &'a str, out: &mut [&'a str; 16]) -> usize {
+    let mut n = 0;
+    for s in path.split('/') {
+        if !s.is_empty() && n < out.len() {
+            out[n] = s;
+            n += 1;
+        }
+    }
+    n
+}
+
+fn commit_deep(path: &str, leaf: (Hash, Kind, Meta), keep_dir: bool) -> Result<(), ()> {
+    let mut segs = [""; 16];
+    let n = path_segments(path, &mut segs);
+    if n == 0 {
+        return Err(());
+    }
+    let new_root = upsert_deep(root(), &segs[..n], leaf, keep_dir)?;
+    commit(new_root)
+}
+
+/// Create the folder `path` (and every missing parent), keeping any folder
+/// that already exists and its contents. Absolute (from the root), `/`-separated.
+pub fn mkdir_p(path: &str) -> Result<(), ()> {
+    let _g = FsGuard::new();
+    let empty = put_tree(&[])?;
+    commit_deep(path, (empty, Kind::Tree, make_meta(MODE_DIR_DEFAULT, next_seq())), true)
+}
+
+/// Write a file of any size (~64MiB cap) at a path of any depth, creating
+/// missing parent folders.
+pub fn write_path_any(path: &str, content: &[u8]) -> Result<(), ()> {
+    let _g = FsGuard::new();
+    let h = store_content_hash(content)?;
+    commit_deep(path, (h, Kind::Blob, make_meta(MODE_FILE_DEFAULT, next_seq())), false)
+}
+
+/// Does `path` exist, and is it a folder? (None = missing.)
+pub fn path_kind(path: &str) -> Option<bool> {
+    let mut segs = [""; 16];
+    let n = path_segments(path, &mut segs);
+    if n == 0 {
+        return Some(true);
+    }
+    let mut tree = root();
+    for (k, seg) in segs[..n].iter().enumerate() {
+        if tree == ZERO_HASH {
+            return None;
+        }
+        let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+        let count = get_tree(&tree, &mut entries).ok()??;
+        let i = (0..count).find(|&i| name_eq(&entries[i].0, seg))?;
+        let is_dir = matches!(entries[i].2, Kind::Tree);
+        if k + 1 == n {
+            return Some(is_dir);
+        }
+        if !is_dir {
+            return None;
+        }
+        tree = entries[i].1;
+    }
+    None
 }

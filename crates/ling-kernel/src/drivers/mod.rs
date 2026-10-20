@@ -46,7 +46,8 @@ pub mod keyboard;
 pub mod lingfu;
 #[cfg(target_arch = "x86_64")]
 pub mod locale;
-#[cfg(target_arch = "x86_64")]
+// PNG/SVG decoding: the x86 desktop's Gallery/browsers and the Pi desktop's Files.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod image;
 #[cfg(target_arch = "x86_64")]
 pub mod media;

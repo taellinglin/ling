@@ -948,12 +948,22 @@ fn horizon_key(k: u8) {
 
 // -- Files window state ----------------------------------------------------
 const FM_NAME_MAX: usize = 60;
-static mut FM_DIR: [u8; FM_NAME_MAX] = [0; FM_NAME_MAX]; // "" = root
+/// Longest folder path the Files window tracks (home/<user>/3D Models/...).
+const FM_PATH_MAX: usize = 128;
+static mut FM_DIR: [u8; FM_PATH_MAX] = [0; FM_PATH_MAX]; // "" = root
 static mut FM_DIR_LEN: usize = 0;
 static mut FM_CURSOR: usize = 0;
 static mut FM_SCROLL: usize = 0;
 static mut FM_VIEWING: bool = false; // true = file-content view
-static mut FM_VIEW_NAME: [u8; FM_NAME_MAX * 2 + 1] = [0; FM_NAME_MAX * 2 + 1];
+static mut FM_VIEW_NAME: [u8; FM_PATH_MAX] = [0; FM_PATH_MAX];
+/// One-line notice under the listing (e.g. a format that can't be opened yet).
+static mut FM_MSG: &str = "";
+/// (time ms, row) of the last click, for double-click.
+static mut FM_CLICK: (u64, usize) = (0, usize::MAX);
+/// The current folder's entries in display order (home folders first, in
+/// `users::HOME_FOLDERS` order), rebuilt when the folder or the disk changes.
+static mut FM_ITEMS: alloc::vec::Vec<(alloc::string::String, bool)> = alloc::vec::Vec::new();
+static mut FM_ITEMS_KEY: (u32, usize, u64) = (u32::MAX, 0, 0);
 static mut FM_VIEW_NAME_LEN: usize = 0;
 const FM_VISIBLE_ROWS: usize = 10;
 
@@ -1290,6 +1300,9 @@ pub fn open(kind: u8) {
         return;
     }
     let Some(idx) = windows().iter().position(|w| !w.used) else { return };
+    if kind == KIND_FILES {
+        fm_go_home();
+    }
     let (w, h) = kind_size(kind);
     let cascade = unsafe {
         SPAWN_COUNT = SPAWN_COUNT.wrapping_add(1);
@@ -2211,16 +2224,201 @@ fn fm_dir() -> &'static str {
     }
 }
 
-fn fm_entry_count() -> usize {
+fn fm_home(buf: &mut [u8; FM_PATH_MAX]) -> &str {
+    let user = lingfs::current_user();
     let mut n = 0;
-    let mut buf = [0u8; FM_NAME_MAX];
-    while n < 64 {
-        if lingfs::list_entry(fm_dir(), n, &mut buf).is_none() {
-            break;
+    for &b in b"home/".iter().chain(user.as_bytes()) {
+        if n < buf.len() {
+            buf[n] = b;
+            n += 1;
         }
-        n += 1;
     }
-    n
+    core::str::from_utf8(&buf[..n]).unwrap_or("home")
+}
+
+fn fm_set_dir(dir: &str) {
+    unsafe {
+        let n = dir.len().min(FM_PATH_MAX);
+        (&mut *&raw mut FM_DIR)[..n].copy_from_slice(&dir.as_bytes()[..n]);
+        FM_DIR_LEN = n;
+        FM_CURSOR = 0;
+        FM_SCROLL = 0;
+        FM_MSG = "";
+    }
+}
+
+/// Files opens in the signed-in user's home folder (when it exists).
+fn fm_go_home() {
+    let mut hb = [0u8; FM_PATH_MAX];
+    let home = fm_home(&mut hb);
+    if lingfs::path_kind(home) == Some(true) {
+        fm_set_dir(home);
+    }
+}
+
+/// Rebuild FM_ITEMS if the folder or the filesystem changed.
+fn fm_refresh() {
+    let key = (lingfs::commit_count(), unsafe { FM_DIR_LEN }, {
+        let d = fm_dir().as_bytes();
+        d.iter().fold(1469598103934665603u64, |h, &b| (h ^ b as u64).wrapping_mul(1099511628211))
+    });
+    unsafe {
+        if FM_ITEMS_KEY == key {
+            return;
+        }
+        FM_ITEMS_KEY = key;
+    }
+    let mut raw: alloc::vec::Vec<(alloc::string::String, bool)> = alloc::vec::Vec::new();
+    let mut buf = [0u8; FM_NAME_MAX];
+    let mut i = 0;
+    while i < 64 {
+        let Some((len, is_dir)) = lingfs::list_entry(fm_dir(), i, &mut buf) else { break };
+        raw.push((alloc::string::String::from(core::str::from_utf8(&buf[..len]).unwrap_or("?")), is_dir));
+        i += 1;
+    }
+    // Folders first; the standard home folders in their fixed order; then by name.
+    let rank = |(n, d): &(alloc::string::String, bool)| -> (u8, usize, alloc::string::String) {
+        let hf = crate::fs::users::HOME_FOLDERS.iter().position(|f| *f == n.as_str());
+        match (d, hf) {
+            (true, Some(k)) => (0, k, alloc::string::String::new()),
+            (true, None) => (1, 0, n.to_ascii_lowercase()),
+            _ => (2, 0, n.to_ascii_lowercase()),
+        }
+    };
+    raw.sort_by(|a, b| rank(a).cmp(&rank(b)));
+    unsafe { *(&raw mut FM_ITEMS) = raw };
+}
+
+fn fm_entry_count() -> usize {
+    fm_refresh();
+    unsafe { (*(&raw const FM_ITEMS)).len() }
+}
+
+/// Entry `i` of the current folder in display order: copies the name into
+/// `out`, returns (len, is_dir).
+fn fm_entry(i: usize, out: &mut [u8]) -> Option<(usize, bool)> {
+    fm_refresh();
+    let items = unsafe { &*(&raw const FM_ITEMS) };
+    let (name, is_dir) = items.get(i)?;
+    let n = name.len().min(out.len());
+    out[..n].copy_from_slice(&name.as_bytes()[..n]);
+    Some((n, *is_dir))
+}
+
+/// "dir/name" (or "name" at the root) into `out`.
+fn fm_join<'a>(out: &'a mut [u8; FM_PATH_MAX], name: &[u8]) -> &'a str {
+    let dir = fm_dir().as_bytes();
+    let mut n = 0;
+    let mut put = |b: u8, n: &mut usize| {
+        if *n < FM_PATH_MAX {
+            out[*n] = b;
+            *n += 1;
+        }
+    };
+    for &b in dir {
+        put(b, &mut n);
+    }
+    if !dir.is_empty() {
+        put(b'/', &mut n);
+    }
+    for &b in name {
+        put(b, &mut n);
+    }
+    core::str::from_utf8(&out[..n]).unwrap_or("")
+}
+
+/// What kind of file a name is, for its icon and how it opens.
+#[derive(Clone, Copy, PartialEq)]
+enum FmType {
+    Image,
+    Svg,
+    Audio,
+    Video,
+    Ling,
+    Text,
+    Model,
+    Other,
+}
+
+fn fm_type(name: &[u8]) -> FmType {
+    let ext = |e: &[u8]| name.len() > e.len() && name[name.len() - e.len()..].eq_ignore_ascii_case(e);
+    if ext(b".bmp") || ext(b".png") {
+        FmType::Image
+    } else if ext(b".svg") {
+        FmType::Svg
+    } else if ext(b".wav") || ext(b".mp3") || ext(b".ogg") || ext(b".flac") || ext(b".mid") {
+        FmType::Audio
+    } else if ext(b".mp4") || ext(b".mkv") || ext(b".webm") || ext(b".avi") || ext(b".mov") || ext(b".gif") {
+        FmType::Video
+    } else if ext(b".ling") {
+        FmType::Ling
+    } else if ext(b".obj") || ext(b".stl") || ext(b".glb") || ext(b".gltf") || ext(b".ply") || ext(b".blend") {
+        FmType::Model
+    } else if is_editable(name) || ext(b".json") || ext(b".csv") {
+        FmType::Text
+    } else {
+        FmType::Other
+    }
+}
+
+// 8x8 emblems (bit 7 = left pixel) drawn on folder and file icons.
+const EMB_DOC: [u8; 8] = [0x00, 0x7E, 0x00, 0x7E, 0x00, 0x78, 0x00, 0x00];
+const EMB_PHOTO: [u8; 8] = [0x06, 0x06, 0x00, 0x20, 0x72, 0xFF, 0xFF, 0x00];
+const EMB_MUSIC: [u8; 8] = [0x1E, 0x12, 0x12, 0x12, 0x72, 0xF6, 0x66, 0x00];
+const EMB_VIDEO: [u8; 8] = [0x40, 0x60, 0x70, 0x78, 0x70, 0x60, 0x40, 0x00];
+const EMB_GRAPHICS: [u8; 8] = [0x38, 0x44, 0x44, 0x38, 0x10, 0x38, 0x7C, 0x00];
+const EMB_MODEL: [u8; 8] = [0x3E, 0x46, 0xFA, 0x8A, 0x8C, 0x88, 0xF8, 0x00];
+const EMB_PROGRAM: [u8; 8] = [0xFF, 0x81, 0xA1, 0x91, 0xA1, 0x81, 0xFF, 0x00];
+const EMB_SCRIPT: [u8; 8] = [0x24, 0x42, 0x81, 0x00, 0x81, 0x42, 0x24, 0x00];
+
+fn draw_emblem(x: u32, y: u32, rows: &[u8; 8], color: u32) {
+    for (r, bits) in rows.iter().enumerate() {
+        for c in 0..8u32 {
+            if bits & (0x80 >> c) != 0 {
+                framebuffer::back_set_pixel(x + c, y + r as u32, color);
+            }
+        }
+    }
+}
+
+/// A folder (tab + body, coloured by kind, emblem for the home folders) or a
+/// page-shaped file icon coloured and marked by file type. 18x14 at (x, y).
+fn draw_fm_icon(x: u32, y: u32, name: &[u8], is_dir: bool) {
+    let ink = 0x1A1423;
+    if is_dir {
+        let (color, emb): (u32, Option<&[u8; 8]>) = match name {
+            b"Documents" => (0x4A8FE0, Some(&EMB_DOC)),
+            b"Photos" => (0x5AC06A, Some(&EMB_PHOTO)),
+            b"Music" => (0xE0A44A, Some(&EMB_MUSIC)),
+            b"Videos" => (0xE0605A, Some(&EMB_VIDEO)),
+            b"Graphics" => (0xB06AE0, Some(&EMB_GRAPHICS)),
+            b"3D Models" => (0x40C0C0, Some(&EMB_MODEL)),
+            b"Programs" => (0x8A9BB8, Some(&EMB_PROGRAM)),
+            b"Scripts" => (0xF0D050, Some(&EMB_SCRIPT)),
+            _ => (theme::color(theme::SLOT_ACCENT), None),
+        };
+        framebuffer::back_fill_rounded_rect(x, y, 8, 4, 1, color);
+        framebuffer::back_fill_rounded_rect(x, y + 2, 18, 12, 2, color);
+        if let Some(e) = emb {
+            draw_emblem(x + 5, y + 4, e, ink);
+        }
+    } else {
+        let t = fm_type(name);
+        let (color, emb): (u32, Option<&[u8; 8]>) = match t {
+            FmType::Image => (0x5AC06A, Some(&EMB_PHOTO)),
+            FmType::Svg => (0xB06AE0, Some(&EMB_GRAPHICS)),
+            FmType::Audio => (0xE0A44A, Some(&EMB_MUSIC)),
+            FmType::Video => (0xE0605A, Some(&EMB_VIDEO)),
+            FmType::Ling => (0xF0D050, Some(&EMB_SCRIPT)),
+            FmType::Model => (0x40C0C0, Some(&EMB_MODEL)),
+            FmType::Text => (0xC8C0D8, Some(&EMB_DOC)),
+            FmType::Other => (theme::color(theme::SLOT_DIM), None),
+        };
+        framebuffer::back_fill_rounded_rect(x + 2, y, 14, 14, 2, color);
+        if let Some(e) = emb {
+            draw_emblem(x + 5, y + 3, e, ink);
+        }
+    }
 }
 
 /// Extensions the Editor opens (everything else is a binary peek). Also
@@ -2237,6 +2435,58 @@ fn is_editable(name: &[u8]) -> bool {
         || !name.contains(&b'.')
 }
 
+/// Open the highlighted entry: folders open in place (any depth); files go to
+/// the app for their type.
+fn fm_open_selected() {
+    let mut name = [0u8; FM_NAME_MAX];
+    let Some((len, is_dir)) = (unsafe { fm_entry(FM_CURSOR, &mut name) }) else { return };
+    let mut pb = [0u8; FM_PATH_MAX];
+    let full = fm_join(&mut pb, &name[..len]);
+    if is_dir {
+        let n = full.len();
+        let owned: [u8; FM_PATH_MAX] = pb;
+        fm_set_dir(core::str::from_utf8(&owned[..n]).unwrap_or(""));
+        return;
+    }
+    unsafe {
+        let vn = &mut *&raw mut FM_VIEW_NAME;
+        vn[..full.len()].copy_from_slice(full.as_bytes());
+        FM_VIEW_NAME_LEN = full.len();
+        FM_MSG = "";
+    }
+    match fm_type(&name[..len]) {
+        // Photos (BMP/PNG) and SVG drawings open in the Gallery.
+        FmType::Image | FmType::Svg => {
+            if gallery::open(full) {
+                open(KIND_GALLERY);
+            } else {
+                unsafe { FM_MSG = "couldn't decode that picture" };
+            }
+        },
+        FmType::Audio => {
+            if media::open(full) {
+                open(KIND_MEDIA);
+            } else {
+                unsafe { FM_MSG = "Media Player plays WAV files (other audio formats: not yet)" };
+            }
+        },
+        FmType::Video => unsafe { FM_MSG = "video playback isn't available yet (no video codec)" },
+        // .ling scripts and graphics programs run (e = edit instead).
+        FmType::Ling => {
+            let mut cmd = [0u8; FM_PATH_MAX + 9];
+            cmd[..9].copy_from_slice(b"ling run ");
+            cmd[9..9 + full.len()].copy_from_slice(full.as_bytes());
+            open(KIND_TERM);
+            terminal::run_command(core::str::from_utf8(&cmd[..9 + full.len()]).unwrap_or(""));
+        },
+        FmType::Text => {
+            editor::load(full);
+            open(KIND_EDIT);
+        },
+        FmType::Model | FmType::Other => unsafe { FM_VIEWING = true },
+    }
+}
+
 fn files_key(k: u8) {
     use crate::drivers::{clipboard, keyboard as kb};
     unsafe {
@@ -2244,19 +2494,9 @@ fn files_key(k: u8) {
         // it can be pasted into the editor, terminal, or browser URL bar.
         if k == kb::CTRL_C {
             let mut nm = [0u8; FM_NAME_MAX];
-            if let Some((len, _)) = lingfs::list_entry(fm_dir(), FM_CURSOR, &mut nm) {
-                let dir = fm_dir();
-                if dir.is_empty() {
-                    clipboard::set(&nm[..len]);
-                } else {
-                    // "dir/name"
-                    let mut full = [0u8; FM_NAME_MAX * 2 + 1];
-                    let dl = dir.len();
-                    full[..dl].copy_from_slice(dir.as_bytes());
-                    full[dl] = b'/';
-                    full[dl + 1..dl + 1 + len].copy_from_slice(&nm[..len]);
-                    clipboard::set(&full[..dl + 1 + len]);
-                }
+            if let Some((len, _)) = fm_entry(FM_CURSOR, &mut nm) {
+                let mut pb = [0u8; FM_PATH_MAX];
+                clipboard::set(fm_join(&mut pb, &nm[..len]).as_bytes());
             }
             return;
         }
@@ -2276,74 +2516,37 @@ fn files_key(k: u8) {
                 }
             },
             0x08 | 0x13 => {
-                // Up to root.
-                FM_DIR_LEN = 0;
-                FM_CURSOR = 0;
-                FM_SCROLL = 0;
-            },
-            10 => {
-                let mut name = [0u8; FM_NAME_MAX];
-                let Some((len, is_dir)) = lingfs::list_entry(fm_dir(), FM_CURSOR, &mut name)
-                else {
-                    return;
+                // Up one folder (to the root from a top-level folder).
+                let dir = fm_dir();
+                let parent = match dir.rfind('/') {
+                    Some(i) => &dir[..i],
+                    None => "",
                 };
-                if is_dir && FM_DIR_LEN == 0 {
-                    // One level deep only -- same real limit as lingfs's own
-                    // path model (`write_in_dir` is dir/file, not deeper).
-                    let fm = &mut *&raw mut FM_DIR;
-                    fm[..len].copy_from_slice(&name[..len]);
-                    FM_DIR_LEN = len;
-                    FM_CURSOR = 0;
-                    FM_SCROLL = 0;
-                } else if !is_dir {
-                    // Compose "dir/name" (or just "name" at root) for view.
-                    let vn = &mut *&raw mut FM_VIEW_NAME;
-                    let mut off = 0;
-                    if FM_DIR_LEN > 0 {
-                        vn[..FM_DIR_LEN].copy_from_slice(&(&*&raw const FM_DIR)[..FM_DIR_LEN]);
-                        off = FM_DIR_LEN;
-                        vn[off] = b'/';
-                        off += 1;
-                    }
-                    vn[off..off + len].copy_from_slice(&name[..len]);
-                    FM_VIEW_NAME_LEN = off + len;
-                    let full = core::str::from_utf8(&vn[..off + len]).unwrap_or("");
-                    // Route by extension: .bmp -> Gallery, .wav -> Media
-                    // Player, text-ish files -> Editor, else inline peek.
-                    if len >= 4 && &name[len - 4..len] == b".bmp" {
-                        if gallery::open(full) {
-                            open(KIND_GALLERY);
-                        }
-                    } else if len >= 4 && &name[len - 4..len] == b".wav" {
-                        if media::open(full) {
-                            open(KIND_MEDIA);
-                        }
-                    } else if is_editable(&name[..len]) {
-                        editor::load(full);
+                let mut tmp = [0u8; FM_PATH_MAX];
+                let n = parent.len();
+                tmp[..n].copy_from_slice(parent.as_bytes());
+                fm_set_dir(core::str::from_utf8(&tmp[..n]).unwrap_or(""));
+            },
+            b'h' | b'H' => fm_go_home(),
+            10 => fm_open_selected(),
+            b'e' | b'E' => {
+                // Edit a script/text file instead of running it.
+                let mut name = [0u8; FM_NAME_MAX];
+                if let Some((len, false)) = fm_entry(FM_CURSOR, &mut name) {
+                    if matches!(fm_type(&name[..len]), FmType::Ling | FmType::Text) {
+                        let mut pb = [0u8; FM_PATH_MAX];
+                        editor::load(fm_join(&mut pb, &name[..len]));
                         open(KIND_EDIT);
-                    } else {
-                        FM_VIEWING = true;
                     }
                 }
             },
             0x77 | 0x57 => {
                 // 'w' / 'W': set the highlighted .bmp as the desktop wallpaper.
                 let mut name = [0u8; FM_NAME_MAX];
-                if let Some((len, is_dir)) = lingfs::list_entry(fm_dir(), FM_CURSOR, &mut name) {
-                    if !is_dir && len >= 4 && &name[len - 4..len] == b".bmp" {
-                        // Compose "dir/name" (or "name" at root), same as view.
-                        let mut full = [0u8; FM_NAME_MAX * 2 + 1];
-                        let mut off = 0;
-                        let dir = fm_dir();
-                        if !dir.is_empty() {
-                            full[..dir.len()].copy_from_slice(dir.as_bytes());
-                            off = dir.len();
-                            full[off] = b'/';
-                            off += 1;
-                        }
-                        full[off..off + len].copy_from_slice(&name[..len]);
-                        let path = core::str::from_utf8(&full[..off + len]).unwrap_or("");
-                        if set_wallpaper_image(path) {
+                if let Some((len, is_dir)) = fm_entry(FM_CURSOR, &mut name) {
+                    if !is_dir && len >= 4 && name[len - 4..len].eq_ignore_ascii_case(b".bmp") {
+                        let mut pb = [0u8; FM_PATH_MAX];
+                        if set_wallpaper_image(fm_join(&mut pb, &name[..len])) {
                             settings_save();
                         }
                     }
@@ -2358,6 +2561,44 @@ fn files_key(k: u8) {
             FM_SCROLL = FM_CURSOR - FM_VISIBLE_ROWS + 1;
         }
     }
+}
+
+/// Mouse in the Files window: click selects a row, double-click (or a click
+/// on the selected row within 450ms) opens it; the path header goes up.
+fn files_click(wx: i64, wy: i64, dw: u32, mx: i64, my: i64) -> bool {
+    let x = (wx.max(0) as u32) + 16;
+    let y = (wy.max(0) as u32) + TITLEBAR_H + 14;
+    unsafe {
+        if FM_VIEWING {
+            FM_VIEWING = false;
+            return true;
+        }
+        if pt_in(mx, my, (x, y.saturating_sub(4), dw.saturating_sub(32), 16)) {
+            files_key(0x08);
+            return true;
+        }
+        let row_w = dw.saturating_sub(32).max(40);
+        let count = fm_entry_count();
+        for vis in 0..FM_VISIBLE_ROWS {
+            let i = FM_SCROLL + vis;
+            if i >= count {
+                break;
+            }
+            let ry = y + 22 + vis as u32 * 24;
+            if pt_in(mx, my, (x, ry.saturating_sub(5), row_w, 20)) {
+                let now = crate::arch::timer::now_ms();
+                let double = FM_CLICK.1 == i && now.saturating_sub(FM_CLICK.0) < 450;
+                FM_CURSOR = i;
+                FM_CLICK = (now, i);
+                if double {
+                    FM_CLICK = (0, usize::MAX);
+                    fm_open_selected();
+                }
+                return true;
+            }
+        }
+    }
+    false
 }
 
 // -- Top-bar tray: volume + network widgets --------------------------------
@@ -2708,6 +2949,9 @@ fn pt_in(px: i64, py: i64, r: (u32, u32, u32, u32)) -> bool {
 fn content_click(idx: usize, mx: i64, my: i64) -> bool {
     let w = windows()[idx];
     let (wx, wy, dw, dh) = deformed_rect(&w);
+    if w.kind == KIND_FILES {
+        return files_click(wx, wy, dw, mx, my);
+    }
     if w.kind == KIND_SETTINGS {
         // Tab buttons switch tabs.
         for t in 0..SETTINGS_TAB_COUNT {
@@ -3189,6 +3433,9 @@ fn draw_content_inner(slot: usize) {
                 // Directory listing.
                 let header: &[u8] = if FM_DIR_LEN == 0 { b"/" } else { fm_dir().as_bytes() };
                 font8x8::draw_str(x, y, header, accent, panel);
+                if FM_DIR_LEN > 0 {
+                    font8x8::draw_str(x + dw.saturating_sub(96), y, b"[ up ]", dim, panel);
+                }
                 let count = fm_entry_count();
                 if count == 0 {
                     font_unicode::draw_utf8_str(x, y + 22, locale::tr("(empty)").as_bytes(), dim, panel, locale::render_daemon());
@@ -3198,23 +3445,22 @@ fn draw_content_inner(slot: usize) {
                 let mut buf = [0u8; FM_NAME_MAX];
                 for vis in 0..FM_VISIBLE_ROWS {
                     let i = FM_SCROLL + vis;
-                    let Some((len, is_dir)) = lingfs::list_entry(fm_dir(), i, &mut buf) else {
+                    let Some((len, is_dir)) = fm_entry(i, &mut buf) else {
                         break;
                     };
                     let ry = y + 22 + vis as u32 * row_h;
                     draw_row_ring(x, ry.saturating_sub(5), row_w, row_h - 4, FM_CURSOR == i);
-                    if is_dir {
-                        framebuffer::back_fill_rounded_rect(x + 8, ry, 12, 10, 2, accent);
-                        font8x8::draw_str(x + 28, ry, &buf[..len], text, panel);
-                    } else {
-                        framebuffer::back_fill_rounded_rect(x + 9, ry, 10, 12, 2, dim);
-                        font8x8::draw_str(x + 28, ry, &buf[..len], text, panel);
-                    }
+                    draw_fm_icon(x + 6, ry.saturating_sub(3), &buf[..len], is_dir);
+                    font8x8::draw_str(x + 32, ry, &buf[..len], text, panel);
+                }
+                let foot = y + 22 + FM_VISIBLE_ROWS as u32 * row_h + 6;
+                if !FM_MSG.is_empty() {
+                    font8x8::draw_str(x, foot - 14, FM_MSG.as_bytes(), 0xE0A44A, panel);
                 }
                 font_unicode::draw_utf8_str(
                     x,
-                    y + 22 + FM_VISIBLE_ROWS as u32 * row_h + 6,
-                    locale::tr("enter: open   backspace: up").as_bytes(),
+                    foot,
+                    locale::tr("double-click/enter: open   e: edit   backspace: up   h: home").as_bytes(),
                     dim,
                     panel,
                     locale::render_daemon(),

@@ -545,6 +545,209 @@ fn os_wallpaper() -> bool {
     }
 }
 
+// ── Files: icons, pictures, the Pi's built-in home ──────────────────────────
+
+/// The standard home folders, in display order (same as the x86 desktop's
+/// `fs::users::HOME_FOLDERS`).
+pub const HOME_FOLDERS: [&str; 8] =
+    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Programs", "Scripts"];
+
+// 8x8 emblems (bit 7 = left pixel), the same art as the x86 Files window.
+const EMB_DOC: [u8; 8] = [0x00, 0x7E, 0x00, 0x7E, 0x00, 0x78, 0x00, 0x00];
+const EMB_PHOTO: [u8; 8] = [0x06, 0x06, 0x00, 0x20, 0x72, 0xFF, 0xFF, 0x00];
+const EMB_MUSIC: [u8; 8] = [0x1E, 0x12, 0x12, 0x12, 0x72, 0xF6, 0x66, 0x00];
+const EMB_VIDEO: [u8; 8] = [0x40, 0x60, 0x70, 0x78, 0x70, 0x60, 0x40, 0x00];
+const EMB_GRAPHICS: [u8; 8] = [0x38, 0x44, 0x44, 0x38, 0x10, 0x38, 0x7C, 0x00];
+const EMB_MODEL: [u8; 8] = [0x3E, 0x46, 0xFA, 0x8A, 0x8C, 0x88, 0xF8, 0x00];
+const EMB_PROGRAM: [u8; 8] = [0xFF, 0x81, 0xA1, 0x91, 0xA1, 0x81, 0xFF, 0x00];
+const EMB_SCRIPT: [u8; 8] = [0x24, 0x42, 0x81, 0x00, 0x81, 0x42, 0x24, 0x00];
+
+fn put(w: &mut Window, x: i64, y: i64, c: u32) {
+    if x >= 0 && y >= 0 && (x as usize) < w.w && (y as usize) < w.h {
+        w.buf[y as usize * w.w + x as usize] = c;
+    }
+}
+
+fn fill_rr(w: &mut Window, x: i64, y: i64, ww: i64, hh: i64, r: i64, c: u32) {
+    for yy in 0..hh {
+        for xx in 0..ww {
+            let cx = if xx < r { r - xx } else if xx >= ww - r { xx - (ww - r - 1) } else { 0 };
+            let cy = if yy < r { r - yy } else if yy >= hh - r { yy - (hh - r - 1) } else { 0 };
+            if cx * cx + cy * cy <= r * r + 1 {
+                put(w, x + xx, y + yy, c);
+            }
+        }
+    }
+}
+
+/// Kind of file by extension: (icon colour, emblem). Shared with the x86 look.
+fn file_kind(name: &str, is_dir: bool) -> (u32, Option<&'static [u8; 8]>) {
+    if is_dir {
+        return match name {
+            "Documents" => (0x4A8FE0, Some(&EMB_DOC)),
+            "Photos" => (0x5AC06A, Some(&EMB_PHOTO)),
+            "Music" => (0xE0A44A, Some(&EMB_MUSIC)),
+            "Videos" => (0xE0605A, Some(&EMB_VIDEO)),
+            "Graphics" => (0xB06AE0, Some(&EMB_GRAPHICS)),
+            "3D Models" => (0x40C0C0, Some(&EMB_MODEL)),
+            "Programs" => (0x8A9BB8, Some(&EMB_PROGRAM)),
+            "Scripts" => (0xF0D050, Some(&EMB_SCRIPT)),
+            _ => (0x4A8FE0, None),
+        };
+    }
+    let l = name.to_ascii_lowercase();
+    let ext = |e: &str| l.ends_with(e);
+    if ext(".bmp") || ext(".png") {
+        (0x5AC06A, Some(&EMB_PHOTO))
+    } else if ext(".svg") {
+        (0xB06AE0, Some(&EMB_GRAPHICS))
+    } else if ext(".wav") || ext(".mp3") || ext(".ogg") || ext(".flac") || ext(".mid") {
+        (0xE0A44A, Some(&EMB_MUSIC))
+    } else if ext(".mp4") || ext(".mkv") || ext(".webm") || ext(".avi") || ext(".mov") || ext(".gif") {
+        (0xE0605A, Some(&EMB_VIDEO))
+    } else if ext(".ling") {
+        (0xF0D050, Some(&EMB_SCRIPT))
+    } else if ext(".obj") || ext(".stl") || ext(".glb") || ext(".gltf") || ext(".ply") {
+        (0x40C0C0, Some(&EMB_MODEL))
+    } else if ext(".txt") || ext(".md") || ext(".json") || ext(".toml") || ext(".csv") || !l.contains('.') {
+        (0xC8C0D8, Some(&EMB_DOC))
+    } else {
+        (0x9B8FB0, None)
+    }
+}
+
+/// `os_file_icon(x, y, name, is_dir [, scale])`: the Files icon for an entry —
+/// a folder coloured by kind with an emblem for the home folders, or a page
+/// coloured and marked by file type. 18x14 at scale 1.
+fn os_file_icon(args: &[u64]) {
+    let Some(w) = win() else { return };
+    let n = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+    let (x, y) = (n(0, 0.0) as i64, n(1, 0.0) as i64);
+    let name = args.get(2).map(|&v| to_string(v)).unwrap_or_default();
+    let is_dir = args.get(3).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
+    let sc = (n(4, 1.0) as i64).max(1);
+    let (color, emb) = file_kind(&name, is_dir);
+    let ink = 0x1A1423;
+    if is_dir {
+        fill_rr(w, x, y, 8 * sc, 4 * sc, sc, color);
+        fill_rr(w, x, y + 2 * sc, 18 * sc, 12 * sc, 2 * sc, color);
+    } else {
+        fill_rr(w, x + 2 * sc, y, 14 * sc, 14 * sc, 2 * sc, color);
+    }
+    if let Some(e) = emb {
+        let (ex, ey) = if is_dir { (x + 5 * sc, y + 4 * sc) } else { (x + 5 * sc, y + 3 * sc) };
+        for (r, bits) in e.iter().enumerate() {
+            for c in 0..8i64 {
+                if bits & (0x80 >> c) != 0 {
+                    for dy in 0..sc {
+                        for dx in 0..sc {
+                            put(w, ex + c * sc + dx, ey + r as i64 * sc + dy, ink);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Decoded pictures by path (PNG/SVG via drivers::image, BMP here).
+static mut PICS: BTreeMap<String, Option<(usize, usize, Vec<u32>)>> = BTreeMap::new();
+
+fn decode_bmp(b: &[u8]) -> Option<(usize, usize, Vec<u32>)> {
+    let rd32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    if b.len() < 54 || &b[0..2] != b"BM" {
+        return None;
+    }
+    let off = rd32(10) as usize;
+    let sw = rd32(18) as i32;
+    let sh_raw = rd32(22) as i32;
+    let bpp = u16::from_le_bytes([b[28], b[29]]) as usize;
+    if sw <= 0 || sh_raw == 0 || (bpp != 24 && bpp != 32) {
+        return None;
+    }
+    let (sw, sh) = (sw as usize, sh_raw.unsigned_abs() as usize);
+    let stride = (sw * bpp / 8 + 3) & !3;
+    let mut px = vec![0u32; sw * sh];
+    for y in 0..sh {
+        let row = if sh_raw < 0 { y } else { sh - 1 - y };
+        for x in 0..sw {
+            let p = off + row * stride + x * bpp / 8;
+            if p + 2 < b.len() {
+                px[y * sw + x] = ((b[p + 2] as u32) << 16) | ((b[p + 1] as u32) << 8) | b[p] as u32;
+            }
+        }
+    }
+    Some((sw, sh, px))
+}
+
+fn picture(path: &str) -> Option<&'static (usize, usize, Vec<u32>)> {
+    let cache = unsafe { &mut *(&raw mut PICS) };
+    if !cache.contains_key(path) {
+        let decoded = crate::appfs::get(path).and_then(|data| {
+            let l = path.to_ascii_lowercase();
+            if l.ends_with(".bmp") {
+                decode_bmp(data)
+            } else if l.ends_with(".svg") || crate::drivers::image::looks_svg(data) {
+                crate::drivers::image::decode_svg_capped(data, 1024).map(|i| (i.w as usize, i.h as usize, i.px))
+            } else {
+                crate::drivers::image::decode_png(data).map(|i| (i.w as usize, i.h as usize, i.px))
+            }
+        });
+        cache.insert(String::from(path), decoded);
+    }
+    cache.get(path).and_then(|v| v.as_ref())
+}
+
+/// `px_image(path, x, y, w, h)`: draw a BMP/PNG/SVG file fitted (aspect kept,
+/// centred) inside the rectangle; false if it can't be read or decoded.
+fn px_image(args: &[u64]) -> bool {
+    let path = path_arg(args, 0);
+    let Some((iw, ih, px)) = picture(&path) else { return false };
+    let Some(w) = win() else { return false };
+    let n = |i: usize| args.get(i).map(|&v| to_f64(v)).unwrap_or(0.0);
+    let (rx, ry, rw, rh) = (n(1), n(2), n(3).max(1.0), n(4).max(1.0));
+    let scale = f64::min(rw / *iw as f64, rh / *ih as f64);
+    let (dw, dh) = ((*iw as f64 * scale) as i64, (*ih as f64 * scale) as i64);
+    let (ox, oy) = ((rx + (rw - dw as f64) / 2.0) as i64, (ry + (rh - dh as f64) / 2.0) as i64);
+    for y in 0..dh.max(0) {
+        let sy = ((y as f64 / scale) as usize).min(ih - 1);
+        for x in 0..dw.max(0) {
+            let sx = ((x as f64 / scale) as usize).min(iw - 1);
+            put(w, ox + x, oy + y, px[sy * iw + sx]);
+        }
+    }
+    true
+}
+
+/// The Pi has no storage driver yet, so its home is built in: the standard
+/// folders (an empty `.keep` makes each one listable) and starter files, under
+/// `home/<user>/`, served read-only from the image like the app's own files.
+#[cfg(target_arch = "aarch64")]
+pub fn register_builtin_home(user: &str) {
+    use alloc::boxed::Box;
+    let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
+    for f in HOME_FOLDERS {
+        crate::appfs::register(leak(alloc::format!("home/{user}/{f}/.keep")), b"");
+    }
+    let starters: [(&str, &'static [u8]); 3] = [
+        ("Scripts/hello.ling", b"// A Ling script.\nprintln(\"Hello from LingOS!\")\nprintln(\"2 + 2 = \", 2 + 2)\n"),
+        ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
+        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts\n\nOn the Raspberry Pi this home is built into the image (read-only)\nuntil LingOS can read and write the SD card.\n"),
+    ];
+    for (rel, data) in starters {
+        crate::appfs::register(leak(alloc::format!("home/{user}/{rel}")), data);
+    }
+}
+
+/// The signed-in user's name (x86: the lingfs session; Pi: "ling" until the
+/// setup screen's accounts persist).
+fn os_user() -> String {
+    #[cfg(target_arch = "x86_64")]
+    return String::from(crate::fs::lingfs::current_user());
+    #[allow(unreachable_code)]
+    String::from("ling")
+}
+
 /// `os_info(key)`: facts about the running system for the desktop's About/tray.
 fn os_info(key: &str) -> String {
     use alloc::format;
@@ -575,6 +778,7 @@ fn os_info(key: &str) -> String {
             String::from("PS/2 keyboard")
         },
         "network" => String::from("not available yet"),
+        "user" => os_user(),
         _ => String::new(),
     }
 }
@@ -1005,6 +1209,13 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             unsafe { CURSOR_DOT = path_arg(args, 0) == "dot" };
             UNIT
         },
+        b"os_file_icon" => {
+            os_file_icon(args);
+            UNIT
+        },
+        b"px_image" => boolean(px_image(args)),
+        b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
+        b"os_user" => mk_str(&os_user()),
         b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
