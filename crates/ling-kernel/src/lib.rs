@@ -450,7 +450,7 @@ fn run_setup_wizard() {
 type AppEntry = unsafe extern "C" fn() -> u64;
 static mut APPS: [Option<(&'static str, AppEntry)>; 8] = [None; 8];
 
-/// Register a built-in app. The first one registered is autostarted at boot.
+/// Register a built-in app (listed by `apps`, started by typing its name).
 pub fn register_app(name: &'static str, entry: AppEntry) {
     unsafe {
         let apps = &mut *(&raw mut APPS);
@@ -474,7 +474,46 @@ pub fn run_first_app() {
     }
 }
 
-fn app_named(name: &[u8]) -> Option<AppEntry> {
+/// Names of the built-in apps, in registration order.
+pub(crate) fn app_names() -> alloc::vec::Vec<&'static str> {
+    let apps = unsafe { &*(&raw const APPS) };
+    apps.iter().flatten().map(|(n, _)| *n).collect()
+}
+
+/// Desktop → Console: the text console full-screen until `exit`.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn desktop_console() {
+    rpi_boot_screen();
+    crate::drivers::fbcon::init();
+    console_write(b"LingOS console -- type 'exit' to return to the desktop, 'help' for commands.\n");
+    rpi_console(true);
+    crate::drivers::fbcon::suspend();
+}
+
+/// Desktop → Settings: the setup screen (users, root password, SSH, language,
+/// time), then back to the desktop.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn desktop_setup() {
+    crate::setup::run();
+    crate::drivers::fbcon::suspend();
+}
+
+/// Boot-time hardware bring-up for the desktop: the Pi 5 USB probe (keyboard +
+/// mouse), once. Its log shows on the console before the desktop opens.
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn desktop_boot() {
+    static mut DONE: bool = false;
+    unsafe {
+        if DONE {
+            return;
+        }
+        DONE = true;
+    }
+    console_write(b"LingOS aarch64 (Raspberry Pi) -- starting the desktop\n");
+    arch::rp1::usb_probe();
+}
+
+pub(crate) fn app_named(name: &[u8]) -> Option<AppEntry> {
     let apps = unsafe { &*(&raw const APPS) };
     apps.iter().flatten().find(|(n, _)| n.as_bytes() == name).map(|&(_, e)| e)
 }
@@ -492,24 +531,20 @@ fn run_app(name: &[u8], entry: AppEntry) {
     console_write(b"back in LingOS -- type 'apps' to list built-in apps.\n");
 }
 
-/// Autostart the first built-in app after a short countdown; any key cancels
-/// to the console.
+/// Tell the user which built-in apps this image has and how to start one. LingOS
+/// boots to its console; apps run only when asked for (`lingstation`, ...).
 #[cfg(target_arch = "aarch64")]
-fn autostart_app() {
-    let first = unsafe { (*(&raw const APPS))[0] };
-    let Some((name, entry)) = first else { return };
-    console_write(b"\n");
-    console_write(name.as_bytes());
-    console_write(b" starts in 3s -- press any key for the LingOS console.\n");
-    let deadline = arch::timer::now_ms() + 3000;
-    while arch::timer::now_ms() < deadline {
-        if poll_input().is_some() {
-            console_write(b"autostart cancelled.\n");
-            return;
-        }
-        arch::timer::delay_us(5_000);
+fn announce_apps() {
+    let apps = unsafe { &*(&raw const APPS) };
+    for (name, _) in apps.iter().flatten() {
+        console_write(b"
+");
+        console_write(name.as_bytes());
+        console_write(b" is installed -- type '");
+        console_write(name.as_bytes());
+        console_write(b"' and press Enter to start it (Ctrl+Q returns here).
+");
     }
-    run_app(name.as_bytes(), entry);
 }
 
 /// aarch64/Raspberry Pi idle loop with a live uptime clock painted on the boot
@@ -521,7 +556,6 @@ fn autostart_app() {
 #[cfg(target_arch = "aarch64")]
 #[no_mangle]
 pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
-    use crate::drivers::{font8x8, framebuffer};
     console_write(b"LingOS aarch64 (Raspberry Pi)\nbasic kernel booted.\n\n");
     // Auto-run the USB probe once at boot. Without a serial adapter the only
     // way to see its output (and the only way to drive it at all, since typing
@@ -534,8 +568,17 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
     if arch::xhci::keyboard_ready() {
         run_setup_wizard();
     }
-    autostart_app();
+    announce_apps();
     console_write(b"\nconsole ready (USB keyboard or serial) -- type 'help'.\n");
+    rpi_console(false);
+    0
+}
+
+/// The Pi's interactive line console (serial + USB keyboard, echoed to HDMI).
+/// `nested`: opened from the desktop — `exit` returns to it.
+#[cfg(target_arch = "aarch64")]
+fn rpi_console(nested: bool) {
+    use crate::drivers::{font8x8, framebuffer};
     console_write(b"lingos$ ");
     const BAR: u32 = 0x6C_3A_FF;
     let mut last = u64::MAX;
@@ -549,6 +592,9 @@ pub extern "C" fn ling_kernel_rpi_idle() -> u64 {
             match c {
                 b'\r' | b'\n' => {
                     console_write(b"\n");
+                    if nested && matches!(&line[..len], b"exit" | b"desktop") {
+                        return;
+                    }
                     rpi_shell_exec(&line[..len]);
                     len = 0;
                     console_write(b"lingos$ ");

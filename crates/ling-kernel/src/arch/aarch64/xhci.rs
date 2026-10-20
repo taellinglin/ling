@@ -14,7 +14,6 @@
 //! only be tested on real hardware (no serial adapter → debugging by HDMI photo).
 
 use crate::arch::mmio::{read32, write32};
-use crate::mm::frame;
 
 /// Offset added to a CPU-physical address to get the bus address RP1's DMA uses
 /// to reach system RAM (the PCIe inbound window). smallkirby's board needed
@@ -456,42 +455,36 @@ fn report_cc(cc: u32) {
     }
 }
 
-/// Find the first root-hub port with a device connected; reset it and return
-/// (port_number, psc) once enabled, or None.
-fn reset_connected_port(x: &Xhci) -> Option<(u32, u32)> {
-    let max_ports = (unsafe { read32(x.cap + 0x04) } >> 24) & 0xFF;
-    let mut p = 1u32;
-    while p <= max_ports {
-        let off = x.op + OP_PORTSC0 + (p as usize - 1) * OP_PORT_STRIDE;
-        let mut psc = unsafe { read32(off) };
-        if psc & PORTSC_PP == 0 {
-            unsafe { write32(off, (psc & !PORTSC_RW1CS) | PORTSC_PP) };
-            crate::arch::timer::delay_us(20_000);
-            psc = unsafe { read32(off) };
-        }
-        if psc & PORTSC_CCS != 0 {
-            // Reset the port (USB2): write PR, keep PP, clear RW1C change bits.
-            let base = (psc & !PORTSC_RW1CS) | PORTSC_PP;
-            unsafe { write32(off, base | PORTSC_PR) };
-            if !wait_clear(off, PORTSC_PR, 20_000) {
-                crate::console_write(b"  port reset timeout\n");
-                return None;
-            }
-            crate::arch::timer::delay_us(20_000);
-            let psc2 = unsafe { read32(off) };
-            crate::console_write(b"  port ");
-            crate::console_write(&[b'0' + p as u8]);
-            hex(b" after reset PORTSC=", psc2 as u64, 8);
-            if psc2 & PORTSC_PED == 0 {
-                crate::console_write(b"  port did not enable after reset\n");
-                return None;
-            }
-            return Some((p, psc2));
-        }
-        p += 1;
+/// Reset root-hub port `p` (1-based) if a device is connected; returns its
+/// PORTSC once the port is enabled.
+fn reset_port(x: &Xhci, p: u32) -> Option<u32> {
+    let off = x.op + OP_PORTSC0 + (p as usize - 1) * OP_PORT_STRIDE;
+    let mut psc = unsafe { read32(off) };
+    if psc & PORTSC_PP == 0 {
+        unsafe { write32(off, (psc & !PORTSC_RW1CS) | PORTSC_PP) };
+        crate::arch::timer::delay_us(20_000);
+        psc = unsafe { read32(off) };
     }
-    crate::console_write(b"  no connected port found\n");
-    None
+    if psc & PORTSC_CCS == 0 {
+        return None;
+    }
+    // Reset the port: write PR, keep PP, clear RW1C change bits.
+    let base = (psc & !PORTSC_RW1CS) | PORTSC_PP;
+    unsafe { write32(off, base | PORTSC_PR) };
+    if !wait_clear(off, PORTSC_PR, 20_000) {
+        crate::console_write(b"  port reset timeout\n");
+        return None;
+    }
+    crate::arch::timer::delay_us(20_000);
+    let psc2 = unsafe { read32(off) };
+    crate::console_write(b"  port ");
+    crate::console_write(&[b'0' + (p % 10) as u8]);
+    hex(b" after reset PORTSC=", psc2 as u64, 8);
+    if psc2 & PORTSC_PED == 0 {
+        crate::console_write(b"  port did not enable after reset\n");
+        return None;
+    }
+    Some(psc2)
 }
 
 /// Quick check (no full init) for any powered port with a device connected — so
@@ -518,8 +511,10 @@ fn has_device(cap: usize) -> bool {
     false
 }
 
-/// Enumerate a single device: reset its port, enable a slot, address it, and
-/// read its device descriptor. Prints progress at every step.
+/// Enumerate every device on this controller's root ports and keep every boot
+/// keyboard / boot mouse interface (a wireless combo dongle has both) for the
+/// persistent poller. Prints progress at every step (HDMI is the only debug
+/// channel on a Pi 5 without a serial adapter).
 pub fn enumerate(cap_base: usize, name: &[u8]) {
     if !has_device(cap_base) {
         crate::console_write(name);
@@ -530,10 +525,45 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     crate::console_write(b" xHCI enumerate:\n");
 
     let Some(mut x) = Xhci::init(cap_base) else { return };
+    let mut hids: [Option<Hid>; MAX_HID] = [None; MAX_HID];
+    let max_ports = (unsafe { read32(x.cap + 0x04) } >> 24) & 0xFF;
+    for p in 1..=max_ports {
+        if let Some(psc) = reset_port(&x, p) {
+            enumerate_device(&mut x, p, psc, &mut hids);
+        }
+    }
+    if hids.iter().all(|h| h.is_none()) {
+        crate::console_write(b"  no keyboard or mouse on this controller\n");
+        return;
+    }
+    let ctls = unsafe { &mut *(&raw mut CTLS) };
+    let Some(slot) = ctls.iter_mut().find(|c| c.is_none()) else { return };
+    *slot = Some(Ctl { x, hids });
+    let ctl = slot.as_mut().unwrap();
+    for h in ctl.hids.iter_mut().flatten() {
+        hid_queue(&ctl.x, h); // arm the first interrupt transfer
+        crate::console_write(if h.kind == HidKind::Kbd {
+            b"  -> USB KEYBOARD READY\n"
+        } else {
+            b"  -> USB MOUSE READY\n"
+        });
+    }
+}
 
-    let Some((port, psc)) = reset_connected_port(&x) else { return };
-    let speed = (psc >> 10) & 0xF;
+/// One HID interrupt-IN endpoint found in a configuration descriptor.
+#[derive(Clone, Copy)]
+struct HidEp {
+    iface: u32,
+    proto: u32,
+    addr: u32,
+    mps: u32,
+    interval: u32,
+}
 
+/// Address one device on root port `port`, read its descriptors, configure
+/// all its boot keyboard/mouse endpoints at once, and record them in `hids`.
+fn enumerate_device(x: &mut Xhci, port: u32, psc: u32, hids: &mut [Option<Hid>; MAX_HID]) {
+    let speed = (psc >> 10) & 0xF; // 1 FS, 2 LS, 3 HS, 4+ SS
     let Some(slot) = x.enable_slot() else { return };
     crate::console_write(b"  slot assigned: ");
     crate::console_write(&[b'0' + (slot % 10)]);
@@ -547,23 +577,25 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
     x.ep0_ring = ep0_ring;
     x.ep0_enq = 0;
     let cs = x.ctx_size as u64;
+    // Provisional EP0 max packet by speed (HS 64, SS 512, FS/LS 8 until read).
+    let mps_default: u32 = match speed {
+        3 => 64,
+        s if s >= 4 => 512,
+        _ => 8,
+    };
 
-    // Input Control Context: add slot (A0) + EP0 (A1).
     unsafe { core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, 0b11) };
-    // Slot context (1 * ctx_size): speed, 1 context entry, root-hub port.
     let slot_ctx = input_ctx + cs;
     unsafe {
         core::ptr::write_volatile(slot_ctx as *mut u32, (1u32 << 27) | (speed << 20));
         core::ptr::write_volatile((slot_ctx + 4) as *mut u32, port << 16);
     }
-    // EP0 context (2 * ctx_size): Control, MPS 8 (full-speed default), CErr 3.
     let ep0 = input_ctx + 2 * cs;
     unsafe {
-        core::ptr::write_volatile((ep0 + 4) as *mut u32, (8u32 << 16) | (4 << 3) | (3 << 1));
+        core::ptr::write_volatile((ep0 + 4) as *mut u32, (mps_default << 16) | (4 << 3) | (3 << 1));
         core::ptr::write_volatile((ep0 + 8) as *mut u64, dma(ep0_ring) | 1); // TR deq | DCS
         core::ptr::write_volatile((ep0 + 16) as *mut u32, 8); // avg TRB length
     }
-    // Register the output device context in the DCBAA.
     unsafe { core::ptr::write_volatile((x.dcbaa + slot as u64 * 8) as *mut u64, dma(dev_ctx)) };
     dsb();
 
@@ -581,28 +613,21 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
 
     // --- GET_DESCRIPTOR(device): 8 bytes first to learn bMaxPacketSize0 ------
     let Some(buf) = alloc_page() else { return };
-    let rd = |o: usize| -> u32 {
-        (unsafe { core::ptr::read_volatile((buf + o as u64) as *const u8) }) as u32
-    };
+    let rd = |o: usize| -> u32 { (unsafe { core::ptr::read_volatile((buf + o as u64) as *const u8) }) as u32 };
     if x.control(0x80, 6, 0x0100, 0, dma(buf), 8).is_none() {
         crate::console_write(b"  get device descriptor (8) failed\n");
         return;
     }
-    // bMaxPacketSize0 is byte 7. If the control endpoint is bigger than the
-    // provisional 8, re-program it (Evaluate Context) before reading more, or
-    // the device babbles.
     let mps0 = rd(7);
     hex(b"  bMaxPacketSize0=", mps0 as u64, 2);
-    if (mps0 == 16 || mps0 == 32 || mps0 == 64) && !x.set_ep0_mps(input_ctx, mps0) {
+    if speed < 3 && (mps0 == 16 || mps0 == 32 || mps0 == 64) && !x.set_ep0_mps(input_ctx, mps0) {
         crate::console_write(b"  set EP0 max-packet failed\n");
         return;
     }
-    // Now read the full 18-byte descriptor at the correct max-packet size.
     if x.control(0x80, 6, 0x0100, 0, dma(buf), 18).is_none() {
         crate::console_write(b"  get device descriptor (18) failed\n");
         return;
     }
-    crate::console_write(b"  device descriptor:\n");
     hex(b"    idVendor=", (rd(8) | (rd(9) << 8)) as u64, 4);
     hex(b"    idProduct=", (rd(10) | (rd(11) << 8)) as u64, 4);
 
@@ -612,22 +637,19 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         return;
     }
     let total = (rd(2) | (rd(3) << 8)).min(4096) as u16;
-    let cfg_val = rd(5); // bConfigurationValue (from the 9-byte header)
+    let cfg_val = rd(5);
     if x.control(0x80, 6, 0x0200, 0, dma(buf), total).is_none() {
         crate::console_write(b"  get full config failed\n");
         return;
     }
 
-    // Walk the config: find the first HID interface and its interrupt-IN endpoint.
+    // Walk the config: every boot-protocol HID interface (protocol 1 keyboard,
+    // 2 mouse) and its first interrupt-IN endpoint.
     let total = total as usize;
+    let mut eps: [Option<HidEp>; MAX_HID] = [None; MAX_HID];
+    let mut n = 0usize;
+    let (mut cur_iface, mut cur_proto, mut cur_taken) = (0u32, 0u32, true);
     let mut off = 0usize;
-    let mut cur_is_hid = false;
-    let mut hid_iface = 0xFFu32;
-    let mut iface_proto = 0u32;
-    let mut ep_addr = 0u32;
-    let mut ep_mps = 0u32;
-    let mut ep_interval = 0u32;
-    let mut found_ep = false;
     while off + 2 <= total {
         let blen = rd(off) as usize;
         let btype = rd(off + 1);
@@ -635,88 +657,77 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
             break;
         }
         if btype == 4 {
-            // Interface descriptor: bInterfaceClass @ +5 (3 = HID).
-            cur_is_hid = rd(off + 5) == 3;
-            // Record this interface only until an endpoint locks one in, so the
-            // reported interface/protocol matches the endpoint we keep (combo
-            // keyboard+mouse devices have two HID interfaces).
-            if cur_is_hid && !found_ep {
-                hid_iface = rd(off + 2); // bInterfaceNumber
-                iface_proto = rd(off + 7); // bInterfaceProtocol: 1=keyboard, 2=mouse
-            }
-        } else if btype == 5 && cur_is_hid && !found_ep {
-            // Endpoint descriptor: want IN (addr bit7) + interrupt (attr[1:0]=3).
+            let is_boot_hid = rd(off + 5) == 3 && matches!(rd(off + 7), 1 | 2);
+            cur_iface = rd(off + 2);
+            cur_proto = rd(off + 7);
+            cur_taken = !is_boot_hid;
+        } else if btype == 5 && !cur_taken && n < MAX_HID {
             let addr = rd(off + 2);
             if addr & 0x80 != 0 && rd(off + 3) & 0x3 == 3 {
-                ep_addr = addr;
-                ep_mps = rd(off + 4) | (rd(off + 5) << 8);
-                ep_interval = rd(off + 6);
-                found_ep = true;
+                let mps = rd(off + 4) | (rd(off + 5) << 8);
+                eps[n] = Some(HidEp { iface: cur_iface, proto: cur_proto, addr, mps, interval: rd(off + 6) });
+                n += 1;
+                cur_taken = true;
             }
         }
         off += blen;
     }
-
-    if hid_iface == 0xFF || !found_ep {
-        crate::console_write(b"  no HID interrupt-IN endpoint found in config\n");
+    if n == 0 {
+        crate::console_write(b"  no boot keyboard/mouse interface (skipped)\n");
         return;
     }
-    crate::console_write(b"  HID interface found:\n");
-    hex(b"    bInterfaceNumber=", hid_iface as u64, 2);
-    crate::console_write(if iface_proto == 1 {
-        b"    protocol=keyboard\n"
-    } else if iface_proto == 2 {
-        b"    protocol=mouse\n"
-    } else {
-        b"    protocol=other\n"
-    });
-    hex(b"    int-IN endpoint addr=", ep_addr as u64, 2);
-    hex(b"    wMaxPacketSize=", ep_mps as u64, 4);
-    hex(b"    bInterval=", ep_interval as u64, 2);
 
     // --- SET_CONFIGURATION --------------------------------------------------
     if x.control(0x00, 9, cfg_val as u16, 0, 0, 0).is_none() {
         crate::console_write(b"  SET_CONFIGURATION failed\n");
         return;
     }
-    crate::console_write(b"  device configured\n");
 
-    // --- Configure the interrupt-IN endpoint --------------------------------
-    let ep_num = ep_addr & 0x0F;
-    let dci = (ep_num * 2 + 1) as usize; // IN direction
-    // A zero max-packet is invalid in an endpoint context; boot HID uses 8.
-    let ep_mps = if ep_mps == 0 { 8 } else { ep_mps };
-    let Some(int_ring) = alloc_page() else { return };
-    // Full/low-speed interrupt interval field = 3 + floor(log2(bInterval)).
-    let mut iv = 0u32;
-    let mut bi = ep_interval.max(1);
-    while bi > 1 {
-        bi >>= 1;
-        iv += 1;
+    // --- Configure all the interrupt-IN endpoints in one command -----------
+    let mut add_flags = 1u32;
+    let mut max_dci = 1u32;
+    let mut rings = [0u64; MAX_HID];
+    for (i, e) in eps.iter().flatten().enumerate() {
+        let dci = (e.addr & 0x0F) * 2 + 1;
+        add_flags |= 1 << dci;
+        max_dci = max_dci.max(dci);
+        let Some(ring) = alloc_page() else { return };
+        rings[i] = ring;
+        let mps = if e.mps == 0 { 8 } else { e.mps & 0x7FF };
+        let interval_field = if speed >= 3 {
+            // HS/SS: bInterval is already an exponent (2^(b-1) microframes).
+            e.interval.max(1).saturating_sub(1).min(15)
+        } else {
+            // FS/LS: frames → 125us exponent = 3 + floor(log2(bInterval)).
+            let mut iv = 0u32;
+            let mut bi = e.interval.max(1);
+            while bi > 1 {
+                bi >>= 1;
+                iv += 1;
+            }
+            (iv + 3).clamp(3, 15)
+        };
+        // Input-context index 0 is the Input Control Context, 1 the slot, so the
+        // endpoint with DCI n sits at index n+1.
+        let epc = input_ctx + (dci as u64 + 1) * cs;
+        unsafe {
+            core::ptr::write_volatile(epc as *mut u32, interval_field << 16);
+            core::ptr::write_volatile((epc + 4) as *mut u32, (mps << 16) | (7 << 3) | (3 << 1)); // Int-IN, CErr 3
+            core::ptr::write_volatile((epc + 8) as *mut u64, dma(ring) | 1);
+            core::ptr::write_volatile((epc + 16) as *mut u32, (mps << 16) | mps.min(8));
+        }
     }
-    let interval_field = (iv + 3).clamp(3, 15);
-
-    // Input context: add slot (A0) + this endpoint (A<dci>); slot ContextEntries=dci.
     unsafe {
         core::ptr::write_volatile(input_ctx as *mut u32, 0);
-        core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, 1 | (1 << dci));
+        core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, add_flags);
         let sctx = input_ctx + cs;
-        core::ptr::write_volatile(sctx as *mut u32, ((dci as u32) << 27) | (speed << 20));
+        core::ptr::write_volatile(sctx as *mut u32, (max_dci << 27) | (speed << 20));
         core::ptr::write_volatile((sctx + 4) as *mut u32, port << 16);
-        // Input-context index 0 is the Input Control Context, 1 the slot, so the
-        // endpoint with DCI n sits at index n+1 (EP0/DCI1 at 2*cs, matching
-        // Address Device). Writing it at dci*cs left the real slot all-zero →
-        // Parameter Error (completion code 0x11).
-        let epc = input_ctx + (dci as u64 + 1) * cs;
-        core::ptr::write_volatile(epc as *mut u32, interval_field << 16);
-        core::ptr::write_volatile((epc + 4) as *mut u32, (ep_mps << 16) | (7 << 3) | (3 << 1)); // Int-IN, CErr 3
-        core::ptr::write_volatile((epc + 8) as *mut u64, dma(int_ring) | 1); // TR deq | DCS
-        core::ptr::write_volatile((epc + 16) as *mut u32, (ep_mps << 16) | ep_mps.min(8));
     }
     dsb();
     x.ring_command(dma(input_ctx), (TRB_CONFIGURE_ENDPOINT << 10) | ((slot as u32) << 24));
     match x.wait_for(TRB_EV_CMD_COMPLETE, 40_000) {
-        Some((_p, s, _c)) if (s >> 24) & 0xFF == 1 => crate::console_write(b"  endpoint configured\n"),
+        Some((_p, s, _c)) if (s >> 24) & 0xFF == 1 => crate::console_write(b"  endpoints configured\n"),
         Some((_p, s, _c)) => {
             crate::console_write(b"  configure endpoint: ");
             report_cc((s >> 24) & 0xFF);
@@ -728,64 +739,82 @@ pub fn enumerate(cap_base: usize, name: &[u8]) {
         },
     }
 
-    // --- SET_PROTOCOL(boot): best effort (gaming devices may STALL) ----------
-    if x.control(0x21, 0x0B, 0, hid_iface as u16, 0, 0).is_some() {
-        crate::console_write(b"  boot protocol set\n");
-    } else {
-        crate::console_write(b"  (no boot protocol; using report protocol)\n");
+    for (i, e) in eps.iter().flatten().enumerate() {
+        // SET_PROTOCOL(boot) — fixed 8-byte keyboard / 3-4 byte mouse reports —
+        // and SET_IDLE(0) so reports only arrive on change. Best effort: some
+        // devices STALL these and still send boot-format reports.
+        let boot = x.control(0x21, 0x0B, 0, e.iface as u16, 0, 0).is_some();
+        let _ = x.control(0x21, 0x0A, 0, e.iface as u16, 0, 0);
+        let kind = if e.proto == 1 { HidKind::Kbd } else { HidKind::Mouse };
+        crate::console_write(if kind == HidKind::Kbd { b"  keyboard interface" } else { b"  mouse interface" });
+        crate::console_write(if boot { b" (boot protocol)\n" } else { b" (report protocol)\n" });
+        let Some(rbuf) = alloc_page() else { return };
+        let mps = if e.mps == 0 { 8 } else { e.mps & 0x7FF };
+        if let Some(h) = hids.iter_mut().find(|h| h.is_none()) {
+            *h = Some(Hid {
+                kind,
+                slot,
+                dci: (e.addr & 0x0F) * 2 + 1,
+                ring: rings[i],
+                enq: 0,
+                cycle: 1,
+                rbuf,
+                mps,
+                prev: [0; 8],
+            });
+        }
     }
-
-    // --- Hand the keyboard to the persistent poller -------------------------
-    if iface_proto != 1 {
-        crate::console_write(b"  -> HID mouse found (pointer input not wired yet)\n");
-        return;
-    }
-    if keyboard_ready() {
-        return; // already have a keyboard on another controller
-    }
-    let Some(rbuf) = alloc_page() else { return };
-    let mut k = Kbd {
-        x,
-        ring: int_ring,
-        enq: 0,
-        cycle: 1,
-        rbuf,
-        dci: dci as u32,
-        mps: ep_mps,
-        prev: [0; 8],
-    };
-    kbd_queue(&mut k); // arm the first interrupt transfer
-    unsafe { core::ptr::write(&raw mut KBD, Some(k)) };
-    crate::console_write(b"  -> USB KEYBOARD READY\n");
 }
 
-// ── Persistent USB keyboard ──────────────────────────────────────────────────
-// After enumeration the keyboard's controller state moves here. One interrupt
-// TRB is kept outstanding; `kbd_poll_byte` (non-blocking) checks the event ring,
-// decodes each new boot report into bytes, and re-arms. Bytes come out exactly as
-// a serial terminal would send them (arrows as ESC [ A..D), so the shell and the
-// setup wizard consume USB and serial input through the same path.
+// ── Persistent USB keyboards + mice ──────────────────────────────────────────
+// After enumeration each controller's state moves into CTLS with its HID
+// endpoints. Each endpoint keeps one interrupt TRB outstanding; `poll` (non-
+// blocking) drains every controller's event ring, decodes each report — keys
+// into bytes (exactly as a serial terminal sends them: arrows as ESC [ A..D),
+// mouse reports into an absolute pointer — and re-arms that endpoint.
 
 const TRB_LINK: u32 = 6;
+const MAX_HID: usize = 4;
 
-struct Kbd {
-    x: Xhci,
+#[derive(Clone, Copy, PartialEq)]
+enum HidKind {
+    Kbd,
+    Mouse,
+}
+
+#[derive(Clone, Copy)]
+struct Hid {
+    kind: HidKind,
+    slot: u8,
+    dci: u32,
     ring: u64,
     enq: usize,
     cycle: u32,
     rbuf: u64,
-    dci: u32,
     mps: u32,
     prev: [u8; 8],
 }
 
-static mut KBD: Option<Kbd> = None;
+struct Ctl {
+    x: Xhci,
+    hids: [Option<Hid>; MAX_HID],
+}
+
+static mut CTLS: [Option<Ctl>; 2] = [None, None];
 
 // Decoded-byte queue (a key press can yield several bytes, e.g. an arrow).
 const KQ_LEN: usize = 64;
 static mut KQ: [u8; KQ_LEN] = [0; KQ_LEN];
 static mut KQ_HEAD: usize = 0;
 static mut KQ_TAIL: usize = 0;
+
+/// Keys currently held (the last keyboard report): modifiers + 6 usages.
+static mut HELD: [u8; 8] = [0; 8];
+/// Absolute pointer (in the framebuffer's safe-area coordinates), buttons,
+/// accumulated wheel clicks; `MOUSE_INIT` centres it on first use.
+static mut MOUSE: (i32, i32, u8) = (0, 0, 0);
+static mut MOUSE_WHEEL: i32 = 0;
+static mut MOUSE_INIT: bool = false;
 
 fn kq_push(b: u8) {
     unsafe {
@@ -808,24 +837,127 @@ fn kq_pop() -> Option<u8> {
     }
 }
 
+fn any_hid(kind: HidKind) -> bool {
+    let ctls = unsafe { &*(&raw const CTLS) };
+    ctls.iter().flatten().any(|c| c.hids.iter().flatten().any(|h| h.kind == kind))
+}
+
 /// True once a USB keyboard has been enumerated and armed.
 pub fn keyboard_ready() -> bool {
-    unsafe { (*&raw const KBD).is_some() }
+    any_hid(HidKind::Kbd)
+}
+
+/// True once a USB mouse has been enumerated and armed.
+pub fn mouse_ready() -> bool {
+    any_hid(HidKind::Mouse)
 }
 
 /// Queue the next interrupt-IN transfer and ring the endpoint doorbell. The ring
 /// is circular: when the producer reaches the last slot it writes a Link TRB
 /// (Toggle Cycle) back to the start and flips its cycle bit.
-fn kbd_queue(k: &mut Kbd) {
-    trb_write(k.ring, k.enq, dma(k.rbuf), k.mps, (TRB_NORMAL << 10) | (1 << 5) | k.cycle);
-    k.enq += 1;
-    if k.enq == RING_TRBS - 1 {
-        trb_write(k.ring, k.enq, dma(k.ring), 0, (TRB_LINK << 10) | (1 << 1) | k.cycle);
-        k.enq = 0;
-        k.cycle ^= 1;
+fn hid_queue(x: &Xhci, h: &mut Hid) {
+    trb_write(h.ring, h.enq, dma(h.rbuf), h.mps, (TRB_NORMAL << 10) | (1 << 5) | h.cycle);
+    h.enq += 1;
+    if h.enq == RING_TRBS - 1 {
+        trb_write(h.ring, h.enq, dma(h.ring), 0, (TRB_LINK << 10) | (1 << 1) | h.cycle);
+        h.enq = 0;
+        h.cycle ^= 1;
     }
     dsb();
-    unsafe { write32(k.x.db + k.x.slot as usize * 4, k.dci) };
+    unsafe { write32(x.db + h.slot as usize * 4, h.dci) };
+}
+
+/// Drain every controller's events: decode completed reports, re-arm endpoints.
+fn poll() {
+    let ctls = unsafe { &mut *(&raw mut CTLS) };
+    for ctl in ctls.iter_mut().flatten() {
+        while let Some((_p, status, control)) = ctl.x.poll_event() {
+            if (control >> 10) & 0x3F != TRB_EV_TRANSFER {
+                continue; // port-status changes etc.
+            }
+            let slot = ((control >> 24) & 0xFF) as u8;
+            let epid = (control >> 16) & 0x1F;
+            let Some(h) = ctl.hids.iter_mut().flatten().find(|h| h.slot == slot && h.dci == epid) else {
+                continue;
+            };
+            if matches!((status >> 24) & 0xFF, 1 | 13) {
+                let mut cur = [0u8; 8];
+                let n = (h.mps as usize).min(8);
+                for (i, b) in cur.iter_mut().enumerate().take(n) {
+                    *b = unsafe { core::ptr::read_volatile((h.rbuf + i as u64) as *const u8) };
+                }
+                match h.kind {
+                    HidKind::Kbd => {
+                        decode_report(&h.prev, &cur);
+                        unsafe { HELD = cur };
+                    },
+                    HidKind::Mouse => mouse_report(&cur, n),
+                }
+                h.prev = cur;
+            }
+            hid_queue(&ctl.x, h);
+        }
+    }
+}
+
+/// Boot mouse report: buttons, dx, dy (signed), then wheel if the endpoint
+/// sends a fourth byte. Moves the absolute pointer, clamped to the screen.
+fn mouse_report(r: &[u8; 8], n: usize) {
+    let (w, h) = (
+        crate::drivers::framebuffer::width().max(1) as i32,
+        crate::drivers::framebuffer::height().max(1) as i32,
+    );
+    unsafe {
+        if !MOUSE_INIT {
+            MOUSE = (w / 2, h / 2, 0);
+            MOUSE_INIT = true;
+        }
+        let dx = r[1] as i8 as i32;
+        let dy = r[2] as i8 as i32;
+        MOUSE.0 = (MOUSE.0 + dx).clamp(0, w - 1);
+        MOUSE.1 = (MOUSE.1 + dy).clamp(0, h - 1);
+        MOUSE.2 = r[0] & 0x07;
+        if n >= 4 {
+            MOUSE_WHEEL += r[3] as i8 as i32;
+        }
+    }
+}
+
+/// Pointer state after draining pending reports: (x, y, buttons bit0 L / bit1 R
+/// / bit2 M). None until a USB mouse is enumerated.
+pub fn mouse_state() -> Option<(i32, i32, u8)> {
+    if !mouse_ready() {
+        return None;
+    }
+    poll();
+    unsafe {
+        if !MOUSE_INIT {
+            let (w, h) = (
+                crate::drivers::framebuffer::width() as i32,
+                crate::drivers::framebuffer::height() as i32,
+            );
+            MOUSE = (w / 2, h / 2, 0);
+            MOUSE_INIT = true;
+        }
+        Some(MOUSE)
+    }
+}
+
+/// Wheel clicks since the last call (positive = away from the user).
+pub fn mouse_take_wheel() -> i32 {
+    poll();
+    unsafe { core::mem::take(&mut *(&raw mut MOUSE_WHEEL)) }
+}
+
+/// Is the key with HID usage `usage` held right now? Modifier usages 0xE0..0xE7
+/// (LCtrl, LShift, LAlt, LGUI, RCtrl, RShift, RAlt, RGUI) read the modifier byte.
+pub fn key_held(usage: u8) -> bool {
+    poll();
+    let held = unsafe { HELD };
+    if (0xE0..=0xE7).contains(&usage) {
+        return held[0] & (1 << (usage - 0xE0)) != 0;
+    }
+    held[2..8].contains(&usage)
 }
 
 /// US-layout HID usage → ASCII (None for keys with no single-byte meaning).
@@ -898,26 +1030,21 @@ fn decode_report(prev: &[u8; 8], cur: &[u8; 8]) {
     }
 }
 
-/// Non-blocking: the next byte typed on the USB keyboard, if any.
+/// Non-blocking: the next byte typed on any USB keyboard, if any.
 pub fn kbd_poll_byte() -> Option<u8> {
     if let Some(b) = kq_pop() {
         return Some(b);
     }
-    let kbd = unsafe { &mut *(&raw mut KBD) };
-    let k = kbd.as_mut()?;
-    while let Some((_p, status, control)) = k.x.poll_event() {
-        if (control >> 10) & 0x3F != TRB_EV_TRANSFER {
-            continue; // port-status changes etc.
-        }
-        if matches!((status >> 24) & 0xFF, 1 | 13) {
-            let mut cur = [0u8; 8];
-            for (i, b) in cur.iter_mut().enumerate() {
-                *b = unsafe { core::ptr::read_volatile((k.rbuf + i as u64) as *const u8) };
-            }
-            decode_report(&k.prev, &cur);
-            k.prev = cur;
-        }
-        kbd_queue(k);
+    if !keyboard_ready() {
+        return None;
     }
+    poll();
     kq_pop()
+}
+
+/// The last keyboard report (modifiers, reserved, 6 usages), after draining
+/// pending reports — all zero with no USB keyboard.
+pub fn held_report() -> [u8; 8] {
+    poll();
+    unsafe { HELD }
 }

@@ -141,6 +141,12 @@ pub fn putc(ch: u8) {
     }
 }
 
+/// Stop drawing console text (a full-screen app or the desktop owns the
+/// framebuffer); `init` brings the console back.
+pub fn suspend() {
+    unsafe { READY = false };
+}
+
 pub fn write(bytes: &[u8]) {
     for &b in bytes {
         putc(b);

@@ -320,6 +320,37 @@ pub fn fill_rect(x: u32, y: u32, w: u32, h: u32, color: u32) {
     }
 }
 
+/// Fill the WHOLE physical framebuffer, margin included, with one 0xRRGGBB
+/// color — so nothing drawn earlier (the boot banner) lingers in the overscan
+/// margin around a full-screen app.
+pub fn clear_physical(color: u32) {
+    let Some(fb) = get() else { return };
+    for y in 0..fb.height as usize {
+        let base = fb.addr as usize + y * fb.pitch as usize;
+        unsafe {
+            match fb.bpp {
+                32 => {
+                    let row = base as *mut u32;
+                    for x in 0..fb.width as usize {
+                        ptr::write_volatile(row.add(x), color);
+                    }
+                },
+                16 => {
+                    let row = base as *mut u16;
+                    for x in 0..fb.width as usize {
+                        ptr::write_volatile(row.add(x), rgb565(color));
+                    }
+                },
+                _ => {
+                    for x in 0..fb.width as usize * (fb.bpp as usize / 8) {
+                        ptr::write_volatile((base + x) as *mut u8, 0);
+                    }
+                },
+            }
+        }
+    }
+}
+
 /// Copy a whole `sw`×`sh` frame of 0xRRGGBB pixels to the live framebuffer at
 /// the safe-area origin, converting to the panel's format (32/24bpp, or the
 /// RGB565 the Pi 5 firmware scans out). One pass, row by row — the Ling app

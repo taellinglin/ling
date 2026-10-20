@@ -290,12 +290,22 @@ fn px_line(a: Arg) {
 
 // ── Fonts ────────────────────────────────────────────────────────────────────
 
+/// Paths already parsed → font index: the desktop and the apps it launches
+/// share big fonts (a CJK face takes seconds to parse on a Pi) instead of
+/// re-parsing them on every launch.
+static mut FONT_PATHS: BTreeMap<String, usize> = BTreeMap::new();
+
 fn font_load(path: &str) -> f64 {
+    let paths = unsafe { &mut *(&raw mut FONT_PATHS) };
+    if let Some(&i) = paths.get(path) {
+        return i as f64;
+    }
     let Some(bytes) = crate::appfs::get(path) else { return -1.0 };
     match fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
         Ok(fd) => {
             let f = fonts();
             f.push(Font { fd, cache: BTreeMap::new() });
+            paths.insert(String::from(path), f.len() - 1);
             (f.len() - 1) as f64
         },
         Err(_) => -1.0,
@@ -412,42 +422,260 @@ fn open_window(req_w: f64, req_h: f64) {
             Some(Window { buf: vec![0u32; w * h], w, h, open: true, clip: None, black: false }),
         );
     }
+    // The window owns the screen now: stop the text console drawing over it,
+    // and blank the overscan margin the window doesn't cover.
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::drivers::fbcon::suspend();
+        framebuffer::clear_physical(0);
+    }
+}
+
+/// Run a built-in app (linked into this image) full-screen from a running
+/// program — the desktop's launcher. The caller's window, globals and state are
+/// put aside and restored when the app closes.
+fn app_run(name: &str) -> bool {
+    let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
+    let saved = unsafe { core::ptr::replace(&raw mut WIN, None) };
+    crate::lingrt::run_isolated(entry);
+    unsafe { core::ptr::write(&raw mut WIN, saved) };
+    true
+}
+
+/// `os_info(key)`: facts about the running system for the desktop's About/tray.
+fn os_info(key: &str) -> String {
+    use alloc::format;
+    match key {
+        "board" => {
+            #[cfg(target_arch = "aarch64")]
+            return String::from(match crate::arch::mmio::board() {
+                crate::arch::mmio::RpiBoard::Pi3 => "Raspberry Pi 3",
+                crate::arch::mmio::RpiBoard::Pi4 => "Raspberry Pi 4",
+                crate::arch::mmio::RpiBoard::Pi5 => "Raspberry Pi 5",
+                crate::arch::mmio::RpiBoard::Unknown => "Raspberry Pi",
+            });
+            #[allow(unreachable_code)]
+            String::from("PC (x86-64)")
+        },
+        "memory" => format!("{} MiB free", crate::mm::frame::free_frame_count() * 4 / 1024),
+        "display" => format!("{} x {}", framebuffer::width(), framebuffer::height()),
+        "mouse" => {
+            #[cfg(target_arch = "aarch64")]
+            return String::from(if crate::arch::xhci::mouse_ready() { "USB mouse" } else { "none" });
+            #[allow(unreachable_code)]
+            String::from("PS/2 mouse")
+        },
+        "keyboard" => {
+            #[cfg(target_arch = "aarch64")]
+            return String::from(if crate::arch::xhci::keyboard_ready() { "USB keyboard" } else { "serial only" });
+            #[allow(unreachable_code)]
+            String::from("PS/2 keyboard")
+        },
+        "network" => String::from("not available yet"),
+        _ => String::new(),
+    }
 }
 
 fn present() {
     if let Some(w) = win() {
         framebuffer::blit_rgb(&w.buf, w.w, w.h);
-        // Ctrl+Q (USB keyboard or serial) closes the app back to the LingOS
-        // console — the way out until the app's own input is wired to HID.
-        #[cfg(target_arch = "aarch64")]
+    }
+    // Input for the next frame. Ctrl+Q closes a launched app (never the
+    // desktop itself) back to whatever started it.
+    let nested = crate::lingrt::app_depth() > 0;
+    let input = unsafe { &mut *(&raw mut INPUT) };
+    input.pressed.clear();
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Serial + USB keyboard bytes, decoded the way a terminal sends them.
         while let Some(c) = crate::poll_input() {
-            if c == 0x11 {
-                w.open = false;
-            }
+            input.feed(c);
         }
-        // x86: PS/2 keyboard — Ctrl+Q (chord byte 0x80|17) returns to the
-        // desktop; printable keys, Enter and Backspace feed `text_poll`.
-        #[cfg(target_arch = "x86_64")]
-        {
-            crate::arch::idt::poll_drain_8042();
-            loop {
-                let c = crate::drivers::keyboard::poll_char();
-                match c {
-                    0 => break,
-                    0x91 => w.open = false,
-                    b'\n' | b'\r' | 0x08 | 0x20..=0x7E => unsafe { (*(&raw mut TEXT)).push(c as char) },
-                    _ => {},
-                }
+        input.prev_held = input.held;
+        input.held = crate::arch::xhci::held_report();
+        input.wheel = crate::arch::xhci::mouse_take_wheel();
+    }
+    // x86: PS/2 keyboard — Ctrl+Q is the chord byte 0x80|17.
+    #[cfg(target_arch = "x86_64")]
+    {
+        crate::arch::idt::poll_drain_8042();
+        loop {
+            match crate::drivers::keyboard::poll_char() {
+                0 => break,
+                0x91 => input.feed(0x11),
+                c => input.feed(c),
             }
         }
     }
+    if input.quit && nested {
+        if let Some(w) = win() {
+            w.open = false;
+        }
+    }
+    input.quit = false;
 }
 
-/// Keys typed since the app last called `text_poll` (x86 PS/2 for now).
-static mut TEXT: String = String::new();
+/// Keyboard state between frames: text typed since the last `text_poll`, key
+/// names pressed during the last frame (from terminal-style bytes), and the
+/// USB keyboard's held keys now and one frame ago (for `key_down` and edge
+/// `key_pressed` on keys that send no bytes, like Super or F-keys).
+struct Input {
+    text: String,
+    pressed: Vec<&'static str>,
+    esc: u8, // 0 idle, 1 after ESC, 2 after ESC [
+    quit: bool,
+    held: [u8; 8],
+    prev_held: [u8; 8],
+    wheel: i32,
+}
+
+static mut INPUT: Input = Input {
+    text: String::new(),
+    pressed: Vec::new(),
+    esc: 0,
+    quit: false,
+    held: [0; 8],
+    prev_held: [0; 8],
+    wheel: 0,
+};
+
+impl Input {
+    fn feed(&mut self, c: u8) {
+        match (self.esc, c) {
+            (1, b'[') => {
+                self.esc = 2;
+                return;
+            },
+            (2, b'A') => self.pressed.push("up"),
+            (2, b'B') => self.pressed.push("down"),
+            (2, b'C') => self.pressed.push("right"),
+            (2, b'D') => self.pressed.push("left"),
+            (1, _) => {
+                // A lone ESC followed by something else: Escape, then the byte.
+                self.pressed.push("escape");
+                self.esc = 0;
+                return self.feed(c);
+            },
+            (2, _) => {},
+            (_, 0x1B) => {
+                self.esc = 1;
+                return;
+            },
+            (_, 0x11) => self.quit = true,
+            (_, b'\r' | b'\n') => {
+                self.pressed.push("enter");
+                self.text.push('\n');
+            },
+            (_, 0x08 | 0x7F) => {
+                self.pressed.push("backspace");
+                self.text.push('\u{8}');
+            },
+            (_, b'\t') => self.pressed.push("tab"),
+            (_, 0x20..=0x7E) => {
+                self.text.push(c as char);
+                if let Some(n) = key_name_of_byte(c) {
+                    self.pressed.push(n);
+                }
+            },
+            _ => {},
+        }
+        self.esc = 0;
+    }
+
+    /// A trailing ESC with nothing after it by frame end is the Escape key.
+    fn flush_esc(&mut self) {
+        if self.esc == 1 {
+            self.pressed.push("escape");
+        }
+        self.esc = 0;
+    }
+}
+
+fn key_name_of_byte(c: u8) -> Option<&'static str> {
+    const LETTERS: [&str; 26] = [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u",
+        "v", "w", "x", "y", "z",
+    ];
+    const DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+    match c {
+        b'a'..=b'z' => Some(LETTERS[(c - b'a') as usize]),
+        b'A'..=b'Z' => Some(LETTERS[(c - b'A') as usize]),
+        b'0'..=b'9' => Some(DIGITS[(c - b'0') as usize]),
+        b' ' => Some("space"),
+        _ => None,
+    }
+}
+
+/// HID usages for a key name (left and right variants for modifiers).
+fn key_usages(name: &str) -> &'static [u8] {
+    const L: [u8; 26] = [
+        4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+    ];
+    const D: [u8; 10] = [0x27, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26];
+    const F: [u8; 12] = [0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45];
+    let b = name.as_bytes();
+    if b.len() == 1 && b[0].is_ascii_lowercase() {
+        let i = (b[0] - b'a') as usize;
+        return &L[i..i + 1];
+    }
+    if b.len() == 1 && b[0].is_ascii_digit() {
+        let i = (b[0] - b'0') as usize;
+        return &D[i..i + 1];
+    }
+    if b.len() >= 2 && b[0] == b'f' {
+        if let Ok(n) = name[1..].parse::<usize>() {
+            if (1..=12).contains(&n) {
+                return &F[n - 1..n];
+            }
+        }
+    }
+    match name {
+        "enter" | "return" => &[0x28, 0x58],
+        "escape" | "esc" => &[0x29],
+        "backspace" => &[0x2A],
+        "tab" => &[0x2B],
+        "space" => &[0x2C],
+        "right" => &[0x4F],
+        "left" => &[0x50],
+        "down" => &[0x51],
+        "up" => &[0x52],
+        "delete" => &[0x4C],
+        "home" => &[0x4A],
+        "end" => &[0x4D],
+        "pageup" => &[0x4B],
+        "pagedown" => &[0x4E],
+        "ctrl" | "control" | "leftctrl" => &[0xE0, 0xE4],
+        "shift" | "leftshift" => &[0xE1, 0xE5],
+        "alt" | "leftalt" => &[0xE2, 0xE6],
+        "super" | "win" | "meta" | "cmd" => &[0xE3, 0xE7],
+        _ => &[],
+    }
+}
+
+fn report_has(r: &[u8; 8], u: u8) -> bool {
+    if (0xE0..=0xE7).contains(&u) {
+        r[0] & (1 << (u - 0xE0)) != 0
+    } else {
+        r[2..8].contains(&u)
+    }
+}
+
+fn key_down(name: &str) -> bool {
+    let i = unsafe { &*(&raw const INPUT) };
+    let n = name.to_ascii_lowercase();
+    key_usages(&n).iter().any(|&u| report_has(&i.held, u)) || i.pressed.iter().any(|p| *p == n)
+}
+
+fn key_pressed(name: &str) -> bool {
+    let i = unsafe { &mut *(&raw mut INPUT) };
+    i.flush_esc();
+    let n = name.to_ascii_lowercase();
+    i.pressed.iter().any(|p| *p == n)
+        || key_usages(&n).iter().any(|&u| report_has(&i.held, u) && !report_has(&i.prev_held, u))
+}
 
 /// Pointer state in window coordinates: (x, y, buttons bit0 L / bit1 R / bit2 M).
-/// x86 reads the PS/2 mouse; boards without a pointer yet report it off-screen.
+/// x86 reads the PS/2 mouse, the Pi its USB mouse; with no mouse it's off-screen.
 fn mouse_state() -> (f64, f64, u8) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -455,6 +683,10 @@ fn mouse_state() -> (f64, f64, u8) {
         let (ox, oy) = framebuffer::safe_margin();
         use crate::drivers::mouse;
         return ((mouse::x() - ox as i32) as f64, (mouse::y() - oy as i32) as f64, mouse::buttons());
+    }
+    #[cfg(target_arch = "aarch64")]
+    if let Some((x, y, b)) = crate::arch::xhci::mouse_state() {
+        return (x as f64, y as f64, b);
     }
     #[allow(unreachable_code)]
     (-10_000.0, -10_000.0, 0)
@@ -597,16 +829,39 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             num(font(a(0, -1.0)).map(|f| measure(f, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
         },
 
-        // Input: the PS/2 mouse + typed text on x86; Pi USB HID is the next step.
+        // Input: PS/2 (x86) or USB HID (Pi) mouse + keyboard, serial on the Pi.
         b"mouse_x" => num(mouse_state().0),
         b"mouse_y" => num(mouse_state().1),
         b"mouse_down" => boolean(mouse_state().2 & 1 != 0),
         b"mouse_down_right" => boolean(mouse_state().2 & 2 != 0),
         b"mouse_down_middle" => boolean(mouse_state().2 & 4 != 0),
-        b"mouse_scroll" | b"mouse_scroll_x" => num(0.0),
-        b"key_down" | b"key_pressed" => FALSE,
-        b"text_poll" | b"text_get" => mk_str(&core::mem::take(unsafe { &mut *(&raw mut TEXT) })),
+        b"mouse_scroll" => num(unsafe { (*(&raw const INPUT)).wheel } as f64),
+        b"mouse_scroll_x" => num(0.0),
+        b"key_down" => boolean(key_down(&path_arg(args, 0))),
+        b"key_pressed" => boolean(key_pressed(&path_arg(args, 0))),
+        b"text_poll" | b"text_get" => mk_str(&core::mem::take(unsafe { &mut (*(&raw mut INPUT)).text })),
         b"text_set" => UNIT,
+
+        // LingOS: the desktop's view of the system.
+        b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
+        b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
+        b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
+        b"os_info" => mk_str(&os_info(&path_arg(args, 0))),
+        #[cfg(target_arch = "aarch64")]
+        b"os_boot" => {
+            crate::desktop_boot();
+            UNIT
+        },
+        #[cfg(target_arch = "aarch64")]
+        b"os_console" => {
+            crate::desktop_console();
+            UNIT
+        },
+        #[cfg(target_arch = "aarch64")]
+        b"os_setup" => {
+            crate::desktop_setup();
+            UNIT
+        },
 
         // Files.
         b"file_exists" => boolean(crate::appfs::exists(&path_arg(args, 0))),

@@ -493,7 +493,7 @@ struct LingProject {
     embed_root: Option<PathBuf>,
     /// `kernel_app = "<name>"` (Raspberry Pi kernel targets): instead of running
     /// the entry program as the whole kernel, boot LingOS (console, USB, setup)
-    /// and offer the program as a built-in app of that name, auto-started once.
+    /// and offer the program as a built-in app of that name, started from the console.
     kernel_app: Option<String>,
     /// `bundle_app = "<name>:<path/to/main.ling>"` (kernel targets): compile a
     /// second program into the image as a built-in app (its own object, local

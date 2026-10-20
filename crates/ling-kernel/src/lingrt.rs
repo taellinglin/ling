@@ -376,10 +376,20 @@ fn store() -> &'static mut BTreeMap<Vec<u8>, StEntry> {
 pub fn run_isolated(entry: unsafe extern "C" fn() -> u64) -> u64 {
     let saved_g = core::mem::take(globals());
     let saved_s = core::mem::take(store());
+    unsafe { APP_DEPTH += 1 };
     let r = unsafe { entry() };
+    unsafe { APP_DEPTH -= 1 };
     *globals() = saved_g;
     *store() = saved_s;
     r
+}
+
+static mut APP_DEPTH: u32 = 0;
+
+/// How many launched apps are running (0 = only the image's own program, e.g.
+/// the desktop) — Ctrl+Q closes only a launched app.
+pub fn app_depth() -> u32 {
+    unsafe { APP_DEPTH }
 }
 
 /// The stored list for `key`, made private (unshared) and created empty if
