@@ -419,20 +419,26 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
                 d.playing = true;
                 d.base_beat = d.position;
                 d.base_ms = crate::arch::timer::now_ms();
+                audio_start(d.position);
             }
             UNIT
         },
         b"daw_pause" => {
+            audio_stop();
             d.playing = false;
             UNIT
         },
         b"daw_stop" => {
+            audio_stop();
             d.playing = false;
             d.position = 0.0;
             UNIT
         },
         b"daw_seek" => {
             d.position = n(0).max(0.0);
+            if d.playing {
+                audio_start(d.position);
+            }
             d.base_beat = d.position;
             d.base_ms = crate::arch::timer::now_ms();
             UNIT
@@ -656,4 +662,327 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         _ => return None,
     })
+}
+
+// ── step 2: sound ────────────────────────────────────────────────────────────
+// A polyphonic synth + note scheduler rendering the loaded project into the
+// kernel mixer (x86: AC97 via `drivers::mixer`, which pulls `block`). It
+// follows the project's own clock: notes of every audible track (mute/solo,
+// clip loops) are scheduled sample-accurately per block, synth tracks play
+// detuned saws + a square sub through a resonant low-pass with an envelope,
+// drum tracks a synthesized General MIDI kit. Track level/pan, note velocity/
+// pan/cutoff/resonance, master level and the limiter are honoured. It is not
+// ling-daw's instrument/effect DSP (Prism, the sampler, reverb...) — a stand-in
+// so a project plays recognisably until those are ported.
+
+const SR: f64 = 48_000.0;
+const MAX_VOICES: usize = 64;
+
+#[derive(Clone, Copy, PartialEq)]
+enum VKind {
+    Synth,
+    Kick,
+    Snare,
+    Hat,
+    OpenHat,
+    Tom,
+    Cymbal,
+    Click,
+}
+
+#[derive(Clone, Copy)]
+struct Voice {
+    track: usize,
+    kind: VKind,
+    freq: f64,
+    vel: f64,
+    pan: f64,
+    cutoff: f64,
+    reso: f64,
+    /// seconds since note-on / since release
+    t: f64,
+    rel_t: f64,
+    gate: bool,
+    off_beat: f64,
+    phase: [f64; 3],
+    lp: [f64; 2],
+    noise: u32,
+    env: f64,
+}
+
+struct Audio {
+    running: bool,
+    beat: f64,
+    voices: Vec<Voice>,
+    buf: Vec<i16>,
+}
+
+static mut AUDIO: Audio = Audio { running: false, beat: 0.0, voices: Vec::new(), buf: Vec::new() };
+
+fn audio() -> &'static mut Audio {
+    unsafe { &mut *(&raw mut AUDIO) }
+}
+
+fn audio_start(beat: f64) {
+    let a = audio();
+    a.voices.clear();
+    a.beat = beat;
+    a.running = true;
+}
+
+fn audio_stop() {
+    let a = audio();
+    a.running = false;
+    for v in a.voices.iter_mut() {
+        v.gate = false;
+    }
+}
+
+fn drum_kind(key: u8) -> (VKind, f64) {
+    match key {
+        35 | 36 => (VKind::Kick, 55.0),
+        37 | 39 => (VKind::Click, 1800.0),
+        38 | 40 => (VKind::Snare, 190.0),
+        42 | 44 => (VKind::Hat, 0.0),
+        46 => (VKind::OpenHat, 0.0),
+        41 | 43 | 45 | 47 | 48 | 50 => (VKind::Tom, 70.0 + (key as f64 - 41.0) * 14.0),
+        49 | 51 | 52 | 53 | 55 | 57 | 59 => (VKind::Cymbal, 0.0),
+        _ => (VKind::Click, 900.0),
+    }
+}
+
+fn note_on(a: &mut Audio, track: usize, drums: bool, n: &NoteDoc, off_beat: f64) {
+    let (kind, freq) = if drums {
+        drum_kind(n.key)
+    } else {
+        (VKind::Synth, 440.0 * libm::pow(2.0, (n.key as f64 - 69.0) / 12.0))
+    };
+    let v = Voice {
+        track,
+        kind,
+        freq,
+        vel: (n.vel as f64).clamp(0.0, 1.0),
+        pan: (n.pan as f64).clamp(-1.0, 1.0),
+        cutoff: (n.cutoff as f64).clamp(0.0, 1.0),
+        reso: (n.reso as f64).clamp(0.0, 1.0),
+        t: 0.0,
+        rel_t: 0.0,
+        gate: true,
+        off_beat,
+        phase: [0.0; 3],
+        lp: [0.0; 2],
+        noise: 0x1234_5678 ^ (n.key as u32 * 2654435761),
+        env: 0.0,
+    };
+    if a.voices.len() >= MAX_VOICES {
+        // steal the oldest released voice, else the oldest
+        let i = a.voices.iter().position(|v| !v.gate).unwrap_or(0);
+        a.voices.remove(i);
+    }
+    a.voices.push(v);
+}
+
+#[inline]
+fn noise(s: &mut u32) -> f64 {
+    let mut x = *s;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *s = x;
+    (x as f64 / u32::MAX as f64) * 2.0 - 1.0
+}
+
+/// One sample of a voice; false once it has died away.
+fn voice_sample(v: &mut Voice, dt: f64) -> Option<f64> {
+    v.t += dt;
+    if !v.gate {
+        v.rel_t += dt;
+    }
+    let s = match v.kind {
+        VKind::Synth => {
+            // ADSR: 8ms attack, decay to 0.7, 250ms release
+            let target = if v.gate {
+                if v.t < 0.008 { v.t / 0.008 } else { 0.7 + 0.3 * libm::exp(-(v.t - 0.008) * 6.0) }
+            } else {
+                v.env * libm::exp(-dt / 0.08)
+            };
+            v.env = target;
+            if !v.gate && v.env < 0.0005 {
+                return None;
+            }
+            let mut osc = 0.0;
+            for (i, det) in [1.0f64, 1.0058, 0.5].iter().enumerate() {
+                v.phase[i] += v.freq * det * dt;
+                v.phase[i] -= libm::floor(v.phase[i]);
+                osc += if i < 2 { 2.0 * v.phase[i] - 1.0 } else if v.phase[i] < 0.5 { 0.6 } else { -0.6 };
+            }
+            osc *= 0.33;
+            // two-pole low-pass: cutoff follows the note's cutoff + envelope
+            let fc = (300.0 + 6000.0 * v.cutoff * v.cutoff + 2500.0 * v.env).min(16_000.0);
+            let g = 1.0 - libm::exp(-2.0 * core::f64::consts::PI * fc * dt);
+            let fb = v.reso * 0.6;
+            v.lp[0] += g * (osc - v.lp[0] - fb * (v.lp[1] - v.lp[0]));
+            v.lp[1] += g * (v.lp[0] - v.lp[1]);
+            v.lp[1] * v.env
+        },
+        VKind::Kick => {
+            let f = v.freq + 110.0 * libm::exp(-v.t * 30.0);
+            v.phase[0] += f * dt;
+            let e = libm::exp(-v.t * 9.0);
+            if e < 0.0005 {
+                return None;
+            }
+            libm::sin(2.0 * core::f64::consts::PI * v.phase[0]) * e * 1.2
+        },
+        VKind::Snare => {
+            v.phase[0] += v.freq * dt;
+            let tone = libm::sin(2.0 * core::f64::consts::PI * v.phase[0]) * libm::exp(-v.t * 25.0);
+            let nz = noise(&mut v.noise) * libm::exp(-v.t * 14.0);
+            if v.t > 0.5 {
+                return None;
+            }
+            (tone * 0.5 + nz * 0.7) * 0.8
+        },
+        VKind::Hat | VKind::OpenHat | VKind::Cymbal => {
+            let decay = match v.kind {
+                VKind::Hat => 45.0,
+                VKind::OpenHat => 9.0,
+                _ => 3.5,
+            };
+            let e = libm::exp(-v.t * decay);
+            if e < 0.0005 {
+                return None;
+            }
+            // high-passed noise
+            let nz = noise(&mut v.noise);
+            let hp = nz - v.lp[0];
+            v.lp[0] += 0.35 * (nz - v.lp[0]);
+            hp * e * 0.45
+        },
+        VKind::Tom => {
+            let f = v.freq * (1.0 + 0.5 * libm::exp(-v.t * 20.0));
+            v.phase[0] += f * dt;
+            let e = libm::exp(-v.t * 7.0);
+            if e < 0.0005 {
+                return None;
+            }
+            libm::sin(2.0 * core::f64::consts::PI * v.phase[0]) * e * 0.9
+        },
+        VKind::Click => {
+            v.phase[0] += v.freq * dt;
+            let e = libm::exp(-v.t * 40.0);
+            if e < 0.0005 {
+                return None;
+            }
+            (libm::sin(2.0 * core::f64::consts::PI * v.phase[0]) * 0.5 + noise(&mut v.noise) * 0.3) * e
+        },
+    };
+    Some(s * (0.35 + 0.65 * v.vel))
+}
+
+/// Schedule every note starting in [b0, b1) on audible tracks.
+fn schedule(a: &mut Audio, p: &ProjectDoc, b0: f64, b1: f64) {
+    let any_solo = p.tracks.iter().any(|t| t.solo);
+    for (ti, t) in p.tracks.iter().enumerate() {
+        if t.is_audio() || t.muted || (any_solo && !t.solo) {
+            continue;
+        }
+        let drums = t.instrument == "drums" || t.instrument == "drum";
+        for c in &t.clips {
+            if c.is_audio() || c.end() <= b0 || c.start >= b1 {
+                continue;
+            }
+            let span = if c.loop_len > 0.0 { c.loop_len } else { c.len };
+            let reps = if c.loop_len > 0.0 { libm::ceil(c.len / c.loop_len).max(1.0) as usize } else { 1 };
+            for k in 0..reps {
+                let off = c.start + k as f64 * span;
+                if off >= b1 || off + span <= b0 {
+                    continue;
+                }
+                for n in &c.midi_notes {
+                    if n.start >= span {
+                        continue;
+                    }
+                    let on = off + n.start;
+                    if on >= c.end() || on < b0 || on >= b1 {
+                        continue;
+                    }
+                    let off_beat = (on + n.len.max(0.02)).min(c.end());
+                    note_on(a, ti, drums, n, off_beat);
+                }
+            }
+        }
+    }
+}
+
+/// Render `frames` stereo frames of the playing project, or None when silent
+/// (nothing playing and every voice has died away). Called by the mixer.
+pub fn block(frames: usize) -> Option<&'static [i16]> {
+    let a = audio();
+    if !a.running && a.voices.is_empty() {
+        return None;
+    }
+    let d = unsafe { (*(&raw mut DAW)).as_ref() }?;
+    let p = &d.project;
+    if a.buf.len() < frames * 2 {
+        a.buf.resize(frames * 2, 0);
+    }
+    let dt = 1.0 / SR;
+    let master = p.master_level as f64;
+    // Gains per track (level + constant-power pan).
+    let gains: Vec<(f64, f64, f64)> = p
+        .tracks
+        .iter()
+        .map(|t| {
+            let pan = (t.pan as f64).clamp(-1.0, 1.0);
+            (t.level as f64, pan, 0.0)
+        })
+        .collect();
+    let mut f = 0usize;
+    while f < frames {
+        // Sub-blocks of 64 frames: schedule notes, then render.
+        let n = (frames - f).min(64);
+        if a.running {
+            let bpm = p.bpm_at(a.beat);
+            let b0 = a.beat;
+            let mut b1 = b0 + n as f64 * dt * bpm / 60.0;
+            if p.loop_on && p.loop_end > p.loop_start && b1 >= p.loop_end && b0 < p.loop_end {
+                schedule(a, p, b0, p.loop_end);
+                for v in a.voices.iter_mut() {
+                    v.gate = false;
+                }
+                b1 = p.loop_start + (b1 - p.loop_end);
+                schedule(a, p, p.loop_start, b1);
+            } else {
+                schedule(a, p, b0, b1);
+            }
+            a.beat = b1;
+            for v in a.voices.iter_mut() {
+                if v.gate && a.beat >= v.off_beat {
+                    v.gate = false;
+                }
+            }
+        }
+        for i in 0..n {
+            let (mut l, mut r) = (0.0f64, 0.0f64);
+            a.voices.retain_mut(|v| match voice_sample(v, dt) {
+                Some(s) => {
+                    let (lvl, tpan, _) = gains.get(v.track).copied().unwrap_or((1.0, 0.0, 0.0));
+                    let pan = (tpan + v.pan).clamp(-1.0, 1.0);
+                    let x = (pan + 1.0) * core::f64::consts::FRAC_PI_4;
+                    l += s * lvl * libm::cos(x);
+                    r += s * lvl * libm::sin(x);
+                    true
+                },
+                None => false,
+            });
+            // master + soft limiter
+            let sl = libm::tanh(l * master * 0.35);
+            let sr = libm::tanh(r * master * 0.35);
+            a.buf[(f + i) * 2] = (sl * 32000.0) as i16;
+            a.buf[(f + i) * 2 + 1] = (sr * 32000.0) as i16;
+        }
+        f += n;
+    }
+    Some(&a.buf[..frames * 2])
 }

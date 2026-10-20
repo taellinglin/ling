@@ -615,9 +615,17 @@ fn render(buf: &mut [i16]) {
         let mono = MONO;
         let mut buf_peak_l = 0i16;
         let mut buf_peak_r = 0i16;
+        // LingStationX (the compiled app) playing a project through lingdaw;
+        // silenced while another app holds exclusive output.
+        let lsx = crate::lingdaw::block(frames);
+        let lsx_gain = if excl >= 0 { 0.0 } else { 1.0 };
         for f in 0..frames {
             let mut accl = 0.0f64;
             let mut accr = 0.0f64;
+            if let Some(d) = lsx {
+                accl += d[f * 2] as f64 / 32768.0 * lsx_gain;
+                accr += d[f * 2 + 1] as f64 / 32768.0 * lsx_gain;
+            }
             for v in voices.iter_mut() {
                 if !v.active {
                     continue;

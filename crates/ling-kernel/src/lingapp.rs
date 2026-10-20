@@ -645,9 +645,12 @@ fn present() {
         input.held = crate::arch::xhci::held_report();
         input.wheel = crate::arch::xhci::mouse_take_wheel();
     }
-    // x86: PS/2 keyboard — Ctrl+Q is the chord byte 0x80|17.
+    // x86: PS/2 keyboard — Ctrl+Q is the chord byte 0x80|17. Also keep the
+    // AC97 ring fed (the desktop loop that normally pumps it isn't running
+    // while an app owns the screen), so LingStationX playback is heard.
     #[cfg(target_arch = "x86_64")]
     {
+        crate::drivers::mixer::pump();
         crate::arch::idt::poll_drain_8042();
         loop {
             match crate::drivers::keyboard::poll_char() {
