@@ -910,6 +910,15 @@ fn os_info(key: &str) -> String {
             String::from("PC (x86-64)")
         },
         "memory" => format!("{} MiB free", crate::mm::frame::free_frame_count() * 4 / 1024),
+        // The configured IPv4 address ("" before DHCP / without a NIC).
+        "ip" => {
+            let ip = crate::drivers::netstack::self_ip();
+            if ip == [0, 0, 0, 0] {
+                String::new()
+            } else {
+                format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+            }
+        },
         "display" => format!("{} x {}", framebuffer::width(), framebuffer::height()),
         "mouse" => {
             #[cfg(target_arch = "aarch64")]
