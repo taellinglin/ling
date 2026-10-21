@@ -17,7 +17,11 @@
 //! every byte below goes through the e1000 ring to a real peer.
 
 use crate::arch::timer;
+// The NIC: the e1000 on x86, the RP1's GEM on the Raspberry Pi 5.
+#[cfg(target_arch = "x86_64")]
 use crate::drivers::net_e1000 as nic;
+#[cfg(target_arch = "aarch64")]
+use crate::arch::rp1_eth as nic;
 
 /// Live IP config, resolved through the NIC's runtime config (a DHCP lease
 /// if one was obtained, else the SLIRP fallback) — never the compile-time

@@ -44,7 +44,7 @@ pub mod cursor;
 pub mod kbdlayout;
 #[cfg(target_arch = "x86_64")]
 pub mod keyboard;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod lingfu;
 #[cfg(target_arch = "x86_64")]
 pub mod locale;
@@ -59,7 +59,7 @@ pub mod pkgman;
 pub mod mouse;
 #[cfg(target_arch = "x86_64")]
 pub mod net_e1000;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod netstack;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;

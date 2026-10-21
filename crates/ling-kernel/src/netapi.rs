@@ -9,12 +9,12 @@
 //! Honest limits: `http_post_async` runs the request synchronously (there is
 //! no background runtime in-kernel) and `http_job_poll` then returns its
 //! result. The Pi has no network driver yet, so there everything reports
-//! "not connected" (status 0, empty strings) until it does.
+//! "not connected" (status 0, empty strings) until it does. (The Pi 5's wired
+//! port is `arch::rp1_eth`.)
 
 use crate::lingrt::{mk_str, num, to_f64, to_string, UNIT};
 use alloc::string::String;
 
-#[cfg(target_arch = "x86_64")]
 mod imp {
     use crate::drivers::netstack as ns;
     use alloc::collections::VecDeque;
@@ -387,54 +387,6 @@ mod imp {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
-mod imp {
-    use alloc::string::String;
-    pub fn host(_port: u16) {}
-    pub fn join(_ip: &str, _port: u16) {}
-    pub fn send(_s: &str) {}
-    pub fn send_to(_id: u64, _s: &str) {}
-    pub fn recv() -> String {
-        String::new()
-    }
-    pub fn recv_from() -> String {
-        String::new()
-    }
-    pub fn status() -> u8 {
-        0
-    }
-    pub fn close() {}
-    pub fn clients() -> String {
-        String::new()
-    }
-    pub fn client_count() -> usize {
-        0
-    }
-    pub fn events() -> String {
-        String::new()
-    }
-    pub fn announce(_port: u16, _info: &str) {}
-    pub fn announce_stop() {}
-    pub fn discover(_port: u16) -> String {
-        String::new()
-    }
-    pub fn test_bind(_port: u16) -> String {
-        String::from("no network driver on this machine yet (the Pi's Ethernet / Wi-Fi are coming)\n")
-    }
-    pub fn request(_method: &str, _url: &str, _content_type: &str, _body: &str) -> (u16, String) {
-        (0, String::new())
-    }
-    pub fn last_status() -> u16 {
-        0
-    }
-    pub fn post_async(_url: &str, _body: &str, _content_type: &str) -> String {
-        String::from("job0")
-    }
-    pub fn job_poll(_id: &str) -> String {
-        String::from("ERROR: no network driver on this machine yet")
-    }
-}
-
 fn url_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out: alloc::vec::Vec<u8> = alloc::vec::Vec::with_capacity(b.len());
@@ -457,6 +409,11 @@ fn url_decode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// `(status, body)` of a GET -- the console's `curl`.
+pub fn http_get(url: &str) -> (u16, String) {
+    imp::request("GET", url, "", "")
 }
 
 /// The networking builtins; `None` for any other name.

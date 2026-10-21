@@ -18,7 +18,12 @@ use sha2::{Digest, Sha256, Sha512};
 pub fn random_bytes(out: &mut [u8]) -> bool {
     let mut i = 0;
     while i < out.len() {
-        let Some(word) = (unsafe { crate::arch::cpu::rdrand64() }) else {
+        #[cfg(target_arch = "x86_64")]
+        let word = unsafe { crate::arch::cpu::rdrand64() };
+        // The Pi: the SoC's hardware RNG (arch::rng).
+        #[cfg(target_arch = "aarch64")]
+        let word = crate::arch::rng::random_u64();
+        let Some(word) = word else {
             return false;
         };
         let bytes = word.to_le_bytes();

@@ -20,6 +20,8 @@ pub mod timer;
 pub mod xhci;
 pub mod wifi;
 pub mod sdcard;
+pub mod rng;
+pub mod rp1_eth;
 pub mod hdmi_audio;
 pub mod paging;
 pub mod vectors;

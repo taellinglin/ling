@@ -6,6 +6,5 @@
 
 pub mod blockdev;
 pub mod lingfs;
-#[cfg(target_arch = "x86_64")]
 pub mod packages;
 pub mod users;

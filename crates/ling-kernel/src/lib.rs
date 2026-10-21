@@ -31,12 +31,11 @@ pub mod abi;
 pub mod mm;
 
 // ─── Arch-neutral Ling runtime support: hashing, allocation, strings, sigs ──
-// TLS 1.3 crypto suite (SHA-256/HMAC/HKDF/ChaCha20-Poly1305/X25519) + RDRAND
-// entropy -- the foundation HTTPS/lingtp/fu.ling-lang.org build on.
-#[cfg(target_arch = "x86_64")]
+// TLS 1.3 crypto suite (SHA-256/HMAC/HKDF/ChaCha20-Poly1305/X25519) + hardware
+// entropy (RDRAND / the Pi's RNG) -- the foundation HTTPS/lingtp/fu.ling-lang.org
+// build on.
 pub mod crypto;
 // TLS 1.3 client (HTTPS) built on crypto + netstack.
-#[cfg(target_arch = "x86_64")]
 pub mod tls;
 pub mod ed25519;
 pub mod hash;
@@ -528,9 +527,27 @@ pub(crate) fn desktop_boot() {
     crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
     storage_boot();
+    net_boot();
     // HDMI audio: brought up at boot so LingStationX plays straight away;
     // the console's `hdmiaudio` repeats it verbosely with a test tone.
     arch::hdmi_audio::init(false);
+}
+
+/// The wired network: bring the RP1 Ethernet up and ask DHCP for an address
+/// when a cable is in; otherwise say so and move on (the console's `dhcp`
+/// retries later).
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn net_boot() {
+    if !arch::rp1_eth::ensure_init() {
+        return;
+    }
+    if !arch::rp1_eth::link_up() {
+        console_write(b"net: no link -- plug in a cable and run `dhcp`\n");
+        return;
+    }
+    if !crate::drivers::netstack::dhcp_configure() {
+        console_write(b"net: DHCP got no lease (run `dhcp` to retry)\n");
+    }
 }
 
 /// The SD card as storage: bring the card up, find the free space after its
@@ -702,7 +719,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, sd [format], ls [path], cat <file>, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -719,6 +736,63 @@ fn rpi_shell_exec(line: &[u8]) {
         arch::rp1::usb_probe();
     } else if s == b"wifi" {
         arch::wifi::probe();
+    } else if s == b"net" {
+        arch::rp1_eth::debug_dump();
+        let ip = crate::drivers::netstack::self_ip();
+        let gw = crate::drivers::netstack::gateway_ip();
+        let mut b = [0u8; 64];
+        let mut n = 0;
+        for (label, a) in [(&b"net: ip "[..], ip), (&b"  gateway "[..], gw)] {
+            append_bytes(&mut b, &mut n, label);
+            for (k, o) in a.iter().enumerate() {
+                n += write_decimal(&mut b[n..], *o as u64);
+                if k < 3 {
+                    append_bytes(&mut b, &mut n, b".");
+                }
+            }
+        }
+        append_bytes(&mut b, &mut n, b"\n");
+        console_write(&b[..n]);
+    } else if s == b"dhcp" {
+        if arch::rp1_eth::ensure_init() {
+            if !crate::drivers::netstack::dhcp_configure() {
+                console_write(b"net: DHCP got no lease\n");
+            }
+        }
+    } else if let Some(rest) = s.strip_prefix(b"curl ") {
+        let url = core::str::from_utf8(rest).unwrap_or("").trim();
+        let (status, body) = crate::netapi::http_get(url);
+        let mut b = [0u8; 24];
+        let n = write_decimal(&mut b, status as u64);
+        console_write(b"HTTP ");
+        console_write(&b[..n]);
+        console_write(b"\n");
+        console_write(&body.as_bytes()[..body.len().min(2000)]);
+        console_write(b"\n");
+    } else if s == b"lingfu" || s.starts_with(b"lingfu ") {
+        let arg = core::str::from_utf8(&s[6.min(s.len())..]).unwrap_or("").trim();
+        let (sub, name) = match arg.find(' ') {
+            Some(i) => (&arg[..i], arg[i + 1..].trim()),
+            None => (arg, ""),
+        };
+        match sub {
+            "install" if !name.is_empty() => {
+                if !fs::lingfs::is_mounted() {
+                    console_write(b"lingfu: storage first -- `sd format` puts lingfs on the card\n");
+                } else if crate::drivers::lingfu::install(name) {
+                    console_write(b"lingfu: installed; run it with `ling run pkg-");
+                    console_write(name.as_bytes());
+                    console_write(b"`\n");
+                }
+            },
+            "sync" => {
+                crate::drivers::lingfu::sync();
+            },
+            "list" | "search" => {
+                crate::drivers::lingfu::list(name);
+            },
+            _ => console_write(b"lingfu install <name> | lingfu list [query] | lingfu sync\n"),
+        }
     } else if s == b"sd" {
         storage_boot();
     } else if s == b"sd format" {
@@ -766,8 +840,6 @@ fn rpi_shell_exec(line: &[u8]) {
         arch::hdmi_audio::test_port((s[s.len() - 1] - b'0') as usize);
     } else if s == b"ling" || s.starts_with(b"ling ") {
         ling_command(core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim());
-    } else if s == b"lingfu" || s.starts_with(b"lingfu ") {
-        console_write(b"lingfu: installing packages needs the network and the SD card, which LingOS on the Pi cannot use yet.\n  On x86-64 LingOS: Terminal -> `lingfu install <name>`, then `ling run pkg-<name>` (or the Applications menu).\n");
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
         let mut b = [0u8; 24];

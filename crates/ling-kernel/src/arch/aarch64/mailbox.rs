@@ -84,6 +84,25 @@ unsafe fn call(channel: u32) -> bool {
 /// The board revision code (mailbox tag 0x00010002), e.g. 0xd04170 for a Pi 5
 /// 8GB rev 1.0. The low nibble is the PCB revision: Pi 5 rev 1.0 boards carry the
 /// BCM2712 C1 stepping, rev 1.1+ the D0 stepping (different pin-mux tables).
+/// The board's 64-bit serial number (GET_BOARD_SERIAL).
+pub fn board_serial() -> Option<u64> {
+    unsafe {
+        BUFFER.0[0] = 8 * 4;
+        BUFFER.0[1] = 0;
+        BUFFER.0[2] = 0x0001_0004;
+        BUFFER.0[3] = 8;
+        BUFFER.0[4] = 0;
+        BUFFER.0[5] = 0;
+        BUFFER.0[6] = 0;
+        BUFFER.0[7] = TAG_END;
+        if call(CHANNEL_PROPERTY) {
+            Some(((BUFFER.0[6] as u64) << 32) | BUFFER.0[5] as u64)
+        } else {
+            None
+        }
+    }
+}
+
 pub fn board_revision() -> Option<u32> {
     unsafe {
         BUFFER.0[0] = 7 * 4;
