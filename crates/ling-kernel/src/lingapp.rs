@@ -994,6 +994,7 @@ fn present() {
                 c @ 0x81..=0x9A => {
                     if let Some(name) = key_name_of_byte(b'a' + (c - 0x81)) {
                         input.pressed.push("ctrl");
+                        input.pressed.push("lctrl");
                         input.pressed.push(name);
                     }
                 },
@@ -1138,9 +1139,12 @@ fn key_usages(name: &str) -> &'static [u8] {
         "end" => &[0x4D],
         "pageup" => &[0x4B],
         "pagedown" => &[0x4E],
-        "ctrl" | "control" | "leftctrl" => &[0xE0, 0xE4],
-        "shift" | "leftshift" => &[0xE1, 0xE5],
-        "alt" | "leftalt" => &[0xE2, 0xE6],
+        "ctrl" | "control" | "leftctrl" | "lctrl" => &[0xE0, 0xE4],
+        "rctrl" | "rightctrl" => &[0xE4],
+        "shift" | "leftshift" | "lshift" => &[0xE1, 0xE5],
+        "rshift" | "rightshift" => &[0xE5],
+        "alt" | "leftalt" | "lalt" => &[0xE2, 0xE6],
+        "ralt" | "rightalt" => &[0xE6],
         "super" | "win" | "meta" | "cmd" => &[0xE3, 0xE7],
         _ => &[],
     }
