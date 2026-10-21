@@ -721,6 +721,9 @@ pub unsafe extern "C" fn ling_builtin(
     if let Some(v) = crate::lingdaw::dispatch(name, args) {
         return v;
     }
+    if let Some(v) = crate::netapi::dispatch(name, args) {
+        return v;
+    }
     for f in (*(&raw const EXT)).iter().flatten() {
         if let Some(v) = f(name, args) {
             return v;

@@ -670,6 +670,13 @@ fn route_packet(buf: &[u8]) {
 
 /// Drain all currently-available NIC packets, routing each to its socket.
 /// Bounded per call so a busy link can't starve the caller's own progress.
+/// One service pass over the NIC (ARP, inbound TCP/UDP) for callers that are
+/// not inside a socket wait -- programs polling `net_discover` / `net_status`.
+pub fn pump_once() {
+    let _net = NetGuard::new();
+    pump();
+}
+
 fn pump() {
     let mut buf = [0u8; 2048];
     let mut n = 0;

@@ -394,6 +394,41 @@ pub fn https_get(host: &str, port: u16, path: &str, out: &mut [u8], log: &mut dy
     Ok(total)
 }
 
+/// Any HTTP method with an optional body over a fresh TLS session (programs'
+/// `http_get` / `http_post_async`): the whole response (headers + body) lands
+/// in `out`, like `https_get`. The request is sent in `chunk`-byte records
+/// (the record buffer is small).
+pub fn https_request(
+    host: &str,
+    port: u16,
+    method: &str,
+    path: &str,
+    content_type: &str,
+    body: &[u8],
+    out: &mut [u8],
+    chunk: usize,
+    log: &mut dyn FnMut(&[u8]),
+) -> Result<usize, &'static str> {
+    let _net = netstack::NetGuard::new();
+    let (mut c_app, mut s_app, pos, rxlen) = tls_handshake(host, port, log)?;
+    let tx = unsafe { &mut *&raw mut TXBUF };
+    let rx = unsafe { &mut *&raw mut RX };
+    let mut req = alloc::format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: LingOS\r\n").into_bytes();
+    if !body.is_empty() {
+        req.extend_from_slice(alloc::format!("Content-Type: {content_type}\r\nContent-Length: {}\r\n", body.len()).as_bytes());
+    }
+    req.extend_from_slice(b"\r\n");
+    req.extend_from_slice(body);
+    for piece in req.chunks(chunk.clamp(256, 3800)) {
+        let m = encrypt_record(&mut c_app, 0x17, piece, tx);
+        if !netstack::tcp_write(&tx[..m]) {
+            return Err("write request failed");
+        }
+    }
+    let (total, _p, _r) = read_response(&mut s_app, rx, pos, rxlen, out, false);
+    Ok(total)
+}
+
 /// Run a full TLS 1.3 handshake to `host:port` and derive application traffic
 /// keys. Returns `(client_app_keys, server_app_keys, pos, rxlen)` where
 /// pos/rxlen mark bytes already buffered in the static RX after the handshake.

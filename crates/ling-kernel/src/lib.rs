@@ -73,6 +73,8 @@ pub mod lingapp;
 pub mod appfs;
 // Files for programs: lingfs in front of appfs, per-program data roots.
 pub mod vfs;
+// Networking builtins for programs (net_*, http_*) over the netstack.
+pub mod netapi;
 // LingStationX's daw_* builtins: the project model (project.json), transport.
 pub mod lingdaw;
 
