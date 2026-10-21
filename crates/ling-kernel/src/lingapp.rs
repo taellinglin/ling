@@ -48,6 +48,10 @@ struct Font {
 }
 
 static mut WIN: Option<Window> = None;
+/// The host gfx API's current drawing colour (0xRRGGBB) and the number of
+/// frames presented so far (`frame_count`).
+static mut GFX_COLOR: u32 = 0xFF_FFFF;
+static mut FRAMES: u64 = 0;
 static mut FONTS: Vec<Font> = Vec::new();
 
 fn win() -> Option<&'static mut Window> {
@@ -583,6 +587,116 @@ const EMB_MODEL: [u8; 8] = [0x3E, 0x46, 0xFA, 0x8A, 0x8C, 0x88, 0xF8, 0x00];
 const EMB_PROGRAM: [u8; 8] = [0xFF, 0x81, 0xA1, 0x91, 0xA1, 0x81, 0xFF, 0x00];
 const EMB_SCRIPT: [u8; 8] = [0x24, 0x42, 0x81, 0x00, 0x81, 0x42, 0x24, 0x00];
 
+fn gfx_color() -> u32 {
+    unsafe { GFX_COLOR }
+}
+
+fn pack_rgb(r: f64, g: f64, b: f64) -> u32 {
+    let c = |v: f64| v.max(0.0).min(255.0) as u32;
+    (c(r) << 16) | (c(g) << 8) | c(b)
+}
+
+/// HSL (h 0-360, s 0-100, l 0-100) to 0xRRGGBB, as the host's `hsl_to_hex`.
+fn hsl_rgb(h: f64, s: f64, l: f64) -> u32 {
+    let h = (((h % 360.0) + 360.0) % 360.0) / 360.0;
+    let s = (s / 100.0).max(0.0).min(1.0);
+    let l = (l / 100.0).max(0.0).min(1.0);
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let f = |mut t: f64| {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    pack_rgb(f(h + 1.0 / 3.0) * 255.0, f(h) * 255.0, f(h - 1.0 / 3.0) * 255.0)
+}
+
+fn put_clipped(w: &mut Window, x: i64, y: i64, c: u32) {
+    let (cx0, cy0, cx1, cy1) = clip_box(w);
+    if x >= cx0 as i64 && y >= cy0 as i64 && x < cx1 as i64 && y < cy1 as i64 {
+        w.buf[y as usize * w.w + x as usize] = c;
+    }
+}
+
+fn hline(w: &mut Window, x0: i64, x1: i64, y: i64, c: u32) {
+    let (cx0, cy0, cx1, cy1) = clip_box(w);
+    if y < cy0 as i64 || y >= cy1 as i64 {
+        return;
+    }
+    let (xa, xb) = (x0.max(cx0 as i64), x1.min(cx1 as i64 - 1));
+    let row = y as usize * w.w;
+    for x in xa..=xb {
+        w.buf[row + x as usize] = c;
+    }
+}
+
+/// Scanline even-odd fill of a closed polygon (the host's draw_poly / triangle).
+fn fill_poly(w: &mut Window, pts: &[(f64, f64)], c: u32) {
+    let n = pts.len();
+    if n < 3 || pts.iter().any(|p| !p.0.is_finite() || !p.1.is_finite()) {
+        return;
+    }
+    let (_, cy0, _, cy1) = clip_box(w);
+    let ymin = pts.iter().map(|p| p.1).fold(f64::INFINITY, f64::min).max(cy0 as f64);
+    let ymax = pts.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max).min(cy1 as f64);
+    let mut xs: Vec<f64> = Vec::with_capacity(n);
+    let mut y = libm::floor(ymin);
+    while y < ymax {
+        let sy = y + 0.5;
+        xs.clear();
+        for i in 0..n {
+            let (x0, y0) = pts[i];
+            let (x1, y1) = pts[(i + 1) % n];
+            if (y0 <= sy && sy < y1) || (y1 <= sy && sy < y0) {
+                xs.push(x0 + (sy - y0) / (y1 - y0) * (x1 - x0));
+            }
+        }
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
+        let mut i = 0;
+        while i + 1 < xs.len() {
+            hline(w, libm::round(xs[i]) as i64, libm::round(xs[i + 1]) as i64 - 1, y as i64, c);
+            i += 2;
+        }
+        y += 1.0;
+    }
+}
+
+fn fill_circle(w: &mut Window, cx: i64, cy: i64, r: i64, c: u32) {
+    for dy in -r..=r {
+        let dx = libm::sqrt((r * r - dy * dy) as f64) as i64;
+        hline(w, cx - dx, cx + dx, cy + dy, c);
+    }
+}
+
+/// Midpoint circle outline.
+fn outline_circle(w: &mut Window, cx: i64, cy: i64, r: i64, c: u32) {
+    let (mut x, mut y, mut d) = (r, 0i64, 1 - r);
+    while x >= y {
+        for (px, py) in [(x, y), (y, x), (-y, x), (-x, y), (-x, -y), (-y, -x), (y, -x), (x, -y)] {
+            put_clipped(w, cx + px, cy + py, c);
+        }
+        y += 1;
+        if d < 0 {
+            d += 2 * y + 1;
+        } else {
+            x -= 1;
+            d += 2 * (y - x) + 1;
+        }
+    }
+}
+
 fn put(w: &mut Window, x: i64, y: i64, c: u32) {
     if x >= 0 && y >= 0 && (x as usize) < w.w && (y as usize) < w.h {
         w.buf[y as usize * w.w + x as usize] = c;
@@ -1109,6 +1223,18 @@ fn fs_list(dir: &str) -> u64 {
 pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
     let a = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
     let arg: Arg = &a;
+    // The host gfx API's polyglot names (ling/src/runtime/mod.rs) -> canonical.
+    let name: &[u8] = match core::str::from_utf8(name).unwrap_or("") {
+        "สีดินสอ" | "设色" | "色設定" | "색설정" => b"set_color",
+        "颜色HSL" | "色相" | "HSL色" | "HSL색설정" | "สีHSLวาด" => b"set_color_hsl",
+        "เติม" | "填" | "塗り潰し" | "채우기" | "清" => b"fill",
+        "วาดสามเหลี่ยม" => b"triangle",
+        "วาดเส้น" => b"line",
+        "วาดจุด" => b"pixel",
+        "แสดงผล" | "แสดง" | "显" | "呈现" | "表示" | "표시" => b"present",
+        "หยุด" | "นอน" | "睡眠" | "眠る" | "スリープ" | "잠자기" => b"sleep",
+        _ => name,
+    };
     Some(match name {
         // Window.
         b"open_window" => {
@@ -1122,13 +1248,89 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             }
             UNIT
         },
-        b"present" => {
+        b"present" | b"show" | b"gfx_present" => {
             present();
+            unsafe { FRAMES += 1 };
             UNIT
         },
         b"get_width" => num(win().map(|w| w.w).unwrap_or(0) as f64),
         b"get_height" => num(win().map(|w| w.h).unwrap_or(0) as f64),
         b"screenshot" => UNIT,
+
+        // The host's immediate-mode gfx API (the gfx arms of
+        // ling/src/runtime/mod.rs): a current colour, whole-window fills,
+        // lines, triangles, circles and polygons -- so the programs in
+        // ling/examples run here unchanged.
+        b"set_color" | b"gfx_color" | b"color" => {
+            unsafe { GFX_COLOR = pack_rgb(a(0, 255.0), a(1, 255.0), a(2, 255.0)) };
+            UNIT
+        },
+        b"set_color_hsl" => {
+            unsafe { GFX_COLOR = hsl_rgb(a(0, 0.0), a(1, 70.0), a(2, 50.0)) };
+            UNIT
+        },
+        b"fill" | b"clear" | b"gfx_fill" => {
+            if let Some(w) = win() {
+                let c = pack_rgb(a(0, 0.0), a(1, 0.0), a(2, 0.0));
+                w.buf.fill(c);
+            }
+            UNIT
+        },
+        b"triangle" | b"draw_triangle" => {
+            if let Some(w) = win() {
+                let pts = [(a(0, 0.0), a(1, 0.0)), (a(2, 0.0), a(3, 0.0)), (a(4, 0.0), a(5, 0.0))];
+                fill_poly(w, &pts, gfx_color());
+            }
+            UNIT
+        },
+        b"line" | b"draw_line" => {
+            // px_line takes its colour (and alpha) as arguments 4 and 5.
+            let c = gfx_color() as f64;
+            let l = |i: usize, d: f64| match i {
+                4 => c,
+                5 => 1.0,
+                _ => a(i, d),
+            };
+            px_line(&l);
+            UNIT
+        },
+        b"pixel" | b"draw_pixel" => {
+            if let Some(w) = win() {
+                put_clipped(w, a(0, 0.0) as i64, a(1, 0.0) as i64, gfx_color());
+            }
+            UNIT
+        },
+        b"draw_circle" => {
+            if let Some(w) = win() {
+                outline_circle(w, a(0, 0.0) as i64, a(1, 0.0) as i64, a(2, 10.0) as i64, gfx_color());
+            }
+            UNIT
+        },
+        b"draw_filled_circle" | b"draw_disc" => {
+            if let Some(w) = win() {
+                fill_circle(w, a(0, 0.0) as i64, a(1, 0.0) as i64, a(2, 10.0) as i64, gfx_color());
+            }
+            UNIT
+        },
+        b"draw_poly" => {
+            if let (Some(w), Some(&l)) = (win(), args.first()) {
+                let items = crate::lingrt::list_items(l);
+                let pts: Vec<(f64, f64)> = items.chunks_exact(2).map(|p| (to_f64(p[0]), to_f64(p[1]))).collect();
+                fill_poly(w, &pts, gfx_color());
+            }
+            UNIT
+        },
+        b"frame_count" => num(unsafe { FRAMES } as f64),
+        b"sleep" | b"sleep_ms" => {
+            let end = crate::arch::timer::now_ms() + a(0, 0.0).max(0.0) as u64;
+            while crate::arch::timer::now_ms() < end {
+                #[cfg(target_arch = "x86_64")]
+                crate::proc::sched::yield_now();
+                #[cfg(target_arch = "aarch64")]
+                crate::arch::timer::delay_us(500);
+            }
+            UNIT
+        },
 
         // Pixel toolkit.
         b"px_theme" => {

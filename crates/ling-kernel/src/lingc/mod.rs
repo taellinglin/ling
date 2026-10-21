@@ -23,6 +23,7 @@ use alloc::vec::Vec;
 pub const EXAMPLES: &[(&str, &str)] = &[
     ("Scripts/fib.ling", include_str!("../../../../examples/basics/fib.ling")),
     ("Graphics/spiral.ling", include_str!("../../../../examples/lingos/spiral.ling")),
+    ("Graphics/gfx.ling", include_str!("../../../../examples/basics/gfx.ling")),
 ];
 
 /// `ling demo`: a built-in program exercising the whole pipeline (functions,
