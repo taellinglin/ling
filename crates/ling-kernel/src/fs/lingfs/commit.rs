@@ -2,7 +2,7 @@
 
 use crate::fs::lingfs::objects::{
     self, read_block, write_block, Hash, BLOCK_SIZE, COMMIT_BLOCKS,
-    COMMIT_ENTRY_BYTES, INDEX_BLOCKS, LINGFS_BASE_LBA, MAX_COMMITS, ZERO_HASH,
+    base_lba, COMMIT_ENTRY_BYTES, INDEX_BLOCKS, MAX_COMMITS, ZERO_HASH,
 };
 
 pub const MAGIC: u64 = 0x53_46_47_4E_4C_47_4E_4C; // "LNGLNGFS"
@@ -41,12 +41,12 @@ pub fn next_seq() -> u32 {
 }
 
 pub fn commit_block_lba(b: usize) -> u32 {
-    LINGFS_BASE_LBA + (1 + INDEX_BLOCKS as u32 + b as u32) * objects::SECTORS_PER_BLOCK as u32
+    base_lba() + (1 + INDEX_BLOCKS as u32 + b as u32) * objects::SECTORS_PER_BLOCK as u32
 }
 
 pub fn load_superblock() -> Result<(u32, u32, u32, u32), ()> {
     let mut block = [0u8; BLOCK_SIZE];
-    read_block(LINGFS_BASE_LBA, &mut block)?;
+    read_block(base_lba(), &mut block)?;
     let magic = u64::from_le_bytes(block[0..8].try_into().unwrap());
     if magic != MAGIC {
         return Err(());
@@ -66,7 +66,7 @@ pub fn save_superblock() -> Result<(), ()> {
         block[12..16].copy_from_slice(&objects::OBJECTS.next_free_block.to_le_bytes());
         block[16..20].copy_from_slice(&COMMITS.commit_count.to_le_bytes());
         block[20..24].copy_from_slice(&COMMITS.next_seq.to_le_bytes());
-        write_block(LINGFS_BASE_LBA, &block)
+        write_block(base_lba(), &block)
     }
 }
 

@@ -104,8 +104,8 @@ pub fn create(
     }
 
     let salt: [u8; SALT_BYTES] = unsafe {
-        let a = crate::arch::cpu::rdtsc();
-        let b = crate::arch::cpu::rdtsc();
+        let a = cpu_ticks();
+        let b = cpu_ticks();
         let mut s = [0u8; SALT_BYTES];
         s[..4].copy_from_slice(&(a as u32).to_le_bytes());
         s[4..].copy_from_slice(&(b as u32).to_le_bytes());
@@ -305,4 +305,20 @@ pub fn set_group(username: &str, new_group: &str) -> bool {
         append(&mut out, &mut out_len, b"\n");
     }
     lingfs::write_in_dir(USERS_DIR, username, &out[..out_len]).is_ok()
+}
+
+/// A tick counter for salts: the TSC on x86, the Pi's timer mixed with a
+/// call counter (the generic timer is only millisecond-grained here).
+fn cpu_ticks() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    return unsafe { crate::arch::cpu::rdtsc() };
+    #[allow(unreachable_code)]
+    {
+        static mut N: u64 = 0;
+        let n = unsafe {
+            N = N.wrapping_add(1);
+            N
+        };
+        (crate::arch::timer::now_ms() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ n.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+    }
 }

@@ -87,10 +87,14 @@ pub fn locate(path: &str) -> Option<String> {
 /// Run a program's MIR to completion with its own globals, state store and
 /// window (the caller's are put aside and restored), with `args` as its
 /// command line. Returns the runtime error, if one stopped it.
-pub fn run_program(prog: &ir::MirProgram, args: &[&str]) -> Option<String> {
+pub fn run_program(prog: &ir::MirProgram, args: &[&str], root: &str) -> Option<String> {
     let owned: Vec<String> = args.iter().map(|a| String::from(*a)).collect();
     let mut err = None;
     crate::lingapp::with_own_window(|| {
+        // The program's relative file paths live beside it (`vfs`).
+        if !root.is_empty() {
+            crate::vfs::set_root(root);
+        }
         crate::lingrt::run_isolated_with(|| {
             crate::lingrt::set_args(&owned);
             let mut it = interp::Interp::new(prog);
@@ -114,7 +118,7 @@ pub fn run_file(path: &str, args: &[&str]) -> Result<(), String> {
     let mut argv: Vec<&str> = Vec::with_capacity(args.len() + 1);
     argv.push(&found);
     argv.extend_from_slice(args);
-    match run_program(&prog, &argv) {
+    match run_program(&prog, &argv, modules::parent(&found)) {
         None => Ok(()),
         Some(e) => Err(format!("ling run: {e}")),
     }
@@ -123,7 +127,7 @@ pub fn run_file(path: &str, args: &[&str]) -> Result<(), String> {
 /// `ling eval <source>`: run a snippet (imports resolve against the root).
 pub fn run_source(src: &str) -> Result<(), String> {
     let prog = compile(src, "")?;
-    match run_program(&prog, &["eval"]) {
+    match run_program(&prog, &["eval"], "") {
         None => Ok(()),
         Some(e) => Err(format!("ling: {e}")),
     }

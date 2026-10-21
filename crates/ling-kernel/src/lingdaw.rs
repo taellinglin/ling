@@ -17,7 +17,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::lingrt::{boolean, list_from, mk_str, num, to_f64, to_string, UNIT};
 
@@ -36,7 +36,7 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default)]
 struct FxDoc {
     #[serde(default)]
     name: String,
@@ -46,7 +46,7 @@ struct FxDoc {
     bypass: bool,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 struct NoteDoc {
     start: f64,
     len: f64,
@@ -60,7 +60,7 @@ struct NoteDoc {
     reso: f32,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 struct ClipDoc {
     #[serde(default)]
     name: String,
@@ -91,7 +91,7 @@ impl ClipDoc {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 struct TrackDoc {
     #[serde(default)]
     name: String,
@@ -123,7 +123,7 @@ impl TrackDoc {
     }
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 struct ProjectDoc {
     #[serde(default)]
     name: String,
@@ -282,10 +282,10 @@ fn expose_projects_as_templates() {
 }
 
 fn load_into(d: &mut Daw, path: &str) -> Result<(), String> {
-    let Some(bytes) = crate::appfs::get(path) else {
+    let Some(bytes) = crate::vfs::read(path) else {
         return Err(alloc::format!("{path}: not found"));
     };
-    let doc: ProjectDoc = serde_json::from_slice(bytes).map_err(|e| alloc::format!("{path}: {e}"))?;
+    let doc: ProjectDoc = serde_json::from_slice(&bytes).map_err(|e| alloc::format!("{path}: {e}"))?;
     d.project = doc.normalised();
     d.path = String::from(path);
     d.dirty = false;
@@ -405,9 +405,35 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"daw_audio_gain_set" | b"daw_audio_norm_set" | b"daw_audio_input_set" | b"daw_midi_channel"
         | b"daw_audio_config" | b"daw_set_device" | b"daw_midi_open" | b"daw_gm_sf2_set" => UNIT,
         // Saving needs a writable disk (no storage driver yet).
+        // Save: `daw_project_save("")` to the project's own path,
+        // `_save_as(path)` moves the project there, `_save_copy(path)` writes a
+        // copy. project.json as ling-daw writes it, through crate::vfs.
         b"daw_project_save" | b"daw_project_save_copy" | b"daw_project_save_as" => {
-            d.status = String::from("Saving needs storage -- not available on LingOS yet");
-            boolean(false)
+            let arg = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            let target = if arg.is_empty() { d.path.clone() } else { arg };
+            if target.is_empty() {
+                d.status = String::from("No project path yet -- use Save As");
+                boolean(false)
+            } else {
+                match serde_json::to_vec_pretty(&d.project) {
+                    Ok(json) if crate::vfs::write(&target, &json) => {
+                        if name != b"daw_project_save_copy" {
+                            d.path = target.clone();
+                            d.dirty = false;
+                        }
+                        d.status = alloc::format!("Saved {target}");
+                        boolean(true)
+                    },
+                    _ => {
+                        d.status = if crate::vfs::ready() {
+                            alloc::format!("Could not write {target}")
+                        } else {
+                            String::from("Saving needs storage (no SD card driver on the Pi yet)")
+                        };
+                        boolean(false)
+                    },
+                }
+            }
         },
         // Undo isn't implemented yet: snapshots are accepted and dropped.
         b"daw_undo_push" | b"daw_undo" | b"daw_redo" => UNIT,

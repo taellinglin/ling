@@ -21,7 +21,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::drivers::framebuffer;
-use crate::lingrt::{boolean, list_from, mk_str, num, str_of, to_f64, to_string, FALSE, UNIT};
+use crate::lingrt::{boolean, list_from, mk_str, num, str_of, to_f64, to_string, UNIT};
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -304,7 +304,7 @@ fn font_load(path: &str) -> f64 {
     if let Some(&i) = paths.get(path) {
         return i as f64;
     }
-    let Some(bytes) = crate::appfs::get(path) else { return -1.0 };
+    let Some(bytes) = crate::vfs::read(path) else { return -1.0 };
     match fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
         Ok(fd) => {
             let f = fonts();
@@ -452,7 +452,12 @@ fn app_run(name: &str) -> bool {
         };
     }
     let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
+    let folder = match name {
+        "lingstation" => String::from("LingStationX"),
+        n => String::from(n),
+    };
     with_own_window(|| {
+        crate::vfs::set_root(&alloc::format!("{}/Programs/{folder}", crate::vfs::home()));
         crate::lingrt::run_isolated(entry);
     });
     true
@@ -464,7 +469,9 @@ fn app_run(name: &str) -> bool {
 pub fn with_own_window(body: impl FnOnce()) {
     let saved = unsafe { core::ptr::replace(&raw mut WIN, None) };
     let dot = unsafe { core::mem::replace(&mut *(&raw mut CURSOR_DOT), false) };
+    let root = crate::vfs::take_root();
     body();
+    crate::vfs::restore_root(root);
     unsafe {
         core::ptr::write(&raw mut WIN, saved);
         CURSOR_DOT = dot;
@@ -818,7 +825,8 @@ fn decode_bmp(b: &[u8]) -> Option<(usize, usize, Vec<u32>)> {
 fn picture(path: &str) -> Option<&'static (usize, usize, Vec<u32>)> {
     let cache = unsafe { &mut *(&raw mut PICS) };
     if !cache.contains_key(path) {
-        let decoded = crate::appfs::get(path).and_then(|data| {
+        let decoded = crate::vfs::read(path).and_then(|data| {
+            let data: &[u8] = &data;
             let l = path.to_ascii_lowercase();
             if l.ends_with(".bmp") {
                 decode_bmp(data)
@@ -981,6 +989,14 @@ fn present() {
             match crate::drivers::keyboard::poll_char() {
                 0 => break,
                 0x91 => input.feed(0x11),
+                // Ctrl+letter chords (keyboard.rs): the letter pressed with
+                // Ctrl held this frame, as apps test with key_down("ctrl").
+                c @ 0x81..=0x9A => {
+                    if let Some(name) = key_name_of_byte(b'a' + (c - 0x81)) {
+                        input.pressed.push("ctrl");
+                        input.pressed.push(name);
+                    }
+                },
                 c => input.feed(c),
             }
         }
@@ -1198,16 +1214,7 @@ fn fs_parent(p: &str) -> String {
 /// The host's `fs_list`: a flat list of `name, is_dir (1/0), size` triples,
 /// directories first, then by lower-cased name, dotfiles hidden.
 fn fs_list(dir: &str) -> u64 {
-    let mut items: Vec<(String, bool, usize)> = Vec::new();
-    let base = String::from(dir);
-    crate::appfs::list(dir, |name, is_dir| {
-        if name.starts_with('.') {
-            return;
-        }
-        let size = if is_dir { 0 } else { crate::appfs::get(&fs_join(&base, name)).map(|d| d.len()).unwrap_or(0) };
-        items.push((String::from(name), is_dir, size));
-    });
-    items.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.to_lowercase().cmp(&y.0.to_lowercase())));
+    let items = crate::vfs::list(dir);
     let mut v = Vec::with_capacity(items.len() * 3);
     for (n, d, s) in items {
         v.push(mk_str(&n));
@@ -1215,6 +1222,281 @@ fn fs_list(dir: &str) -> u64 {
         v.push(num(s as f64));
     }
     list_from(v)
+}
+
+// ── File dialogs ─────────────────────────────────────────────────────────────
+// `dlg_open(title, exts, start_dir)`, `dlg_save(title, ext, default_name)` and
+// `dlg_folder(title, start_dir)`: a modal picker drawn over the program's own
+// window and driven by the same keyboard and mouse. Up/Down/PageUp/PageDown
+// (or the wheel) move, Enter opens a folder or accepts, Backspace goes up a
+// folder (in Save it edits the name first), typing jumps to a name (Open) or
+// edits the name (Save), Space picks the current folder (Folder), a click
+// selects and a double-click opens, Esc cancels. Returns the path or "".
+
+#[derive(PartialEq, Clone, Copy)]
+enum Dlg {
+    Open,
+    Save,
+    Folder,
+}
+
+fn exts_arg(args: &[u64], i: usize) -> Vec<String> {
+    path_arg(args, i)
+        .split(',')
+        .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+fn ext_matches(name: &str, exts: &[String]) -> bool {
+    if exts.is_empty() {
+        return true;
+    }
+    let lower = name.to_ascii_lowercase();
+    exts.iter().any(|e| lower.ends_with(&alloc::format!(".{e}")))
+}
+
+fn dlg_entries(dir: &str, kind: Dlg, exts: &[String]) -> Vec<(String, bool)> {
+    crate::vfs::list(dir)
+        .into_iter()
+        .filter(|(n, d, _)| *d || (kind != Dlg::Folder && ext_matches(n, exts)))
+        .map(|(n, d, _)| (n, d))
+        .collect()
+}
+
+/// 8x8 text, unclipped (the dialog ignores the program's clip rectangle).
+fn text8(w: &mut Window, x: i64, y: i64, color: u32, s: &str) {
+    for (k, ch) in s.bytes().enumerate() {
+        let gx = x + k as i64 * 8;
+        let rows = crate::drivers::font8x8::glyph(ch);
+        for (r, bits) in rows.iter().enumerate() {
+            for c in 0..8i64 {
+                if (bits >> c) & 1 != 0 {
+                    put(w, gx + c, y + r as i64, color);
+                }
+            }
+        }
+    }
+}
+
+fn rect(w: &mut Window, x: i64, y: i64, ww: i64, hh: i64, c: u32) {
+    for yy in y..y + hh {
+        for xx in x..x + ww {
+            put(w, xx, yy, c);
+        }
+    }
+}
+
+/// `s` cut to `max` characters, keeping the end (paths) when `tail`.
+fn fit(s: &str, max: usize, tail: bool) -> String {
+    let cs: Vec<char> = s.chars().collect();
+    if cs.len() <= max || max < 4 {
+        return String::from(s);
+    }
+    if tail {
+        alloc::format!("...{}", cs[cs.len() - (max - 3)..].iter().collect::<String>())
+    } else {
+        alloc::format!("{}...", cs[..max - 3].iter().collect::<String>())
+    }
+}
+
+fn file_dialog(kind: Dlg, title: &str, exts: &[String], start: &str, default_name: &str) -> String {
+    let Some(w) = win() else {
+        crate::console_write(b"[dialog] no window open\n");
+        return String::new();
+    };
+    if !w.open {
+        return String::new();
+    }
+    let saved_buf = w.buf.clone();
+    let saved_clip = w.clip.take();
+    let (ww, wh) = (w.w as i64, w.h as i64);
+    let pw = (ww - 40).clamp(240, 720);
+    let ph = (wh - 40).clamp(200, 520);
+    let (px, py) = ((ww - pw) / 2, (wh - ph) / 2);
+    let cols = ((pw - 28) / 8).max(10) as usize;
+    let row_h = 18i64;
+    let list_y = py + 60;
+    let list_h = ph - 60 - 54;
+    let rows = (list_h / row_h).max(1) as usize;
+
+    let mut dir = if !start.is_empty() && crate::vfs::is_dir(start) { crate::vfs::resolve(start) } else { crate::vfs::home() };
+    let mut entries = dlg_entries(&dir, kind, exts);
+    let (mut sel, mut scroll) = (0usize, 0usize);
+    let mut name = String::from(default_name);
+    let mut msg = String::new();
+    let mut result = String::new();
+    let mut prev_buttons = mouse_state().2;
+    let mut last_click: (usize, u64) = (usize::MAX, 0);
+    let one_ext = if exts.len() == 1 { Some(exts[0].clone()) } else { None };
+
+    loop {
+        let Some(w) = win() else { break };
+        w.buf.copy_from_slice(&saved_buf);
+        rect(w, px - 2, py - 2, pw + 4, ph + 4, 0x6C_3AFF);
+        rect(w, px, py, pw, ph, 0x1B_1626);
+        rect(w, px, py, pw, 26, 0x2A_2140);
+        text8(w, px + 10, py + 9, 0xFF_FFFF, &fit(title, cols, false));
+        text8(w, px + 10, py + 38, 0xB8_B0D0, &fit(&alloc::format!("/{dir}"), cols, true));
+        if sel >= entries.len() {
+            sel = entries.len().saturating_sub(1);
+        }
+        if sel < scroll {
+            scroll = sel;
+        } else if sel >= scroll + rows {
+            scroll = sel + 1 - rows;
+        }
+        if entries.is_empty() {
+            text8(w, px + 14, list_y + 4, 0x8A_82A0, "(empty folder)");
+        }
+        for (i, (n, is_dir)) in entries.iter().enumerate().skip(scroll).take(rows) {
+            let y = list_y + (i - scroll) as i64 * row_h;
+            if i == sel {
+                rect(w, px + 6, y - 2, pw - 12, row_h, 0x3A_2F5C);
+            }
+            let label = if *is_dir { alloc::format!("{n}/") } else { n.clone() };
+            text8(w, px + 14, y + 3, if *is_dir { 0x8F_D0FF } else { 0xE8_E4F0 }, &fit(&label, cols - 1, false));
+        }
+        let by = py + ph - 48;
+        rect(w, px + 6, by, pw - 12, 1, 0x3A_2F5C);
+        let help = match kind {
+            Dlg::Open => "Enter: open   Backspace: up   Esc: cancel",
+            Dlg::Save => "Enter: save   Backspace: edit / up   Esc: cancel",
+            Dlg::Folder => "Enter: into   Space: choose this folder   Esc: cancel",
+        };
+        if kind == Dlg::Save {
+            text8(w, px + 10, by + 10, 0xB8_B0D0, "Name:");
+            rect(w, px + 58, by + 5, pw - 70, 18, 0x0F_0C18);
+            text8(w, px + 62, by + 10, 0xFF_FFFF, &fit(&alloc::format!("{name}_"), cols - 7, true));
+            text8(w, px + 10, by + 30, 0x8A_82A0, help);
+        } else {
+            text8(w, px + 10, by + 10, 0x8A_82A0, help);
+            text8(w, px + 10, by + 30, 0xFF_8080, &fit(&msg, cols, false));
+        }
+        present();
+
+        let input = unsafe { &mut *(&raw mut INPUT) };
+        if input.quit {
+            break;
+        }
+        let typed = core::mem::take(&mut input.text);
+        let wheel = core::mem::take(&mut input.wheel);
+        if key_pressed("escape") {
+            break;
+        }
+        let before = sel;
+        let last = entries.len().saturating_sub(1);
+        if key_pressed("down") {
+            sel = (sel + 1).min(last);
+        }
+        if key_pressed("up") {
+            sel = sel.saturating_sub(1);
+        }
+        if key_pressed("pagedown") {
+            sel = (sel + rows).min(last);
+        }
+        if key_pressed("pageup") {
+            sel = sel.saturating_sub(rows);
+        }
+        if wheel < 0 {
+            sel = (sel + 3).min(last);
+        } else if wheel > 0 {
+            sel = sel.saturating_sub(3);
+        }
+        let mut activate = key_pressed("enter");
+        let (mx, my, buttons) = mouse_state();
+        if buttons & 1 != 0 && prev_buttons & 1 == 0 {
+            let (mx, my) = (mx as i64, my as i64);
+            if mx >= px && mx < px + pw && my >= list_y && my < list_y + rows as i64 * row_h {
+                let i = scroll + ((my - list_y) / row_h) as usize;
+                if i < entries.len() {
+                    let now = crate::arch::timer::now_ms();
+                    if last_click.0 == i && now.saturating_sub(last_click.1) < 450 {
+                        activate = true;
+                    }
+                    sel = i;
+                    last_click = (i, now);
+                }
+            }
+        }
+        prev_buttons = buttons;
+        if !typed.is_empty() {
+            match kind {
+                Dlg::Save => {
+                    for ch in typed.chars() {
+                        if ch == '\n' || ch == '\r' {
+                            activate = true;
+                        } else if !ch.is_control() && ch != '/' && ch != '\\' {
+                            name.push(ch);
+                        }
+                    }
+                },
+                _ => {
+                    let t = typed.to_ascii_lowercase();
+                    if let Some(i) = entries.iter().position(|(n, _)| n.to_ascii_lowercase().starts_with(&t)) {
+                        sel = i;
+                    }
+                },
+            }
+        }
+        if kind == Dlg::Save && sel != before {
+            if let Some((n, false)) = entries.get(sel) {
+                name = n.clone();
+            }
+        }
+        if key_pressed("backspace") {
+            if kind == Dlg::Save && !name.is_empty() {
+                name.pop();
+            } else {
+                dir = crate::vfs::parent(&dir);
+                entries = dlg_entries(&dir, kind, exts);
+                sel = 0;
+                scroll = 0;
+            }
+        }
+        if kind == Dlg::Folder && key_pressed("space") {
+            result = dir.clone();
+            break;
+        }
+        if activate {
+            match entries.get(sel).cloned() {
+                Some((n, true)) => {
+                    dir = crate::vfs::join(&dir, &n);
+                    entries = dlg_entries(&dir, kind, exts);
+                    sel = 0;
+                    scroll = 0;
+                },
+                Some((n, false)) if kind == Dlg::Open => {
+                    result = crate::vfs::join(&dir, &n);
+                    break;
+                },
+                _ if kind == Dlg::Save => {
+                    let nm = name.trim();
+                    if nm.is_empty() {
+                        msg = String::from("Type a name first");
+                    } else {
+                        let full = match &one_ext {
+                            Some(e) if !nm.to_ascii_lowercase().ends_with(&alloc::format!(".{e}")) => alloc::format!("{nm}.{e}"),
+                            _ => String::from(nm),
+                        };
+                        result = crate::vfs::join(&dir, &full);
+                        break;
+                    }
+                },
+                _ => {},
+            }
+        }
+    }
+    if let Some(w) = win() {
+        w.buf.copy_from_slice(&saved_buf);
+        w.clip = saved_clip;
+    }
+    unsafe {
+        let input = &mut *(&raw mut INPUT);
+        input.pressed.clear();
+        input.text.clear();
+    }
+    result
 }
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
@@ -1445,23 +1727,30 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
 
-        // Files.
-        b"file_exists" => boolean(crate::appfs::exists(&path_arg(args, 0))),
-        b"read_file" => match crate::appfs::get(&path_arg(args, 0)) {
-            Some(bytes) => mk_str(core::str::from_utf8(bytes).unwrap_or("")),
+        // Files: storage (lingfs) in front of the image's read-only files, with
+        // the program's relative paths under its data folder (crate::vfs).
+        b"file_exists" => boolean(crate::vfs::exists(&path_arg(args, 0))),
+        b"read_file" => match crate::vfs::read(&path_arg(args, 0)) {
+            Some(bytes) => mk_str(core::str::from_utf8(&bytes).unwrap_or("")),
             None => mk_str(""),
         },
-        b"write_file" => FALSE,
+        b"write_file" => {
+            let text = args.get(1).map(|&v| to_string(v)).unwrap_or_default();
+            boolean(crate::vfs::write(&path_arg(args, 0), text.as_bytes()))
+        },
         b"file_modified" => num(0.0),
-        b"fs_cwd" => mk_str("."),
-        b"fs_home" => mk_str("."),
+        b"fs_cwd" => mk_str(&crate::vfs::root()),
+        b"fs_home" => mk_str(&crate::vfs::home()),
         b"fs_join" => mk_str(&fs_join(&path_arg(args, 0), &path_arg(args, 1))),
         b"fs_parent" => mk_str(&fs_parent(&path_arg(args, 0))),
         // fs_* come from the host's daw API, which returns booleans as 1/0.
-        b"fs_is_dir" => num(crate::appfs::is_dir(&path_arg(args, 0)) as i32 as f64),
+        b"fs_is_dir" => num(crate::vfs::is_dir(&path_arg(args, 0)) as i32 as f64),
         b"fs_list" => fs_list(&path_arg(args, 0)),
-        b"fs_mkdir" | b"fs_delete" | b"fs_copy" | b"fs_reveal" => num(0.0),
-        b"dlg_open" | b"dlg_save" | b"dlg_folder" => mk_str(""),
+        b"fs_mkdir" => num(crate::vfs::mkdir(&path_arg(args, 0)) as i32 as f64),
+        b"fs_delete" | b"fs_copy" | b"fs_reveal" => num(0.0),
+        b"dlg_open" => mk_str(&file_dialog(Dlg::Open, &path_arg(args, 0), &exts_arg(args, 1), &path_arg(args, 2), "")),
+        b"dlg_save" => mk_str(&file_dialog(Dlg::Save, &path_arg(args, 0), &exts_arg(args, 1), "", &path_arg(args, 2))),
+        b"dlg_folder" => mk_str(&file_dialog(Dlg::Folder, &path_arg(args, 0), &[], &path_arg(args, 1), "")),
 
         _ => {
             let _ = str_of;

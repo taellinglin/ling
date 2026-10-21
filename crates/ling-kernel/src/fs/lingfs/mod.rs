@@ -23,6 +23,36 @@ pub use tree::{
     TREE_ENTRY_NAME_LEN,
 };
 
+/// Whether a volume is mounted (x86: the disk; the Pi: the SD card).
+pub fn is_mounted() -> bool {
+    unsafe { commit::COMMITS.mounted }
+}
+
+/// Format a fresh volume at sector `base` (the user asked for it explicitly).
+pub fn format_region(base: u32) -> Result<(), ()> {
+    objects::set_base_lba(base);
+    format()
+}
+
+/// Mount the volume starting at sector `base` -- the Pi's SD card, where the
+/// region after the partitions is formatted only if it is blank (all zero or
+/// all 0xFF), never over data of unknown origin. Ok(true) = freshly formatted.
+pub fn mount_region(base: u32) -> Result<bool, ()> {
+    objects::set_base_lba(base);
+    if load_superblock().is_ok() {
+        mount()?;
+        return Ok(false);
+    }
+    let mut block = [0u8; BLOCK_SIZE];
+    objects::read_block(base, &mut block)?;
+    let blank = block.iter().all(|&b| b == 0) || block.iter().all(|&b| b == 0xFF);
+    if !blank {
+        return Err(());
+    }
+    format()?;
+    Ok(true)
+}
+
 pub fn format() -> Result<(), ()> {
     unsafe {
         objects::OBJECTS.object_count = 0;

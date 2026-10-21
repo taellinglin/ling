@@ -4,11 +4,8 @@
 //! x86_64-only today — the aarch64 storage stack (`drivers::emmc`, once it
 //! exists) is on the LingOS packages roadmap, not started yet.
 
-#[cfg(target_arch = "x86_64")]
 pub mod blockdev;
-#[cfg(target_arch = "x86_64")]
 pub mod lingfs;
 #[cfg(target_arch = "x86_64")]
 pub mod packages;
-#[cfg(target_arch = "x86_64")]
 pub mod users;

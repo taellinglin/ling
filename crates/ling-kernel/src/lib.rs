@@ -71,6 +71,8 @@ pub mod lingrt;
 // and the read-only files `ling build` bakes into the image ([includes]).
 pub mod lingapp;
 pub mod appfs;
+// Files for programs: lingfs in front of appfs, per-program data roots.
+pub mod vfs;
 // LingStationX's daw_* builtins: the project model (project.json), transport.
 pub mod lingdaw;
 
@@ -523,9 +525,39 @@ pub(crate) fn desktop_boot() {
     console_write(b"LingOS aarch64 (Raspberry Pi) -- starting the desktop\n");
     crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
+    storage_boot();
     // HDMI audio: brought up at boot so LingStationX plays straight away;
     // the console's `hdmiaudio` repeats it verbosely with a test tone.
     arch::hdmi_audio::init(false);
+}
+
+/// The SD card as storage: bring the card up, find the free space after its
+/// partitions, mount lingfs there (formatting only blank space) and give the
+/// user a home on it. The image's built-in home stays underneath (vfs merges).
+#[cfg(target_arch = "aarch64")]
+pub(crate) fn storage_boot() {
+    if !arch::sdcard::init() {
+        console_write(b"storage: no SD card -- files are read-only from the image\n");
+        return;
+    }
+    if fs::lingfs::is_mounted() {
+        console_write(b"storage: lingfs is mounted on the SD card\n");
+        return;
+    }
+    // 64 MiB of room is the least worth formatting.
+    let Some(base) = arch::sdcard::free_region_after_partitions(131_072) else { return };
+    match fs::lingfs::mount_region(base) {
+        Ok(fresh) => {
+            console_write(if fresh { b"storage: formatted lingfs after the partitions (sector " } else { b"storage: lingfs mounted (sector " });
+            let mut b = [0u8; 24];
+            let n = write_decimal(&mut b, base as u64);
+            console_write(&b[..n]);
+            console_write(b")\n");
+            fs::lingfs::set_current_user("ling", "ling");
+            fs::users::ensure_home("ling");
+        },
+        Err(()) => console_write(b"storage: the space after the partitions holds other data -- lingfs not mounted\n"),
+    }
 }
 
 pub(crate) fn app_named(name: &[u8]) -> Option<AppEntry> {
@@ -668,7 +700,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, sd [format], ls [path], cat <file>, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -685,6 +717,47 @@ fn rpi_shell_exec(line: &[u8]) {
         arch::rp1::usb_probe();
     } else if s == b"wifi" {
         arch::wifi::probe();
+    } else if s == b"sd" {
+        storage_boot();
+    } else if s == b"sd format" {
+        // The space after the partitions held something: format it anyway.
+        if arch::sdcard::init() {
+            match arch::sdcard::free_region_after_partitions(131_072).map(fs::lingfs::format_region) {
+                Some(Ok(())) => {
+                    console_write(b"storage: lingfs formatted after the partitions\n");
+                    fs::lingfs::set_current_user("ling", "ling");
+                    fs::users::ensure_home("ling");
+                },
+                _ => console_write(b"storage: format failed\n"),
+            }
+        }
+    } else if s == b"ls" || s.starts_with(b"ls ") {
+        let p = core::str::from_utf8(&s[2.min(s.len())..]).unwrap_or("").trim();
+        let p = if p.is_empty() { crate::vfs::home() } else { alloc::string::String::from(p) };
+        let items = crate::vfs::list(&p);
+        if items.is_empty() {
+            console_write(b"(empty or no such folder)\n");
+        }
+        for (name, is_dir, size) in items {
+            console_write(name.as_bytes());
+            if is_dir {
+                console_write(b"/");
+            } else {
+                console_write(b"  ");
+                let mut b = [0u8; 24];
+                let n = write_decimal(&mut b, size as u64);
+                console_write(&b[..n]);
+            }
+            console_write(b"\n");
+        }
+    } else if let Some(rest) = s.strip_prefix(b"cat ") {
+        match crate::vfs::read(core::str::from_utf8(rest).unwrap_or("").trim()) {
+            Some(bytes) => {
+                console_write(&bytes[..bytes.len().min(4096)]);
+                console_write(b"\n");
+            },
+            None => console_write(b"cat: no such file\n"),
+        }
     } else if s == b"hdmiaudio" {
         arch::hdmi_audio::test();
     } else if s == b"hdmiaudio 0" || s == b"hdmiaudio 1" {

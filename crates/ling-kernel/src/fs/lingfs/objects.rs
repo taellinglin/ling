@@ -60,12 +60,25 @@ pub static mut OBJECTS: ObjectTable = ObjectTable {
     dirty_blocks: [false; INDEX_BLOCKS],
 };
 
+/// The volume's first sector: `LINGFS_BASE_LBA` on the x86 disk (behind the
+/// kernel image); on the Pi's SD card, the free space after its partitions
+/// (`set_base_lba` before mounting).
+static mut BASE_LBA: u32 = LINGFS_BASE_LBA;
+
+pub fn base_lba() -> u32 {
+    unsafe { BASE_LBA }
+}
+
+pub fn set_base_lba(lba: u32) {
+    unsafe { BASE_LBA = lba };
+}
+
 pub fn block_to_lba(block: u32) -> u32 {
-    LINGFS_BASE_LBA + (DATA_REGION_START + block) * SECTORS_PER_BLOCK as u32
+    base_lba() + (DATA_REGION_START + block) * SECTORS_PER_BLOCK as u32
 }
 
 pub fn block_index_lba(b: usize) -> u32 {
-    LINGFS_BASE_LBA + (1 + b as u32) * SECTORS_PER_BLOCK as u32
+    base_lba() + (1 + b as u32) * SECTORS_PER_BLOCK as u32
 }
 
 pub fn read_block(block_lba_base: u32, out: &mut [u8; BLOCK_SIZE]) -> Result<(), ()> {
