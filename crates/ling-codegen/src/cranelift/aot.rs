@@ -284,6 +284,7 @@ fn declare_runtime_functions(
             &[types::I64, types::I64, types::I64, types::I64],
             types::I64,
         ),
+        ("ling_kernel_wm_draw_cursor", &[types::I64, types::I64], types::I64),
         (
             "ling_kernel_fb_back_blend_rect",
             &[

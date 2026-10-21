@@ -783,16 +783,8 @@ fn os_info(key: &str) -> String {
     }
 }
 
-/// The mouse pointer, drawn by the runtime over every presented frame (apps
-/// built for a desktop OS rely on the OS cursor): `X` outline, `.` fill.
-const CURSOR: [&[u8]; 19] = [
-    b"X", b"XX", b"X.X", b"X..X", b"X...X", b"X....X", b"X.....X", b"X......X", b"X.......X",
-    b"X........X", b"X.........X", b"X......XXXXX", b"X...X..X", b"X..XX..X", b"X.X  X..X",
-    b"XX   X..X", b"X     X..X", b"      X..X", b"       XX",
-];
-
-/// Pointer style: false = arrow (apps), true = the x86 desktop's white dot with
-/// a dark ring (`os_cursor("dot")`). Launched apps always get the arrow.
+/// Kept for apps that call `os_cursor`: the pointer is now always the LingOS
+/// cursor (`drivers::cursor`), so this is a no-op.
 static mut CURSOR_DOT: bool = false;
 
 fn present() {
@@ -801,31 +793,20 @@ fn present() {
         // Draw the pointer into the frame, blit, then put the pixels back so the
         // app's own buffer is untouched.
         let mut saved: Vec<(usize, u32)> = Vec::new();
-        if unsafe { CURSOR_DOT } && mx >= 0.0 && my >= 0.0 {
+        if mx >= 0.0 && my >= 0.0 {
+            use crate::drivers::cursor;
+            let fill = cursor::fill_color(crate::arch::timer::now_ms());
             let (cx, cy) = (mx as i64, my as i64);
-            for dy in -5i64..=5 {
-                for dx in -5i64..=5 {
-                    let d2 = dx * dx + dy * dy;
+            for dy in 0..cursor::H as i64 {
+                for dx in 0..cursor::W as i64 {
+                    let k = cursor::classify(dx as i32, dy as i32);
                     let (x, y) = (cx + dx, cy + dy);
-                    if d2 > 25 || x < 0 || y < 0 || x as usize >= w.w || y as usize >= w.h {
+                    if k == 0 || x < 0 || y < 0 || x as usize >= w.w || y as usize >= w.h {
                         continue;
                     }
                     let i = y as usize * w.w + x as usize;
                     saved.push((i, w.buf[i]));
-                    w.buf[i] = if d2 <= 16 { 0xFFFFFF } else { 0x000000 };
-                }
-            }
-        } else if mx >= 0.0 && my >= 0.0 {
-            let (cx, cy) = (mx as usize, my as usize);
-            for (r, row) in CURSOR.iter().enumerate() {
-                for (c, &px) in row.iter().enumerate() {
-                    let (x, y) = (cx + c, cy + r);
-                    if px == b' ' || x >= w.w || y >= w.h {
-                        continue;
-                    }
-                    let i = y * w.w + x;
-                    saved.push((i, w.buf[i]));
-                    w.buf[i] = if px == b'X' { 0x000000 } else { 0xFFFFFF };
+                    w.buf[i] = if k == 1 { cursor::OUTLINE } else { fill };
                 }
             }
         }
@@ -841,6 +822,8 @@ fn present() {
     input.pressed.clear();
     #[cfg(target_arch = "aarch64")]
     {
+        // Keep the HDMI audio ring fed (the app loop is the only loop running).
+        crate::arch::hdmi_audio::pump();
         // Serial + USB keyboard bytes, decoded the way a terminal sends them.
         while let Some(c) = crate::poll_input() {
             input.feed(c);

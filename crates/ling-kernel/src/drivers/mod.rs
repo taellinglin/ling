@@ -38,6 +38,8 @@ pub mod font_unicode;
 pub mod gallery;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod framebuffer;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod cursor;
 #[cfg(target_arch = "x86_64")]
 pub mod kbdlayout;
 #[cfg(target_arch = "x86_64")]

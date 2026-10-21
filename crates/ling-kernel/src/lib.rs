@@ -520,6 +520,9 @@ pub(crate) fn desktop_boot() {
     console_write(b"LingOS aarch64 (Raspberry Pi) -- starting the desktop\n");
     crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
+    // HDMI audio: brought up at boot so LingStationX plays straight away;
+    // the console's `hdmiaudio` repeats it verbosely with a test tone.
+    arch::hdmi_audio::init(false);
 }
 
 pub(crate) fn app_named(name: &[u8]) -> Option<AppEntry> {
@@ -662,7 +665,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, hdmiaudio, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -679,6 +682,8 @@ fn rpi_shell_exec(line: &[u8]) {
         arch::rp1::usb_probe();
     } else if s == b"wifi" {
         arch::wifi::probe();
+    } else if s == b"hdmiaudio" {
+        arch::hdmi_audio::test();
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
         let mut b = [0u8; 24];
@@ -1605,6 +1610,24 @@ pub unsafe extern "C" fn ling_kernel_fb_back_fill_rrect(
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_fb_back_fill_circle(cx: u64, cy: u64, r: u64, color: u64) -> u64 {
     framebuffer::back_fill_circle(cx as u32, cy as u32, r as u32, color as u32);
+    0
+}
+
+/// The LingOS pointer (drivers::cursor) at (mx, my) in the back buffer.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_draw_cursor(mx: u64, my: u64) -> u64 {
+    use crate::drivers::cursor;
+    let fill = cursor::fill_color(timer::now_ms());
+    for dy in 0..cursor::H {
+        for dx in 0..cursor::W {
+            match cursor::classify(dx, dy) {
+                0 => {},
+                1 => framebuffer::back_set_pixel(mx as u32 + dx as u32, my as u32 + dy as u32, cursor::OUTLINE),
+                _ => framebuffer::back_set_pixel(mx as u32 + dx as u32, my as u32 + dy as u32, fill),
+            }
+        }
+    }
     0
 }
 

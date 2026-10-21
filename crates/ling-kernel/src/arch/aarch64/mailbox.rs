@@ -198,52 +198,49 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
             // the firmware can't fake is the ALLOCATED BUFFER SIZE, so derive the
             // true stride from size/height, and the real width from stride/2.
             let (bpp, pitch) = if board() == RpiBoard::Pi5 {
-                // 16bpp RGB565. Confirmed on real hardware: the firmware lies
-                // about width/height/pitch (it reported ~1200x720 for a panel
-                // actually running 1920x1080), but NOT about the allocated buffer
-                // SIZE. At 16bpp total pixels = size/2, so recover the true mode
-                // by matching that against standard display resolutions.
-                let total_px = alloc_size / 2;
-                // Auto-detect: ask the DISPLAY via EDID (robust for any panel),
-                // accept it only if consistent with the allocated buffer;
-                // otherwise match the pixel count against standard modes.
-                let edid_match = match edid_preferred_resolution() {
-                    Some((ew, eh)) if ew > 0 && eh > 0 && ew * eh == total_px => Some((ew, eh)),
-                    _ => None,
-                };
-                let (mw, mh) = if let Some(res) = edid_match {
-                    res
-                } else {
-                    const MODES: [(u32, u32); 12] = [
-                        (1920, 1080),
-                        (1280, 720),
-                        (3840, 2160),
-                        (2560, 1440),
-                        (1920, 1200),
-                        (1600, 900),
-                        (1680, 1050),
-                        (1440, 900),
-                        (1366, 768),
-                        (1280, 1024),
-                        (1024, 768),
-                        (800, 600),
-                    ];
-                    let mut m = (0u32, 0u32);
-                    for &(cw, ch) in MODES.iter() {
-                        if cw * ch == total_px {
-                            m = (cw, ch);
+                // The Pi 5 firmware lies about width/height/pitch (it reported
+                // ~1200x720 for a panel actually running 1920x1080) and used to
+                // hand back 16bpp RGB565 whatever depth was requested
+                // (raspberrypi/firmware#1904); config.txt's framebuffer_depth=32
+                // asks for full colour. What it can't fake is the ALLOCATED
+                // BUFFER SIZE: recover the real depth and mode by matching
+                // size/4 (32bpp) then size/2 (16bpp) against the display's EDID
+                // mode, then against standard resolutions.
+                const MODES: [(u32, u32); 12] = [
+                    (1920, 1080),
+                    (1280, 720),
+                    (3840, 2160),
+                    (2560, 1440),
+                    (1920, 1200),
+                    (1600, 900),
+                    (1680, 1050),
+                    (1440, 900),
+                    (1366, 768),
+                    (1280, 1024),
+                    (1024, 768),
+                    (800, 600),
+                ];
+                let edid = edid_preferred_resolution();
+                let mut found: Option<(u32, u32, u32)> = None; // (w, h, bytes per pixel)
+                for bytes in [4u32, 2] {
+                    let total_px = alloc_size / bytes;
+                    if let Some((ew, eh)) = edid {
+                        if ew > 0 && eh > 0 && ew * eh == total_px {
+                            found = Some((ew, eh, bytes));
                             break;
                         }
                     }
-                    if m.0 == 0 {
-                        // No match — last-resort reported virtual size.
-                        m = (if rw > 0 { rw } else { w }, if rh > 0 { rh } else { h });
+                    if let Some(&(cw, ch)) = MODES.iter().find(|&&(cw, ch)| cw * ch == total_px) {
+                        found = Some((cw, ch, bytes));
+                        break;
                     }
-                    m
-                };
+                }
+                // No match — last-resort reported virtual size, 16bpp.
+                let (mw, mh, bytes) =
+                    found.unwrap_or((if rw > 0 { rw } else { w }, if rh > 0 { rh } else { h }, 2));
                 rw = mw;
                 rh = mh;
-                (16u8, mw * 2)
+                ((bytes * 8) as u8, mw * bytes)
             } else {
                 let byppx = if rw > 0 { reported_pitch / rw } else { 4 };
                 if (2..=4).contains(&byppx) {
@@ -267,6 +264,32 @@ pub fn allocate_framebuffer(w: u32, h: u32, depth: u32) -> Option<(u64, u32, u32
 /// EDID. Uses the shared BUFFER, so call it when no other mailbox op is in
 /// flight (allocate_framebuffer calls it after extracting its own results).
 pub fn edid_preferred_resolution() -> Option<(u32, u32)> {
+    let e = edid_block0()?;
+    // First detailed timing descriptor is at offset 54; horizontal/vertical
+    // active pixels are split across low byte + the high nibble of a shared byte.
+    let h = e[56] as u32 | (((e[58] as u32) >> 4) << 8);
+    let v = e[59] as u32 | (((e[61] as u32) >> 4) << 8);
+    if (320..=7680).contains(&h) && (240..=4320).contains(&v) {
+        Some((h, v))
+    } else {
+        None
+    }
+}
+
+/// Pixel clock of the display's preferred mode in kHz (EDID detailed timing
+/// bytes 54-55, units of 10 kHz) — HDMI audio's CTS value.
+pub fn edid_pixel_clock_khz() -> Option<u32> {
+    let e = edid_block0()?;
+    let v = (e[54] as u32 | ((e[55] as u32) << 8)) * 10;
+    if (25_000..=600_000).contains(&v) {
+        Some(v)
+    } else {
+        None
+    }
+}
+
+/// EDID block 0 over the HDMI DDC via the mailbox; None if no/invalid EDID.
+fn edid_block0() -> Option<[u8; 128]> {
     unsafe {
         BUFFER.0[0] = 40 * 4;
         BUFFER.0[1] = 0;
@@ -287,19 +310,14 @@ pub fn edid_preferred_resolution() -> Option<(u32, u32)> {
             return None; // non-zero status: EDID read failed
         }
         // EDID bytes live little-endian in BUFFER.0[7..7+32].
-        let edid_byte = |n: usize| -> u8 { ((BUFFER.0[7 + n / 4] >> (8 * (n % 4))) & 0xFF) as u8 };
+        let mut e = [0u8; 128];
+        for (n, b) in e.iter_mut().enumerate() {
+            *b = ((BUFFER.0[7 + n / 4] >> (8 * (n % 4))) & 0xFF) as u8;
+        }
         // Header must be 00 FF FF FF FF FF FF 00.
-        if edid_byte(0) != 0x00 || edid_byte(1) != 0xFF || edid_byte(7) != 0x00 {
+        if e[0] != 0x00 || e[1] != 0xFF || e[7] != 0x00 {
             return None;
         }
-        // First detailed timing descriptor is at offset 54; horizontal/vertical
-        // active pixels are split across low byte + the high nibble of a shared byte.
-        let h = edid_byte(56) as u32 | (((edid_byte(58) as u32) >> 4) << 8);
-        let v = edid_byte(59) as u32 | (((edid_byte(61) as u32) >> 4) << 8);
-        if (320..=7680).contains(&h) && (240..=4320).contains(&v) {
-            Some((h, v))
-        } else {
-            None
-        }
+        Some(e)
     }
 }

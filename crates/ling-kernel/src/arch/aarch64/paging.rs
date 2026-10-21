@@ -278,6 +278,27 @@ pub fn dma_alloc_page() -> Option<u64> {
     }
 }
 
+/// `n` physically contiguous uncached pages (a DMA ring): carved from the
+/// pool's tail, never the free list. None if the pool can't fit them.
+pub fn dma_alloc_pages(n: usize) -> Option<u64> {
+    unsafe {
+        let (next, end) = DMA_POOL;
+        if end == 0 {
+            let mut order = 0;
+            while (1usize << order) < n {
+                order += 1;
+            }
+            return crate::mm::frame::alloc_frames(order);
+        }
+        let bytes = n as u64 * PAGE_SIZE;
+        if next + bytes > end {
+            return None;
+        }
+        DMA_POOL.0 = next + bytes;
+        Some(next)
+    }
+}
+
 /// Head of the intrusive free list of returned DMA pages (each page's first
 /// word holds the next one).
 static mut DMA_FREE: u64 = 0;

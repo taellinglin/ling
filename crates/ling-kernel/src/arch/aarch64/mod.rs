@@ -19,6 +19,7 @@ pub mod rp1;
 pub mod timer;
 pub mod xhci;
 pub mod wifi;
+pub mod hdmi_audio;
 pub mod paging;
 pub mod vectors;
 pub mod trap;
