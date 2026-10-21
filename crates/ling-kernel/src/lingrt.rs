@@ -374,17 +374,37 @@ fn store() -> &'static mut BTreeMap<Vec<u8>, StEntry> {
 /// restore the host program's (e.g. the desktop's) — two compiled programs in
 /// one image must not see each other's module-level binds.
 pub fn run_isolated(entry: unsafe extern "C" fn() -> u64) -> u64 {
+    run_isolated_with(|| unsafe { entry() })
+}
+
+/// `run_isolated` for any program body -- the `ling run` interpreter's.
+pub fn run_isolated_with<F: FnOnce() -> u64>(body: F) -> u64 {
     let saved_g = core::mem::take(globals());
     let saved_s = core::mem::take(store());
+    let saved_a = core::mem::take(args_vec());
     unsafe { APP_DEPTH += 1 };
-    let r = unsafe { entry() };
+    let r = body();
     unsafe { APP_DEPTH -= 1 };
     *globals() = saved_g;
     *store() = saved_s;
+    *args_vec() = saved_a;
     r
 }
 
 static mut APP_DEPTH: u32 = 0;
+
+/// The running program's command line, what `get_args()` reports: empty for a
+/// bundled app (which sees its own name), `[file, args...]` for `ling run`.
+static mut ARGS: Vec<String> = Vec::new();
+
+fn args_vec() -> &'static mut Vec<String> {
+    unsafe { &mut *(&raw mut ARGS) }
+}
+
+/// Set the command line for the program `run_isolated_with` is about to run.
+pub fn set_args(args: &[String]) {
+    *args_vec() = args.to_vec();
+}
 
 /// How many launched apps are running (0 = only the image's own program, e.g.
 /// the desktop) — Ctrl+Q closes only a launched app.
@@ -632,8 +652,16 @@ fn core_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
         b"str_lower" => mk_str(&arg_str(args, 0, "").to_lowercase()),
         b"str_upper" => mk_str(&arg_str(args, 0, "").to_uppercase()),
 
-        // The program's command line: just its name, in-kernel.
-        b"get_args" => new_list(alloc::vec![mk_str("lingstation")]),
+        // The program's command line: `ling run <file> [args]`'s, or just the
+        // bundled app's name.
+        b"get_args" => {
+            let a = args_vec();
+            if a.is_empty() {
+                new_list(alloc::vec![mk_str("lingstation")])
+            } else {
+                new_list(a.iter().map(|s| mk_str(s)).collect())
+            }
+        },
 
         _ => return None,
     })
@@ -660,7 +688,7 @@ pub fn register(f: ExtDispatch) {
 static mut REPORTED: BTreeSet<Vec<u8>> = BTreeSet::new();
 
 /// Note (once per name) that a builtin isn't implemented in-kernel yet.
-fn report_missing(name: &[u8]) {
+pub(crate) fn report_missing(name: &[u8]) {
     let rep = unsafe { &mut *(&raw mut REPORTED) };
     if rep.insert(name.to_vec()) {
         crate::console_write(b"[lingrt] builtin not implemented: ");

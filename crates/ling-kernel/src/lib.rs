@@ -43,8 +43,11 @@ pub mod hash;
 // Boot-time service configuration (SSH-at-boot prompt + persistence).
 #[cfg(target_arch = "x86_64")]
 pub mod services;
-// In-kernel tree-walking interpreter for a subset of Ling (`ling run` in the
-// Terminal); built on the global allocator above.
+// `ling run` inside LingOS: the Ling front end (lexer, parser, `use`
+// resolution, MIR lowering -- generated no_std copies of the compiler's own
+// sources) and a MIR interpreter over the same runtime bundled apps use.
+pub mod lingc;
+// The Terminal's `ling run` / `ling eval` facade over it (captured output).
 pub mod ling;
 pub mod runtime;
 pub mod strings;
@@ -665,7 +668,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, hdmiaudio, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -684,6 +687,12 @@ fn rpi_shell_exec(line: &[u8]) {
         arch::wifi::probe();
     } else if s == b"hdmiaudio" {
         arch::hdmi_audio::test();
+    } else if s == b"hdmiaudio 0" || s == b"hdmiaudio 1" {
+        arch::hdmi_audio::test_port((s[s.len() - 1] - b'0') as usize);
+    } else if s == b"ling" || s.starts_with(b"ling ") {
+        ling_command(core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim());
+    } else if s == b"lingfu" || s.starts_with(b"lingfu ") {
+        console_write(b"lingfu: installing packages needs the network and the SD card, which LingOS on the Pi cannot use yet.\n  On x86-64 LingOS: Terminal -> `lingfu install <name>`, then `ling run pkg-<name>` (or the Applications menu).\n");
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
         let mut b = [0u8; 24];
@@ -707,6 +716,47 @@ fn rpi_shell_exec(line: &[u8]) {
         console_write(b"unknown command: ");
         console_write(s);
         console_write(b"\n");
+    }
+}
+
+/// Console `ling ...`: the in-kernel Ling compiler + interpreter (`lingc`).
+#[cfg(target_arch = "aarch64")]
+fn ling_command(arg: &str) {
+    let (sub, rest) = match arg.find(' ') {
+        Some(i) => (&arg[..i], arg[i + 1..].trim()),
+        None => (arg, ""),
+    };
+    let report = |r: Result<(), alloc::string::String>| {
+        if let Err(e) = r {
+            console_write(e.as_bytes());
+            console_write(b"\n");
+        }
+    };
+    match sub {
+        "" | "help" => console_write(
+            b"ling run <file.ling> [args]   run a program (`ling list` shows the built-in ones)\n\
+              ling eval <source>            run one line of Ling\n\
+              ling demo                     a built-in test program\n\
+              ling list                     the .ling files in this image\n",
+        ),
+        "eval" => report(lingc::run_source(rest)),
+        "demo" => report(lingc::run_source(lingc::DEMO)),
+        "list" => appfs::each_file(|p| {
+            if p.ends_with(".ling") {
+                console_write(p.as_bytes());
+                console_write(b"\n");
+            }
+        }),
+        "run" => {
+            let mut words = rest.split(' ').filter(|w| !w.is_empty());
+            let Some(path) = words.next() else {
+                console_write(b"usage: ling run <file.ling> [args]\n");
+                return;
+            };
+            let args: alloc::vec::Vec<&str> = words.collect();
+            report(lingc::run_file(path, &args));
+        },
+        _ => console_write(b"ling: unknown subcommand (ling help)\n"),
     }
 }
 

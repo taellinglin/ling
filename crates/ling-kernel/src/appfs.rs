@@ -49,6 +49,13 @@ pub fn exists(path: &str) -> bool {
     get(path).is_some()
 }
 
+/// Every embedded file's path, in registration order.
+pub fn each_file(mut f: impl FnMut(&str)) {
+    for (n, _) in files() {
+        f(n);
+    }
+}
+
 /// Is `path` a directory — i.e. a prefix of some embedded file?
 pub fn is_dir(path: &str) -> bool {
     let p = path.trim_start_matches("./").trim_end_matches('/');

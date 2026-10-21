@@ -594,18 +594,19 @@ fn run_lingfu(arg: &str) {
     }
 }
 
-/// `ling run <file.ling>` / `ling eval <source>` -- run a Ling program with
-/// the in-kernel subset interpreter (crate::ling). Output and any error are
-/// printed into this window. This is a real interpreter for the language
-/// core, not the full compiler (no AOT/native codegen in-kernel yet).
+/// `ling run <file.ling> [args]` / `ling eval <source>` -- run a Ling program
+/// with the in-kernel compiler + interpreter (crate::lingc: the real lexer,
+/// parser and MIR lowering, interpreted over the same runtime bundled apps
+/// use). Output and any error are printed into this window.
 fn run_ling(arg: &str) {
     let (sub, rest) = split_cmd(arg);
     match sub {
         "" | "help" | "--help" | "-h" => {
-            push(Cls::Accent, b"ling -- run Ling programs (in-kernel subset interpreter)");
-            push(Cls::Normal, b"  ling run <file.ling>     run a program from lingfs");
-            push(Cls::Normal, b"  ling eval <source>       run a one-line program");
-            push(Cls::Dim, b"  subset: bind, +-*/%, comparisons, if/else, while, fn, strings, print");
+            push(Cls::Accent, b"ling -- run Ling programs (in-kernel compiler + interpreter)");
+            push(Cls::Normal, b"  ling run <file.ling> [args]   run a program (a folder runs its main.ling)");
+            push(Cls::Normal, b"  ling eval <source>            run a one-line program");
+            push(Cls::Normal, b"  ling demo                     a built-in test program");
+            push(Cls::Dim, b"  the whole language; builtins: core, strings, lists, st_*, files, px_* graphics, daw_*");
         },
         "eval" => {
             if rest.is_empty() {
@@ -614,38 +615,20 @@ fn run_ling(arg: &str) {
                 run_ling_source(rest);
             }
         },
-        "demo" => {
-            // A built-in program exercising the interpreter end-to-end
-            // (functions, recursion, if/return, while, arithmetic, strings).
-            run_ling_source(concat!(
-                "fn sq(n) { n * n }\n",
-                "fn fib(n) { if n < 2 { return n } return fib(n - 1) + fib(n - 2) }\n",
-                "bind x = 9\n",
-                "print(\"ling running in LingOS\")\n",
-                "print(sq(x))\n",
-                "print(6 * 7)\n",
-                "bind i = 0\n",
-                "while i < 5 { print(i) bind i = i + 1 }\n",
-                "print(fib(10))\n",
-                "if x > 4 { print(\"x is big\") } else { print(\"x is small\") }\n",
-            ));
-        },
+        "demo" => run_ling_source(crate::ling::DEMO),
         "run" => {
-            if rest.is_empty() {
-                push(Cls::Err, b"usage: ling run <file.ling>");
+            let mut words = rest.split(' ').filter(|w| !w.is_empty());
+            let Some(file) = words.next() else {
+                push(Cls::Err, b"usage: ling run <file.ling> [args]");
                 return;
-            }
+            };
+            let args: alloc::vec::Vec<&str> = words.collect();
             let mut pbuf = [0u8; 128];
-            let path = resolve_path(rest, &mut pbuf);
-            static mut SRCBUF: [u8; 32 * 1024] = [0; 32 * 1024];
-            let sb = unsafe { &mut *&raw mut SRCBUF };
-            match lingfs::read_file_all(path, sb) {
-                Ok(Some(len)) => {
-                    let src = core::str::from_utf8(&sb[..len]).unwrap_or("");
-                    run_ling_source(src);
-                },
-                _ => push(Cls::Err, b"ling: no such file"),
-            }
+            let path = resolve_path(file, &mut pbuf);
+            // Relative to the current folder first, then as typed from the
+            // root (`ling run pkg-<name>` works from anywhere).
+            let (out, err) = crate::ling::run_file(&[path, file], &args);
+            show_ling_result(out, err);
         },
         _ => push(Cls::Err, b"ling: unknown subcommand (try: ling run <file> | ling eval <src>)"),
     }
@@ -890,6 +873,10 @@ fn run_services(arg: &str) {
 
 fn run_ling_source(src: &str) {
     let (out, err) = crate::ling::run_source(src);
+    show_ling_result(out, err);
+}
+
+fn show_ling_result(out: alloc::string::String, err: Option<alloc::string::String>) {
     if !out.is_empty() {
         push_wrapped(Cls::Normal, out.as_bytes());
     }

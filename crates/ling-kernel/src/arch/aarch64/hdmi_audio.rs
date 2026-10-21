@@ -1,6 +1,8 @@
-//! Raspberry Pi 5 HDMI audio: the HDMI0 MAI (the audio FIFO inside the HDMI
-//! block) fed by a cyclic DMA of IEC958 subframes rendered from the kernel's
-//! audio source (LingStationX projects, via `lingdaw::block`).
+//! Raspberry Pi 5 HDMI audio: the MAI (the audio FIFO inside the HDMI block)
+//! of whichever port has the display -- HDMI0 or HDMI1, they differ in block
+//! addresses, MAI register offsets and DREQ -- fed by a cyclic DMA of IEC958
+//! subframes rendered from the kernel's audio source (LingStationX projects,
+//! via `lingdaw::block`).
 //!
 //! Ported from Linux's vc4_hdmi audio path for the BCM2712 register layout
 //! ("vc6" hdmi0 tables in vc4_hdmi_regs.h, bit fields from vc4_regs.h), the
@@ -16,14 +18,29 @@ use crate::arch::mmio::{read32, write32};
 use crate::arch::timer::{delay_us, now_ms};
 use crate::console_write as out;
 
-// BCM2712 HDMI0 register blocks (bcm2712.dtsi, soc bus at CPU 0x10_7c00_0000).
-const HDMI: usize = 0x10_7c70_1400; // "hdmi": packet/scheduler/CRP/MAI config
-const HD: usize = 0x10_7c72_0000; // "hd": the MAI FIFO
-const RAM: usize = 0x10_7c70_3800; // "packet": infoframe RAM
+/// One HDMI port's register blocks (bcm2712.dtsi, soc bus at CPU
+/// 0x10_7c00_0000; hdmi1 = hdmi0 + 0x5000). Both ports share the "hd" block,
+/// where HDMI1's MAI registers sit 0x20 above HDMI0's (vc6_hdmi_hdmi1_fields).
+pub struct Port {
+    pub name: &'static str,
+    hdmi: usize, // "hdmi": packet/scheduler/CRP/MAI config
+    ram: usize,  // "packet": infoframe RAM
+    mai: usize,  // MAI_CTL's offset in the "hd" block
+    dreq: u32,   // `dmas = <&dma32 N>`
+    gate_bit: u32, // DVP MISC_CONFIG 108 MHz gate bit (SET = disabled)
+}
+pub const PORT0: Port = Port { name: "HDMI0", hdmi: 0x10_7c70_1400, ram: 0x10_7c70_3800, mai: 0x10, dreq: 10, gate_bit: 3 };
+pub const PORT1: Port = Port { name: "HDMI1", hdmi: 0x10_7c70_6400, ram: 0x10_7c70_8800, mai: 0x30, dreq: 17, gate_bit: 4 };
+static mut PORT: &Port = &PORT0;
+/// Console override (`hdmiaudio 0|1`); None = detect from HOTPLUG/SCHEDULER.
+static mut FORCED: Option<&Port> = None;
+fn port() -> &'static Port {
+    unsafe { *(&raw const PORT) }
+}
+const HD: usize = 0x10_7c72_0000; // "hd": the MAI FIFOs of both ports
 const DVP: usize = 0x10_7c70_0000; // DVP: HDMI clock gates + resets
 const DMA: usize = 0x10_0001_0000; // dma32 (legacy-format channels 0-5)
 const DMA_CHAN: usize = 0; // channel mask 0x35: 0, 2, 4, 5 are the ARM's
-const DREQ_HDMI0_MAI: u32 = 10; // hdmi0 `dmas = <&dma32 10>`
 
 // "hdmi" block (vc6 hdmi0 field table).
 const MAI_CHANNEL_MAP: usize = 0x0a4;
@@ -36,12 +53,12 @@ const CTS_0: usize = 0x0d4;
 const CTS_1: usize = 0x0d8;
 const SCHEDULER_CONTROL: usize = 0x0e8;
 const HOTPLUG: usize = 0x1c8;
-// "hd" block.
-const MAI_CTL: usize = 0x10;
-const MAI_THR: usize = 0x14;
-const MAI_FMT: usize = 0x18;
-const MAI_DATA: usize = 0x1c;
-const MAI_SMP: usize = 0x20;
+// "hd" block, relative to the port's MAI_CTL (0x10 for HDMI0, 0x30 for HDMI1).
+const MAI_CTL: usize = 0x00;
+const MAI_THR: usize = 0x04;
+const MAI_FMT: usize = 0x08;
+const MAI_DATA: usize = 0x0c;
+const MAI_SMP: usize = 0x10;
 
 const MAI_CTL_RESET: u32 = 1 << 0;
 const MAI_CTL_ERRORF: u32 = 1 << 1;
@@ -101,16 +118,48 @@ fn hex(label: &[u8], v: u32) {
 }
 
 fn hdmi_rd(off: usize) -> u32 {
-    unsafe { read32(HDMI + off) }
+    unsafe { read32(port().hdmi + off) }
 }
 fn hdmi_wr(off: usize, v: u32) {
-    unsafe { write32(HDMI + off, v) }
+    unsafe { write32(port().hdmi + off, v) }
 }
 fn hd_rd(off: usize) -> u32 {
-    unsafe { read32(HD + off) }
+    unsafe { read32(HD + port().mai + off) }
 }
 fn hd_wr(off: usize, v: u32) {
-    unsafe { write32(HD + off, v) }
+    unsafe { write32(HD + port().mai + off, v) }
+}
+
+/// Pick the port with the display: HOTPLUG connected on one port, else the
+/// one whose packet scheduler is active, else HDMI0. Prints both ports' state
+/// when verbose so a photo of the console says which one the firmware drives.
+fn detect_port(verbose: bool) {
+    let hp0 = unsafe { read32(PORT0.hdmi + HOTPLUG) };
+    let sc0 = unsafe { read32(PORT0.hdmi + SCHEDULER_CONTROL) };
+    let hp1 = unsafe { read32(PORT1.hdmi + HOTPLUG) };
+    let sc1 = unsafe { read32(PORT1.hdmi + SCHEDULER_CONTROL) };
+    if verbose {
+        hex(b"  HDMI0 HOTPLUG=", hp0);
+        hex(b"  HDMI0 SCHEDULER_CONTROL=", sc0);
+        hex(b"  HDMI1 HOTPLUG=", hp1);
+        hex(b"  HDMI1 SCHEDULER_CONTROL=", sc1);
+    }
+    let forced = unsafe { *(&raw const FORCED) };
+    let pick: &'static Port = match forced {
+        Some(p) => p,
+        None => match (hp0 & 1 != 0, hp1 & 1 != 0) {
+            (true, false) => &PORT0,
+            (false, true) => &PORT1,
+            _ => {
+                if sc1 & 0x2 != 0 && sc0 & 0x2 == 0 {
+                    &PORT1
+                } else {
+                    &PORT0
+                }
+            },
+        },
+    };
+    unsafe { core::ptr::write(&raw mut PORT, pick) };
 }
 fn dma_rd(off: usize) -> u32 {
     unsafe { read32(DMA + DMA_CHAN * 0x100 + off) }
@@ -218,7 +267,7 @@ fn write_audio_infoframe(verbose: bool) -> bool {
         }
         delay_us(100);
     }
-    let slot = RAM + AUDIO_INFOFRAME_SLOT as usize * PACKET_STRIDE;
+    let slot = port().ram + AUDIO_INFOFRAME_SLOT as usize * PACKET_STRIDE;
     let mut off = 0usize;
     let mut i = 0usize;
     while i < pkt.len() {
@@ -261,16 +310,17 @@ pub fn init(verbose: bool) -> bool {
     }
     if crate::arch::mmio::board() != crate::arch::mmio::RpiBoard::Pi5 {
         if verbose {
-            out(b"HDMI audio: this driver is for the Raspberry Pi 5 (BCM2712 HDMI0)\n");
+            out(b"HDMI audio: this driver is for the Raspberry Pi 5 (BCM2712)\n");
         }
         return false;
     }
-    out(b"HDMI audio (Pi 5, HDMI0 MAI + DMA):\n");
-    let hp = hdmi_rd(HOTPLUG);
+    out(b"HDMI audio (Pi 5, MAI + DMA):\n");
+    detect_port(verbose);
+    out(b"  port: ");
+    out(port().name.as_bytes());
+    out(if unsafe { (*(&raw const FORCED)).is_some() } { b" (forced)\n" } else { b" (detected)\n" });
     let sched = hdmi_rd(SCHEDULER_CONTROL);
     if verbose {
-        hex(b"  HOTPLUG=", hp);
-        hex(b"  SCHEDULER_CONTROL=", sched);
         hex(b"  RAM_PACKET_CONFIG=", hdmi_rd(RAM_PACKET_CONFIG));
         hex(b"  MAI_CTL before=", hd_rd(MAI_CTL));
     }
@@ -278,10 +328,11 @@ pub fn init(verbose: bool) -> bool {
         out(b"  the display link is in DVI mode (no audio packets); config.txt hdmi_drive=2 forces HDMI\n");
     }
 
-    // 1. The MAI's 108 MHz: DVP MISC_CONFIG bit 3 is the hdmi0 gate, SET = disabled.
+    // 1. The MAI's 108 MHz: DVP MISC_CONFIG bit 3 (hdmi0) / 4 (hdmi1) gates it, SET = disabled.
+    let gate = 1u32 << port().gate_bit;
     let misc = unsafe { read32(DVP + 0x08) };
-    if misc & (1 << 3) != 0 {
-        unsafe { write32(DVP + 0x08, misc & !(1 << 3)) };
+    if misc & gate != 0 {
+        unsafe { write32(DVP + 0x08, misc & !gate) };
     }
     if verbose {
         hex(b"  DVP MISC_CONFIG was ", misc);
@@ -337,8 +388,8 @@ pub fn init(verbose: bool) -> bool {
     for i in 0..BLOCKS {
         fill_block(&mut st, i); // valid (silent) frames before the DMA starts
     }
-    let mai_data = (HD + MAI_DATA) as u64;
-    let ti = TI_D_DREQ | TI_S_INC | TI_WAIT_RESP | ((DREQ_HDMI0_MAI & 31) << 16);
+    let mai_data = (HD + port().mai + MAI_DATA) as u64;
+    let ti = TI_D_DREQ | TI_S_INC | TI_WAIT_RESP | ((port().dreq & 31) << 16);
     for i in 0..BLOCKS {
         let cb = cbs + (i * 32) as u64;
         let src = ring + (i * BLOCK_BYTES) as u64;
@@ -378,6 +429,22 @@ pub fn init(verbose: bool) -> bool {
     }
     let _ = (MAI_CTL_FULL, MAI_CTL_BUSY);
     flowing
+}
+
+/// Console `hdmiaudio 0|1`: force a port (restarting a stream that was
+/// already running on the other one), then the test.
+pub fn test_port(which: usize) {
+    let p: &'static Port = if which == 1 { &PORT1 } else { &PORT0 };
+    unsafe {
+        core::ptr::write(&raw mut FORCED, Some(p));
+        if running() && !core::ptr::eq(port(), p) {
+            dma_wr(DMA_CS, CS_RESET);
+            delay_us(1_000);
+            hd_wr(MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH);
+            core::ptr::write(&raw mut ST, None); // DMA pages are leaked: the ring is 64 KiB, once
+        }
+    }
+    test();
 }
 
 /// Console `hdmiaudio`: verbose bring-up, then a 2 s 440 Hz test tone.

@@ -171,7 +171,7 @@ pub fn ensure_home(username: &str) {
         }
     }
     let starters: [(&str, &[u8]); 3] = [
-        ("Scripts/hello.ling", b"// A Ling script -- open it from Files to run it.\nprintln(\"Hello from LingOS!\")\nprintln(\"2 + 2 = \", 2 + 2)\n"),
+        ("Scripts/hello.ling", b"// A Ling script -- open it from Files, or `ling run` it from the console.\nbind main = do {\n    println(\"Hello from LingOS!\")\n    println(\"2 + 2 = \", 2 + 2)\n}\n"),
         ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
         ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts (open one to run it)\n"),
     ];
@@ -179,6 +179,12 @@ pub fn ensure_home(username: &str) {
         let p = join4(&mut path, "home/", username, "/", rel);
         if lingfs::path_kind(p).is_none() {
             let _ = lingfs::write_path_any(p, data);
+        }
+    }
+    for (rel, src) in crate::lingc::EXAMPLES {
+        let p = join4(&mut path, "home/", username, "/", rel);
+        if lingfs::path_kind(p).is_none() {
+            let _ = lingfs::write_path_any(p, src.as_bytes());
         }
     }
 }

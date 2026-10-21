@@ -435,15 +435,36 @@ fn open_window(req_w: f64, req_h: f64) {
 /// program — the desktop's launcher. The caller's window, globals and state are
 /// put aside and restored when the app closes.
 fn app_run(name: &str) -> bool {
+    // `ling:<path>`: a `.ling` script (Files double-click), run by the
+    // in-kernel compiler + interpreter like `ling run <path>`.
+    if let Some(path) = name.strip_prefix("ling:") {
+        return match crate::lingc::run_file(path, &[]) {
+            Ok(()) => true,
+            Err(e) => {
+                crate::console_write(e.as_bytes());
+                crate::console_write(b"\n");
+                false
+            },
+        };
+    }
     let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
+    with_own_window(|| {
+        crate::lingrt::run_isolated(entry);
+    });
+    true
+}
+
+/// Run `body` with a fresh window slot and cursor state, restoring the
+/// caller's afterwards: a launched program (bundled app or `ling run` script)
+/// opens its own window without disturbing the desktop's.
+pub fn with_own_window(body: impl FnOnce()) {
     let saved = unsafe { core::ptr::replace(&raw mut WIN, None) };
     let dot = unsafe { core::mem::replace(&mut *(&raw mut CURSOR_DOT), false) };
-    crate::lingrt::run_isolated(entry);
+    body();
     unsafe {
         core::ptr::write(&raw mut WIN, saved);
         CURSOR_DOT = dot;
     }
-    true
 }
 
 /// `px_text8(x, y, colour, text [, scale])`: the kernel's 8x8 pixel font (the
@@ -729,8 +750,11 @@ pub fn register_builtin_home(user: &str) {
     for f in HOME_FOLDERS {
         crate::appfs::register(leak(alloc::format!("home/{user}/{f}/.keep")), b"");
     }
+    for (rel, src) in crate::lingc::EXAMPLES {
+        crate::appfs::register(leak(alloc::format!("home/{user}/{rel}")), src.as_bytes());
+    }
     let starters: [(&str, &'static [u8]); 3] = [
-        ("Scripts/hello.ling", b"// A Ling script.\nprintln(\"Hello from LingOS!\")\nprintln(\"2 + 2 = \", 2 + 2)\n"),
+        ("Scripts/hello.ling", b"// A Ling script -- open it from Files, or `ling run` it from the console.\nbind main = do {\n    println(\"Hello from LingOS!\")\n    println(\"2 + 2 = \", 2 + 2)\n}\n"),
         ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
         ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts\n\nOn the Raspberry Pi this home is built into the image (read-only)\nuntil LingOS can read and write the SD card.\n"),
     ];
