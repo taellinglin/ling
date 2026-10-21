@@ -260,6 +260,12 @@ static mut DMA_POOL: (u64, u64) = (0, 0);
 /// otherwise straight from the frame allocator (MMU off ⇒ uncached anyway).
 pub fn dma_alloc_page() -> Option<u64> {
     unsafe {
+        if DMA_FREE != 0 {
+            // Reuse a page handed back by `dma_free_page` first.
+            let p = DMA_FREE;
+            DMA_FREE = core::ptr::read_volatile(p as *const u64);
+            return Some(p);
+        }
         let (next, end) = DMA_POOL;
         if end == 0 {
             return crate::mm::frame::alloc_frames(0);
@@ -269,6 +275,26 @@ pub fn dma_alloc_page() -> Option<u64> {
         }
         DMA_POOL.0 = next + PAGE_SIZE;
         Some(next)
+    }
+}
+
+/// Head of the intrusive free list of returned DMA pages (each page's first
+/// word holds the next one).
+static mut DMA_FREE: u64 = 0;
+
+/// Give a `dma_alloc_page` page back for reuse — USB hot-plug churn must not
+/// drain the 2 MiB pool. The caller guarantees no DMA master still uses it.
+pub fn dma_free_page(p: u64) {
+    if p == 0 {
+        return;
+    }
+    unsafe {
+        if DMA_POOL.1 == 0 {
+            crate::mm::frame::free_frames(p, 0);
+            return;
+        }
+        core::ptr::write_volatile(p as *mut u64, DMA_FREE);
+        DMA_FREE = p;
     }
 }
 
