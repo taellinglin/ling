@@ -400,12 +400,13 @@ const ACT_LAUNCH_PKG: u8 = 203;
 /// LingStationX, LingOS Edition) full-screen; Ctrl+Q returns to the desktop.
 const ACT_RUN_APP: u8 = 204;
 
-// Installed lingfu packages that are runnable on LingOS (have a `main.ling`)
-// appear in the start menu grouped by category. The list is rebuilt each time
-// the menu opens (cheap; packages are few) by scanning lingfs `packages/`,
-// checking each `pkg-<name>/main.ling`, and reading its category from
-// `pkg-<name>/Ling.toml` (default "Applications"). Rust-only source packages
-// (no `main.ling`) are intentionally omitted -- they can't run here.
+// Installed lingfu packages that are runnable on LingOS (have a `main.ling`,
+// at the top or under `src/` as the registry's packages do) appear in the
+// start menu grouped by category. The list is rebuilt each time the menu opens
+// (cheap; packages are few) by scanning lingfs `packages/`, checking each
+// `pkg-<name>`, and reading its category from `pkg-<name>/Ling.toml` (default
+// "Applications"). Rust-only source packages (no `main.ling`) are
+// intentionally omitted -- they can't run here.
 const MAX_MENU_PKGS: usize = 16;
 // menu_walk encodes a clicked package row as this base + the package index, so
 // it stays distinct from the real window kinds (0..=10) and ACT_* (200..).
@@ -645,7 +646,12 @@ fn load_installed_packages() {
             }
         }
         let Ok(dirs) = core::str::from_utf8(&dir[..d]) else { continue };
-        if !dir_has_file(dirs, b"main.ling") {
+        let mut src = [0u8; 52];
+        src[..d].copy_from_slice(&dir[..d]);
+        src[d..d + 4].copy_from_slice(b"/src");
+        let runnable = dir_has_file(dirs, b"main.ling")
+            || core::str::from_utf8(&src[..d + 4]).map(|s| dir_has_file(s, b"main.ling")).unwrap_or(false);
+        if !runnable {
             continue; // source-only (Rust) package -- not runnable here
         }
         let mut cat = [0u8; 20];
@@ -812,12 +818,8 @@ fn launch_pkg(idx: usize) {
             w += 1;
         }
     }
-    for &b in b"/main.ling" {
-        if w < line.len() {
-            line[w] = b;
-            w += 1;
-        }
-    }
+    // `ling run pkg-<name>`: the Terminal finds the entry (Ling.toml `entry`,
+    // main.ling or src/main.ling).
     if let Ok(s) = core::str::from_utf8(&line[..w]) {
         terminal::run_command(s);
     }

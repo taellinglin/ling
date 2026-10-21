@@ -36,7 +36,9 @@ pub fn source_exists(path: &str) -> bool {
     }
     #[cfg(target_arch = "x86_64")]
     {
-        return crate::fs::lingfs::file_size(p).is_some();
+        // A file, not a folder (`ling run pkg-<name>` must fall through to the
+        // folder's entry).
+        return crate::fs::lingfs::path_kind(p) == Some(false);
     }
     #[allow(unreachable_code)]
     false

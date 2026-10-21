@@ -54,14 +54,28 @@ pub fn compile(source: &str, dir: &str) -> Result<ir::MirProgram, String> {
     Ok(lower::lower_program_with(&flat, true))
 }
 
-/// The program `path` names: the file itself, a folder's `main.ling`, or
-/// `<path>.ling`.
+/// The program `path` names: the file itself; a project folder's entry (its
+/// `Ling.toml` `entry = "..."`, else `main.ling` / `src/main.ling`, the layout
+/// lingfu packages install with); or `<path>.ling`.
 pub fn locate(path: &str) -> Option<String> {
     let p = path.trim_start_matches("./").trim_end_matches('/');
     if p.is_empty() {
         return None;
     }
-    for c in [String::from(p), format!("{p}/main.ling"), format!("{p}.ling")] {
+    if modules::source_exists(p) {
+        return Some(String::from(p));
+    }
+    if let Some(toml) = modules::read_source(&format!("{p}/Ling.toml")) {
+        for line in toml.lines() {
+            if let Some(v) = line.trim().strip_prefix("entry").and_then(|r| r.trim_start().strip_prefix('=')) {
+                let c = modules::join(p, v.trim().trim_matches('"'));
+                if modules::source_exists(&c) {
+                    return Some(c);
+                }
+            }
+        }
+    }
+    for c in [format!("{p}/main.ling"), format!("{p}/src/main.ling"), format!("{p}.ling")] {
         if modules::source_exists(&c) {
             return Some(c);
         }
