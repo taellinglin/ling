@@ -70,7 +70,7 @@ RUN --mount=type=bind,source=docker/macos-sdk,target=/opt/macos-sdk \
             ./tools/gen_sdk_package_pbzx.sh "$(ls /opt/macos-sdk/Xcode*.xip | head -1)" && \
             mv MacOSX*.sdk.tar.* tarballs/ && rm -rf MacOSX*.sdk *.sdk.tar.* tools/xcode_tmp 2>/dev/null; true; \
         fi && \
-        rm -f tarballs/MacOSX*.sdk.tar.* -- $(ls tarballs/MacOSX*.sdk.tar.* | sort -V | head -n -1) && \
+        (ls tarballs/MacOSX*.sdk.tar.* | sort -V | head -n -1 | xargs -r rm -f) && \
         UNATTENDED=1 ./build.sh && \
         ln -sfn "$(ls -d /opt/osxcross/target/SDK/MacOSX*.sdk | sort -V | tail -1)" /opt/osxcross/target/SDK/current && \
         rustup target add x86_64-apple-darwin && \
