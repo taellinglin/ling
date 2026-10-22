@@ -864,3 +864,70 @@ pub fn install(name: &str) -> bool {
         false
     }
 }
+
+// ── Package manager views (both desktops' Packages windows) ─────────────────
+
+/// The synced catalog as (name, meta, description) rows; `meta` is the
+/// download count on the official registry, the version on a local repo.
+pub fn entries() -> Vec<(alloc::string::String, alloc::string::String, alloc::string::String)> {
+    use alloc::string::String;
+    let mut out = Vec::new();
+    for line in catalog().split(|&b| b == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let mut f = line.split(|&b| b == FSEP);
+        let s = |b: Option<&[u8]>| String::from_utf8_lossy(b.unwrap_or(b"")).into_owned();
+        let name = s(f.next());
+        let meta = s(f.next());
+        let _file = f.next();
+        let desc = s(f.next());
+        if !name.is_empty() {
+            out.push((name, meta, desc));
+        }
+    }
+    out
+}
+
+/// Sync the catalog once (the registry over HTTPS) unless it is already here.
+pub fn ensure_synced() -> bool {
+    synced() || sync() > 0
+}
+
+/// Is `name` unpacked under pkg-<name>/ on storage?
+pub fn is_installed(name: &str) -> bool {
+    crate::vfs::is_dir(&alloc::format!("pkg-{name}"))
+}
+
+/// Does the installed package have a Ling entry (what the start menus run)?
+pub fn is_app(name: &str) -> bool {
+    crate::lingc::locate(&alloc::format!("pkg-{name}")).is_some()
+}
+
+/// Installed packages that are runnable, by name (for the start menus).
+pub fn installed_apps() -> Vec<alloc::string::String> {
+    let mut out = Vec::new();
+    for (n, is_dir, _) in crate::vfs::list("") {
+        if is_dir {
+            if let Some(name) = n.strip_prefix("pkg-") {
+                if is_app(name) {
+                    out.push(alloc::string::String::from(name));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What a package's description says about LingOS: (mentions LingOS, fits
+/// x86-64, fits the Raspberry Pi). The registry carries no platform field, so
+/// this is the convention: "LingOS" in the description marks a LingOS app;
+/// "x86-64"/"x86_64"/"amd64" or "rpi5"/"Raspberry Pi"/"aarch64"/"arm64"
+/// narrow it to one machine; naming neither means both.
+pub fn for_lingos(desc: &str) -> (bool, bool, bool) {
+    let d = desc.to_ascii_lowercase();
+    let lingos = d.contains("lingos") || d.contains("ling os");
+    let x86 = ["x86-64", "x86_64", "x86", "amd64"].iter().any(|w| d.contains(w));
+    let pi = ["rpi5", "rpi 5", "rpi", "raspberry", "aarch64", "arm64"].iter().any(|w| d.contains(w));
+    (lingos, x86 || !pi, pi || !x86)
+}

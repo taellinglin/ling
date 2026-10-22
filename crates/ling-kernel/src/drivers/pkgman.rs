@@ -43,6 +43,30 @@ static mut ICON_DL: [u8; 160 * 1024] = [0; 160 * 1024];
 static mut VIS_START: usize = 0;
 static mut VIS_END: usize = 0;
 
+/// Tab: the "LingOS apps for this machine" view (default) or every package.
+static mut TAB_ALL: bool = false;
+/// An install requested by Enter, run by `service()` after the next repaint.
+static mut PENDING_INSTALL: [u8; 64] = [0; 64];
+static mut PENDING_INSTALL_LEN: usize = 0;
+
+/// Catalog line indices shown under the current tab.
+fn visible() -> alloc::vec::Vec<usize> {
+    let mut v = alloc::vec::Vec::new();
+    for i in 0..line_count() {
+        let Some(line) = nth_line(i) else { continue };
+        if unsafe { TAB_ALL } {
+            v.push(i);
+            continue;
+        }
+        let d = alloc::string::String::from_utf8_lossy(desc(line)).into_owned();
+        let (lingos, x86, _pi) = lingfu::for_lingos(&d);
+        if lingos && x86 {
+            v.push(i);
+        }
+    }
+    v
+}
+
 fn set_status(s: &[u8]) {
     unsafe {
         let st = &mut *&raw mut STATUS;
@@ -73,6 +97,21 @@ pub fn open() {
 /// off the CPU long enough to drop PS/2 bytes, so the packet framing needs
 /// realigning or the cursor jumps erratically.
 pub fn service() {
+    let pl = unsafe { PENDING_INSTALL_LEN };
+    if pl > 0 {
+        let mut nb = [0u8; 64];
+        unsafe { core::ptr::copy_nonoverlapping((&raw const PENDING_INSTALL) as *const u8, nb.as_mut_ptr(), pl) };
+        unsafe { PENDING_INSTALL_LEN = 0 };
+        if let Ok(name) = core::str::from_utf8(&nb[..pl]) {
+            lingfu::begin_capture();
+            let _ = lingfu::install(name);
+            let cap = lingfu::end_capture();
+            let last = cap.split(|&b| b == b'\n').filter(|l| !l.is_empty()).last().unwrap_or(b"install done");
+            set_status(last);
+            crate::drivers::mouse::resync();
+        }
+        return;
+    }
     if !unsafe { PENDING } {
         return;
     }
@@ -113,6 +152,10 @@ extern "C" fn icon_task() {
         if next_pending_icon().is_some() {
             if lingfu::open_official() {
                 while let Some(idx) = next_pending_icon() {
+                    // An install or sync is waiting for the network: let go.
+                    if unsafe { PENDING_INSTALL_LEN > 0 || PENDING } {
+                        break;
+                    }
                     fetch_icon(idx);
                     crate::proc::sched::yield_now();
                 }
@@ -270,10 +313,12 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     let accent = theme::color(theme::SLOT_ACCENT);
     let hl = theme::color(theme::SLOT_PANEL_BORDER);
 
-    font8x8::draw_str(x, y, b"lingfu packages", accent, panel);
-    font8x8::draw_str(x, y + 14, b"up/down select   Enter install   S resync", dim, panel);
+    let tab_all = unsafe { TAB_ALL };
+    font8x8::draw_str(x, y, if tab_all { b"lingfu -- all packages (LingOS x86-64)" } else { b"lingfu -- LingOS apps for x86-64" }, accent, panel);
+    font8x8::draw_str(x, y + 14, b"up/down select   Enter install/run   Tab apps|all   S resync", dim, panel);
 
-    let count = line_count();
+    let vis = visible();
+    let count = vis.len();
     let list_y = y + 36;
     let row_h = 28u32;
     let avail = h.saturating_sub(36 + 22);
@@ -283,8 +328,8 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
 
     // Record the visible range so tick_icons() only fetches on-screen icons.
     unsafe {
-        VIS_START = start;
-        VIS_END = (start + rows).min(count);
+        VIS_START = vis.get(start).copied().unwrap_or(0);
+        VIS_END = vis.get((start + rows).min(count).saturating_sub(1)).map(|i| i + 1).unwrap_or(0);
     }
 
     // Icon column: a square inset into each row, text shifted right past it.
@@ -292,17 +337,28 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     let text_x = x + ICON_DIM as u32 + icon_pad * 2;
 
     if count == 0 {
-        font8x8::draw_str(x, list_y, b"(no packages -- press S to sync a reachable repo)", dim, panel);
+        font8x8::draw_str(
+            x,
+            list_y,
+            if line_count() == 0 {
+                b"(no packages -- press S to sync a reachable repo)" as &[u8]
+            } else {
+                b"(no package describes itself as a LingOS app for x86-64 -- Tab shows all)"
+            },
+            dim,
+            panel,
+        );
     }
     let mut r = 0;
     while r < rows {
-        let i = start + r;
-        if i >= count {
+        let vi = start + r;
+        if vi >= count {
             break;
         }
+        let i = vis[vi];
         if let Some(line) = nth_line(i) {
             let ry = list_y + r as u32 * row_h;
-            let rowbg = if i == sel { hl } else { panel };
+            let rowbg = if vi == sel { hl } else { panel };
             framebuffer::back_fill_rounded_rect(
                 x.saturating_sub(4),
                 ry.saturating_sub(2),
@@ -326,8 +382,16 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
             }
             let name = field(line, 0);
             let ver = field(line, 1);
-            font8x8::draw_str(text_x, ry, name, if i == sel { accent } else { text }, rowbg);
+            font8x8::draw_str(text_x, ry, name, if vi == sel { accent } else { text }, rowbg);
             font8x8::draw_str(text_x + (name.len() as u32 + 1) * 8, ry, ver, dim, rowbg);
+            // Installed / runnable state from storage.
+            if let Ok(ns) = core::str::from_utf8(name) {
+                if lingfu::is_installed(ns) {
+                    let badge: &[u8] = if lingfu::is_app(ns) { b"installed - app (Enter runs)" } else { b"installed" };
+                    let bx = x + w.saturating_sub(badge.len() as u32 * 8 + 12);
+                    font8x8::draw_str(bx, ry, badge, accent, rowbg);
+                }
+            }
             let d = desc(line);
             let maxd = (w.saturating_sub(text_x - x + 8) / 8) as usize;
             font8x8::draw_str(text_x, ry + 12, &d[..d.len().min(maxd)], dim, rowbg);
@@ -345,27 +409,48 @@ fn install_selected() {
         set_status(b"nothing to install -- sync a repo first (S)");
         return;
     }
-    let sel = unsafe { SEL.min(count - 1) };
-    let Some(line) = nth_line(sel) else { return };
+    let vis = visible();
+    if vis.is_empty() {
+        set_status(b"nothing to install under this tab");
+        return;
+    }
+    let sel = unsafe { SEL.min(vis.len() - 1) };
+    let Some(line) = nth_line(vis[sel]) else { return };
     let name = field(line, 0);
     let mut nb = [0u8; 64];
     let n = name.len().min(nb.len());
     nb[..n].copy_from_slice(&name[..n]);
     let Ok(namestr) = core::str::from_utf8(&nb[..n]) else { return };
-    set_status(b"installing...");
-    lingfu::begin_capture();
-    let _ = lingfu::install(namestr);
-    let cap = lingfu::end_capture();
-    // Surface the last thing lingfu said as the status line.
-    let last = cap.split(|&b| b == b'\n').filter(|l| !l.is_empty()).last().unwrap_or(b"install done");
-    set_status(last);
-    // The download blocked the loop; realign the mouse packet framing.
-    crate::drivers::mouse::resync();
+    // Installed and runnable: Enter runs it (the Terminal's `ling run`).
+    if lingfu::is_installed(namestr) && lingfu::is_app(namestr) {
+        let mut cmd = [0u8; 96];
+        let pre = b"ling run pkg-";
+        cmd[..pre.len()].copy_from_slice(pre);
+        cmd[pre.len()..pre.len() + n].copy_from_slice(&nb[..n]);
+        crate::drivers::wm::open_terminal_with(core::str::from_utf8(&cmd[..pre.len() + n]).unwrap_or(""));
+        return;
+    }
+    // Shown first; service() downloads after this frame is on screen.
+    let mut st = [0u8; 96];
+    let pre = b"installing ";
+    st[..pre.len()].copy_from_slice(pre);
+    st[pre.len()..pre.len() + n].copy_from_slice(&nb[..n]);
+    let post = b" from fu.ling-lang.org ...";
+    st[pre.len() + n..pre.len() + n + post.len()].copy_from_slice(post);
+    set_status(&st[..pre.len() + n + post.len()]);
+    unsafe {
+        core::ptr::copy_nonoverlapping(nb.as_ptr(), (&raw mut PENDING_INSTALL) as *mut u8, n);
+        PENDING_INSTALL_LEN = n;
+    }
 }
 
 pub fn key(k: u8) {
-    let count = line_count();
+    let count = visible().len();
     match k {
+        b'\t' => unsafe {
+            TAB_ALL = !TAB_ALL;
+            SEL = 0;
+        },
         0x11 => unsafe { SEL = SEL.saturating_sub(1) }, // up
         0x12 => unsafe {
             if SEL + 1 < count {

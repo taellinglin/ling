@@ -803,6 +803,13 @@ pub fn draw_menu() {
 
 /// Launch installed package `idx`: open a Terminal and run its `main.ling`
 /// through the in-kernel Ling interpreter.
+/// Open (or raise) the Terminal and run `cmd` in it -- the Packages window
+/// launching an installed app.
+pub fn open_terminal_with(cmd: &str) {
+    open(KIND_TERM);
+    terminal::run_command(cmd);
+}
+
 fn launch_pkg(idx: usize) {
     if idx >= unsafe { PKG_COUNT } {
         return;

@@ -1721,6 +1721,46 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
         b"os_user" => mk_str(&os_user()),
         b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
+        // The lingfu package manager: one flat row per catalog entry --
+        // name, meta, description, installed, app, mentions LingOS, fits
+        // this machine -- then installs by name (its last message back).
+        b"lingfu_catalog" => {
+            use crate::drivers::lingfu;
+            lingfu::ensure_synced();
+            let on_pi = cfg!(target_arch = "aarch64");
+            let mut v = Vec::new();
+            for (name, meta, desc) in lingfu::entries() {
+                let (lingos, x86, pi) = lingfu::for_lingos(&desc);
+                let here = lingos && if on_pi { pi } else { x86 };
+                let inst = lingfu::is_installed(&name);
+                let app = inst && lingfu::is_app(&name);
+                let meta = if meta.bytes().all(|b| b.is_ascii_digit()) && !meta.is_empty() {
+                    alloc::format!("{meta} downloads")
+                } else {
+                    meta
+                };
+                v.push(mk_str(&name));
+                v.push(mk_str(&meta));
+                v.push(mk_str(&desc));
+                v.push(num(inst as i32 as f64));
+                v.push(num(app as i32 as f64));
+                v.push(num(lingos as i32 as f64));
+                v.push(num(here as i32 as f64));
+            }
+            list_from(v)
+        },
+        b"lingfu_install" => {
+            use crate::drivers::lingfu;
+            let name = path_arg(args, 0);
+            lingfu::begin_capture();
+            let _ = lingfu::install(&name);
+            let cap = lingfu::end_capture();
+            let last = cap.split(|&b| b == b'\n').filter(|l| !l.is_empty()).last().unwrap_or(b"done");
+            mk_str(&String::from_utf8_lossy(last))
+        },
+        b"lingfu_sync" => num(crate::drivers::lingfu::sync() as f64),
+        b"os_packages" => list_from(crate::drivers::lingfu::installed_apps().iter().map(|s| mk_str(s)).collect()),
+        b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
         b"os_info" => mk_str(&os_info(&path_arg(args, 0))),

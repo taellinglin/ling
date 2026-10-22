@@ -14,34 +14,17 @@ use alloc::vec::Vec;
 /// A source file by path (`/`-separated, relative to the filesystem root).
 pub fn read_source(path: &str) -> Option<String> {
     let p = path.trim_start_matches("./");
-    if let Some(bytes) = crate::appfs::get(p) {
-        return core::str::from_utf8(bytes).ok().map(String::from);
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        let Some(size) = crate::fs::lingfs::file_size(p) else { return None };
-        let mut buf = alloc::vec![0u8; size.min(4 << 20)];
-        let Ok(Some(n)) = crate::fs::lingfs::read_file_all(p, &mut buf) else { return None };
-        return core::str::from_utf8(&buf[..n]).ok().map(String::from);
-    }
-    #[allow(unreachable_code)]
-    None
+    // Storage first (a user's copy wins), then the image (crate::vfs does both).
+    let bytes = crate::vfs::read(p)?;
+    core::str::from_utf8(&bytes).ok().map(String::from)
 }
 
 /// Does `path` name a source file (without reading it)?
 pub fn source_exists(path: &str) -> bool {
     let p = path.trim_start_matches("./");
-    if crate::appfs::exists(p) {
-        return true;
-    }
-    #[cfg(target_arch = "x86_64")]
-    {
-        // A file, not a folder (`ling run pkg-<name>` must fall through to the
-        // folder's entry).
-        return crate::fs::lingfs::path_kind(p) == Some(false);
-    }
-    #[allow(unreachable_code)]
-    false
+    // A file, not a folder (`ling run pkg-<name>` must fall through to the
+    // folder's entry).
+    crate::vfs::exists(p) && !crate::vfs::is_dir(p)
 }
 
 /// Join `dir` and `rel`, collapsing `.` and `..` segments.
