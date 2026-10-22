@@ -88,3 +88,6 @@ pub mod wm_liquid;
 pub mod fbcon;
 #[cfg(target_arch = "aarch64")]
 pub mod uart;
+// USB flash drives (bulk-only mass storage over xHCI).
+#[cfg(target_arch = "aarch64")]
+pub mod usbmsd;

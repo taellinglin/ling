@@ -460,6 +460,28 @@ struct HidEp {
     interval: u32,
 }
 
+/// One bulk endpoint of a mass-storage device (its ring state lives here).
+#[derive(Clone, Copy)]
+struct BulkEp {
+    dci: u32,
+    ep_addr: u32,
+    ring: u64,
+    enq: usize,
+    cycle: u32,
+}
+
+/// A USB mass-storage device (one per controller): its two bulk endpoints and
+/// the DMA page the class driver's transfers go through.
+#[derive(Clone, Copy)]
+struct Msd {
+    slot: u8,
+    di: usize,
+    iface: u32,
+    ep_in: BulkEp,
+    ep_out: BulkEp,
+    data: u64,
+}
+
 struct Ctl {
     x: Xhci,
     name: &'static [u8],
@@ -468,9 +490,14 @@ struct Ctl {
     /// Ports whose status-change events arrived; serviced by [`poll`].
     port_pending: u32,
     last_scan_ms: u64,
+    msd: Option<Msd>,
 }
 
 static mut CTLS: [Option<Ctl>; 2] = [None, None];
+/// A drive arrived / left: handed to drivers::usbmsd by poll(), outside the
+/// controller borrow its transfers need.
+static mut MSD_ATTACH: bool = false;
+static mut MSD_DETACH: bool = false;
 
 /// What a waiter is looking for in the event stream.
 #[derive(Clone, Copy)]
@@ -693,6 +720,15 @@ impl Ctl {
     /// Forget device `di`: drop its endpoints, disable its slot, free its pages.
     fn remove_dev(&mut self, di: usize) {
         let Some(d) = self.devs[di] else { return };
+        if let Some(m) = self.msd {
+            if m.slot == d.slot {
+                free_page(m.ep_in.ring);
+                free_page(m.ep_out.ring);
+                free_page(m.data);
+                self.msd = None;
+                unsafe { MSD_DETACH = true };
+            }
+        }
         for h in self.hids.iter_mut() {
             if let Some(hh) = *h {
                 if hh.slot == d.slot {
@@ -833,7 +869,7 @@ pub fn enumerate(cap_base: usize, name: &'static [u8]) {
         out(b"  no controller slot free\n");
         return;
     };
-    *slot = Some(Ctl { x, name, devs: [None; MAX_DEVS], hids: [None; MAX_HID], port_pending: 0, last_scan_ms: now_ms() });
+    *slot = Some(Ctl { x, name, devs: [None; MAX_DEVS], hids: [None; MAX_HID], port_pending: 0, last_scan_ms: now_ms(), msd: None });
     let ctl = slot.as_mut().unwrap();
     // Power every port so later connects raise events even on empty ports.
     for p in 1..=ctl.x.max_ports {
@@ -961,6 +997,9 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
     let mut eps: [Option<HidEp>; MAX_HID] = [None; MAX_HID];
     let mut n = 0usize;
     let (mut cur_iface, mut cur_proto, mut cur_taken) = (0u32, 0u32, true);
+    // Bulk-only mass storage (class 8, SCSI transparent, protocol 0x50).
+    let (mut msd_iface, mut in_msd) = (0u32, false);
+    let (mut msd_in, mut msd_out): (Option<(u32, u32)>, Option<(u32, u32)>) = (None, None);
     let mut off = 0usize;
     while off + 2 <= total {
         let blen = rd(off) as usize;
@@ -973,6 +1012,22 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
             cur_iface = rd(off + 2);
             cur_proto = rd(off + 7);
             cur_taken = !is_boot_hid;
+            in_msd = rd(off + 5) == 8 && rd(off + 6) == 6 && rd(off + 7) == 0x50;
+            if in_msd {
+                msd_iface = cur_iface;
+            }
+        } else if btype == 5 && in_msd {
+            let addr = rd(off + 2);
+            if rd(off + 3) & 0x3 == 2 {
+                let mps = rd(off + 4) | (rd(off + 5) << 8);
+                if addr & 0x80 != 0 {
+                    if msd_in.is_none() {
+                        msd_in = Some((addr, mps));
+                    }
+                } else if msd_out.is_none() {
+                    msd_out = Some((addr, mps));
+                }
+            }
         } else if btype == 5 && !cur_taken && n < MAX_HID {
             let addr = rd(off + 2);
             if addr & 0x80 != 0 && rd(off + 3) & 0x3 == 3 {
@@ -985,8 +1040,16 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
         off += blen;
     }
     if n == 0 {
-        // Not a keyboard/mouse: leave it addressed but unused (a hub, a drive).
-        out(b"  no boot keyboard/mouse interface (device left idle)\n");
+        if let (Some(i), Some(o)) = (msd_in, msd_out) {
+            if ctl.msd.is_some() {
+                out(b"  a second USB drive: one at a time is supported (left idle)\n");
+                return;
+            }
+            configure_msd(ctl, di, cfg_val as u16, msd_iface, i, o);
+            return;
+        }
+        // Not a keyboard/mouse/drive: leave it addressed but unused (a hub).
+        out(b"  no boot keyboard/mouse or storage interface (device left idle)\n");
         return;
     }
 
@@ -1151,6 +1214,174 @@ pub fn mouse_ready() -> bool {
 /// Queue the next interrupt-IN transfer and ring the endpoint doorbell. The ring
 /// is circular: when the producer reaches the last slot it writes a Link TRB
 /// (Toggle Cycle) back to the start and flips its cycle bit.
+/// Bulk-only mass storage: SET_CONFIGURATION, both bulk endpoints in one
+/// Configure Endpoint command, then the device is handed to drivers::usbmsd
+/// (from poll(), outside this controller borrow).
+fn configure_msd(ctl: &mut Ctl, di: usize, cfg_val: u16, iface: u32, ep_in: (u32, u32), ep_out: (u32, u32)) {
+    let Some(d) = ctl.devs[di] else { return };
+    let (slot, port, speed, input_ctx) = (d.slot, d.port, d.speed, d.input_ctx);
+    if ctl.control(di, 0x00, 9, cfg_val, 0, 0, 0).is_none() {
+        return abort_dev(ctl, di, b"  SET_CONFIGURATION failed\n");
+    }
+    let cs = ctl.x.ctx_size as u64;
+    let (Some(ring_in), Some(ring_out), Some(data)) = (alloc_page(), alloc_page(), alloc_page()) else {
+        return abort_dev(ctl, di, b"  out of DMA pages\n");
+    };
+    let mut add_flags = 1u32;
+    let mut max_dci = 1u32;
+    for (addr, mps, ring, is_in) in [(ep_in.0, ep_in.1, ring_in, true), (ep_out.0, ep_out.1, ring_out, false)] {
+        let dci = (addr & 0x0F) * 2 + if is_in { 1 } else { 0 };
+        add_flags |= 1 << dci;
+        max_dci = max_dci.max(dci);
+        let mps = if mps == 0 { 512 } else { mps & 0x7FF };
+        let ep_type = if is_in { 6u32 } else { 2 }; // bulk IN / bulk OUT
+        let epc = input_ctx + (dci as u64 + 1) * cs;
+        unsafe {
+            core::ptr::write_volatile(epc as *mut u32, 0);
+            core::ptr::write_volatile((epc + 4) as *mut u32, (mps << 16) | (ep_type << 3) | (3 << 1));
+            core::ptr::write_volatile((epc + 8) as *mut u64, dma(ring) | 1);
+            core::ptr::write_volatile((epc + 16) as *mut u32, 3072);
+        }
+    }
+    unsafe {
+        core::ptr::write_volatile(input_ctx as *mut u32, 0);
+        core::ptr::write_volatile((input_ctx + 0x04) as *mut u32, add_flags);
+        let sctx = input_ctx + cs;
+        core::ptr::write_volatile(sctx as *mut u32, (max_dci << 27) | (speed << 20));
+        core::ptr::write_volatile((sctx + 4) as *mut u32, port << 16);
+    }
+    dsb();
+    let a = ctl.x.ring_command(dma(input_ctx), (TRB_CONFIGURE_ENDPOINT << 10) | ((slot as u32) << 24));
+    match ctl.wait(Want::Cmd(a), 40_000) {
+        Some((_, s, _)) if (s >> 24) & 0xFF == 1 => {},
+        Some((_, s, _)) => {
+            out(b"  configure bulk endpoints: ");
+            report_cc((s >> 24) & 0xFF);
+            free_page(ring_in);
+            free_page(ring_out);
+            free_page(data);
+            ctl.remove_dev(di);
+            return;
+        },
+        None => {
+            free_page(ring_in);
+            free_page(ring_out);
+            free_page(data);
+            return abort_dev(ctl, di, b"  configure bulk endpoints: no event\n");
+        },
+    }
+    let mk = |addr: u32, ring: u64, is_in: bool| BulkEp { dci: (addr & 0x0F) * 2 + if is_in { 1 } else { 0 }, ep_addr: addr, ring, enq: 0, cycle: 1 };
+    ctl.msd = Some(Msd { slot, di, iface, ep_in: mk(ep_in.0, ring_in, true), ep_out: mk(ep_out.0, ring_out, false), data });
+    unsafe { MSD_ATTACH = true };
+    out(b"  -> USB STORAGE (bulk endpoints ready)\n");
+}
+
+impl Ctl {
+    /// One bulk transfer of `len` bytes at `data` on `ep`; the completion code
+    /// and residual, or None without an event (10 s).
+    fn bulk(&mut self, slot: u8, ep: &mut BulkEp, data: u64, len: u32) -> Option<(u32, u32)> {
+        trb_write(ep.ring, ep.enq, data, len, (TRB_NORMAL << 10) | (1 << 5) | (1 << 2) | ep.cycle);
+        ep.enq += 1;
+        if ep.enq == RING_TRBS - 1 {
+            trb_write(ep.ring, ep.enq, dma(ep.ring), 0, (TRB_LINK << 10) | (1 << 1) | ep.cycle);
+            ep.enq = 0;
+            ep.cycle ^= 1;
+        }
+        dsb();
+        unsafe { write32(self.x.db + slot as usize * 4, ep.dci) };
+        let (_, status, _) = self.wait(Want::Xfer(slot, ep.dci), 200_000)?;
+        Some(((status >> 24) & 0xFF, status & 0xFF_FFFF))
+    }
+
+    /// A stalled / halted bulk endpoint back to running: Reset Endpoint, the
+    /// dequeue pointer at our enqueue, CLEAR_FEATURE(ENDPOINT_HALT).
+    fn bulk_clear(&mut self, slot: u8, di: usize, ep: &mut BulkEp) {
+        let sl = (slot as u32) << 24;
+        let a = self.x.ring_command(0, (TRB_RESET_ENDPOINT << 10) | (ep.dci << 16) | sl);
+        let _ = self.wait(Want::Cmd(a), 20_000);
+        let deq = dma(ep.ring + (ep.enq * 16) as u64) | ep.cycle as u64;
+        let a = self.x.ring_command(deq, (TRB_SET_TR_DEQUEUE << 10) | (ep.dci << 16) | sl);
+        let _ = self.wait(Want::Cmd(a), 20_000);
+        let _ = self.control(di, 0x02, 1, 0, ep.ep_addr as u16, 0, 0);
+    }
+}
+
+fn with_msd<R>(f: impl FnOnce(&mut Ctl, &mut Msd) -> R) -> Option<R> {
+    let ctls = unsafe { &mut *(&raw mut CTLS) };
+    for ctl in ctls.iter_mut().flatten() {
+        if let Some(mut m) = ctl.msd.take() {
+            let r = f(ctl, &mut m);
+            ctl.msd = Some(m);
+            return Some(r);
+        }
+    }
+    None
+}
+
+/// Is a mass-storage device attached (bulk endpoints configured)?
+pub fn msd_present() -> bool {
+    let ctls = unsafe { &*(&raw const CTLS) };
+    ctls.iter().flatten().any(|c| c.msd.is_some())
+}
+
+/// Send `buf` (up to a page) on the drive's bulk-OUT endpoint: bytes sent, or
+/// the completion code (6 = stall; 0 = no device / no event).
+pub fn msd_bulk_out(buf: &[u8]) -> Result<usize, u32> {
+    with_msd(|ctl, m| {
+        let n = buf.len().min(4096);
+        unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), m.data as *mut u8, n) };
+        dsb();
+        let mut ep = m.ep_out;
+        let r = ctl.bulk(m.slot, &mut ep, dma(m.data), n as u32);
+        m.ep_out = ep;
+        match r {
+            Some((1 | 13, resid)) => Ok(n - (resid as usize).min(n)),
+            Some((cc, _)) => Err(cc),
+            None => Err(0),
+        }
+    })
+    .unwrap_or(Err(0))
+}
+
+/// Receive into `buf` (up to a page) from the drive's bulk-IN endpoint.
+pub fn msd_bulk_in(buf: &mut [u8]) -> Result<usize, u32> {
+    with_msd(|ctl, m| {
+        let n = buf.len().min(4096);
+        let mut ep = m.ep_in;
+        let r = ctl.bulk(m.slot, &mut ep, dma(m.data), n as u32);
+        m.ep_in = ep;
+        match r {
+            Some((1 | 13, resid)) => {
+                let got = n - (resid as usize).min(n);
+                dsb();
+                unsafe { core::ptr::copy_nonoverlapping(m.data as *const u8, buf.as_mut_ptr(), got) };
+                Ok(got)
+            },
+            Some((cc, _)) => Err(cc),
+            None => Err(0),
+        }
+    })
+    .unwrap_or(Err(0))
+}
+
+pub fn msd_clear_stall(dir_in: bool) -> bool {
+    with_msd(|ctl, m| {
+        let mut ep = if dir_in { m.ep_in } else { m.ep_out };
+        ctl.bulk_clear(m.slot, m.di, &mut ep);
+        if dir_in {
+            m.ep_in = ep;
+        } else {
+            m.ep_out = ep;
+        }
+    })
+    .is_some()
+}
+
+/// Bulk-Only Mass Storage Reset (class request) after a phase error.
+pub fn msd_reset() -> bool {
+    with_msd(|ctl, m| ctl.control(m.di, 0x21, 0xFF, 0, m.iface as u16, 0, 0).is_some()).unwrap_or(false)
+}
+
 fn hid_queue(x: &Xhci, h: &mut Hid) {
     trb_write(h.ring, h.enq, dma(h.rbuf), h.mps, (TRB_NORMAL << 10) | (1 << 5) | h.cycle);
     h.enq += 1;
@@ -1190,7 +1421,14 @@ fn poll() {
             ctl.service_ports(scan);
         }
     }
+    let (attach, detach) = unsafe { (core::mem::replace(&mut MSD_ATTACH, false), core::mem::replace(&mut MSD_DETACH, false)) };
     unsafe { IN_POLL = false };
+    if detach {
+        crate::drivers::usbmsd::detach();
+    }
+    if attach {
+        crate::drivers::usbmsd::attach();
+    }
 }
 
 /// Boot mouse report: buttons, dx, dy (signed), then wheel if the endpoint

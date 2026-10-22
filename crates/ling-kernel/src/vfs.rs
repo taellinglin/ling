@@ -122,6 +122,9 @@ fn lingfs_read(path: &str) -> Option<Vec<u8>> {
 /// A file's bytes: the program's copy on storage first, then the image's.
 pub fn read(p: &str) -> Option<Vec<u8>> {
     let n = norm(p);
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::read(&n);
+    }
     let r = resolve(&n);
     if ready() {
         if let Some(v) = lingfs_read(&r) {
@@ -138,6 +141,9 @@ pub fn read(p: &str) -> Option<Vec<u8>> {
 
 /// Write a file (creating its folders); false without storage.
 pub fn write(p: &str, data: &[u8]) -> bool {
+    if crate::fs::media::is_media_path(&norm(p)) {
+        return crate::fs::media::write(&norm(p), data);
+    }
     if !ready() {
         return false;
     }
@@ -153,6 +159,9 @@ pub fn write(p: &str, data: &[u8]) -> bool {
 
 pub fn exists(p: &str) -> bool {
     let n = norm(p);
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::exists(&n);
+    }
     let r = resolve(&n);
     if ready() && (crate::fs::lingfs::path_kind(&r).is_some() || crate::fs::lingfs::path_kind(&n).is_some()) {
         return true;
@@ -165,6 +174,9 @@ pub fn is_dir(p: &str) -> bool {
     if n.is_empty() {
         return true;
     }
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::is_dir(&n);
+    }
     let r = resolve(&n);
     if ready() && (crate::fs::lingfs::path_kind(&r) == Some(true) || crate::fs::lingfs::path_kind(&n) == Some(true)) {
         return true;
@@ -173,7 +185,78 @@ pub fn is_dir(p: &str) -> bool {
 }
 
 pub fn mkdir(p: &str) -> bool {
+    if crate::fs::media::is_media_path(&norm(p)) {
+        return crate::fs::media::mkdir(&norm(p));
+    }
     ready() && crate::fs::lingfs::mkdir_p(&resolve(p)).is_ok()
+}
+
+/// Delete a file or an empty folder (removable media; the image's files and
+/// lingfs's are kept).
+pub fn delete(p: &str) -> bool {
+    let n = norm(p);
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::delete(&n);
+    }
+    false
+}
+
+pub fn basename(p: &str) -> String {
+    let n = norm(p);
+    match n.rfind('/') {
+        Some(i) => String::from(&n[i + 1..]),
+        None => n,
+    }
+}
+
+/// Where `cp`/`mv` put `src` for a `dst` argument: inside `dst` when it is an
+/// existing folder, else at `dst` itself.
+pub fn target_for(src: &str, dst: &str) -> String {
+    if is_dir(dst) && !norm(dst).is_empty() || norm(dst).is_empty() {
+        join(dst, &basename(src))
+    } else {
+        norm(dst)
+    }
+}
+
+/// Copy a file, or a folder with everything in it.
+pub fn copy(from: &str, to: &str) -> bool {
+    let (a, b) = (norm(from), norm(to));
+    if a == b {
+        return true;
+    }
+    if is_dir(&a) {
+        if !is_dir(&b) && !mkdir(&b) {
+            return false;
+        }
+        let mut ok = true;
+        for (name, _, _) in list(&a) {
+            ok &= copy(&join(&a, &name), &join(&b, &name));
+        }
+        return ok;
+    }
+    match read(&a) {
+        Some(data) => write(&b, &data),
+        None => false,
+    }
+}
+
+/// Move / rename: in place inside one removable volume, else copy + delete.
+pub fn rename(from: &str, to: &str) -> bool {
+    let (a, b) = (norm(from), norm(to));
+    if crate::fs::media::is_media_path(&a) && crate::fs::media::is_media_path(&b) && crate::fs::media::rename(&a, &b) {
+        return true;
+    }
+    copy(&a, &b) && delete_tree(&a)
+}
+
+fn delete_tree(p: &str) -> bool {
+    if is_dir(p) {
+        for (name, _, _) in list(p) {
+            delete_tree(&join(p, &name));
+        }
+    }
+    delete(p)
 }
 
 fn push_entry(items: &mut Vec<(String, bool, usize)>, name: &str, is_dir: bool, size: usize) {
@@ -206,8 +289,14 @@ fn lingfs_list_into(dir: &str, items: &mut Vec<(String, bool, usize)>) {
 /// first, names case-insensitive; dotfiles hidden.
 pub fn list(p: &str) -> Vec<(String, bool, usize)> {
     let n = norm(p);
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::list(&n);
+    }
     let r = resolve(&n);
     let mut items: Vec<(String, bool, usize)> = Vec::new();
+    if n.is_empty() && !crate::fs::media::names().is_empty() {
+        items.push((String::from("media"), true, 0));
+    }
     if ready() {
         lingfs_list_into(&r, &mut items);
         if r != n {

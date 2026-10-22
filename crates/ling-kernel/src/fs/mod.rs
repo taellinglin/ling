@@ -5,6 +5,9 @@
 //! exists) is on the LingOS packages roadmap, not started yet.
 
 pub mod blockdev;
+// FAT16/32 volumes (USB flash drives, SD cards) and their mounts under media/.
+pub mod fat;
+pub mod media;
 pub mod lingfs;
 pub mod packages;
 pub mod users;

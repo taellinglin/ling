@@ -719,7 +719,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -793,6 +793,28 @@ fn rpi_shell_exec(line: &[u8]) {
             },
             _ => console_write(b"lingfu install <name> | lingfu list [query] | lingfu sync\n"),
         }
+    } else if let Some(rest) = s.strip_prefix(b"cp ").or_else(|| s.strip_prefix(b"mv ")) {
+        let is_cp = s.starts_with(b"cp ");
+        let args = core::str::from_utf8(rest).unwrap_or("");
+        let mut it = args.split_whitespace();
+        match (it.next(), it.next()) {
+            (Some(a), Some(b)) => {
+                let dst = crate::vfs::target_for(a, b);
+                let ok = if is_cp { crate::vfs::copy(a, &dst) } else { crate::vfs::rename(a, &dst) };
+                console_write(if ok { b"-> " } else { b"failed: " });
+                console_write(dst.as_bytes());
+                console_write(b"\n");
+            },
+            _ => console_write(if is_cp { b"usage: cp <src> <dst>\n" } else { b"usage: mv <src> <dst>\n" }),
+        }
+    } else if let Some(rest) = s.strip_prefix(b"rm ") {
+        let p = core::str::from_utf8(rest).unwrap_or("").trim();
+        console_write(if crate::vfs::delete(p) { b"deleted\n" } else { b"rm: not deleted (missing, a non-empty folder, or read-only storage)\n" });
+    } else if let Some(rest) = s.strip_prefix(b"mkdir ") {
+        let p = core::str::from_utf8(rest).unwrap_or("").trim();
+        console_write(if crate::vfs::mkdir(p) { b"created\n" } else { b"mkdir: failed\n" });
+    } else if s == b"media" {
+        crate::drivers::usbmsd::status();
     } else if s == b"sd" {
         storage_boot();
     } else if s == b"sd format" {
@@ -1441,6 +1463,8 @@ pub unsafe extern "C" fn ling_kernel_fs_mount() -> u64 {
     // Best-effort: an empty/full-root failure here shouldn't fail the mount
     // itself — `dev`/`bin` just won't show up in `ls` this boot.
     let _ = lingfs::seed_defaults();
+    // A FAT-formatted second disk becomes media/disk1.
+    fs::media::probe_x86();
     1
 }
 

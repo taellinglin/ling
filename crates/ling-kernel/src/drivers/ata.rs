@@ -209,6 +209,46 @@ fn slave_set_multiple() -> bool {
     }
 }
 
+/// Write whole sectors to the SLAVE drive -- the FAT volume media/disk1.
+pub fn write_slave(lba: u32, buf: &[u8]) -> Result<(), ()> {
+    if buf.len() % SECTOR_SIZE != 0 {
+        return Err(());
+    }
+    lock();
+    let mut res = Ok(());
+    for (i, sec) in buf.chunks(SECTOR_SIZE).enumerate() {
+        let cur = lba + i as u32;
+        if wait_ready().is_err() {
+            res = Err(());
+            break;
+        }
+        unsafe {
+            outb(DRIVE_HEAD, 0xF0 | ((cur >> 24) & 0x0F) as u8);
+            outb(ERROR_FEATURES, 0x00);
+            outb(SECTOR_COUNT, 1);
+            outb(LBA_LOW, (cur & 0xFF) as u8);
+            outb(LBA_MID, ((cur >> 8) & 0xFF) as u8);
+            outb(LBA_HIGH, ((cur >> 16) & 0xFF) as u8);
+            outb(STATUS_COMMAND, CMD_WRITE_SECTORS);
+        }
+        if wait_ready().is_err() || wait_drq().is_err() {
+            res = Err(());
+            break;
+        }
+        unsafe { outsw(DATA, sec.as_ptr() as *const u16, SECTOR_SIZE / 2) };
+        if wait_ready().is_err() {
+            res = Err(());
+            break;
+        }
+    }
+    if res.is_ok() {
+        unsafe { outb(STATUS_COMMAND, CMD_CACHE_FLUSH) };
+        let _ = wait_ready();
+    }
+    unlock();
+    res
+}
+
 pub fn read_slave(lba: u32, buf: &mut [u8]) -> Result<(), ()> {
     if buf.len() % SECTOR_SIZE != 0 {
         return Err(());

@@ -403,6 +403,61 @@ fn run(line: &str) {
                 }
             }
         },
+        "ls" if crate::fs::media::is_media_path(arg) => {
+            let items = crate::vfs::list(arg);
+            if items.is_empty() {
+                push(Cls::Dim, b"(empty)");
+            }
+            for (name, is_dir, size) in items {
+                let mut line = alloc::string::String::from(name.as_str());
+                if is_dir {
+                    line.push('/');
+                } else {
+                    line.push_str(&alloc::format!("  {size}"));
+                }
+                push(Cls::Normal, line.as_bytes());
+            }
+        },
+        "cat" if crate::fs::media::is_media_path(arg) => match crate::vfs::read(arg) {
+            Some(bytes) => push_wrapped(Cls::Normal, &bytes[..bytes.len().min(8192)]),
+            None => push(Cls::Err, b"cat: no such file"),
+        },
+        "mkdir" if crate::fs::media::is_media_path(arg) => {
+            if crate::vfs::mkdir(arg) {
+                push(Cls::Ok, b"created");
+            } else {
+                push(Cls::Err, b"mkdir: failed");
+            }
+        },
+        "cp" | "mv" => {
+            let mut it = arg.split_whitespace();
+            let (Some(a), Some(b)) = (it.next(), it.next()) else {
+                push(Cls::Err, if cmd == "cp" { b"usage: cp <src> <dst>" } else { b"usage: mv <src> <dst>" });
+                return;
+            };
+            let (mut pa, mut pb) = ([0u8; 128], [0u8; 128]);
+            let src = alloc::string::String::from(resolve_path(a, &mut pa));
+            let dst = crate::vfs::target_for(&src, resolve_path(b, &mut pb));
+            let ok = if cmd == "cp" { crate::vfs::copy(&src, &dst) } else { crate::vfs::rename(&src, &dst) };
+            if ok {
+                push(Cls::Ok, dst.as_bytes());
+            } else {
+                push(Cls::Err, b"failed (source missing, destination not writable, or folder not empty)");
+            }
+        },
+        "rm" => {
+            if arg.is_empty() {
+                push(Cls::Err, b"usage: rm <path>");
+            } else {
+                let mut pb = [0u8; 128];
+                let p = resolve_path(arg, &mut pb);
+                if crate::vfs::delete(p) {
+                    push(Cls::Ok, b"deleted");
+                } else {
+                    push(Cls::Err, b"rm: not deleted (missing, a non-empty folder, or read-only storage)");
+                }
+            }
+        },
         "dns" => {
             if arg.is_empty() {
                 push(Cls::Err, b"usage: dns <host>");
