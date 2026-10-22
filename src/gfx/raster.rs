@@ -393,6 +393,7 @@ pub fn fill_triangle_z(
     let de1 = -(y2 - y1);
     let de2 = -(y0 - y2);
 
+    let pp = persp_iw(z0, z1, z2);
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
         let fx0 = min_x as f32 + 0.5;
@@ -410,7 +411,7 @@ pub fn fill_triangle_z(
                     let w2 = e0 / tot;
                     let w0 = e1 / tot;
                     let w1 = e2 / tot;
-                    let z = z0 * w0 + z1 * w1 + z2 * w2;
+                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
                     let idx = row + px as usize;
                     if z < zbuf[idx] {
                         zbuf[idx] = z;
@@ -566,6 +567,7 @@ pub fn fill_triangle_z_blend(
     let de1 = -(y2 - y1);
     let de2 = -(y0 - y2);
 
+    let pp = persp_iw(z0, z1, z2);
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
         let fx0 = min_x as f32 + 0.5;
@@ -583,7 +585,7 @@ pub fn fill_triangle_z_blend(
                     let w2 = e0 / tot;
                     let w0 = e1 / tot;
                     let w1 = e2 / tot;
-                    let z = z0 * w0 + z1 * w1 + z2 * w2;
+                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
                     if z < zbuf[row + px as usize] {
                         if fast_add {
                             let idx = row + px as usize;
@@ -671,6 +673,7 @@ pub fn fill_triangle_gouraud_z(
     let de2 = -(y0 - y2);
     let blended = alpha < 0.999 || mode != 0;
 
+    let pp = persp_iw(z0, z1, z2);
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
         let fx0 = min_x as f32 + 0.5;
@@ -688,7 +691,7 @@ pub fn fill_triangle_gouraud_z(
                     let w2 = e0 / tot;
                     let w0 = e1 / tot;
                     let w1 = e2 / tot;
-                    let z = z0 * w0 + z1 * w1 + z2 * w2;
+                    let z = persp_z(pp, w0, w1, w2, z0, z1, z2);
                     let idx = row + px as usize;
                     if z < zbuf[idx] {
                         let r = r0 * w0 + r1 * w1 + r2 * w2;
@@ -2127,6 +2130,282 @@ mod fill_tests {
                     "softness=1.0 must crossfade back to smooth Gouraud (pixel {i}, channel shift {shift}: {ca} vs {cb})"
                 );
             }
+        }
+    }
+}
+
+// ── perspective-correct depth ────────────────────────────────────────────────
+// Camera depth z is not linear in screen space, 1/(z + zdist) is. The z-tested
+// fills interpolate that and convert back, so long walls and big floor slabs
+// resolve against small objects correctly. The flush sets the camera's zdist.
+static PERSP_ZD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x7FC0_0000);
+pub fn set_persp_zd(zd: f32) {
+    PERSP_ZD.store(zd.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+#[inline]
+fn persp_zd() -> f32 {
+    f32::from_bits(PERSP_ZD.load(std::sync::atomic::Ordering::Relaxed))
+}
+/// Per-vertex 1/w for the perspective depth, or None (fall back to linear) when
+/// zdist is unset or a vertex sits behind the eye (2-D depth_triangle callers).
+#[inline]
+fn persp_iw(z0: f32, z1: f32, z2: f32) -> Option<(f32, f32, f32, f32)> {
+    let zd = persp_zd();
+    if !zd.is_finite() {
+        return None;
+    }
+    let (a, b, c) = (z0 + zd, z1 + zd, z2 + zd);
+    if a <= 1e-4 || b <= 1e-4 || c <= 1e-4 {
+        return None;
+    }
+    Some((1.0 / a, 1.0 / b, 1.0 / c, zd))
+}
+#[inline]
+fn persp_z(p: Option<(f32, f32, f32, f32)>, w0: f32, w1: f32, w2: f32, z0: f32, z1: f32, z2: f32) -> f32 {
+    match p {
+        Some((i0, i1, i2, zd)) => {
+            let q = i0 * w0 + i1 * w1 + i2 * w2;
+            if q > 1e-12 { 1.0 / q - zd } else { z0 * w0 + z1 * w1 + z2 * w2 }
+        },
+        None => z0 * w0 + z1 * w1 + z2 * w2,
+    }
+}
+
+// ── textured triangles (game3d tm_* / pfx_* builtins) ───────────────────────
+
+#[inline]
+fn tex_fetch(t: &crate::gfx::depth::TexData, x: i32, y: i32) -> u32 {
+    let xm = (t.w - 1) as i32;
+    let ym = (t.h - 1) as i32;
+    t.px[((y & ym) as u32 * t.w + (x & xm) as u32) as usize]
+}
+
+/// Bilinear, wrapping texel fetch at texture coordinates (u, v) in texels.
+#[inline]
+fn tex_bilinear(t: &crate::gfx::depth::TexData, u: f32, v: f32) -> [f32; 4] {
+    let u = u - 0.5;
+    let v = v - 0.5;
+    let x0 = u.floor();
+    let y0 = v.floor();
+    let fx = u - x0;
+    let fy = v - y0;
+    let (xi, yi) = (x0 as i32, y0 as i32);
+    let c00 = tex_fetch(t, xi, yi);
+    let c10 = tex_fetch(t, xi + 1, yi);
+    let c01 = tex_fetch(t, xi, yi + 1);
+    let c11 = tex_fetch(t, xi + 1, yi + 1);
+    let mut out = [0.0f32; 4];
+    for (k, sh) in [16u32, 8, 0, 24].iter().enumerate() {
+        let a = ((c00 >> sh) & 255) as f32;
+        let b = ((c10 >> sh) & 255) as f32;
+        let c = ((c01 >> sh) & 255) as f32;
+        let d = ((c11 >> sh) & 255) as f32;
+        let top = a + (b - a) * fx;
+        let bot = c + (d - c) * fx;
+        out[k] = top + (bot - top) * fy;
+    }
+    out
+}
+
+/// Perspective-correct textured triangle with optional z-test / z-write, pen
+/// `alpha`, blend `mode` (0 normal, 1 additive, anything else normal), `tint`
+/// (0xRRGGBB multiplier) and a soft see-through `hole` (screen x, y, radius,
+/// depth): pixels nearer than `depth` fade to 12% inside the radius so whatever
+/// stands behind a wall stays visible. `ysh` is the band's first row.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_triangle_tex(
+    buf: &mut [u32],
+    zbuf: Option<&mut [f32]>,
+    width: usize,
+    height: usize,
+    ysh: f32,
+    v: &[crate::gfx::depth::TexVert; 3],
+    tex: &crate::gfx::depth::TexData,
+    tint: u32,
+    hole: [f32; 4],
+    zwrite: bool,
+    mode: u8,
+    alpha: f32,
+) {
+    fill_triangle_tex_shaded(buf, zbuf, width, height, ysh, v, tex, tint, hole, zwrite, mode, alpha, None)
+}
+
+/// [`fill_triangle_tex`] with optional per-pixel point lighting (from the
+/// perspective-correct world position) and distance fog.
+#[allow(clippy::too_many_arguments)]
+pub fn fill_triangle_tex_shaded(
+    buf: &mut [u32],
+    mut zbuf: Option<&mut [f32]>,
+    width: usize,
+    height: usize,
+    ysh: f32,
+    v: &[crate::gfx::depth::TexVert; 3],
+    tex: &crate::gfx::depth::TexData,
+    tint: u32,
+    hole: [f32; 4],
+    zwrite: bool,
+    mode: u8,
+    alpha: f32,
+    shade: Option<&crate::gfx::depth::TexShade>,
+) {
+    let lit = shade.map(|s| s.lit).unwrap_or(false);
+    let (fog_s, fog_e, fog_c) = shade.map(|s| (s.fog_start, s.fog_end, s.fog_color)).unwrap_or((0.0, 0.0, 0));
+    let fog_on = fog_e > fog_s && fog_e > 0.0;
+    let fcr = ((fog_c >> 16) & 255) as f32;
+    let fcg = ((fog_c >> 8) & 255) as f32;
+    let fcb = (fog_c & 255) as f32;
+    if width == 0 || height == 0 || tex.px.is_empty() {
+        return;
+    }
+    let (x0, y0) = (v[0].x, v[0].y - ysh);
+    let (x1, y1) = (v[1].x, v[1].y - ysh);
+    let (x2, y2) = (v[2].x, v[2].y - ysh);
+    if !(x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() && x2.is_finite() && y2.is_finite()) {
+        return;
+    }
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha <= 0.0 {
+        return;
+    }
+    let min_x = x0.min(x1).min(x2).max(0.0) as i32;
+    let max_x = x0.max(x1).max(x2).min(width as f32 - 1.0) as i32;
+    let min_y = y0.min(y1).min(y2).max(0.0) as i32;
+    let max_y = y0.max(y1).max(y2).min(height as f32 - 1.0) as i32;
+    if min_x > max_x || min_y > max_y {
+        return;
+    }
+    let area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+    if area.abs() < 1e-6 {
+        return;
+    }
+    let tr = ((tint >> 16) & 255) as f32 / 255.0;
+    let tg = ((tint >> 8) & 255) as f32 / 255.0;
+    let tb = (tint & 255) as f32 / 255.0;
+    let (tw, th) = (tex.w as f32, tex.h as f32);
+    let hole_on = hole[2] > 0.0;
+    let (hx, hy, hr, hd) = (hole[0], hole[1] - ysh, hole[2], hole[3]);
+    let de0 = -(y1 - y0);
+    let de1 = -(y2 - y1);
+    let de2 = -(y0 - y2);
+    // the edge sum is the same everywhere in the triangle: one reciprocal per triangle
+    let fx0c = min_x as f32 + 0.5;
+    let fy0c = min_y as f32 + 0.5;
+    let tot0 = ((x1 - x0) * (fy0c - y0) - (y1 - y0) * (fx0c - x0))
+        + ((x2 - x1) * (fy0c - y1) - (y2 - y1) * (fx0c - x1))
+        + ((x0 - x2) * (fy0c - y2) - (y0 - y2) * (fx0c - x2));
+    if tot0.abs() < 1e-9 {
+        return;
+    }
+    let inv_tot = 1.0 / tot0;
+    let zd = persp_zd();
+    let persp_ok = zd.is_finite() && v[0].z + zd > 0.0;
+    // equal 1/w on every vertex (sprites, billboards): affine, no per-pixel divide
+    let affine = (v[0].iw - v[1].iw).abs() < 1e-9 && (v[0].iw - v[2].iw).abs() < 1e-9;
+    for py in min_y..=max_y {
+        let fy = py as f32 + 0.5;
+        let fx0 = min_x as f32 + 0.5;
+        let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
+        let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
+        let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        let row = py as usize * width;
+        let mut in_span = false;
+        for px in min_x..=max_x {
+            let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
+            if inside {
+                in_span = true;
+                {
+                    let w2 = e0 * inv_tot;
+                    let w0 = e1 * inv_tot;
+                    let w1 = e2 * inv_tot;
+                    let iw = if affine { v[0].iw } else { v[0].iw * w0 + v[1].iw * w1 + v[2].iw * w2 };
+                    let z = if affine {
+                        v[0].z
+                    } else if persp_ok && iw > 1e-12 {
+                        1.0 / iw - zd
+                    } else {
+                        v[0].z * w0 + v[1].z * w1 + v[2].z * w2
+                    };
+                    let idx = row + px as usize;
+                    let pass = match zbuf.as_deref() {
+                        Some(zb) => z < zb[idx],
+                        None => true,
+                    };
+                    if pass {
+                        if iw > 1e-12 {
+                            let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };
+                            let u = (v[0].uw * w0 + v[1].uw * w1 + v[2].uw * w2) * inv;
+                            let vv = (v[0].vw * w0 + v[1].vw * w1 + v[2].vw * w2) * inv;
+                            let s = tex_bilinear(tex, u * tw, vv * th);
+                            let mut a = s[3] / 255.0 * alpha;
+                            if hole_on && z < hd {
+                                let dx = px as f32 + 0.5 - hx;
+                                let dy = py as f32 + 0.5 - hy;
+                                let d = (dx * dx + dy * dy).sqrt();
+                                let t = ((d - hr * 0.55) / (hr * 0.45)).clamp(0.0, 1.0);
+                                let t = t * t * (3.0 - 2.0 * t);
+                                a *= 0.12 + 0.88 * t;
+                            }
+                            if a > 0.004 {
+                                let mut sr = s[0] * tr;
+                                let mut sg = s[1] * tg;
+                                let mut sb = s[2] * tb;
+                                if lit {
+                                    if let Some(sh) = shade {
+                                        let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };
+                                        let px_w = (v[0].wx * w0 + v[1].wx * w1 + v[2].wx * w2) * inv;
+                                        let py_w = (v[0].wy * w0 + v[1].wy * w1 + v[2].wy * w2) * inv;
+                                        let pz_w = (v[0].wz * w0 + v[1].wz * w1 + v[2].wz * w2) * inv;
+                                        let (mut lr, mut lg, mut lb) = (sh.amb, sh.amb, sh.amb);
+                                        for l in &sh.lights {
+                                            let dx = px_w - l[0];
+                                            let dy = py_w - l[1];
+                                            let dz = pz_w - l[2];
+                                            let d2 = dx * dx + dy * dy + dz * dz;
+                                            let r2 = l[7] * l[7];
+                                            if d2 < r2 {
+                                                let k = 1.0 - (d2 / r2).sqrt();
+                                                let e = k * k * l[6];
+                                                lr += l[3] * e;
+                                                lg += l[4] * e;
+                                                lb += l[5] * e;
+                                            }
+                                        }
+                                        sr = (sr * lr).min(255.0);
+                                        sg = (sg * lg).min(255.0);
+                                        sb = (sb * lb).min(255.0);
+                                    }
+                                }
+                                if fog_on {
+                                    let f = ((z - fog_s) / (fog_e - fog_s)).clamp(0.0, 1.0);
+                                    sr += (fcr - sr) * f;
+                                    sg += (fcg - sg) * f;
+                                    sb += (fcb - sb) * f;
+                                }
+                                let dst = buf[idx];
+                                let dr = ((dst >> 16) & 255) as f32;
+                                let dg = ((dst >> 8) & 255) as f32;
+                                let db = (dst & 255) as f32;
+                                let (r, g, b) = if mode == 1 {
+                                    ((dr + sr * a).min(255.0), (dg + sg * a).min(255.0), (db + sb * a).min(255.0))
+                                } else {
+                                    (dr + (sr - dr) * a, dg + (sg - dg) * a, db + (sb - db) * a)
+                                };
+                                buf[idx] = ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                                if zwrite && a > 0.97 {
+                                    if let Some(zb) = zbuf.as_deref_mut() {
+                                        zb[idx] = z;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if in_span {
+                break;
+            }
+            e0 += de0;
+            e1 += de1;
+            e2 += de2;
         }
     }
 }

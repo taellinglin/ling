@@ -96,6 +96,38 @@ pub unsafe extern "C" fn ling_list_get(list_val: u64, idx_val: u64) -> u64 {
     *elems.add(idx)
 }
 
+/// `list_set(list, idx, val)`: lists are values in Ling, so this returns a NEW list with one element replaced
+/// and leaves the original untouched (same as the host interpreter and the kernel runtime). Out-of-range or
+/// non-numeric indices return an unchanged copy. The AOT emits this symbol for every `list_set` call.
+#[no_mangle]
+pub unsafe extern "C" fn ling_list_set(list_val: u64, idx_val: u64, elem: u64) -> u64 {
+    let p = decode_ptr(list_val);
+    if p.is_null() {
+        return ling_list_new();
+    }
+    let hdr = p as *mut ListHeader;
+    let len = (*hdr).len as usize;
+    let cap = core::cmp::max(len, 8);
+    let size = core::mem::size_of::<ListHeader>() + cap * 8;
+    let new_p = crate::alloc::alloc(size);
+    if new_p.is_null() {
+        crate::alloc::ling_panic(0);
+    }
+    let new_hdr = new_p as *mut ListHeader;
+    (*new_hdr).cap = cap as u32;
+    (*new_hdr).len = len as u32;
+    let old_elems = p.add(core::mem::size_of::<ListHeader>()) as *const u64;
+    let new_elems = new_p.add(core::mem::size_of::<ListHeader>()) as *mut u64;
+    ptr::copy_nonoverlapping(old_elems, new_elems, len);
+    if (idx_val >> 56) != 0x7F {
+        let idx = f64::from_bits(idx_val);
+        if idx >= 0.0 && (idx as usize) < len {
+            *new_elems.add(idx as usize) = elem;
+        }
+    }
+    encode_list(new_p)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ling_list_len(list_val: u64) -> u64 {
     let p = decode_ptr(list_val);

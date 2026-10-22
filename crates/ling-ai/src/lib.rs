@@ -24,6 +24,12 @@ pub mod nn;
 #[cfg(feature = "llm")]
 pub mod llm;
 
+#[cfg(feature = "llm")]
+pub mod whisper;
+
+#[cfg(feature = "llm")]
+pub mod rvc;
+
 #[cfg(feature = "vision")]
 pub mod vision;
 

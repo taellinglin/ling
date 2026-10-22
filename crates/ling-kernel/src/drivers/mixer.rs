@@ -36,10 +36,11 @@ pub const APP_PLAYER: usize = 2; // the tape player
 pub const APP_ABOUT: usize = 3;
 pub const APP_SETTINGS: usize = 4;
 pub const APP_FILES: usize = 5;
-pub const NUM_STREAMS: usize = 6;
+pub const APP_DAW: usize = 6; // the LingStation window
+pub const NUM_STREAMS: usize = 7;
 
 static STREAM_NAMES: [&str; NUM_STREAMS] =
-    ["system", "shell", "player", "about", "settings", "files"];
+    ["system", "shell", "player", "about", "settings", "files", "lingstation"];
 
 static mut STREAM_VOL: [u32; NUM_STREAMS] = [80; NUM_STREAMS];
 static mut MASTER_VOL: u32 = 80;
@@ -615,6 +616,9 @@ fn render(buf: &mut [i16]) {
         let mono = MONO;
         let mut buf_peak_l = 0i16;
         let mut buf_peak_r = 0i16;
+        // the LingStation sequencer renders a whole block at once; it is None (free) while nothing plays
+        let daw = crate::drivers::daw::block(frames);
+        let daw_gain = if excl >= 0 && excl as usize != APP_DAW { 0.0 } else { STREAM_VOL[APP_DAW] as f64 / 100.0 };
         // LingStationX (the compiled app) playing a project through lingdaw;
         // silenced while another app holds exclusive output.
         let lsx = crate::lingdaw::block(frames);
@@ -666,6 +670,12 @@ fn render(buf: &mut [i16]) {
                 let (lg, rg) = if pan <= 0.0 { (1.0, 1.0 + pan) } else { (1.0 - pan, 1.0) };
                 accl += contrib * lg;
                 accr += contrib * rg;
+            }
+            if let Some(d) = daw {
+                if f * 2 + 1 < d.len() {
+                    accl += d[f * 2] as f64 / 32768.0 * daw_gain;
+                    accr += d[f * 2 + 1] as f64 / 32768.0 * daw_gain;
+                }
             }
             // Real PCM (WAV) on the player stream, honoring exclusive mode.
             let pcm = pcm_next();

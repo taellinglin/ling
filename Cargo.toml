@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.48"
+version = "2030.1.49"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -32,6 +32,7 @@ members = [
     "crates/ling-lex",
     "crates/ling-polyglot",
     "crates/ling-ai",
+    "crates/ling-llm",
     "crates/ling-icon",
     "crates/ling-crypto",
     "crates/ling-audio",
@@ -51,6 +52,9 @@ members = [
     "crates/ling-physics",
     "crates/ling-py",
     "crates/ling-music",
+    "crates/ling-body",
+    "crates/ling-daw",
+    "crates/ling-osdaw",
     "crates/ling-gpu",
     "crates/ling-animation",
     "crates/ling-input",
@@ -135,9 +139,9 @@ vision = ["ling-ai/vision"]
 # candle-core/candle-nn/candle-transformers/tokenizers, a heavy addition
 # irrelevant to builds that don't need local LLM inference. Pair with `cuda`
 # for GPU acceleration.
-llm = ["ling-ai/llm"]
+llm = ["ling-ai/llm", "ling-daw/llm"]
 # See ling-ai's Cargo.toml for why this is separate from `cuda` above.
-llm-cuda = ["ling-ai/llm-cuda"]
+llm-cuda = ["ling-ai/llm-cuda", "ling-daw/llm"]
 # HTTP server builtins (http_route/http_serve): axum/rustls/rusqlite via
 # ling-http. Off by default — the compiler/game/graphics build shouldn't
 # carry a web server stack unless a program actually uses it.
@@ -169,19 +173,23 @@ ling-codegen = { workspace = true }
 fontdue = "0.9"   # rasterizes a kernel project's idle-timeout font (font/*.otf) to a VGA bitmap at build time
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serde_json = "1.0"   # stt_* builtins read faster-whisper output
+ling-daw = { path = "crates/ling-daw" }
+ling-body = { path = "crates/ling-body" }
 minifb = "0.27"
 rayon = { workspace = true }   # parallel software rasteriser (banded flush)
 ling-ai = { path = "crates/ling-ai", version = "2030.0.9" }
 ling-icon = { path = "crates/ling-icon", version = "2030.0.8" }
 ling-audio = { workspace = true }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic = { path = "crates/ling-mic", version = "2030.0.10" }
+ling-mic = { path = "crates/ling-mic", version = "2030.0.11" }
 ling-crypto = { path = "crates/ling-crypto", version = "2030.1.12" }
 subtle = "2.6"   # constant-time compare for lingtp_*'s handshake Finished-MAC check
 ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
+resvg = "0.44"   # tm_tex_load: SVG / SVGZ textures for the game3d textured-mesh builtins
 ling-http = { workspace = true, optional = true, features = ["dev-certs"] }   # http_route/http_serve builtins (feature = "web"); dev-certs backs http_serve_dev_tls
 tower-http = { version = "0.6", features = ["fs"], optional = true }   # ServeDir backs http_static (feature = "web")
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }   # http_post_async/http_job_poll builtins (feature = "web")
@@ -264,7 +272,7 @@ ling-core     = { path = "crates/ling-core", version = "2030.0.8" }
 ling-lex      = { path = "crates/ling-lex", version = "2030.0.7" }
 ling-ast      = { path = "crates/ling-ast", version = "2030.0.7" }
 ling-mir      = { path = "crates/ling-mir", version = "2030.0.11" }
-ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.11" }
+ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.12" }
 ling-runtime  = { path = "crates/ling-runtime", version = "2030.0.7" }
 ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.7" }
 ling-macro    = { path = "crates/ling-macro", version = "2030.0.7" }
@@ -288,13 +296,13 @@ blake3        = "1.5"
 # Audio
 ling-audio = { path = "crates/ling-audio", version = "2030.0.12" }
 ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic   = { path = "crates/ling-mic", version = "2030.0.10" }
+ling-mic   = { path = "crates/ling-mic", version = "2030.0.11" }
 cpal       = "0.15"
 hound      = "3.5"
 half       = "2"
 
 # Networking
-ling-net = { path = "crates/ling-net", version = "2030.0.7" }
+ling-net = { path = "crates/ling-net", version = "2030.0.8" }
 ling-http = { path = "crates/ling-http", version = "0.1.7" }
 tokio    = { version = "1.37", features = ["full"] }
 quinn    = "0.11"

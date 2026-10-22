@@ -26,7 +26,7 @@ request_framebuffer = []
 # needs a `cc` cross-compiler that doesn't exist for this bare-metal
 # target — confirmed by an actual failed RPi build). Slower, portably
 # correct on every architecture instead.
-blake3 = { version = "1.5", default-features = false, features = ["pure"] }
+ling-osdaw = { path = "../ling-osdaw", version = "2030.0.1" }
 # Pure-Rust no_std maths (sin/cos/pow/log10/exp/floor…) for the Ling value
 # runtime (`lingrt`) — compiled `.ling` code calls these through the AOT ABI.
 libm = "0.2"
@@ -37,6 +37,7 @@ fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] 
 # ling-daw's project.rs, no_std + alloc.
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+blake3 = { version = "1.5", default-features = false, features = ["pure"] }
 
 # Ed25519 signature *verification* only (no `alloc`, no `rand_core`/`std`,
 # no `precomputed-tables`/`fast` — those need alloc for their lookup
@@ -100,6 +101,10 @@ horizon-browser = { path = "../../../horizon-browser" }
 # for exactly what security properties the handshake does and doesn't
 # provide.
 ling-messenger = { path = "../../../ling-messenger" }
+
+# Qwen3 inference, freestanding (no_std + alloc + libm): the `ask` command and the model task in drivers/llm.rs. The weights live on a
+# raw second IDE disk (see live/make-model-disk.py in LingOS), so the kernel image itself stays small.
+ling-llm = { path = "../ling-llm" }
 
 [profile.release]
 lto = "fat"

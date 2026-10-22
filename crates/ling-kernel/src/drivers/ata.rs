@@ -24,6 +24,23 @@ const STATUS_BSY: u8 = 0x80;
 
 pub const SECTOR_SIZE: usize = 512;
 
+/// One command sequence on the bus at a time. The waits below yield to other tasks (see `timer::poll_until`), and another task could
+/// otherwise select the other drive in the middle of a command: whoever holds the lock finishes its command first.
+static mut BUS_LOCK: bool = false;
+
+fn lock() {
+    unsafe {
+        while BUS_LOCK {
+            crate::proc::sched::yield_now();
+        }
+        BUS_LOCK = true;
+    }
+}
+
+fn unlock() {
+    unsafe { BUS_LOCK = false };
+}
+
 /// Generous for a real drive spinning up from a cold start, still finite —
 /// see `wait_ready`/`wait_drq`'s doc for why unbounded was never safe here:
 /// with no drive on the bus at all, the status port floats and can read
@@ -68,6 +85,13 @@ fn wait_drq() -> Result<(), ()> {
 /// `buf`. Primary bus, master drive only — this is a "basic" kernel with
 /// one disk, not a general ATA stack.
 pub fn read_sector(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
+    lock();
+    let r = read_sector_locked(lba, buf);
+    unlock();
+    r
+}
+
+fn read_sector_locked(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
     wait_ready()?;
     unsafe {
         outb(DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F) as u8);
@@ -89,6 +113,13 @@ pub fn read_sector(lba: u32, buf: &mut [u8; SECTOR_SIZE]) -> Result<(), ()> {
 /// not just sitting in a volatile cache — matters a lot once this is doing
 /// crash-consistent, content-addressed storage).
 pub fn write_sector(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
+    lock();
+    let r = write_sector_locked(lba, buf);
+    unlock();
+    r
+}
+
+fn write_sector_locked(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
     wait_ready()?;
     unsafe {
         outb(DRIVE_HEAD, 0xE0 | ((lba >> 24) & 0x0F) as u8);
@@ -106,4 +137,139 @@ pub fn write_sector(lba: u32, buf: &[u8; SECTOR_SIZE]) -> Result<(), ()> {
     unsafe { outb(STATUS_COMMAND, CMD_CACHE_FLUSH) };
     wait_ready()?;
     Ok(())
+}
+
+// ── the second drive on the primary bus: the model disk ─────────────────────────
+
+/// Size in sectors (LBA28) of the drive on the primary bus's SLAVE position, from IDENTIFY; `None` when nothing that is a plain ATA disk
+/// answers there (no drive, or an ATAPI / SATA device).
+pub fn slave_sectors() -> Option<u32> {
+    lock();
+    let r = (|| unsafe {
+        outb(DRIVE_HEAD, 0xB0);
+        for _ in 0..4 {
+            inb(STATUS_COMMAND); // the drive needs 400 ns to answer a select
+        }
+        outb(SECTOR_COUNT, 0);
+        outb(LBA_LOW, 0);
+        outb(LBA_MID, 0);
+        outb(LBA_HIGH, 0);
+        outb(STATUS_COMMAND, 0xEC); // IDENTIFY
+        let s = inb(STATUS_COMMAND);
+        if s == 0 || s == 0xFF {
+            return None; // nothing there (a floating bus reads 0xFF)
+        }
+        wait_ready().ok()?;
+        if inb(LBA_MID) != 0 || inb(LBA_HIGH) != 0 {
+            return None; // ATAPI or SATA signature
+        }
+        wait_drq().ok()?;
+        let mut w = [0u16; 256];
+        insw(DATA, w.as_mut_ptr(), 256);
+        let n = ((w[61] as u32) << 16) | w[60] as u32;
+        if n == 0 {
+            None
+        } else {
+            Some(n)
+        }
+    })();
+    unlock();
+    r
+}
+
+/// Read whole sectors from the slave drive: `buf.len()` must be a multiple of 512. Up to 128 sectors go in one command.
+/// Sectors per DRQ block of READ MULTIPLE on the slave drive: 0 = not set up yet / not supported (then plain READ SECTORS, one DRQ per
+/// sector). Every port access is a VM exit under QEMU, and several of them per sector made a 600 MB model take twenty minutes to read:
+/// a block of 16 sectors costs the same handful of accesses as one sector did.
+const MULTI: usize = 16;
+static mut MULTI_STATE: u8 = 0; // 0 unknown, 1 on, 2 off
+
+/// Tell the slave drive to use `MULTI`-sector blocks (SET MULTIPLE MODE); false when it refuses. Call with the bus locked.
+fn slave_set_multiple() -> bool {
+    unsafe {
+        if MULTI_STATE != 0 {
+            return MULTI_STATE == 1;
+        }
+        MULTI_STATE = 2;
+        if wait_ready().is_err() {
+            return false;
+        }
+        outb(DRIVE_HEAD, 0xF0);
+        outb(ERROR_FEATURES, 0x00);
+        outb(SECTOR_COUNT, MULTI as u8);
+        outb(STATUS_COMMAND, 0xC6);
+        if wait_ready().is_err() {
+            return false;
+        }
+        if inb(STATUS_COMMAND) & STATUS_ERR != 0 {
+            return false;
+        }
+        MULTI_STATE = 1;
+        true
+    }
+}
+
+pub fn read_slave(lba: u32, buf: &mut [u8]) -> Result<(), ()> {
+    if buf.len() % SECTOR_SIZE != 0 {
+        return Err(());
+    }
+    lock();
+    let multi = slave_set_multiple();
+    let total = buf.len() / SECTOR_SIZE;
+    let mut done = 0;
+    let mut res = Ok(());
+    'outer: while done < total {
+        let mut n = (total - done).min(128);
+        // whole blocks go by READ MULTIPLE, the tail (under one block) by READ SECTORS
+        let use_multi = multi && n >= MULTI;
+        if use_multi {
+            n -= n % MULTI;
+        }
+        let cur = lba + done as u32;
+        if wait_ready().is_err() {
+            res = Err(());
+            break;
+        }
+        if use_multi {
+            unsafe {
+                outb(DRIVE_HEAD, 0xF0 | ((cur >> 24) & 0x0F) as u8);
+                outb(ERROR_FEATURES, 0x00);
+                outb(SECTOR_COUNT, n as u8);
+                outb(LBA_LOW, (cur & 0xFF) as u8);
+                outb(LBA_MID, ((cur >> 8) & 0xFF) as u8);
+                outb(LBA_HIGH, ((cur >> 16) & 0xFF) as u8);
+                outb(STATUS_COMMAND, 0xC4);
+            }
+            for b in 0..n / MULTI {
+                if wait_ready().is_err() || wait_drq().is_err() {
+                    res = Err(());
+                    break 'outer;
+                }
+                let at = (done + b * MULTI) * SECTOR_SIZE;
+                unsafe { insw(DATA, buf[at..at + MULTI * SECTOR_SIZE].as_mut_ptr() as *mut u16, MULTI * SECTOR_SIZE / 2) };
+            }
+            done += n;
+            continue;
+        }
+        unsafe {
+            outb(DRIVE_HEAD, 0xF0 | ((cur >> 24) & 0x0F) as u8);
+            outb(ERROR_FEATURES, 0x00);
+            outb(SECTOR_COUNT, n as u8);
+            outb(LBA_LOW, (cur & 0xFF) as u8);
+            outb(LBA_MID, ((cur >> 8) & 0xFF) as u8);
+            outb(LBA_HIGH, ((cur >> 16) & 0xFF) as u8);
+            outb(STATUS_COMMAND, CMD_READ_SECTORS);
+        }
+        for s in 0..n {
+            if wait_ready().is_err() || wait_drq().is_err() {
+                res = Err(());
+                break 'outer;
+            }
+            let at = (done + s) * SECTOR_SIZE;
+            unsafe { insw(DATA, buf[at..at + SECTOR_SIZE].as_mut_ptr() as *mut u16, SECTOR_SIZE / 2) };
+        }
+        done += n;
+    }
+    unlock();
+    res
 }

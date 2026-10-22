@@ -29,11 +29,25 @@ pub struct MicConfig {
     pub channels: u16,
     /// Preferred capture buffer size in frames.
     pub buffer_frames: u32,
+    /// Input device name to prefer (see [`input_devices`]); `None` = the system default.
+    pub device: Option<String>,
 }
 
 impl Default for MicConfig {
     fn default() -> Self {
-        Self { sample_rate: 44_100, channels: 1, buffer_frames: 512 }
+        Self { sample_rate: 44_100, channels: 1, buffer_frames: 512, device: None }
+    }
+}
+
+/// Names of the available input devices (empty on the web).
+pub fn input_devices() -> Vec<String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        native::input_devices()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Vec::new()
     }
 }
 
@@ -63,6 +77,15 @@ impl MicInput {
     where
         F: Fn(&[f32]) + Send + Sync + 'static,
     {
+        self.inner.start(move |d, _| callback(d))
+    }
+
+    /// Like [`start`](Self::start), but the callback also gets the channel count of the
+    /// interleaved buffer (known only once the device is open).
+    pub fn start_framed<F>(&self, callback: F) -> Result<(), MicError>
+    where
+        F: Fn(&[f32], usize) + Send + Sync + 'static,
+    {
         self.inner.start(callback)
     }
 
@@ -89,5 +112,15 @@ impl MicInput {
     /// Actual capture sample rate of the open device (Hz).
     pub fn sample_rate(&self) -> u32 {
         self.inner.sample_rate()
+    }
+
+    /// Channels per frame in the buffers handed to the `start` callback (interleaved).
+    pub fn channels(&self) -> u16 {
+        self.inner.channels()
+    }
+
+    /// Name of the device actually capturing.
+    pub fn device_name(&self) -> String {
+        self.inner.device_name()
     }
 }

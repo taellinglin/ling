@@ -267,6 +267,23 @@ async fn stream_multipart_to_disk(req: Request) -> Result<String, Response> {
     Ok(body)
 }
 
+/// The in-browser editor shares memory between its threads (SharedArrayBuffer), which browsers only allow on a
+/// cross-origin-isolated page: COOP + COEP on that page and on the files it loads. Nothing else needs it, so nothing else gets it.
+async fn isolate_online(req: Request, next: axum::middleware::Next) -> Response {
+    let on = {
+        let p = req.uri().path();
+        p.starts_with("/studio/online") || p.starts_with("/static/webstudio/") || p.starts_with("/static/lsx/")
+    };
+    let mut r = next.run(req).await;
+    if on {
+        let h = r.headers_mut();
+        h.insert("cross-origin-opener-policy", axum::http::HeaderValue::from_static("same-origin"));
+        h.insert("cross-origin-embedder-policy", axum::http::HeaderValue::from_static("require-corp"));
+        h.insert("cross-origin-resource-policy", axum::http::HeaderValue::from_static("same-origin"));
+    }
+    r
+}
+
 async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
     let method = req.method().to_string();
     let path = req.uri().path().to_string();
@@ -441,6 +458,7 @@ pub fn spawn_server(
             let router: Router = router
                 .fallback(catch_all)
                 .layer(DefaultBodyLimit::disable())
+                .layer(axum::middleware::from_fn(isolate_online))
                 .with_state(state);
             // ling-http's `dev-certs` feature is unconditionally enabled on
             // its dependency line in the root Cargo.toml (whenever this

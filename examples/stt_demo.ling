@@ -1,0 +1,32 @@
+# Speech to text with faster-whisper, locally:  ling run --interp examples/stt_demo.ling <audio file>
+# One-time setup: python -m venv %LOCALAPPDATA%\LingStation\stt\venv, then  <venv>\Scripts\pip install faster-whisper ctranslate2==4.5.0 onnxruntime==1.19.2
+# and download a model into the Hugging Face cache: huggingface-cli download Systran/faster-whisper-small
+
+fn last_arg(a) {
+    if len(a) < 1.0 { return "speech.wav" }
+    return list_get(a, len(a) - 1.0)
+}
+
+bind start = do {
+    bind audio = last_arg(get_args())
+    println("faster-whisper available: ", stt_available())
+    println("models in the local cache: ", stt_models())
+    bind job = stt_start(audio, "small", "auto", true)
+    if job == "" {
+        println("could not start")
+        return 0.0
+    }
+    while !stt_done(job) {
+        println("  ", stt_info(job), " ", round(stt_poll(job) * 100.0), "%")
+        sleep(500.0)
+    }
+    if stt_error(job) != "" { println("error: ", stt_error(job)) }
+    println("language: ", stt_language(job))
+    bind segs = stt_segments(job)
+    bind i = 0.0
+    while i < len(segs) / 3.0 {
+        println(list_get(segs, i * 3.0), " - ", list_get(segs, i * 3.0 + 1.0), "  ", list_get(segs, i * 3.0 + 2.0))
+        bind i = i + 1.0
+    }
+    println(stt_srt(job, 30.0))
+}

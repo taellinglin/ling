@@ -13,7 +13,7 @@ impl WebMic {
 
     pub fn start<F>(&self, _cb: F) -> Result<(), MicError>
     where
-        F: Fn(&[f32]) + Send + Sync + 'static,
+        F: Fn(&[f32], usize) + Send + Sync + 'static,
     {
         Ok(())
     }
@@ -34,5 +34,13 @@ impl WebMic {
 
     pub fn sample_rate(&self) -> u32 {
         44_100
+    }
+
+    pub fn channels(&self) -> u16 {
+        1
+    }
+
+    pub fn device_name(&self) -> String {
+        String::new()
     }
 }

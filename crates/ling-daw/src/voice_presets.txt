@@ -1,0 +1,65 @@
+[aria]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "aria"
+type = voice
+gender=0.900 bright=0.650 breath=0.100 vib_rate=0.550 vib_depth=0.400 vib_delay=0.350 attack=0.150 release=0.300 glide=0.120 cons=0.500
+
+[mei]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "mei"
+type = voice
+gender=0.700 bright=0.550 breath=0.120 vib_rate=0.500 vib_depth=0.300 vib_delay=0.400 attack=0.150 release=0.300 glide=0.150 cons=0.500
+
+[kai]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "kai"
+type = voice
+gender=0.350 bright=0.600 breath=0.100 vib_rate=0.450 vib_depth=0.250 vib_delay=0.400 attack=0.120 release=0.250 glide=0.150 cons=0.550
+
+[ren]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "ren"
+type = voice
+gender=0.050 bright=0.450 breath=0.080 vib_rate=0.400 vib_depth=0.200 vib_delay=0.450 attack=0.150 release=0.300 glide=0.200 cons=0.550
+
+[choir]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "choir"
+type = voice
+gender=0.600 bright=0.500 breath=0.150 vib_rate=0.400 vib_depth=0.100 vib_delay=0.300 attack=0.350 release=0.450 glide=0.150 cons=0.400
+
+[whisper]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "whisper"
+type = voice
+gender=0.550 bright=0.800 breath=0.300 whisp=0.900 vib_depth=0.000 attack=0.100 release=0.200 glide=0.100 cons=0.600 gain=0.900
+
+[robot]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "robot"
+type = voice
+gender=0.400 bright=0.900 breath=0.000 vib_depth=0.000 attack=0.020 release=0.100 glide=0.000 cons=0.900
+
+[ensemble]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "ensemble"
+type = voice
+voices=0.570 choir=0.600 ring=0.450 gender=0.600 bright=0.500 breath=0.150 vib_rate=0.400 vib_depth=0.150 vib_delay=0.300 attack=0.300 release=0.450 glide=0.150 cons=0.400
+
+[smoky]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "smoky"
+type = voice
+gender=0.250 bright=0.350 breath=0.350 fry=0.700 open=0.800 drift=0.550 scoop=0.300 nasal=0.100 vib_depth=0.150 vib_delay=0.600 attack=0.200 release=0.350 glide=0.250 cons=0.550
+
+[gospel]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "gospel"
+type = voice
+voices=0.430 choir=0.350 gender=0.700 bright=0.650 scoop=0.500 trem=0.300 ring=0.600 vib_rate=0.600 vib_depth=0.450 vib_delay=0.250 attack=0.150 release=0.400 glide=0.250 cons=0.500
+
+[arpeggio]
+# Ling Voice patch - a formant singer; give notes IPA lyrics in the Piano Roll
+name = "arpeggio"
+type = voice
+voices=0.570 choir=0.350 ring=0.350 gender=0.700 bright=0.650 vib_depth=0.150 attack=0.050 release=0.300 glide=0.100 cons=0.450 arp=1.000 arp_mode=0.000 arp_rate=0.600 arp_gate=0.550 arp_oct=0.500

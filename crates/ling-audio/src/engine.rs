@@ -1035,6 +1035,21 @@ impl AudioEngine {
         }
     }
 
+    /// Change a playing voice's volume and playback rate (a rolling ball's loop
+    /// follows its speed). Negative values leave that setting alone.
+    pub fn set_sample_voice(&self, voice: u32, vol: f32, pitch: f32) {
+        if let Ok(mut s) = self.state.lock() {
+            if let Some(v) = s.sample_voices.iter_mut().find(|v| v.id == voice) {
+                if vol >= 0.0 {
+                    v.vol = vol;
+                }
+                if pitch > 0.0 {
+                    v.pitch = pitch;
+                }
+            }
+        }
+    }
+
     /// Stop a sample voice by id.
     pub fn stop_sample(&self, voice: u32) {
         if let Ok(mut s) = self.state.lock() {

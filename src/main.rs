@@ -477,6 +477,7 @@ impl ProjKind {
     }
 }
 
+#[derive(Clone)]
 struct LingProject {
     name: String,
     version: String,
@@ -506,6 +507,18 @@ struct LingProject {
     /// default — enabling it for a target with no framebuffer-based
     /// renderer would blank the screen (confirmed the hard way once).
     graphics: bool,
+    /// `entry_os = "<path>"`: the entry used for the LingOS targets (kernel, rpi,
+    /// lingos) instead of `entry` — an app whose desktop entry `use`s the desktop
+    /// platform layer can name its LingOS twin (e.g. `ling/main_os.ling`).
+    entry_os: Option<PathBuf>,
+    /// `portable = "<dir>"`: desktop builds (win / lin / mac) get the portable
+    /// launcher — the exe runs `<dir>/<entry>` on the interpreter from the folder
+    /// next to it (copied there by `includes`), so multi-folder apps whose modules
+    /// `use "sub/..."` keep their layout. Same as setting LING_APP_INTERP=<dir>.
+    portable: Option<String>,
+    /// `includes_os = [...]`: the resources embedded by the LingOS targets instead of
+    /// `includes` (a kernel image should not carry a desktop build's music folder).
+    includes_os: Option<Vec<String>>,
 }
 
 fn discover_project(target: &str) -> LingProject {
@@ -530,6 +543,9 @@ fn discover_project(target: &str) -> LingProject {
             kernel_app: None,
             bundle_app: None,
             graphics: false,
+            entry_os: None,
+            portable: None,
+            includes_os: None,
         }
     } else if path.is_dir() {
         // ling-fu project: 灵符.toml or ลิงฟู.toml
@@ -571,6 +587,9 @@ fn discover_project(target: &str) -> LingProject {
             kernel_app: None,
             bundle_app: None,
             graphics: false,
+            entry_os: None,
+            portable: None,
+            includes_os: None,
         }
     } else {
         eprintln!("error: '{}' is not a .ling file or directory", target);
@@ -651,6 +670,9 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         kernel_app: None,
         bundle_app: None,
         graphics: false,
+        entry_os: None,
+        portable: None,
+        includes_os: None,
     }
 }
 
@@ -678,6 +700,8 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut embed_root: Option<PathBuf> = None;
     let mut kernel_app: Option<String> = None;
     let mut bundle_app: Option<(String, PathBuf)> = None;
+    let mut entry_os: Option<PathBuf> = None;
+    let mut portable: Option<String> = None;
 
     for line in text.lines() {
         let line = line.trim();
@@ -715,6 +739,12 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
                 bundle_app = Some((name.trim().to_string(), base.join(path.trim())));
             }
         }
+        if let Some(v) = toml_kv(line, "entry_os") {
+            entry_os = Some(base.join(v));
+        }
+        if let Some(v) = toml_kv(line, "portable") {
+            portable = Some(v.trim_matches('/').to_string());
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -737,6 +767,9 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         kernel_app,
         bundle_app,
         graphics,
+        entry_os,
+        portable,
+        includes_os: parse_includes_os(&text),
     }
 }
 
@@ -1121,6 +1154,21 @@ fn build_native(
     let is_kernel = matches!(platform, NativePlatform::BareMetal | NativePlatform::Rpi);
     let is_lingos = matches!(platform, NativePlatform::Lingos);
     let is_rpi = matches!(platform, NativePlatform::Rpi);
+    // LingOS targets build the manifest's `entry_os` when it names one
+    let os_project;
+    let project = match (&project.entry_os, is_kernel || is_lingos) {
+        (Some(e), true) => {
+            let mut p = project.clone();
+            println!("  [{}] using entry_os {}", platform.dir_name(), e.display());
+            p.entry = e.clone();
+            if let Some(inc) = &project.includes_os {
+                p.includes = inc.clone();
+            }
+            os_project = p;
+            &os_project
+        },
+        _ => project,
+    };
     println!(
         "  [{}] building {} ({triple}){}…",
         platform.dir_name(),
@@ -1519,7 +1567,7 @@ fn build_native(
         .expect("write Cargo.toml");
         std::fs::write(
             build_dir.join("src/main.rs"),
-            gen_main_rs(&entry_filename, do_pack),
+            gen_main_rs(&entry_filename, do_pack, project.portable.as_deref()),
         )
         .expect("write src/main.rs");
         std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
@@ -1562,6 +1610,16 @@ fn build_native(
     let build_cmd = choose_build_tool(platform);
 
     let mut cargo_args: Vec<&str> = vec!["build", "--release", "--target", triple];
+
+    // A kernel / LingOS build of the same project shares this build dir and leaves a
+    // build-std .cargo/config.toml behind; a later host build would then link a second
+    // `core` ("duplicate lang item"). Host builds drop that generated config first.
+    if !is_kernel && !is_lingos {
+        let stale = build_dir.join(".cargo").join("config.toml");
+        if std::fs::read_to_string(&stale).map(|t| t.contains("build-std")).unwrap_or(false) {
+            let _ = std::fs::remove_file(&stale);
+        }
+    }
 
     // For no_std targets, we need nightly features
     if is_kernel || is_lingos {
@@ -2107,6 +2165,13 @@ fn main() {
 /// Cargo.toml writes ends up being final on disk.
 fn gen_app_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
+    // LING_APP_FEATURES="llm,web" turns on features of the ling crate inside the built app (default: none)
+    let feats = std::env::var("LING_APP_FEATURES")
+        .ok()
+        .map(|f| f.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "))
+        .filter(|f| !f.is_empty())
+        .map(|f| format!(", features = [{f}]"))
+        .unwrap_or_default();
     format!(
         r#"[workspace]
 [package]
@@ -2120,7 +2185,7 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-ling = {{ path = "{root_str}", package = "ling-lang" }}
+ling = {{ path = "{root_str}", package = "ling-lang"{feats} }}
 
 [build-dependencies]
 winresource = "0.1"
@@ -2138,6 +2203,13 @@ strip = true
 /// Generate Cargo.toml for LingOS userspace (no_std, links to ling-user).
 fn gen_user_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
+    // LING_APP_FEATURES="llm,web" turns on features of the ling crate inside the built app (default: none)
+    let feats = std::env::var("LING_APP_FEATURES")
+        .ok()
+        .map(|f| f.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "))
+        .filter(|f| !f.is_empty())
+        .map(|f| format!(", features = [{f}]"))
+        .unwrap_or_default();
     format!(
         r#"[workspace]
 [package]
@@ -2241,6 +2313,13 @@ strip = true
 /// default matching by coincidence.
 fn gen_native_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
+    // LING_APP_FEATURES="llm,web" turns on features of the ling crate inside the built app (default: none)
+    let feats = std::env::var("LING_APP_FEATURES")
+        .ok()
+        .map(|f| f.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "))
+        .filter(|f| !f.is_empty())
+        .map(|f| format!(", features = [{f}]"))
+        .unwrap_or_default();
     format!(
         r#"[workspace]
 [package]
@@ -2254,7 +2333,7 @@ name = "{name}"
 path = "src/main.rs"
 
 [dependencies]
-ling = {{ path = "{root_str}", package = "ling-lang" }}
+ling = {{ path = "{root_str}", package = "ling-lang"{feats} }}
 
 [build-dependencies]
 winresource = "0.1"
@@ -2548,7 +2627,38 @@ fn resolve_icon(cli: Option<&Path>, project: &LingProject, ling_root: &Path) -> 
     default.exists().then_some(default)
 }
 
-fn gen_main_rs(entry_file: &str, packed: bool) -> String {
+fn gen_main_rs(entry_file: &str, packed: bool, portable: Option<&str>) -> String {
+    // LING_APP_INTERP=<dir>: a portable launcher. The app runs on the interpreter from `<dir>/<entry>` next to the exe (the folder is
+    // assembled by the caller), with the exe's folder as the working directory so assets, settings and projects live beside it.
+    // Startup errors go to lingstation.log because the windows build has no console.
+    // The manifest's `portable = "<dir>"` does the same as the environment variable.
+    let portable_dir = std::env::var("LING_APP_INTERP").ok().or_else(|| portable.map(str::to_string));
+    if let Some(dir) = portable_dir {
+        return format!(
+            r#"// Built by ling build (portable launcher) — no console window on Windows.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+fn main() {{
+    if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {{
+        let _ = std::env::set_current_dir(d);
+    }}
+    let entry = "{dir}/{entry_file}";
+    let fail = |msg: String| -> ! {{
+        let _ = std::fs::write("lingstation.log", &msg);
+        eprintln!("{{msg}}");
+        std::process::exit(1);
+    }};
+    let source = match std::fs::read_to_string(entry) {{
+        Ok(s) => s,
+        Err(e) => fail(format!("cannot read {{entry}}: {{e}} (keep the exe next to its ling, assets and instruments folders)")),
+    }};
+    std::env::set_var("RUST_BACKTRACE", "1");
+    if let Err(e) = ling::run_named(&source, Some(std::path::PathBuf::from("{dir}")), Some(entry)) {{
+        fail(e);
+    }}
+}}
+"#
+        );
+    }
     // When packing, pull in the generated resource table and self-extract it
     // before running so every path-based asset loader finds its files on disk.
     let res_mod = if packed { "mod resources;\n" } else { "" };
@@ -2638,6 +2748,19 @@ fn main() {
 ///   "/music/*.wav",
 ///   "/font/*.otf",
 /// Patterns are returned verbatim (leading `/`/`./` stripped later).
+/// `includes_os = ["a", "b"]` (one line) — None when the manifest has no such key.
+fn parse_includes_os(text: &str) -> Option<Vec<String>> {
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(rest) = line.strip_prefix("includes_os").and_then(|r| r.trim_start().strip_prefix('=')) {
+            let mut out = Vec::new();
+            collect_quoted(rest, &mut out);
+            return Some(out);
+        }
+    }
+    None
+}
+
 fn parse_includes(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_section = false;

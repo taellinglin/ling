@@ -150,7 +150,9 @@ pub fn spawn(entry: u64) -> u64 {
                 // Fabricate the frame `switch_to`'s pop sequence expects:
                 // r15,r14,r13,r12,rbp,rbx (unused, zeroed) then a return
                 // address landing in `trampoline`.
-                let mut sp = top - 8;
+                // `ret` pops the trampoline address, leaving rsp at `top - 8` (8 mod 16) as if `trampoline` had been called: with
+                // hardware SSE enabled the compiler uses aligned `movaps` on the stack and faults when entered 16-byte aligned.
+                let mut sp = top - 16;
                 *(sp as *mut u64) = trampoline as *const () as usize as u64;
                 for _ in 0..6 {
                     sp -= 8;

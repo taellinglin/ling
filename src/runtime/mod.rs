@@ -2,6 +2,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod ai;
 #[cfg(not(target_arch = "wasm32"))]
+mod body;
+#[cfg(not(target_arch = "wasm32"))]
+mod game3d;
+#[cfg(not(target_arch = "wasm32"))]
+mod daw;
+#[cfg(not(target_arch = "wasm32"))]
 mod gamepad;
 #[cfg(target_arch = "wasm32")]
 mod input_web;
@@ -9,6 +15,8 @@ mod input_web;
 pub(crate) mod jit_abi;
 #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
 mod llm;
+#[cfg(not(target_arch = "wasm32"))]
+mod stt;
 #[cfg(not(target_arch = "wasm32"))]
 mod terrain_bg;
 #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
@@ -210,6 +218,10 @@ pub enum Value {
 // are hashed on every variable access and builtin dispatch, where SipHash dominates.
 use rustc_hash::FxHashMap;
 type Env = FxHashMap<String, Value>;
+
+fn return_list(v: Vec<Value>) -> Value {
+    Value::List(Rc::new(v))
+}
 
 #[inline]
 fn new_env() -> Env {
@@ -1223,6 +1235,19 @@ fn os_key_down(vk: i32) -> bool {
     }
 }
 
+/// (held now, pressed since the last call): the second catches a key tapped and released between two frames, which a once-per-frame
+/// look at the held state misses (fast typing at 20-50 ms per frame dropped letters).
+#[cfg(windows)]
+fn os_key_state(vk: i32) -> (bool, bool) {
+    unsafe {
+        extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+        }
+        let s = GetAsyncKeyState(vk) as u16;
+        (s & 0x8000 != 0, s & 1 != 0)
+    }
+}
+
 /// True when `hwnd` is the actual OS foreground window. `GetAsyncKeyState`
 /// (see `os_key_down`) reads the global key-state table regardless of which
 /// window is focused, so the `topmost_window` input fallback must check this
@@ -1312,6 +1337,30 @@ fn str_to_vk(name: &str) -> Option<i32> {
         "rctrl" | "rightctrl" => 0xA3,
         "lalt" | "leftalt" => 0xA4,
         "ralt" | "rightalt" => 0xA5,
+        "f1" => 0x70,
+        "f2" => 0x71,
+        "f3" => 0x72,
+        "f4" => 0x73,
+        "f5" => 0x74,
+        "f6" => 0x75,
+        "f7" => 0x76,
+        "f8" => 0x77,
+        "f9" => 0x78,
+        "f10" => 0x79,
+        "f11" => 0x7A,
+        "f12" => 0x7B,
+        "capslock" => 0x14,
+        "minus" | "-" => 0xBD,
+        "equals" | "=" | "plus" => 0xBB,
+        "comma" | "," => 0xBC,
+        "period" | "." => 0xBE,
+        "slash" | "/" => 0xBF,
+        "semicolon" | ";" => 0xBA,
+        "quote" | "'" => 0xDE,
+        "lbracket" | "[" => 0xDB,
+        "rbracket" | "]" => 0xDD,
+        "backslash" => 0xDC,
+        "grave" | "`" => 0xC0,
         "tab" => 0x09,
         "backspace" => VK_BACK,
         "delete" => 0x2E,
@@ -1402,22 +1451,38 @@ fn hex_to_32(s: &str) -> [u8; 32] {
 }
 
 /// Builds a minimal, valid PDF with one page per input image (decoded via
-/// `image`, page sized to the image's own pixel dimensions), backing the
-/// `pdf_from_images` builtin. No PDF crate: each page is three objects
-/// (Page / Contents / Image XObject) hand-written directly, with the image
-/// stream flate-compressed raw RGB8 (`/Filter /FlateDecode /ColorSpace
-/// /DeviceRGB /BitsPerComponent 8`) — no separate re-encoding step beyond
-/// what `flate2` (already a dependency) does for the stream itself.
+/// `image`), backing both `pdf_from_images` and `pdf_from_images_sized`. No
+/// PDF crate: each page is three objects (Page / Contents / Image XObject)
+/// hand-written directly, with the image stream flate-compressed raw RGB8
+/// (`/Filter /FlateDecode /ColorSpace /DeviceRGB /BitsPerComponent 8`) — no
+/// separate re-encoding step beyond what `flate2` (already a dependency)
+/// does for the stream itself.
+///
+/// `page_pt`, when given, is the MediaBox size in PDF points (1/72in),
+/// applied to every page regardless of that image's own pixel dimensions —
+/// the content stream's `cm` matrix scales the image to fill it. `None`
+/// keeps the original behavior: MediaBox == the image's own pixel
+/// dimensions (i.e. an implied 72 DPI), which is what `pdf_from_images`
+/// still does — fine for a quick multi-image bundle, but it means a page
+/// sized in real inches always needs the source image already downsampled
+/// to that many pixels. `pdf_from_images_sized` exists so a caller can keep
+/// a high-resolution source image (embedded at its native `/Width /Height`,
+/// so viewers render it at full quality) while still declaring a sane
+/// physical page size — e.g. an actual banknote's real-world dimensions —
+/// independent of that pixel count.
 #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
 fn build_pdf_from_images(
     paths: &[String],
     out_path: &str,
+    page_pt: Option<(f64, f64)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write as _;
 
     struct PageImg {
         w: u32,
         h: u32,
+        page_w: f64,
+        page_h: f64,
         compressed: Vec<u8>,
     }
 
@@ -1425,9 +1490,10 @@ fn build_pdf_from_images(
     for p in paths {
         let img = image::open(p)?.to_rgb8();
         let (w, h) = (img.width(), img.height());
+        let (page_w, page_h) = page_pt.unwrap_or((w as f64, h as f64));
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(img.as_raw())?;
-        pages.push(PageImg { w, h, compressed: enc.finish()? });
+        pages.push(PageImg { w, h, page_w, page_h, compressed: enc.finish()? });
     }
 
     let n = pages.len();
@@ -1458,13 +1524,14 @@ fn build_pdf_from_images(
         let content_num = page_num + 1;
         let image_num = page_num + 2;
         let (w, h) = (page.w, page.h);
+        let (pw, ph) = (page.page_w, page.page_h);
 
         off[page_num as usize] = buf.len();
         buf.extend_from_slice(format!(
-            "{page_num} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << /XObject << /Im0 {image_num} 0 R >> >> /Contents {content_num} 0 R >>\nendobj\n"
+            "{page_num} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw:.2} {ph:.2}] /Resources << /XObject << /Im0 {image_num} 0 R >> >> /Contents {content_num} 0 R >>\nendobj\n"
         ).as_bytes());
 
-        let content = format!("q {w} 0 0 {h} 0 0 cm /Im0 Do Q");
+        let content = format!("q {pw:.2} 0 0 {ph:.2} 0 0 cm /Im0 Do Q");
         off[content_num as usize] = buf.len();
         buf.extend_from_slice(
             format!(
@@ -1809,6 +1876,8 @@ pub struct Interpreter {
     pub source_dir: Option<std::path::PathBuf>,
     /// Files already loaded — prevents circular imports.
     loaded_files: std::collections::HashSet<String>,
+    /// functions defined by user scripts (`script_load`), the only ones `script_call` may run
+    script_fns: std::collections::HashSet<String>,
     /// Optional audio engine — `None` if no audio device is available.
     #[cfg(not(target_arch = "wasm32"))]
     audio: Option<AudioEngine>,
@@ -1868,6 +1937,21 @@ pub struct Interpreter {
     music: Option<ling_music::MusicEngine>,
     #[cfg(not(target_arch = "wasm32"))]
     music_init: bool,
+    /// LingStationX audio engine (`daw_*` builtins) — lazily initialised.
+    #[cfg(not(target_arch = "wasm32"))]
+    daw: Option<ling_daw::Daw>,
+    /// Acoustic body kit (`body_*` builtins).
+    #[cfg(not(target_arch = "wasm32"))]
+    body: body::BodyState,
+    /// Textured meshes, mesh collision and particles (`tm_*` / `coll_*` / `pfx_*`).
+    #[cfg(not(target_arch = "wasm32"))]
+    g3d: game3d::G3dState,
+    /// Global key/value store (`st_*` builtins) — shared app state for scripts.
+    gstore: FxHashMap<String, Value>,
+    /// Clip rectangle for the `px_*` primitives: x0, y0, x1, y1 (exclusive).
+    px_clip: Option<[i32; 4]>,
+    /// "Black" colour scheme active for the `px_*` primitives.
+    px_black: bool,
     /// Decoded tracks (for analysis + playback), by `music_load` handle.
     tracks: Vec<ling_music::DecodedAudio>,
     /// Parsed `.lrc` lyrics, by `music_lrc` handle.
@@ -1977,6 +2061,7 @@ impl Interpreter {
             svg: RefCell::new(None),
             source_dir: None,
             loaded_files: std::collections::HashSet::new(),
+            script_fns: std::collections::HashSet::new(),
             #[cfg(not(target_arch = "wasm32"))]
             audio,
             #[cfg(not(target_arch = "wasm32"))]
@@ -2011,6 +2096,15 @@ impl Interpreter {
             music: None,
             #[cfg(not(target_arch = "wasm32"))]
             music_init: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            daw: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            body: body::BodyState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            g3d: game3d::G3dState::default(),
+            gstore: FxHashMap::default(),
+            px_clip: None,
+            px_black: false,
             tracks: Vec::new(),
             lyrics: Vec::new(),
             midis: Vec::new(),
@@ -3390,6 +3484,21 @@ impl Interpreter {
         #[cfg(target_arch = "wasm32")]
         if let Some(v) = self.wasm_music_builtin(name, &args)? {
             return Ok(v);
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.daw_builtin(name, &args) {
+            return r;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.body_builtin(name, &args) {
+            return r;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.game3d_builtin(name, &args) {
+            return r;
         }
 
         match name {
@@ -4952,19 +5061,22 @@ impl Interpreter {
                         .get(2)
                         .map(|v| v.to_string())
                         .unwrap_or_else(|| "Ling".into());
+                    // optional 4th argument: 1 = resizable / maximizable window
+                    let resizable = self.arg_num(&args, 3, 0.0)? > 0.5;
                     let mut gfx = self.gfx.borrow_mut();
                     let mut win = minifb::Window::new(
                         &title,
                         w,
                         h,
                         minifb::WindowOptions {
-                            resize: false,
+                            resize: resizable,
                             scale: minifb::Scale::X1,
                             ..Default::default()
                         },
                     )
                     .map_err(|e| EvalErr::from(format!("cannot open window: {e}")))?;
                     apply_frame_pacing(&mut win, gfx.vsync);
+                    gfx.resizable = resizable;
                     gfx.buffer = vec![0u32; w * h];
                     gfx.width = w;
                     gfx.height = h;
@@ -5213,6 +5325,7 @@ impl Interpreter {
                             let queue = std::mem::take(&mut gfx.depth_queue);
                             {
                                 let g = &mut *gfx;
+                                crate::gfx::raster::set_persp_zd(g.camera.zdist);
                                 let z = if dt { Some(&mut g.depth_buf) } else { None };
                                 queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                             }
@@ -5257,16 +5370,85 @@ impl Interpreter {
                                 .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
                             ling_phase_add(phase::BLIT, _b.elapsed().as_nanos());
                         }
+                        // resizable windows: the framebuffer follows the client size (next frame)
+                        if g.resizable {
+                            if let Some((nw, nh)) = g.window.as_ref().map(|w| w.get_size()) {
+                                if nw > 0 && nh > 0 && (nw != g.width || nh != g.height) {
+                                    g.width = nw;
+                                    g.height = nh;
+                                    g.buffer = vec![0u32; nw * nh];
+                                    g.prev_frame.clear();
+                                    g.sync_projection();
+                                }
+                            }
+                        }
                     }
                     // Read mouse AFTER update_with_buffer so events are processed.
                     let mouse_pos = {
                         let gfx = self.gfx.borrow();
                         gfx.window
                             .as_ref()
-                            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+                            .filter(|w| {
+                        // minifb panics clamping the mouse into a window with no client area (minimised)
+                        let (sw, sh) = w.get_size();
+                        sw > 0 && sh > 0
+                    })
+                    .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
                     };
                     let mut gfx = self.gfx.borrow_mut();
-                    if gfx.mouse_captured {
+                    // Windows: true relative look. Read the OS cursor, take the delta from the
+                    // client-area centre, and put the cursor back there every frame, so turning
+                    // never stops at a screen or window edge. Nothing is warped while another
+                    // window has focus.
+                    #[cfg(windows)]
+                    let win_captured = if gfx.mouse_captured {
+                        #[repr(C)]
+                        struct POINT { x: i32, y: i32 }
+                        #[repr(C)]
+                        struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+                        extern "system" {
+                            fn GetForegroundWindow() -> isize;
+                            fn GetClientRect(hwnd: isize, r: *mut RECT) -> i32;
+                            fn ClientToScreen(hwnd: isize, p: *mut POINT) -> i32;
+                            fn GetCursorPos(p: *mut POINT) -> i32;
+                            fn SetCursorPos(x: i32, y: i32) -> i32;
+                        }
+                        let hwnd = gfx.window.as_ref().map(|w| w.get_window_handle() as isize).unwrap_or(0);
+                        let mut handled = false;
+                        if hwnd != 0 {
+                            unsafe {
+                                let fg = GetForegroundWindow() == hwnd;
+                                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                                if fg && GetClientRect(hwnd, &mut r) != 0 && r.right > 0 && r.bottom > 0 {
+                                    let mut c = POINT { x: r.right / 2, y: r.bottom / 2 };
+                                    ClientToScreen(hwnd, &mut c);
+                                    let mut p = POINT { x: c.x, y: c.y };
+                                    GetCursorPos(&mut p);
+                                    if gfx.last_mx.is_nan() {
+                                        gfx.mouse_dx = 0.0;
+                                        gfx.mouse_dy = 0.0;
+                                    } else {
+                                        gfx.mouse_dx = (p.x - c.x) as f32;
+                                        gfx.mouse_dy = (p.y - c.y) as f32;
+                                    }
+                                    SetCursorPos(c.x, c.y);
+                                    gfx.last_mx = (r.right / 2) as f32;
+                                    gfx.last_my = (r.bottom / 2) as f32;
+                                } else {
+                                    gfx.mouse_dx = 0.0;
+                                    gfx.mouse_dy = 0.0;
+                                    gfx.last_mx = f32::NAN;
+                                }
+                            }
+                            handled = true;
+                        }
+                        handled
+                    } else { false };
+                    #[cfg(not(windows))]
+                    let win_captured = false;
+                    if win_captured {
+                        // done above
+                    } else if gfx.mouse_captured {
                         let w = gfx.width as f32;
                         let h = gfx.height as f32;
                         if let Some((mx, my)) = mouse_pos {
@@ -5403,6 +5585,7 @@ impl Interpreter {
                             let queue = std::mem::take(&mut gfx.depth_queue);
                             {
                                 let g = &mut *gfx;
+                                crate::gfx::raster::set_persp_zd(g.camera.zdist);
                                 let z = if dt { Some(&mut g.depth_buf) } else { None };
                                 queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                             }
@@ -5876,6 +6059,17 @@ impl Interpreter {
                 return Ok(Value::Number(self.gfx.borrow().mouse_dx as f64));
                 #[cfg(target_arch = "wasm32")]
                 return Ok(Value::Number(crate::gfx::wasm_mouse_dx() as f64));
+            },
+            // ── mouse_scroll_x() → f64 — horizontal scroll delta this frame (tilt wheel / trackpad) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "mouse_scroll_x" => {
+                let gfx = self.gfx.borrow();
+                let s = gfx.window.as_ref().and_then(|w| w.get_scroll_wheel()).map(|(x, _)| x as f64).unwrap_or(0.0);
+                return Ok(Value::Number(s));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "mouse_scroll_x" => {
+                return Ok(Value::Number(0.0));
             },
             // ── mouse_scroll() → f64 — vertical scroll-wheel delta this frame ──
             #[cfg(not(target_arch = "wasm32"))]
@@ -7962,6 +8156,11 @@ impl Interpreter {
                 let (mx, my) = gfx
                     .window
                     .as_ref()
+                    .filter(|w| {
+                        // minifb panics clamping the mouse into a window with no client area (minimised)
+                        let (sw, sh) = w.get_size();
+                        sw > 0 && sh > 0
+                    })
                     .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
                     .unwrap_or((gfx.camera.cx, gfx.camera.cy));
                 let cam = &gfx.camera;
@@ -10626,6 +10825,191 @@ impl Interpreter {
                     .unwrap_or_default();
                 return Ok(Value::Str(ext));
             },
+            // ── user scripts: plain Ling files loaded and run while the program runs ──
+            // script_load(path) -> [ok, message, stem]: parses the file and registers its functions. A script named `arp.ling` may only define
+            // functions that start with `arp_` (so scripts cannot replace the program's own functions); loading it again replaces them.
+            #[cfg(not(target_arch = "wasm32"))]
+            "script_load" => {
+                let path = self.arg_str(&args, 0, "");
+                let stem: String = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default().chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
+                let fail = |m: String, stem: &str| return_list(vec![Value::Bool(false), Value::Str(m), Value::Str(stem.to_string())]);
+                if stem.is_empty() {
+                    return Ok(fail("not a script file".into(), ""));
+                }
+                let source = match std::fs::read_to_string(&path) {
+                    Ok(t) => t,
+                    Err(e) => return Ok(fail(format!("{path}: {e}"), &stem)),
+                };
+                let program = match crate::parser::parse(&source) {
+                    Ok(p) => p,
+                    Err(e) => return Ok(fail(format!("parse error: {e}"), &stem)),
+                };
+                let prefix = format!("{stem}_");
+                let mut defs: Vec<FnDef> = vec![];
+                for item in &program.items {
+                    match item {
+                        Item::Fn(def) => {
+                            if !def.name.starts_with(&prefix) {
+                                return Ok(fail(format!("function '{}' must start with '{prefix}' (every function in {stem}.ling does)", def.name), &stem));
+                            }
+                            if self.functions.contains_key(&def.name) && !self.script_fns.contains(&def.name) {
+                                return Ok(fail(format!("'{}' is already a function of the program", def.name), &stem));
+                            }
+                            defs.push(def.clone());
+                        },
+                        _ => return Ok(fail("a script may only contain fn definitions".into(), &stem)),
+                    }
+                }
+                // a reload replaces what the script had before
+                let old: Vec<String> = self.script_fns.iter().filter(|n| n.starts_with(&prefix)).cloned().collect();
+                for n in old {
+                    self.functions.remove(&n);
+                    self.script_fns.remove(&n);
+                }
+                for def in defs {
+                    self.script_fns.insert(def.name.clone());
+                    self.functions.insert(def.name.clone(), Rc::new(def));
+                }
+                return Ok(return_list(vec![Value::Bool(true), Value::Str(String::new()), Value::Str(stem)]));
+            },
+            // script_call(name, [args]) -> [ok, value or error text]: runs a function a script defined
+            #[cfg(not(target_arch = "wasm32"))]
+            "script_call" => {
+                let fname = self.arg_str(&args, 0, "");
+                if !self.script_fns.contains(&fname) {
+                    return Ok(return_list(vec![Value::Bool(false), Value::Str(format!("no script function '{fname}'"))]));
+                }
+                let fargs: Vec<Value> = match args.get(1) {
+                    Some(Value::List(l)) => l.as_ref().clone(),
+                    _ => vec![],
+                };
+                let env: Env = FxHashMap::default();
+                return match self.call_named(&fname, fargs, &env) {
+                    Ok(v) => Ok(return_list(vec![Value::Bool(true), v])),
+                    Err(EvalErr::Runtime(m)) => Ok(return_list(vec![Value::Bool(false), Value::Str(m)])),
+                    Err(EvalErr::Return(v)) => Ok(return_list(vec![Value::Bool(true), v])),
+                    Err(EvalErr::Break) => Ok(return_list(vec![Value::Bool(false), Value::Str("break outside a loop".into())])),
+                };
+            },
+            // script_functions() -> the names of every loaded script function
+            #[cfg(not(target_arch = "wasm32"))]
+            "script_functions" => {
+                let mut v: Vec<String> = self.script_fns.iter().cloned().collect();
+                v.sort();
+                return Ok(return_list(v.into_iter().map(Value::Str).collect()));
+            },
+            // ── speech to text through faster-whisper, locally (see runtime/stt.rs) ──
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_available" => return Ok(Value::Bool(stt::stt_available())),
+            // stt_models() -> [name, size_mb, ...]
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_models" => {
+                let mut v = Vec::new();
+                for (n, mb) in stt::stt_models() {
+                    v.push(Value::Str(n));
+                    v.push(Value::Number(mb));
+                }
+                return Ok(Value::List(Rc::new(v)));
+            },
+            // stt_start(audio_path, model, lang, words) -> job id ("" when it cannot start)
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_start" => {
+                let audio = self.arg_str(&args, 0, "").replace('\\', "/");
+                let model = self.arg_str(&args, 1, "small");
+                let lang = self.arg_str(&args, 2, "auto");
+                let words = !matches!(args.get(3), Some(Value::Bool(false))) && !matches!(args.get(3), Some(Value::Number(n)) if *n < 0.5);
+                return Ok(Value::Str(stt::stt_start(&audio, &model, &lang, words)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_poll" => return Ok(Value::Number(stt::stt_poll(&self.arg_str(&args, 0, "")))),
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_done" => return Ok(Value::Bool(stt::stt_done(&self.arg_str(&args, 0, "")))),
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_error" => return Ok(Value::Str(stt::stt_error(&self.arg_str(&args, 0, "")))),
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_info" => return Ok(Value::Str(stt::stt_info(&self.arg_str(&args, 0, "")))),
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_language" => return Ok(Value::Str(stt::stt_language(&self.arg_str(&args, 0, "")))),
+            // stt_segments(job) -> [start, end, text, ...]
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_segments" => {
+                let mut v = Vec::new();
+                for (a, b, t) in stt::stt_segments(&self.arg_str(&args, 0, "")) {
+                    v.push(Value::Number(a));
+                    v.push(Value::Number(b));
+                    v.push(Value::Str(t));
+                }
+                return Ok(Value::List(Rc::new(v)));
+            },
+            // stt_words(job) -> [start, end, word, probability, ...]
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_words" => {
+                let mut v = Vec::new();
+                for (a, b, w, p) in stt::stt_words(&self.arg_str(&args, 0, "")) {
+                    v.push(Value::Number(a));
+                    v.push(Value::Number(b));
+                    v.push(Value::Str(w));
+                    v.push(Value::Number(p));
+                }
+                return Ok(Value::List(Rc::new(v)));
+            },
+            // stt_srt(job, max_chars) -> SubRip text
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_srt" => {
+                let n = self.arg_num(&args, 1, 42.0)?.max(0.0) as usize;
+                return Ok(Value::Str(stt::stt_srt(&self.arg_str(&args, 0, ""), n)));
+            },
+            // stt_align(job, lyrics) -> [start, end, line, ...]: pasted lyrics timed against what was heard
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_align" => {
+                let mut v = Vec::new();
+                for (a, b, t) in stt::stt_align(&self.arg_str(&args, 0, ""), &self.arg_str(&args, 1, "")) {
+                    v.push(Value::Number(a));
+                    v.push(Value::Number(b));
+                    v.push(Value::Str(t));
+                }
+                return Ok(Value::List(Rc::new(v)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_align_srt" => return Ok(Value::Str(stt::stt_align_srt(&self.arg_str(&args, 0, ""), &self.arg_str(&args, 1, "")))),
+            #[cfg(not(target_arch = "wasm32"))]
+            "stt_cancel" => {
+                stt::stt_cancel(&self.arg_str(&args, 0, ""));
+                return Ok(Value::Bool(true));
+            },
+            // file_write_bytes(path, [0..255, ...], append?) -> bool: raw bytes (the other file builtins are text only)
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_write_bytes" => {
+                use std::io::Write;
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
+                let bytes: Vec<u8> = match args.get(1) {
+                    Some(Value::List(v)) => v
+                        .iter()
+                        .map(|x| match x {
+                            Value::Number(n) if n.is_finite() => n.clamp(0.0, 255.0) as u8,
+                            _ => 0,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                let append = matches!(args.get(2), Some(Value::Bool(true))) || matches!(args.get(2), Some(Value::Number(n)) if *n > 0.5);
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    if !parent.as_os_str().is_empty() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                }
+                let f = if append { std::fs::OpenOptions::new().create(true).append(true).open(&path) } else { std::fs::File::create(&path) };
+                let ok = f.and_then(|mut f| f.write_all(&bytes)).is_ok();
+                return Ok(Value::Bool(ok));
+            },
+            // file_append_file(dst, src) -> bytes copied, -1 when either file cannot be used: streams src onto the end of dst
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_append_file" => {
+                let dst = self.arg_str(&args, 0, "").replace('\\', "/");
+                let src = self.arg_str(&args, 1, "").replace('\\', "/");
+                let n = std::fs::File::open(&src).and_then(|mut i| std::fs::OpenOptions::new().create(true).append(true).open(&dst).and_then(|mut o| std::io::copy(&mut i, &mut o)));
+                return Ok(Value::Number(n.map(|n| n as f64).unwrap_or(-1.0)));
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "file_size" | "ขนาดไฟล์" | "اندازه_فایل" | "حجم_الملف" | "גודל_קובץ" | "فائل_سائز" =>
             {
@@ -12974,11 +13358,14 @@ impl Interpreter {
                 return Ok(Value::Bool(ok));
             },
             // pdf_from_images(png_paths_list, out_path) — one page per image,
-            // sized to its pixel dimensions. No PDF crate dependency: `image`
-            // (decode) and `flate2` (deflate the page's raw RGB stream) are
-            // already unconditional deps, so this hand-writes the handful of
-            // PDF objects (Catalog/Pages/Page/Contents/Image XObject) directly.
-            // `build_pdf_from_images` itself only exists under this same gate.
+            // sized to its pixel dimensions (i.e. an implied 72 DPI — see
+            // pdf_from_images_sized below for a real physical page size
+            // independent of the source resolution). No PDF crate
+            // dependency: `image` (decode) and `flate2` (deflate the page's
+            // raw RGB stream) are already unconditional deps, so this
+            // hand-writes the handful of PDF objects (Catalog/Pages/Page/
+            // Contents/Image XObject) directly. `build_pdf_from_images`
+            // itself only exists under this same gate.
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
             "pdf_from_images" | "PDF来自图片" => {
                 let paths = match args.first() {
@@ -12986,7 +13373,27 @@ impl Interpreter {
                     _ => Vec::new(),
                 };
                 let out_path = self.arg_str(&args, 1, "out.pdf");
-                let ok = build_pdf_from_images(&paths, &out_path).is_ok();
+                let ok = build_pdf_from_images(&paths, &out_path, None).is_ok();
+                return Ok(Value::Bool(ok));
+            },
+            // pdf_from_images_sized(png_paths_list, out_path, page_w_pt, page_h_pt)
+            // — same page-per-image bundling as pdf_from_images, but every
+            // page's MediaBox is fixed to (page_w_pt, page_h_pt) PDF points
+            // (1/72in) regardless of the source image's pixel dimensions —
+            // e.g. a real banknote's physical size in points — while each
+            // image keeps embedding at its own native resolution (so a
+            // high-res source still renders crisp, just scaled onto that
+            // physical page instead of a page sized 1:1 to its pixel count).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "pdf_from_images_sized" | "PDF来自图片_定尺" => {
+                let paths = match args.first() {
+                    Some(Value::List(l)) => l.iter().map(|v| v.to_string()).collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                let out_path = self.arg_str(&args, 1, "out.pdf");
+                let page_w_pt = self.arg_num(&args, 2, 0.0)?;
+                let page_h_pt = self.arg_num(&args, 3, 0.0)?;
+                let ok = build_pdf_from_images(&paths, &out_path, Some((page_w_pt, page_h_pt))).is_ok();
                 return Ok(Value::Bool(ok));
             },
 
@@ -13276,6 +13683,11 @@ impl Interpreter {
                 let v = gfx
                     .window
                     .as_ref()
+                    .filter(|w| {
+                        // minifb panics clamping the mouse into a window with no client area (minimised)
+                        let (sw, sh) = w.get_size();
+                        sw > 0 && sh > 0
+                    })
                     .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
                     .map(|p| p.0 as f64)
                     .unwrap_or(0.0);
@@ -13291,6 +13703,11 @@ impl Interpreter {
                 let v = gfx
                     .window
                     .as_ref()
+                    .filter(|w| {
+                        // minifb panics clamping the mouse into a window with no client area (minimised)
+                        let (sw, sh) = w.get_size();
+                        sw > 0 && sh > 0
+                    })
                     .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
                     .map(|p| p.1 as f64)
                     .unwrap_or(0.0);
@@ -13386,6 +13803,10 @@ impl Interpreter {
                 let (mx, my) = gfx
                     .window
                     .as_ref()
+                    .filter(|win| {
+                        let (sw, sh) = win.get_size();
+                        sw > 0 && sh > 0
+                    })
                     .and_then(|win| win.get_mouse_pos(minifb::MouseMode::Clamp))
                     .unwrap_or((0.0, 0.0));
                 return Ok(Value::Bool(ling_ui::holo::hit_rect(mx, my, x, y, w, h)));
@@ -13516,6 +13937,24 @@ impl Interpreter {
                         return Ok(Value::Number(-1.0));
                     },
                 }
+            },
+            // image_replace(id, "path.png") — decode a raster image into an existing handle (so a picture that is redrawn
+            // often, like a score page, does not grow the table). Returns 1, or -1 on a bad handle / unreadable file.
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_replace" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let path = self.arg_str(&args, 1, "").replace('\\', "/");
+                if id >= 0 && (id as usize) < self.images.len() {
+                    if let Ok(img) = image::open(&path) {
+                        self.images[id as usize] = img.to_rgba8();
+                        return Ok(Value::Number(1.0));
+                    }
+                }
+                return Ok(Value::Number(-1.0));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "image_replace" => {
+                return Ok(Value::Number(-1.0));
             },
             #[cfg(target_arch = "wasm32")]
             "image_load" => {
@@ -13658,6 +14097,13 @@ impl Interpreter {
                 let dy = self.arg_num(&args, 2, 0.0)? as i32;
                 let dw = self.arg_num(&args, 3, 0.0)?.max(0.0) as i32;
                 let dh = self.arg_num(&args, 4, 0.0)?.max(0.0) as i32;
+                // optional clip rectangle (x, y, w, h) as arguments 5..8: nothing is drawn outside it
+                let (kx0, ky0, kx1, ky1) = if args.len() >= 9 {
+                    let (a, b, c, d) = (self.arg_num(&args, 5, 0.0)? as i32, self.arg_num(&args, 6, 0.0)? as i32, self.arg_num(&args, 7, 0.0)? as i32, self.arg_num(&args, 8, 0.0)? as i32);
+                    (a, b, a.saturating_add(c), b.saturating_add(d))
+                } else {
+                    (i32::MIN, i32::MIN, i32::MAX, i32::MAX)
+                };
                 if id >= 0 && (id as usize) < self.images.len() && dw > 0 && dh > 0 {
                     let img = &self.images[id as usize];
                     let sw = img.width() as i32;
@@ -13667,13 +14113,13 @@ impl Interpreter {
                         let (fw, fh) = (gfx.width as i32, gfx.height as i32);
                         for py in 0..dh {
                             let ty = dy + py;
-                            if ty < 0 || ty >= fh {
+                            if ty < 0 || ty >= fh || ty < ky0 || ty >= ky1 {
                                 continue;
                             }
                             let sy = (py * sh / dh).clamp(0, sh - 1) as u32;
                             for px in 0..dw {
                                 let tx = dx + px;
-                                if tx < 0 || tx >= fw {
+                                if tx < 0 || tx >= fw || tx < kx0 || tx >= kx1 {
                                     continue;
                                 }
                                 let sx = (px * sw / dw).clamp(0, sw - 1) as u32;
@@ -17269,7 +17715,7 @@ impl Interpreter {
             // script can't grow the buffer without bound.
             #[cfg(not(target_arch = "wasm32"))]
             "text_poll" => {
-                const TEXT_BUFFER_MAX: usize = 240;
+                const TEXT_BUFFER_MAX: usize = 16384;
                 // See key_down/key_pressed: our topmost fullscreen window can
                 // be visually in front without real Win32 keyboard focus, so
                 // WM_KEYDOWN/WM_CHAR (what minifb's get_keys_pressed reads)
@@ -17286,6 +17732,8 @@ impl Interpreter {
                             return Ok(Value::Str(self.text_buffer.clone()));
                         }
                         let shift = os_key_down(VK_SHIFT);
+                        // Ctrl / Alt shortcuts (Ctrl+V, Ctrl+A ...) are not typing: the letter must not land in the field
+                        let chord = os_key_down(0x11) || os_key_down(0x12);
                         let now = crate::runtime::now_secs();
                         let mut gfx = self.gfx.borrow_mut();
                         let back_idx = VK_BACK as usize;
@@ -17309,11 +17757,13 @@ impl Interpreter {
                         gfx.raw_keys_prev[back_idx] = back_down;
                         for &vk in TEXT_POLL_VKS {
                             let idx = (vk as usize) & 0xFF;
-                            let down = os_key_down(vk);
+                            let (down, tapped) = os_key_state(vk);
                             let was = gfx.raw_keys_prev[idx];
                             let (mut since, mut fire) =
                                 (gfx.raw_keys_down_since[idx], gfx.raw_keys_last_fire[idx]);
-                            if key_repeat_fire(now, down, was, &mut since, &mut fire) {
+                            // a tap that came and went between two polls counts once
+                            let quick = tapped && !down && !was;
+                            if (quick || key_repeat_fire(now, down, was, &mut since, &mut fire)) && !chord {
                                 if let Some(c) = vk_char(vk, shift) {
                                     if self.text_buffer.chars().count() < TEXT_BUFFER_MAX {
                                         self.text_buffer.push(c);
@@ -17338,9 +17788,15 @@ impl Interpreter {
                         None => (Vec::new(), false),
                     }
                 };
+                let chord = {
+                    let gfx = self.gfx.borrow();
+                    gfx.window.as_ref().map(|w| w.is_key_down(minifb::Key::LeftCtrl) || w.is_key_down(minifb::Key::RightCtrl) || w.is_key_down(minifb::Key::LeftAlt)).unwrap_or(false)
+                };
                 for k in keys {
                     if k == minifb::Key::Backspace {
                         self.text_buffer.pop();
+                    } else if chord {
+                        continue;
                     } else if let Some(c) = key_char(k, shift) {
                         if self.text_buffer.chars().count() < TEXT_BUFFER_MAX {
                             self.text_buffer.push(c);
@@ -17460,7 +17916,8 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
-                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        crate::gfx::raster::set_persp_zd(g.camera.zdist);
+                                let z = if dt { Some(&mut g.depth_buf) } else { None };
                         queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                     }
                     gfx.zbuf_needs_clear = false;
@@ -17481,7 +17938,8 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
-                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        crate::gfx::raster::set_persp_zd(g.camera.zdist);
+                                let z = if dt { Some(&mut g.depth_buf) } else { None };
                         queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                     }
                     gfx.zbuf_needs_clear = false;
@@ -17506,7 +17964,8 @@ impl Interpreter {
                     let queue = std::mem::take(&mut gfx.depth_queue);
                     {
                         let g = &mut *gfx;
-                        let z = if dt { Some(&mut g.depth_buf) } else { None };
+                        crate::gfx::raster::set_persp_zd(g.camera.zdist);
+                                let z = if dt { Some(&mut g.depth_buf) } else { None };
                         queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
                     }
                     gfx.zbuf_needs_clear = false;
@@ -17927,7 +18386,12 @@ impl Interpreter {
         let (mx, my) = gfx
             .window
             .as_ref()
-            .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
+            .filter(|w| {
+                        // minifb panics clamping the mouse into a window with no client area (minimised)
+                        let (sw, sh) = w.get_size();
+                        sw > 0 && sh > 0
+                    })
+                    .and_then(|w| w.get_mouse_pos(minifb::MouseMode::Clamp))
             .unwrap_or((0.0, 0.0));
         let down = gfx
             .window
@@ -18113,6 +18577,30 @@ fn str_to_minifb_key(name: &str) -> Option<minifb::Key> {
         "rctrl" | "rightctrl" => Key::RightCtrl,
         "lalt" | "leftalt" => Key::LeftAlt,
         "ralt" | "rightalt" => Key::RightAlt,
+        "f1" => Key::F1,
+        "f2" => Key::F2,
+        "f3" => Key::F3,
+        "f4" => Key::F4,
+        "f5" => Key::F5,
+        "f6" => Key::F6,
+        "f7" => Key::F7,
+        "f8" => Key::F8,
+        "f9" => Key::F9,
+        "f10" => Key::F10,
+        "f11" => Key::F11,
+        "f12" => Key::F12,
+        "capslock" => Key::CapsLock,
+        "minus" | "-" => Key::Minus,
+        "equals" | "=" | "plus" => Key::Equal,
+        "comma" | "," => Key::Comma,
+        "period" | "." => Key::Period,
+        "slash" | "/" => Key::Slash,
+        "semicolon" | ";" => Key::Semicolon,
+        "quote" | "'" => Key::Apostrophe,
+        "lbracket" | "[" => Key::LeftBracket,
+        "rbracket" | "]" => Key::RightBracket,
+        "backslash" => Key::Backslash,
+        "grave" | "`" => Key::Backquote,
         "tab" => Key::Tab,
         "backspace" => Key::Backspace,
         "delete" => Key::Delete,

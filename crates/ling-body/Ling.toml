@@ -1,0 +1,8 @@
+[package]
+name = "ling-body"
+version = "2030.0.1"
+description = "Acoustic body toolkit for Ling: humanoid SDF scaffolds, FDTD wave solver, level-set membrane, surface extraction, mesh and WAV codecs"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+homepage = "https://ling-lang.org"
+authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]

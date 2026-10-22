@@ -1,4 +1,7 @@
 pub fn is_builtin(name: &str) -> bool {
+    if name.starts_with("daw_") || name.starts_with("fs_") || name.starts_with("dlg_") || name.starts_with("st_") || name.starts_with("px_") || name.starts_with("body_") {
+        return true;
+    }
     match name {
         "0" => true,
         "1" => true,
@@ -148,6 +151,8 @@ pub fn is_builtin(name: &str) -> bool {
         "html_escape" | "กันเอชทีเอ็มแอล" => true,
         "json_escape" | "หนีเจสัน" => true,
         "copy_file" | "คัดลอกไฟล์" => true,
+        "file_write_bytes" | "file_append_file" => true,
+        "script_load" | "script_call" | "script_functions" | "stt_available" | "stt_models" | "stt_start" | "stt_poll" | "stt_done" | "stt_error" | "stt_info" | "stt_language" | "stt_segments" | "stt_words" | "stt_srt" | "stt_align" | "stt_align_srt" | "stt_cancel" => true,
         "file_magic" | "มายาไฟล์" => true,
         "tar_gz_list" | "รายการทาร์" => true,
         "tar_gz_read" | "อ่านทาร์" => true,

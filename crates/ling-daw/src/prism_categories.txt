@@ -1,0 +1,428 @@
+[HyperPop]
+Hyper Glitch Lead
+Pixel Pop Lead
+Bubble Pluck Pop
+Sugar Rush Arp
+Autotune Stab
+Gum Bass
+Pitched Vox Lead
+Nightcore Saw
+Crash Pad Hyper
+Glitter Bell
+Hyper 808
+Rainbow Chord Pop
+
+[Deep House]
+Deep House Chord
+Warm Organ Stab
+Rolling Deep Bass
+Sub Pulse Deep
+Dub Stab Deep
+Velvet Pad
+Rhodes House
+Pluck Chord Deep
+Late Night Pad
+Piano Stab Italo
+Chord Smear House
+Deep Lead Whisper
+
+[Disco]
+Disco Strings Lush
+Funky Clav Stab
+Octave Disco Bass
+Philly Strings
+Guitar Chop Disco
+Brass Section Disco
+Disco Lead Whistle
+Moroder Arp
+Nu Disco Pad
+Slap Bass Synth
+Glitter Keys Disco
+Disco Chord Stab
+
+[Dance]
+Eurodance Lead
+Rave Piano Stab
+Dance Pad Anthem
+Piano House Chord
+Dance Bass Pump
+Rave Organ Stab
+Club Pluck
+Euro Arp
+Diva Lead Synth
+Hands Up Lead
+Bounce Bass
+Dance Whistle
+
+[EDM]
+Big Room Lead
+Festival Supersaw
+Future Bass Chord
+Drop Growl Bass
+Riser Sweep EDM
+Pluck Lead Drop
+Progressive Pad
+Anthem Stab
+Sidechain Pad
+Chain Bass EDM
+Brostep Lead
+EDM Pluck Arp
+
+[Industrial]
+Industrial Bass
+Metal Clang Lead
+Machine Drone
+Rust Pad
+Factory Stab
+Noise Seq Industrial
+Distorted Kick Tone
+Gnash Lead
+Grinder Arp
+Concrete Pad
+Ring Mod Machine
+Cold Steel Bell
+
+[Atmos & Space]
+Void Sub
+Black Mass
+Bohlen Drone
+Analog Hum
+Radio Ghost
+Ether Pad
+Nebula Pad
+Spacey Pad
+Netherworld Pad
+Space Bass
+Crystal Sphere
+Haunted Place
+Ice Rain
+Lynchian Texture
+Magic Swamp
+Steam Starship
+Space Distortion
+Atlantis Pad
+Starlight Pad
+Aquarius Pad
+Oblivion Pad
+Dreamland Pad
+Mirage Pad
+Equinox Pad
+Voice of Mist
+Pluck Space
+Tranquility Pad
+Butterfly Pad
+Space Dust Pad
+Deep Space Drone
+Nebula Wash
+Orbit Pad
+Cosmic Choir
+Event Horizon
+Aurora Pad
+Solar Wind
+Zero Gravity
+Crystal Cave
+Satellite Ping
+Interstellar Bell
+Dark Matter
+Stellar Swell
+Lunar Surface
+
+[Synthwave]
+Neon Lead
+Outrun Bass
+Retrowave Pad
+Sunset Arp
+Eighties Brass Stab
+Night Drive Lead
+Chrome Pad
+Synthwave Pluck
+Arcade Bass
+Miami Chord
+
+[Lo-Fi]
+Dusty Rhodes
+Vinyl Pad
+Chill Keys
+Tape Pluck
+Lo-Fi Bell
+Mellow Sub
+Warm Wobble Lead
+Late Study Chord
+
+[Pads]
+Uplift Pad
+Gated Pad
+Dub Chord
+Phaser Pad
+Sugar Stack
+Candy Pad
+Classic Trance Pad
+Classic Trance Pad Two
+Dark Pad One
+Dark Pad Two
+Dark Pad Three
+Dreamer Pad
+Dreamer Pad Wide
+Earth Pad
+Tender Gated Pad
+Pedro Gated Pad
+Polar Pad
+Rainy Day Pad
+Soft Pad
+Strange Pad
+Monk Pad
+Fire Pad
+Heavy Pad
+Pad of Many
+Electric Pad
+Screaming Electro
+Supersaw Pad
+Trance Pad Wash
+Sunroom Pad
+Sherpad
+Gotham Pad
+Amber Pad
+8th Note Chords
+Ridge Groove
+Intro Sapphire
+Intro Quartz
+Intro Jade
+Intro Friendly Drip
+Intro Smoothy
+Intro Water
+Intro Freakenstein
+
+[Leads]
+Supersaw Lead
+Hyper Lead
+Hardstyle Lead
+Hardstyle Lead Tuned
+Hardstyle Lead Two
+Simple Trance Lead
+Hoover Dark
+Hoover Heaven
+Hoover Jump
+Dance Lead Phobia
+Retro Lead
+Spacer Lead
+Funky Lead
+Shoop Lead
+Dubble Lead
+Happy Hardcore Lead
+Panama Synth
+Panama Synth Four
+Super Synth
+Super Synth Hard
+Perfecto Synth
+Heard It Synth
+Hard Synth
+Dirty Lead
+Supersaw Lead Two
+Hoover Lead Harmor
+Dubstep Lead
+Wah Lead
+Brass Lead
+Gamer Lead
+Arcade Lead
+Robot Lead
+Waspinator Lead
+Monolith Lead
+Grunge Synth
+Filthy Synth
+Rachel Synth
+Samsara Synth
+
+[Basses]
+Rolling Bass
+Offbeat Bass
+Warm Sub
+Octave Bass
+Bubble Bass
+Bass Donk
+Bass Donk Hard
+Offbeat Bass Two
+Offbeat Bass Three
+Heavy Saw Bass
+Fuzzy Synth Bass
+Sine Bass
+Mega Bass
+Fallout Bass
+Punch Bass
+Electric Bass
+Fretless Bass
+Circulating Bass
+Nasty Bass
+Knarzy Bass
+Dub Steppy Bass
+Dub Steppy Bass Two
+Greasy Wobble
+Basic Wobble
+Neuro Bass
+Tunnel Bass
+Bajo Growl One
+Bajo Growl Laser
+Bajo Psy
+Bajo Melbourne
+Bajo Trance
+Bajo Techno
+Bajo Sweat
+Analog Bass One
+Face Eater
+Future Bass Lead
+Growler Synth
+
+[Plucks]
+Trance Pluck
+Deep Pluck
+Funk Pluck
+Glitch Pluck
+Bass Guitar Pluck
+Pluck Mau Style
+Pluck Tropical
+Pluck Strobe
+Pluck Metallic
+Pluck Detuned
+Pluck Warm
+Pluck Sweet
+Pluck Heaven
+Pluck Neutron
+Strum Chord Pluck
+Intro Gold Pluck
+
+[Stabs]
+Deep Stab
+Brass Stab
+Stab Laser Sword
+Stab Fireworks
+Stab Dark Noise
+Stab Dinosaur Walk
+Stab Unlocked
+Stab Broken TV
+Stab Buggy
+Stab Eye
+Classic Rave Stab
+Viking Stab
+Shorty Stab
+Ploc Stab
+Stab Fall
+
+[Arps & Sequences]
+Chipmunk Arp
+Seq Or Die Bass
+Knarky Arp One
+Knarky Arp Two
+Knarky Arp Three
+Anero Synth Arp
+Slow Lizzy Arp
+Peace Synth Arp
+Poltergeist Arp
+Special Arp
+Tiny Arp
+Dreamers Synth Arp
+Tronic Arp
+Cubist Arp
+Zombitronic Arp
+Machine Wriggle Arp
+Nyan Sequence
+Plankton Sequence
+Filter Sequence
+Bass Machine Sequence
+
+[Keys & Organs]
+Dream Keys
+Organ Pad
+Hoover Epic
+Devils Piano
+Devils Piano Low
+Heavens Piano
+Real Piano
+Broken Piano
+Wannabe Piano
+Moonlight EP
+Rhodes Dream
+Hammond Drawbar
+Hammond Two
+Dirty Organ
+Cathedral Orgel
+Church Organ
+Steampunk Organ
+Accordiola
+Clav
+Harp of Illusion
+Pluck Rhodes
+Pluck Piano E
+
+[Bells & Mallets]
+Glass Lead With Bell
+Church Bell Toll
+Dance Bell
+Bells From Distance
+Fairy Bells
+Ice Bells
+Gong Hit
+Labyrinth Bell
+
+[Strings & Orchestra]
+Disco Strings
+Flute Bass
+String Orkestro
+Symphonic Strings
+Lazy String
+Dramatic Strings
+Basson Reed
+Flutes Breath
+Simple Harmonica
+Train Horn Mess
+
+[Vocals & Choir]
+Dark Choir
+Choir Pad Classic
+Oldskool Choir Pad
+Moving Choir
+Old Vox
+Ahh Choir
+Chorus Ensemble
+Pluck Vocal
+
+[Drums & Percussion]
+Kick Basic
+Kick Building Site
+Kick Nu Style
+Kick 808 Long
+Kick Trance
+Kick Psy
+Hardcore Kick
+Kick Machine
+Hihat Closed
+Hihat Open
+Perc Metal
+Perc Snap
+Snare Thin
+Clap Classic
+Moon Drum
+
+[FX & Textures]
+Witch Drag
+Ritual Bell
+Cursed Arp
+Tape Dream
+Prism Bloom
+Helicopter
+Motor Going Up
+Motor Going Down
+Rain Drops
+Broken TV FX
+Rise of Terror
+Drop FX
+Power Up
+Blue Screen
+Snake Stop
+
+[Microtonal]
+19 EDO Glass
+Slendro Pad
+Quarter Lead
+Pad of Many 31 EDO
+Bell 22 Shruti
+Pluck Just Intonation
+Pelog Dreamers

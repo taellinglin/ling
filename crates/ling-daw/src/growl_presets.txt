@@ -1,0 +1,1448 @@
+[wobble]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "wobble"
+type = growl
+pos=0.150 detn=0.300 sub=0.600 cut=0.200 res=0.450 drv=0.450 l1_len=0.200 l1_int=1.000
+l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.500 l1_p3=0.875 l1_p4=1.000
+l1_p5=0.875 l1_p6=0.500 l1_p7=0.125 l1_p8=0.000 l1_p9=0.125 l1_p10=0.500 l1_p11=0.875
+l1_p12=1.000 l1_p13=0.875 l1_p14=0.500 l1_p15=0.125 l3_len=0.600 l3_int=0.000
+l3_loop=1.000 l3_trig=0.000 l3_p0=0.000 l3_p1=0.000 l3_p2=0.000 l3_p3=0.000 l3_p4=0.500
+l3_p5=0.500 l3_p6=0.000 l3_p7=0.000 l3_p8=0.000 l3_p9=0.000 l3_p10=1.000 l3_p11=1.000
+l3_p12=0.500 l3_p13=0.500 l3_p14=0.500 l3_p15=0.500 m_l1c=1.000 m_l3r=1.000 m_whlc=0.750
+
+[growl]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "growl"
+type = growl
+table=0.333 pos=0.300 detn=0.150 b_fm=0.300 sub=0.550 ftype=0.250 cut=0.500 res=0.400
+shaper=0.500 drv=0.350 l1_len=0.400 l1_int=0.500 l1_loop=1.000 l1_trig=0.000 l1_p0=0.000
+l1_p1=0.250 l1_p2=0.500 l1_p3=0.750 l1_p4=0.000 l1_p5=0.250 l1_p6=0.500 l1_p7=0.750
+l1_p8=0.000 l1_p9=0.250 l1_p10=0.500 l1_p11=0.750 l1_p12=0.000 l1_p13=0.250 l1_p14=0.500
+l1_p15=0.750 l2_len=0.600 l2_int=1.000 l2_loop=1.000 l2_trig=0.000 l2_p0=0.000
+l2_p1=0.062 l2_p2=0.125 l2_p3=0.312 l2_p4=0.500 l2_p5=0.688 l2_p6=0.875 l2_p7=0.938
+l2_p8=1.000 l2_p9=0.938 l2_p10=0.875 l2_p11=0.688 l2_p12=0.500 l2_p13=0.312 l2_p14=0.125
+l2_p15=0.062 m_l1w=1.000 m_l1f=0.875 m_l2c=0.875 m_whld=0.750
+
+[yoi]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "yoi"
+type = growl
+pos=0.600 ftype=1.000 cut=0.500 res=0.500 vow=0.080 drv=0.500 glid=0.200 l1_len=0.400
+l1_int=1.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.150 l1_p2=0.400 l1_p3=0.750
+l1_p4=1.000 l1_p5=1.000 l1_p6=0.900 l1_p7=0.700 l1_p8=0.450 l1_p9=0.250 l1_p10=0.100
+l1_p11=0.000 l1_p12=0.000 l1_p13=0.000 l1_p14=0.000 l1_p15=0.000 m_l1v=1.000 m_l1c=0.625
+m_envd=0.750 m_whlv=0.875
+
+[reese]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "reese"
+type = growl
+detn=0.650 cut=0.320 res=0.250 drv=0.250 glid=0.350 wide=0.500 l1_len=1.000 l1_int=1.000
+l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.062 l1_p2=0.125 l1_p3=0.312 l1_p4=0.500
+l1_p5=0.688 l1_p6=0.875 l1_p7=0.938 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.688
+l1_p12=0.500 l1_p13=0.312 l1_p14=0.125 l1_p15=0.062 l2_len=0.800 l2_int=1.000
+l2_loop=1.000 l2_trig=0.000 l2_p0=0.000 l2_p1=0.062 l2_p2=0.125 l2_p3=0.312 l2_p4=0.500
+l2_p5=0.688 l2_p6=0.875 l2_p7=0.938 l2_p8=1.000 l2_p9=0.938 l2_p10=0.875 l2_p11=0.688
+l2_p12=0.500 l2_p13=0.312 l2_p14=0.125 l2_p15=0.062 m_l1c=0.750 m_l2n=0.750 m_l2w=0.625
+m_whlc=0.875
+
+[laser]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "laser"
+type = growl
+table=1.000 pos=0.300 detn=0.100 sub=0.000 cut=0.450 res=0.550 shaper=1.000 drv=0.300
+amp_a=0.000 amp_d=0.350 amp_s=0.000 glid=0.000 dely=0.350 verb=0.200 l1_len=0.000
+l1_int=1.000 l1_loop=0.000 l1_trig=0.000 l1_p0=1.000 l1_p1=0.750 l1_p2=0.562 l1_p3=0.438
+l1_p4=0.312 l1_p5=0.250 l1_p6=0.188 l1_p7=0.125 l1_p8=0.125 l1_p9=0.062 l1_p10=0.062
+l1_p11=0.062 l1_p12=0.000 l1_p13=0.000 l1_p14=0.000 l1_p15=0.000 m_l1p=1.000 m_l1c=0.875
+m_velc=0.625
+
+[stab]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "stab"
+type = growl
+pos=0.100 detn=0.350 stack=0.750 sub=0.200 cut=0.300 res=0.300 drv=0.200 amp_a=0.000
+amp_d=0.320 amp_s=0.150 amp_r=0.250 env_d=0.300 glid=0.000 wide=0.700 dely=0.350
+verb=0.300 m_envc=0.875 m_velc=0.750 m_whlc=0.750
+
+[riser]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "riser"
+type = growl
+pos=0.500 detn=0.500 stack=0.250 sub=0.000 nois=0.500 cut=0.200 res=0.500 amp_r=0.300
+glid=0.000 wide=0.500 verb=0.500 l1_len=0.200 l1_int=1.000 l1_loop=1.000 l1_trig=0.000
+l1_p0=0.000 l1_p1=0.500 l1_p2=1.000 l1_p3=0.500 l1_p4=0.000 l1_p5=0.500 l1_p6=1.000
+l1_p7=0.500 l1_p8=0.000 l1_p9=0.500 l1_p10=1.000 l1_p11=0.500 l1_p12=0.000 l1_p13=0.500
+l1_p14=1.000 l1_p15=0.500 l2_len=1.000 l2_int=0.500 l2_loop=0.000 l2_trig=0.000
+l2_p0=0.000 l2_p1=0.067 l2_p2=0.133 l2_p3=0.200 l2_p4=0.267 l2_p5=0.333 l2_p6=0.400
+l2_p7=0.467 l2_p8=0.533 l2_p9=0.600 l2_p10=0.667 l2_p11=0.733 l2_p12=0.800 l2_p13=0.867
+l2_p14=0.933 l2_p15=1.000 m_l1a=0.125 m_l2p=0.875 m_l2c=1.000 m_l2r=1.000
+
+[neuro]
+# Ling Growl patch - edit freely; load from the Parameters tab
+name = "neuro"
+type = growl
+table=1.000 pos=0.500 b_wave=0.667 b_rat=0.429 b_fm=0.450 sub=0.600 ftype=0.250
+cut=0.450 res=0.550 shaper=0.500 drv=0.500 l1_len=0.600 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.250 l1_p1=0.875 l1_p2=0.125 l1_p3=0.625 l1_p4=1.000 l1_p5=0.375
+l1_p6=0.750 l1_p7=0.000 l1_p8=0.500 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.125
+l1_p13=0.875 l1_p14=0.500 l1_p15=0.375 l2_len=0.400 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=1.000 l2_p1=0.750 l2_p2=0.500 l2_p3=0.250 l2_p4=1.000 l2_p5=0.750
+l2_p6=0.500 l2_p7=0.250 l2_p8=1.000 l2_p9=0.750 l2_p10=0.500 l2_p11=0.250 l2_p12=1.000
+l2_p13=0.750 l2_p14=0.500 l2_p15=0.250 l3_len=0.600 l3_int=0.000 l3_loop=1.000
+l3_trig=0.000 l3_p0=1.000 l3_p1=1.000 l3_p2=1.000 l3_p3=1.000 l3_p4=0.000 l3_p5=0.000
+l3_p6=0.000 l3_p7=0.000 l3_p8=1.000 l3_p9=1.000 l3_p10=1.000 l3_p11=1.000 l3_p12=0.000
+l3_p13=0.000 l3_p14=0.000 l3_p15=0.000 m_l1c=0.875 m_l1w=0.875 m_l2f=0.875 m_l3q=0.750
+m_whld=0.750
+
+[talkbox]
+# a bass that talks: the Talk sequencer through a yoi-oi-yoi figure
+name = "talkbox"
+type = growl
+table=0.333 pos=0.35 detn=0.25 sub=0.55 cut=0.6 res=0.3 drv=0.4 talk=1 t_rate=0.75
+t_glid=0.35 t_res=0.5 m_whld=0.75 t_s0=1 t_s1=0.75 t_s2=0 t_s3=0 t_s4=0.5 t_s5=0.5 t_s6=0.75
+t_s7=1 t_s8=1 t_s9=0.75 t_s10=0 t_s11=0 t_s12=0.5 t_s13=0.5 t_s14=0.75 t_s15=1
+
+[robot vowels]
+# hard, stepped vowels like a vocoded robot
+name = "robot vowels"
+type = growl
+table=0.667 pos=0.5 detn=0.3 b_fm=0.2 sub=0.4 cut=0.7 res=0.35 drv=0.5 talk=1 t_rate=1
+t_glid=0.05 t_res=0.7 shaper=0.5 t_s0=0 t_s1=0.5 t_s2=0.75 t_s3=0.25 t_s4=1 t_s5=0 t_s6=0.25
+t_s7=0.5 t_s8=0.75 t_s9=1 t_s10=0.5 t_s11=0 t_s12=0.75 t_s13=0.25 t_s14=1 t_s15=0.5
+
+[formant bass]
+# a slow, round talking bass
+name = "formant bass"
+type = growl
+table=0 pos=0.2 detn=0.2 sub=0.65 cut=0.35 res=0.25 drv=0.3 talk=0.8 t_rate=0.5 t_glid=0.5
+t_res=0.35 m_whld=0.75 t_s0=0.75 t_s1=0.75 t_s2=0 t_s3=1 t_s4=0.75 t_s5=0.25 t_s6=0 t_s7=1
+t_s8=0.75 t_s9=0.75 t_s10=0 t_s11=1 t_s12=0.75 t_s13=0.25 t_s14=0 t_s15=1
+
+[yoi talk]
+# the classic yoi sweep with the Talk sequencer on top
+name = "yoi talk"
+type = growl
+table=0.333 pos=0.6 ftype=1 cut=0.5 res=0.5 vow=0.08 drv=0.5 glid=0.2 talk=0.55 t_rate=0.5
+t_glid=0.4 l1_len=0.4 l1_int=0.5 l1_loop=1 l1_trig=1 l1_p0=0 l1_p1=0.062 l1_p2=0.125
+l1_p3=0.188 l1_p4=0.25 l1_p5=0.312 l1_p6=0.375 l1_p7=0.438 l1_p8=0.5 l1_p9=0.562
+l1_p10=0.625 l1_p11=0.688 l1_p12=0.75 l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 m_l1v=1
+m_l1c=0.625 m_envd=0.875 t_s0=1 t_s1=1 t_s2=0.75 t_s3=0 t_s4=0 t_s5=0.25 t_s6=0.5 t_s7=0.5
+t_s8=1 t_s9=1 t_s10=0.75 t_s11=0 t_s12=0 t_s13=0.25 t_s14=0.5 t_s15=0.5
+
+[alien talk]
+# formants pushed up: a thin, speaking, not-quite-human voice
+name = "alien talk"
+type = growl
+table=0.667 pos=0.45 detn=0.4 b_fm=0.25 cut=0.7 res=0.4 drv=0.4 talk=1 t_rate=0.75
+t_glid=0.2 t_sh=0.85 t_res=0.8 wide=0.35 verb=0.2 t_s0=0.5 t_s1=0.25 t_s2=0.5 t_s3=0
+t_s4=0.25 t_s5=0.5 t_s6=1 t_s7=0.5 t_s8=0.5 t_s9=0.25 t_s10=0.5 t_s11=0 t_s12=0.25 t_s13=0.5
+t_s14=1 t_s15=0.5
+
+[vox pad]
+# a slow pad that breathes through the vowels
+name = "vox pad"
+type = growl
+table=0.667 pos=0.4 detn=0.55 stack=0.25 sub=0.3 cut=0.6 res=0.2 drv=0.15 talk=0.6 t_rate=0
+t_glid=0.85 t_res=0.3 amp_a=0.55 amp_d=0.5 amp_s=1 amp_r=0.6 wide=0.5 verb=0.5 t_s0=1
+t_s1=0.75 t_s2=0 t_s3=0.25 t_s4=0.5 t_s5=0.25 t_s6=0 t_s7=0.75 t_s8=1 t_s9=0.75 t_s10=0
+t_s11=0.25 t_s12=0.5 t_s13=0.25 t_s14=0 t_s15=0.75
+
+[choir stack]
+# stacked fifths with a slow vowel
+name = "choir stack"
+type = growl
+table=0.667 pos=0.3 detn=0.5 stack=0.25 sub=0.2 cut=0.65 res=0.15 drv=0.1 talk=0.5
+t_rate=0.25 t_glid=0.9 t_res=0.25 amp_a=0.45 amp_s=1 amp_r=0.55 wide=0.55 verb=0.45 t_s0=0
+t_s1=0.75 t_s2=1 t_s3=0.75 t_s4=0 t_s5=0.25 t_s6=0.75 t_s7=1 t_s8=0 t_s9=0.75 t_s10=1
+t_s11=0.75 t_s12=0 t_s13=0.25 t_s14=0.75 t_s15=1
+
+[glitch talk]
+# chopped amplitude with a fast talking filter
+name = "glitch talk"
+type = growl
+table=0.333 pos=0.4 detn=0.3 sub=0.4 cut=0.6 res=0.35 drv=0.6 talk=0.9 t_rate=1 t_glid=0.1
+t_res=0.6 l1_len=0.2 l1_int=0 l1_loop=1 l1_trig=0 l1_p0=1 l1_p1=0 l1_p2=1 l1_p3=1 l1_p4=0
+l1_p5=1 l1_p6=0 l1_p7=0 l1_p8=1 l1_p9=0 l1_p10=1 l1_p11=1 l1_p12=0 l1_p13=1 l1_p14=0
+l1_p15=0 m_l1a=0 t_s0=0 t_s1=0.25 t_s2=0.5 t_s3=0.75 t_s4=1 t_s5=0.75 t_s6=0.5 t_s7=0.25
+t_s8=0 t_s9=0.25 t_s10=0.5 t_s11=0.75 t_s12=1 t_s13=0.75 t_s14=0.5 t_s15=0.25
+
+[screech]
+# hard-synced saw with the ratio swept by lane 3
+name = "screech"
+type = growl
+table=0.333 pos=0.2 detn=0.15 sub=0.5 cut=0.75 res=0.3 drv=0.55 shaper=0.5 sync=0.55
+s_mod=0.6 l3_len=0.4 l3_int=0.5 l3_loop=1 l3_trig=0 l3_p0=0 l3_p1=0.062 l3_p2=0.125
+l3_p3=0.188 l3_p4=0.25 l3_p5=0.312 l3_p6=0.375 l3_p7=0.438 l3_p8=0.5 l3_p9=0.562
+l3_p10=0.625 l3_p11=0.688 l3_p12=0.75 l3_p13=0.812 l3_p14=0.875 l3_p15=0.938 m_l3f=0.625
+
+[neuro sync]
+# sync wobble under a filter wobble
+name = "neuro sync"
+type = growl
+table=0.333 pos=0.3 detn=0.5 sub=0.45 cut=0.5 res=0.4 drv=0.6 shaper=0.5 sync=0.4 s_mod=0.8
+l1_len=0.2 l1_int=1 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309
+l1_p4=0.5 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691
+l1_p12=0.5 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l3_len=0.2 l3_int=0.5 l3_loop=1 l3_trig=0
+l3_p0=0 l3_p1=0.125 l3_p2=0.25 l3_p3=0.375 l3_p4=0.5 l3_p5=0.625 l3_p6=0.75 l3_p7=0.875
+l3_p8=1 l3_p9=0.875 l3_p10=0.75 l3_p11=0.625 l3_p12=0.5 l3_p13=0.375 l3_p14=0.25
+l3_p15=0.125 m_l1c=0.875 m_l1w=0.75
+
+[hard lead]
+# a screaming synced lead that holds
+name = "hard lead"
+type = growl
+table=0.333 pos=0.4 detn=0.35 sub=0 cut=0.8 res=0.25 drv=0.35 sync=0.6 s_mod=0 amp_s=1
+amp_r=0.25 glid=0.25 verb=0.25 wide=0.3 m_whld=0.625
+
+[sync sweep]
+# one long sync sweep from the note on, like a riser
+name = "sync sweep"
+type = growl
+table=0.333 pos=0.2 detn=0.25 sub=0.35 cut=0.8 res=0.3 drv=0.45 sync=0 s_mod=1 amp_s=1
+amp_r=0.3 l3_len=0.6 l3_int=0.5 l3_loop=0 l3_trig=1 l3_p0=0 l3_p1=0.062 l3_p2=0.125
+l3_p3=0.188 l3_p4=0.25 l3_p5=0.312 l3_p6=0.375 l3_p7=0.438 l3_p8=0.5 l3_p9=0.562
+l3_p10=0.625 l3_p11=0.688 l3_p12=0.75 l3_p13=0.812 l3_p14=0.875 l3_p15=0.938
+
+[sync pluck]
+# a short plucked sync bass
+name = "sync pluck"
+type = growl
+table=0.333 pos=0.2 sub=0.5 cut=0.7 res=0.3 drv=0.4 sync=0.5 s_mod=0 amp_d=0.35 amp_s=0
+amp_r=0.1 env_d=0.3 m_envc=0.875
+
+[tear out]
+# everything at once: FM, detune, sync and drive
+name = "tear out"
+type = growl
+table=0.667 pos=0.5 detn=0.8 b_wave=0.667 b_rat=0.571 b_fm=0.85 sub=0.35 cut=0.6 res=0.4
+drv=0.9 shaper=0.5 sync=0.3 s_mod=0.5 l1_len=0.2 l1_int=1 l1_loop=1 l1_trig=0 l1_p0=0
+l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1
+l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.5 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038
+l3_len=0 l3_int=0.5 l3_loop=1 l3_trig=0 l3_p0=0 l3_p1=1 l3_p2=0.25 l3_p3=0.75 l3_p4=0.5
+l3_p5=1 l3_p6=0 l3_p7=0.5 l3_p8=0 l3_p9=1 l3_p10=0.25 l3_p11=0.75 l3_p12=0.5 l3_p13=1
+l3_p14=0 l3_p15=0.5 m_l1c=0.75 m_l1f=0.75
+
+[dub wobble]
+# the plain one-beat wobble
+name = "dub wobble"
+type = growl
+table=0 pos=0.15 detn=0.3 sub=0.6 cut=0.2 res=0.45 drv=0.45 l1_len=0.2 l1_int=1 l1_loop=1
+l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854
+l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.5 l1_p13=0.309
+l1_p14=0.146 l1_p15=0.038 m_l1c=0.875
+
+[half-time wob]
+# a two-beat wobble that breathes with the drop
+name = "half-time wob"
+type = growl
+table=0 pos=0.2 detn=0.35 sub=0.6 cut=0.25 res=0.5 drv=0.5 l1_len=0.4 l1_int=1 l1_loop=1
+l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854
+l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.5 l1_p13=0.309
+l1_p14=0.146 l1_p15=0.038 l2_len=0.6 l2_int=0.5 l2_loop=1 l2_trig=0 l2_p0=0 l2_p1=0.125
+l2_p2=0.25 l2_p3=0.375 l2_p4=0.5 l2_p5=0.625 l2_p6=0.75 l2_p7=0.875 l2_p8=1 l2_p9=0.969
+l2_p10=0.938 l2_p11=0.906 l2_p12=0.875 l2_p13=0.844 l2_p14=0.812 l2_p15=0.781 m_l1c=0.875
+m_l2w=0.75
+
+[triplet wob]
+# fast triplet-feel wobble
+name = "triplet wob"
+type = growl
+table=0.333 pos=0.3 detn=0.3 sub=0.5 cut=0.3 res=0.4 drv=0.5 l1_len=0 l1_int=1 l1_loop=1
+l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854
+l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.5 l1_p13=0.309
+l1_p14=0.146 l1_p15=0.038 l2_len=0.2 l2_int=0 l2_loop=1 l2_trig=0 l2_p0=0 l2_p1=1 l2_p2=0.5
+l2_p3=1 l2_p4=0 l2_p5=0.5 l2_p6=0 l2_p7=1 l2_p8=0.5 l2_p9=1 l2_p10=0 l2_p11=0.5 l2_p12=0
+l2_p13=1 l2_p14=0.5 l2_p15=1 m_l1c=0.875 m_l2w=0.75
+
+[riddim]
+# the on-off riddim stab
+name = "riddim"
+type = growl
+table=0.333 pos=0.25 detn=0.3 sub=0.5 cut=0.45 res=0.5 drv=0.55 shaper=0.5 l1_len=0.2
+l1_int=0 l1_loop=1 l1_trig=0 l1_p0=1 l1_p1=0 l1_p2=0 l1_p3=1 l1_p4=1 l1_p5=0 l1_p6=1 l1_p7=0
+l1_p8=1 l1_p9=0 l1_p10=0 l1_p11=1 l1_p12=1 l1_p13=0 l1_p14=1 l1_p15=0 l2_len=0.4 l2_int=1
+l2_loop=1 l2_trig=0 l2_p0=0 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.5 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.5
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 m_l1a=0 m_l2c=0.75
+
+[riddim 2]
+# a busier riddim with a little talk
+name = "riddim 2"
+type = growl
+table=0.333 pos=0.3 detn=0.4 sub=0.45 cut=0.5 res=0.45 drv=0.6 shaper=0.5 talk=0.35
+t_rate=0.75 t_glid=0.2 l1_len=0.2 l1_int=0 l1_loop=1 l1_trig=0 l1_p0=1 l1_p1=1 l1_p2=0
+l1_p3=1 l1_p4=0 l1_p5=1 l1_p6=1 l1_p7=0 l1_p8=1 l1_p9=1 l1_p10=0 l1_p11=1 l1_p12=0 l1_p13=1
+l1_p14=1 l1_p15=0 l2_len=0 l2_int=0.5 l2_loop=1 l2_trig=0 l2_p0=0 l2_p1=0.062 l2_p2=0.125
+l2_p3=0.188 l2_p4=0.25 l2_p5=0.312 l2_p6=0.375 l2_p7=0.438 l2_p8=0.5 l2_p9=0.562
+l2_p10=0.625 l2_p11=0.688 l2_p12=0.75 l2_p13=0.812 l2_p14=0.875 l2_p15=0.938 m_l1a=0
+m_l2c=0.75 t_s0=0 t_s1=0.75 t_s2=0 t_s3=0.25 t_s4=0.5 t_s5=0.75 t_s6=0 t_s7=1 t_s8=0
+t_s9=0.75 t_s10=0 t_s11=0.25 t_s12=0.5 t_s13=0.75 t_s14=0 t_s15=1
+
+[minimal wub]
+# clean and low: a sub with one slow wub
+name = "minimal wub"
+type = growl
+table=0 pos=0 detn=0.1 sub=0.8 cut=0.18 res=0.3 drv=0.15 l1_len=0.4 l1_int=1 l1_loop=1
+l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854
+l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.5 l1_p13=0.309
+l1_p14=0.146 l1_p15=0.038 m_l1c=0.75
+
+[mid growl]
+# bandpassed mids, the gritty centre of a growl
+name = "mid growl"
+type = growl
+table=0.667 pos=0.5 detn=0.35 ftype=0.25 cut=0.55 res=0.6 drv=0.65 shaper=0.5 sub=0.3
+l1_len=0.2 l1_int=0.5 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=1 l1_p2=0.25 l1_p3=0.75 l1_p4=0.5
+l1_p5=1 l1_p6=0 l1_p7=0.5 l1_p8=0 l1_p9=1 l1_p10=0.25 l1_p11=0.75 l1_p12=0.5 l1_p13=1
+l1_p14=0 l1_p15=0.5 l2_len=0.4 l2_int=1 l2_loop=1 l2_trig=0 l2_p0=0 l2_p1=0.038 l2_p2=0.146
+l2_p3=0.309 l2_p4=0.5 l2_p5=0.691 l2_p6=0.854 l2_p7=0.962 l2_p8=1 l2_p9=0.962 l2_p10=0.854
+l2_p11=0.691 l2_p12=0.5 l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 m_l1c=0.875 m_l2w=0.75
+
+[rasp]
+# a hissing, high-passed rasp
+name = "rasp"
+type = growl
+table=0.333 pos=0.3 detn=0.5 nois=0.35 ftype=0.5 cut=0.45 res=0.35 drv=0.7 shaper=1 sub=0.3
+l1_len=0.2 l1_int=0.5 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188
+l1_p4=0.25 l1_p5=0.312 l1_p6=0.375 l1_p7=0.438 l1_p8=0.5 l1_p9=0.562 l1_p10=0.625
+l1_p11=0.688 l1_p12=0.75 l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 m_l1c=0.75
+
+[gnarl]
+# FM and a fold: knotted and nasty
+name = "gnarl"
+type = growl
+table=0.333 pos=0.35 detn=0.4 b_wave=0.667 b_rat=0.571 b_fm=0.7 sub=0.35 cut=0.55 res=0.45
+drv=0.8 shaper=0.5 l1_len=0.2 l1_int=1 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146
+l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854
+l1_p11=0.691 l1_p12=0.5 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 m_l1f=0.875 m_l1c=0.75
+
+[future bass]
+# wide detuned saw chords with a slow filter lift
+name = "future bass"
+type = growl
+table=0 pos=0.1 detn=0.8 stack=0.75 sub=0.2 cut=0.45 res=0.2 drv=0.2 amp_s=1 amp_r=0.4
+wide=0.65 verb=0.35 dely=0.2 l1_len=0.6 l1_int=0.5 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=0.125
+l1_p2=0.25 l1_p3=0.375 l1_p4=0.5 l1_p5=0.625 l1_p6=0.75 l1_p7=0.875 l1_p8=1 l1_p9=0.969
+l1_p10=0.938 l1_p11=0.906 l1_p12=0.875 l1_p13=0.844 l1_p14=0.812 l1_p15=0.781 m_l1c=0.875
+
+[supersaw]
+# a thick supersaw for leads and stabs
+name = "supersaw"
+type = growl
+table=0 pos=0 detn=0.9 stack=1 sub=0.1 cut=0.7 res=0.15 drv=0.2 amp_s=1 amp_r=0.3 wide=0.6
+verb=0.3 m_whld=0.625
+
+[detune lead]
+# a plain detuned lead
+name = "detune lead"
+type = growl
+table=0.333 pos=0.2 detn=0.7 stack=0.5 sub=0.1 cut=0.65 res=0.2 drv=0.3 amp_s=1 amp_r=0.25
+glid=0.2 verb=0.25 l1_len=0.4 l1_int=1 l1_loop=1 l1_trig=0 l1_p0=0 l1_p1=0.038 l1_p2=0.146
+l1_p3=0.309 l1_p4=0.5 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1 l1_p9=0.962 l1_p10=0.854
+l1_p11=0.691 l1_p12=0.5 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 m_l1p=0.625
+
+[fm bell]
+# a bright FM bell
+name = "fm bell"
+type = growl
+table=0 pos=0 b_wave=0 b_rat=0.571 b_fm=0.6 b_lvl=0 sub=0 cut=0.9 res=0.1 drv=0 amp_d=0.6
+amp_s=0 amp_r=0.5 verb=0.45 dely=0.25 wide=0.4 m_envf=0.25
+
+[pluck bass]
+# a short, punchy plucked bass
+name = "pluck bass"
+type = growl
+table=0.333 pos=0.2 detn=0.2 sub=0.6 cut=0.5 res=0.35 drv=0.4 amp_d=0.3 amp_s=0 amp_r=0.1
+env_d=0.25 m_envc=0.875
+
+[sub drop]
+# a sine-ish drop: the pitch falls fast then settles
+name = "sub drop"
+type = growl
+table=0 pos=0 detn=0 sub=0.9 cut=0.2 res=0.1 drv=0.2 amp_d=0.8 amp_s=0.9 amp_r=0.3
+l1_len=0.2 l1_int=0.5 l1_loop=0 l1_trig=1 l1_p0=1 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812
+l1_p4=0.75 l1_p5=0.688 l1_p6=0.625 l1_p7=0.562 l1_p8=0.5 l1_p9=0.438 l1_p10=0.375
+l1_p11=0.312 l1_p12=0.25 l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 m_l1p=1
+
+[808 growl]
+# an 808 with a growling edge
+name = "808 growl"
+type = growl
+table=0.333 pos=0.2 sub=0.8 cut=0.3 res=0.35 drv=0.6 shaper=0.5 glid=0.3 amp_d=0.9 amp_s=0.7
+amp_r=0.25 l1_len=0 l1_int=0.5 l1_loop=0 l1_trig=1 l1_p0=1 l1_p1=0.938 l1_p2=0.875
+l1_p3=0.812 l1_p4=0.75 l1_p5=0.688 l1_p6=0.625 l1_p7=0.562 l1_p8=0.5 l1_p9=0.438
+l1_p10=0.375 l1_p11=0.312 l1_p12=0.25 l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 m_l1p=0.875
+m_l1d=0.625
+
+[acid squeal]
+# a resonant squelch driven by the envelope
+name = "acid squeal"
+type = growl
+table=0 pos=0 sub=0.2 cut=0.35 res=0.85 drv=0.4 glid=0.3 amp_d=0.4 amp_s=0.6 env_d=0.35
+env_s=0 m_envc=1 m_velq=0.625
+
+[chirp]
+# a short rising chirp
+name = "chirp"
+type = growl
+table=0.333 pos=0.3 sub=0 cut=0.7 res=0.4 drv=0.3 amp_d=0.3 amp_s=0 amp_r=0.1 verb=0.2
+l1_len=0 l1_int=0.5 l1_loop=0 l1_trig=1 l1_p0=0 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188
+l1_p4=0.25 l1_p5=0.312 l1_p6=0.375 l1_p7=0.438 l1_p8=0.5 l1_p9=0.562 l1_p10=0.625
+l1_p11=0.688 l1_p12=0.75 l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 m_l1p=0.875
+
+[swarm]
+# random cutoff steps on a fat detuned stack
+name = "swarm"
+type = growl
+table=0.667 pos=0.5 detn=1 stack=0.5 sub=0.2 cut=0.5 res=0.35 drv=0.5 l1_len=0.2 l1_int=0
+l1_loop=1 l1_trig=0 l1_p0=0.324 l1_p1=0.151 l1_p2=0.651 l1_p3=0.072 l1_p4=0.536 l1_p5=0.366
+l1_p6=0.058 l1_p7=0.507 l1_p8=0.037 l1_p9=0.434 l1_p10=0.07 l1_p11=0.091 l1_p12=0.425
+l1_p13=0.827 l1_p14=0.124 l1_p15=0.223 l2_len=0.4 l2_int=0.5 l2_loop=1 l2_trig=0 l2_p0=0.452
+l2_p1=0.56 l2_p2=0.924 l2_p3=0.466 l2_p4=0.508 l2_p5=0.587 l2_p6=0.185 l2_p7=0.512
+l2_p8=0.63 l2_p9=0.793 l2_p10=0.094 l2_p11=0.303 l2_p12=0.091 l2_p13=0.81 l2_p14=0.693
+l2_p15=0.042 m_l1c=0.875 m_l2w=0.75
+
+[wide stab]
+# a short, wide house-style stab
+name = "wide stab"
+type = growl
+table=0 pos=0.1 detn=0.6 stack=0.75 sub=0.1 cut=0.55 res=0.25 drv=0.25 amp_d=0.3 amp_s=0
+amp_r=0.2 wide=0.6 dely=0.3 verb=0.3 env_d=0.3 m_envc=0.875
+
+[gentle wub]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "gentle wub"
+type = growl
+table=0.667 pos=0.636 detn=0.536 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.580 nois=0.000 ftype=0.000 cut=0.240 res=0.483 vow=0.500 drv=0.435
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.146 wide=0.279 dely=0.000 verb=0.145 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=1.000 l1_p2=0.250 l1_p3=0.750 l1_p4=0.500 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.500 l1_p8=0.000 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.500
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.500 l2_len=0.600 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750
+m_l1d=0.625 m_l2w=0.750 m_whlc=0.750
+
+[sunken speaker]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "sunken speaker"
+type = growl
+table=0.333 pos=0.473 detn=0.275 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.334 nois=0.000 ftype=0.000 cut=0.725 res=0.207 vow=0.500 drv=0.286
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.213 wide=0.445 dely=0.000 verb=0.217 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_whlc=0.750 talk=0.899 t_rate=0.750 t_glid=0.222 t_res=0.407 t_sh=0.524
+t_s0=0.500 t_s2=0.500 t_s3=0.250 t_s4=0.750 t_s5=0.250 t_s6=0.250 t_s7=0.250 t_s9=0.000
+t_s10=0.000 t_s11=0.500 t_s12=0.500 t_s13=0.250 t_s14=0.500 t_s15=0.500
+
+[rural shriek]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "rural shriek"
+type = growl
+table=1.000 pos=0.371 detn=0.309 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.559 nois=0.000 ftype=0.000 cut=0.842 res=0.429 vow=0.500 drv=0.657
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.226 wide=0.282 dely=0.000 verb=0.239 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=0.125 l3_p2=0.250 l3_p3=0.375 l3_p4=0.500 l3_p5=0.625 l3_p6=0.750 l3_p7=0.875
+l3_p8=1.000 l3_p9=0.875 l3_p10=0.750 l3_p11=0.625 l3_p12=0.500 l3_p13=0.375
+l3_p14=0.250 l3_p15=0.125 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_whlc=0.750 sync=0.496 s_mod=0.603
+
+[gravel stab]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "gravel stab"
+type = growl
+table=0.667 pos=0.093 detn=0.386 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.528 nois=0.000 ftype=0.000 cut=0.371 res=0.398 vow=0.500 drv=0.578
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.233 wide=0.209 dely=0.000 verb=0.190 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=1.000 l1_p1=1.000 l1_p2=0.000 l1_p3=0.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.000 l1_p8=0.000 l1_p9=0.000 l1_p10=1.000 l1_p11=1.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.750 m_veld=0.625 m_whlc=0.750 talk=0.385 t_rate=0.750
+
+[brass hook]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "brass hook"
+type = growl
+table=0.667 pos=0.471 detn=0.845 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.197 nois=0.000 ftype=0.000 cut=0.556 res=0.418 vow=0.500 drv=0.417
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.274 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.156 wide=0.224 dely=0.096 verb=0.364 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_whlc=0.750
+
+[crimson pad]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "crimson pad"
+type = growl
+table=0.333 pos=0.675 detn=0.556 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.281 nois=0.000 ftype=0.000 cut=0.522 res=0.442 vow=0.500 drv=0.139
+shaper=0.000 amp_a=0.401 amp_d=0.500 amp_s=1.000 amp_r=0.638 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.242 wide=0.672 dely=0.000 verb=0.358 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_whlc=0.750
+
+[solar pop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "solar pop"
+type = growl
+table=0.667 pos=0.086 detn=0.520 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.302 nois=0.000 ftype=0.000 cut=0.357 res=0.311 vow=0.500 drv=0.365
+shaper=0.000 amp_a=0.020 amp_d=0.279 amp_s=0.000 amp_r=0.156 env_a=0.010 env_d=0.263
+env_s=0.000 env_r=0.200 glid=0.126 wide=0.217 dely=0.000 verb=0.119 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=0.875 m_whlc=0.750 sync=0.348
+
+[thunder drop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "thunder drop"
+type = growl
+table=0.000 pos=0.000 detn=0.547 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.891 nois=0.000 ftype=0.000 cut=0.174 res=0.464 vow=0.500 drv=0.429
+shaper=0.500 amp_a=0.020 amp_d=0.828 amp_s=0.918 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.176 wide=0.383 dely=0.000 verb=0.161 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=1.000 m_veld=0.625 m_whlc=0.750
+
+[molten metal]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "molten metal"
+type = growl
+table=1.000 pos=0.408 detn=0.303 stack=0.000 b_wave=1.000 b_rat=0.571 b_fm=0.477
+b_lvl=0.030 sub=0.610 nois=0.000 ftype=0.000 cut=0.857 res=0.390 vow=0.500 drv=0.211
+shaper=1.000 amp_a=0.020 amp_d=0.669 amp_s=0.136 amp_r=0.392 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.104 wide=0.395 dely=0.000 verb=0.394 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.750 m_envf=0.250 m_whlc=0.750
+
+[violet throat]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "violet throat"
+type = growl
+table=0.667 pos=0.661 detn=0.225 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.577 nois=0.000 ftype=1.000 cut=0.641 res=0.411 vow=0.208 drv=0.463
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.234 wide=0.387 dely=0.000 verb=0.088 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188 l1_p4=0.250 l1_p5=0.312
+l1_p6=0.375 l1_p7=0.438 l1_p8=0.500 l1_p9=0.562 l1_p10=0.625 l1_p11=0.688 l1_p12=0.750
+l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=1.000 m_veld=0.625 m_whlc=0.750
+talk=0.412 t_rate=0.250 t_glid=0.748 t_s0=1.000 t_s3=0.250 t_s4=1.000 t_s6=1.000
+t_s7=0.250 t_s8=0.500 t_s9=0.500 t_s10=0.250 t_s12=0.250 t_s13=1.000 t_s14=0.000
+t_s15=0.250
+
+[sweet wub]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "sweet wub"
+type = growl
+table=0.333 pos=0.477 detn=0.350 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.535 nois=0.000 ftype=0.000 cut=0.202 res=0.419 vow=0.500 drv=0.489
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.211 wide=0.365 dely=0.000 verb=0.157 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.400 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.947 l2_p1=0.791 l2_p2=0.616 l2_p3=0.404 l2_p4=0.081 l2_p5=0.040
+l2_p6=0.290 l2_p7=0.448 l2_p8=0.433 l2_p9=0.530 l2_p10=0.994 l2_p11=0.008 l2_p12=0.539
+l2_p13=0.339 l2_p14=0.821 l2_p15=0.690 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750
+m_l1d=0.625 m_l2w=0.875 m_veld=0.625 m_whlc=0.750
+
+[ghost speaker]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "ghost speaker"
+type = growl
+table=0.333 pos=0.057 detn=0.430 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.676 nois=0.000 ftype=0.000 cut=0.646 res=0.281 vow=0.500 drv=0.478
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.295 wide=0.271 dely=0.000 verb=0.237 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_veld=0.625 m_whlc=0.750 talk=0.893 t_rate=0.750 t_glid=0.058
+t_res=0.666 t_sh=0.434 t_s0=1.000 t_s1=1.000 t_s3=1.000 t_s4=1.000 t_s5=0.250
+t_s6=0.250 t_s7=0.750 t_s8=0.750 t_s9=1.000 t_s10=1.000 t_s13=0.750 t_s14=0.500
+t_s15=0.500
+
+[neon shriek]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "neon shriek"
+type = growl
+table=0.333 pos=0.191 detn=0.118 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.565 nois=0.000 ftype=0.000 cut=0.837 res=0.336 vow=0.500 drv=0.621
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.182 wide=0.294 dely=0.000 verb=0.152 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.600 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_veld=0.625 m_whlc=0.750 sync=0.467 s_mod=0.370
+
+[wooden stab]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "wooden stab"
+type = growl
+table=0.000 pos=0.185 detn=0.153 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.475 nois=0.000 ftype=0.000 cut=0.499 res=0.402 vow=0.500 drv=0.591
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.107 wide=0.140 dely=0.000 verb=0.073 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.000 l1_p2=1.000 l1_p3=1.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=1.000 l1_p7=1.000 l1_p8=0.000 l1_p9=0.000 l1_p10=0.000 l1_p11=0.000 l1_p12=0.000
+l1_p13=0.000 l1_p14=1.000 l1_p15=1.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.875 m_veld=0.625 m_whlc=0.750 talk=0.363 t_rate=0.750
+
+[narrow anthem]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "narrow anthem"
+type = growl
+table=0.000 pos=0.045 detn=0.671 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.031 nois=0.000 ftype=0.000 cut=0.755 res=0.356 vow=0.500 drv=0.438
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.203 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.365 wide=0.248 dely=0.249 verb=0.294 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_veld=0.625 m_whlc=0.750
+
+[marble pad]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "marble pad"
+type = growl
+table=0.333 pos=0.123 detn=0.591 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.276 nois=0.000 ftype=0.000 cut=0.586 res=0.283 vow=0.500 drv=0.240
+shaper=0.500 amp_a=0.461 amp_d=0.500 amp_s=1.000 amp_r=0.458 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.076 wide=0.456 dely=0.000 verb=0.560 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_veld=0.625 m_whlc=0.750
+
+[velvet tick]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "velvet tick"
+type = growl
+table=1.000 pos=0.581 detn=0.168 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.506 nois=0.000 ftype=0.000 cut=0.356 res=0.459 vow=0.500 drv=0.414
+shaper=0.000 amp_a=0.020 amp_d=0.326 amp_s=0.000 amp_r=0.110 env_a=0.010 env_d=0.283
+env_s=0.000 env_r=0.200 glid=0.063 wide=0.330 dely=0.000 verb=0.208 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=1.000 m_whlc=0.750
+
+[savage drop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "savage drop"
+type = growl
+table=0.000 pos=0.000 detn=0.227 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.893 nois=0.000 ftype=0.000 cut=0.221 res=0.361 vow=0.500 drv=0.498
+shaper=0.000 amp_a=0.020 amp_d=0.802 amp_s=0.934 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.230 wide=0.106 dely=0.000 verb=0.063 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.875 m_veld=0.625 m_whlc=0.750
+
+[rapid metal]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "rapid metal"
+type = growl
+table=0.000 pos=0.520 detn=0.193 stack=0.000 b_wave=0.000 b_rat=0.714 b_fm=0.829
+b_lvl=0.296 sub=0.395 nois=0.000 ftype=0.000 cut=0.651 res=0.459 vow=0.500 drv=0.146
+shaper=0.500 amp_a=0.020 amp_d=0.590 amp_s=0.272 amp_r=0.393 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.217 wide=0.299 dely=0.000 verb=0.362 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.750 m_envf=0.125 m_veld=0.625
+m_whlc=0.750
+
+[ancient throat]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "ancient throat"
+type = growl
+table=0.667 pos=0.202 detn=0.200 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.581 nois=0.000 ftype=1.000 cut=0.656 res=0.513 vow=0.204 drv=0.417
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.176 wide=0.195 dely=0.000 verb=0.216 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=1.000 l1_p2=0.250 l1_p3=0.750 l1_p4=0.500 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.500 l1_p8=0.000 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.500
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.500 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=0.875 m_whlc=0.750 talk=0.557
+t_glid=0.786 t_s0=1.000 t_s2=0.750 t_s3=0.250 t_s4=0.000 t_s5=1.000 t_s7=0.250
+t_s8=0.750 t_s9=0.000 t_s10=1.000 t_s11=0.000 t_s12=0.500 t_s13=0.250 t_s14=1.000
+t_s15=0.500
+
+[satin wub]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "satin wub"
+type = growl
+table=0.667 pos=0.380 detn=0.536 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.572 nois=0.000 ftype=0.000 cut=0.292 res=0.302 vow=0.500 drv=0.643
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.106 wide=0.258 dely=0.000 verb=0.247 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=1.000 l1_p2=0.250 l1_p3=0.750 l1_p4=0.500 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.500 l1_p8=0.000 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.500
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.500 l2_len=0.600 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=1.000
+m_l2w=0.875 m_veld=0.625 m_whlc=0.750
+
+[static voice]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "static voice"
+type = growl
+table=0.333 pos=0.412 detn=0.360 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.614 nois=0.000 ftype=0.000 cut=0.542 res=0.370 vow=0.500 drv=0.450
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.095 wide=0.492 dely=0.000 verb=0.162 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_whlc=0.750 talk=0.966 t_rate=0.750 t_glid=0.544 t_res=0.622 t_sh=0.598
+t_s2=0.500 t_s3=0.500 t_s4=0.500 t_s7=0.500 t_s8=0.500 t_s9=1.000 t_s10=0.750
+t_s11=0.500 t_s12=0.000 t_s13=0.000 t_s15=0.250
+
+[tidal shriek]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "tidal shriek"
+type = growl
+table=0.667 pos=0.532 detn=0.485 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.399 nois=0.000 ftype=0.000 cut=0.788 res=0.279 vow=0.500 drv=0.739
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.059 wide=0.194 dely=0.000 verb=0.160 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.600 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_veld=0.625 m_whlc=0.750 sync=0.617 s_mod=0.849
+
+[polar riddim]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "polar riddim"
+type = growl
+table=0.667 pos=0.542 detn=0.302 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.374 nois=0.000 ftype=0.000 cut=0.368 res=0.421 vow=0.500 drv=0.686
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.152 wide=0.394 dely=0.000 verb=0.158 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=1.000 l1_p1=1.000 l1_p2=0.000 l1_p3=0.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.000 l1_p8=0.000 l1_p9=0.000 l1_p10=0.000 l1_p11=0.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.000 l2_len=0.200 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.062 l2_p2=0.125 l2_p3=0.188 l2_p4=0.250 l2_p5=0.312
+l2_p6=0.375 l2_p7=0.438 l2_p8=0.500 l2_p9=0.562 l2_p10=0.625 l2_p11=0.688 l2_p12=0.750
+l2_p13=0.812 l2_p14=0.875 l2_p15=0.938 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.875 m_veld=0.625 m_whlc=0.750
+
+[whisper anthem]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "whisper anthem"
+type = growl
+table=0.667 pos=0.340 detn=0.674 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.092 nois=0.000 ftype=0.000 cut=0.810 res=0.466 vow=0.500 drv=0.438
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.336 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.169 wide=0.331 dely=0.072 verb=0.392 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_whlc=0.750
+
+[silver pad]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "silver pad"
+type = growl
+table=1.000 pos=0.588 detn=0.464 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.207 nois=0.000 ftype=0.000 cut=0.665 res=0.271 vow=0.500 drv=0.165
+shaper=0.500 amp_a=0.437 amp_d=0.500 amp_s=1.000 amp_r=0.453 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.057 wide=0.629 dely=0.000 verb=0.556 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_veld=0.625 m_whlc=0.750
+
+[scarlet tick]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "scarlet tick"
+type = growl
+table=1.000 pos=0.225 detn=0.154 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.413 nois=0.000 ftype=0.000 cut=0.310 res=0.446 vow=0.500 drv=0.426
+shaper=0.500 amp_a=0.020 amp_d=0.404 amp_s=0.000 amp_r=0.190 env_a=0.010 env_d=0.394
+env_s=0.000 env_r=0.200 glid=0.090 wide=0.362 dely=0.000 verb=0.118 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=1.000 m_veld=0.625 m_whlc=0.750
+
+[salty drop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "salty drop"
+type = growl
+table=0.000 pos=0.000 detn=0.229 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.877 nois=0.000 ftype=0.000 cut=0.203 res=0.337 vow=0.500 drv=0.244
+shaper=0.500 amp_a=0.020 amp_d=0.860 amp_s=0.943 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.118 wide=0.264 dely=0.000 verb=0.121 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=1.000 m_whlc=0.750
+
+[shadow bell]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "shadow bell"
+type = growl
+table=0.333 pos=0.650 detn=0.285 stack=0.000 b_wave=0.000 b_rat=0.571 b_fm=0.642
+b_lvl=0.191 sub=0.341 nois=0.000 ftype=0.000 cut=0.760 res=0.432 vow=0.500 drv=0.226
+shaper=1.000 amp_a=0.020 amp_d=0.536 amp_s=0.378 amp_r=0.492 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.099 wide=0.375 dely=0.000 verb=0.381 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.625 m_envf=0.375 m_veld=0.625
+m_whlc=0.750
+
+[dusty throat]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "dusty throat"
+type = growl
+table=0.333 pos=0.333 detn=0.502 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.589 nois=0.000 ftype=1.000 cut=0.316 res=0.384 vow=0.201 drv=0.333
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.100 wide=0.355 dely=0.000 verb=0.176 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188 l1_p4=0.250 l1_p5=0.312
+l1_p6=0.375 l1_p7=0.438 l1_p8=0.500 l1_p9=0.562 l1_p10=0.625 l1_p11=0.688 l1_p12=0.750
+l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=0.875 m_veld=0.625 m_whlc=0.750
+talk=0.538 t_glid=0.519 t_s0=1.000 t_s1=1.000 t_s2=0.250 t_s3=0.500 t_s4=1.000
+t_s5=0.000 t_s6=0.000 t_s7=0.750 t_s9=0.750 t_s10=0.250 t_s11=0.500 t_s12=1.000
+t_s13=0.000 t_s15=0.750
+
+[liquid wobble]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "liquid wobble"
+type = growl
+table=0.667 pos=0.338 detn=0.251 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.577 nois=0.000 ftype=0.000 cut=0.164 res=0.329 vow=0.500 drv=0.501
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.140 wide=0.217 dely=0.000 verb=0.171 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 l2_len=0.600 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.465 l2_p1=0.940 l2_p2=0.438 l2_p3=0.442 l2_p4=0.225 l2_p5=0.914
+l2_p6=0.953 l2_p7=0.532 l2_p8=0.663 l2_p9=0.217 l2_p10=0.637 l2_p11=0.331 l2_p12=0.678
+l2_p13=0.671 l2_p14=0.646 l2_p15=0.985 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750
+m_l2w=0.625 m_whlc=0.750
+
+[mean voice]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "mean voice"
+type = growl
+table=1.000 pos=0.362 detn=0.376 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.354 nois=0.000 ftype=0.000 cut=0.720 res=0.259 vow=0.500 drv=0.325
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.150 wide=0.360 dely=0.000 verb=0.083 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_whlc=0.750 talk=0.747 t_rate=0.750 t_glid=0.311 t_res=0.780 t_sh=0.512
+t_s0=0.750 t_s1=1.000 t_s2=0.750 t_s4=0.500 t_s5=0.000 t_s7=0.750 t_s8=0.750 t_s9=0.750
+t_s11=0.500 t_s12=0.250 t_s13=0.000 t_s14=0.000 t_s15=0.250
+
+[copper shriek]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "copper shriek"
+type = growl
+table=1.000 pos=0.572 detn=0.129 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.574 nois=0.000 ftype=0.000 cut=0.757 res=0.309 vow=0.500 drv=0.588
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.207 wide=0.356 dely=0.000 verb=0.163 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.400 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_veld=0.625 m_whlc=0.750 sync=0.621 s_mod=0.985
+
+[acid riddim]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "acid riddim"
+type = growl
+table=1.000 pos=0.255 detn=0.445 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.506 nois=0.000 ftype=0.000 cut=0.368 res=0.429 vow=0.500 drv=0.734
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.212 wide=0.393 dely=0.000 verb=0.097 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.000 l1_p2=0.000 l1_p3=0.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=1.000 l1_p7=1.000 l1_p8=1.000 l1_p9=1.000 l1_p10=1.000 l1_p11=1.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=1.000 l1_p15=1.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.062 l2_p2=0.125 l2_p3=0.188 l2_p4=0.250 l2_p5=0.312
+l2_p6=0.375 l2_p7=0.438 l2_p8=0.500 l2_p9=0.562 l2_p10=0.625 l2_p11=0.688 l2_p12=0.750
+l2_p13=0.812 l2_p14=0.875 l2_p15=0.938 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.750 m_veld=0.625 m_whlc=0.750
+
+[frozen anthem]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "frozen anthem"
+type = growl
+table=1.000 pos=0.528 detn=0.506 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.097 nois=0.000 ftype=0.000 cut=0.737 res=0.250 vow=0.500 drv=0.393
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.159 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.396 wide=0.202 dely=0.254 verb=0.255 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_veld=0.625 m_whlc=0.750
+sync=0.517
+
+[heavy haze]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "heavy haze"
+type = growl
+table=0.667 pos=0.202 detn=0.555 stack=0.750 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.233 nois=0.000 ftype=0.000 cut=0.526 res=0.237 vow=0.500 drv=0.106
+shaper=0.000 amp_a=0.491 amp_d=0.500 amp_s=1.000 amp_r=0.599 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.056 wide=0.517 dely=0.000 verb=0.581 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_whlc=0.750 talk=0.545
+t_rate=0.000 t_glid=0.738
+
+[future tick]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "future tick"
+type = growl
+table=0.000 pos=0.424 detn=0.121 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.367 nois=0.000 ftype=0.000 cut=0.488 res=0.456 vow=0.500 drv=0.427
+shaper=1.000 amp_a=0.020 amp_d=0.314 amp_s=0.000 amp_r=0.173 env_a=0.010 env_d=0.245
+env_s=0.000 env_r=0.200 glid=0.054 wide=0.223 dely=0.000 verb=0.149 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=1.000 m_whlc=0.750
+
+[chrome boom]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "chrome boom"
+type = growl
+table=0.000 pos=0.000 detn=0.312 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.802 nois=0.000 ftype=0.000 cut=0.273 res=0.259 vow=0.500 drv=0.360
+shaper=0.000 amp_a=0.020 amp_d=0.611 amp_s=0.714 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.156 wide=0.361 dely=0.000 verb=0.177 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.875 m_whlc=0.750
+
+[cosmic bell]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "cosmic bell"
+type = growl
+table=0.667 pos=0.134 detn=0.342 stack=0.000 b_wave=0.000 b_rat=0.714 b_fm=0.607
+b_lvl=0.196 sub=0.564 nois=0.000 ftype=0.000 cut=0.626 res=0.371 vow=0.500 drv=0.108
+shaper=0.000 amp_a=0.020 amp_d=0.370 amp_s=0.077 amp_r=0.290 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.126 wide=0.315 dely=0.000 verb=0.394 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.750 m_envf=0.250 m_whlc=0.750
+
+[ashen throat]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "ashen throat"
+type = growl
+table=0.000 pos=0.541 detn=0.434 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.665 nois=0.000 ftype=1.000 cut=0.372 res=0.639 vow=0.253 drv=0.270
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.248 wide=0.138 dely=0.000 verb=0.206 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=1.000 l1_p2=0.250 l1_p3=0.750 l1_p4=0.500 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.500 l1_p8=0.000 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.500
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.500 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=0.875 m_veld=0.625 m_whlc=0.750
+talk=0.325 t_rate=0.750 t_glid=0.615 t_s1=0.750 t_s3=1.000 t_s5=0.000 t_s6=1.000
+t_s7=0.000 t_s8=1.000 t_s9=0.750 t_s10=0.000 t_s11=0.750 t_s12=0.000 t_s13=1.000
+t_s14=0.500
+
+[tribal wobble]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "tribal wobble"
+type = growl
+table=0.667 pos=0.186 detn=0.292 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.821 nois=0.000 ftype=0.000 cut=0.343 res=0.447 vow=0.500 drv=0.435
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.206 wide=0.169 dely=0.000 verb=0.158 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.400 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=1.000
+m_l2w=0.625 m_veld=0.625 m_whlc=0.750
+
+[razor voice]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "razor voice"
+type = growl
+table=0.000 pos=0.603 detn=0.330 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.311 nois=0.000 ftype=0.000 cut=0.478 res=0.461 vow=0.500 drv=0.441
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.136 wide=0.365 dely=0.000 verb=0.143 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_veld=0.625 m_whlc=0.750 talk=0.886 t_rate=0.750 t_glid=0.142
+t_res=0.361 t_sh=0.548 t_s1=0.250 t_s2=0.250 t_s3=0.250 t_s4=0.750 t_s5=1.000
+t_s6=0.250 t_s7=0.750 t_s8=0.750 t_s9=0.500 t_s10=0.750 t_s11=0.750 t_s12=1.000
+t_s13=0.000 t_s15=0.250
+
+[toxic squeal]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "toxic squeal"
+type = growl
+table=0.667 pos=0.032 detn=0.219 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.354 nois=0.000 ftype=0.000 cut=0.627 res=0.444 vow=0.500 drv=0.616
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.052 wide=0.215 dely=0.000 verb=0.189 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.600 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_veld=0.625 m_whlc=0.750 sync=0.315 s_mod=0.734
+
+[amber riddim]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "amber riddim"
+type = growl
+table=0.667 pos=0.029 detn=0.153 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.466 nois=0.000 ftype=0.000 cut=0.574 res=0.291 vow=0.500 drv=0.679
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.157 wide=0.390 dely=0.000 verb=0.203 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=1.000 l1_p1=1.000 l1_p2=0.000 l1_p3=0.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=1.000 l1_p7=1.000 l1_p8=0.000 l1_p9=0.000 l1_p10=0.000 l1_p11=0.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=1.000 l1_p15=1.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.875 m_veld=0.625 m_whlc=0.750 talk=0.408 t_rate=0.750
+
+[smoky beacon]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "smoky beacon"
+type = growl
+table=0.333 pos=0.605 detn=0.687 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.041 nois=0.000 ftype=0.000 cut=0.740 res=0.387 vow=0.500 drv=0.446
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.319 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.267 wide=0.240 dely=0.187 verb=0.272 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_whlc=0.750
+
+[ember haze]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "ember haze"
+type = growl
+table=0.667 pos=0.653 detn=0.644 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.284 nois=0.000 ftype=0.000 cut=0.588 res=0.311 vow=0.500 drv=0.166
+shaper=0.000 amp_a=0.460 amp_d=0.500 amp_s=1.000 amp_r=0.514 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.290 wide=0.408 dely=0.000 verb=0.498 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_veld=0.625 m_whlc=0.750
+talk=0.426 t_rate=0.000 t_glid=0.706
+
+[feral tick]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "feral tick"
+type = growl
+table=0.667 pos=0.243 detn=0.456 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.466 nois=0.000 ftype=0.000 cut=0.546 res=0.516 vow=0.500 drv=0.437
+shaper=1.000 amp_a=0.020 amp_d=0.425 amp_s=0.000 amp_r=0.164 env_a=0.010 env_d=0.295
+env_s=0.000 env_r=0.200 glid=0.068 wide=0.365 dely=0.000 verb=0.133 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=1.000 m_whlc=0.750
+
+[rotten boom]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "rotten boom"
+type = growl
+table=0.000 pos=0.000 detn=0.443 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.836 nois=0.000 ftype=0.000 cut=0.178 res=0.400 vow=0.500 drv=0.264
+shaper=0.000 amp_a=0.020 amp_d=0.689 amp_s=0.725 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.245 wide=0.236 dely=0.000 verb=0.217 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=1.000 m_veld=0.625 m_whlc=0.750
+
+[kind bell]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "kind bell"
+type = growl
+table=0.000 pos=0.180 detn=0.491 stack=0.000 b_wave=1.000 b_rat=0.429 b_fm=0.671
+b_lvl=0.096 sub=0.371 nois=0.000 ftype=0.000 cut=0.642 res=0.347 vow=0.500 drv=0.142
+shaper=0.500 amp_a=0.020 amp_d=0.514 amp_s=0.215 amp_r=0.476 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.201 wide=0.140 dely=0.000 verb=0.346 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.625 m_envf=0.375 m_veld=0.625
+m_whlc=0.750
+
+[carbon formant]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "carbon formant"
+type = growl
+table=1.000 pos=0.405 detn=0.361 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.564 nois=0.000 ftype=1.000 cut=0.546 res=0.360 vow=0.185 drv=0.431
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.255 wide=0.312 dely=0.000 verb=0.074 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=1.000 l1_p2=0.250 l1_p3=0.750 l1_p4=0.500 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.500 l1_p8=0.000 l1_p9=1.000 l1_p10=0.250 l1_p11=0.750 l1_p12=0.500
+l1_p13=1.000 l1_p14=0.000 l1_p15=0.500 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=1.000 m_whlc=0.750 talk=0.489
+t_rate=0.250 t_glid=0.590 t_s0=0.750 t_s1=0.750 t_s2=0.500 t_s3=1.000 t_s4=0.750
+t_s6=0.500 t_s9=0.750 t_s10=1.000 t_s13=0.750 t_s14=0.000 t_s15=0.500
+
+[glass wobble]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "glass wobble"
+type = growl
+table=0.667 pos=0.229 detn=0.131 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.749 nois=0.000 ftype=0.000 cut=0.215 res=0.330 vow=0.500 drv=0.583
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.176 wide=0.128 dely=0.000 verb=0.125 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875 l1_p10=0.750 l1_p11=0.625 l1_p12=0.500
+l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 l2_len=0.600 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.125 l2_p2=0.250 l2_p3=0.375 l2_p4=0.500 l2_p5=0.625
+l2_p6=0.750 l2_p7=0.875 l2_p8=1.000 l2_p9=0.875 l2_p10=0.750 l2_p11=0.625 l2_p12=0.500
+l2_p13=0.375 l2_p14=0.250 l2_p15=0.125 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.875
+m_l1d=0.625 m_l2w=0.750 m_veld=0.625 m_whlc=0.750
+
+[burnt talker]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "burnt talker"
+type = growl
+table=0.667 pos=0.635 detn=0.301 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.506 nois=0.000 ftype=0.000 cut=0.558 res=0.491 vow=0.500 drv=0.371
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.241 wide=0.188 dely=0.000 verb=0.180 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_whlc=0.750 talk=0.837 t_glid=0.126 t_res=0.379 t_sh=0.492 t_s0=1.000
+t_s2=0.500 t_s3=0.500 t_s5=0.000 t_s6=1.000 t_s8=1.000 t_s10=0.250 t_s11=0.250
+t_s12=0.250 t_s13=0.750 t_s14=0.000
+
+[thin squeal]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "thin squeal"
+type = growl
+table=0.667 pos=0.171 detn=0.136 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.313 nois=0.000 ftype=0.000 cut=0.822 res=0.495 vow=0.500 drv=0.666
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.054 wide=0.165 dely=0.000 verb=0.139 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_whlc=0.750 sync=0.707 s_mod=0.753
+
+[retro riddim]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "retro riddim"
+type = growl
+table=0.000 pos=0.289 detn=0.265 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.511 nois=0.000 ftype=0.000 cut=0.398 res=0.405 vow=0.500 drv=0.643
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.087 wide=0.392 dely=0.000 verb=0.197 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.000 l1_p2=1.000 l1_p3=1.000 l1_p4=1.000 l1_p5=1.000
+l1_p6=0.000 l1_p7=0.000 l1_p8=1.000 l1_p9=1.000 l1_p10=1.000 l1_p11=1.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=1.000 l1_p15=1.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691
+l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500
+l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.750 m_whlc=0.750
+
+[jade beacon]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "jade beacon"
+type = growl
+table=1.000 pos=0.138 detn=0.407 stack=0.250 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.102 nois=0.000 ftype=0.000 cut=0.810 res=0.488 vow=0.500 drv=0.462
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.300 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.280 wide=0.330 dely=0.188 verb=0.386 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=0.625 m_whlc=0.750 sync=0.577
+
+[bitter pad]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "bitter pad"
+type = growl
+table=1.000 pos=0.375 detn=0.769 stack=1.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.204 nois=0.000 ftype=0.000 cut=0.523 res=0.229 vow=0.500 drv=0.200
+shaper=1.000 amp_a=0.456 amp_d=0.500 amp_s=1.000 amp_r=0.460 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.144 wide=0.595 dely=0.000 verb=0.366 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.800 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=0.750 m_whlc=0.750
+
+[urban pop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "urban pop"
+type = growl
+table=1.000 pos=0.438 detn=0.367 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.571 nois=0.000 ftype=0.000 cut=0.544 res=0.457 vow=0.500 drv=0.283
+shaper=0.000 amp_a=0.020 amp_d=0.288 amp_s=0.000 amp_r=0.123 env_a=0.010 env_d=0.227
+env_s=0.000 env_r=0.200 glid=0.175 wide=0.178 dely=0.000 verb=0.226 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_envc=1.000 m_whlc=0.750
+
+[cotton drop]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "cotton drop"
+type = growl
+table=0.000 pos=0.000 detn=0.395 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.828 nois=0.000 ftype=0.000 cut=0.216 res=0.279 vow=0.500 drv=0.421
+shaper=0.000 amp_a=0.020 amp_d=0.753 amp_s=0.738 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.123 wide=0.241 dely=0.000 verb=0.100 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=0.000
+l1_trig=1.000 l1_p0=1.000 l1_p1=0.938 l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688
+l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438 l1_p10=0.375 l1_p11=0.312 l1_p12=0.250
+l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1p=1.000 m_veld=0.625 m_whlc=0.750
+
+[hollow metal]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "hollow metal"
+type = growl
+table=0.333 pos=0.312 detn=0.304 stack=0.000 b_wave=1.000 b_rat=0.714 b_fm=0.811
+b_lvl=0.004 sub=0.695 nois=0.000 ftype=0.000 cut=0.751 res=0.211 vow=0.500 drv=0.194
+shaper=0.500 amp_a=0.020 amp_d=0.593 amp_s=0.388 amp_r=0.467 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.137 wide=0.190 dely=0.000 verb=0.399 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1f=0.750 m_envf=0.250 m_veld=0.625
+m_whlc=0.750
+
+[cobalt yoi]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "cobalt yoi"
+type = growl
+table=1.000 pos=0.274 detn=0.277 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.637 nois=0.000 ftype=1.000 cut=0.354 res=0.574 vow=0.192 drv=0.433
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.284 wide=0.333 dely=0.000 verb=0.220 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=0.500 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188 l1_p4=0.250 l1_p5=0.312
+l1_p6=0.375 l1_p7=0.438 l1_p8=0.500 l1_p9=0.562 l1_p10=0.625 l1_p11=0.688 l1_p12=0.750
+l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.200 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200
+l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1v=1.000 m_veld=0.625 m_whlc=0.750
+talk=0.491 t_rate=0.750 t_glid=0.523 t_s0=1.000 t_s1=0.000 t_s3=0.250 t_s4=0.000
+t_s5=0.250 t_s7=0.750 t_s9=0.500 t_s10=1.000 t_s12=0.000 t_s13=0.000 t_s14=0.750
+t_s15=0.750
+
+[stormy wub]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "stormy wub"
+type = growl
+table=0.667 pos=0.570 detn=0.275 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.702 nois=0.000 ftype=0.000 cut=0.343 res=0.425 vow=0.500 drv=0.698
+shaper=0.500 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.076 wide=0.103 dely=0.000 verb=0.217 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.600 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875 l1_p10=0.750 l1_p11=0.625 l1_p12=0.500
+l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 l2_len=0.800 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.125 l2_p2=0.250 l2_p3=0.375 l2_p4=0.500 l2_p5=0.625
+l2_p6=0.750 l2_p7=0.875 l2_p8=1.000 l2_p9=0.875 l2_p10=0.750 l2_p11=0.625 l2_p12=0.500
+l2_p13=0.375 l2_p14=0.250 l2_p15=0.125 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1c=1.000
+m_l1d=0.625 m_l2w=0.750 m_whlc=0.750
+
+[frost speaker]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "frost speaker"
+type = growl
+table=0.667 pos=0.525 detn=0.297 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.349 nois=0.000 ftype=0.000 cut=0.500 res=0.489 vow=0.500 drv=0.400
+shaper=0.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.137 wide=0.223 dely=0.000 verb=0.196 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.500 l1_loop=1.000
+l1_trig=0.000 l2_len=0.200 l2_int=0.500 l2_loop=1.000 l2_trig=0.000 l3_len=0.200
+l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000
+l4_trig=0.000 m_veld=0.625 m_whlc=0.750 talk=0.920 t_glid=0.168 t_res=0.502 t_sh=0.570
+t_s0=0.250 t_s1=1.000 t_s2=0.250 t_s3=0.000 t_s4=0.000 t_s5=0.000 t_s6=0.000 t_s7=0.250
+t_s8=0.250 t_s10=1.000 t_s11=0.000 t_s12=0.000 t_s13=0.250 t_s14=0.500 t_s15=0.500
+
+[lunar shriek]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "lunar shriek"
+type = growl
+table=0.333 pos=0.168 detn=0.394 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.580 nois=0.000 ftype=0.000 cut=0.801 res=0.246 vow=0.500 drv=0.588
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.228 wide=0.228 dely=0.000 verb=0.245 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 l2_len=0.200 l2_int=0.500 l2_loop=1.000
+l2_trig=0.000 l3_len=0.600 l3_int=0.500 l3_loop=1.000 l3_trig=0.000 l3_p0=0.000
+l3_p1=1.000 l3_p2=0.250 l3_p3=0.750 l3_p4=0.500 l3_p5=1.000 l3_p6=0.000 l3_p7=0.500
+l3_p8=0.000 l3_p9=1.000 l3_p10=0.250 l3_p11=0.750 l3_p12=0.500 l3_p13=1.000
+l3_p14=0.000 l3_p15=0.500 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000
+m_l1c=0.750 m_veld=0.625 m_whlc=0.750 sync=0.325 s_mod=0.532
+
+[golden stab]
+# Ling Growl patch — edit freely; load from the Instrument tab
+name = "golden stab"
+type = growl
+table=0.667 pos=0.354 detn=0.131 stack=0.000 b_wave=0.000 b_rat=0.143 b_fm=0.000
+b_lvl=0.000 sub=0.512 nois=0.000 ftype=0.000 cut=0.592 res=0.211 vow=0.500 drv=0.518
+shaper=1.000 amp_a=0.020 amp_d=0.400 amp_s=1.000 amp_r=0.200 env_a=0.010 env_d=0.350
+env_s=0.000 env_r=0.200 glid=0.205 wide=0.101 dely=0.000 verb=0.077 out=0.800
+tempo=0.571 bend=0.500 whl=0.000 hold=0.000 l1_len=0.200 l1_int=0.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.000 l1_p2=1.000 l1_p3=1.000 l1_p4=0.000 l1_p5=0.000
+l1_p6=1.000 l1_p7=1.000 l1_p8=0.000 l1_p9=0.000 l1_p10=1.000 l1_p11=1.000 l1_p12=1.000
+l1_p13=1.000 l1_p14=1.000 l1_p15=1.000 l2_len=0.600 l2_int=1.000 l2_loop=1.000
+l2_trig=0.000 l2_p0=0.000 l2_p1=0.062 l2_p2=0.125 l2_p3=0.188 l2_p4=0.250 l2_p5=0.312
+l2_p6=0.375 l2_p7=0.438 l2_p8=0.500 l2_p9=0.562 l2_p10=0.625 l2_p11=0.688 l2_p12=0.750
+l2_p13=0.812 l2_p14=0.875 l2_p15=0.938 l3_len=0.200 l3_int=0.500 l3_loop=1.000
+l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
+m_l2c=0.875 m_whlc=0.750

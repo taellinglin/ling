@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libudev-dev \
     clang \
     curl \
+    mingw-w64 \
+    binutils-aarch64-linux-gnu \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -32,6 +34,72 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # neither is a Cargo dependency of this workspace, so both need installing here.
 RUN rustup target add wasm32-unknown-unknown && \
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+# Extra build-farm targets (see แพลตฟอร์มบิลด์ๆ in fu.ling-lang.org's controllers/publish.ling):
+#  - win:    x86_64-pc-windows-gnu (the triple ling picks when cross-compiling from Linux),
+#            linked + windres'd by mingw-w64 above (winresource is an unconditional build-dep)
+#  - lingos: LingOS ring-3 app, custom x86_64-lingos.json spec  } both no_std + build-std,
+#  - rpi:    Pi 5 kernel8.img, aarch64-unknown-none             } so nightly + rust-src;
+#            rpi's raw-image step needs aarch64-linux-gnu-objcopy (binutils-aarch64-linux-gnu)
+#  - mac is NOT here: x86_64-apple-darwin from Linux needs osxcross + a macOS SDK.
+RUN rustup target add x86_64-pc-windows-gnu && \
+    rustup toolchain install nightly --profile minimal --component rust-src && \
+    rustup target add aarch64-unknown-none --toolchain nightly
+
+# The repo's rust-toolchain.toml pins channel "stable", which rustup treats as a separate
+# toolchain from the image's default (1.x.y) - the builds that run inside /opt/ling (wasm-pack
+# for web) use it, so it needs the same targets as the default toolchain.
+RUN rustup toolchain install stable --profile minimal &&     rustup target add --toolchain stable wasm32-unknown-unknown x86_64-pc-windows-gnu
+
+# Optional mac target: osxcross + a macOS SDK. Apple's SDK is not redistributable, so the image
+# only gains `mac` when docker/macos-sdk/ holds either
+#   - Xcode_*.xip, straight from https://developer.apple.com/download/all/?q=xcode (the SDK is
+#     extracted here with osxcross's gen_sdk_package_pbzx.sh - no Mac needed), or
+#   - a ready MacOSX*.sdk.tar.xz packaged on a Mac with osxcross's tools/gen_sdk_package.sh.
+# The folder is bind-mounted, not COPYed, so a multi-GB .xip never lands in an image layer.
+# Without either file this step is a no-op and the toolchain's platforms list should omit mac.
+RUN --mount=type=bind,source=docker/macos-sdk,target=/opt/macos-sdk \
+    if ls /opt/macos-sdk/MacOSX*.sdk.tar.* /opt/macos-sdk/Xcode*.xip >/dev/null 2>&1; then \
+        apt-get update && apt-get install -y --no-install-recommends clang llvm-dev libclang-dev lld make cmake python3 \
+            libxml2-dev libssl-dev lzma-dev libbz2-dev bzip2 zlib1g-dev uuid-dev cpio git patch xz-utils file && \
+        git clone --depth 1 https://github.com/tpoechtrager/osxcross /opt/osxcross && \
+        cd /opt/osxcross && \
+        if ls /opt/macos-sdk/MacOSX*.sdk.tar.* >/dev/null 2>&1; then \
+            cp /opt/macos-sdk/MacOSX*.sdk.tar.* tarballs/; \
+        else \
+            ./tools/gen_sdk_package_pbzx.sh "$(ls /opt/macos-sdk/Xcode*.xip | head -1)" && \
+            mv MacOSX*.sdk.tar.* tarballs/ && rm -rf MacOSX*.sdk *.sdk.tar.* tools/xcode_tmp 2>/dev/null; true; \
+        fi && \
+        rm -f tarballs/MacOSX*.sdk.tar.* -- $(ls tarballs/MacOSX*.sdk.tar.* | sort -V | head -n -1) && \
+        UNATTENDED=1 ./build.sh && \
+        ln -sfn "$(ls -d /opt/osxcross/target/SDK/MacOSX*.sdk | sort -V | tail -1)" /opt/osxcross/target/SDK/current && \
+        rustup target add x86_64-apple-darwin && \
+        rustup target add --toolchain stable x86_64-apple-darwin && \
+        rm -rf /var/lib/apt/lists/* /opt/osxcross/build /opt/osxcross/tarballs/*; \
+    else echo 'no macOS SDK or Xcode .xip in docker/macos-sdk: the mac target stays off'; fi
+ENV PATH="/opt/osxcross/target/bin:${PATH}"
+# cargo / cc-rs use these for x86_64-apple-darwin (only meaningful when osxcross was installed;
+# osxcross names its tools after the SDK's darwin version - o64-clang is the stable alias).
+# coreaudio-sys (cpal's macOS backend) runs bindgen against the SDK: it reads COREAUDIO_SDK_PATH
+# instead of asking xcrun, which does not exist here.
+ENV CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="o64-clang" \
+    CC_x86_64_apple_darwin="o64-clang" \
+    CXX_x86_64_apple_darwin="o64-clang++" \
+    AR_x86_64_apple_darwin="x86_64-apple-darwin-ar" \
+    COREAUDIO_SDK_PATH="/opt/osxcross/target/SDK/current" \
+    SDKROOT="/opt/osxcross/target/SDK/current"
+
+# crates/ling-kernel depends on three sibling repositories by path (../../../<name> from
+# /opt/ling/crates/ling-kernel = /opt/<name>). Build with named contexts for them:
+#   docker build -f Dockerfile.build-runner #     --build-context bring-browser=../bring-browser #     --build-context horizon-browser=../horizon-browser #     --build-context ling-messenger=../ling-messenger #     -t fu-build-runner:2030.1 .
+# Only their manifests and sources are copied (not their target/ folders).
+COPY --from=bring-browser Cargo.toml Cargo.lock /opt/bring-browser/
+COPY --from=bring-browser src /opt/bring-browser/src
+COPY --from=horizon-browser Cargo.toml Cargo.lock /opt/horizon-browser/
+COPY --from=horizon-browser src /opt/horizon-browser/src
+COPY --from=horizon-browser crates /opt/horizon-browser/crates
+COPY --from=ling-messenger Cargo.toml Cargo.lock /opt/ling-messenger/
+COPY --from=ling-messenger src /opt/ling-messenger/src
 
 WORKDIR /opt/ling
 COPY . .
@@ -70,13 +138,19 @@ ENV CARGO_TARGET_DIR="/opt/cargo-target-shared"
 # Warm that shared target dir AND the offline cargo registry cache for the
 # wrapper Cargo project (local path dep on this same tree, unconditional
 # `winresource` build-dependency even on non-Windows targets — see
-# gen_native_cargo_toml in src/main.rs), and smoke-test that both allowed v1
-# platforms (web, lin) actually build in this environment. This is the one and
-# only network access any of this ever needs after image build — every later
-# per-package build runs with --network none.
+# gen_native_cargo_toml in src/main.rs), and smoke-test that the v1 platforms
+# (web, lin) actually build in this environment. The later targets (win, lingos,
+# rpi) are warmed too but non-fatally, so one broken cross target can't block
+# the whole image — its failure shows up per package on the Builds tab instead.
+# This is the one and only network access any of this ever needs after image
+# build — every later per-package build runs with --network none.
 RUN mkdir -p /opt/warmup && \
     printf 'ผูก เริ่ม = ทำ {\n    พิมพ์("build farm warmup ok")\n}\n' > /opt/warmup/hello.ling && \
     cd /opt/warmup && ling build hello.ling --platform web,lin --out dist && \
+    for p in win lingos rpi $(test -x /opt/osxcross/target/bin/o64-clang && echo mac); do \
+        ling build hello.ling --platform $p --out dist-$p \
+            || echo "WARNING: build farm warmup for '$p' failed; its package builds will fail too"; \
+    done && \
     cd / && rm -rf /opt/warmup
 
 WORKDIR /work

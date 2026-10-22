@@ -4,6 +4,9 @@ target/
 ling-lang.org/
 assets/
 examples/
+!examples/basics/fib.ling
+!examples/basics/gfx.ling
+!examples/lingos/spiral.ling
 examples-web/
 dist/
 benchmarks/

@@ -1,0 +1,1837 @@
+[0]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Acoustic Grand Piano"
+type = synth
+wave=0.670 sub=0.150 add=1.000 fm=0.000 cutoff=0.877 reso=0.050 filt_env=0.000
+partials=1.000 rolloff=0.280 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.120
+noise=0.000 attack=0.039 decay=0.966 sustain=0.030 release=0.235 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.617 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.250 inharm=0.130
+damp=0.300 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.600 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.180 size=0.550 damp=0.400
+
+[1]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bright Acoustic Piano"
+type = synth
+wave=0.670 sub=0.150 add=1.000 fm=0.000 cutoff=0.945 reso=0.050 filt_env=0.000
+partials=1.000 rolloff=0.200 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.120
+noise=0.000 attack=0.039 decay=0.966 sustain=0.030 release=0.235 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.719 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.350 inharm=0.130
+damp=0.220 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.800 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.140 size=0.500 damp=0.400
+
+[2]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Electric Grand Piano"
+type = synth
+wave=0.670 sub=0.150 add=1.000 fm=0.350 cutoff=0.877 reso=0.050 filt_env=0.000
+partials=1.000 rolloff=0.280 odd/even=0.500 fm_ratio=0.143 fm_index=0.220 detune=0.120
+noise=0.000 attack=0.039 decay=0.966 sustain=0.030 release=0.235 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.900 gain=0.371 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.120 inharm=0.100
+damp=0.300 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.600 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.350 rate=0.200 depth=0.500
+fx Reverb mix=0.180 size=0.600 damp=0.400
+
+[3]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Honky-tonk Piano"
+type = synth
+wave=0.500 sub=0.550 add=0.550 fm=0.000 cutoff=0.859 reso=0.050 filt_env=0.000
+partials=1.000 rolloff=0.280 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.750
+noise=0.000 attack=0.039 decay=0.966 sustain=0.030 release=0.235 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.468 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.350 inharm=0.200
+damp=0.300 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.600 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.120 size=0.400 damp=0.400
+
+[4]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Electric Piano 1"
+type = synth
+wave=0.000 sub=0.120 add=0.000 fm=1.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.143 fm_index=0.280 detune=0.150
+noise=0.000 attack=0.039 decay=0.856 sustain=0.020 release=0.274 lfo_rate=0.342
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.850 gain=0.240 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.140 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.500 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.280 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.450 rate=0.150 depth=0.500
+fx Reverb mix=0.140 size=0.600 damp=0.400
+
+[5]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Electric Piano 2"
+type = synth
+wave=0.660 sub=0.000 add=0.300 fm=1.000 cutoff=0.921 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.500 odd/even=0.500 fm_ratio=0.714 fm_index=0.420 detune=0.150
+noise=0.000 attack=0.032 decay=0.894 sustain=0.020 release=0.296 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.950 gain=0.170 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.400 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.200 depth=0.500
+fx Reverb mix=0.160 size=0.600 damp=0.400
+
+[6]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Harpsichord"
+type = synth
+wave=0.600 sub=0.220 add=0.000 fm=0.000 cutoff=0.908 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.613 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.467 str_bright=0.900 str_pos=0.220 click=0.450 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.140 size=0.400 damp=0.400
+
+[7]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Clavinet"
+type = synth
+wave=0.850 sub=0.300 add=0.000 fm=0.000 cutoff=0.630 reso=0.200 filt_env=0.500
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.814 filt_mode=0.000 pulse=0.250
+string=0.900 str_decay=0.271 str_bright=1.000 str_pos=0.150 click=0.500 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.700 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.216 fenv_sustain=0.000
+fx Drive amount=0.150 mix=0.500
+
+[8]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Celesta"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.250 cutoff=0.966 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.500 odd/even=0.500 fm_ratio=1.000 fm_index=0.150 detune=0.150
+noise=0.000 attack=0.032 decay=0.730 sustain=0.000 release=0.387 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.206 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=0.500
+damp=0.300 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[9]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Glockenspiel"
+type = synth
+wave=0.660 sub=1.000 add=1.000 fm=0.000 cutoff=0.984 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.658 sustain=0.000 release=0.354 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.168 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.120 inharm=0.950
+damp=0.500 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.280 size=0.650 damp=0.400
+
+[10]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Music Box"
+type = synth
+wave=0.660 sub=1.000 add=1.000 fm=0.000 cutoff=0.921 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=0.000 release=0.316 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.145 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=0.700
+damp=0.400 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.220 size=0.600 damp=0.400
+
+[11]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Vibraphone"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.400 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.032 decay=1.000 sustain=0.000 release=0.354 lfo_rate=0.325
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.305 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.080 inharm=0.550
+damp=0.250 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.550 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[12]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Marimba"
+type = synth
+wave=0.000 sub=0.250 add=1.000 fm=0.000 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.350 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.428 sustain=0.000 release=0.224 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.207 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.300 inharm=0.620
+damp=1.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[13]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Xylophone"
+type = synth
+wave=0.660 sub=1.000 add=1.000 fm=0.000 cutoff=0.921 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.306 sustain=0.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.226 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.500 inharm=0.550
+damp=1.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[14]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tubular Bells"
+type = synth
+wave=0.660 sub=0.000 add=0.700 fm=0.700 cutoff=0.966 reso=0.200 filt_env=0.400
+partials=0.333 rolloff=0.300 odd/even=0.500 fm_ratio=0.857 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=1.000 sustain=0.000 release=0.707 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.201 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.150 inharm=0.850
+damp=0.150 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.400 size=0.800 damp=0.400
+
+[15]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Dulcimer"
+type = synth
+wave=0.670 sub=0.300 add=0.000 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.800
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.526 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.396 str_bright=0.800 str_pos=0.250 click=0.300 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+fx Chorus mix=0.250 rate=0.200 depth=0.500
+
+[16]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Drawbar Organ"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.000 cutoff=0.966 reso=0.200 filt_env=0.000
+partials=0.533 rolloff=0.150 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.045 decay=0.183 sustain=1.000 release=0.112 lfo_rate=0.492
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.320 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.150 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.550 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[17]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Percussive Organ"
+type = synth
+wave=0.000 sub=0.250 add=1.000 fm=0.000 cutoff=0.708 reso=0.200 filt_env=0.600
+partials=0.333 rolloff=0.150 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.045 decay=0.183 sustain=1.000 release=0.112 lfo_rate=0.492
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.192 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.450 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.271 fenv_sustain=0.350
+fx Chorus mix=0.400 rate=0.200 depth=0.500
+fx Reverb mix=0.180 size=0.600 damp=0.400
+
+[18]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Rock Organ"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.000 cutoff=0.966 reso=0.200 filt_env=0.000
+partials=1.000 rolloff=0.050 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.045 decay=0.183 sustain=1.000 release=0.112 lfo_rate=0.533
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.466 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.200 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.100 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Drive amount=0.300 mix=0.700
+fx Chorus mix=0.400 rate=0.250 depth=0.500
+
+[19]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Church Organ"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.000 cutoff=0.966 reso=0.200 filt_env=0.000
+partials=1.000 rolloff=0.200 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.173 decay=0.183 sustain=1.000 release=0.274 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.395 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.060 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.450 size=0.850 damp=0.500
+
+[20]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Reed Organ"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.000 cutoff=0.787 reso=0.200 filt_env=0.000
+partials=0.467 rolloff=0.250 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.123 decay=0.183 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.289 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[21]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Accordion"
+type = synth
+wave=0.950 sub=0.900 add=0.250 fm=0.000 cutoff=0.732 reso=0.200 filt_env=0.150
+partials=0.333 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.550
+noise=0.000 attack=0.132 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.080 fm_env=0.500 gain=0.214 filt_mode=0.000 pulse=0.350
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.050
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.400 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[22]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Harmonica"
+type = synth
+wave=0.950 sub=0.900 add=0.000 fm=0.000 cutoff=0.698 reso=0.200 filt_env=0.250
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.158 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.250 fm_env=0.500 gain=0.245 filt_mode=0.000 pulse=0.350
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.120
+formant=0.300 vowel=0.300 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.158
+fenv_decay=0.316 fenv_sustain=0.500
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[23]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tango Accordion"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.400 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.750
+noise=0.000 attack=0.132 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.060 fm_env=0.500 gain=0.218 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[24]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Nylon Guitar"
+type = synth
+wave=0.000 sub=0.100 add=0.000 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.712 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.541 str_bright=0.350 str_pos=0.150 click=0.150 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.400 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.200 size=0.500 damp=0.400
+
+[25]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Steel Guitar"
+type = synth
+wave=0.670 sub=0.100 add=0.000 fm=0.000 cutoff=0.908 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.695 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.658 str_bright=0.700 str_pos=0.100 click=0.250 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.500 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[26]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Jazz Guitar"
+type = synth
+wave=0.300 sub=0.150 add=0.000 fm=0.000 cutoff=0.718 reso=0.100 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.763 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.588 str_bright=0.200 str_pos=0.300 click=0.080 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[27]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Clean Guitar"
+type = synth
+wave=0.660 sub=0.000 add=0.000 fm=0.000 cutoff=0.859 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.710 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.626 str_bright=0.500 str_pos=0.180 click=0.120 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.400 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.550 rate=0.180 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[28]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Muted Guitar"
+type = synth
+wave=0.660 sub=0.000 add=0.000 fm=0.000 cutoff=0.752 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.100 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.929 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.205 str_bright=0.300 str_pos=0.200 click=0.300 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.100 size=0.300 damp=0.400
+
+[29]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Overdriven Guitar"
+type = synth
+wave=0.670 sub=0.450 add=0.000 fm=0.000 cutoff=0.771 reso=0.150 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.366 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.771 str_bright=0.600 str_pos=0.150 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Drive amount=0.500 mix=1.000
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[30]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Distortion Guitar"
+type = synth
+wave=0.700 sub=0.700 add=0.000 fm=0.000 cutoff=0.787 reso=0.250 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.306 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.855 str_bright=0.600 str_pos=0.150 click=0.080 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Drive amount=0.850 mix=1.000
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[31]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Guitar Harmonics"
+type = synth
+wave=0.660 sub=0.000 add=0.500 fm=0.000 cutoff=0.956 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.400 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.730 sustain=0.000 release=0.316 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.294 filt_mode=0.000 pulse=0.500
+string=0.800 str_decay=0.626 str_bright=0.150 str_pos=0.500 click=0.050 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.350 size=0.700 damp=0.400
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+
+[32]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Acoustic Bass"
+type = synth
+wave=0.000 sub=0.550 add=0.000 fm=0.000 cutoff=0.523 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.032 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.277 filt_mode=0.000 pulse=0.500
+string=0.800 str_decay=0.481 str_bright=0.120 str_pos=0.300 click=0.180 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.100 size=0.300 damp=0.400
+
+[33]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Finger Bass"
+type = synth
+wave=0.250 sub=0.450 add=0.000 fm=0.000 cutoff=0.484 reso=0.200 filt_env=0.300
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.032 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.509 filt_mode=0.000 pulse=0.500
+string=0.700 str_decay=0.541 str_bright=0.200 str_pos=0.250 click=0.150 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.500 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.316 fenv_sustain=0.300
+
+[34]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Pick Bass"
+type = synth
+wave=0.670 sub=0.350 add=0.000 fm=0.000 cutoff=0.554 reso=0.200 filt_env=0.250
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.032 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.547 filt_mode=0.000 pulse=0.500
+string=0.700 str_decay=0.494 str_bright=0.500 str_pos=0.200 click=0.400 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.500 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.289 fenv_sustain=0.200
+
+[35]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Fretless Bass"
+type = synth
+wave=0.300 sub=0.900 add=0.000 fm=0.000 cutoff=0.473 reso=0.300 filt_env=0.300
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.063 decay=0.289 sustain=1.000 release=0.224 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.080 fm_env=0.500 gain=0.238 filt_mode=0.000 pulse=0.500
+string=0.250 str_decay=0.541 str_bright=0.200 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.447 fenv_attack=0.100
+fenv_decay=0.365 fenv_sustain=0.300
+
+[36]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Slap Bass 1"
+type = synth
+wave=0.850 sub=0.300 add=0.000 fm=0.000 cutoff=0.612 reso=0.200 filt_env=0.600
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.289 sustain=1.000 release=0.141 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.944 filt_mode=0.000 pulse=0.300
+string=0.800 str_decay=0.396 str_bright=0.900 str_pos=0.050 click=0.750 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.600 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.183 fenv_sustain=0.150
+
+[37]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Slap Bass 2"
+type = synth
+wave=1.000 sub=0.350 add=0.000 fm=0.000 cutoff=0.660 reso=0.200 filt_env=0.600
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.289 sustain=1.000 release=0.132 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.464 filt_mode=0.000 pulse=0.280
+string=0.800 str_decay=0.374 str_bright=1.000 str_pos=0.050 click=0.850 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.400 vel_cut=0.600 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.173 fenv_sustain=0.150
+
+[38]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Bass 1"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.417 reso=0.400 filt_env=0.600
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.000 attack=0.039 decay=0.316 sustain=0.700 release=0.141 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.234 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.271 fenv_sustain=0.100
+
+[39]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Bass 2"
+type = synth
+wave=1.000 sub=1.000 add=0.000 fm=0.200 cutoff=0.433 reso=0.550 filt_env=0.700
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.143 fm_index=0.200 detune=0.150
+noise=0.000 attack=0.039 decay=0.289 sustain=0.800 release=0.141 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.177 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.289 fenv_sustain=0.100
+
+[40]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Violin"
+type = synth
+wave=0.670 sub=0.850 add=0.300 fm=0.000 cutoff=0.718 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.020 attack=0.212 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.250 fm_env=0.500 gain=0.231 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.220 vowel=0.100 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.600 damp=0.400
+
+[41]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Viola"
+type = synth
+wave=0.670 sub=0.850 add=0.300 fm=0.000 cutoff=0.660 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.020 attack=0.224 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.250 fm_env=0.500 gain=0.245 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.220 vowel=0.200 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.600 damp=0.400
+
+[42]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Cello"
+type = synth
+wave=0.670 sub=0.850 add=0.300 fm=0.000 cutoff=0.602 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.020 attack=0.235 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.273 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.300 vowel=0.350 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Chorus mix=0.150 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[43]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Contrabass"
+type = synth
+wave=0.670 sub=0.850 add=0.150 fm=0.000 cutoff=0.523 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.020 attack=0.255 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.226 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.300 vowel=0.500 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[44]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tremolo Strings"
+type = synth
+wave=0.670 sub=0.850 add=0.300 fm=0.000 cutoff=0.718 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.020 attack=0.158 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.742
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.338 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.220 vowel=0.100 lfo_amp=0.850 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[45]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Pizzicato Strings"
+type = synth
+wave=0.300 sub=0.100 add=0.000 fm=0.000 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.132 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.891 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.322 str_bright=0.300 str_pos=0.200 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.220 size=0.550 damp=0.400
+
+[46]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Orchestral Harp"
+type = synth
+wave=0.000 sub=0.100 add=0.100 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.316 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.506 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.658 str_bright=0.350 str_pos=0.300 click=0.080 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.350 size=0.700 damp=0.400
+
+[47]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Timpani"
+type = synth
+wave=0.000 sub=0.700 add=0.600 fm=0.000 cutoff=0.630 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.400 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.250 attack=0.022 decay=0.707 sustain=0.000 release=0.316 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.187 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.500 inharm=0.500
+damp=1.000 pitch_env=0.646 pitch_time=0.379 key_track=0.300 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[48]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "String Ensemble 1"
+type = synth
+wave=0.670 sub=1.000 add=0.400 fm=0.000 cutoff=0.686 reso=0.200 filt_env=0.200
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.600
+noise=0.000 attack=0.387 decay=0.408 sustain=0.920 release=0.354 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.205 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.120 vowel=0.100 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.354
+fenv_decay=0.408 fenv_sustain=0.800
+fx Chorus mix=0.600 rate=0.150 depth=0.600
+fx Reverb mix=0.400 size=0.750 damp=0.400
+
+[49]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "String Ensemble 2"
+type = synth
+wave=0.500 sub=1.000 add=0.400 fm=0.000 cutoff=0.630 reso=0.200 filt_env=0.200
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.700
+noise=0.000 attack=0.500 decay=0.408 sustain=0.920 release=0.418 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.255 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.120 vowel=0.100 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.354
+fenv_decay=0.408 fenv_sustain=0.800
+fx Chorus mix=0.600 rate=0.120 depth=0.700
+fx Reverb mix=0.400 size=0.750 damp=0.400
+
+[50]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Strings 1"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.718 reso=0.200 filt_env=0.200
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.850
+noise=0.000 attack=0.274 decay=0.408 sustain=0.920 release=0.387 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.205 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.100 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.354
+fenv_decay=0.408 fenv_sustain=0.800
+fx Chorus mix=0.850 rate=0.220 depth=0.800
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[51]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Strings 2"
+type = synth
+wave=1.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.674 reso=0.200 filt_env=0.200
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.850
+noise=0.000 attack=0.418 decay=0.408 sustain=0.920 release=0.418 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.169 filt_mode=0.000 pulse=0.400
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.100 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.354
+fenv_decay=0.408 fenv_sustain=0.800
+fx Chorus mix=0.800 rate=0.200 depth=0.800
+fx Reverb mix=0.350 size=0.700 damp=0.400
+
+[52]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Choir Aahs"
+type = synth
+wave=0.670 sub=0.800 add=0.300 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.333 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.300
+noise=0.000 attack=0.354 decay=0.289 sustain=0.900 release=0.354 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.180 fm_env=0.500 gain=0.118 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.030
+formant=1.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[53]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Voice Oohs"
+type = synth
+wave=0.500 sub=0.800 add=0.300 fm=0.000 cutoff=0.771 reso=0.200 filt_env=0.400
+partials=0.267 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.300
+noise=0.000 attack=0.387 decay=0.289 sustain=0.900 release=0.371 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.196 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.020
+formant=1.000 vowel=1.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[54]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Voice"
+type = synth
+wave=0.800 sub=0.900 add=0.000 fm=0.100 cutoff=0.839 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.429 fm_index=0.200 detune=0.400
+noise=0.000 attack=0.200 decay=0.289 sustain=0.900 release=0.316 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.300 fm_env=0.500 gain=0.384 filt_mode=0.000 pulse=0.400
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.850 vowel=0.300 lfo_amp=0.000 vib_delay=0.447 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.400 rate=0.200 depth=0.500
+fx Reverb mix=0.400 size=0.700 damp=0.400
+
+[55]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Orchestra Hit"
+type = synth
+wave=0.670 sub=1.000 add=0.500 fm=0.300 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.733 rolloff=0.500 odd/even=0.500 fm_ratio=0.286 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.032 decay=0.447 sustain=0.200 release=0.316 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.276 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.458 pitch_time=0.400 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.400 size=0.750 damp=0.400
+
+[56]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Trumpet"
+type = synth
+wave=0.670 sub=1.000 add=0.300 fm=0.000 cutoff=0.602 reso=0.250 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.216 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.488 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.173
+fenv_decay=0.258 fenv_sustain=0.650
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[57]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Trombone"
+type = synth
+wave=0.600 sub=1.000 add=0.300 fm=0.000 cutoff=0.539 reso=0.250 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.173 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.263 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.483 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.173
+fenv_decay=0.258 fenv_sustain=0.650
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[58]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tuba"
+type = synth
+wave=0.500 sub=1.000 add=0.400 fm=0.000 cutoff=0.433 reso=0.250 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.200 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.060 fm_env=0.500 gain=0.309 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.490 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.173
+fenv_decay=0.258 fenv_sustain=0.650
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[59]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Muted Trumpet"
+type = synth
+wave=0.670 sub=1.000 add=0.300 fm=0.000 cutoff=0.660 reso=0.300 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.121 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.488 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.020
+formant=0.700 vowel=0.200 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.173
+fenv_decay=0.258 fenv_sustain=0.650
+fx Reverb mix=0.200 size=0.500 damp=0.400
+
+[60]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "French Horn"
+type = synth
+wave=0.550 sub=1.000 add=0.300 fm=0.000 cutoff=0.505 reso=0.250 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.245 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.080 fm_env=0.500 gain=0.234 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.488 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.040
+formant=0.300 vowel=0.750 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.274
+fenv_decay=0.258 fenv_sustain=0.650
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[61]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Brass Section"
+type = synth
+wave=0.670 sub=1.000 add=0.300 fm=0.000 cutoff=0.591 reso=0.250 filt_env=0.600
+partials=0.600 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.500
+noise=0.000 attack=0.158 decay=0.258 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.060 fm_env=0.500 gain=0.210 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.277 key_track=0.600 vel_cut=0.800 breath=0.040
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.200
+fenv_decay=0.258 fenv_sustain=0.650
+fx Chorus mix=0.200 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[62]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Brass 1"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.523 reso=0.300 filt_env=0.700
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.500
+noise=0.000 attack=0.123 decay=0.289 sustain=1.000 release=0.194 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.050 fm_env=0.500 gain=0.199 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.224
+fenv_decay=0.316 fenv_sustain=0.500
+fx Chorus mix=0.400 rate=0.200 depth=0.500
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[63]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Brass 2"
+type = synth
+wave=1.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.554 reso=0.400 filt_env=0.800
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.123 decay=0.289 sustain=1.000 release=0.194 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.175 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.200
+fenv_decay=0.316 fenv_sustain=0.500
+fx Chorus mix=0.350 rate=0.200 depth=0.500
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[64]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Soprano Sax"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.771 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.189 filt_mode=0.000 pulse=0.420
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.080
+formant=0.300 vowel=0.250 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[65]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Alto Sax"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.708 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.202 filt_mode=0.000 pulse=0.450
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.080
+formant=0.300 vowel=0.300 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[66]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tenor Sax"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.646 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.205 filt_mode=0.000 pulse=0.450
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.100
+formant=0.300 vowel=0.400 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[67]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Baritone Sax"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.580 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.158 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.171 filt_mode=0.000 pulse=0.450
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.080
+formant=0.300 vowel=0.500 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[68]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Oboe"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.771 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.173 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.250 fm_env=0.500 gain=0.158 filt_mode=0.000 pulse=0.200
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.040
+formant=0.600 vowel=0.150 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[69]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "English Horn"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.680 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.200 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.183 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.040
+formant=0.500 vowel=0.300 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[70]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bassoon"
+type = synth
+wave=0.950 sub=0.900 add=0.300 fm=0.000 cutoff=0.602 reso=0.200 filt_env=0.150
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.200 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.168 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.040
+formant=0.500 vowel=0.500 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[71]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Clarinet"
+type = synth
+wave=1.000 sub=0.900 add=0.500 fm=0.000 cutoff=0.732 reso=0.200 filt_env=0.150
+partials=0.533 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.158 decay=0.258 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.200 fm_env=0.500 gain=0.146 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.600 vel_cut=0.400 breath=0.060
+formant=0.300 vowel=0.600 lfo_amp=0.000 vib_delay=0.516 fenv_attack=0.158
+fenv_decay=0.258 fenv_sustain=0.700
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[72]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Piccolo"
+type = synth
+wave=0.080 sub=0.800 add=0.250 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.141 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.186 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.521 pitch_time=0.208 key_track=0.300 vel_cut=0.000 breath=0.250
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[73]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Flute"
+type = synth
+wave=0.080 sub=0.800 add=0.250 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.173 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.185 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.300
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[74]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Recorder"
+type = synth
+wave=0.080 sub=0.800 add=0.200 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.123 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.197 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.150
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[75]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Pan Flute"
+type = synth
+wave=0.080 sub=0.800 add=0.100 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.200 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.050 fm_env=0.500 gain=0.216 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.450
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.350 size=0.700 damp=0.400
+
+[76]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Blown Bottle"
+type = synth
+wave=0.000 sub=0.800 add=0.000 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.224 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.188 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.300 vel_cut=0.000 breath=0.600
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[77]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Shakuhachi"
+type = synth
+wave=0.080 sub=0.800 add=0.250 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.200 decay=0.258 sustain=1.000 release=0.194 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.300 fm_env=0.500 gain=0.190 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.469 pitch_time=0.440 key_track=0.300 vel_cut=0.000 breath=0.450
+formant=0.300 vowel=0.800 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.350 size=0.700 damp=0.400
+
+[78]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Whistle"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.966 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.158 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.350 fm_env=0.500 gain=0.159 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.479 pitch_time=0.356 key_track=0.000 vel_cut=0.000 breath=0.080
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[79]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Ocarina"
+type = synth
+wave=0.050 sub=0.900 add=0.100 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.158 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.408
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.193 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.100
+formant=0.400 vowel=0.800 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[80]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Square Lead"
+type = synth
+wave=1.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.827 reso=0.100 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.100
+noise=0.000 attack=0.050 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.162 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Delay time=0.180 feedback=0.300 mix=0.200
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[81]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Saw Lead"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.802 reso=0.200 filt_env=0.200
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.350
+noise=0.000 attack=0.050 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.200 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.258 fenv_sustain=0.600
+fx Delay time=0.180 feedback=0.300 mix=0.200
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[82]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Calliope Lead"
+type = synth
+wave=0.150 sub=1.000 add=0.300 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.100 decay=0.289 sustain=1.000 release=0.173 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.150 fm_env=0.500 gain=0.187 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.200
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[83]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Chiff Lead"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.200
+noise=0.000 attack=0.071 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.197 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.583 pitch_time=0.208 key_track=0.400 vel_cut=0.000 breath=0.300
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[84]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Charang Lead"
+type = synth
+wave=0.800 sub=1.000 add=0.000 fm=0.000 cutoff=0.732 reso=0.350 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.500
+noise=0.000 attack=0.050 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.648 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.542 pitch_time=0.277 key_track=0.400 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.258 fenv_sustain=0.500
+fx Drive amount=0.500 mix=1.000
+fx Delay time=0.200 feedback=0.300 mix=0.200
+
+[85]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Voice Lead"
+type = synth
+wave=0.700 sub=1.000 add=0.000 fm=0.000 cutoff=0.839 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.300
+noise=0.000 attack=0.123 decay=0.289 sustain=1.000 release=0.224 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.300 fm_env=0.500 gain=0.123 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.030
+formant=0.800 vowel=0.100 lfo_amp=0.000 vib_delay=0.447 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[86]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Fifths Lead"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.350 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.286 fm_index=0.150 detune=0.200
+noise=0.000 attack=0.071 decay=0.289 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.000 gain=0.195 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Delay time=0.200 feedback=0.300 mix=0.200
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[87]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bass + Lead"
+type = synth
+wave=0.670 sub=1.000 add=0.400 fm=0.000 cutoff=0.732 reso=0.250 filt_env=0.300
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.700
+noise=0.000 attack=0.050 decay=0.289 sustain=1.000 release=0.173 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.199 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.289 fenv_sustain=0.600
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[88]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "New Age Pad"
+type = synth
+wave=0.400 sub=0.300 add=0.700 fm=0.300 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.467 rolloff=0.300 odd/even=0.500 fm_ratio=0.714 fm_index=0.200 detune=0.400
+noise=0.000 attack=0.548 decay=0.408 sustain=0.800 release=0.612 lfo_rate=0.025
+lfo_cut=0.200 lfo_pitch=0.000 fm_env=0.600 gain=0.249 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.100 depth=0.600
+fx Reverb mix=0.550 size=0.800 damp=0.400
+
+[89]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Warm Pad"
+type = synth
+wave=0.500 sub=1.000 add=0.000 fm=0.000 cutoff=0.580 reso=0.200 filt_env=0.200
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.500
+noise=0.000 attack=0.592 decay=0.408 sustain=0.850 release=0.548 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.299 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.548
+fenv_decay=0.577 fenv_sustain=0.700
+fx Chorus mix=0.600 rate=0.120 depth=0.700
+fx Reverb mix=0.400 size=0.750 damp=0.400
+
+[90]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Polysynth Pad"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.680 reso=0.200 filt_env=0.300
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.700
+noise=0.000 attack=0.387 decay=0.408 sustain=0.850 release=0.447 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.208 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.387
+fenv_decay=0.516 fenv_sustain=0.600
+fx Chorus mix=0.700 rate=0.180 depth=0.750
+fx Reverb mix=0.350 size=0.700 damp=0.400
+
+[91]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Choir Pad"
+type = synth
+wave=0.670 sub=0.700 add=0.500 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.300
+noise=0.000 attack=0.632 decay=0.408 sustain=0.900 release=0.570 lfo_rate=0.367
+lfo_cut=0.000 lfo_pitch=0.100 fm_env=0.500 gain=0.161 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.900 vowel=0.100 lfo_amp=0.000 vib_delay=0.632 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.100 depth=0.600
+fx Reverb mix=0.600 size=0.850 damp=0.400
+
+[92]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bowed Pad"
+type = synth
+wave=0.550 sub=1.000 add=0.000 fm=0.000 cutoff=0.602 reso=0.350 filt_env=0.300
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.350
+noise=0.040 attack=0.671 decay=0.408 sustain=0.900 release=0.592 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.341 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.632
+fenv_decay=0.577 fenv_sustain=0.600
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[93]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Metallic Pad"
+type = synth
+wave=0.660 sub=0.000 add=0.500 fm=0.700 cutoff=0.839 reso=0.200 filt_env=0.400
+partials=0.333 rolloff=0.500 odd/even=0.500 fm_ratio=0.714 fm_index=0.500 detune=0.150
+noise=0.000 attack=0.447 decay=0.516 sustain=0.700 release=0.612 lfo_rate=0.017
+lfo_cut=0.200 lfo_pitch=0.000 fm_env=0.500 gain=0.205 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.600
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.400 rate=0.200 depth=0.500
+fx Reverb mix=0.550 size=0.800 damp=0.400
+
+[94]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Halo Pad"
+type = synth
+wave=0.670 sub=0.600 add=0.600 fm=0.000 cutoff=0.859 reso=0.200 filt_env=0.400
+partials=0.533 rolloff=0.250 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.632 decay=0.447 sustain=0.850 release=0.632 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.263 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.500 vowel=0.050 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.100 depth=0.700
+fx Reverb mix=0.700 size=0.900 damp=0.400
+
+[95]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Sweep Pad"
+type = synth
+wave=0.670 sub=1.000 add=0.000 fm=0.000 cutoff=0.505 reso=0.400 filt_env=1.000
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.632 decay=0.447 sustain=0.850 release=0.592 lfo_rate=0.017
+lfo_cut=0.200 lfo_pitch=0.000 fm_env=0.500 gain=0.226 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.837
+fenv_decay=0.817 fenv_sustain=0.400
+fx Chorus mix=0.500 rate=0.200 depth=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[96]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Rain FX"
+type = synth
+wave=0.000 sub=0.300 add=0.000 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.387 decay=0.289 sustain=1.000 release=0.500 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.904 filt_mode=1.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.400
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.400 size=0.800 damp=0.400
+
+[97]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Soundtrack FX"
+type = synth
+wave=0.660 sub=0.000 add=0.500 fm=0.500 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.286 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.707 decay=0.516 sustain=0.800 release=0.612 lfo_rate=0.017
+lfo_cut=0.200 lfo_pitch=0.000 fm_env=0.300 gain=0.368 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.100 depth=0.700
+fx Reverb mix=0.700 size=0.900 damp=0.400
+
+[98]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Crystal FX"
+type = synth
+wave=0.660 sub=0.000 add=0.400 fm=1.000 cutoff=0.966 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.500 odd/even=0.500 fm_ratio=0.857 fm_index=0.350 detune=0.150
+noise=0.000 attack=0.022 decay=0.913 sustain=0.000 release=0.612 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.161 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.900
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.550 size=0.800 damp=0.400
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+
+[99]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Atmosphere FX"
+type = synth
+wave=0.300 sub=0.450 add=0.000 fm=0.000 cutoff=0.752 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.100 decay=0.577 sustain=0.850 release=0.474 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.459 filt_mode=0.000 pulse=0.500
+string=0.700 str_decay=0.732 str_bright=0.300 str_pos=0.200 click=0.100 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.500 rate=0.200 depth=0.500
+fx Reverb mix=0.600 size=0.850 damp=0.400
+
+[100]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Brightness FX"
+type = synth
+wave=0.670 sub=1.000 add=0.500 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.300
+partials=0.733 rolloff=0.100 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.300
+noise=0.000 attack=0.387 decay=0.408 sustain=0.850 release=0.474 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.227 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.387
+fenv_decay=0.516 fenv_sustain=0.700
+fx Chorus mix=0.500 rate=0.200 depth=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[101]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Goblins FX"
+type = synth
+wave=0.300 sub=0.300 add=0.000 fm=0.600 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.357 fm_index=0.500 detune=0.150
+noise=0.000 attack=0.500 decay=0.516 sustain=0.700 release=0.548 lfo_rate=0.158
+lfo_cut=0.000 lfo_pitch=0.600 fm_env=0.400 gain=0.223 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.600 vowel=0.400 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[102]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Echoes FX"
+type = synth
+wave=0.000 sub=0.500 add=0.300 fm=0.400 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.200 rolloff=0.500 odd/even=0.500 fm_ratio=0.429 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.050 decay=0.707 sustain=0.300 release=0.500 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.800 gain=0.172 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Delay time=0.350 feedback=0.550 mix=0.500
+fx Reverb mix=0.500 size=0.800 damp=0.400
+
+[103]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Sci-Fi FX"
+type = synth
+wave=0.000 sub=0.200 add=0.000 fm=0.800 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.500 fm_index=0.600 detune=0.150
+noise=0.000 attack=0.224 decay=0.632 sustain=0.600 release=0.612 lfo_rate=0.117
+lfo_cut=0.000 lfo_pitch=0.500 fm_env=0.500 gain=0.214 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.625 pitch_time=0.572 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Delay time=0.300 feedback=0.500 mix=0.400
+fx Reverb mix=0.450 size=0.800 damp=0.400
+
+[104]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Sitar"
+type = synth
+wave=0.670 sub=0.300 add=0.000 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.800
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.194 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.483 filt_mode=0.000 pulse=0.150
+string=1.000 str_decay=0.626 str_bright=0.700 str_pos=0.100 click=0.300 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Drive amount=0.250 mix=0.600
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[105]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Banjo"
+type = synth
+wave=1.000 sub=0.150 add=0.000 fm=0.000 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.663 filt_mode=0.000 pulse=0.250
+string=1.000 str_decay=0.350 str_bright=1.000 str_pos=0.120 click=0.500 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.150 size=0.400 damp=0.400
+
+[106]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Shamisen"
+type = synth
+wave=0.850 sub=0.100 add=0.000 fm=0.000 cutoff=0.893 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.123 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.743 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.396 str_bright=0.900 str_pos=0.200 click=0.550 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.180 size=0.500 damp=0.400
+
+[107]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Koto"
+type = synth
+wave=0.300 sub=0.050 add=0.000 fm=0.000 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.577 sustain=1.000 release=0.224 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.699 filt_mode=0.000 pulse=0.500
+string=1.000 str_decay=0.561 str_bright=0.600 str_pos=0.350 click=0.300 inharm=0.000
+damp=0.000 pitch_env=0.485 pitch_time=0.356 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[108]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Kalimba"
+type = synth
+wave=0.000 sub=0.200 add=1.000 fm=0.200 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.400 odd/even=0.500 fm_ratio=0.714 fm_index=0.200 detune=0.150
+noise=0.000 attack=0.022 decay=0.516 sustain=0.000 release=0.274 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.176 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.350 inharm=0.500
+damp=0.600 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[109]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bagpipe"
+type = synth
+wave=0.950 sub=0.900 add=0.400 fm=0.000 cutoff=0.718 reso=0.200 filt_env=0.400
+partials=0.467 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.400
+noise=0.000 attack=0.123 decay=0.289 sustain=1.000 release=0.141 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.202 filt_mode=0.000 pulse=0.300
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.350 vowel=0.550 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[110]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Fiddle"
+type = synth
+wave=0.670 sub=0.850 add=0.300 fm=0.000 cutoff=0.760 reso=0.200 filt_env=0.220
+partials=0.733 rolloff=0.300 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.450
+noise=0.030 attack=0.158 decay=0.316 sustain=0.920 release=0.200 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.300 fm_env=0.500 gain=0.228 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.800 vel_cut=0.300 breath=0.000
+formant=0.220 vowel=0.100 lfo_amp=0.000 vib_delay=0.577 fenv_attack=0.200
+fenv_decay=0.365 fenv_sustain=0.700
+fx Reverb mix=0.200 size=0.500 damp=0.400
+
+[111]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Shanai"
+type = synth
+wave=0.950 sub=0.900 add=0.000 fm=0.000 cutoff=0.771 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.600
+noise=0.000 attack=0.158 decay=0.289 sustain=1.000 release=0.158 lfo_rate=0.450
+lfo_cut=0.000 lfo_pitch=0.250 fm_env=0.500 gain=0.190 filt_mode=0.000 pulse=0.150
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.050
+formant=0.700 vowel=0.150 lfo_amp=0.000 vib_delay=0.447 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Chorus mix=0.300 rate=0.200 depth=0.500
+fx Reverb mix=0.300 size=0.650 damp=0.400
+
+[112]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Tinkle Bell"
+type = synth
+wave=0.660 sub=0.000 add=0.500 fm=1.000 cutoff=0.984 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.857 fm_index=0.500 detune=0.150
+noise=0.000 attack=0.022 decay=0.707 sustain=0.000 release=0.447 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.156 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.100 inharm=1.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.400 size=0.700 damp=0.400
+
+[113]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Agogo"
+type = synth
+wave=0.660 sub=0.000 add=0.600 fm=0.900 cutoff=0.945 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.643 fm_index=0.400 detune=0.150
+noise=0.000 attack=0.022 decay=0.365 sustain=0.000 release=0.224 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.210 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.400 inharm=0.600
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.200 size=0.600 damp=0.400
+
+[114]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Steel Drums"
+type = synth
+wave=0.660 sub=0.000 add=1.000 fm=0.300 cutoff=0.877 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.300 odd/even=0.500 fm_ratio=0.429 fm_index=0.200 detune=0.150
+noise=0.000 attack=0.022 decay=0.548 sustain=0.000 release=0.274 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=1.000 gain=0.144 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.300 inharm=0.250
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[115]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Woodblock"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.732 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.163 sustain=0.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.475 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.800 inharm=0.000
+damp=0.000 pitch_env=0.750 pitch_time=0.163 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[116]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Taiko Drum"
+type = synth
+wave=0.000 sub=0.900 add=0.500 fm=0.000 cutoff=0.567 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.400 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.300 attack=0.022 decay=0.408 sustain=0.000 release=0.274 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.202 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.600 inharm=0.500
+damp=1.000 pitch_env=0.750 pitch_time=0.542 key_track=0.300 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[117]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Melodic Tom"
+type = synth
+wave=0.000 sub=0.900 add=0.300 fm=0.000 cutoff=0.680 reso=0.200 filt_env=0.400
+partials=0.133 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.150 attack=0.022 decay=0.365 sustain=0.000 release=0.224 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.228 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.400 inharm=0.500
+damp=1.000 pitch_env=0.646 pitch_time=0.400 key_track=0.500 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[118]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Synth Drum"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.815 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.342 sustain=0.000 release=0.194 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.236 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.300 inharm=0.000
+damp=0.000 pitch_env=1.000 pitch_time=0.400 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[119]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Reverse Cymbal"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.708 reso=0.200 filt_env=0.350
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.866 decay=0.183 sustain=1.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=1.000 filt_mode=1.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.866
+fenv_decay=0.408 fenv_sustain=1.000
+fx Reverb mix=0.300 size=0.600 damp=0.400
+
+[120]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Guitar Fret Noise"
+type = synth
+wave=0.660 sub=0.000 add=0.000 fm=0.000 cutoff=0.921 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.022 decay=0.183 sustain=0.000 release=0.112 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.807 filt_mode=0.000 pulse=0.500
+string=0.500 str_decay=0.000 str_bright=1.000 str_pos=0.000 click=0.900 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.300
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.150 size=0.600 damp=0.400
+
+[121]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Breath Noise"
+type = synth
+wave=0.660 sub=0.000 add=0.000 fm=0.000 cutoff=0.600 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.316 decay=0.289 sustain=1.000 release=0.274 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.405 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=1.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.700 damp=0.400
+
+[122]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Seashore"
+type = synth
+wave=0.000 sub=0.500 add=0.000 fm=0.000 cutoff=0.602 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.707 decay=0.289 sustain=1.000 release=0.612 lfo_rate=0.004
+lfo_cut=0.800 lfo_pitch=0.000 fm_env=0.500 gain=0.409 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.500 size=0.850 damp=0.400
+
+[123]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Bird Tweet"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.984 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=0.000 attack=0.071 decay=0.200 sustain=0.000 release=0.112 lfo_rate=0.742
+lfo_cut=0.000 lfo_pitch=1.000 fm_env=0.500 gain=0.383 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.750 pitch_time=0.306 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.250 size=0.600 damp=0.400
+
+[124]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Telephone Ring"
+type = synth
+wave=0.950 sub=1.000 add=0.000 fm=0.400 cutoff=0.787 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.143 fm_index=0.100 detune=0.150
+noise=0.000 attack=0.050 decay=0.289 sustain=1.000 release=0.112 lfo_rate=0.992
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.000 gain=0.249 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.900 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+
+[125]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Helicopter"
+type = synth
+wave=0.000 sub=0.500 add=0.000 fm=0.000 cutoff=0.523 reso=0.200 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.316 decay=0.289 sustain=1.000 release=0.274 lfo_rate=0.575
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.475 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=1.000 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.300 size=0.600 damp=0.400
+
+[126]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Applause"
+type = synth
+wave=0.000 sub=1.000 add=0.000 fm=0.000 cutoff=0.680 reso=0.100 filt_env=0.400
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.274 decay=0.289 sustain=1.000 release=0.316 lfo_rate=0.908
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.715 filt_mode=1.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=0.000 inharm=0.000
+damp=0.000 pitch_env=0.500 pitch_time=0.300 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.800 vib_delay=0.000 fenv_attack=0.050
+fenv_decay=0.316 fenv_sustain=0.300
+fx Reverb mix=0.400 size=0.700 damp=0.400
+
+[127]
+# Ling Synth X patch — edit freely; load from the Instrument tab
+name = "Gunshot"
+type = synth
+wave=0.670 sub=0.800 add=0.000 fm=0.000 cutoff=0.602 reso=0.200 filt_env=0.500
+partials=0.500 rolloff=0.500 odd/even=0.500 fm_ratio=0.250 fm_index=0.300 detune=0.150
+noise=1.000 attack=0.022 decay=0.289 sustain=0.000 release=0.224 lfo_rate=0.300
+lfo_cut=0.000 lfo_pitch=0.000 fm_env=0.500 gain=0.342 filt_mode=0.000 pulse=0.500
+string=0.000 str_decay=0.500 str_bright=0.500 str_pos=0.000 click=1.000 inharm=0.000
+damp=0.000 pitch_env=1.000 pitch_time=0.356 key_track=0.000 vel_cut=0.000 breath=0.000
+formant=0.000 vowel=0.000 lfo_amp=0.000 vib_delay=0.000 fenv_attack=0.022
+fenv_decay=0.258 fenv_sustain=0.000
+fx Reverb mix=0.450 size=0.750 damp=0.400
+

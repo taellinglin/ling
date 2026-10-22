@@ -73,7 +73,8 @@ pub const KIND_PKG: u8 = 8;
 pub const KIND_HORIZON: u8 = 9;
 pub const KIND_MESSENGER: u8 = 10;
 pub const KIND_WALLPICK: u8 = 11;
-const DOCK_APPS: [u8; 8] = [
+pub const KIND_DAW: u8 = 12;
+const DOCK_APPS: [u8; 9] = [
     KIND_ABOUT,
     KIND_SETTINGS,
     KIND_FILES,
@@ -82,6 +83,7 @@ const DOCK_APPS: [u8; 8] = [
     KIND_GALLERY,
     KIND_TERM,
     KIND_MEDIA,
+    KIND_DAW,
 ];
 
 #[derive(Clone, Copy)]
@@ -435,7 +437,7 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 20] = [
+const MENU: [MenuRow; 21] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "", app: "horizon (box-model browser)", kind: KIND_HORIZON },
@@ -447,6 +449,7 @@ const MENU: [MenuRow; 20] = [
     MenuRow { header: "Sound & Video", app: "", kind: 255 },
     MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
     MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
+    MenuRow { header: "", app: "LingStation (music studio)", kind: KIND_DAW },
     MenuRow { header: "", app: "LingStationX (LingOS Edition)", kind: ACT_RUN_APP },
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Packages", kind: KIND_PKG },
@@ -1144,6 +1147,7 @@ fn kind_title(kind: u8) -> &'static str {
         KIND_MEDIA => "Media Player",
         KIND_PKG => "Packages",
         KIND_WALLPICK => "Choose wallpaper",
+        KIND_DAW => "LingStation",
         _ => "?",
     }
 }
@@ -1165,6 +1169,7 @@ fn kind_size(kind: u8) -> (u32, u32) {
         KIND_MEDIA => (480.0, 300.0),
         KIND_PKG => (560.0, 440.0),
         KIND_WALLPICK => (640.0, 460.0),
+        KIND_DAW => (900.0, 680.0),
         _ => (390.0, 250.0),
     };
     ((w * s) as u32, (h * s) as u32)
@@ -1186,6 +1191,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "图",
             Some(KIND_TERM) => "终",
             Some(KIND_MEDIA) => "媒",
+            Some(KIND_DAW) => "L",
             _ => "",
         },
         "ko-KR" => match kind {
@@ -1197,6 +1203,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "갤",
             Some(KIND_TERM) => "터",
             Some(KIND_MEDIA) => "미",
+            Some(KIND_DAW) => "L",
             _ => "",
         },
         _ => match kind {
@@ -1208,6 +1215,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "G",
             Some(KIND_TERM) => "T",
             Some(KIND_MEDIA) => "M",
+            Some(KIND_DAW) => "L",
             _ => "",
         },
     }
@@ -2047,6 +2055,7 @@ pub fn key(k: u8) {
         KIND_GALLERY => gallery::key(k),
         KIND_TERM => terminal::key(k),
         KIND_MEDIA => media::key(k),
+        KIND_DAW => crate::drivers::daw::key(k),
         KIND_PKG => pkgman::key(k),
         KIND_WALLPICK => wallpick_key(k),
         _ => {},
@@ -3010,6 +3019,12 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
         horizon::click_page(mx - page_x0, my - page_y0, unsafe { HZ_VIEWPORT_W });
         return true;
     }
+    if w.kind == KIND_DAW {
+        // the same origin draw_content_inner gives daw::draw
+        let cx = (wx.max(0) as u32) + 16;
+        let cy = (wy.max(0) as u32) + TITLEBAR_H + 14;
+        return crate::drivers::daw::click(mx, my, cx, cy);
+    }
     if w.kind == KIND_MESSENGER {
         // Geometry must track messenger::draw's SIDEBAR_W / LIST_TOP / ROW_H.
         let cx = wx.max(0) + 16;
@@ -3062,6 +3077,10 @@ fn draw_content_inner(slot: usize) {
     }
     if w.kind == KIND_MEDIA {
         media::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
+        return;
+    }
+    if w.kind == KIND_DAW {
+        crate::drivers::daw::draw(x, y, dw.saturating_sub(24), dh.saturating_sub(TITLEBAR_H + 20));
         return;
     }
     if w.kind == KIND_PKG {

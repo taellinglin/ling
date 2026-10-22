@@ -49,6 +49,11 @@ fn estimate_fill(calls: &[DrawCall]) -> usize {
                 (w, h)
             },
             DrawKind::Line { .. } => (0.0, 0.0),
+            DrawKind::TriangleT { ref v, .. } => {
+                let w = v[0].x.max(v[1].x).max(v[2].x) - v[0].x.min(v[1].x).min(v[2].x);
+                let h = v[0].y.max(v[1].y).max(v[2].y) - v[0].y.min(v[1].y).min(v[2].y);
+                (w, h)
+            },
         };
         px += 0.5 * a * b;
     }
@@ -73,6 +78,10 @@ fn rasterize_call(
     ysh: f32,
     aa: bool,
 ) {
+    if let DrawKind::TriangleT { ref v, ref tex, tint, hole, zwrite, ref shade } = call.kind {
+        raster::fill_triangle_tex_shaded(buf, zbuf, width, height, ysh, v, tex, tint, hole, zwrite, call.mode, call.alpha, shade.as_deref());
+        return;
+    }
     let blended = call.mode != 0 || call.alpha < 0.999;
     match zbuf {
         Some(z) => match call.kind {
@@ -183,6 +192,7 @@ fn rasterize_call(
                     raster::draw_line(buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh);
                 }
             },
+            DrawKind::TriangleT { .. } => {},
         },
         None => match call.kind {
             DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. } => {
@@ -267,6 +277,7 @@ fn rasterize_call(
                     raster::draw_line(buf, width, height, call.color, x0, y0 - ysh, x1, y1 - ysh);
                 }
             },
+            DrawKind::TriangleT { .. } => {},
         },
     }
 }
@@ -339,6 +350,60 @@ pub enum DrawKind {
         y1: f32,
         z1: f32,
     },
+    /// Textured, perspective-correct triangle (game3d `tm_*` / `pfx_*` builtins):
+    /// bilinear texel × `tint`, texel alpha × pen alpha, an optional soft see-through
+    /// circle (`hole` = screen x, y, radius px, depth; radius <= 0 = off) that fades the
+    /// pixels in front of `depth` around a point, and `zwrite` for opaque surfaces.
+    TriangleT {
+        v: [TexVert; 3],
+        tex: std::sync::Arc<TexData>,
+        tint: u32,
+        hole: [f32; 4],
+        zwrite: bool,
+        shade: Option<std::sync::Arc<TexShade>>,
+    },
+}
+
+/// One screen-space vertex of a textured triangle: pixel x/y, camera depth z (the
+/// z-buffer key), and 1/w, u/w, v/w for perspective-correct interpolation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TexVert {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub iw: f32,
+    pub uw: f32,
+    pub vw: f32,
+    /// World position times 1/w (perspective-correct per-pixel lighting).
+    pub wx: f32,
+    pub wy: f32,
+    pub wz: f32,
+}
+
+/// Per-pixel lighting and fog for a textured triangle: ambient level, the point
+/// lights near it (x, y, z, r, g, b, intensity, radius) and distance fog
+/// (start, end, colour; end <= 0 = off).
+#[derive(Debug, Clone, Default)]
+pub struct TexShade {
+    pub amb: f32,
+    pub lights: Vec<[f32; 8]>,
+    pub fog_start: f32,
+    pub fog_end: f32,
+    pub fog_color: u32,
+    pub lit: bool,
+}
+
+/// A texture for [`DrawKind::TriangleT`]: power-of-two size, 0xAARRGGBB texels.
+pub struct TexData {
+    pub w: u32,
+    pub h: u32,
+    pub px: Vec<u32>,
+}
+
+impl std::fmt::Debug for TexData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TexData({}x{})", self.w, self.h)
+    }
 }
 
 /// Deferred depth-sorted draw queue.
@@ -385,6 +450,47 @@ impl DepthQueue {
             alpha: self.cur_alpha,
             unlit: false,
             kind: DrawKind::Triangle { x0, y0, z0: depth, x1, y1, z1: depth, x2, y2, z2: depth },
+        });
+    }
+
+    /// Queue a textured triangle (see [`DrawKind::TriangleT`]); the sort key is the
+    /// mean vertex depth, blend mode and alpha come from the current pen state.
+    pub fn push_triangle_tex(
+        &mut self,
+        v: [TexVert; 3],
+        tex: std::sync::Arc<TexData>,
+        tint: u32,
+        hole: [f32; 4],
+        zwrite: bool,
+    ) {
+        self.push_triangle_tex_shaded(v, tex, tint, hole, zwrite, None);
+    }
+
+    /// As [`Self::push_triangle_tex`] with lighting / fog. Translucent triangles
+    /// (no z-write) sort after every opaque call, so they are depth-tested
+    /// against the finished opaque scene and blend over it: a translucent wall
+    /// in front of the ball tints it, one behind it is hidden.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_triangle_tex_shaded(
+        &mut self,
+        v: [TexVert; 3],
+        tex: std::sync::Arc<TexData>,
+        tint: u32,
+        hole: [f32; 4],
+        zwrite: bool,
+        shade: Option<std::sync::Arc<TexShade>>,
+    ) {
+        let mut depth = (v[0].z + v[1].z + v[2].z) / 3.0;
+        if !zwrite {
+            depth -= 1.0e6;
+        }
+        self.calls.push(DrawCall {
+            depth,
+            color: tint,
+            mode: self.cur_mode,
+            alpha: self.cur_alpha,
+            unlit: true,
+            kind: DrawKind::TriangleT { v, tex, tint, hole, zwrite, shade },
         });
     }
 
@@ -696,6 +802,9 @@ impl DepthQueue {
                 DrawKind::Line { x0, y0, x1, y1, .. } => {
                     crate::gfx::webgl::push_line(call.color, x0, y0, x1, y1, call.depth)
                 },
+                DrawKind::TriangleT { ref v, tint, .. } => crate::gfx::webgl::push_triangle(
+                    tint, v[0].x, v[0].y, v[1].x, v[1].y, v[2].x, v[2].y, call.depth,
+                ),
             }
         }
         crate::gfx::webgl::flush(fill_r, fill_g, fill_b, width, height);
@@ -743,6 +852,12 @@ impl DepthQueue {
                     verts.push(Vert { pos: [x2, y2], color: to_rgb(c2) });
                 },
                 DrawKind::Line { .. } => { /* TODO: emit lines as thin quads on the GPU path */ },
+                DrawKind::TriangleT { ref v, tint, .. } => {
+                    let c = to_rgb(tint);
+                    for k in v {
+                        verts.push(Vert { pos: [k.x, k.y], color: c });
+                    }
+                },
             }
         }
         if buf.len() < width * height {

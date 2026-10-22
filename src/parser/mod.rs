@@ -646,7 +646,7 @@ impl Parser {
 
     fn parse_if_expr(&mut self) -> Result<Expr, String> {
         self.advance(); // consume `if`
-        let cond = self.parse_cmp_expr()?;
+        let cond = self.parse_expr()?;
         self.expect(&Token::LBrace)?;
         let then = self.parse_block()?;
         self.expect(&Token::RBrace)?;
@@ -658,7 +658,7 @@ impl Parser {
             self.advance(); // consume `else`
             if matches!(self.peek(), Token::If) {
                 self.advance(); // consume `if`
-                let ei_cond = self.parse_cmp_expr()?;
+                let ei_cond = self.parse_expr()?;
                 self.expect(&Token::LBrace)?;
                 let ei_body = self.parse_block()?;
                 self.expect(&Token::RBrace)?;

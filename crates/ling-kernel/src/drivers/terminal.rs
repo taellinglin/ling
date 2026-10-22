@@ -13,7 +13,7 @@
 //! class so errors read red, ok green, and command echoes accent.
 
 use crate::arch::rtc;
-use crate::drivers::{clipboard, font8x8, framebuffer, lingfu, media, mixer, netstack, theme};
+use crate::drivers::{clipboard, font8x8, framebuffer, lingfu, llm, media, mixer, netstack, theme};
 use crate::fs::{lingfs, users};
 
 const COLS: usize = 128; // max stored chars per line
@@ -244,7 +244,23 @@ fn split_cmd(s: &str) -> (&str, &str) {
     }
 }
 
+/// show whatever the model task has produced since the last look
+fn pump_llm(cols: usize) {
+    if !llm::has_output() {
+        return;
+    }
+    llm::drain_lines(cols.clamp(20, COLS - 1), &mut |kind, s| {
+        let cls = match kind {
+            0 => Cls::Normal,
+            1 => Cls::Dim,
+            _ => Cls::Err,
+        };
+        push(cls, s.as_bytes());
+    });
+}
+
 fn run(line: &str) {
+    pump_llm(COLS - 1);
     let (cmd, arg) = split_cmd(line.trim());
     match cmd {
         "" => {},
@@ -259,6 +275,7 @@ fn run(line: &str) {
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
             push(Cls::Normal, b"  ssh [user@]host   services [enable|disable ssh]   cryptotest");
             push(Cls::Normal, b"  https <url>   imgview demo|demosvg|<url>");
+            push(Cls::Normal, b"  ask <question>   llm [status|load|stop]   (Qwen3, on this machine)");
             push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
@@ -267,6 +284,38 @@ fn run(line: &str) {
             SCROLL = 0;
         },
         "echo" => push(Cls::Normal, arg.as_bytes()),
+        "ask" => {
+            if arg.is_empty() {
+                push(Cls::Err, b"usage: ask <question>");
+            } else if !llm::start() {
+                push(Cls::Err, b"ask: no free task slot for the model");
+            } else if !llm::ask(arg) {
+                push(Cls::Dim, b"llm is still busy with the last question (llm stop)");
+            } else if llm::phase() == llm::Phase::Idle || llm::phase() == llm::Phase::Failed {
+                push(Cls::Dim, b"asking: the first question loads the model from the model disk...");
+            } else {
+                push(Cls::Dim, b"asking...");
+            }
+        },
+        "llm" => match arg {
+            "" | "status" => {
+                let s = llm::status();
+                push(Cls::Normal, s.as_bytes());
+            },
+            "load" => {
+                if llm::start() {
+                    llm::request_load();
+                    push(Cls::Dim, b"loading the model from the model disk...");
+                } else {
+                    push(Cls::Err, b"llm: no free task slot");
+                }
+            },
+            "stop" => {
+                llm::cancel();
+                push(Cls::Dim, b"stopping");
+            },
+            _ => push(Cls::Err, b"usage: llm [status|load|stop]"),
+        },
         "play" => {
             if arg.is_empty() {
                 push(Cls::Err, b"usage: play <file.wav>");
@@ -1133,6 +1182,7 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     let gw = 8 * z;
     let gh = 8 * z + 2 * z;
     let cols = ((w / gw).max(1)) as usize;
+    pump_llm(cols.saturating_sub(1));
     // Reserve the last grid row for the input prompt.
     let grid_rows = (h / gh).max(2) as usize;
     let out_rows = grid_rows - 1;

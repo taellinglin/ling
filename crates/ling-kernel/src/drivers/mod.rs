@@ -13,6 +13,8 @@ pub mod ata;
 #[cfg(target_arch = "x86_64")]
 pub mod browser;
 #[cfg(target_arch = "x86_64")]
+pub mod daw;
+#[cfg(target_arch = "x86_64")]
 pub mod clipboard;
 #[cfg(target_arch = "x86_64")]
 pub mod display;
@@ -20,6 +22,8 @@ pub mod display;
 pub mod editor;
 #[cfg(target_arch = "x86_64")]
 pub mod horizon;
+#[cfg(target_arch = "x86_64")]
+pub mod llm;
 #[cfg(target_arch = "x86_64")]
 pub mod messenger;
 #[cfg(target_arch = "x86_64")]

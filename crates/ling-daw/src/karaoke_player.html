@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title><!--TITLE--> - karaoke</title>
+<style>
+/*FONTS*/
+:root{color-scheme:dark}
+html,body{margin:0;height:100%;background:#05070c;color:#dfe6f2;font:13px 'Segoe UI',Arial,sans-serif;overflow:hidden}
+#stage{position:absolute;inset:0;display:flex;flex-direction:column}
+#cv{flex:1;min-height:0;width:100%;display:block;background:#000}
+#bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:#0b0f18;border-top:1px solid #1d2638}
+button,select,input{font:inherit;color:inherit}
+button{background:#141c2c;border:1px solid #2a3753;border-radius:4px;padding:5px 12px;cursor:pointer}
+button:hover{background:#1c2740}
+#seek{flex:1;accent-color:#ffc83c}
+#time{font-variant-numeric:tabular-nums;min-width:96px;text-align:right;color:#9fb0cc}
+#panel{position:absolute;right:10px;top:10px;width:290px;max-height:calc(100% - 80px);overflow:auto;background:#0b0f18ee;border:1px solid #2a3753;border-radius:6px;padding:10px 12px;display:none}
+#panel.on{display:block}
+#panel h3{margin:0 0 8px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:#7f93b8}
+#panel label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px 0}
+#panel input[type=range]{width:130px;accent-color:#ffc83c}
+#panel input[type=color]{width:42px;height:22px;border:1px solid #2a3753;background:none;padding:0}
+#panel select{background:#141c2c;border:1px solid #2a3753;border-radius:4px;padding:3px;max-width:150px}
+#hint{position:absolute;left:12px;top:10px;color:#7f93b8;font-size:12px;pointer-events:none;transition:opacity .6s}
+</style></head>
+<body><div id="stage">
+<canvas id="cv"></canvas>
+<div id="hint">Space play / pause &middot; &larr; &rarr; seek &middot; F fullscreen &middot; S settings</div>
+<div id="panel"></div>
+<div id="bar"><button id="play">Play</button><input id="seek" type="range" min="0" max="1000" value="0"><span id="time">0:00 / 0:00</span><button id="gear">Settings</button></div>
+</div>
+<audio id="au" preload="auto"></audio>
+<script>
+const D=/*DATA*/;
+const DEFAULTS=/*SETTINGS*/;
+const FONTS=/*FONTCHOICES*/;
+const PCS=[/*PCS*/];
+const AUDIO=/*AUDIO*/;
+const cv=document.getElementById('cv'),cx=cv.getContext('2d'),au=document.getElementById('au');
+let S=Object.assign({},DEFAULTS);
+try{const j=localStorage.getItem('lsx_kar_'+D.title);if(j)S=Object.assign(S,JSON.parse(j));}catch(e){}
+function fontFamily(){const f=FONTS.find(x=>x[0]===S.font);return f?f[1]:FONTS[0][1];}
+// clock: the audio when there is one, otherwise a silent timeline
+let hasAudio=false,t0=0,pos=0,playing=false;
+if(AUDIO){au.src=AUDIO;au.addEventListener('loadedmetadata',()=>{hasAudio=true;});au.addEventListener('error',()=>{hasAudio=false;});}
+function now(){if(hasAudio)return au.currentTime;if(playing)pos=(performance.now()-t0)/1000;return pos;}
+function seek(t){t=Math.max(0,Math.min(D.length,t));if(hasAudio)au.currentTime=t;pos=t;t0=performance.now()-t*1000;}
+function play(){if(playing)return;playing=true;t0=performance.now()-pos*1000;if(AUDIO)au.play().catch(()=>{});document.getElementById('play').textContent='Pause';}
+function pause(){playing=false;pos=now();au.pause();document.getElementById('play').textContent='Play';}
+function toggle(){playing?pause():play();}
+document.getElementById('play').onclick=toggle;
+const seekEl=document.getElementById('seek');seekEl.oninput=()=>seek(seekEl.value/1000*D.length);
+document.getElementById('gear').onclick=()=>document.getElementById('panel').classList.toggle('on');
+addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+ if(e.code==='Space'){e.preventDefault();toggle();}
+ else if(e.key==='ArrowLeft')seek(now()-5);else if(e.key==='ArrowRight')seek(now()+5);
+ else if(e.key==='f'||e.key==='F'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+ else if(e.key==='s'||e.key==='S')document.getElementById('panel').classList.toggle('on');});
+function fmt(t){t=Math.max(0,t);return Math.floor(t/60)+':'+String(Math.floor(t%60)).padStart(2,'0');}
+// ── settings panel ──
+function save(){try{localStorage.setItem('lsx_kar_'+D.title,JSON.stringify(S));}catch(e){}}
+function buildPanel(){
+ const p=document.getElementById('panel');p.innerHTML='<h3>Karaoke look</h3>';
+ const add=(label,el)=>{const l=document.createElement('label');l.append(label,el);p.append(l);return el;};
+ const rng=(k,min,max,step)=>{const i=document.createElement('input');i.type='range';i.min=min;i.max=max;i.step=step;i.value=S[k];i.oninput=()=>{S[k]=+i.value;save();};return i;};
+ const col=k=>{const i=document.createElement('input');i.type='color';i.value=S[k];i.oninput=()=>{S[k]=i.value;save();};return i;};
+ const chk=k=>{const i=document.createElement('input');i.type='checkbox';i.checked=!!S[k];i.onchange=()=>{S[k]=i.checked;save();};return i;};
+ const sel=(k,opts)=>{const s=document.createElement('select');opts.forEach(o=>{const e=document.createElement('option');e.value=o[0];e.textContent=o[1];s.append(e);});s.value=S[k];s.onchange=()=>{S[k]=isNaN(+s.value)?s.value:+s.value;save();};return s;};
+ add('Font',sel('font',FONTS.map(f=>[f[0],f[0]])));
+ add('Size',rng('size',24,160,1));
+ add('Text colour',col('unsung'));add('Sung colour',col('sung'));
+ add('Outline colour',col('outline'));add('Outline thickness',rng('outw',0,16,0.5));add('Outline opacity',rng('outa',0,1,0.05));
+ add('Text opacity',rng('texta',0.1,1,0.05));
+ add('Cursor',sel('cursor',[['sweep','Sweep fill'],['pop','Pop'],['fill','Outline fill'],['ball','Bouncing ball'],['underline','Underline bar'],['block','Block'],['arrow','Arrow'],['none','None']]));
+ add('Cursor colour',col('cursorc'));
+ add('Lines shown',sel('lines',[[1,'1'],[2,'2'],[3,'3'],[4,'4']]));
+ add('Colour by pitch',chk('pitchcolor'));add('Pitch ribbon',chk('ribbon'));add('Bold',chk('bold'));add('UPPERCASE',chk('upper'));
+ add('Background top',col('bg1'));add('Background bottom',col('bg2'));
+ const b=document.createElement('button');b.textContent='Copy settings';b.style.marginTop='8px';b.onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(JSON.stringify(S));};p.append(b);
+ const r=document.createElement('button');r.textContent='Reset';r.style.margin='8px 0 0 6px';r.onclick=()=>{S=Object.assign({},DEFAULTS);save();buildPanel();};p.append(r);
+}
+buildPanel();
+// ── layout ──
+function resize(){const r=cv.getBoundingClientRect(),d=devicePixelRatio||1;cv.width=Math.round(r.width*d);cv.height=Math.round(r.height*d);}
+addEventListener('resize',resize);resize();
+// lines windows: alternate between `lines` slots
+function windows(){const n=S.lines,out=[];D.lines.forEach((l,i)=>{const st=l[0][0],en=l[l.length-1][1];let a=Math.max(0,st-2);
+ if(n>1&&i>=n)a=Math.min(Math.max(a,out[i-n][1]+0.15),Math.max(0,st-0.4));else if(n===1&&i>0)a=Math.min(Math.max(a,out[i-1][1]+0.05),Math.max(0,st-0.2));
+ let g=en+0.5;const nx=D.lines[i+n];if(nx)g=Math.min(g,Math.max(en+0.1,nx[0][0]-2));out.push([a,g]);});return out;}
+let WIN=windows(),WINN=S.lines;
+function rgba(hex,a){const n=parseInt(hex.slice(1),16);return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;}
+function setFont(size){cx.font=(S.bold?'bold ':'')+size+'px '+fontFamily();}
+function txt(s){return S.upper?s.toUpperCase():s;}
+function drawText(s,x,y,fill){ // outlined text
+ if(S.outw>0){cx.lineJoin='round';cx.lineWidth=S.outw*scale;cx.strokeStyle=rgba(S.outline,S.outa);cx.strokeText(s,x,y);}
+ cx.fillStyle=fill;cx.fillText(s,x,y);}
+let scale=1;
+function measureLine(l,size){setFont(size);const parts=[];let x=0;
+ l.forEach((s,j)=>{const pre=(s.length&&s[3]&&j>0)?' ':'';const t=txt(s[2]);const wp=cx.measureText(pre).width,w=cx.measureText(t).width;parts.push({x:x+wp,w:w,t:t,s:s});x+=wp+w;});
+ return{parts:parts,w:x};}
+function pcCol(key){return PCS[((key%12)+12)%12];}
+function drawLine(l,cxm,y,size,t,alpha){
+ const m=measureLine(l,size);let x0=cxm-m.w/2;cx.globalAlpha=alpha;setFont(size);cx.textBaseline='middle';cx.textAlign='left';
+ // ball / arrow / underline / block need the current syllable
+ let cur=-1;m.parts.forEach((p,i)=>{if(t>=p.s[0])cur=i;});
+ m.parts.forEach((p,i)=>{
+  const [s0,s1]=p.s;const done=t>=s1,active=t>=s0&&t<s1;
+  const prog=active?(t-s0)/Math.max(0.001,s1-s0):(done?1:0);
+  const sungC=S.pitchcolor?pcCol(p.s[4]):S.sung;
+  const x=x0+p.x;
+  if(S.cursor==='block'&&active){cx.fillStyle=rgba(S.cursorc,0.35*alpha);cx.fillRect(x-4*scale,y-size*0.62,p.w+8*scale,size*1.24);}
+  if(S.cursor==='underline'&&(active||done)){cx.fillStyle=rgba(S.cursorc,0.9);cx.fillRect(x,y+size*0.55,p.w*(done?1:prog),Math.max(3,size*0.07));}
+  // base (unsung) then the sung part on top
+  drawText(p.t,x,y,rgba(S.unsung,S.texta));
+  if(S.cursor==='none'){if(done||active)drawText(p.t,x,y,rgba(sungC,S.texta));}
+  else if(S.cursor==='sweep'){if(done){cx.fillStyle=rgba(sungC,S.texta);cx.fillText(p.t,x,y);}else if(active){cx.save();cx.beginPath();cx.rect(x-2,y-size,p.w*prog+2,size*2);cx.clip();cx.fillStyle=rgba(sungC,S.texta);cx.fillText(p.t,x,y);cx.restore();}}
+  else if(S.cursor==='fill'){if(done||active){cx.fillStyle=rgba(sungC,S.texta);cx.fillText(p.t,x,y);}}
+  else{if(done||active){cx.fillStyle=rgba(sungC,S.texta);cx.fillText(p.t,x,y);}}
+  if(S.cursor==='pop'&&active){const k=Math.sin(Math.min(1,prog*4)*Math.PI);cx.save();cx.translate(x+p.w/2,y);cx.scale(1+0.12*k,1+0.12*k);cx.translate(-(x+p.w/2),-y);cx.fillStyle=rgba(sungC,S.texta);cx.fillText(p.t,x,y);cx.restore();}
+ });
+ // ball and arrow travel along the line
+ if((S.cursor==='ball'||S.cursor==='arrow')&&cur>=0){
+  const p=m.parts[cur],[s0,s1]=p.s;const fr=Math.min(1,Math.max(0,(t-s0)/Math.max(0.001,s1-s0)));
+  const nx=m.parts[cur+1];let bx=x0+p.x+p.w*fr,jump=0;
+  if(nx&&t>=s1-0.0){const g=(nx.s[0]-s1);if(g>0&&t<nx.s[0]){const q=(t-s1)/g;bx=x0+p.x+p.w+(nx.x-(p.x+p.w))*q;jump=Math.sin(q*Math.PI)*size*0.55;}}
+  const by=y-size*0.85-Math.abs(Math.sin(fr*Math.PI))*size*0.35-jump;
+  cx.fillStyle=rgba(S.cursorc,1);
+  if(S.cursor==='ball'){cx.beginPath();cx.arc(bx,by,size*0.16,0,7);cx.fill();cx.strokeStyle=rgba(S.outline,S.outa);cx.lineWidth=Math.max(1,S.outw*scale*0.5);cx.stroke();}
+  else{cx.beginPath();cx.moveTo(bx,by+size*0.18);cx.lineTo(bx-size*0.17,by-size*0.12);cx.lineTo(bx+size*0.17,by-size*0.12);cx.closePath();cx.fill();}
+ }
+ cx.globalAlpha=1;}
+function drawRibbon(W,H,t){
+ const top=H*0.04,hh=H*0.30,span=8,win0=t-span*0.3;
+ let lo=127,hi=0;D.notes.forEach(n=>{lo=Math.min(lo,n[2]);hi=Math.max(hi,n[2]);});if(hi<lo){return;}lo-=2;hi+=2;const rng=Math.max(8,hi-lo);
+ cx.fillStyle='rgba(0,0,0,0.28)';cx.fillRect(0,top,W,hh);
+ for(let k=Math.ceil(lo);k<=hi;k++){if([1,3,6,8,10].includes(k%12))continue;const y=top+hh-(k-lo)/rng*hh;cx.fillStyle='rgba(255,255,255,0.05)';cx.fillRect(0,y,W,1);}
+ const nowX=W*0.3;cx.fillStyle='rgba(255,255,255,0.5)';cx.fillRect(nowX,top,2,hh);
+ D.notes.forEach(n=>{if(n[1]<win0||n[0]>win0+span)return;const x0=(n[0]-win0)/span*W,x1=(n[1]-win0)/span*W,y=top+hh-(n[2]-lo)/rng*hh,h=Math.max(6,hh/rng*0.8);
+  const on=t>=n[0]&&t<n[1],done=t>=n[1];const c=S.pitchcolor?pcCol(n[2]):S.sung;
+  cx.fillStyle=rgba(c,on?1:(done?0.35:0.75));const r=h/2;cx.beginPath();cx.roundRect(x0,y-h/2,Math.max(3,x1-x0),h,r);cx.fill();
+  if(on){cx.shadowColor=rgba(c,1);cx.shadowBlur=18;cx.fill();cx.shadowBlur=0;}});}
+function frame(){
+ const W=cv.width,H=cv.height;scale=H/1080;
+ const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,S.bg1);g.addColorStop(1,S.bg2);cx.fillStyle=g;cx.fillRect(0,0,W,H);
+ const t=now();
+ if(S.lines!==WINN){WIN=windows();WINN=S.lines;}
+ const size=S.size*scale*(H/1080>0?1:1);
+ if(S.ribbon)drawRibbon(W,H,t);
+ const n=S.lines,ys={1:[0.78],2:[0.62,0.82],3:[0.46,0.64,0.82],4:[0.40,0.55,0.70,0.85]}[n];
+ D.lines.forEach((l,i)=>{const [a,gn]=WIN[i];if(t<a||t>=gn)return;const fade=Math.min(1,(t-a)/0.25,(gn-t)/0.25);drawLine(l.map(s=>s),W/2,H*ys[i%n],size,t,Math.max(0,fade)*1);});
+ // count-in dots before the first line and after long rests
+ for(let i=0;i<D.lines.length;i++){const st=D.lines[i][0][0],prev=i?D.lines[i-1][D.lines[i-1].length-1][1]:-9;if(i===0||st-prev>=6){const d=st-t;if(d>0&&d<=3){const k=Math.ceil(d);cx.fillStyle=rgba(S.sung,1);for(let j=0;j<k;j++){cx.beginPath();cx.arc(W/2+(j-(k-1)/2)*size*0.5,H*(S.ribbon?0.42:ys[0]-0.12),size*0.13,0,7);cx.fill();}}}}
+ seekEl.value=D.length?Math.round(t/D.length*1000):0;document.getElementById('time').textContent=fmt(t)+' / '+fmt(D.length);
+ if(playing&&t>=D.length+1)pause();
+ requestAnimationFrame(frame);}
+{const m=location.hash.match(/t=([\d.]+)/);if(m)seek(+m[1]);}
+setTimeout(()=>{document.getElementById('hint').style.opacity=0;},6000);
+requestAnimationFrame(frame);
+</script></body></html>

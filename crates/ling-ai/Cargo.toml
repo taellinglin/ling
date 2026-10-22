@@ -19,7 +19,7 @@ cuda = ["candle-core/cuda", "candle-transformers/cuda", "dfdx/cuda"]
 llm-cuda = ["llm", "candle-core/cuda", "candle-transformers/cuda"]
 metal = ["candle-core/metal"]
 tensorrt = []
-llm = ["dep:candle-transformers", "dep:tokenizers", "dep:candle-core", "dep:candle-nn"]
+llm = ["dep:candle-transformers", "dep:tokenizers", "dep:candle-core", "dep:candle-nn", "dep:serde_json", "dep:zip"]
 # Image understanding (Moondream2, quantized) for chat.ling-lang.org's
 # attach-an-image flow — UI screenshots and 3D/game screenshots. Shares the
 # same candle-transformers/tokenizers stack as `llm`; adds only image
@@ -48,6 +48,9 @@ burn-nn = { version = "0.21.0-pre.5", optional = true }
 # (CUDA-capable) and a HF `tokenizers` vocab; no external server involved.
 candle-transformers = { version = "0.11", optional = true, default-features = false }
 tokenizers = { version = "0.23", optional = true, default-features = false, features = ["fancy-regex"] }
+serde_json = { version = "1.0", optional = true }
+# reading RVC / HuBERT .pth checkpoints (the config list next to the weights); the same version candle-core uses
+zip = { version = "8.6", optional = true, default-features = false }
 image = { version = "0.25", optional = true, default-features = false, features = ["png", "jpeg"] }
 # llama-cpp-rs = { version = "0.1", optional = true, features = ["cuda"] }
 # mistralrs currently disabled to prevent pulling reqwest/web-sys on non-wasm builds

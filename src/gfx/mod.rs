@@ -189,6 +189,8 @@ pub struct GfxState {
     /// alt-tab and restored on refocus — a plain `open_window()` window was
     /// never topmost, so leave it alone.
     pub topmost_window: bool,
+    /// Window has a resize border / maximize button; the framebuffer follows its client size.
+    pub resizable: bool,
     /// Previous-frame down-state per Win32 virtual-key code (0-255), for
     /// edge detection when reading keyboard state via `GetAsyncKeyState`
     /// instead of minifb's message-queue-based (`WM_KEYDOWN`) tracking. The
@@ -280,6 +282,7 @@ impl GfxState {
             was_active: true,
             focus_grace_frames: 0,
             topmost_window: false,
+            resizable: false,
             #[cfg(windows)]
             raw_keys_prev: [false; 256],
             #[cfg(windows)]
