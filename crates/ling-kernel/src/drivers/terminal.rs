@@ -264,6 +264,32 @@ fn run(line: &str) {
     let (cmd, arg) = split_cmd(line.trim());
     match cmd {
         "" => {},
+        "ls" if crate::fs::media::is_media_path(arg) => {
+            let items = crate::vfs::list(arg);
+            if items.is_empty() {
+                push(Cls::Dim, b"(empty)");
+            }
+            for (name, is_dir, size) in items {
+                let mut line = alloc::string::String::from(name.as_str());
+                if is_dir {
+                    line.push('/');
+                } else {
+                    line.push_str(&alloc::format!("  {size}"));
+                }
+                push(Cls::Normal, line.as_bytes());
+            }
+        },
+        "cat" if crate::fs::media::is_media_path(arg) => match crate::vfs::read(arg) {
+            Some(bytes) => push_wrapped(Cls::Normal, &bytes[..bytes.len().min(8192)]),
+            None => push(Cls::Err, b"cat: no such file"),
+        },
+        "mkdir" if crate::fs::media::is_media_path(arg) => {
+            if crate::vfs::mkdir(arg) {
+                push(Cls::Ok, b"created");
+            } else {
+                push(Cls::Err, b"mkdir: failed");
+            }
+        },
         "help" => {
             push(Cls::Normal, b"commands:");
             push(Cls::Normal, b"  help  clear  echo <t>  ls [dir]  cat <file>");
@@ -401,32 +427,6 @@ fn run(line: &str) {
                     Ok(Some(len)) => push_wrapped(Cls::Normal, &cb[..len]),
                     _ => push(Cls::Err, b"cat: no such file"),
                 }
-            }
-        },
-        "ls" if crate::fs::media::is_media_path(arg) => {
-            let items = crate::vfs::list(arg);
-            if items.is_empty() {
-                push(Cls::Dim, b"(empty)");
-            }
-            for (name, is_dir, size) in items {
-                let mut line = alloc::string::String::from(name.as_str());
-                if is_dir {
-                    line.push('/');
-                } else {
-                    line.push_str(&alloc::format!("  {size}"));
-                }
-                push(Cls::Normal, line.as_bytes());
-            }
-        },
-        "cat" if crate::fs::media::is_media_path(arg) => match crate::vfs::read(arg) {
-            Some(bytes) => push_wrapped(Cls::Normal, &bytes[..bytes.len().min(8192)]),
-            None => push(Cls::Err, b"cat: no such file"),
-        },
-        "mkdir" if crate::fs::media::is_media_path(arg) => {
-            if crate::vfs::mkdir(arg) {
-                push(Cls::Ok, b"created");
-            } else {
-                push(Cls::Err, b"mkdir: failed");
             }
         },
         "cp" | "mv" => {
