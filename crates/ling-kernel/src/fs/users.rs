@@ -152,8 +152,8 @@ pub fn create(
 }
 
 /// The folders every home has, in the order the Files window shows them.
-pub const HOME_FOLDERS: [&str; 8] =
-    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Programs", "Scripts"];
+pub const HOME_FOLDERS: [&str; 9] =
+    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Projects", "Programs", "Scripts"];
 
 /// Create `home/<user>` and its standard folders if missing (existing folders
 /// and their files are kept). Called on account creation and at every login,
@@ -173,7 +173,7 @@ pub fn ensure_home(username: &str) {
     let starters: [(&str, &[u8]); 3] = [
         ("Scripts/hello.ling", b"// A Ling script -- open it from Files, or `ling run` it from the console.\nbind main = do {\n    println(\"Hello from LingOS!\")\n    println(\"2 + 2 = \", 2 + 2)\n}\n"),
         ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
-        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts (open one to run it)\n"),
+        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Projects   - your LingStationX, LingDev, LingModeler projects (one folder each)\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts (open one to run it)\n"),
     ];
     for (rel, data) in starters {
         let p = join4(&mut path, "home/", username, "/", rel);

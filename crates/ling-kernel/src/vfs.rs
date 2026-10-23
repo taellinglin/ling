@@ -11,6 +11,14 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 static mut ROOT: Option<String> = None;
+/// The running app's folder in the image (`apps/<name>`): its embedded files
+/// by their own relative names, beside any unprefixed ones.
+static mut IMG: Option<String> = None;
+/// Where the running app's `projects/...` paths live (`home/<user>/Projects/<App>`).
+static mut PROJECTS: Option<String> = None;
+
+/// A program's whole path scope (data root, image folder, projects folder).
+pub struct Scope(Option<String>, Option<String>, Option<String>);
 
 /// Is there writable storage (a mounted lingfs volume)?
 pub fn ready() -> bool {
@@ -37,12 +45,64 @@ pub fn set_root(r: &str) {
     unsafe { *(&raw mut ROOT) = if r.is_empty() { None } else { Some(norm(r)) } };
 }
 
-pub fn take_root() -> Option<String> {
-    unsafe { (*(&raw mut ROOT)).take() }
+/// `apps/<name>` when the image holds that app's files, else nothing.
+pub fn set_image_root(r: &str) {
+    let r = norm(r);
+    unsafe { *(&raw mut IMG) = if !r.is_empty() && crate::appfs::is_dir(&r) { Some(r) } else { None } };
 }
 
-pub fn restore_root(r: Option<String>) {
-    unsafe { *(&raw mut ROOT) = r };
+pub fn set_projects_root(r: &str) {
+    unsafe { *(&raw mut PROJECTS) = if r.is_empty() { None } else { Some(norm(r)) } };
+}
+
+/// The projects folder of the running app, if it has one.
+pub fn projects_root() -> Option<String> {
+    unsafe { (*(&raw const PROJECTS)).clone() }
+}
+
+/// Clear the scope for a launched program, returning the caller's to restore.
+pub fn take_scope() -> Scope {
+    unsafe { Scope((*(&raw mut ROOT)).take(), (*(&raw mut IMG)).take(), (*(&raw mut PROJECTS)).take()) }
+}
+
+pub fn restore_scope(s: Scope) {
+    unsafe {
+        *(&raw mut ROOT) = s.0;
+        *(&raw mut IMG) = s.1;
+        *(&raw mut PROJECTS) = s.2;
+    }
+}
+
+/// `n` without the running program's data root (`<root>/x` -> `x`): apps
+/// build paths from their `fs_cwd()`, which must still find bundled files.
+fn under_root(n: &str) -> Option<String> {
+    let r = root();
+    if r.is_empty() {
+        return None;
+    }
+    n.strip_prefix(&format!("{r}/")).map(String::from)
+}
+
+/// The image path of `n` (or of `n` relative to the data root) inside the
+/// running app's folder, when it exists.
+fn img(n: &str) -> Option<String> {
+    let base = unsafe { (*(&raw const IMG)).as_ref()? };
+    let mut cands: Vec<String> = alloc::vec![join(base, n)];
+    if let Some(rel) = under_root(n) {
+        cands.push(join(base, &rel));
+        cands.push(rel);
+    }
+    cands.into_iter().find(|p| crate::appfs::exists(p) || crate::appfs::is_dir(p))
+}
+
+/// `projects/...` of the running app, moved to its Projects folder.
+fn projects_path(n: &str) -> Option<String> {
+    let base = unsafe { (*(&raw const PROJECTS)).as_ref()? };
+    if n == "projects" {
+        Some(base.clone())
+    } else {
+        n.strip_prefix("projects/").map(|rest| join(base, rest))
+    }
 }
 
 /// Strip `./` and leading `/`, collapse `.` and `..` segments, `\` → `/`.
@@ -89,11 +149,17 @@ pub fn resolve(p: &str) -> String {
     if n == "home" || n.starts_with("home/") || n.starts_with("pkg-") || n == "packages" || n.starts_with("packages/") {
         return n;
     }
+    if let Some(p) = projects_path(&n) {
+        return p;
+    }
     if ready() && crate::fs::lingfs::path_kind(&n).is_some() {
         return n;
     }
     if crate::appfs::exists(&n) || crate::appfs::is_dir(&n) {
         return n;
+    }
+    if let Some(p) = img(&n) {
+        return p;
     }
     let r = root();
     if r.is_empty() || n == r || n.starts_with(&format!("{r}/")) {
@@ -136,7 +202,10 @@ pub fn read(p: &str) -> Option<Vec<u8>> {
             }
         }
     }
-    crate::appfs::get(&n).or_else(|| crate::appfs::get(&r)).map(|b| b.to_vec())
+    crate::appfs::get(&n)
+        .or_else(|| crate::appfs::get(&r))
+        .or_else(|| img(&n).and_then(|p| crate::appfs::get(&p)))
+        .map(|b| b.to_vec())
 }
 
 /// Write a file (creating its folders); false without storage.
@@ -166,7 +235,7 @@ pub fn exists(p: &str) -> bool {
     if ready() && (crate::fs::lingfs::path_kind(&r).is_some() || crate::fs::lingfs::path_kind(&n).is_some()) {
         return true;
     }
-    crate::appfs::exists(&n) || crate::appfs::is_dir(&n) || crate::appfs::exists(&r)
+    crate::appfs::exists(&n) || crate::appfs::is_dir(&n) || crate::appfs::exists(&r) || img(&n).is_some()
 }
 
 pub fn is_dir(p: &str) -> bool {
@@ -181,7 +250,7 @@ pub fn is_dir(p: &str) -> bool {
     if ready() && (crate::fs::lingfs::path_kind(&r) == Some(true) || crate::fs::lingfs::path_kind(&n) == Some(true)) {
         return true;
     }
-    crate::appfs::is_dir(&n) || crate::appfs::is_dir(&r)
+    crate::appfs::is_dir(&n) || crate::appfs::is_dir(&r) || img(&n).is_some_and(|p| crate::appfs::is_dir(&p))
 }
 
 pub fn mkdir(p: &str) -> bool {
@@ -303,15 +372,21 @@ pub fn list(p: &str) -> Vec<(String, bool, usize)> {
             lingfs_list_into(&n, &mut items);
         }
     }
-    for dir in [n.as_str(), r.as_str()] {
-        let base = String::from(dir);
+    let mut dirs: Vec<String> = alloc::vec![n.clone()];
+    if r != n {
+        dirs.push(r.clone());
+    }
+    if let Some(p) = img(&n) {
+        if !dirs.contains(&p) {
+            dirs.push(p);
+        }
+    }
+    for dir in &dirs {
+        let base = dir.clone();
         crate::appfs::list(dir, |name, is_dir| {
             let size = if is_dir { 0 } else { crate::appfs::get(&join(&base, name)).map(|d| d.len()).unwrap_or(0) };
             push_entry(&mut items, name, is_dir, size);
         });
-        if r == n {
-            break;
-        }
     }
     items.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.to_lowercase().cmp(&y.0.to_lowercase())));
     items

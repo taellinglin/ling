@@ -21,7 +21,7 @@ use crate::arch::timer;
 #[cfg(target_arch = "x86_64")]
 use crate::drivers::net_e1000 as nic;
 #[cfg(target_arch = "aarch64")]
-use crate::arch::rp1_eth as nic;
+use crate::arch::netdev as nic;
 
 /// Live IP config, resolved through the NIC's runtime config (a DHCP lease
 /// if one was obtained, else the SLIRP fallback) — never the compile-time

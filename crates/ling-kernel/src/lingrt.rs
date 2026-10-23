@@ -686,6 +686,85 @@ pub fn register(f: ExtDispatch) {
 }
 
 static mut REPORTED: BTreeSet<Vec<u8>> = BTreeSet::new();
+/// Console `trace`: print each builtin name the first time a program calls
+/// it -- a cheap way to see how far a start-up got before a hang.
+pub static mut TRACE: bool = false;
+static mut TRACED: BTreeSet<Vec<u8>> = BTreeSet::new();
+
+fn trace_first(name: &[u8]) {
+    let seen = unsafe { &mut *(&raw mut TRACED) };
+    if seen.insert(name.to_vec()) {
+        crate::console_write(b"[trace] ");
+        crate::console_write(name);
+        crate::console_write(b"
+");
+    }
+    // The last few calls, for the hang report below.
+    let ring = unsafe { &mut *(&raw mut RING) };
+    let i = unsafe { RING_N } % 16;
+    let n = name.len().min(31);
+    ring[i][..n].copy_from_slice(&name[..n]);
+    ring[i][31] = n as u8;
+    unsafe { RING_N += 1 };
+}
+
+static mut RING: [[u8; 32]; 16] = [[0; 32]; 16];
+static mut RING_N: usize = 0;
+static mut LAST_PRESENT_MS: u64 = 0;
+static mut HANG_REPORTED: bool = false;
+
+/// `present()` happened (a frame is on screen): the program is alive.
+pub fn mark_present() {
+    unsafe {
+        LAST_PRESENT_MS = crate::arch::timer::now_ms();
+        HANG_REPORTED = false;
+    }
+}
+
+/// From the timer tick: with `trace` on, a program that has not presented a
+/// frame for 10 s gets its last builtin calls printed once -- where it hangs.
+pub fn hang_tick() {
+    unsafe {
+        if !TRACE || HANG_REPORTED || APP_DEPTH == 0 || LAST_PRESENT_MS == 0 {
+            return;
+        }
+        if crate::arch::timer::now_ms().wrapping_sub(LAST_PRESENT_MS) < 10_000 {
+            return;
+        }
+        HANG_REPORTED = true;
+        crate::console_write(b"[trace] no frame for 10 s; last builtin calls (oldest first):
+");
+        let ring = &*(&raw const RING);
+        let total = RING_N;
+        for k in 0..16usize {
+            let idx = (total + k) % 16;
+            let n = ring[idx][31] as usize;
+            if n > 0 {
+                crate::console_write(b"  ");
+                crate::console_write(&ring[idx][..n]);
+                crate::console_write(b"
+");
+            }
+        }
+        crate::console_write(b"[trace] total builtin calls: ");
+        let mut b = [0u8; 20];
+        let mut m = 0;
+        let mut x = total;
+        if x == 0 {
+            b[0] = b'0';
+            m = 1;
+        }
+        while x > 0 {
+            b[m] = b'0' + (x % 10) as u8;
+            x /= 10;
+            m += 1;
+        }
+        b[..m].reverse();
+        crate::console_write(&b[..m]);
+        crate::console_write(b"
+");
+    }
+}
 
 /// Note (once per name) that a builtin isn't implemented in-kernel yet.
 pub(crate) fn report_missing(name: &[u8]) {
@@ -709,6 +788,9 @@ pub unsafe extern "C" fn ling_builtin(
     ensure_init();
     let name = core::slice::from_raw_parts(name_ptr, name_len);
     let args: &[u64] = if args_len == 0 { &[] } else { core::slice::from_raw_parts(args_ptr, args_len) };
+    if TRACE {
+        trace_first(name);
+    }
     if let Some(v) = core_builtin(name, args) {
         return v;
     }

@@ -39,12 +39,17 @@ fn process(
                 }
                 out.push(Item::Fn(def));
             },
-            // Only the entry file's top-level binds become the program body;
-            // imported module globals are unrepresentable in MIR and so dropped.
+            // Top-level binds of the entry file and of every `use`d module
+            // become program globals, in `use` order (a module's constants are
+            // initialised before the code after the `use` runs). A module
+            // imported under an alias keeps its binds namespaced like its fns.
+            // (They used to be dropped for imported modules, which left an
+            // app's theme constants as unit on LingOS while its PC build read
+            // them fine.)
             Item::Bind(name, expr) => {
-                if is_entry && ns.is_empty() {
-                    out.push(Item::Bind(name.clone(), expr.clone()));
-                }
+                let _ = is_entry;
+                let bound = if ns.is_empty() { name.clone() } else { format!("{ns}::{name}") };
+                out.push(Item::Bind(bound, expr.clone()));
             },
             Item::Mod(name, body) => {
                 let child_ns = if ns.is_empty() {

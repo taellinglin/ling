@@ -52,6 +52,8 @@ mod imp {
         jobs: Vec<(String, String)>,
         next_job: u64,
         last_status: u16,
+        /// Header block of the last response (`http_header`).
+        last_headers: String,
     }
 
     static mut NET: Net = Net {
@@ -66,6 +68,7 @@ mod imp {
         jobs: Vec::new(),
         next_job: 1,
         last_status: 0,
+        last_headers: String::new(),
     };
 
     fn net() -> &'static mut Net {
@@ -355,17 +358,32 @@ mod imp {
         };
         if n == 0 {
             net().last_status = 0;
+            net().last_headers.clear();
             return (0, String::new());
         }
         let status = parse_status(&resp[..n]);
         net().last_status = status;
         let off = crate::tls::http_body_offset(&resp[..n]);
+        net().last_headers = String::from_utf8_lossy(&resp[..off.min(n)]).into_owned();
         let start = if off > 0 && off <= n { off } else { 0 };
         (status, String::from_utf8_lossy(&resp[start..n]).into_owned())
     }
 
     pub fn last_status() -> u16 {
         net().last_status
+    }
+
+    /// A header of the last response (case-insensitive name), "" if absent.
+    pub fn last_header(name: &str) -> String {
+        let want = name.trim().to_ascii_lowercase();
+        for line in net().last_headers.lines() {
+            if let Some((k, v)) = line.split_once(':') {
+                if k.trim().to_ascii_lowercase() == want {
+                    return String::from(v.trim());
+                }
+            }
+        }
+        String::new()
     }
 
     pub fn post_async(url: &str, body: &str, content_type: &str) -> String {
@@ -474,6 +492,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"net_test" => mk_str(&imp::test_bind(n(0, 7777.0) as u16)),
         b"http_get" => mk_str(&imp::request("GET", &s(0), "", "").1),
         b"http_get_status" => num(imp::last_status() as f64),
+        b"http_header" => mk_str(&imp::last_header(&s(0))),
         b"http_post_async" => {
             let ct = if args.len() > 2 { s(2) } else { String::from("application/json") };
             mk_str(&imp::post_async(&s(0), &s(1), &ct))

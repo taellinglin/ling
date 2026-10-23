@@ -452,15 +452,43 @@ fn app_run(name: &str) -> bool {
         };
     }
     let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
-    let folder = match name {
-        "lingstation" => String::from("LingStationX"),
-        n => String::from(n),
-    };
+    let folder = app_folder(name);
     with_own_window(|| {
-        crate::vfs::set_root(&alloc::format!("{}/Programs/{folder}", crate::vfs::home()));
+        // Its settings and caches under Programs/<App>, its projects under
+        // Projects/<App> (both in the user's home), its bundled files from
+        // the image's apps/<name>/ folder.
+        let home = crate::vfs::home();
+        let programs = alloc::format!("{home}/Programs/{folder}");
+        let projects = alloc::format!("{home}/Projects/{folder}");
+        if crate::vfs::ready() {
+            crate::vfs::mkdir(&programs);
+            crate::vfs::mkdir(&projects);
+        }
+        crate::vfs::set_root(&programs);
+        crate::vfs::set_projects_root(&projects);
+        crate::vfs::set_image_root(&alloc::format!("apps/{name}"));
+        crate::console_write(b"app: starting ");
+        crate::console_write(name.as_bytes());
+        crate::console_write(b"
+");
         crate::lingrt::run_isolated(entry);
+        crate::console_write(b"app: ");
+        crate::console_write(name.as_bytes());
+        crate::console_write(b" returned
+");
     });
     true
+}
+
+/// The home folder name of a bundled app (`Projects/<App>`, `Programs/<App>`).
+pub fn app_folder(name: &str) -> String {
+    String::from(match name {
+        "lingstation" => "LingStationX",
+        "lingdev" => "LingDev",
+        "lingmodeler" => "LingModeler",
+        "horizon" => "Horizon",
+        n => n,
+    })
 }
 
 /// Run `body` with a fresh window slot and cursor state, restoring the
@@ -469,9 +497,9 @@ fn app_run(name: &str) -> bool {
 pub fn with_own_window(body: impl FnOnce()) {
     let saved = unsafe { core::ptr::replace(&raw mut WIN, None) };
     let dot = unsafe { core::mem::replace(&mut *(&raw mut CURSOR_DOT), false) };
-    let root = crate::vfs::take_root();
+    let scope = crate::vfs::take_scope();
     body();
-    crate::vfs::restore_root(root);
+    crate::vfs::restore_scope(scope);
     unsafe {
         core::ptr::write(&raw mut WIN, saved);
         CURSOR_DOT = dot;
@@ -581,8 +609,8 @@ fn os_wallpaper() -> bool {
 
 /// The standard home folders, in display order (same as the x86 desktop's
 /// `fs::users::HOME_FOLDERS`).
-pub const HOME_FOLDERS: [&str; 8] =
-    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Programs", "Scripts"];
+pub const HOME_FOLDERS: [&str; 9] =
+    ["Documents", "Photos", "Music", "Videos", "Graphics", "3D Models", "Projects", "Programs", "Scripts"];
 
 // 8x8 emblems (bit 7 = left pixel), the same art as the x86 Files window.
 const EMB_DOC: [u8; 8] = [0x00, 0x7E, 0x00, 0x7E, 0x00, 0x78, 0x00, 0x00];
@@ -732,6 +760,7 @@ fn file_kind(name: &str, is_dir: bool) -> (u32, Option<&'static [u8; 8]>) {
             "Videos" => (0xE0605A, Some(&EMB_VIDEO)),
             "Graphics" => (0xB06AE0, Some(&EMB_GRAPHICS)),
             "3D Models" => (0x40C0C0, Some(&EMB_MODEL)),
+            "Projects" => (0xE08A4A, Some(&EMB_PROGRAM)),
             "Programs" => (0x8A9BB8, Some(&EMB_PROGRAM)),
             "Scripts" => (0xF0D050, Some(&EMB_SCRIPT)),
             _ => (0x4A8FE0, None),
@@ -932,7 +961,16 @@ fn os_info(key: &str) -> String {
             #[allow(unreachable_code)]
             String::from("PS/2 keyboard")
         },
-        "network" => String::from("not available yet"),
+        "network" => {
+            #[cfg(target_arch = "aarch64")]
+            {
+                crate::arch::netdev::kind()
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                String::from("ethernet")
+            }
+        },
         "user" => os_user(),
         _ => String::new(),
     }
@@ -943,6 +981,7 @@ fn os_info(key: &str) -> String {
 static mut CURSOR_DOT: bool = false;
 
 fn present() {
+    crate::lingrt::mark_present();
     let (mx, my, _) = mouse_state();
     if let Some(w) = win() {
         // Draw the pointer into the frame, blit, then put the pixels back so the
@@ -1762,6 +1801,70 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_packages" => list_from(crate::drivers::lingfu::installed_apps().iter().map(|s| mk_str(s)).collect()),
         b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
+        // Wi-Fi (crate::wifi): the desktop's network picker.
+        b"wifi_available" => boolean(crate::wifi::available()),
+        b"wifi_status" => mk_str(&crate::wifi::status()),
+        b"wifi_ssid" => mk_str(&crate::wifi::ssid()),
+        b"wifi_scan" => match crate::wifi::scan() {
+            // "ssid\tsignal\tsecurity\tchannel" per network, strongest first;
+            // one "!<reason>" row when the scan could not run.
+            Ok(list) => list_from(
+                list.iter()
+                    .map(|n| mk_str(&alloc::format!("{}\t{}\t{}\t{}", n.ssid, n.rssi, ["open", "WEP", "WPA", "WPA2"][n.secure.min(3) as usize], n.channel)))
+                    .collect(),
+            ),
+            Err(e) => list_from(alloc::vec![mk_str(&alloc::format!("!{e}"))]),
+        },
+        b"wifi_connect" => match crate::wifi::connect(&path_arg(args, 0), &path_arg(args, 1)) {
+            Ok(m) => mk_str(&m),
+            Err(e) => mk_str(&alloc::format!("!{e}")),
+        },
+        b"wifi_forget" => {
+            crate::wifi::forget();
+            UNIT
+        },
+        // Messenger (drivers::messenger + the ling-messenger crate): the Pi's
+        // Ling window drives the same LAN discovery, handshake and chats as
+        // the x86 desktop's window.
+        b"msg_start" => {
+            crate::drivers::messenger::start();
+            UNIT
+        },
+        b"msg_tick" => {
+            crate::drivers::messenger::tick();
+            UNIT
+        },
+        b"msg_me" => {
+            let (h, id) = crate::drivers::messenger::me();
+            mk_str(&alloc::format!("{h}\t{id}"))
+        },
+        b"msg_rows" => list_from(
+            crate::drivers::messenger::rows()
+                .iter()
+                .map(|(f, i, l, o)| mk_str(&alloc::format!("{}\t{i}\t{l}\t{}", if *f { "friend" } else { "nearby" }, *o as u8)))
+                .collect(),
+        ),
+        b"msg_selected" => num(crate::drivers::messenger::selected_row().map(|r| r as f64).unwrap_or(-1.0)),
+        b"msg_select" => {
+            crate::drivers::messenger::select_row(a(0, -1.0) as i64);
+            UNIT
+        },
+        b"msg_activate" => {
+            crate::drivers::messenger::activate_row(a(0, 0.0).max(0.0) as usize);
+            UNIT
+        },
+        b"msg_lines" => list_from(
+            crate::drivers::messenger::selected_lines()
+                .iter()
+                .map(|(me, t)| mk_str(&alloc::format!("{}\t{t}", if *me { "me" } else { "them" })))
+                .collect(),
+        ),
+        b"msg_connected" => boolean(crate::drivers::messenger::selected_connected()),
+        b"msg_submit" => {
+            crate::drivers::messenger::submit(&path_arg(args, 0));
+            UNIT
+        },
+        b"msg_status" => mk_str(crate::drivers::messenger::status()),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
         b"os_info" => mk_str(&os_info(&path_arg(args, 0))),
         #[cfg(target_arch = "aarch64")]

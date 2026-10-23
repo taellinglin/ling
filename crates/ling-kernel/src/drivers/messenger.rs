@@ -26,7 +26,9 @@
 //! needs two LingOS machines on a LAN (it's LAN peer-to-peer, mouse-driven).
 
 use crate::arch::timer;
-use crate::drivers::{font8x8, framebuffer, mixer, netstack, theme};
+use crate::drivers::netstack;
+#[cfg(target_arch = "x86_64")]
+use crate::drivers::{font8x8, framebuffer, mixer, theme};
 use crate::fs::lingfs;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -421,6 +423,9 @@ pub fn tick() {
     unsafe {
         (&mut *&raw mut NEARBY).retain(|p| now.wrapping_sub(p.last_seen_ms) < NEARBY_TIMEOUT_MS);
     }
+    // No scheduler on the Pi: the listener's round runs here, each frame.
+    #[cfg(target_arch = "aarch64")]
+    task_step();
 }
 
 /// The background chat listener: a cooperative task (spawned once by `tick`)
@@ -430,8 +435,18 @@ pub fn tick() {
 /// window is closed. Discipline: network calls (which yield) run on LOCAL data;
 /// every `CONVERSATIONS`/queue mutation is a non-yielding burst, so no `&mut`
 /// into shared state is ever live across a context switch.
+#[cfg(target_arch = "x86_64")]
 extern "C" fn messenger_task() {
     loop {
+        task_step();
+        crate::proc::sched::yield_now();
+    }
+}
+
+/// One round of the chat listener's work (what the background task loops
+/// on; on the Pi, where the kernel has no scheduler, `tick` runs it inline).
+fn task_step() {
+    {
         let now = timer::now_ms();
         if now.wrapping_sub(unsafe { LAST_BEACON_MS }) >= BEACON_INTERVAL_MS {
             send_beacon();
@@ -471,7 +486,6 @@ extern "C" fn messenger_task() {
         }
         // Receive frames on open conversations.
         recv_all_conversations();
-        crate::proc::sched::yield_now();
     }
 }
 
@@ -489,7 +503,15 @@ pub fn start() {
     // pump), so the desktop's draw never has to poll the NIC itself.
     netstack::udp_listen(MSG_PORT);
     crate::console_write(b"messenger: background listener online (chat port 41338)\n");
+    #[cfg(target_arch = "x86_64")]
     crate::proc::sched::spawn(messenger_task as *const () as usize as u64);
+    // The Pi signs in without a password: the chat log is sealed under a key
+    // from the board's serial (kept per device, not a secret the user types).
+    #[cfg(target_arch = "aarch64")]
+    if unsafe { CHAT_KEY.is_none() } {
+        let serial = crate::arch::mailbox::board_serial().unwrap_or(0);
+        set_chat_key(alloc::format!("pi-{serial:016x}").as_bytes());
+    }
 }
 
 fn ensure_task() {
@@ -537,6 +559,7 @@ fn recv_all_conversations() {
                                 // even if the window is closed (the task runs in
                                 // the background).
                                 convos[i].lines.push((false, "*ping*".to_string()));
+                                #[cfg(target_arch = "x86_64")]
                                 mixer::jingle(mixer::EVENT_PING);
                                 remembered = Some((peer, false, "*ping*".to_string()));
                             },
@@ -1246,20 +1269,89 @@ pub fn click_row(row: usize) {
     }
 }
 
+// -- A Ling window's view (LingOS/apps/messenger on the Pi) --------------------
+
+/// Sidebar rows: (is_friend, index into that list, label without marker, online).
+pub fn rows() -> Vec<(bool, usize, String, bool)> {
+    selectable_rows()
+        .into_iter()
+        .map(|(f, i, label)| {
+            let online = label.starts_with('*') || !f;
+            (f, i, strip_marker(&label).to_string(), online)
+        })
+        .collect()
+}
+
+pub fn selected_row() -> Option<usize> {
+    unsafe { SELECTED }
+}
+
+pub fn select_row(row: i64) {
+    unsafe { SELECTED = if row < 0 { None } else { Some(row as usize) } };
+}
+
+/// Enter / click on a row: a friend starts (or restarts) the chat, a nearby
+/// peer is added and dialed.
+pub fn activate_row(row: usize) {
+    click_row(row);
+}
+
+/// The selected friend's conversation (live lines, else the saved history).
+pub fn selected_lines() -> Vec<(bool, String)> {
+    let Some(sel) = (unsafe { SELECTED }) else { return Vec::new() };
+    let Some(lid) = roster().friends.get(sel).map(|f| f.ling_id.clone()) else { return Vec::new() };
+    unsafe {
+        if let Some(c) = (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == lid) {
+            return c.lines.clone();
+        }
+    }
+    history_for(&lid)
+}
+
+pub fn selected_connected() -> bool {
+    let Some(sel) = (unsafe { SELECTED }) else { return false };
+    let Some(lid) = roster().friends.get(sel).map(|f| f.ling_id.clone()) else { return false };
+    unsafe { (&*&raw const CONVERSATIONS).iter().any(|c| c.peer == lid && netstack::tcp_established_h(c.handle)) }
+}
+
+/// A line typed into the compose box: `/commands`, a message to the selected
+/// friend, or (nothing selected) a new display handle.
+pub fn submit(text: &str) {
+    let b = text.as_bytes();
+    let n = b.len().min(COMPOSE_MAX);
+    unsafe {
+        (&mut *&raw mut COMPOSE)[..n].copy_from_slice(&b[..n]);
+        COMPOSE_LEN = n;
+    }
+    key(10);
+}
+
+/// (display handle, LingId fingerprint) of this machine.
+pub fn me() -> (String, String) {
+    (local_handle(), my_ling_id().0)
+}
+
 // -- Drawing ------------------------------------------------------------------
 // A Discord-style two-pane chat: a conversations sidebar with round avatars on
 // the left, a header + word-wrapped message stream + compose box on the right.
 // `wm.rs::window_click` mirrors SIDEBAR_W / LIST_TOP / ROW_H for the sidebar
 // hit-test -- keep those three in sync there.
+#[cfg(target_arch = "x86_64")]
 const SIDEBAR_W: u32 = 190;
+#[cfg(target_arch = "x86_64")]
 const ROW_H: u32 = 40; // avatar row height in the sidebar
+#[cfg(target_arch = "x86_64")]
 const LIST_TOP: u32 = 34; // sidebar list starts below the "DIRECT MESSAGES" header
+#[cfg(target_arch = "x86_64")]
 const HEADER_H: u32 = 40; // chat-pane header height
+#[cfg(target_arch = "x86_64")]
 const LINE_H: u32 = 12; // one text line (8px glyph + 4px leading)
+#[cfg(target_arch = "x86_64")]
 const ONLINE_DOT: u32 = 0x3B_A5_5D; // Discord-ish presence green
 
 /// A deterministic avatar color for `seed` (a handle), from a small palette --
 /// the same handle always gets the same color, like Discord's default avatars.
+#[cfg(target_arch = "x86_64")]
 fn avatar_color(seed: &[u8]) -> u32 {
     const PAL: [u32; 6] = [0x58_65_F2, 0x3B_A5_5D, 0xFA_A6_1A, 0xED_42_45, 0x9B_59_B6, 0x1A_BC_9C];
     let mut hsh: u32 = 2166136261;
@@ -1271,6 +1363,7 @@ fn avatar_color(seed: &[u8]) -> u32 {
 
 /// Draw a round default avatar: a color-hashed disc with the handle's first
 /// letter centered. `scale` is the glyph scale (1 = 8px, 2 = 16px).
+#[cfg(target_arch = "x86_64")]
 fn draw_avatar(cx: u32, cy: u32, r: u32, scale: u32, name: &[u8]) {
     let initial = name
         .iter()
@@ -1294,6 +1387,7 @@ fn strip_marker(label: &str) -> &str {
 
 /// Word-wrap `s` into `max_w` pixels, drawing each line; returns the next `y`.
 /// Breaks on spaces, hard-splits any single word longer than the line.
+#[cfg(target_arch = "x86_64")]
 fn draw_wrapped(x: u32, mut yy: u32, max_w: u32, y_limit: u32, s: &str, fg: u32, bg: u32) -> u32 {
     let maxch = (max_w / 8).max(1) as usize;
     let mut line = String::new();
@@ -1338,6 +1432,7 @@ fn draw_wrapped(x: u32, mut yy: u32, max_w: u32, y_limit: u32, s: &str, fg: u32,
 }
 
 /// How many wrapped lines `s` needs at `max_w` -- for scrolling to the newest.
+#[cfg(target_arch = "x86_64")]
 fn wrapped_line_count(s: &str, max_w: u32) -> usize {
     let maxch = (max_w / 8).max(1) as usize;
     let mut lines = 0usize;
@@ -1364,6 +1459,7 @@ fn wrapped_line_count(s: &str, max_w: u32) -> usize {
     lines.max(1)
 }
 
+#[cfg(target_arch = "x86_64")]
 pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     tick();
     let bg = theme::color(theme::SLOT_BG);

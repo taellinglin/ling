@@ -74,6 +74,7 @@ pub mod appfs;
 pub mod vfs;
 // Networking builtins for programs (net_*, http_*) over the netstack.
 pub mod netapi;
+pub mod wifi;
 // LingStationX's daw_* builtins: the project model (project.json), transport.
 pub mod lingdaw;
 
@@ -528,6 +529,7 @@ pub(crate) fn desktop_boot() {
     arch::rp1::usb_probe();
     storage_boot();
     net_boot();
+    crate::wifi::boot_autojoin();
     // HDMI audio: brought up at boot so LingStationX plays straight away;
     // the console's `hdmiaudio` repeats it verbosely with a test tone.
     arch::hdmi_audio::init(false);
@@ -719,7 +721,7 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi, net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -734,8 +736,13 @@ fn rpi_shell_exec(line: &[u8]) {
         run_setup_wizard();
     } else if s == b"usb" {
         arch::rp1::usb_probe();
-    } else if s == b"wifi" {
-        arch::wifi::probe();
+    } else if s == b"trace" {
+        unsafe { crate::lingrt::TRACE = !crate::lingrt::TRACE };
+        console_write(if unsafe { crate::lingrt::TRACE } { b"trace: on (first call of every builtin is printed)
+" } else { b"trace: off
+" });
+    } else if s == b"wifi" || s.starts_with(b"wifi ") {
+        crate::wifi::console(&s[4.min(s.len())..]);
     } else if s == b"net" {
         arch::rp1_eth::debug_dump();
         let ip = crate::drivers::netstack::self_ip();
