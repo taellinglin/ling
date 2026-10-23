@@ -477,6 +477,15 @@ impl ProjKind {
     }
 }
 
+/// One `[app.<name>]` section of a kernel manifest.
+#[derive(Clone)]
+struct BundleApp {
+    name: String,
+    entry: PathBuf,
+    root: PathBuf,
+    includes: Vec<String>,
+}
+
 #[derive(Clone)]
 struct LingProject {
     name: String,
@@ -501,6 +510,11 @@ struct LingProject {
     /// symbols, entry `__ling_app_<name>`) next to the entry program — e.g.
     /// LingStationX inside the x86 desktop, launched from the Applications menu.
     bundle_app: Option<(String, PathBuf)>,
+    /// `[app.<name>]` sections (kernel targets): more programs compiled into
+    /// the image as built-in apps, each with its own object, embed root and
+    /// `includes` (embedded as `apps/<name>/<rel>`) -- the studio image that
+    /// bundles LingStationX, LingDev, LingModeler and Horizon together.
+    bundle_apps: Vec<BundleApp>,
     /// `[project] graphics = true` (kernel targets only): request a
     /// Multiboot2 linear framebuffer instead of leaving VGA in text mode
     /// (see `ling-kernel`'s `request_framebuffer` Cargo feature). Off by
@@ -542,6 +556,7 @@ fn discover_project(target: &str) -> LingProject {
             embed_root: None,
             kernel_app: None,
             bundle_app: None,
+            bundle_apps: Vec::new(),
             graphics: false,
             entry_os: None,
             portable: None,
@@ -586,6 +601,7 @@ fn discover_project(target: &str) -> LingProject {
             embed_root: None,
             kernel_app: None,
             bundle_app: None,
+            bundle_apps: Vec::new(),
             graphics: false,
             entry_os: None,
             portable: None,
@@ -669,6 +685,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         embed_root: None,
         kernel_app: None,
         bundle_app: None,
+        bundle_apps: Vec::new(),
         graphics: false,
         entry_os: None,
         portable: None,
@@ -702,9 +719,17 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut bundle_app: Option<(String, PathBuf)> = None;
     let mut entry_os: Option<PathBuf> = None;
     let mut portable: Option<String> = None;
+    let mut in_app = false;
 
     for line in text.lines() {
         let line = line.trim();
+        if line.starts_with('[') {
+            in_app = line.starts_with("[app.");
+            continue;
+        }
+        if in_app {
+            continue;
+        }
         if let Some(v) = toml_kv(line, "name") {
             name = sanitise_name(&v);
         }
@@ -754,6 +779,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     }
     let build_dir = base.join(".ling-build").join(&name);
     let includes = parse_includes(&text);
+    let bundle_apps = parse_bundle_apps(&text, base);
     LingProject {
         name,
         version,
@@ -766,6 +792,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         embed_root,
         kernel_app,
         bundle_app,
+        bundle_apps,
         graphics,
         entry_os,
         portable,
@@ -1214,7 +1241,12 @@ fn build_native(
         .into_owned();
 
     // Resources declared in the manifest [includes] block (glob-expanded).
-    let resources = expand_includes(project);
+    let mut resources = expand_includes(project);
+    for app in &project.bundle_apps {
+        for (rel, abs) in expand_includes_in(&app.root, &app.includes) {
+            resources.push((format!("apps/{}/{rel}", app.name), abs));
+        }
+    }
     let do_pack = pack && !resources.is_empty();
 
     if is_lingos {
@@ -1328,10 +1360,15 @@ fn build_native(
 
         println!("    AOT object written to {}", obj_path.display());
 
-        // bundle_app: the second program, as its own object with local symbols.
-        let app_obj = build_dir.join("app.o");
-        let _ = std::fs::remove_file(&app_obj);
-        if let Some((app_name, app_entry)) = &project.bundle_app {
+        // bundle_app / [app.<name>]: more programs, each its own object with
+        // local symbols (app_<name>.o), registered as built-in apps.
+        let mut bundled: Vec<(String, PathBuf)> = project.bundle_app.iter().cloned().collect();
+        for app in &project.bundle_apps {
+            bundled.push((app.name.clone(), app.entry.clone()));
+        }
+        for (app_name, app_entry) in &bundled {
+            let app_obj = build_dir.join(format!("app_{app_name}.o"));
+            let _ = std::fs::remove_file(&app_obj);
             let app_mir = ling::mir::compile_path_standalone(app_entry, kernel_opt).unwrap_or_else(|e| {
                 eprintln!("    bundled app '{app_name}': MIR compilation failed: {e}");
                 std::process::exit(1);
@@ -1459,16 +1496,43 @@ fn build_native(
         // `ling_kernel::appfs` (after zero_bss, before the program runs) so the
         // program's file/font builtins find them by their relative names.
         if !resources.is_empty() {
+            // One static per distinct file content: several bundled apps ship
+            // the same font under their own names, which must not cost the
+            // image four copies.
             let mut emb = String::from(
-                "// Generated by `ling build`: the project's [includes], baked into the kernel image.\npub fn register() {\n",
+                "// Generated by `ling build`: the project's [includes], baked into the kernel image.\n",
             );
             let mut total = 0u64;
+            let mut statics: Vec<(u64, PathBuf)> = Vec::new();
+            let mut names: Vec<(String, usize)> = Vec::new();
             for (rel, abs) in &resources {
-                total += std::fs::metadata(abs).map(|m| m.len()).unwrap_or(0);
+                let bytes = std::fs::read(abs).unwrap_or_default();
+                let digest = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    bytes.len().hash(&mut h);
+                    bytes.hash(&mut h);
+                    h.finish()
+                };
+                let idx = match statics.iter().position(|(d, p)| *d == digest && std::fs::read(p).unwrap_or_default() == bytes) {
+                    Some(i) => i,
+                    None => {
+                        total += bytes.len() as u64;
+                        statics.push((digest, abs.clone()));
+                        statics.len() - 1
+                    },
+                };
+                names.push((rel.clone(), idx));
+            }
+            for (i, (_, abs)) in statics.iter().enumerate() {
                 emb.push_str(&format!(
-                    "    ling_kernel::appfs::register({rel:?}, include_bytes!({:?}));\n",
+                    "static F{i}: &[u8] = include_bytes!({:?});\n",
                     abs.to_string_lossy().replace('\\', "/")
                 ));
+            }
+            emb.push_str("pub fn register() {\n");
+            for (rel, idx) in &names {
+                emb.push_str(&format!("    ling_kernel::appfs::register({rel:?}, F{idx});\n"));
             }
             emb.push_str("}\n");
             std::fs::write(build_dir.join("src/embedded.rs"), emb).expect("write src/embedded.rs");
@@ -1494,14 +1558,16 @@ fn build_native(
             println!("    kernel app: LingOS boots, '{app}' is a built-in app");
         }
         let mut build_rs = gen_kernel_build_rs();
-        if let Some((app_name, _)) = &project.bundle_app {
+        for (app_name, _) in &bundled {
             let sym = format!("__ling_app_{app_name}");
             main_rs = main_rs
                 .replacen("fn __main__() -> u64;", &format!("fn __main__() -> u64;\n    fn {sym}() -> u64;"), 1)
                 .replacen("__main__();", &format!("ling_kernel::register_app({app_name:?}, {sym});\n        __main__();"), 1);
             build_rs = build_rs.replacen(
                 "    println!(\"cargo:rerun-if-changed=entry.o\");",
-                "    println!(\"cargo:rerun-if-changed=entry.o\");\n    println!(\"cargo:rustc-link-arg-bins={}/app.o\", manifest_dir);\n    println!(\"cargo:rerun-if-changed=app.o\");",
+                &format!(
+                    "    println!(\"cargo:rerun-if-changed=entry.o\");\n    println!(\"cargo:rustc-link-arg-bins={{}}/app_{app_name}.o\", manifest_dir);\n    println!(\"cargo:rerun-if-changed=app_{app_name}.o\");"
+                ),
                 1,
             );
         }
@@ -2761,9 +2827,53 @@ fn parse_includes_os(text: &str) -> Option<Vec<String>> {
     None
 }
 
+/// `[app.<name>]` sections: entry (required), root (default: the entry's
+/// folder's parent, i.e. `<app>/ling/main.ling` -> `<app>`), includes.
+fn parse_bundle_apps(text: &str, base: &Path) -> Vec<BundleApp> {
+    let mut apps: Vec<BundleApp> = Vec::new();
+    let mut cur: Option<(String, Option<PathBuf>, Option<PathBuf>, Vec<String>)> = None;
+    let flush = |cur: &mut Option<(String, Option<PathBuf>, Option<PathBuf>, Vec<String>)>, apps: &mut Vec<BundleApp>| {
+        if let Some((name, entry, root, includes)) = cur.take() {
+            let Some(entry) = entry else {
+                eprintln!("error: [app.{name}] needs an entry = \"<path/to/main.ling>\"");
+                std::process::exit(1);
+            };
+            let root = root.unwrap_or_else(|| {
+                let dir = entry.parent().unwrap_or(Path::new("."));
+                dir.parent().unwrap_or(dir).to_path_buf()
+            });
+            apps.push(BundleApp { name, entry, root, includes });
+        }
+    };
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            flush(&mut cur, &mut apps);
+            if let Some(name) = line.strip_prefix("[app.").and_then(|r| r.strip_suffix(']')) {
+                cur = Some((sanitise_name(name.trim()), None, None, Vec::new()));
+            }
+            continue;
+        }
+        let Some(app) = cur.as_mut() else { continue };
+        if let Some(v) = toml_kv(line, "entry") {
+            app.1 = Some(base.join(v));
+        } else if let Some(v) = toml_kv(line, "root") {
+            app.2 = Some(base.join(v));
+        } else if let Some(rest) = line.strip_prefix("includes").and_then(|r| r.trim_start().strip_prefix('=')) {
+            collect_quoted(rest, &mut app.3);
+        }
+    }
+    flush(&mut cur, &mut apps);
+    apps
+}
+
 fn parse_includes(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_section = false;
+    let mut in_app = false;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -2772,6 +2882,10 @@ fn parse_includes(text: &str) -> Vec<String> {
         if line.starts_with('[') {
             // [includes] (English) or [包含] (Chinese)
             in_section = line == "[includes]" || line == "[包含]";
+            in_app = line.starts_with("[app.");
+            continue;
+        }
+        if in_app {
             continue;
         }
         // Inline array form: includes = ["a", "b"]  /  包含 = [...]
@@ -2853,13 +2967,18 @@ fn is_ignored(pats: &[String], rel: &str) -> bool {
 /// `ling.ignore` are excluded.
 fn expand_includes(project: &LingProject) -> Vec<(String, PathBuf)> {
     let root = project.embed_root.as_ref().unwrap_or(&project.source_dir);
+    expand_includes_in(root, &project.includes)
+}
+
+/// `includes` globs resolved under `root`: `(relative name, absolute path)`.
+fn expand_includes_in(root: &Path, includes: &[String]) -> Vec<(String, PathBuf)> {
     let mut all: Vec<(String, PathBuf)> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let files = walk_files(root); // (rel, abs) for the whole tree, once
     let ignore = load_ignore_patterns(root);
     let mut skipped = 0usize;
 
-    for pat in &project.includes {
+    for pat in includes {
         let pat = pat.trim().trim_start_matches("./").trim_start_matches('/');
         if pat.is_empty() {
             continue;
