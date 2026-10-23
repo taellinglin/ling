@@ -1017,7 +1017,14 @@ fn present() {
     #[cfg(target_arch = "aarch64")]
     {
         // Keep the HDMI audio ring fed (the app loop is the only loop running).
-        crate::arch::hdmi_audio::pump();
+        // Without HDMI audio (QEMU, a board with no sink) the engine still
+        // renders a block per frame, so the transport advances the same way
+        // and a render-time fault shows up in the emulator too.
+        if crate::arch::hdmi_audio::running() {
+            crate::arch::hdmi_audio::pump();
+        } else {
+            let _ = crate::lingdaw::block(512);
+        }
         // Serial + USB keyboard bytes, decoded the way a terminal sends them.
         while let Some(c) = crate::poll_input() {
             input.feed(c);
@@ -1064,6 +1071,8 @@ fn present() {
 /// `key_pressed` on keys that send no bytes, like Super or F-keys).
 struct Input {
     text: String,
+    /// Digits of a `CSI n ~` key sequence being read (F5..F12 over serial).
+    esc_num: u32,
     pressed: Vec<&'static str>,
     esc: u8, // 0 idle, 1 after ESC, 2 after ESC [
     quit: bool,
@@ -1074,6 +1083,7 @@ struct Input {
 
 static mut INPUT: Input = Input {
     text: String::new(),
+    esc_num: 0,
     pressed: Vec::new(),
     esc: 0,
     quit: false,
@@ -1093,6 +1103,49 @@ impl Input {
             (2, b'B') => self.pressed.push("down"),
             (2, b'C') => self.pressed.push("right"),
             (2, b'D') => self.pressed.push("left"),
+            (2, b'H') => self.pressed.push("home"),
+            (2, b'F') => self.pressed.push("end"),
+            // `ESC [ n ~`: F5..F12, Home/End/PageUp/PageDown/Delete as a terminal sends them.
+            (2, b'0'..=b'9') => {
+                self.esc_num = self.esc_num * 10 + (c - b'0') as u32;
+                return;
+            },
+            (2, b'~') => {
+                let name = match self.esc_num {
+                    1 | 7 => "home",
+                    4 | 8 => "end",
+                    5 => "pageup",
+                    6 => "pagedown",
+                    3 => "delete",
+                    11 => "f1",
+                    12 => "f2",
+                    13 => "f3",
+                    14 => "f4",
+                    15 => "f5",
+                    17 => "f6",
+                    18 => "f7",
+                    19 => "f8",
+                    20 => "f9",
+                    21 => "f10",
+                    23 => "f11",
+                    24 => "f12",
+                    _ => "",
+                };
+                if !name.is_empty() {
+                    self.pressed.push(name);
+                }
+                self.esc_num = 0;
+            },
+            // `ESC O P..S`: F1..F4 in application mode.
+            (1, b'O') => {
+                self.esc = 3;
+                return;
+            },
+            (3, b'P') => self.pressed.push("f1"),
+            (3, b'Q') => self.pressed.push("f2"),
+            (3, b'R') => self.pressed.push("f3"),
+            (3, b'S') => self.pressed.push("f4"),
+            (3, _) => {},
             (1, _) => {
                 // A lone ESC followed by something else: Escape, then the byte.
                 self.pressed.push("escape");
@@ -1102,6 +1155,7 @@ impl Input {
             (2, _) => {},
             (_, 0x1B) => {
                 self.esc = 1;
+                self.esc_num = 0;
                 return;
             },
             (_, 0x11) => self.quit = true,

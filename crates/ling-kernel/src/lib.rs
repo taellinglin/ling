@@ -403,9 +403,49 @@ fn console_clear() {
 
 /// Panic on unreachable kernel path.
 pub fn kernel_panic(msg: &str) -> ! {
-    console_write(b"KERNEL PANIC: ");
-    console_write(msg.as_bytes());
+    crash(b"KERNEL PANIC: ", msg, None)
+}
+
+/// The kernel's `#[panic_handler]` body: say what and where on the serial
+/// line AND on the screen (a program that owns the screen would otherwise
+/// just freeze), stop any audio still looping through its DMA ring, halt.
+pub fn panic_report(info: &core::panic::PanicInfo) -> ! {
+    let mut msg = alloc::string::String::new();
+    let _ = core::fmt::write(&mut msg, format_args!("{}", info.message()));
+    let loc = info.location().map(|l| (l.file(), l.line()));
+    crash(b"PANIC: ", &msg, loc)
+}
+
+fn crash(label: &[u8], msg: &str, loc: Option<(&str, u32)>) -> ! {
+    #[cfg(target_arch = "aarch64")]
+    {
+        arch::hdmi_audio::stop();
+        // Take the screen back from whatever program had it.
+        crate::drivers::fbcon::init();
+    }
     console_write(b"\n");
+    console_write(label);
+    console_write(msg.as_bytes());
+    if let Some((file, line)) = loc {
+        console_write(b"\n  at ");
+        console_write(file.as_bytes());
+        console_write(b":");
+        let mut b = [0u8; 12];
+        let mut n = 0;
+        let mut x = line;
+        if x == 0 {
+            b[0] = b'0';
+            n = 1;
+        }
+        while x > 0 {
+            b[n] = b'0' + (x % 10) as u8;
+            x /= 10;
+            n += 1;
+        }
+        b[..n].reverse();
+        console_write(&b[..n]);
+    }
+    console_write(b"\nLingOS stopped. Power-cycle to restart.\n");
     loop {
         unsafe {
             cpu::halt();

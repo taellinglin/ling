@@ -2560,8 +2560,8 @@ extern "C" {
 }
 
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
-    loop {}
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    ling_kernel::panic_report(info)
 }
 
 #[no_mangle]

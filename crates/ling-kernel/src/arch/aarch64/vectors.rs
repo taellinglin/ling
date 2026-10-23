@@ -271,6 +271,10 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
 }
 
 fn fault_halt(name: &str, frame: &TrapFrame, esr: u64, far: u64) -> ! {
+    // Silence the HDMI audio ring and take the screen back so the report is
+    // visible, instead of the last buffer looping behind a frozen window.
+    crate::arch::hdmi_audio::stop();
+    crate::drivers::fbcon::init();
     crate::console_write(b"\n!!! CPU EXCEPTION: ");
     crate::console_write(name.as_bytes());
     crate::console_write(b"\n");

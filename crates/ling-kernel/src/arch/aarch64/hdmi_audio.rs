@@ -243,6 +243,18 @@ pub fn pump() {
     }
 }
 
+/// Stop playback: the DMA channel reset, the MAI flushed. Used when a
+/// program ends or the kernel stops (the ring must not keep looping the
+/// last buffer into the speakers).
+pub fn stop() {
+    if unsafe { (*(&raw const ST)).is_none() } {
+        return;
+    }
+    dma_wr(DMA_CS, CS_RESET);
+    hd_wr(MAI_CTL, MAI_CTL_RESET | MAI_CTL_FLUSH | MAI_CTL_ERRORF | MAI_CTL_ERRORE);
+    unsafe { *(&raw mut ST) = None };
+}
+
 /// True once the MAI + DMA are streaming.
 pub fn running() -> bool {
     unsafe { (*(&raw const ST)).is_some() }
