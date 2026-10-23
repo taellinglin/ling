@@ -1097,7 +1097,28 @@ fn parse_escan(r: &mut Radio, data: &[u8]) {
                     break;
                 }
                 if id == 48 {
-                    secure = 3;
+                    // RSN: version, group cipher, pairwise suites, AKM suites.
+                    // PSK (2 / 6) joins with a passphrase; SAE-only (8) is WPA3.
+                    let rsn = &ies[i + 2..i + 2 + l];
+                    let (mut psk, mut sae) = (false, false);
+                    if rsn.len() >= 8 {
+                        let pc = u16::from_le_bytes([rsn[6], rsn[7]]) as usize;
+                        let ak = 8 + pc * 4;
+                        if rsn.len() >= ak + 2 {
+                            let ac = u16::from_le_bytes([rsn[ak], rsn[ak + 1]]) as usize;
+                            for k in 0..ac {
+                                let o = ak + 2 + k * 4;
+                                if rsn.len() >= o + 4 && rsn[o..o + 3] == [0x00, 0x0F, 0xAC] {
+                                    match rsn[o + 3] {
+                                        2 | 6 => psk = true,
+                                        8 | 9 => sae = true,
+                                        _ => {},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    secure = if sae && !psk { 4 } else { 3 };
                 } else if id == 221 && l >= 4 && ies[i + 2..i + 6] == [0x00, 0x50, 0xF2, 0x01] && secure < 3 {
                     secure = 2;
                 }
@@ -1206,6 +1227,34 @@ fn step(name: &[u8], r: Result<(), i32>) -> Option<()> {
             None
         },
     }
+}
+
+/// `step` for the join path: the failing iovar / ioctl and the firmware's
+/// code end up in the message the picker shows.
+fn stepc(name: &str, r: Result<(), i32>) -> Result<(), String> {
+    match r {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            out(b"  wifi: ");
+            out(name.as_bytes());
+            out(b" failed, code ");
+            dec(b"", (e as i64).unsigned_abs());
+            out(b"\n");
+            Err(alloc::format!("{name} refused by the firmware (code {e})"))
+        },
+    }
+}
+
+/// Signal strength of the joined network in dBm (WLC_GET_RSSI).
+pub fn rssi() -> Option<i32> {
+    if !is_joined() {
+        return None;
+    }
+    let v = ioctl(false, 127, &[0u8; 4]).ok()?;
+    if v.len() < 4 {
+        return None;
+    }
+    Some(le32(&v, 0) as i32)
 }
 
 fn load_clm() -> Option<()> {
@@ -1322,12 +1371,41 @@ fn radio_up() -> Option<()> {
     let _ = set_iovar_u32("bus:txglom", 0);
     let _ = set_iovar_u32("apsta", 1);
     let _ = set_iovar_u32("ampdu_ba_wsize", 8);
+    // 802.11 b/g/n on 2.4 GHz and a/n/ac on 5 GHz: HT and VHT on, the band
+    // on auto, g-mode auto (these take effect before `up`).
+    let _ = set_iovar_u32("nmode", 1);
+    let _ = set_iovar_u32("vhtmode", 1);
     let _ = ioctl_set_u32(WLC_SET_GMODE, 1);
     let _ = ioctl_set_u32(WLC_SET_BAND, 0);
     step(b"up", ioctl(true, WLC_UP, &[]).map(|_| ()))?;
     let _ = ioctl_set_u32(WLC_SET_PM, 0);
-    out(b"  radio is up\n");
+    let flag = |name: &str| get_iovar(name, 4).ok().filter(|v| v.len() >= 4).map(|v| le32(&v, 0)).unwrap_or(0);
+    out(b"  modes: 802.11b/g");
+    if flag("nmode") != 0 {
+        out(b"/n");
+    }
+    if flag("vhtmode") != 0 {
+        out(b" + a/n/ac on 5 GHz");
+    }
+    out(b"\n  radio is up\n");
     Some(())
+}
+
+/// `wifi country <CC>`: the regulatory domain (channels 12/13 and the 5 GHz
+/// set depend on it; "XX" is the world-safe default).
+pub fn set_country(cc: &str) -> Result<(), String> {
+    if !ensure_init() {
+        return Err(String::from(last_error()));
+    }
+    let code = cc.trim().to_ascii_uppercase();
+    if code.len() != 2 {
+        return Err(String::from("a country code is two letters (JP, US, CN, GB ...)"));
+    }
+    let mut country = [0u8; 12];
+    country[..2].copy_from_slice(code.as_bytes());
+    country[4..8].copy_from_slice(&(-1i32).to_le_bytes());
+    country[8..10].copy_from_slice(code.as_bytes());
+    stepc("country", set_iovar("country", &country))
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
@@ -1421,17 +1499,17 @@ pub fn scan() -> Result<Vec<Network>, &'static str> {
 
 /// Join `ssid` (WPA2-PSK with a passphrase, open without); blocks until the
 /// firmware reports the association or gives up.
-pub fn join(ssid: &str, psk: &str) -> Result<(), &'static str> {
+pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
     if !ensure_init() {
-        return Err(last_error());
+        return Err(String::from(last_error()));
     }
     if ssid.is_empty() || ssid.len() > 32 {
-        return Err("network name must be 1-32 bytes");
+        return Err(String::from("network name must be 1-32 bytes"));
     }
     if !psk.is_empty() && (psk.len() < 8 || psk.len() > 63) {
-        return Err("a WPA2 passphrase is 8-63 characters");
+        return Err(String::from("a WPA2 passphrase is 8-63 characters"));
     }
-    let r = radio().ok_or("radio not up")?;
+    let r = radio().ok_or_else(|| String::from("radio not up"))?;
     if r.joined {
         let _ = ioctl(true, WLC_DISASSOC, &[]);
         r.joined = false;
@@ -1440,37 +1518,64 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), &'static str> {
     r.psk_status = None;
     r.link = false;
     let wpa = !psk.is_empty();
-    if wpa {
-        step(b"wsec", ioctl_set_u32(WLC_SET_WSEC, 4)).ok_or("wsec")?;
-        step(b"sup_wpa", set_iovar_u32x2("bsscfg:sup_wpa", 0, 1)).ok_or("supplicant")?;
-        let _ = set_iovar_u32x2("bsscfg:sup_wpa2_eapver", 0, 0xFFFF_FFFF);
-        let _ = set_iovar_u32x2("bsscfg:sup_wpa_tmo", 0, 2500);
+    // What the last scan saw for this network: 4 = WPA3-only (SAE).
+    let sae = r.scan_hits.iter().any(|n| n.ssid == ssid && n.secure == 4);
+    if wpa && sae {
+        out(b"  wifi: WPA3-only network, joining with SAE\n");
+        stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 4))?;
+        if set_iovar_u32("sup_wpa", 1).is_err() {
+            let _ = set_iovar_u32x2("bsscfg:sup_wpa", 0, 1);
+        }
+        let mut pw = [0u8; 130];
+        pw[..2].copy_from_slice(&(psk.len() as u16).to_le_bytes());
+        pw[2..2 + psk.len()].copy_from_slice(psk.as_bytes());
+        stepc("sae_password", set_iovar("sae_password", &pw)).map_err(|e| alloc::format!("{e}; this firmware may lack WPA3 -- enable WPA2 on the router"))?;
+        stepc("infra", ioctl_set_u32(WLC_SET_INFRA, 1))?;
+        stepc("auth", ioctl_set_u32(WLC_SET_AUTH, 3))?;
+        stepc("wpa_auth", set_iovar_u32("wpa_auth", 0x40000))?;
+    } else if wpa {
+        stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 4))?;
+        // The firmware's own supplicant does the 4-way handshake. For the
+        // main interface brcmfmac sends the plain iovar (the "bsscfg:" form
+        // the Pico W driver uses was refused by the Pi 5's firmware); it is
+        // kept as a fallback.
+        if set_iovar_u32("sup_wpa", 1).is_err() {
+            stepc("sup_wpa", set_iovar_u32x2("bsscfg:sup_wpa", 0, 1))?;
+        }
+        if set_iovar_u32("sup_wpa2_eapver", 0xFFFF_FFFF).is_err() {
+            let _ = set_iovar_u32x2("bsscfg:sup_wpa2_eapver", 0, 0xFFFF_FFFF);
+        }
+        if set_iovar_u32("sup_wpa_tmo", 2500).is_err() {
+            let _ = set_iovar_u32x2("bsscfg:sup_wpa_tmo", 0, 2500);
+        }
         delay_us(100_000);
         let mut pmk = [0u8; 68];
         pmk[..2].copy_from_slice(&(psk.len() as u16).to_le_bytes());
         pmk[2..4].copy_from_slice(&1u16.to_le_bytes()); // passphrase, not a raw PMK
         pmk[4..4 + psk.len()].copy_from_slice(psk.as_bytes());
-        step(b"wsec_pmk", ioctl(true, WLC_SET_WSEC_PMK, &pmk).map(|_| ())).ok_or("passphrase")?;
+        stepc("wsec_pmk", ioctl(true, WLC_SET_WSEC_PMK, &pmk).map(|_| ()))?;
     } else {
-        step(b"wsec", ioctl_set_u32(WLC_SET_WSEC, 0)).ok_or("wsec")?;
+        stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 0))?;
     }
-    step(b"infra", ioctl_set_u32(WLC_SET_INFRA, 1)).ok_or("infra")?;
-    step(b"auth", ioctl_set_u32(WLC_SET_AUTH, 0)).ok_or("auth")?;
-    step(b"wpa_auth", set_iovar_u32("wpa_auth", if wpa { 0x80 } else { 0 })).ok_or("wpa_auth")?;
+    if !(wpa && sae) {
+        stepc("infra", ioctl_set_u32(WLC_SET_INFRA, 1))?;
+        stepc("auth", ioctl_set_u32(WLC_SET_AUTH, 0))?;
+        stepc("wpa_auth", set_iovar_u32("wpa_auth", if wpa { 0x80 } else { 0 }))?;
+    }
     let mut s = [0u8; 36];
     s[..4].copy_from_slice(&(ssid.len() as u32).to_le_bytes());
     s[4..4 + ssid.len()].copy_from_slice(ssid.as_bytes());
-    step(b"set_ssid", ioctl(true, WLC_SET_SSID, &s).map(|_| ())).ok_or("set_ssid")?;
+    stepc("set_ssid", ioctl(true, WLC_SET_SSID, &s).map(|_| ()))?;
     let t0 = now_ms();
     let mut assoc = false;
     loop {
         poll_rx();
-        let r = radio().ok_or("radio not up")?;
+        let r = radio().ok_or_else(|| String::from("radio not up"))?;
         if let Some(st) = r.join_status {
             if st != 0 {
                 dec(b"  wifi: join failed, status ", st as u64);
                 out(b"\n");
-                return Err(if st == 3 { "network not found" } else { "the access point refused the join" });
+                return Err(if st == 3 { String::from("network not found") } else { alloc::format!("the access point refused the join (status {st})") });
             }
             assoc = true;
         }
@@ -1478,18 +1583,18 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), &'static str> {
             break;
         }
         if now_ms() - t0 > 20_000 {
-            return Err("no answer from the access point (timeout)");
+            return Err(String::from("no answer from the access point (timeout)"));
         }
         delay_us(5_000);
     }
-    let r = radio().ok_or("radio not up")?;
+    let r = radio().ok_or_else(|| String::from("radio not up"))?;
     if wpa {
         match r.psk_status {
             Some(6) => {},
             Some(st) => {
                 dec(b"  wifi: WPA2 handshake status ", st as u64);
                 out(b"\n");
-                return Err("wrong passphrase (the WPA2 handshake failed)");
+                return Err(alloc::format!("wrong passphrase (the WPA2 handshake failed, status {st})"));
             },
             None => out(b"  wifi: no handshake report; assuming joined\n"),
         }

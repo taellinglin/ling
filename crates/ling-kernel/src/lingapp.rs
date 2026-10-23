@@ -1810,7 +1810,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             // one "!<reason>" row when the scan could not run.
             Ok(list) => list_from(
                 list.iter()
-                    .map(|n| mk_str(&alloc::format!("{}\t{}\t{}\t{}", n.ssid, n.rssi, ["open", "WEP", "WPA", "WPA2"][n.secure.min(3) as usize], n.channel)))
+                    .map(|n| mk_str(&alloc::format!("{}\t{}\t{}\t{}", n.ssid, n.rssi, ["open", "WEP", "WPA", "WPA2", "WPA3"][n.secure.min(4) as usize], n.channel)))
                     .collect(),
             ),
             Err(e) => list_from(alloc::vec![mk_str(&alloc::format!("!{e}"))]),
@@ -1823,6 +1823,12 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             crate::wifi::forget();
             UNIT
         },
+        b"wifi_disconnect" => {
+            crate::wifi::disconnect();
+            UNIT
+        },
+        b"wifi_joined" => boolean(crate::wifi::joined()),
+        b"wifi_signal" => num(crate::wifi::signal() as f64),
         // Messenger (drivers::messenger + the ling-messenger crate): the Pi's
         // Ling window drives the same LAN discovery, handshake and chats as
         // the x86 desktop's window.

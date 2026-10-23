@@ -9,7 +9,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// (ssid, signal dBm, security: 0 open, 1 WEP, 2 WPA, 3 WPA2, channel)
+/// (ssid, signal dBm, security: 0 open, 1 WEP, 2 WPA, 3 WPA2 (or WPA2/WPA3 mixed), 4 WPA3-only, channel)
 pub struct Network {
     pub ssid: String,
     pub rssi: i32,
@@ -52,6 +52,7 @@ pub fn scan() -> Result<Vec<Network>, String> {
             Network { ssid: String::from("Moon Palace 5G"), rssi: -58, secure: 3, channel: 36 },
             Network { ssid: String::from("cafe-open"), rssi: -70, secure: 0, channel: 11 },
             Network { ssid: String::from("old-router"), rssi: -82, secure: 1, channel: 1 },
+            Network { ssid: String::from("Neo WPA3"), rssi: -66, secure: 4, channel: 44 },
         ]);
     }
     #[cfg(target_arch = "aarch64")]
@@ -78,7 +79,7 @@ pub fn connect(ssid: &str, psk: &str) -> Result<String, String> {
     }
     #[cfg(target_arch = "aarch64")]
     {
-        crate::arch::wifi::join(ssid, psk).map_err(String::from)?;
+        crate::arch::wifi::join(ssid, psk)?;
         unsafe { *(&raw mut LAST) = String::from(ssid) };
         remember(ssid, psk);
         if crate::drivers::netstack::dhcp_configure() {
@@ -95,6 +96,43 @@ pub fn connect(ssid: &str, psk: &str) -> Result<String, String> {
     }
 }
 
+/// Leave the network but keep it remembered (the tray's Disconnect).
+pub fn disconnect() {
+    unsafe { (*(&raw mut LAST)).clear() };
+    #[cfg(target_arch = "aarch64")]
+    crate::arch::wifi::leave();
+}
+
+/// Joined right now?
+pub fn joined() -> bool {
+    if demo() {
+        return !unsafe { (&*(&raw const LAST)).is_empty() };
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::arch::wifi::is_joined()
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
+}
+
+/// Signal of the joined network in dBm (0 when not joined / unknown).
+pub fn signal() -> i32 {
+    if demo() {
+        return if joined() { -58 } else { 0 };
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        crate::arch::wifi::rssi().unwrap_or(0)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        0
+    }
+}
+
 pub fn forget() {
     unsafe { (*(&raw mut LAST)).clear() };
     #[cfg(target_arch = "aarch64")]
@@ -107,7 +145,7 @@ pub fn forget() {
 /// One line for the picker's header and the tray.
 pub fn status() -> String {
     if demo() {
-        let l = unsafe { (*(&raw const LAST)).clone() };
+        let l = unsafe { (&*(&raw const LAST)).clone() };
         return if l.is_empty() { String::from("demo radio: not joined") } else { format!("demo radio: joined {l}") };
     }
     #[cfg(target_arch = "aarch64")]
@@ -124,7 +162,7 @@ pub fn status() -> String {
 }
 
 pub fn ssid() -> String {
-    unsafe { (*(&raw const LAST)).clone() }
+    unsafe { (&*(&raw const LAST)).clone() }
 }
 
 fn remember(ssid: &str, psk: &str) {
@@ -185,7 +223,7 @@ pub fn console(args: &[u8]) {
             Ok(list) if list.is_empty() => w("wifi: no networks found\n"),
             Ok(list) => {
                 for n in list {
-                    let sec = ["open", "WEP", "WPA", "WPA2"][n.secure.min(3) as usize];
+                    let sec = ["open", "WEP", "WPA", "WPA2", "WPA3"][n.secure.min(4) as usize];
                     w(&format!("  {:<32} {:>4} dBm  ch {:<3} {}\n", n.ssid, n.rssi, n.channel, sec));
                 }
             },
@@ -198,9 +236,20 @@ pub fn console(args: &[u8]) {
         match connect(ssid, psk) {
             Ok(m) | Err(m) => w(&format!("wifi: {m}\n")),
         }
-    } else if a == "leave" || a == "forget" {
+    } else if a == "leave" || a == "disconnect" {
+        disconnect();
+        w("wifi: left the network (still remembered; `wifi forget` drops it)\n");
+    } else if a == "forget" {
         forget();
         w("wifi: left (and forgot the saved network)\n");
+    } else if let Some(cc) = a.strip_prefix("country ") {
+        #[cfg(target_arch = "aarch64")]
+        match crate::arch::wifi::set_country(cc) {
+            Ok(()) => w(&format!("wifi: country {}\n", cc.trim().to_ascii_uppercase())),
+            Err(e) => w(&format!("wifi: {e}\n")),
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        w(&format!("wifi: no radio to set {cc} on\n"));
     } else if a.is_empty() || a == "status" {
         #[cfg(target_arch = "aarch64")]
         {
@@ -210,6 +259,6 @@ pub fn console(args: &[u8]) {
         }
         w(&format!("wifi: {}\n", status()));
     } else {
-        w("usage: wifi [scan | join <ssid> [passphrase] | leave | status | demo]\n");
+        w("usage: wifi [scan | join <ssid> [passphrase] | leave | forget | country <CC> | status | demo]\n");
     }
 }
