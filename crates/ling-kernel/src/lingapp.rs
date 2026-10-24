@@ -771,6 +771,9 @@ fn net_test() -> String {
     let ip = ns::self_ip();
     let gw = ns::gateway_ip();
     out.push_str(&alloc::format!("address {}  gateway {}  ({})\n", fmt_ip(ip), fmt_ip(gw), crate::arch::netdev::kind()));
+    // TLS cannot run without hardware randomness (client random, key share).
+    let mut rb = [0u8; 8];
+    out.push_str(if crate::crypto::random_bytes(&mut rb) { "random source: ok\n" } else { "random source: NONE -- HTTPS cannot work on this board yet\n" });
     if ip == [0; 4] {
         out.push_str("no address: join a network, or set a static address\n");
         return out;
