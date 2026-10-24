@@ -1450,6 +1450,17 @@ fn audio() -> &'static mut Audio {
     unsafe { &mut *(&raw mut AUDIO) }
 }
 
+/// Pause the transport (the desktop does this when LingStationX is suspended
+/// or closed, if the "pause music" setting is on). Nothing if no project is up.
+pub fn pause_transport() {
+    if let Some(d) = unsafe { (*(&raw mut DAW)).as_mut() } {
+        if d.playing {
+            audio_stop();
+            d.playing = false;
+        }
+    }
+}
+
 fn audio_start(beat: f64) {
     let a = audio();
     a.voices.clear();

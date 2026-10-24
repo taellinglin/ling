@@ -431,6 +431,8 @@ struct Dev {
 enum HidKind {
     Kbd,
     Mouse,
+    /// A gamepad / joystick: decoded with `pad` (drivers::hidpad).
+    Pad,
 }
 
 /// One boot-protocol HID interrupt-IN endpoint being polled.
@@ -447,6 +449,8 @@ struct Hid {
     rbuf: u64,
     mps: u32,
     prev: [u8; 8],
+    /// Where a gamepad's sticks and buttons sit in its report.
+    pad: crate::drivers::hidpad::Layout,
     /// Set by a transfer error: the controller halted the endpoint and it
     /// must be reset (done by [`poll`], outside the event loop).
     halted: bool,
@@ -458,10 +462,14 @@ struct Hid {
 #[derive(Clone, Copy)]
 struct HidEp {
     iface: u32,
+    /// 1 keyboard, 2 mouse (boot protocol), 0 another HID device (a gamepad
+    /// if its report descriptor says so), 0xFF a wired Xbox 360 controller.
     proto: u32,
     addr: u32,
     mps: u32,
     interval: u32,
+    /// The HID report descriptor's length (proto 0).
+    report_len: u32,
 }
 
 /// One bulk endpoint of a mass-storage device (its ring state lives here).
@@ -599,6 +607,16 @@ impl Ctl {
                     unsafe { HELD = cur };
                 },
                 HidKind::Mouse => mouse_report(&cur, n),
+                HidKind::Pad => {
+                    // The whole report (up to 64 bytes); the TRB's residual says how much came.
+                    let got = (h.mps as usize).saturating_sub((status & 0xFF_FFFF) as usize).min(64);
+                    let mut rep = [0u8; 64];
+                    for (k, b) in rep.iter_mut().enumerate().take(got) {
+                        *b = unsafe { core::ptr::read_volatile((h.rbuf + k as u64) as *const u8) };
+                    }
+                    let st = unsafe { &mut *(&raw mut PAD) };
+                    crate::drivers::hidpad::decode(&h.pad, &rep[..got], st);
+                },
             }
             h.prev = cur;
             h.fails = 0;
@@ -619,7 +637,11 @@ impl Ctl {
         let Some(mut h) = self.hids[i] else { return };
         h.fails += 1;
         out(self.name);
-        out(if h.kind == HidKind::Kbd { b": keyboard endpoint halted (" } else { b": mouse endpoint halted (" });
+        out(match h.kind {
+            HidKind::Kbd => b": keyboard endpoint halted (",
+            HidKind::Mouse => b": mouse endpoint halted (",
+            HidKind::Pad => b": gamepad endpoint halted (",
+        });
         report_cc(h.last_cc);
         if h.fails > 6 {
             out(b"  resetting its port and enumerating the device again\n");
@@ -738,6 +760,9 @@ impl Ctl {
                 if hh.slot == d.slot {
                     if hh.kind == HidKind::Kbd {
                         unsafe { HELD = [0; 8] };
+                    }
+                    if hh.kind == HidKind::Pad {
+                        unsafe { PAD = crate::drivers::hidpad::PadState::default() };
                     }
                     free_page(hh.ring);
                     free_page(hh.rbuf);
@@ -1116,6 +1141,7 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
     let mut eps: [Option<HidEp>; MAX_HID] = [None; MAX_HID];
     let mut n = 0usize;
     let (mut cur_iface, mut cur_proto, mut cur_taken) = (0u32, 0u32, true);
+    let mut cur_report_len = 0u32;
     // Bulk-only mass storage (class 8, SCSI transparent, protocol 0x50).
     let (mut msd_iface, mut in_msd) = (0u32, false);
     let (mut msd_in, mut msd_out): (Option<(u32, u32)>, Option<(u32, u32)>) = (None, None);
@@ -1127,10 +1153,16 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
             break;
         }
         if btype == 4 {
-            let is_boot_hid = rd(off + 5) == 3 && matches!(rd(off + 7), 1 | 2);
+            // HID interfaces: boot keyboard / mouse (protocol 1 / 2), or any
+            // other HID device (a gamepad, decided by its report descriptor
+            // later); a wired Xbox 360 controller is vendor class FF/5D/01.
+            let class = rd(off + 5);
+            let is_hid = class == 3 && matches!(rd(off + 7), 0 | 1 | 2);
+            let is_xbox = class == 0xFF && rd(off + 6) == 0x5D && rd(off + 7) == 0x01;
             cur_iface = rd(off + 2);
-            cur_proto = rd(off + 7);
-            cur_taken = !is_boot_hid;
+            cur_proto = if is_xbox { 0xFF } else { rd(off + 7) };
+            cur_taken = !(is_hid || is_xbox);
+            cur_report_len = 0;
             in_msd = rd(off + 5) == 8 && rd(off + 6) == 6 && rd(off + 7) == 0x50;
             if in_msd {
                 msd_iface = cur_iface;
@@ -1147,11 +1179,14 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
                     msd_out = Some((addr, mps));
                 }
             }
+        } else if btype == 0x21 && !cur_taken && blen >= 9 && rd(off + 6) == 0x22 {
+            // The HID descriptor: how long the report descriptor is.
+            cur_report_len = rd(off + 7) | (rd(off + 8) << 8);
         } else if btype == 5 && !cur_taken && n < MAX_HID {
             let addr = rd(off + 2);
             if addr & 0x80 != 0 && rd(off + 3) & 0x3 == 3 {
                 let mps = rd(off + 4) | (rd(off + 5) << 8);
-                eps[n] = Some(HidEp { iface: cur_iface, proto: cur_proto, addr, mps, interval: rd(off + 6) });
+                eps[n] = Some(HidEp { iface: cur_iface, proto: cur_proto, addr, mps, interval: rd(off + 6), report_len: cur_report_len });
                 n += 1;
                 cur_taken = true;
             }
@@ -1240,14 +1275,70 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
     }
 
     for (i, e) in eps.iter().flatten().enumerate() {
-        // SET_PROTOCOL(boot) — fixed 8-byte keyboard / 3-4 byte mouse reports —
-        // and SET_IDLE(0) so reports only arrive on change. Best effort: some
-        // devices STALL these and still send boot-format reports.
-        let boot = ctl.control(di, 0x21, 0x0B, 0, e.iface as u16, 0, 0).is_some();
-        let _ = ctl.control(di, 0x21, 0x0A, 0, e.iface as u16, 0, 0);
-        let kind = if e.proto == 1 { HidKind::Kbd } else { HidKind::Mouse };
-        out(if kind == HidKind::Kbd { b"  keyboard interface" } else { b"  mouse interface" });
-        out(if boot { b" (boot protocol)\n" } else { b" (report protocol)\n" });
+        let mut pad = crate::drivers::hidpad::Layout::EMPTY;
+        let kind = match e.proto {
+            1 => HidKind::Kbd,
+            2 => HidKind::Mouse,
+            0xFF => {
+                pad = crate::drivers::hidpad::Layout::XBOX360;
+                HidKind::Pad
+            },
+            _ => {
+                // Another HID device: a gamepad / joystick if its report
+                // descriptor says so (read with GET_DESCRIPTOR(Report)).
+                let rl = e.report_len.clamp(1, 2048) as u16;
+                let mut lay = None;
+                if ctl.control(di, 0x81, 6, 0x2200, e.iface as u16, dma(buf), rl).is_some() {
+                    let mut desc = alloc::vec![0u8; rl as usize];
+                    for (k, b) in desc.iter_mut().enumerate() {
+                        *b = unsafe { core::ptr::read_volatile((buf + k as u64) as *const u8) };
+                    }
+                    lay = crate::drivers::hidpad::parse_descriptor(&desc);
+                }
+                match lay {
+                    Some(l) => {
+                        pad = l;
+                        HidKind::Pad
+                    },
+                    None => {
+                        out(b"  a HID interface that is not a keyboard, mouse or gamepad (left idle)\n");
+                        continue;
+                    },
+                }
+            },
+        };
+        let boot = if kind == HidKind::Pad {
+            // Gamepads speak the report protocol; an Xbox 360 pad is not HID at all.
+            if e.proto != 0xFF {
+                let _ = ctl.control(di, 0x21, 0x0A, 0, e.iface as u16, 0, 0); // SET_IDLE(0)
+            }
+            false
+        } else {
+            // SET_PROTOCOL(boot) — fixed 8-byte keyboard / 3-4 byte mouse reports —
+            // and SET_IDLE(0) so reports only arrive on change. Best effort: some
+            // devices STALL these and still send boot-format reports.
+            let b = ctl.control(di, 0x21, 0x0B, 0, e.iface as u16, 0, 0).is_some();
+            let _ = ctl.control(di, 0x21, 0x0A, 0, e.iface as u16, 0, 0);
+            b
+        };
+        out(match kind {
+            HidKind::Kbd => b"  keyboard interface",
+            HidKind::Mouse => b"  mouse interface",
+            HidKind::Pad => {
+                if pad.xbox360 {
+                    b"  Xbox 360 controller"
+                } else {
+                    b"  gamepad interface"
+                }
+            },
+        });
+        if kind == HidKind::Pad {
+            dec(b": axes=", pad.n_axes as u32);
+            dec(b" buttons=", pad.n_buttons as u32);
+            out(if pad.hat.is_some() { b" hat\n" } else { b"\n" });
+        } else {
+            out(if boot { b" (boot protocol)\n" } else { b" (report protocol)\n" });
+        }
         let Some(rbuf) = alloc_page() else { return abort_dev(ctl, di, b"  out of DMA pages\n") };
         let mps = if e.mps == 0 { 8 } else { e.mps & 0x7FF };
         let Some(hi) = ctl.hids.iter().position(|h| h.is_none()) else {
@@ -1267,13 +1358,25 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
             rbuf,
             mps,
             prev: [0; 8],
+            pad,
             halted: false,
             last_cc: 0,
             fails: 0,
         };
         hid_queue(&ctl.x, &mut h); // arm the first interrupt transfer
         ctl.hids[hi] = Some(h);
-        out(if kind == HidKind::Kbd { b"  -> USB KEYBOARD READY\n" } else { b"  -> USB MOUSE READY\n" });
+        if kind == HidKind::Pad {
+            unsafe {
+                PAD = crate::drivers::hidpad::PadState::default();
+                PAD.connected = true;
+                PAD.xbox = pad.xbox360;
+            }
+        }
+        out(match kind {
+            HidKind::Kbd => b"  -> USB KEYBOARD READY\n",
+            HidKind::Mouse => b"  -> USB MOUSE READY\n",
+            HidKind::Pad => b"  -> USB GAMEPAD READY\n",
+        });
     }
 }
 
@@ -1287,6 +1390,14 @@ static mut KQ_TAIL: usize = 0;
 
 /// Keys currently held (the last keyboard report): modifiers + 6 usages.
 static mut HELD: [u8; 8] = [0; 8];
+/// The gamepad (one at a time), as its last report left it.
+static mut PAD: crate::drivers::hidpad::PadState = crate::drivers::hidpad::PadState { connected: false, axes: [0.0; 8], buttons: 0, hat: -1, xbox: false };
+
+/// The gamepad's state after draining pending reports.
+pub fn pad_state() -> crate::drivers::hidpad::PadState {
+    poll();
+    unsafe { *(&raw const PAD) }
+}
 /// Absolute pointer (in the framebuffer's safe-area coordinates), buttons,
 /// accumulated wheel clicks; `MOUSE_INIT` centres it on first use.
 static mut MOUSE: (i32, i32, u8) = (0, 0, 0);

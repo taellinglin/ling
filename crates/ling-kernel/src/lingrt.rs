@@ -495,15 +495,16 @@ unsafe fn scan_current_stack(top: u64, work: &mut Vec<*mut ListBuf>) {
 }
 
 unsafe fn scan_stacks(work: &mut Vec<*mut ListBuf>) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        scan_current_stack(crate::proc::sched::current_stack_top(), work);
-        // A suspended task's registers were pushed on its own stack by the
-        // context switch, so its stack alone covers it.
-        crate::proc::sched::for_each_suspended_stack(|lo, hi| scan_range(lo, hi, work));
+    // The stack we are on (an app's own, or the host's), then every stack
+    // parked by a stack switch: the host's while an app runs, suspended apps'.
+    // Their registers were pushed on those stacks by the switch.
+    let (top, others) = crate::lingapp::gc_stacks();
+    scan_current_stack(top, work);
+    for (lo, hi) in others {
+        scan_range(lo, hi, work);
     }
-    #[cfg(target_arch = "aarch64")]
-    scan_current_stack(crate::arch::boot::boot_stack_top(), work);
+    #[cfg(target_arch = "x86_64")]
+    crate::proc::sched::for_each_suspended_stack(|lo, hi| scan_range(lo, hi, work));
 }
 
 /// Free every unmarked object and clear the marks; (objects, bytes) freed.
@@ -567,6 +568,14 @@ pub fn gc_collect() {
                 mark_value(v, &mut work);
             }
             for e in s.values() {
+                mark_value(e.val, &mut work);
+            }
+        }
+        for p in parked().iter() {
+            for &v in p.g.values() {
+                mark_value(v, &mut work);
+            }
+            for e in p.s.values() {
                 mark_value(e.val, &mut work);
             }
         }
@@ -749,6 +758,51 @@ static mut SAVED: Vec<Scope> = Vec::new();
 
 fn saved_scopes() -> &'static mut Vec<Scope> {
     unsafe { &mut *(&raw mut SAVED) }
+}
+
+/// A suspended app's globals, store, command line and nesting depth, parked
+/// while its host (the desktop) runs again; collector roots like the rest.
+struct Parked {
+    id: u64,
+    g: BTreeMap<Vec<u8>, u64>,
+    s: BTreeMap<Vec<u8>, StEntry>,
+    a: Vec<String>,
+    depth: u32,
+}
+static mut PARKED: Vec<Parked> = Vec::new();
+static mut PARK_SEQ: u64 = 0;
+
+fn parked() -> &'static mut Vec<Parked> {
+    unsafe { &mut *(&raw mut PARKED) }
+}
+
+/// Inside a running app that is about to be suspended: its scope goes aside
+/// and the host's (the newest `run_isolated_with` put it on `SAVED`) comes
+/// back. Returns the ticket `unpark_scope` takes.
+pub fn park_scope() -> u64 {
+    let id = unsafe {
+        PARK_SEQ += 1;
+        PARK_SEQ
+    };
+    let depth = unsafe { APP_DEPTH };
+    parked().push(Parked { id, g: core::mem::take(globals()), s: core::mem::take(store()), a: core::mem::take(args_vec()), depth });
+    if let Some((g, s)) = saved_scopes().pop() {
+        *globals() = g;
+        *store() = s;
+    }
+    unsafe { APP_DEPTH = depth.saturating_sub(1) };
+    id
+}
+
+/// Back inside the app: the host's scope returns to `SAVED`, the app's comes back.
+pub fn unpark_scope(id: u64) {
+    let Some(i) = parked().iter().position(|p| p.id == id) else { return };
+    let p = parked().remove(i);
+    saved_scopes().push((core::mem::take(globals()), core::mem::take(store())));
+    *globals() = p.g;
+    *store() = p.s;
+    *args_vec() = p.a;
+    unsafe { APP_DEPTH = p.depth };
 }
 
 static mut APP_DEPTH: u32 = 0;

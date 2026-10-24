@@ -451,33 +451,382 @@ fn app_run(name: &str) -> bool {
             },
         };
     }
+    // Suspended earlier (Alt+Tab): pick up where it was.
+    if parked_apps().iter().any(|a| a.name == name) {
+        return app_resume(name);
+    }
     let Some(entry) = crate::app_named(name.as_bytes()) else { return false };
     let folder = app_folder(name);
-    with_own_window(|| {
-        // Its settings and caches under Programs/<App>, its projects under
-        // Projects/<App> (both in the user's home), its bundled files from
-        // the image's apps/<name>/ folder.
-        let home = crate::vfs::home();
-        let programs = alloc::format!("{home}/Programs/{folder}");
-        let projects = alloc::format!("{home}/Projects/{folder}");
-        if crate::vfs::ready() {
-            crate::vfs::mkdir(&programs);
-            crate::vfs::mkdir(&projects);
-        }
-        crate::vfs::set_root(&programs);
-        crate::vfs::set_projects_root(&projects);
-        crate::vfs::set_image_root(&alloc::format!("apps/{name}"));
-        crate::console_write(b"app: starting ");
-        crate::console_write(name.as_bytes());
-        crate::console_write(b"
-");
-        crate::lingrt::run_isolated(entry);
-        crate::console_write(b"app: ");
-        crate::console_write(name.as_bytes());
-        crate::console_write(b" returned
-");
-    });
+    let Some(stack) = crate::mm::frame::alloc_frames(APP_STACK_ORDER) else {
+        crate::console_write(b"app: no memory for its stack\n");
+        return false;
+    };
+    let top = (stack + (4096u64 << APP_STACK_ORDER)) & !0xF;
+    // The desktop's window and file scope go aside while the app has the screen.
+    let host = host_put_aside();
+    // Its settings and caches under Programs/<App>, its projects under
+    // Projects/<App> (both in the user's home), its bundled files from
+    // the image's apps/<name>/ folder.
+    let home = crate::vfs::home();
+    let programs = alloc::format!("{home}/Programs/{folder}");
+    let projects = alloc::format!("{home}/Projects/{folder}");
+    if crate::vfs::ready() {
+        crate::vfs::mkdir(&programs);
+        crate::vfs::mkdir(&projects);
+    }
+    crate::vfs::set_root(&programs);
+    crate::vfs::set_projects_root(&projects);
+    crate::vfs::set_image_root(&alloc::format!("apps/{name}"));
+    crate::console_write(b"app: starting ");
+    crate::console_write(name.as_bytes());
+    crate::console_write(b"\n");
+    let sp = unsafe { fresh_stack(top) };
+    unsafe {
+        *(&raw mut ACTIVE_APP) = Some(AppCtx { name: String::from(name), stack, top, sp, win: None, dot: false, scope: None, park: 0, done: false });
+        *(&raw mut PENDING_ENTRY) = Some(entry);
+        // Runs the app on its stack until it suspends or returns.
+        ling_switch_stack(&raw mut HOST_SP, sp);
+    }
+    app_came_back(host);
     true
+}
+
+// ── Running apps: each on its own stack, suspendable ─────────────────────────
+// An app runs on a 2 MiB stack of its own, entered with a stack switch from
+// the desktop's `os_app_run`. Alt+Tab inside the app (seen by `present`) parks
+// it: its window, file scope and Ling scope go aside, the desktop's come back,
+// and the switch returns to the desktop, which goes on as if the app had
+// closed -- except that `os_apps_running` lists it and `os_app_resume` (or a
+// second `os_app_run`) switches back into its `present`, which then returns
+// to the app's loop. When the app's entry returns, the trampoline switches to
+// the desktop for good and the stack is freed. Only one app runs at a time;
+// the desktop is always the host. The collector scans every parked stack.
+
+struct AppCtx {
+    name: String,
+    stack: u64,
+    top: u64,
+    /// Its sp while it is not running (the switch's saved frame).
+    sp: u64,
+    win: Option<Window>,
+    dot: bool,
+    scope: Option<crate::vfs::Scope>,
+    /// `lingrt::park_scope` ticket while suspended.
+    park: u64,
+    done: bool,
+}
+
+/// The desktop's state while an app has the screen.
+struct Host {
+    win: Option<Window>,
+    dot: bool,
+    scope: crate::vfs::Scope,
+}
+
+const APP_STACK_ORDER: usize = 9; // 2 MiB
+static mut ACTIVE_APP: Option<AppCtx> = None;
+static mut PARKED_APPS: Vec<AppCtx> = Vec::new();
+/// The desktop's sp while an app runs (the switch's saved frame).
+static mut HOST_SP: u64 = 0;
+static mut PENDING_ENTRY: Option<crate::AppEntry> = None;
+/// Settings > Sound: pause LingStationX's transport when it is suspended or closes.
+static mut PAUSE_AUDIO: bool = true;
+
+fn parked_apps() -> &'static mut Vec<AppCtx> {
+    unsafe { &mut *(&raw mut PARKED_APPS) }
+}
+
+fn active_app() -> Option<&'static mut AppCtx> {
+    unsafe { (*(&raw mut ACTIVE_APP)).as_mut() }
+}
+
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".global ling_switch_stack",
+    "ling_switch_stack:",
+    "sub sp, sp, #176",
+    "stp x19, x20, [sp, #0]",
+    "stp x21, x22, [sp, #16]",
+    "stp x23, x24, [sp, #32]",
+    "stp x25, x26, [sp, #48]",
+    "stp x27, x28, [sp, #64]",
+    "stp x29, x30, [sp, #80]",
+    "stp d8, d9, [sp, #96]",
+    "stp d10, d11, [sp, #112]",
+    "stp d12, d13, [sp, #128]",
+    "stp d14, d15, [sp, #144]",
+    "mov x2, sp",
+    "str x2, [x0]",
+    "mov sp, x1",
+    "ldp x19, x20, [sp, #0]",
+    "ldp x21, x22, [sp, #16]",
+    "ldp x23, x24, [sp, #32]",
+    "ldp x25, x26, [sp, #48]",
+    "ldp x27, x28, [sp, #64]",
+    "ldp x29, x30, [sp, #80]",
+    "ldp d8, d9, [sp, #96]",
+    "ldp d10, d11, [sp, #112]",
+    "ldp d12, d13, [sp, #128]",
+    "ldp d14, d15, [sp, #144]",
+    "add sp, sp, #176",
+    "ret",
+);
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(
+    ".global ling_switch_stack",
+    "ling_switch_stack:",
+    "push rbx",
+    "push rbp",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "mov [rdi], rsp",
+    "mov rsp, rsi",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbp",
+    "pop rbx",
+    "ret",
+);
+extern "C" {
+    /// Save the callee-saved registers and sp to `*save`, switch to the stack
+    /// at `to` and return into whatever saved that one (or `app_trampoline`
+    /// for a fresh stack).
+    fn ling_switch_stack(save: *mut u64, to: u64);
+}
+
+/// A new stack whose first switch-in lands in `app_trampoline`.
+unsafe fn fresh_stack(top: u64) -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let sp = top - 176;
+        core::ptr::write_bytes(sp as *mut u8, 0, 176);
+        core::ptr::write((sp + 88) as *mut u64, app_trampoline as usize as u64); // x30
+        sp
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        let mut sp = top - 16;
+        core::ptr::write(sp as *mut u64, app_trampoline as usize as u64);
+        for _ in 0..6 {
+            sp -= 8;
+            core::ptr::write(sp as *mut u64, 0);
+        }
+        sp
+    }
+}
+
+/// First thing on an app's stack: run its entry, then hand the stack back.
+extern "C" fn app_trampoline() -> ! {
+    let entry = unsafe { (*(&raw mut PENDING_ENTRY)).take() };
+    if let Some(e) = entry {
+        crate::lingrt::run_isolated(e);
+    }
+    if let Some(a) = active_app() {
+        a.done = true;
+    }
+    unsafe {
+        let mut gone = 0u64;
+        ling_switch_stack(&raw mut gone, HOST_SP);
+    }
+    loop {}
+}
+
+fn host_put_aside() -> Host {
+    let win = unsafe { core::ptr::replace(&raw mut WIN, None) };
+    let dot = unsafe { core::mem::replace(&mut *(&raw mut CURSOR_DOT), false) };
+    let scope = crate::vfs::take_scope();
+    input_reset();
+    Host { win, dot, scope }
+}
+
+fn input_reset() {
+    let input = unsafe { &mut *(&raw mut INPUT) };
+    input.pressed.clear();
+    input.text.clear();
+    input.quit = false;
+    input.esc = 0;
+}
+
+/// Back on the desktop's stack after an app suspended or returned.
+fn app_came_back(host: Host) {
+    let ctx = unsafe { (*(&raw mut ACTIVE_APP)).take() };
+    crate::vfs::restore_scope(host.scope);
+    unsafe {
+        core::ptr::write(&raw mut WIN, host.win);
+        CURSOR_DOT = host.dot;
+        if PAUSE_AUDIO {
+            crate::lingdaw::pause_transport();
+        }
+    }
+    input_reset();
+    if let Some(c) = ctx {
+        crate::console_write(b"app: ");
+        crate::console_write(c.name.as_bytes());
+        if c.done {
+            crate::console_write(b" returned\n");
+            crate::mm::frame::free_frames(c.stack, APP_STACK_ORDER);
+        } else {
+            crate::console_write(b" suspended\n");
+            parked_apps().push(c);
+        }
+    }
+}
+
+/// Switch back into a suspended app; returns when it suspends again or ends.
+fn app_resume(name: &str) -> bool {
+    let Some(i) = parked_apps().iter().position(|a| a.name == name) else { return false };
+    let ctx = parked_apps().remove(i);
+    let sp = ctx.sp;
+    let host = host_put_aside();
+    unsafe {
+        *(&raw mut ACTIVE_APP) = Some(ctx);
+        ling_switch_stack(&raw mut HOST_SP, sp);
+    }
+    app_came_back(host);
+    true
+}
+
+/// Inside an app, from `present`: park it and give the screen back to the
+/// desktop; continues here when the desktop resumes it.
+fn app_suspend() {
+    let Some(a) = active_app() else { return };
+    a.win = unsafe { core::ptr::replace(&raw mut WIN, None) };
+    a.dot = unsafe { CURSOR_DOT };
+    a.scope = Some(crate::vfs::take_scope());
+    a.park = crate::lingrt::park_scope();
+    let sp_slot = &raw mut a.sp;
+    unsafe { ling_switch_stack(sp_slot, HOST_SP) };
+    // Resumed: the context is back in ACTIVE_APP (it moved meanwhile).
+    if let Some(a) = active_app() {
+        unsafe {
+            core::ptr::write(&raw mut WIN, a.win.take());
+            CURSOR_DOT = a.dot;
+        }
+        if let Some(s) = a.scope.take() {
+            crate::vfs::restore_scope(s);
+        }
+        crate::lingrt::unpark_scope(a.park);
+    }
+    input_reset();
+}
+
+/// For the collector: the top of the stack we are on, and every parked stack
+/// (the desktop's while an app runs, every suspended app's).
+pub fn gc_stacks() -> (u64, Vec<(u64, u64)>) {
+    #[cfg(target_arch = "aarch64")]
+    let host_top = crate::arch::boot::boot_stack_top();
+    #[cfg(target_arch = "x86_64")]
+    let host_top = crate::proc::sched::current_stack_top();
+    let mut others: Vec<(u64, u64)> = parked_apps().iter().map(|a| (a.sp, a.top)).collect();
+    match active_app() {
+        Some(a) => {
+            others.push((unsafe { HOST_SP }, host_top));
+            (a.top, others)
+        },
+        None => (host_top, others),
+    }
+}
+
+fn apps_running() -> Vec<String> {
+    parked_apps().iter().map(|a| a.name.clone()).collect()
+}
+
+// ── Network settings (Settings > Network) ────────────────────────────────────
+fn parse_ip(s: &str) -> Option<[u8; 4]> {
+    let mut out = [0u8; 4];
+    let mut n = 0;
+    for part in s.trim().split('.') {
+        if n == 4 {
+            return None;
+        }
+        out[n] = part.trim().parse::<u8>().ok()?;
+        n += 1;
+    }
+    if n == 4 { Some(out) } else { None }
+}
+
+fn fmt_ip(a: [u8; 4]) -> String {
+    alloc::format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3])
+}
+
+/// "mode\tip\tmask\tgateway\tdns": the static setting, or the live DHCP state.
+fn net_get() -> String {
+    use crate::drivers::netstack as ns;
+    match ns::static_config() {
+        Some((ip, mask, gw, dns)) => alloc::format!("static\t{}\t{}\t{}\t{}", fmt_ip(ip), fmt_ip(mask), fmt_ip(gw), fmt_ip(dns)),
+        None => alloc::format!("dhcp\t{}\t255.255.255.0\t{}\t{}", fmt_ip(ns::self_ip()), fmt_ip(ns::gateway_ip()), fmt_ip(ns::dns_servers().0)),
+    }
+}
+
+/// Apply a configuration; the text is what to show the user.
+fn net_set(mode: &str, ip: &str, mask: &str, gw: &str, dns: &str) -> String {
+    use crate::drivers::netstack as ns;
+    if mode == "static" {
+        let (Some(ip), Some(mask), Some(gw)) = (parse_ip(ip), parse_ip(mask), parse_ip(gw)) else {
+            return String::from("address, netmask and gateway must be four numbers 0-255 (like 192.168.1.20)");
+        };
+        let dns = parse_ip(dns).unwrap_or(gw);
+        ns::set_static(Some((ip, mask, gw, dns)));
+        alloc::format!("static address {} set (gateway {}, DNS {})", fmt_ip(ip), fmt_ip(gw), fmt_ip(dns))
+    } else {
+        ns::set_static(None);
+        if ns::dhcp_configure() {
+            alloc::format!("DHCP gave {}", fmt_ip(ns::self_ip()))
+        } else {
+            String::from("DHCP: no lease yet (no link, or no server); a static address always works")
+        }
+    }
+}
+
+// ── Accounts (the desktop's login screen) ────────────────────────────────────
+fn users_list() -> Vec<String> {
+    let mut out = Vec::new();
+    if !crate::fs::lingfs::is_mounted() {
+        return out;
+    }
+    let mut name = [0u8; 64];
+    let mut i = 0usize;
+    while let Some((n, is_dir)) = crate::fs::lingfs::list_entry("users", i, &mut name) {
+        if !is_dir {
+            if let Ok(s) = core::str::from_utf8(&name[..n]) {
+                out.push(String::from(s));
+            }
+        }
+        i += 1;
+        if i > 256 {
+            break;
+        }
+    }
+    out
+}
+
+/// Sign in: the user becomes the owner of new files, gets a home, and the
+/// Messenger history key is derived from the password.
+fn user_login(name: &str, password: &str) -> bool {
+    if !crate::fs::users::verify(name, password) {
+        return false;
+    }
+    let mut group = [0u8; 32];
+    let n = crate::fs::users::group_of(name, &mut group).unwrap_or(0);
+    let group = core::str::from_utf8(&group[..n]).unwrap_or("users");
+    crate::fs::lingfs::set_current_user(name, group);
+    crate::fs::users::ensure_home(name);
+    crate::drivers::messenger::set_chat_key(password.as_bytes());
+    true
+}
+
+fn user_create(name: &str, password: &str) -> bool {
+    if name.is_empty() || password.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
+        return false;
+    }
+    if !crate::fs::users::create(name, password, "", "", "", "", "users") {
+        return false;
+    }
+    user_login(name, password)
 }
 
 /// The home folder name of a bundled app (`Projects/<App>`, `Programs/<App>`).
@@ -924,6 +1273,14 @@ fn os_user() -> String {
 }
 
 /// `os_info(key)`: facts about the running system for the desktop's About/tray.
+/// The USB gamepad's state (none on x86 yet).
+fn pad() -> crate::drivers::hidpad::PadState {
+    #[cfg(target_arch = "aarch64")]
+    return crate::arch::xhci::pad_state();
+    #[cfg(not(target_arch = "aarch64"))]
+    crate::drivers::hidpad::PadState::default()
+}
+
 fn os_info(key: &str) -> String {
     use alloc::format;
     match key {
@@ -949,6 +1306,10 @@ fn os_info(key: &str) -> String {
             }
         },
         "display" => format!("{} x {}", framebuffer::width(), framebuffer::height()),
+        "gamepad" => {
+            let p = pad();
+            String::from(if !p.connected { "none" } else if p.xbox { "Xbox 360 controller" } else { "USB gamepad" })
+        },
         "mouse" => {
             #[cfg(target_arch = "aarch64")]
             return String::from(if crate::arch::xhci::mouse_ready() { "USB mouse" } else { "none" });
@@ -1064,6 +1425,10 @@ fn present() {
         }
     }
     input.quit = false;
+    // Alt+Tab inside a launched app: back to the desktop, the app kept alive.
+    if active_app().is_some() && key_down("alt") && key_pressed("tab") {
+        app_suspend();
+    }
 }
 
 /// Keyboard state between frames: text typed since the last `text_poll`, key
@@ -1220,7 +1585,10 @@ impl Input {
                 self.pressed.push("backspace");
                 self.text.push('\u{8}');
             },
-            (_, b'\t') => self.pressed.push("tab"),
+            (_, b'\t') => {
+                self.pressed.push("tab");
+                self.text.push('\t'); // in the text stream too: forms move on in order
+            },
             (_, 0x20..=0x7E) => {
                 self.text.push(c as char);
                 if let Some(n) = key_name_of_byte(c) {
@@ -1851,6 +2219,19 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"mouse_scroll" => num(unsafe { (*(&raw const INPUT)).wheel } as f64),
         b"mouse_scroll_x" => num(0.0),
         b"key_down" => boolean(key_down(&path_arg(args, 0))),
+        // Gamepad (USB, the Pi): sticks / triggers -1..1 (triggers 0..1), buttons
+        // A B X Y LB RB Back Start LS RS Guide .. d-pad 12..15, hat 0..7 / -1.
+        b"pad_connected" => boolean(pad().connected),
+        b"pad_axis" => {
+            let i = args.first().map(|&v| to_f64(v)).unwrap_or(0.0).clamp(0.0, 7.0) as usize;
+            num(pad().axes[i] as f64)
+        },
+        b"pad_button" => {
+            let i = args.first().map(|&v| to_f64(v)).unwrap_or(0.0).clamp(0.0, 31.0) as u32;
+            boolean((pad().buttons >> i) & 1 == 1)
+        },
+        b"pad_buttons" => num(pad().buttons as f64),
+        b"pad_hat" => num(pad().hat as f64),
         b"key_pressed" => boolean(key_pressed(&path_arg(args, 0))),
         b"text_poll" | b"text_get" => mk_str(&core::mem::take(unsafe { &mut (*(&raw mut INPUT)).text })),
         b"text_set" => UNIT,
@@ -1917,6 +2298,21 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_packages" => list_from(crate::drivers::lingfu::installed_apps().iter().map(|s| mk_str(s)).collect()),
         b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
+        b"os_app_resume" => boolean(app_resume(&path_arg(args, 0))),
+        b"os_apps_running" => list_from(apps_running().iter().map(|s| mk_str(s)).collect()),
+        b"os_option" => {
+            let v = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
+            if path_arg(args, 0) == "pause_audio" {
+                unsafe { PAUSE_AUDIO = v };
+            }
+            UNIT
+        },
+        b"os_net_get" => mk_str(&net_get()),
+        b"os_net_set" => mk_str(&net_set(&path_arg(args, 0), &path_arg(args, 1), &path_arg(args, 2), &path_arg(args, 3), &path_arg(args, 4))),
+        b"os_storage_ready" => boolean(crate::fs::lingfs::is_mounted()),
+        b"os_users" => list_from(users_list().iter().map(|s| mk_str(s)).collect()),
+        b"os_login" => boolean(user_login(&path_arg(args, 0), &path_arg(args, 1))),
+        b"os_user_create" => boolean(user_create(&path_arg(args, 0), &path_arg(args, 1))),
         // Wi-Fi (crate::wifi): the desktop's network picker.
         b"wifi_available" => boolean(crate::wifi::available()),
         b"wifi_status" => mk_str(&crate::wifi::status()),

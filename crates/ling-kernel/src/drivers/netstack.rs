@@ -1468,6 +1468,40 @@ pub fn apply_static_ip_from_mac() {
     invalidate_gateway();
 }
 
+/// A user-set static IPv4 configuration (address, mask, gateway, DNS) --
+/// Settings > Network on the desktop. While one is set, `configure` applies
+/// it instead of asking DHCP.
+static mut STATIC_CFG: Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])> = None;
+
+pub fn set_static(cfg: Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])>) {
+    unsafe { *(&raw mut STATIC_CFG) = cfg };
+    apply_static();
+}
+
+pub fn static_config() -> Option<([u8; 4], [u8; 4], [u8; 4], [u8; 4])> {
+    unsafe { *(&raw const STATIC_CFG) }
+}
+
+/// Put the static configuration on the NIC, if there is one.
+pub fn apply_static() -> bool {
+    let Some((ip, mask, gw, dns)) = static_config() else { return false };
+    if !nic::ensure_init() {
+        return false;
+    }
+    nic::set_ip_config(ip, mask, gw);
+    set_dns(dns, [8, 8, 8, 8]);
+    invalidate_gateway();
+    true
+}
+
+/// Get an address: the static one when set, DHCP otherwise.
+pub fn configure() -> bool {
+    if apply_static() {
+        return true;
+    }
+    dhcp_configure()
+}
+
 /// Best-effort and bounded: on a network with no DHCP server it returns
 /// false after the timeouts and the static SLIRP fallback stays in place, so
 /// plain QEMU and manual static-IP setups still work. Runs once at boot.

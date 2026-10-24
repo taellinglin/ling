@@ -82,11 +82,12 @@ pub fn connect(ssid: &str, psk: &str) -> Result<String, String> {
         crate::arch::wifi::join(ssid, psk)?;
         unsafe { *(&raw mut LAST) = String::from(ssid) };
         remember(ssid, psk);
-        if crate::drivers::netstack::dhcp_configure() {
+        // The static address from Settings > Network when there is one, DHCP otherwise.
+        if crate::drivers::netstack::configure() {
             let ip = crate::drivers::netstack::self_ip();
             Ok(format!("joined {ssid}: {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]))
         } else {
-            Ok(format!("joined {ssid}, but DHCP gave no address yet"))
+            Ok(format!("joined {ssid}, but DHCP gave no address yet (Settings > Network sets a static one)"))
         }
     }
     #[cfg(not(target_arch = "aarch64"))]

@@ -26,6 +26,8 @@ pub mod horizon;
 pub mod llm;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod messenger;
+/// USB gamepad report layouts and decoding (used by the Pi's xHCI driver).
+pub mod hidpad;
 #[cfg(target_arch = "x86_64")]
 pub mod mixer;
 #[cfg(target_arch = "x86_64")]

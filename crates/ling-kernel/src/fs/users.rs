@@ -77,6 +77,32 @@ fn append(buf: &mut [u8; RECORD_MAX], len: &mut usize, s: &[u8]) {
     *len += n;
 }
 
+/// Argon2id (16 MiB, 3 passes, 1 lane) -- what new and changed passwords
+/// are stored with (`kdf:argon2id`); the memory comes from the frame
+/// allocator for the duration of one hash. None only if that memory is
+/// not there.
+fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+    let params = Params::new(16 * 1024, 3, 1, Some(32)).ok()?;
+    let a = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut out = [0u8; 32];
+    a.hash_password_into(password, salt, &mut out).ok()?;
+    Some(out)
+}
+
+/// A salt from the hardware random source (RDRAND / the Pi's RNG), the
+/// timer-derived ticks only when there is none.
+fn fresh_salt(out: &mut [u8]) {
+    if crate::crypto::random_bytes(out) {
+        return;
+    }
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = (cpu_ticks() >> ((i % 8) * 8)) as u8;
+    }
+}
+
+/// The original salted-BLAKE3 scheme, kept to verify accounts made before
+/// Argon2id (`verify` re-hashes nothing on its own; `set_password` upgrades).
 fn hash_password(salt: &[u8; SALT_BYTES], password: &[u8]) -> [u8; 32] {
     let mut buf = [0u8; SALT_BYTES + 256];
     let n = password.len().min(256);
@@ -103,18 +129,21 @@ pub fn create(
         return false;
     }
 
-    let salt: [u8; SALT_BYTES] = unsafe {
-        let a = cpu_ticks();
-        let b = cpu_ticks();
-        let mut s = [0u8; SALT_BYTES];
-        s[..4].copy_from_slice(&(a as u32).to_le_bytes());
-        s[4..].copy_from_slice(&(b as u32).to_le_bytes());
-        s
+    let mut salt = [0u8; 16];
+    fresh_salt(&mut salt);
+    // Argon2id; the old scheme only if its memory could not be had.
+    let (hash, kdf): ([u8; 32], &[u8]) = match argon2id(&salt, password.as_bytes()) {
+        Some(h) => (h, b"argon2id"),
+        None => {
+            let mut s = [0u8; SALT_BYTES];
+            s.copy_from_slice(&salt[..SALT_BYTES]);
+            (hash_password(&s, password.as_bytes()), b"blake3")
+        },
     };
-    let hash = hash_password(&salt, password.as_bytes());
-
-    let mut salt_hex = [0u8; SALT_BYTES * 2];
-    hex_encode(&salt, &mut salt_hex);
+    let salt_n = if kdf == b"argon2id" { 16 } else { SALT_BYTES };
+    let mut salt_hex = [0u8; 32];
+    hex_encode(&salt[..salt_n], &mut salt_hex);
+    let salt_hex = &salt_hex[..salt_n * 2];
     let mut hash_hex = [0u8; 64];
     hex_encode(&hash, &mut hash_hex);
 
@@ -138,8 +167,10 @@ pub fn create(
             group.as_bytes()
         },
     );
+    append(&mut buf, &mut len, b"\nkdf:");
+    append(&mut buf, &mut len, kdf);
     append(&mut buf, &mut len, b"\nsalt:");
-    append(&mut buf, &mut len, &salt_hex);
+    append(&mut buf, &mut len, salt_hex);
     append(&mut buf, &mut len, b"\nhash:");
     append(&mut buf, &mut len, &hash_hex);
     append(&mut buf, &mut len, b"\n");
@@ -220,17 +251,32 @@ pub fn verify(username: &str, password: &str) -> bool {
     let record = &buf[..len];
     let Some(salt_hex) = field(record, "salt") else { return false };
     let Some(hash_hex) = field(record, "hash") else { return false };
-
-    let mut salt = [0u8; SALT_BYTES];
-    if hex_decode(salt_hex, &mut salt) != Some(SALT_BYTES) {
+    let mut salt = [0u8; 16];
+    let Some(salt_len) = hex_decode(salt_hex, &mut salt) else { return false };
+    let mut stored = [0u8; 32];
+    if hex_decode(hash_hex, &mut stored) != Some(32) {
         return false;
     }
-    let mut stored_hash = [0u8; 32];
-    if hex_decode(hash_hex, &mut stored_hash) != Some(32) {
-        return false;
+    let computed = match field(record, "kdf") {
+        Some(k) if k == b"argon2id" => match argon2id(&salt[..salt_len], password.as_bytes()) {
+            Some(h) => h,
+            None => return false,
+        },
+        _ => {
+            if salt_len != SALT_BYTES {
+                return false;
+            }
+            let mut s = [0u8; SALT_BYTES];
+            s.copy_from_slice(&salt[..SALT_BYTES]);
+            hash_password(&s, password.as_bytes())
+        },
+    };
+    // Constant-time compare: no early exit on the first differing byte.
+    let mut diff = 0u8;
+    for (a, b) in computed.iter().zip(stored.iter()) {
+        diff |= a ^ b;
     }
-
-    hash_password(&salt, password.as_bytes()) == stored_hash
+    diff == 0
 }
 
 /// The stored group for `username`, written into `out`, returning its

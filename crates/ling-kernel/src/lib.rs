@@ -496,7 +496,7 @@ fn run_setup_wizard() {
 
 /// Built-in apps: compiled `.ling` programs linked into this kernel image
 /// (`kernel_app` in the project's Ling.toml), launched from the console by name.
-type AppEntry = unsafe extern "C" fn() -> u64;
+pub(crate) type AppEntry = unsafe extern "C" fn() -> u64;
 static mut APPS: [Option<(&'static str, AppEntry)>; 8] = [None; 8];
 
 /// Register a built-in app (listed by `apps`, started by typing its name).
