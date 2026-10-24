@@ -1304,15 +1304,30 @@ pub fn dns_resolve(host: &str) -> Option<[u8; 4]> {
         return None;
     }
     let (d1, d2) = unsafe { (DNS1, DNS2) };
-    for server in [d1, d2, NAT_RESOLVER] {
-        if server == [0, 0, 0, 0] {
+    // The configured servers, then the gateway (most home routers resolve),
+    // then public resolvers: a wrong DNS entry must not take the network down.
+    let mut tried: [[u8; 4]; 6] = [[0; 4]; 6];
+    let mut n = 0;
+    for server in [d1, d2, gateway_ip(), [1, 1, 1, 1], [8, 8, 8, 8], NAT_RESOLVER] {
+        if server == [0, 0, 0, 0] || tried[..n].contains(&server) {
             continue;
         }
+        tried[n] = server;
+        n += 1;
         if let Some(ip) = dns_query(server, host) {
             return Some(ip);
         }
     }
     None
+}
+
+/// One query to one server (the connection test names who answered).
+pub fn dns_query_at(server: [u8; 4], host: &str) -> Option<[u8; 4]> {
+    let _net = NetGuard::new();
+    if arp_gateway().is_none() && !same_subnet(server) {
+        return None;
+    }
+    dns_query(server, host)
 }
 
 // -- DHCP client -------------------------------------------------------------

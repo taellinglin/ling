@@ -785,13 +785,38 @@ fn net_test() -> String {
             return out;
         },
     }
+    // Routing past the router, with no DNS involved.
+    match ns::tcp_connect_h([1, 1, 1, 1], 443, 3_000_000) {
+        Some(h) => {
+            ns::tcp_close_h(h);
+            out.push_str("TCP 1.1.1.1:443: connected (the router forwards our traffic)\n");
+        },
+        None => out.push_str("TCP 1.1.1.1:443: no answer (the router is not forwarding this address: static lease / allow list?)\n"),
+    }
     let (dns1, _) = ns::dns_servers();
     let host = "ling-lang.org";
-    let Some(hip) = ns::dns_resolve(host) else {
-        out.push_str(&alloc::format!("DNS {host} via {}: failed\n", fmt_ip(dns1)));
+    let mut hip: Option<[u8; 4]> = None;
+    let mut via = [0u8; 4];
+    let mut tried = String::new();
+    for server in [dns1, gw, [1, 1, 1, 1], [8, 8, 8, 8]] {
+        if server == [0; 4] || tried.contains(&fmt_ip(server)) {
+            continue;
+        }
+        if !tried.is_empty() {
+            tried.push_str(", ");
+        }
+        tried.push_str(&fmt_ip(server));
+        if let Some(ip) = ns::dns_query_at(server, host) {
+            hip = Some(ip);
+            via = server;
+            break;
+        }
+    }
+    let Some(hip) = hip else {
+        out.push_str(&alloc::format!("DNS {host}: failed via {tried}\n"));
         return out;
     };
-    out.push_str(&alloc::format!("DNS {host} via {}: {}\n", fmt_ip(dns1), fmt_ip(hip)));
+    out.push_str(&alloc::format!("DNS {host}: {} via {}{}\n", fmt_ip(hip), fmt_ip(via), if via != dns1 { " (your DNS entry did not answer)" } else { "" }));
     match ns::tcp_connect_h(hip, 443, 4_000_000) {
         Some(h) => {
             ns::tcp_close_h(h);
