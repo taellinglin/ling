@@ -28,6 +28,8 @@ pub mod llm;
 pub mod messenger;
 /// USB gamepad report layouts and decoding (used by the Pi's xHCI driver).
 pub mod hidpad;
+/// Sound effects and music for programs (WAV samples, synthesised blips).
+pub mod sfx;
 #[cfg(target_arch = "x86_64")]
 pub mod mixer;
 #[cfg(target_arch = "x86_64")]

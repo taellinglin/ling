@@ -160,7 +160,8 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let key = name.as_bytes();
     let mut i = 0;
     while i + key.len() + 1 < bytes.len() {
-        if &bytes[i..i + key.len()] == key {
+        let boundary = i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r');
+        if boundary && &bytes[i..i + key.len()] == key {
             let mut j = i + key.len();
             while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
                 j += 1;
@@ -180,6 +181,69 @@ fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
         i += 1;
     }
     None
+}
+
+/// An attribute, or the same property inside `style="..."` (what Inkscape
+/// and most editors write for fill, stroke, opacity and stroke-width).
+fn prop<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    if let Some(v) = attr(tag, name) {
+        return Some(v);
+    }
+    let style = attr(tag, "style")?;
+    for decl in style.split(';') {
+        let mut kv = decl.splitn(2, ':');
+        let k = kv.next()?.trim();
+        if k == name {
+            return kv.next().map(|v| v.trim());
+        }
+    }
+    None
+}
+
+/// gzip (an .svgz) -> the bytes inside; None when it is not gzip or is broken.
+pub fn gunzip(d: &[u8]) -> Option<Vec<u8>> {
+    if d.len() < 18 || d[0] != 0x1f || d[1] != 0x8b || d[2] != 8 {
+        return None;
+    }
+    let flg = d[3];
+    let mut p = 10usize;
+    if flg & 4 != 0 {
+        let xl = u16::from_le_bytes([*d.get(p)?, *d.get(p + 1)?]) as usize;
+        p += 2 + xl;
+    }
+    if flg & 8 != 0 {
+        while *d.get(p)? != 0 {
+            p += 1;
+        }
+        p += 1;
+    }
+    if flg & 16 != 0 {
+        while *d.get(p)? != 0 {
+            p += 1;
+        }
+        p += 1;
+    }
+    if flg & 2 != 0 {
+        p += 2;
+    }
+    if p + 8 >= d.len() {
+        return None;
+    }
+    miniz_oxide::inflate::decompress_to_vec(&d[p..d.len() - 8]).ok()
+}
+
+/// `src` over `dst` with coverage `a` (0..1), per channel.
+fn blend(dst: u32, src: u32, a: f32) -> u32 {
+    if a >= 1.0 {
+        return src;
+    }
+    let a = a.clamp(0.0, 1.0);
+    let ch = |shift: u32| -> u32 {
+        let d = ((dst >> shift) & 0xFF) as f32;
+        let s = ((src >> shift) & 0xFF) as f32;
+        ((d + (s - d) * a) as u32).min(255) << shift
+    };
+    ch(16) | ch(8) | ch(0)
 }
 
 fn hex1(c: u8) -> Option<u32> {
@@ -244,7 +308,11 @@ fn parse_color(s: &str) -> Option<u32> {
 
 /// Scanline even-odd fill of a polygon into the pixel buffer.
 fn fill_poly(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32) {
-    if verts.len() < 3 {
+    fill_poly_a(px, w, h, verts, color, 1.0)
+}
+
+fn fill_poly_a(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32, alpha: f32) {
+    if verts.len() < 3 || alpha <= 0.0 {
         return;
     }
     let mut ys = h as i32;
@@ -287,7 +355,8 @@ fn fill_poly(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32) {
             let x1 = (xs[k + 1] as i32).min(w as i32) as u32;
             let mut x = x0;
             while x < x1 {
-                px[(y as u32 * w + x) as usize] = color;
+                let idx = (y as u32 * w + x) as usize;
+                px[idx] = if alpha >= 1.0 { color } else { blend(px[idx], color, alpha) };
                 x += 1;
             }
             k += 2;
@@ -461,6 +530,9 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
     let (mut sx, mut sy) = (0f64, 0f64);
     let mut cur: Vec<(f64, f64)> = Vec::new();
     let mut nums = [0f64; 8];
+    // The last curve's control point (for S / T reflection) and the last command.
+    let (mut lcx, mut lcy) = (0f64, 0f64);
+    let mut last_cmd = 0u8;
     let read_nums = |b: &[u8], i: &mut usize, nums: &mut [f64], count: usize| -> bool {
         let mut got = 0;
         while got < count {
@@ -491,6 +563,8 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
         let rel = c.is_ascii_lowercase();
         let cmd = c.to_ascii_uppercase();
         i += 1;
+        let prev_cmd = last_cmd;
+        last_cmd = cmd;
         match cmd {
             b'M' => {
                 if !read_nums(b, &mut i, &mut nums, 2) {
@@ -545,6 +619,56 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
                     cur.push((x, y));
                     t += 1;
                 }
+                lcx = x2;
+                lcy = y2;
+                cx = ex;
+                cy = ey;
+            },
+            b'S' => {
+                if !read_nums(b, &mut i, &mut nums, 4) {
+                    break;
+                }
+                let (x1, y1) = if prev_cmd == b'C' || prev_cmd == b'S' { (2.0 * cx - lcx, 2.0 * cy - lcy) } else { (cx, cy) };
+                let (x2, y2) = (if rel { cx + nums[0] } else { nums[0] }, if rel { cy + nums[1] } else { nums[1] });
+                let (ex, ey) = (if rel { cx + nums[2] } else { nums[2] }, if rel { cy + nums[3] } else { nums[3] });
+                let mut t = 1;
+                while t <= 8 {
+                    let u = t as f64 / 8.0;
+                    let mv = 1.0 - u;
+                    let x = mv * mv * mv * cx + 3.0 * mv * mv * u * x1 + 3.0 * mv * u * u * x2 + u * u * u * ex;
+                    let y = mv * mv * mv * cy + 3.0 * mv * mv * u * y1 + 3.0 * mv * u * u * y2 + u * u * u * ey;
+                    cur.push((x, y));
+                    t += 1;
+                }
+                lcx = x2;
+                lcy = y2;
+                cx = ex;
+                cy = ey;
+            },
+            b'T' => {
+                if !read_nums(b, &mut i, &mut nums, 2) {
+                    break;
+                }
+                let (x1, y1) = if prev_cmd == b'Q' || prev_cmd == b'T' { (2.0 * cx - lcx, 2.0 * cy - lcy) } else { (cx, cy) };
+                let (ex, ey) = (if rel { cx + nums[0] } else { nums[0] }, if rel { cy + nums[1] } else { nums[1] });
+                let mut t = 1;
+                while t <= 8 {
+                    let u = t as f64 / 8.0;
+                    let mv = 1.0 - u;
+                    cur.push((mv * mv * cx + 2.0 * mv * u * x1 + u * u * ex, mv * mv * cy + 2.0 * mv * u * y1 + u * u * ey));
+                    t += 1;
+                }
+                lcx = x1;
+                lcy = y1;
+                cx = ex;
+                cy = ey;
+            },
+            b'A' => {
+                if !read_nums(b, &mut i, &mut nums, 7) {
+                    break;
+                }
+                let (ex, ey) = (if rel { cx + nums[5] } else { nums[5] }, if rel { cy + nums[6] } else { nums[6] });
+                arc_points(cx, cy, nums[0], nums[1], nums[2], nums[3] != 0.0, nums[4] != 0.0, ex, ey, &mut cur);
                 cx = ex;
                 cy = ey;
             },
@@ -563,6 +687,8 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
                     cur.push((x, y));
                     t += 1;
                 }
+                lcx = x1;
+                lcy = y1;
                 cx = ex;
                 cy = ey;
             },
@@ -576,13 +702,69 @@ fn path_polys(d: &str, out: &mut Vec<Vec<(f64, f64)>>) {
                 }
             },
             _ => {
-                // Unknown command (S/T/A, etc.) -- bail out of this path.
+                // Not a path command we know -- stop reading this path.
                 break;
             },
         }
     }
     if cur.len() >= 3 {
         out.push(cur);
+    }
+}
+
+/// An SVG elliptical arc (F.6.5 of the spec: endpoint to centre form), sampled
+/// into `out` as 16 points ending at (ex, ey).
+#[allow(clippy::too_many_arguments)]
+fn arc_points(x1: f64, y1: f64, rx: f64, ry: f64, rot_deg: f64, large: bool, sweep: bool, x2: f64, y2: f64, out: &mut Vec<(f64, f64)>) {
+    let (mut rx, mut ry) = (libm::fabs(rx), libm::fabs(ry));
+    if rx < 1e-9 || ry < 1e-9 || (x1 == x2 && y1 == y2) {
+        out.push((x2, y2));
+        return;
+    }
+    let phi = rot_deg * core::f64::consts::PI / 180.0;
+    let (cp, sp) = (libm::cos(phi), libm::sin(phi));
+    let (dx, dy) = ((x1 - x2) / 2.0, (y1 - y2) / 2.0);
+    let x1p = cp * dx + sp * dy;
+    let y1p = -sp * dx + cp * dy;
+    let lambda = x1p * x1p / (rx * rx) + y1p * y1p / (ry * ry);
+    if lambda > 1.0 {
+        let s = libm::sqrt(lambda);
+        rx *= s;
+        ry *= s;
+    }
+    let num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+    let den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+    let mut coef = if den > 0.0 { libm::sqrt((num / den).max(0.0)) } else { 0.0 };
+    if large == sweep {
+        coef = -coef;
+    }
+    let cxp = coef * rx * y1p / ry;
+    let cyp = -coef * ry * x1p / rx;
+    let ccx = cp * cxp - sp * cyp + (x1 + x2) / 2.0;
+    let ccy = sp * cxp + cp * cyp + (y1 + y2) / 2.0;
+    let ang = |ux: f64, uy: f64, vx: f64, vy: f64| -> f64 {
+        let dot = ux * vx + uy * vy;
+        let len = libm::sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy));
+        let mut a = libm::acos((dot / len.max(1e-12)).clamp(-1.0, 1.0));
+        if ux * vy - uy * vx < 0.0 {
+            a = -a;
+        }
+        a
+    };
+    let (ux, uy) = ((x1p - cxp) / rx, (y1p - cyp) / ry);
+    let (vx, vy) = ((-x1p - cxp) / rx, (-y1p - cyp) / ry);
+    let theta1 = ang(1.0, 0.0, ux, uy);
+    let mut dtheta = ang(ux, uy, vx, vy);
+    if !sweep && dtheta > 0.0 {
+        dtheta -= 2.0 * core::f64::consts::PI;
+    } else if sweep && dtheta < 0.0 {
+        dtheta += 2.0 * core::f64::consts::PI;
+    }
+    let steps = 16;
+    for k in 1..=steps {
+        let th = theta1 + dtheta * k as f64 / steps as f64;
+        let (ct, st) = (libm::cos(th), libm::sin(th));
+        out.push((ccx + rx * ct * cp - ry * st * sp, ccy + rx * ct * sp + ry * st * cp));
     }
 }
 
@@ -799,8 +981,12 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
         }
         let own = attr(tag, "transform").map(parse_transform).unwrap_or(MAT_ID);
         let ctm = mat_mul(gstack[gtop], own);
-        let fill = shape_fill(full, attr(tag, "fill"));
-        let stroke = attr(tag, "stroke").and_then(parse_color);
+        let fill = shape_fill(full, prop(tag, "fill"));
+        let stroke = prop(tag, "stroke").and_then(parse_color);
+        let op = prop(tag, "opacity").map(svg_num).unwrap_or(1.0);
+        let alpha = (op * prop(tag, "fill-opacity").map(svg_num).unwrap_or(1.0)).clamp(0.0, 1.0) as f32;
+        let salpha = (op * prop(tag, "stroke-opacity").map(svg_num).unwrap_or(1.0)).clamp(0.0, 1.0) as f32;
+        let sw = prop(tag, "stroke-width").map(svg_num).unwrap_or(1.0) * libm::sqrt(libm::fabs(ctm[0] * ctm[3] - ctm[1] * ctm[2]));
         match name {
             "use" => {
                 let href = attr(tag, "href").or_else(|| attr(tag, "xlink:href"));
@@ -828,7 +1014,7 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
                     for p in v.iter_mut() {
                         *p = mat_apply(&ctm, p.0, p.1);
                     }
-                    fill_poly(buf, w, h, &v, col);
+                    fill_poly_a(buf, w, h, &v, col, alpha);
                 }
             },
             "circle" | "ellipse" => {
@@ -848,7 +1034,7 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
                         verts.push(mat_apply(&ctm, cx + rx * cos(t), cy + ry * sin(t)));
                         a += 1;
                     }
-                    fill_poly(buf, w, h, &verts, col);
+                    fill_poly_a(buf, w, h, &verts, col, alpha);
                 }
             },
             "polygon" | "polyline" => {
@@ -859,9 +1045,10 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
                         verts.push(mat_apply(&ctm, svg_num(a), svg_num(b)));
                     }
                     if let Some(col) = fill {
-                        fill_poly(buf, w, h, &verts, col);
-                    } else if let Some(col) = stroke {
-                        stroke_path(buf, w, h, &verts, col);
+                        fill_poly_a(buf, w, h, &verts, col, alpha);
+                    }
+                    if let Some(col) = stroke {
+                        stroke_a(buf, w, h, &verts, col, sw, salpha);
                     }
                 }
             },
@@ -871,7 +1058,7 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
                         mat_apply(&ctm, attr(tag, "x1").map(svg_num).unwrap_or(0.0), attr(tag, "y1").map(svg_num).unwrap_or(0.0)),
                         mat_apply(&ctm, attr(tag, "x2").map(svg_num).unwrap_or(0.0), attr(tag, "y2").map(svg_num).unwrap_or(0.0)),
                     ];
-                    stroke_path(buf, w, h, &verts, col);
+                    stroke_a(buf, w, h, &verts, col, sw, salpha);
                 }
             },
             "path" => {
@@ -883,9 +1070,10 @@ fn svg_render(text: &str, full: &str, base: Mat, buf: &mut [u32], w: u32, h: u32
                             *pt = mat_apply(&ctm, pt.0, pt.1);
                         }
                         if let Some(col) = fill {
-                            fill_poly(buf, w, h, p, col);
-                        } else if let Some(col) = stroke {
-                            stroke_path(buf, w, h, p, col);
+                            fill_poly_a(buf, w, h, p, col, alpha);
+                        }
+                        if let Some(col) = stroke {
+                            stroke_a(buf, w, h, p, col, sw, salpha);
                         }
                     }
                 }
@@ -920,12 +1108,47 @@ fn container_inner(el: &str) -> Option<&str> {
 }
 
 fn stroke_path(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32) {
+    stroke_a(px, w, h, verts, color, 1.0, 1.0)
+}
+
+/// A stroke `width` pixels wide: hairlines for thin ones, a filled quad per
+/// segment with round joins otherwise.
+fn stroke_a(px: &mut [u32], w: u32, h: u32, verts: &[(f64, f64)], color: u32, width: f64, alpha: f32) {
+    if width <= 1.5 {
+        for seg in verts.windows(2) {
+            draw_line_a(px, w, h, seg[0], seg[1], color, alpha);
+        }
+        return;
+    }
+    let hw = width / 2.0;
     for seg in verts.windows(2) {
-        draw_line(px, w, h, seg[0], seg[1], color);
+        let (ax, ay) = seg[0];
+        let (bx, by) = seg[1];
+        let (dx, dy) = (bx - ax, by - ay);
+        let len = libm::sqrt(dx * dx + dy * dy);
+        if len < 1e-6 {
+            continue;
+        }
+        let (nx, ny) = (-dy / len * hw, dx / len * hw);
+        fill_poly_a(px, w, h, &[(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)], color, alpha);
+    }
+    if width >= 3.0 {
+        for &(x, y) in verts {
+            let mut ring: Vec<(f64, f64)> = Vec::with_capacity(12);
+            for k in 0..12 {
+                let a = k as f64 / 12.0 * 6.2831853;
+                ring.push((x + hw * cos(a), y + hw * sin(a)));
+            }
+            fill_poly_a(px, w, h, &ring, color, alpha);
+        }
     }
 }
 
 fn draw_line(px: &mut [u32], w: u32, h: u32, a: (f64, f64), b: (f64, f64), color: u32) {
+    draw_line_a(px, w, h, a, b, color, 1.0)
+}
+
+fn draw_line_a(px: &mut [u32], w: u32, h: u32, a: (f64, f64), b: (f64, f64), color: u32, alpha: f32) {
     let dx = (b.0 - a.0).abs();
     let dy = (b.1 - a.1).abs();
     // Cap steps: a stroke coordinate far outside the (already small) canvas
@@ -938,7 +1161,8 @@ fn draw_line(px: &mut [u32], w: u32, h: u32, a: (f64, f64), b: (f64, f64), color
         let x = (a.0 + (b.0 - a.0) * u) as i32;
         let y = (a.1 + (b.1 - a.1) * u) as i32;
         if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-            px[(y as u32 * w + x as u32) as usize] = color;
+            let idx = (y as u32 * w + x as u32) as usize;
+            px[idx] = if alpha >= 1.0 { color } else { blend(px[idx], color, alpha) };
         }
         t += 1;
     }

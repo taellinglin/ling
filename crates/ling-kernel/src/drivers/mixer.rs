@@ -623,6 +623,11 @@ fn render(buf: &mut [i16]) {
         // silenced while another app holds exclusive output.
         let lsx = crate::lingdaw::block(frames);
         let lsx_gain = if excl >= 0 { 0.0 } else { 1.0 };
+        // Programs' sound effects and music (drivers::sfx).
+        let mut fx: alloc::vec::Vec<i16> = alloc::vec![0i16; frames * 2];
+        if crate::drivers::sfx::active() {
+            crate::drivers::sfx::mix_into(&mut fx);
+        }
         for f in 0..frames {
             let mut accl = 0.0f64;
             let mut accr = 0.0f64;
@@ -630,6 +635,8 @@ fn render(buf: &mut [i16]) {
                 accl += d[f * 2] as f64 / 32768.0 * lsx_gain;
                 accr += d[f * 2 + 1] as f64 / 32768.0 * lsx_gain;
             }
+            accl += fx[f * 2] as f64 / 32768.0 * lsx_gain;
+            accr += fx[f * 2 + 1] as f64 / 32768.0 * lsx_gain;
             for v in voices.iter_mut() {
                 if !v.active {
                     continue;

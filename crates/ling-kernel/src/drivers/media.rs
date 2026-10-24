@@ -52,7 +52,7 @@ fn u16le(b: &[u8], o: usize) -> u16 {
 
 /// Parse a WAV image already in `buf[..len]`, returning
 /// (data_offset, data_len, rate, channels, bits). Walks RIFF chunks.
-fn parse_wav(buf: &[u8], len: usize) -> Option<(usize, usize, u32, u8, u8)> {
+pub(crate) fn parse_wav(buf: &[u8], len: usize) -> Option<(usize, usize, u32, u8, u8)> {
     if len < 12 || &buf[0..4] != b"RIFF" || &buf[8..12] != b"WAVE" {
         return None;
     }

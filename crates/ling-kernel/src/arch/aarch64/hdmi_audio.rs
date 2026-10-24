@@ -198,6 +198,11 @@ fn fill_block(st: &mut State, idx: usize) {
     let base = st.ring + (idx * BLOCK_BYTES) as u64;
     let now = now_ms();
     let src: Option<&[i16]> = if st.tone_until_ms > now { None } else { crate::lingdaw::block(BLOCK_FRAMES) };
+    // Programs' sound effects and music (drivers::sfx), on top of the engine.
+    let mut fx: alloc::vec::Vec<i16> = alloc::vec![0i16; BLOCK_FRAMES * 2];
+    if crate::drivers::sfx::active() {
+        crate::drivers::sfx::mix_into(&mut fx);
+    }
     for i in 0..BLOCK_FRAMES {
         let (l, r) = if st.tone_until_ms > now {
             st.tone_phase += 440.0 / RATE as f32;
@@ -207,10 +212,11 @@ fn fill_block(st: &mut State, idx: usize) {
             let v = (libm::sinf(st.tone_phase * core::f32::consts::TAU) * 9000.0) as i16;
             (v, v)
         } else {
-            match src {
-                Some(s) if i * 2 + 1 < s.len() => (s[i * 2], s[i * 2 + 1]),
+            let (dl, dr) = match src {
+                Some(s) if i * 2 + 1 < s.len() => (s[i * 2] as i32, s[i * 2 + 1] as i32),
                 _ => (0, 0),
-            }
+            };
+            ((dl + fx[i * 2] as i32).clamp(-32767, 32767) as i16, (dr + fx[i * 2 + 1] as i32).clamp(-32767, 32767) as i16)
         };
         let f = st.frame.wrapping_add(i as u32);
         unsafe {

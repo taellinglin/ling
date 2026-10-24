@@ -1284,11 +1284,13 @@ fn picture(path: &str) -> Option<&'static (usize, usize, Vec<u32>)> {
     let cache = unsafe { &mut *(&raw mut PICS) };
     if !cache.contains_key(path) {
         let decoded = crate::vfs::read(path).and_then(|data| {
+            // .svgz (and any gzip'd picture) comes in compressed.
+            let data = crate::drivers::image::gunzip(&data).unwrap_or(data);
             let data: &[u8] = &data;
             let l = path.to_ascii_lowercase();
             if l.ends_with(".bmp") {
                 decode_bmp(data)
-            } else if l.ends_with(".svg") || crate::drivers::image::looks_svg(data) {
+            } else if l.ends_with(".svg") || l.ends_with(".svgz") || crate::drivers::image::looks_svg(data) {
                 crate::drivers::image::decode_svg_capped(data, 1024).map(|i| (i.w as usize, i.h as usize, i.px))
             } else {
                 crate::drivers::image::decode_png(data).map(|i| (i.w as usize, i.h as usize, i.px))
@@ -1335,7 +1337,7 @@ pub fn register_builtin_home(user: &str) {
     }
     let starters: [(&str, &'static [u8]); 3] = [
         ("Scripts/hello.ling", b"// A Ling script -- open it from Files, or `ling run` it from the console.\nbind main = do {\n    println(\"Hello from LingOS!\")\n    println(\"2 + 2 = \", 2 + 2)\n}\n"),
-        ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#241B33\"/><circle cx=\"100\" cy=\"100\" r=\"70\" fill=\"#4A8FE0\"/><polygon points=\"100,48 146,140 54,140\" fill=\"#FFFFFF\"/></svg>\n"),
+        ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#1b1b1b\"/><circle cx=\"100\" cy=\"100\" r=\"72\" style=\"fill:#3baaeb;stroke:#f7941e;stroke-width:6\"/><path d=\"M 100 40 A 60 60 0 0 1 160 100 L 100 100 Z\" fill=\"#f7d846\" opacity=\"0.85\"/><path d=\"M 55 125 Q 100 170 145 125 T 145 125\" style=\"fill:none;stroke:#ffffff;stroke-width:5;stroke-opacity:0.9\"/><polygon points=\"100,60 128,120 72,120\" fill=\"#ffffff\" fill-opacity=\"0.7\"/></svg>\n"),
         ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts\n\nOn the Raspberry Pi this home is built into the image (read-only)\nuntil LingOS can read and write the SD card.\n"),
     ];
     for (rel, data) in starters {
@@ -2325,6 +2327,104 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"mouse_scroll" => num(unsafe { (*(&raw const INPUT)).wheel } as f64),
         b"mouse_scroll_x" => num(0.0),
         b"key_down" => boolean(key_down(&path_arg(args, 0))),
+        // Sound (drivers::sfx): the host runtime's audio_* / music_* API.
+        b"audio_sample_load" => {
+            let path = path_arg(args, 0);
+            match crate::vfs::read(&path).and_then(|d| crate::drivers::sfx::load_wav(&d)) {
+                Some(id) => num(id as f64),
+                None => num(-1.0),
+            }
+        },
+        b"audio_sample_play" => {
+            let f = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+            let id = f(0, -1.0);
+            if id < 0.0 {
+                num(-1.0)
+            } else {
+                num(crate::drivers::sfx::play_at(id as usize, f(1, 0.0) as f32, f(2, 0.0) as f32, f(3, 0.0) as f32, f(4, 0.0) as f32, f(5, 1.0) as f32, f(6, 0.0) > 0.5).map(|v| v as f64).unwrap_or(-1.0))
+            }
+        },
+        b"audio_sample_play_flat" => {
+            let f = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+            let id = f(0, -1.0);
+            if id < 0.0 {
+                num(-1.0)
+            } else {
+                num(crate::drivers::sfx::play(id as usize, f(1, 1.0) as f32, 0.0, f(2, 0.0) > 0.5, f(3, 1.0), false).map(|v| v as f64).unwrap_or(-1.0))
+            }
+        },
+        b"audio_sample_stop" => {
+            let v = args.first().map(|&v| to_f64(v)).unwrap_or(-1.0);
+            if v >= 0.0 {
+                crate::drivers::sfx::stop(v as usize);
+            }
+            UNIT
+        },
+        b"audio_sample_duration" => num(crate::drivers::sfx::duration(args.first().map(|&v| to_f64(v)).unwrap_or(-1.0).max(0.0) as usize)),
+        b"audio_listener" => {
+            let f = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+            crate::drivers::sfx::set_listener(f(0, 1.0) as f32, f(1, 0.0) as f32);
+            UNIT
+        },
+        b"audio_volume" => {
+            crate::drivers::sfx::set_master(args.first().map(|&v| to_f64(v)).unwrap_or(1.0) as f32);
+            UNIT
+        },
+        b"audio_sfx" => {
+            // (x, y, z, w, freq, amp, dur, wave): a synthesised blip at a point.
+            let f = |i: usize, d: f64| args.get(i).map(|&v| to_f64(v)).unwrap_or(d);
+            let id = crate::drivers::sfx::synth(f(4, 440.0), f(5, 0.5), f(6, 0.1), f(7, 0.0) as u32);
+            let _ = crate::drivers::sfx::play_at(id, f(0, 0.0) as f32, f(1, 0.0) as f32, f(2, 0.0) as f32, f(3, 0.0) as f32, 1.0, false);
+            UNIT
+        },
+        b"ui_sound" => {
+            let (freq, dur, wave) = match path_arg(args, 0).as_str() {
+                "click" | "tick" => (1200.0, 0.03, 1),
+                "error" | "deny" => (180.0, 0.18, 1),
+                "open" | "rise" => (660.0, 0.12, 0),
+                "close" | "fall" => (440.0, 0.12, 0),
+                "pickup" | "coin" => (1568.0, 0.08, 3),
+                _ => (880.0, 0.05, 0),
+            };
+            let id = crate::drivers::sfx::synth(freq, 0.35, dur, wave);
+            let _ = crate::drivers::sfx::play(id, 1.0, 0.0, false, 1.0, false);
+            UNIT
+        },
+        b"music_load" => {
+            let path = path_arg(args, 0);
+            match crate::vfs::read(&path).and_then(|d| crate::drivers::sfx::load_wav(&d)) {
+                Some(id) => num(id as f64),
+                None => num(-1.0),
+            }
+        },
+        b"music_play" => {
+            let id = args.first().map(|&v| to_f64(v)).unwrap_or(-1.0);
+            if id >= 0.0 {
+                let _ = crate::drivers::sfx::play(id as usize, 1.0, 0.0, true, 1.0, true);
+            }
+            UNIT
+        },
+        b"music_stop" => {
+            crate::drivers::sfx::stop_music();
+            UNIT
+        },
+        b"music_pause" => {
+            crate::drivers::sfx::pause_music();
+            UNIT
+        },
+        b"music_seek" => {
+            crate::drivers::sfx::seek_music(args.first().map(|&v| to_f64(v)).unwrap_or(0.0));
+            UNIT
+        },
+        b"music_pos" => num(crate::drivers::sfx::music_pos()),
+        b"music_playing" => boolean(crate::drivers::sfx::music_playing()),
+        b"music_volume" => {
+            crate::drivers::sfx::set_music_volume(args.first().map(|&v| to_f64(v)).unwrap_or(1.0) as f32);
+            UNIT
+        },
+        b"music_duration" => num(crate::drivers::sfx::duration(args.first().map(|&v| to_f64(v)).unwrap_or(-1.0).max(0.0) as usize)),
+        b"music_fft" | b"music_fft_groups" | b"music_midi_bars" => list_from(Vec::new()),
+        b"music_midi_load" | b"music_midi_count" => num(-1.0),
         // Gamepad (USB, the Pi): sticks / triggers -1..1 (triggers 0..1), buttons
         // A B X Y LB RB Back Start LS RS Guide .. d-pad 12..15, hat 0..7 / -1.
         b"pad_connected" => boolean(pad().connected),
