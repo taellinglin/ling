@@ -115,11 +115,50 @@ struct TrackDoc {
     effects: Vec<FxDoc>,
     #[serde(default)]
     clips: Vec<ClipDoc>,
+    /// The instrument's knobs, (name, 0..1), exactly the PC's `state` field.
+    #[serde(default)]
+    state: Vec<(String, f32)>,
+    #[serde(default)]
+    config: String,
 }
 
 impl TrackDoc {
     fn is_audio(&self) -> bool {
         self.kind == "audio"
+    }
+
+    /// The knobs the Parameters view shows: the saved state, else the
+    /// instrument kind's defaults (the PC synth's parameter list).
+    fn params(&self) -> Vec<(String, f32)> {
+        if !self.state.is_empty() {
+            return self.state.clone();
+        }
+        let defaults: &[(&str, f32)] = if self.instrument == "drums" || self.instrument == "drum" {
+            &[("tune", 0.5), ("decay", 0.5), ("tone", 0.5), ("snap", 0.5), ("room", 0.2), ("level", 0.8)]
+        } else {
+            &[
+                ("wave", 0.0), ("sub", 0.3), ("add", 0.0), ("fm", 0.0), ("cutoff", 0.6), ("reso", 0.2), ("filt env", 0.3),
+                ("partials", 0.5), ("rolloff", 0.5), ("odd/even", 0.5), ("fm ratio", 0.25), ("fm index", 0.0), ("detune", 0.15),
+                ("noise", 0.0), ("attack", 0.1), ("decay", 0.4), ("sustain", 0.7), ("release", 0.3), ("lfo rate", 0.3),
+                ("lfo cut", 0.0), ("lfo pitch", 0.0), ("fm env", 0.0),
+            ]
+        };
+        defaults.iter().map(|(n, v)| (String::from(*n), *v)).collect()
+    }
+
+    fn param(&self, name: &str) -> Option<f32> {
+        self.params().into_iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+
+    fn set_param(&mut self, name: &str, v: f32) {
+        if self.state.is_empty() {
+            self.state = self.params();
+        }
+        let v = if v.is_finite() { v.clamp(0.0, 1.0) } else { return };
+        match self.state.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = v,
+            None => self.state.push((String::from(name), v)),
+        }
     }
 }
 
@@ -332,6 +371,305 @@ fn tick(d: &mut Daw) {
         beat = 0.0;
     }
     d.position = beat;
+}
+
+// ── Tracker view (daw_trk_*): the arrangement as rows and channels ─────────
+// Every instrument track becomes as many channels as it has notes sounding at
+// once (up to 8): notes are dealt to the lowest free channel, so a chord reads
+// as a row of notes across its channels. Audio tracks get one channel whose
+// cells mark where clips start. A row is 1 / rows-per-beat beats. Ported from
+// ling-daw's tracker_api.rs; the layout is rebuilt when the project changes.
+const TRK_VOICES: usize = 8;
+const AUDIO_KEY: i64 = 128;
+
+#[derive(Clone)]
+struct TrkEv {
+    s: f64,
+    e: f64,
+    key: i64,
+    vel: f32,
+    clip: usize,
+    note: usize,
+}
+
+struct TrkChan {
+    track: usize,
+    voice: usize,
+    evs: Vec<TrkEv>,
+}
+
+struct TrkLayout {
+    rev: u64,
+    chans: Vec<TrkChan>,
+    end: f64,
+}
+
+static mut TRK: Option<TrkLayout> = None;
+
+fn trk_track_events(t: &TrackDoc) -> Vec<TrkEv> {
+    let mut out: Vec<TrkEv> = Vec::new();
+    for (ci, c) in t.clips.iter().enumerate() {
+        if c.is_audio() {
+            out.push(TrkEv { s: c.start, e: c.start + c.len, key: AUDIO_KEY, vel: 1.0, clip: ci, note: usize::MAX });
+            continue;
+        }
+        let ll = if c.loop_len >= 0.25 && c.loop_len < c.len { c.loop_len } else { 0.0 };
+        let reps = if ll > 0.0 { (libm::ceil(c.len / ll) as usize).min(4096) } else { 1 };
+        for k in 0..reps {
+            let base = c.start + k as f64 * ll;
+            let limit = if ll > 0.0 { ll.min(c.len - k as f64 * ll) } else { c.len };
+            for (ni, n) in c.midi_notes.iter().enumerate() {
+                if n.start >= limit {
+                    continue;
+                }
+                let s = base + n.start;
+                out.push(TrkEv { s, e: s + n.len.min(limit - n.start).max(0.02), key: n.key as i64, vel: n.vel, clip: ci, note: ni });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.s.total_cmp(&b.s).then(a.key.cmp(&b.key)));
+    out
+}
+
+fn trk_build(p: &ProjectDoc, rev: u64) -> TrkLayout {
+    let mut chans = Vec::new();
+    let mut end = 0f64;
+    for (ti, t) in p.tracks.iter().enumerate() {
+        let evs = trk_track_events(t);
+        end = end.max(evs.iter().map(|e| e.e).fold(0.0, f64::max));
+        let mut lanes: Vec<Vec<TrkEv>> = alloc::vec![Vec::new()];
+        let mut last_end: Vec<f64> = alloc::vec![f64::MIN];
+        if t.is_audio() {
+            lanes[0] = evs;
+        } else {
+            for ev in evs {
+                let free = last_end.iter().position(|le| *le <= ev.s + 1e-6);
+                let v = match free {
+                    Some(v) => v,
+                    None if lanes.len() < TRK_VOICES => {
+                        lanes.push(Vec::new());
+                        last_end.push(f64::MIN);
+                        lanes.len() - 1
+                    },
+                    None => (0..lanes.len()).min_by(|a, b| last_end[*a].total_cmp(&last_end[*b])).unwrap_or(0),
+                };
+                last_end[v] = ev.e;
+                lanes[v].push(ev);
+            }
+        }
+        for (v, evs) in lanes.into_iter().enumerate() {
+            chans.push(TrkChan { track: ti, voice: v, evs });
+        }
+    }
+    TrkLayout { rev, chans, end }
+}
+
+fn trk_layout(p: &ProjectDoc, rev: u64) -> &'static TrkLayout {
+    let slot = unsafe { &mut *(&raw mut TRK) };
+    if slot.as_ref().map(|l| l.rev != rev).unwrap_or(true) {
+        *slot = Some(trk_build(p, rev));
+    }
+    slot.as_ref().unwrap()
+}
+
+/// Cells of a block of rows: (key, velocity 0..1, hold) row by row for the
+/// given channels. key -1 none, 128 an audio clip start; hold 0 none, 1 an
+/// earlier note still sounds, 2 an earlier note ended in this row.
+fn trk_page_cells(l: &TrkLayout, beat0: f64, rows: usize, rpb: f64, chans: &[usize]) -> Vec<(i64, f32, u8)> {
+    let cn = chans.len();
+    let rl = 1.0 / rpb;
+    let mut cells = alloc::vec![(-1i64, 0f32, 0u8); rows * cn];
+    for (ci, chi) in chans.iter().enumerate() {
+        let Some(ch) = l.chans.get(*chi) else { continue };
+        let i0 = ch.evs.partition_point(|e| e.e <= beat0 - 1e-9);
+        for ev in &ch.evs[i0..] {
+            if ev.s >= beat0 + rows as f64 * rl {
+                break;
+            }
+            let on_row = libm::floor((ev.s - beat0) / rl + 1e-6);
+            let off_row = libm::ceil((ev.e - beat0) / rl - 1e-6);
+            if on_row >= 0.0 && (on_row as usize) < rows {
+                let c = &mut cells[on_row as usize * cn + ci];
+                c.0 = ev.key;
+                c.1 = ev.vel;
+            }
+            let from = (on_row + 1.0).max(0.0) as usize;
+            let to = (off_row.max(0.0) as usize).min(rows);
+            for r in from..to {
+                let c = &mut cells[r * cn + ci];
+                if c.0 < 0 && c.2 == 0 {
+                    c.2 = 1;
+                }
+            }
+            if off_row >= 0.0 && (off_row as usize) < rows && ev.key != AUDIO_KEY {
+                let c = &mut cells[off_row as usize * cn + ci];
+                if c.0 < 0 {
+                    c.2 = 2;
+                }
+            }
+        }
+    }
+    cells
+}
+
+/// A list argument's numbers (a non-list gives an empty vector).
+fn nums_arg(args: &[u64], i: usize) -> Vec<f64> {
+    use crate::lingrt::{is_list, list_items};
+    match args.get(i) {
+        Some(&v) if is_list(v) => list_items(v).iter().map(|&x| to_f64(x)).collect(),
+        _ => Vec::new(),
+    }
+}
+
+// ── Sheet view (daw_sheet_*): a compact score layout of our own ──────────────
+// Page 990 x 1400 (portrait). Every `bars`-bar stretch of every chosen
+// instrument track with notes in it is one system: one staff (treble, bass by
+// the track's average pitch, percussion for drums), five lines 10 apart. The
+// geometry list is the PC's: [pw, ph, nsys, (track, b0, b1, x0, bar_w, y top,
+// y bottom, nstaves, (clef, y bottom line, half-step)*)*, nnotes, (track, key,
+// start, x, y)*] in page units.
+const SH_PW: f64 = 990.0;
+const SH_PH: f64 = 1400.0;
+const SH_LEFT: f64 = 60.0;
+const SH_RIGHT: f64 = 40.0;
+const SH_TOP: f64 = 90.0;
+const SH_BOTTOM: f64 = 60.0;
+const SH_STEP: f64 = 5.0;
+const SH_SYS_H: f64 = 110.0;
+
+struct ShSys {
+    track: usize,
+    b0: f64,
+    b1: f64,
+    x0: f64,
+    bar_w: f64,
+    y0: f64,
+    y1: f64,
+    clef: u8,
+    yb: f64,
+}
+
+struct ShNote {
+    track: usize,
+    key: u8,
+    start: f64,
+    x: f64,
+    y: f64,
+}
+
+struct ShPage {
+    systems: Vec<ShSys>,
+    notes: Vec<ShNote>,
+}
+
+struct ShSheet {
+    rev: u64,
+    opts: String,
+    pages: Vec<ShPage>,
+}
+
+static mut SHEET: Option<ShSheet> = None;
+
+fn sh_opt<'a>(opts: &'a str, key: &str) -> &'a str {
+    for kv in opts.split(';') {
+        if let Some((k, v)) = kv.split_once('=') {
+            if k.trim() == key {
+                return v.trim();
+            }
+        }
+    }
+    ""
+}
+
+/// Diatonic number of a key (C-major letters; a sharp sits on the natural below).
+fn sh_dn(key: u8) -> i32 {
+    const LETTER: [i32; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
+    (key as i32 / 12) * 7 + LETTER[(key % 12) as usize]
+}
+
+/// Notes of a track in beats of the arrangement (clip loops unrolled).
+fn sh_track_notes(t: &TrackDoc) -> Vec<(f64, f64, u8)> {
+    let mut out = Vec::new();
+    for c in &t.clips {
+        if c.is_audio() {
+            continue;
+        }
+        let ll = if c.loop_len >= 0.25 && c.loop_len < c.len { c.loop_len } else { 0.0 };
+        let reps = if ll > 0.0 { (libm::ceil(c.len / ll) as usize).min(512) } else { 1 };
+        for k in 0..reps {
+            let base = c.start + k as f64 * ll;
+            let limit = if ll > 0.0 { ll.min(c.len - k as f64 * ll) } else { c.len };
+            for n in &c.midi_notes {
+                if n.start < limit {
+                    out.push((base + n.start, n.len.min(limit - n.start), n.key));
+                }
+            }
+        }
+    }
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out
+}
+
+fn sh_build(p: &ProjectDoc, opts: &str) -> Vec<ShPage> {
+    let bars = sh_opt(opts, "bars").parse::<f64>().unwrap_or(4.0).clamp(1.0, 8.0);
+    let from_bar = sh_opt(opts, "from").parse::<f64>().unwrap_or(1.0).max(1.0);
+    let to_bar = sh_opt(opts, "to").parse::<f64>().unwrap_or(0.0);
+    let chosen: Vec<usize> = sh_opt(opts, "tracks").split(',').filter_map(|s| s.trim().parse::<usize>().ok()).collect();
+    let mut pages: Vec<ShPage> = Vec::new();
+    let mut page = ShPage { systems: Vec::new(), notes: Vec::new() };
+    let mut y = SH_TOP;
+    let end = p.end_beat().max(4.0);
+    let last_bar = if to_bar > 0.0 { to_bar } else { libm::ceil(end / 4.0) };
+    let mut bar = from_bar;
+    let x0 = SH_LEFT + 30.0;
+    let bar_w = (SH_PW - x0 - SH_RIGHT) / bars;
+    while bar <= last_bar {
+        let b0 = (bar - 1.0) * 4.0;
+        let b1 = b0 + bars * 4.0;
+        for (ti, t) in p.tracks.iter().enumerate() {
+            if t.is_audio() || (!chosen.is_empty() && !chosen.contains(&ti)) {
+                continue;
+            }
+            let notes = sh_track_notes(t);
+            let here: Vec<&(f64, f64, u8)> = notes.iter().filter(|n| n.0 >= b0 - 1e-9 && n.0 < b1 - 1e-9).collect();
+            if here.is_empty() {
+                continue;
+            }
+            if y + SH_SYS_H > SH_PH - SH_BOTTOM {
+                pages.push(core::mem::replace(&mut page, ShPage { systems: Vec::new(), notes: Vec::new() }));
+                y = SH_TOP;
+            }
+            let drums = t.instrument == "drums" || t.instrument == "drum";
+            let avg = here.iter().map(|n| n.2 as f64).sum::<f64>() / here.len() as f64;
+            let clef: u8 = if drums { 2 } else if avg < 57.0 { 1 } else { 0 };
+            let yb = y + 20.0 + 8.0 * SH_STEP;
+            let reference = if clef == 1 { sh_dn(43) } else { sh_dn(64) };
+            for n in &here {
+                let x = x0 + 14.0 + (n.0 - b0) / 4.0 * bar_w;
+                let ny = if drums {
+                    yb - ((n.2 as i32 % 8) as f64) * SH_STEP
+                } else {
+                    yb - ((sh_dn(n.2) - reference) as f64) * SH_STEP
+                };
+                page.notes.push(ShNote { track: ti, key: n.2, start: n.0, x, y: ny });
+            }
+            page.systems.push(ShSys { track: ti, b0, b1, x0, bar_w, y0: y, y1: y + SH_SYS_H - 20.0, clef, yb });
+            y += SH_SYS_H;
+        }
+        bar += bars;
+    }
+    if !page.systems.is_empty() || pages.is_empty() {
+        pages.push(page);
+    }
+    pages
+}
+
+fn sh_sheet(p: &ProjectDoc, rev: u64, opts: &str) -> &'static ShSheet {
+    let slot = unsafe { &mut *(&raw mut SHEET) };
+    if slot.as_ref().map(|s| s.rev != rev || s.opts != opts).unwrap_or(true) {
+        *slot = Some(ShSheet { rev, opts: String::from(opts), pages: sh_build(p, opts) });
+    }
+    slot.as_ref().unwrap()
 }
 
 fn effects_of(p: &ProjectDoc, t: i64) -> Option<&Vec<FxDoc>> {
@@ -686,6 +1024,369 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             d.rev += 1;
             num((t.clips.len() - 1) as f64)
         },
+        // ── project meta ──
+        b"daw_meta_get" => mk_str(&p.meta.iter().find(|(k, _)| *k == s(0)).map(|(_, v)| v.clone()).unwrap_or_default()),
+        b"daw_meta_set" => {
+            let (key, val) = (s(0), s(1));
+            match p.meta.iter_mut().find(|(k, _)| *k == key) {
+                Some(slot) => slot.1 = val,
+                None => p.meta.push((key, val)),
+            }
+            d.dirty = true;
+            d.rev += 1;
+            UNIT
+        },
+        // ── notes ──
+        b"daw_note_add" => {
+            // (t, c, start, len, key, vel) -> idx
+            let Some(c) = p.tracks.get_mut(u(0)).and_then(|t| t.clips.get_mut(u(1))) else { return Some(num(-1.0)) };
+            if c.is_audio() {
+                return Some(num(-1.0));
+            }
+            c.midi_notes.push(NoteDoc {
+                start: n(2).max(0.0),
+                len: n(3).max(0.03),
+                key: n(4).clamp(0.0, 127.0) as u8,
+                vel: n(5).clamp(0.01, 1.0) as f32,
+                pan: 0.0,
+                cutoff: 0.5,
+                reso: 0.5,
+            });
+            d.dirty = true;
+            d.rev += 1;
+            num((c.midi_notes.len() - 1) as f64)
+        },
+        b"daw_note_set" => {
+            // (t, c, idx, field, v)
+            if let Some(x) = p.tracks.get_mut(u(0)).and_then(|t| t.clips.get_mut(u(1))).and_then(|c| c.midi_notes.get_mut(u(2))) {
+                let v = n(4);
+                match s(3).as_str() {
+                    "start" => x.start = v.max(0.0),
+                    "len" => x.len = v.max(0.03),
+                    "key" => x.key = v.clamp(0.0, 127.0) as u8,
+                    "vel" => x.vel = v.clamp(0.01, 1.0) as f32,
+                    "pan" => x.pan = v.clamp(-1.0, 1.0) as f32,
+                    "cutoff" => x.cutoff = v.clamp(0.0, 1.0) as f32,
+                    "reso" => x.reso = v.clamp(0.0, 1.0) as f32,
+                    _ => {},
+                }
+            }
+            d.dirty = true;
+            d.rev += 1;
+            UNIT
+        },
+        b"daw_note_remove" => {
+            if let Some(c) = p.tracks.get_mut(u(0)).and_then(|t| t.clips.get_mut(u(1))) {
+                if u(2) < c.midi_notes.len() {
+                    c.midi_notes.remove(u(2));
+                }
+            }
+            d.dirty = true;
+            d.rev += 1;
+            UNIT
+        },
+        b"daw_notes_apply" => {
+            // (t, c, mode, selected indices, origin [start, key]* by note, origin lengths by note, p1, p2)
+            // "move": p1 beats, p2 semitones  "resize": p1 extra beats, p2 shortest  "stretch": p1 anchor, p2 factor
+            let (sel, orig, olen) = (nums_arg(args, 3), nums_arg(args, 4), nums_arg(args, 5));
+            let (mode, p1, p2) = (s(2), n(6), n(7));
+            if p1.is_finite() && p2.is_finite() {
+                if let Some(c) = p.tracks.get_mut(u(0)).and_then(|t| t.clips.get_mut(u(1))) {
+                    for si in sel {
+                        let i = si.max(0.0) as usize;
+                        let Some(x) = c.midi_notes.get_mut(i) else { continue };
+                        let o_start = orig.get(i * 2).copied();
+                        match mode.as_str() {
+                            "move" => {
+                                if let (Some(os), Some(ok)) = (o_start, orig.get(i * 2 + 1)) {
+                                    x.start = (os + p1).max(0.0);
+                                    x.key = (ok + p2).clamp(0.0, 127.0) as u8;
+                                }
+                            },
+                            "resize" => {
+                                if let Some(ol) = olen.get(i) {
+                                    x.len = (ol + p1).max(p2.max(0.03));
+                                }
+                            },
+                            "stretch" => {
+                                if let (Some(os), Some(ol)) = (o_start, olen.get(i)) {
+                                    x.start = (p1 + (os - p1) * p2).max(0.0);
+                                    x.len = (ol * p2).max(0.06);
+                                }
+                            },
+                            _ => {},
+                        }
+                    }
+                }
+                d.dirty = true;
+                d.rev += 1;
+            }
+            UNIT
+        },
+        b"daw_note_lyrics" => {
+            // one string per note; the Pi engine keeps no per-note lyrics yet
+            let count = p.tracks.get(u(0)).and_then(|t| t.clips.get(u(1))).map(|c| c.midi_notes.len()).unwrap_or(0);
+            list_from((0..count).map(|_| mk_str("")).collect())
+        },
+        // ── instrument parameters (the knobs of the Parameters view) ──
+        b"daw_inst_params" => list_from(
+            p.tracks.get(u(0)).map(|t| t.params()).unwrap_or_default().iter().flat_map(|(k, v)| [mk_str(k), num(*v as f64)]).collect(),
+        ),
+        b"daw_inst_get" => num(p.tracks.get(u(0)).and_then(|t| t.param(&s(1))).map(|v| v as f64).unwrap_or(-1.0)),
+        b"daw_inst_get_many" => {
+            use crate::lingrt::{is_list, list_items};
+            let names: Vec<String> = match args.get(1) {
+                Some(&v) if is_list(v) => list_items(v).iter().map(|&x| to_string(x)).collect(),
+                _ => Vec::new(),
+            };
+            let t = p.tracks.get(u(0));
+            list_from(names.iter().map(|nm| num(t.and_then(|t| t.param(nm)).map(|v| v as f64).unwrap_or(-1.0))).collect())
+        },
+        b"daw_inst_set" => {
+            if let Some(t) = p.tracks.get_mut(u(0)) {
+                t.set_param(&s(1), n(2) as f32);
+                d.dirty = true;
+                d.rev += 1;
+            }
+            UNIT
+        },
+        b"daw_inst_parts" | b"daw_inst_presets" | b"daw_inst_categories" | b"daw_inst_plot" => list_from(Vec::new()),
+        b"daw_inst_part" => num(0.0),
+        b"daw_inst_ab_side" => num(-1.0),
+        b"daw_inst_select_part" | b"daw_inst_preset" | b"daw_inst_ab" | b"daw_inst_default" => UNIT,
+        b"daw_inst_random" => boolean(false),
+        // ── not on the Pi yet: theory analysis, sends / sidechains ──
+        b"daw_th_keys" | b"daw_th_chords" | b"daw_th_phrases" | b"daw_th_roles" | b"daw_th_vocab" => list_from(Vec::new()),
+        b"daw_route_count" => num(0.0),
+        // ── Tracker view ──
+        b"daw_trk_channels" => {
+            let l = trk_layout(p, d.rev);
+            list_from(l.chans.iter().flat_map(|c| [num(c.track as f64), num(c.voice as f64)]).collect())
+        },
+        b"daw_trk_length" => num(trk_layout(p, d.rev).end),
+        b"daw_trk_page" => {
+            // (first beat, rows, rows per beat, first channel, channels) -> [key, velocity 0..127, hold]* row by row
+            let l = trk_layout(p, d.rev);
+            let (beat0, rows, rpb) = (n(0), u(1).min(256), n(2).clamp(1.0, 16.0));
+            let (c0, cn) = (u(3), u(4).min(64));
+            let idx: Vec<usize> = (0..cn).map(|ci| c0 + ci).collect();
+            let cells = trk_page_cells(l, beat0, rows, rpb, &idx);
+            list_from(cells.into_iter().flat_map(|(k, v, h)| [num(k as f64), num(libm::round((v * 127.0) as f64).clamp(0.0, 127.0)), num(h as f64)]).collect())
+        },
+        b"daw_trk_ring" => {
+            // (track, first beat, beats, slots) -> loudest note start (0..1) in each slot
+            let l = trk_layout(p, d.rev);
+            let (t, beat0, beats, slots) = (u(0), n(1), n(2).max(0.25), u(3).clamp(1, 128));
+            let mut out = alloc::vec![0f64; slots];
+            for ch in l.chans.iter().filter(|c| c.track == t) {
+                let i0 = ch.evs.partition_point(|e| e.e <= beat0 - 1e-9);
+                for ev in &ch.evs[i0..] {
+                    if ev.s >= beat0 + beats {
+                        break;
+                    }
+                    if ev.s >= beat0 - 1e-9 {
+                        let k = (((ev.s - beat0) / beats) * slots as f64) as usize;
+                        if k < slots {
+                            out[k] = out[k].max(ev.vel as f64);
+                        }
+                    }
+                }
+            }
+            list_from(out.into_iter().map(num).collect())
+        },
+        b"daw_trk_set" => {
+            // (channel, beat, row length, key (-1 clears), velocity 0..127, length in beats (0 = one row)) -> 1 when changed
+            let (chi, beat, rl, key) = (u(0), n(1), n(2).max(0.01), n(3) as i64);
+            let vel = (n(4) / 127.0).clamp(0.02, 1.0) as f32;
+            let len = if n(5) > 0.0 { n(5) } else { rl };
+            let (track, kill) = {
+                let l = trk_layout(p, d.rev);
+                let Some(ch) = l.chans.get(chi) else { return Some(boolean(false)) };
+                let mut kill: Vec<(usize, usize)> =
+                    ch.evs.iter().filter(|e| e.s >= beat - 1e-6 && e.s < beat + rl - 1e-6 && e.note != usize::MAX).map(|e| (e.clip, e.note)).collect();
+                kill.sort_unstable();
+                kill.dedup();
+                (ch.track, kill)
+            };
+            let Some(t) = p.tracks.get_mut(track) else { return Some(boolean(false)) };
+            if t.is_audio() {
+                return Some(boolean(false));
+            }
+            let mut changed = !kill.is_empty();
+            for (ci, ni) in kill.into_iter().rev() {
+                if let Some(c) = t.clips.get_mut(ci) {
+                    if ni < c.midi_notes.len() {
+                        c.midi_notes.remove(ni);
+                    }
+                }
+            }
+            if (0..128).contains(&key) {
+                let ci = match t.clips.iter().position(|c| !c.is_audio() && c.start <= beat + 1e-9 && beat < c.start + c.len - 1e-9) {
+                    Some(i) => i,
+                    None => {
+                        let start = libm::floor(beat / 4.0) * 4.0;
+                        t.clips.push(ClipDoc {
+                            name: String::from("Pattern"),
+                            start,
+                            len: 4.0,
+                            midi_notes: Vec::new(),
+                            audio_path: String::new(),
+                            offset_s: 0.0,
+                            gain: 1.0,
+                            pitch: 0.0,
+                            warp: 0.0,
+                            loop_len: 0.0,
+                        });
+                        t.clips.len() - 1
+                    },
+                };
+                let c = &mut t.clips[ci];
+                let mut local = beat - c.start;
+                if c.loop_len >= 0.25 && c.loop_len < c.len {
+                    local %= c.loop_len;
+                }
+                c.midi_notes.push(NoteDoc { start: local, len, key: key as u8, vel, pan: 0.0, cutoff: 0.5, reso: 0.5 });
+                changed = true;
+            }
+            if changed {
+                d.dirty = true;
+                d.rev += 1;
+            }
+            boolean(changed)
+        },
+        b"daw_trk_pdf" | b"daw_trk_export" => list_from(Vec::new()),
+        // ── Sheet view ──
+        b"daw_sheet_scan" => {
+            // -> [bars, then (track, name, notes, drums 0/1, has lyrics 0/1)*] for every instrument track with notes
+            let mut v = alloc::vec![num(libm::ceil(p.end_beat().max(4.0) / 4.0))];
+            for (i, t) in p.tracks.iter().enumerate() {
+                if t.is_audio() {
+                    continue;
+                }
+                let count: usize = t.clips.iter().map(|c| c.midi_notes.len()).sum();
+                if count == 0 {
+                    continue;
+                }
+                let drums = t.instrument == "drums" || t.instrument == "drum";
+                v.extend([num(i as f64), mk_str(&t.name), num(count as f64), num(drums as u8 as f64), num(0.0)]);
+            }
+            list_from(v)
+        },
+        b"daw_sheet_png" => {
+            // (options, fonts folder, page, page width on screen) -> [pages, 0, 0, 0, page height on screen, generation, ""]:
+            // no picture on the Pi (the view draws the page from daw_sheet_geo), the rest as the PC reports it
+            let opts = s(0);
+            let pw = n(3).max(100.0);
+            let sheet = sh_sheet(p, d.rev, &opts);
+            let pages = sheet.pages.iter().filter(|pg| !pg.systems.is_empty()).count();
+            if pages == 0 {
+                list_from(Vec::new())
+            } else {
+                list_from(alloc::vec![num(pages as f64), num(0.0), num(0.0), num(0.0), num(SH_PH * pw / SH_PW), num(d.rev as f64), mk_str("")])
+            }
+        },
+        b"daw_sheet_geo" => {
+            // (options, page) -> the geometry list (see sh_build); [] for no such page
+            let opts = s(0);
+            let sheet = sh_sheet(p, d.rev, &opts);
+            let Some(pg) = sheet.pages.get(u(1)) else { return Some(list_from(Vec::new())) };
+            if pg.systems.is_empty() {
+                return Some(list_from(Vec::new()));
+            }
+            let mut v = alloc::vec![num(SH_PW), num(SH_PH), num(pg.systems.len() as f64)];
+            for sy in &pg.systems {
+                v.extend([num(sy.track as f64), num(sy.b0), num(sy.b1), num(sy.x0), num(sy.bar_w), num(sy.y0), num(sy.y1), num(1.0)]);
+                v.extend([num(sy.clef as f64), num(sy.yb), num(SH_STEP)]);
+            }
+            v.push(num(pg.notes.len() as f64));
+            for q in &pg.notes {
+                v.extend([num(q.track as f64), num(q.key as f64), num(q.start), num(q.x), num(q.y)]);
+            }
+            list_from(v)
+        },
+        b"daw_sheet_edit" => {
+            // (track, op, key, start beat, value) -> 1 when something changed. op: 0 delete, 1 transpose by value,
+            // 2 move by value beats, 3 set length, 4 add a note of length value at that beat
+            let (ti, op, key, start, val) = (u(0), n(1) as i64, n(2).clamp(0.0, 127.0) as u8, n(3).max(0.0), n(4));
+            if !start.is_finite() || !val.is_finite() {
+                return Some(num(0.0));
+            }
+            let mut changed = false;
+            if let Some(t) = p.tracks.get_mut(ti) {
+                if op == 4 {
+                    let ci = match t.clips.iter().position(|c| !c.is_audio() && start >= c.start && start < c.start + c.len) {
+                        Some(i) => i,
+                        None => {
+                            let s0 = libm::floor(start / 4.0) * 4.0;
+                            t.clips.push(ClipDoc {
+                                name: String::from("Pattern"),
+                                start: s0,
+                                len: 4.0,
+                                midi_notes: Vec::new(),
+                                audio_path: String::new(),
+                                offset_s: 0.0,
+                                gain: 1.0,
+                                pitch: 0.0,
+                                warp: 0.0,
+                                loop_len: 0.0,
+                            });
+                            t.clips.len() - 1
+                        },
+                    };
+                    let c = &mut t.clips[ci];
+                    let rel = start - c.start;
+                    let len = val.max(0.0625);
+                    if rel + len > c.len {
+                        c.len = libm::ceil((rel + len) / 4.0) * 4.0;
+                    }
+                    c.midi_notes.push(NoteDoc { start: rel, len, key, vel: 0.8, pan: 0.0, cutoff: 0.5, reso: 0.5 });
+                    changed = true;
+                } else {
+                    'find: for c in t.clips.iter_mut() {
+                        if c.is_audio() {
+                            continue;
+                        }
+                        let (cs, clen) = (c.start, c.len);
+                        let ll = if c.loop_len >= 0.25 && c.loop_len < c.len { c.loop_len } else { 0.0 };
+                        let reps = if ll > 0.0 { (libm::ceil(clen / ll) as usize).min(512) } else { 1 };
+                        for k in 0..reps {
+                            let base = cs + k as f64 * ll;
+                            let rel = start - base;
+                            for i in 0..c.midi_notes.len() {
+                                let nn = &c.midi_notes[i];
+                                if nn.key == key && rel >= nn.start - 0.01 && rel < nn.start + nn.len.max(0.05) + 0.01 {
+                                    match op {
+                                        0 => {
+                                            c.midi_notes.remove(i);
+                                        },
+                                        1 => c.midi_notes[i].key = (nn.key as f64 + libm::round(val)).clamp(0.0, 127.0) as u8,
+                                        2 => c.midi_notes[i].start = (nn.start + val).max(0.0),
+                                        3 => c.midi_notes[i].len = val.max(0.0625),
+                                        _ => break 'find,
+                                    }
+                                    changed = true;
+                                    break 'find;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if changed {
+                d.dirty = true;
+                d.rev += 1;
+            }
+            num(changed as u8 as f64)
+        },
+        b"daw_sheet_write" | b"daw_sheet_xml" => list_from(Vec::new()),
+        b"daw_sheet_musescore_find" | b"daw_sheet_musescore_open" => mk_str(""),
+        // ── Performance view: no scenes on the Pi yet ──
+        b"daw_perf_scenes" | b"daw_perf_state" => list_from(Vec::new()),
+        b"daw_perf_only" => num(-1.0),
+        b"daw_perf_quant" => num(4.0),
+        b"daw_perf_scene_name" => mk_str(""),
+        b"daw_perf_launch" | b"daw_perf_launch_scene" | b"daw_perf_stop_all" | b"daw_perf_stop_track" | b"daw_perf_set_only" | b"daw_perf_set_quant" | b"daw_perf_scene_add" | b"daw_perf_scene_remove" | b"daw_perf_scene_set_name" | b"daw_perf_slot_clear" | b"daw_perf_slot_copy" | b"daw_perf_slot_from_clip" | b"daw_perf_slot_new" => UNIT,
+        b"daw_perf_slot_info" => list_from(Vec::new()),
         _ => return None,
     })
 }

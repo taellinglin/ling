@@ -1073,6 +1073,10 @@ struct Input {
     text: String,
     /// Digits of a `CSI n ~` key sequence being read (F5..F12 over serial).
     esc_num: u32,
+    /// `CSI < b ; x ; y M|m` mouse report being read: the three numbers.
+    esc_args: [u32; 3],
+    esc_argi: usize,
+    esc_mouse: bool,
     pressed: Vec<&'static str>,
     esc: u8, // 0 idle, 1 after ESC, 2 after ESC [
     quit: bool,
@@ -1084,6 +1088,9 @@ struct Input {
 static mut INPUT: Input = Input {
     text: String::new(),
     esc_num: 0,
+    esc_args: [0; 3],
+    esc_argi: 0,
+    esc_mouse: false,
     pressed: Vec::new(),
     esc: 0,
     quit: false,
@@ -1105,9 +1112,48 @@ impl Input {
             (2, b'D') => self.pressed.push("left"),
             (2, b'H') => self.pressed.push("home"),
             (2, b'F') => self.pressed.push("end"),
+            // `ESC [ < b ; x ; y M` (press) / `m` (release): a terminal's SGR
+            // mouse report -- the pointer over the serial line.
+            (2, b'<') => {
+                self.esc_mouse = true;
+                self.esc_args = [0; 3];
+                self.esc_argi = 0;
+                return;
+            },
+            (2, b';') if self.esc_mouse => {
+                if self.esc_argi < 2 {
+                    self.esc_argi += 1;
+                }
+                return;
+            },
+            (2, b'M' | b'm') if self.esc_mouse => {
+                let (b, x, y) = (self.esc_args[0], self.esc_args[1], self.esc_args[2]);
+                let bit = match b & 0x3 {
+                    0 => 1u8,
+                    1 => 4,
+                    2 => 2,
+                    _ => 0,
+                };
+                let m = unsafe { &mut *(&raw mut SERIAL_MOUSE) };
+                let mut buttons = m.map(|(_, _, bt)| bt).unwrap_or(0);
+                if b & 0x20 == 0 {
+                    if c == b'M' {
+                        buttons |= bit;
+                    } else {
+                        buttons &= !bit;
+                    }
+                }
+                *m = Some((x.saturating_sub(1) as i32, y.saturating_sub(1) as i32, buttons));
+                self.esc_mouse = false;
+            },
             // `ESC [ n ~`: F5..F12, Home/End/PageUp/PageDown/Delete as a terminal sends them.
             (2, b'0'..=b'9') => {
-                self.esc_num = self.esc_num * 10 + (c - b'0') as u32;
+                if self.esc_mouse {
+                    let i = self.esc_argi.min(2);
+                    self.esc_args[i] = self.esc_args[i] * 10 + (c - b'0') as u32;
+                } else {
+                    self.esc_num = self.esc_num * 10 + (c - b'0') as u32;
+                }
                 return;
             },
             (2, b'~') => {
@@ -1156,6 +1202,7 @@ impl Input {
             (_, 0x1B) => {
                 self.esc = 1;
                 self.esc_num = 0;
+                self.esc_mouse = false;
                 return;
             },
             (_, 0x11) => self.quit = true,
@@ -1276,7 +1323,13 @@ fn key_pressed(name: &str) -> bool {
 
 /// Pointer state in window coordinates: (x, y, buttons bit0 L / bit1 R / bit2 M).
 /// x86 reads the PS/2 mouse, the Pi its USB mouse; with no mouse it's off-screen.
+/// The pointer as last reported over the serial line (x, y, buttons), if any.
+static mut SERIAL_MOUSE: Option<(i32, i32, u8)> = None;
+
 fn mouse_state() -> (f64, f64, u8) {
+    if let Some((x, y, b)) = unsafe { *(&raw const SERIAL_MOUSE) } {
+        return (x as f64, y as f64, b);
+    }
     #[cfg(target_arch = "x86_64")]
     {
         crate::arch::idt::poll_drain_8042();
