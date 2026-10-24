@@ -21,7 +21,6 @@
 //! Every Ling object comes through this runtime's allocation path so a
 //! conservative collector can be added without touching call sites.
 
-use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -181,21 +180,42 @@ pub fn mk_str(s: &str) -> u64 {
 // an older view, or `list_set`, copies — so lists keep value semantics with no
 // reference counting.
 
+#[repr(C)]
 struct ListBuf {
+    hdr: GcHdr,
     items: Vec<u64>,
 }
 
+#[repr(C)]
 struct ListView {
+    hdr: GcHdr,
     buf: *mut ListBuf,
     len: usize,
+}
+
+fn new_buf(items: Vec<u64>) -> *mut ListBuf {
+    unsafe {
+        GC_SINCE += items.capacity() * 8;
+        let p = gc_alloc(core::mem::size_of::<ListBuf>(), GK_BUF) as *mut ListBuf;
+        core::ptr::write(&raw mut (*p).items, items);
+        p
+    }
+}
+
+fn new_view(buf: *mut ListBuf, len: usize) -> u64 {
+    let p = gc_alloc(core::mem::size_of::<ListView>(), GK_VIEW) as *mut ListView;
+    unsafe {
+        (*p).buf = buf;
+        (*p).len = len;
+    }
+    TAG_PATTERN | K_LIST | (p as u64 & PTR_MASK)
 }
 
 fn new_list(items: Vec<u64>) -> u64 {
     ensure_init();
     let len = items.len();
-    let buf = Box::into_raw(Box::new(ListBuf { items }));
-    let view = Box::into_raw(Box::new(ListView { buf, len }));
-    TAG_PATTERN | K_LIST | (view as u64 & PTR_MASK)
+    let buf = new_buf(items);
+    new_view(buf, len)
 }
 
 fn view_of(v: u64) -> Option<&'static ListView> {
@@ -227,8 +247,8 @@ fn list_push(list: u64, x: u64) -> u64 {
         let buf = unsafe { &mut *view.buf };
         if view.len == buf.items.len() {
             buf.items.push(x);
-            let nv = Box::into_raw(Box::new(ListView { buf: view.buf, len: view.len + 1 }));
-            return TAG_PATTERN | K_LIST | (nv as u64 & PTR_MASK);
+            unsafe { GC_SINCE += 8 };
+            return new_view(view.buf, view.len + 1);
         }
         let mut items = buf.items[..view.len].to_vec();
         items.push(x);
@@ -286,6 +306,332 @@ pub extern "C" fn ling_list_set(list: u64, idx: u64, val: u64) -> u64 {
 #[no_mangle]
 pub extern "C" fn ling_list_len(list: u64) -> u64 {
     num(list_items(list).len() as f64)
+}
+
+// ── Garbage collection ───────────────────────────────────────────────────────
+// Compiled Ling never frees a value (no refcounts, no drops), so a program that
+// runs for an hour -- the desktop, a DAW -- allocates until the frame allocator
+// is empty. Instead every string, list view and list buffer starts with a
+// `GcHdr` and is threaded on one all-objects list; at a safepoint (`present()`,
+// an app returning) a conservative mark-sweep walks the roots -- the globals,
+// the `st_*` store, the scopes put aside by `run_isolated_with`, and every
+// stack word (plus the callee-saved registers) that looks like a value -- and
+// frees whatever nothing reached. Conservative: a stray integer can keep an
+// object alive, but a live one is never freed, because compiled code only ever
+// holds values in registers or on its stack, and Rust code only transiently
+// inside a builtin (never across a safepoint). The in-kernel interpreter keeps
+// values in its own heap structures, so it blocks collection while it runs.
+
+#[repr(C)]
+pub(crate) struct GcHdr {
+    /// The next object on the all-objects list; bit 0 is the mark.
+    next: usize,
+    magic: u32,
+    kind: u32,
+}
+
+pub(crate) const GC_HDR: usize = core::mem::size_of::<GcHdr>();
+const GC_MAGIC: u32 = 0x4C47_4F42; // "LGOB"
+const GK_TAG: u32 = 0x5A3C_0000;
+pub(crate) const GK_STR: u32 = GK_TAG | 1;
+const GK_VIEW: u32 = GK_TAG | 2;
+const GK_BUF: u32 = GK_TAG | 3;
+/// Allocation volume that triggers a collection at the next frame (the
+/// console's `gc <MiB>` lowers it, to stress the collector).
+static mut GC_TRIGGER: usize = 16 << 20;
+
+static mut GC_HEAD: usize = 0;
+static mut GC_OBJECTS: usize = 0;
+static mut GC_SINCE: usize = 0;
+static mut GC_BLOCK: u32 = 0;
+static mut GC_BUSY: bool = false;
+static mut GC_LAST_MS: u64 = 0;
+static mut GC_RUNS: u32 = 0;
+static mut GC_FREED: u64 = 0;
+
+/// A new collector-managed object of `size` bytes (header included), linked
+/// on the all-objects list. Never null: out of memory is a kernel panic.
+pub(crate) fn gc_alloc(size: usize, kind: u32) -> *mut u8 {
+    let p = {
+        let _g = crate::mm::IrqLock::acquire();
+        crate::mm::heap::alloc(size)
+    };
+    if p.is_null() {
+        crate::kernel_panic("out of memory (heap allocator exhausted)");
+    }
+    unsafe {
+        let h = p as *mut GcHdr;
+        (*h).next = GC_HEAD;
+        (*h).magic = GC_MAGIC;
+        (*h).kind = kind;
+        GC_HEAD = p as usize;
+        GC_OBJECTS += 1;
+        GC_SINCE += size;
+    }
+    p
+}
+
+/// The header at `addr`, if that really is a live object of `kind`: in heap
+/// memory (so it can be read at all), aligned, with the magic and kind words.
+unsafe fn gc_header(addr: usize, kind: u32) -> Option<*mut GcHdr> {
+    if addr == 0 || addr & 7 != 0 || !crate::mm::heap::is_heap_page(addr as u64) {
+        return None;
+    }
+    let h = addr as *mut GcHdr;
+    if core::ptr::read_volatile(&raw const (*h).magic) != GC_MAGIC || core::ptr::read_volatile(&raw const (*h).kind) != kind {
+        return None;
+    }
+    Some(h)
+}
+
+/// Mark `h`; false if it already was.
+unsafe fn gc_set_mark(h: *mut GcHdr) -> bool {
+    if (*h).next & 1 != 0 {
+        return false;
+    }
+    (*h).next |= 1;
+    true
+}
+
+unsafe fn mark_value(v: u64, work: &mut Vec<*mut ListBuf>) {
+    if is_num(v) {
+        return;
+    }
+    let addr = (v & PTR_MASK) as usize;
+    match kind(v) {
+        K_STR => {
+            if addr >= GC_HDR {
+                if let Some(h) = gc_header(addr - GC_HDR, GK_STR) {
+                    gc_set_mark(h);
+                }
+            }
+        },
+        K_LIST => {
+            if let Some(h) = gc_header(addr, GK_VIEW) {
+                if gc_set_mark(h) {
+                    let buf = (*(h as *mut ListView)).buf as usize;
+                    if let Some(bh) = gc_header(buf, GK_BUF) {
+                        if gc_set_mark(bh) {
+                            work.push(bh as *mut ListBuf);
+                        }
+                    }
+                }
+            }
+        },
+        _ => {},
+    }
+}
+
+/// A stack word: a tagged value, or a raw pointer to a string's length word
+/// (what a kernel intrinsic's argument is once the compiler strips the tag --
+/// it may outlive the tagged value it was made from).
+unsafe fn mark_word(w: u64, work: &mut Vec<*mut ListBuf>) {
+    if (w >> 56) == 0x7F {
+        mark_value(w, work);
+    } else if w >= GC_HDR as u64 && w < 1 << 32 {
+        if let Some(h) = gc_header(w as usize - GC_HDR, GK_STR) {
+            gc_set_mark(h);
+        }
+    }
+}
+
+/// Mark everything the buffers on the work list hold (every element of the
+/// whole buffer, not one view's prefix: other views may cover more).
+unsafe fn drain(work: &mut Vec<*mut ListBuf>) {
+    while let Some(b) = work.pop() {
+        let items = &*(&raw const (*b).items);
+        for i in 0..items.len() {
+            mark_value(items[i], work);
+        }
+    }
+}
+
+unsafe fn scan_range(lo: u64, hi: u64, work: &mut Vec<*mut ListBuf>) {
+    let mut a = (lo + 7) & !7;
+    while a + 8 <= hi {
+        mark_word(core::ptr::read_volatile(a as *const u64), work);
+        a += 8;
+    }
+}
+
+/// Spill the callee-saved registers (a live value may sit in one across the
+/// call that got us here) and scan this stack from the current sp up to `top`.
+#[inline(never)]
+unsafe fn scan_current_stack(top: u64, work: &mut Vec<*mut ListBuf>) {
+    let mut regs = [0u64; 24];
+    let sp: u64;
+    #[cfg(target_arch = "aarch64")]
+    core::arch::asm!(
+        "stp x19, x20, [{p}]",
+        "stp x21, x22, [{p}, #16]",
+        "stp x23, x24, [{p}, #32]",
+        "stp x25, x26, [{p}, #48]",
+        "stp x27, x28, [{p}, #64]",
+        "stp x29, x30, [{p}, #80]",
+        "stp d8, d9, [{p}, #96]",
+        "stp d10, d11, [{p}, #112]",
+        "stp d12, d13, [{p}, #128]",
+        "stp d14, d15, [{p}, #144]",
+        "mov {o}, sp",
+        p = in(reg) regs.as_mut_ptr(),
+        o = out(reg) sp,
+        options(nostack)
+    );
+    #[cfg(target_arch = "x86_64")]
+    core::arch::asm!(
+        "mov [{p}], rbx",
+        "mov [{p} + 8], rbp",
+        "mov [{p} + 16], r12",
+        "mov [{p} + 24], r13",
+        "mov [{p} + 32], r14",
+        "mov [{p} + 40], r15",
+        "mov {o}, rsp",
+        p = in(reg) regs.as_mut_ptr(),
+        o = out(reg) sp,
+        options(nostack)
+    );
+    scan_range(sp, top, work);
+    core::hint::black_box(&regs);
+}
+
+unsafe fn scan_stacks(work: &mut Vec<*mut ListBuf>) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        scan_current_stack(crate::proc::sched::current_stack_top(), work);
+        // A suspended task's registers were pushed on its own stack by the
+        // context switch, so its stack alone covers it.
+        crate::proc::sched::for_each_suspended_stack(|lo, hi| scan_range(lo, hi, work));
+    }
+    #[cfg(target_arch = "aarch64")]
+    scan_current_stack(crate::arch::boot::boot_stack_top(), work);
+}
+
+/// Free every unmarked object and clear the marks; (objects, bytes) freed.
+unsafe fn sweep() -> (usize, usize) {
+    let (mut freed, mut bytes) = (0usize, 0usize);
+    let mut link: *mut usize = &raw mut GC_HEAD;
+    while *link != 0 {
+        let h = *link as *mut GcHdr;
+        if (*h).next & 1 != 0 {
+            (*h).next &= !1;
+            link = &raw mut (*h).next;
+        } else {
+            *link = (*h).next;
+            bytes += free_object(h);
+            freed += 1;
+        }
+    }
+    GC_OBJECTS -= freed;
+    (freed, bytes)
+}
+
+unsafe fn free_object(h: *mut GcHdr) -> usize {
+    let size = match (*h).kind {
+        GK_BUF => {
+            let b = h as *mut ListBuf;
+            let n = (*b).items.capacity() * 8;
+            core::ptr::drop_in_place(&raw mut (*b).items);
+            core::mem::size_of::<ListBuf>() + n
+        },
+        GK_VIEW => core::mem::size_of::<ListView>(),
+        _ => GC_HDR + 4 + strings::header_len((h as *const u8).add(GC_HDR)),
+    };
+    // A stale pointer to this slot must never pass `gc_header` again.
+    (*h).magic = 0;
+    (*h).kind = 0;
+    let _g = crate::mm::IrqLock::acquire();
+    crate::mm::heap::free(h as *mut u8);
+    size
+}
+
+/// Collect now. Only at a safepoint: `present()`, or an app having returned.
+pub fn gc_collect() {
+    unsafe {
+        if GC_BLOCK > 0 || GC_BUSY || GC_HEAD == 0 {
+            return;
+        }
+        GC_BUSY = true;
+    }
+    let t0 = crate::arch::timer::now_us();
+    let before = unsafe { GC_OBJECTS };
+    let mut work: Vec<*mut ListBuf> = Vec::new();
+    let (freed, bytes) = unsafe {
+        for &v in globals().values() {
+            mark_value(v, &mut work);
+        }
+        for e in store().values() {
+            mark_value(e.val, &mut work);
+        }
+        for (g, s) in saved_scopes().iter() {
+            for &v in g.values() {
+                mark_value(v, &mut work);
+            }
+            for e in s.values() {
+                mark_value(e.val, &mut work);
+            }
+        }
+        drain(&mut work);
+        scan_stacks(&mut work);
+        drain(&mut work);
+        sweep()
+    };
+    let us = crate::arch::timer::now_us().saturating_sub(t0);
+    unsafe {
+        GC_SINCE = 0;
+        GC_RUNS += 1;
+        GC_FREED += freed as u64;
+        GC_LAST_MS = crate::arch::timer::now_ms();
+        GC_BUSY = false;
+        let runs = GC_RUNS;
+        if TRACE || runs <= 3 || runs % 25 == 0 {
+            let s = alloc::format!(
+                "[gc] #{}: freed {} of {} objects ({} KiB) in {} ms, {} MiB free\n",
+                runs,
+                freed,
+                before,
+                bytes >> 10,
+                us / 1000,
+                crate::mm::frame::free_frame_count() * 4 / 1024
+            );
+            crate::console_write(s.as_bytes());
+        }
+    }
+}
+
+/// Once per frame, from `present()`: collect when enough has been allocated
+/// since the last time, sooner when memory is getting low.
+pub fn gc_maybe() {
+    unsafe {
+        if GC_BLOCK > 0 {
+            return;
+        }
+        let low = crate::mm::frame::free_frame_count() < (48 << 20) / 4096;
+        let since = crate::arch::timer::now_ms().wrapping_sub(GC_LAST_MS);
+        if GC_SINCE >= GC_TRIGGER || (low && GC_SINCE >= 1 << 20 && since >= 2000) {
+            gc_collect();
+        }
+    }
+}
+
+/// Hold collection off (nested) while Rust code keeps values somewhere the
+/// collector does not look -- the in-kernel interpreter's environments.
+pub fn gc_block(on: bool) {
+    unsafe {
+        if on {
+            GC_BLOCK += 1;
+        } else {
+            GC_BLOCK = GC_BLOCK.saturating_sub(1);
+        }
+    }
+}
+
+pub fn gc_set_trigger(bytes: usize) {
+    unsafe { GC_TRIGGER = bytes.max(64 << 10) };
+}
+
+pub fn gc_stats() -> String {
+    let (objects, since, runs, freed) = unsafe { (GC_OBJECTS, GC_SINCE, GC_RUNS, GC_FREED) };
+    alloc::format!("gc: {objects} objects live, {} KiB allocated since the last of {runs} collections, {freed} objects freed in all", since >> 10)
 }
 
 // ── Maths / time / print ABI ─────────────────────────────────────────────────
@@ -382,13 +728,27 @@ pub fn run_isolated_with<F: FnOnce() -> u64>(body: F) -> u64 {
     let saved_g = core::mem::take(globals());
     let saved_s = core::mem::take(store());
     let saved_a = core::mem::take(args_vec());
+    // Put aside where the collector still sees them: the host's values must
+    // survive the collections that happen while the app runs.
+    saved_scopes().push((saved_g, saved_s));
     unsafe { APP_DEPTH += 1 };
     let r = body();
     unsafe { APP_DEPTH -= 1 };
+    let (saved_g, saved_s) = saved_scopes().pop().unwrap_or_default();
     *globals() = saved_g;
     *store() = saved_s;
     *args_vec() = saved_a;
+    // The app's globals and store just went away: everything it built is
+    // garbage now, give it back before the host draws its next frame.
+    gc_collect();
     r
+}
+
+type Scope = (BTreeMap<Vec<u8>, u64>, BTreeMap<Vec<u8>, StEntry>);
+static mut SAVED: Vec<Scope> = Vec::new();
+
+fn saved_scopes() -> &'static mut Vec<Scope> {
+    unsafe { &mut *(&raw mut SAVED) }
 }
 
 static mut APP_DEPTH: u32 = 0;

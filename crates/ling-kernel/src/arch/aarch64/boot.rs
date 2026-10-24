@@ -66,6 +66,13 @@ extern "C" {
     static mut __bss_start: u8;
     static mut __bss_end: u8;
     static _kernel_end: u8;
+    static _stack_top: u8;
+}
+
+/// Top of the boot stack `el1_entry` switched onto -- the one stack every
+/// Ling program on this target runs on, which `lingrt`'s collector scans.
+pub fn boot_stack_top() -> u64 {
+    (&raw const _stack_top) as u64
 }
 
 /// First physical address past the kernel's own image + boot stack

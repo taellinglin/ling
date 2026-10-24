@@ -226,6 +226,32 @@ pub fn exit() -> ! {
     }
 }
 
+/// Top of the running task's stack (slot 0 runs on the boot stack).
+pub fn current_stack_top() -> u64 {
+    unsafe { stack_top_of(CURRENT) }
+}
+
+unsafe fn stack_top_of(i: usize) -> u64 {
+    if i == 0 {
+        crate::arch::boot::boot_stack_top()
+    } else {
+        ((&raw const STACKS[i]) as u64 + STACK_SIZE as u64) & !0xF
+    }
+}
+
+/// Every other live task's stack, from its saved `rsp` (where `switch_to`
+/// pushed its registers) to the top -- what `lingrt`'s collector scans.
+pub fn for_each_suspended_stack(mut f: impl FnMut(u64, u64)) {
+    unsafe {
+        for i in 0..MAX_TASKS {
+            if i == CURRENT || TASKS[i].state != TaskState::Ready || TASKS[i].sp == 0 {
+                continue;
+            }
+            f(TASKS[i].sp, stack_top_of(i));
+        }
+    }
+}
+
 pub fn getpid() -> u64 {
     unsafe { CURRENT as u64 }
 }

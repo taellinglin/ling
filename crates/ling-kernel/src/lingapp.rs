@@ -982,6 +982,7 @@ static mut CURSOR_DOT: bool = false;
 
 fn present() {
     crate::lingrt::mark_present();
+    crate::lingrt::gc_maybe();
     let (mx, my, _) = mouse_state();
     if let Some(w) = win() {
         // Draw the pointer into the frame, blit, then put the pixels back so the

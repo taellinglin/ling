@@ -42,6 +42,10 @@ const CMD_RUN: u32 = 1 << 0;
 const CMD_HCRST: u32 = 1 << 1;
 const STS_HCH: u32 = 1 << 0;
 const STS_CNR: u32 = 1 << 11;
+const STS_HSE: u32 = 1 << 2; // host system error: the controller stopped on a bad DMA
+const STS_HCE: u32 = 1 << 12; // host controller error: internal fault, stopped
+const PLS_U0: u32 = 0;
+const PLS_U3: u32 = 3;
 
 const PORTSC_CCS: u32 = 1 << 0;
 const PORTSC_PED: u32 = 1 << 1; // RW1CS: writing 1 DISABLES the port -- never write it back
@@ -490,6 +494,9 @@ struct Ctl {
     /// Ports whose status-change events arrived; serviced by [`poll`].
     port_pending: u32,
     last_scan_ms: u64,
+    /// Per port: no enumeration attempt from the periodic scan before this
+    /// time (back-off after a failure or a watchdog re-enumeration).
+    port_retry: [u64; 32],
     msd: Option<Msd>,
 }
 
@@ -615,13 +622,10 @@ impl Ctl {
         out(if h.kind == HidKind::Kbd { b": keyboard endpoint halted (" } else { b": mouse endpoint halted (" });
         report_cc(h.last_cc);
         if h.fails > 6 {
-            out(b"  giving up on it -- unplug and re-plug the device\n");
-            if h.kind == HidKind::Kbd {
-                unsafe { HELD = [0; 8] };
-            }
-            free_page(h.ring);
-            free_page(h.rbuf);
-            self.hids[i] = None;
+            out(b"  resetting its port and enumerating the device again\n");
+            let port = h.port;
+            self.remove_port(port);
+            self.port_retry[port as usize & 31] = now_ms() + 2000;
             return;
         }
         let sl = (h.slot as u32) << 24;
@@ -812,7 +816,9 @@ impl Ctl {
                 // Gone, or went away and came back (re-enumerate from scratch).
                 self.remove_port(p);
             }
-            if connected && (!have || changed) {
+            let now = now_ms();
+            let backoff = !changed && now < self.port_retry[p as usize & 31];
+            if connected && (!have || changed) && !backoff {
                 delay_us(100_000); // debounce
                 if unsafe { read32(off) } & PORTSC_CCS != 0 {
                     out(self.name);
@@ -826,9 +832,122 @@ impl Ctl {
                     unsafe { write32(off, portsc_base(psc3) | PORTSC_PRC | PORTSC_CSC) };
                     self.drain();
                     self.port_pending &= !(1 << p);
+                    if !self.devs.iter().any(|d| d.is_some_and(|d| d.port == p)) {
+                        // Did not come up: try again in a while, not every second.
+                        self.port_retry[p as usize & 31] = now + 5000;
+                    }
                 }
             }
         }
+    }
+}
+
+impl Ctl {
+    /// Once a second: catch what no event told us about. A controller that
+    /// halted or hit a host-system error gets re-initialised (returns true);
+    /// an endpoint the controller shows halted / in error is recovered, a
+    /// stopped one gets its doorbell rung, a disabled one has its port
+    /// enumerated again; a port left suspended is resumed; a port that went
+    /// disabled with a device still attached is enumerated again. Any of
+    /// those used to leave a keyboard or mouse silent until a reboot.
+    fn watchdog(&mut self, now: u64) -> bool {
+        let sts = self.x.op_rd(OP_USBSTS);
+        if sts & (STS_HCH | STS_HSE | STS_HCE) != 0 {
+            out(self.name);
+            hex(b": watchdog: controller stopped, USBSTS=", sts as u64, 8);
+            return true;
+        }
+        for i in 0..MAX_HID {
+            let Some(h) = self.hids[i] else { continue };
+            if h.halted {
+                continue;
+            }
+            let Some(d) = self.devs.iter().flatten().find(|d| d.slot == h.slot).copied() else { continue };
+            let epc = d.dev_ctx + h.dci as u64 * self.x.ctx_size as u64;
+            let state = unsafe { read32(epc as usize) } & 7;
+            match state {
+                2 | 4 => {
+                    out(self.name);
+                    out(b": watchdog: endpoint halted -> recovering\n");
+                    let hh = self.hids[i].as_mut().unwrap();
+                    hh.halted = true;
+                    hh.last_cc = 0;
+                },
+                3 => {
+                    out(self.name);
+                    out(b": watchdog: endpoint stopped -> ringing its doorbell\n");
+                    dsb();
+                    unsafe { write32(self.x.db + h.slot as usize * 4, h.dci) };
+                },
+                0 => {
+                    out(self.name);
+                    dec(b": watchdog: endpoint disabled -> enumerating port ", h.port);
+                    out(b" again\n");
+                    self.remove_port(h.port);
+                    self.port_retry[h.port as usize & 31] = now + 1000;
+                },
+                _ => {},
+            }
+        }
+        for p in 1..=self.x.max_ports {
+            let off = self.x.portsc(p);
+            let psc = unsafe { read32(off) };
+            if psc & PORTSC_CCS == 0 {
+                continue;
+            }
+            let base = portsc_base(psc);
+            let pls = (psc & PORTSC_PLS_MASK) >> 5;
+            let have = self.devs.iter().any(|d| d.is_some_and(|d| d.port == p));
+            if pls == PLS_U3 {
+                out(self.name);
+                dec(b": watchdog: port ", p);
+                out(b" is suspended -> resuming\n");
+                unsafe { write32(off, (base & !PORTSC_PLS_MASK) | (PLS_RESUME << 5) | PORTSC_LWS) };
+                delay_us(20_000);
+                unsafe { write32(off, (base & !PORTSC_PLS_MASK) | (PLS_U0 << 5) | PORTSC_LWS) };
+                delay_us(10_000);
+            } else if have && psc & PORTSC_PED == 0 && pls != PLS_RESUME {
+                out(self.name);
+                dec(b": watchdog: port ", p);
+                out(b" disabled with a device attached -> enumerating it again\n");
+                self.remove_port(p);
+                self.port_retry[p as usize & 31] = now + 1000;
+            }
+        }
+        false
+    }
+}
+
+/// Throw a stopped controller away and bring it up again from scratch (its
+/// devices get enumerated anew) -- the only way back from a halted controller.
+fn reinit_controller(idx: usize) {
+    let ctls = unsafe { &mut *(&raw mut CTLS) };
+    let Some(ctl) = ctls[idx].take() else { return };
+    let (cap, name) = (ctl.x.cap, ctl.name);
+    if ctl.msd.is_some() {
+        unsafe { MSD_DETACH = true };
+    }
+    unsafe { HELD = [0; 8] };
+    out(name);
+    out(b": re-initialising the controller\n");
+    // Init resets the controller first, so the old pages are safe to free after.
+    enumerate(cap, name);
+    for d in ctl.devs.iter().flatten() {
+        for p in [d.input_ctx, d.dev_ctx, d.ep0_ring, d.buf] {
+            free_page(p);
+        }
+    }
+    for h in ctl.hids.iter().flatten() {
+        free_page(h.ring);
+        free_page(h.rbuf);
+    }
+    if let Some(m) = ctl.msd {
+        free_page(m.ep_in.ring);
+        free_page(m.ep_out.ring);
+        free_page(m.data);
+    }
+    for p in [ctl.x.dcbaa, ctl.x.cmd_ring, ctl.x.event_ring, ctl.x.erst] {
+        free_page(p);
     }
 }
 
@@ -869,7 +988,7 @@ pub fn enumerate(cap_base: usize, name: &'static [u8]) {
         out(b"  no controller slot free\n");
         return;
     };
-    *slot = Some(Ctl { x, name, devs: [None; MAX_DEVS], hids: [None; MAX_HID], port_pending: 0, last_scan_ms: now_ms(), msd: None });
+    *slot = Some(Ctl { x, name, devs: [None; MAX_DEVS], hids: [None; MAX_HID], port_pending: 0, last_scan_ms: now_ms(), port_retry: [0; 32], msd: None });
     let ctl = slot.as_mut().unwrap();
     // Power every port so later connects raise events even on empty ports.
     for p in 1..=ctl.x.max_ports {
@@ -1406,7 +1525,9 @@ fn poll() {
     }
     let ctls = unsafe { &mut *(&raw mut CTLS) };
     let now = now_ms();
-    for ctl in ctls.iter_mut().flatten() {
+    let mut reinit = [false; 2];
+    for (idx, slot) in ctls.iter_mut().enumerate() {
+        let Some(ctl) = slot.as_mut() else { continue };
         ctl.drain();
         for i in 0..MAX_HID {
             if ctl.hids[i].is_some_and(|h| h.halted) {
@@ -1416,9 +1537,15 @@ fn poll() {
         let scan = now.saturating_sub(ctl.last_scan_ms) >= 1000;
         if scan {
             ctl.last_scan_ms = now;
+            reinit[idx] = ctl.watchdog(now);
         }
         if ctl.port_pending != 0 || scan {
             ctl.service_ports(scan);
+        }
+    }
+    for (idx, r) in reinit.iter().enumerate() {
+        if *r {
+            reinit_controller(idx);
         }
     }
     let (attach, detach) = unsafe { (core::mem::replace(&mut MSD_ATTACH, false), core::mem::replace(&mut MSD_DETACH, false)) };

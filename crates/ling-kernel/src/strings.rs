@@ -7,11 +7,10 @@
 //! `crates/ling-codegen/src/cranelift/runtime.rs` if that ever changes).
 //!
 //! Nothing here ever calls `mm::heap::free`: the Ling compiler doesn't emit
-//! drop/refcount calls for kernel-target code, so every string this runtime
-//! allocates is intentionally leaked for the process's lifetime, same as
-//! before this module moved off the old bump allocator — a real fix needs
-//! ownership tracking at the language/compiler level, not an allocator
-//! change, and is out of scope here.
+//! drop/refcount calls for kernel-target code. Instead every string is a
+//! `lingrt` collector object -- a 16-byte `GcHdr` sits right before the
+//! length word the value points at -- and `lingrt::gc_collect` frees the
+//! ones nothing refers to any more.
 use core::ptr;
 
 const TAG_PATTERN: u64 = 0x7F00_0000_0000_0000;
@@ -30,7 +29,7 @@ pub(crate) fn decode_ptr(val: u64) -> *mut u8 {
     (val & PTR_MASK) as *mut u8
 }
 
-unsafe fn header_len(ptr: *const u8) -> usize {
+pub(crate) unsafe fn header_len(ptr: *const u8) -> usize {
     u32::from_le_bytes([*ptr, *ptr.add(1), *ptr.add(2), *ptr.add(3)]) as usize
 }
 
@@ -59,10 +58,8 @@ fn alloc_string(len: usize) -> *mut u8 {
     // A compiled program's very first act can be building a string literal,
     // before anything has called ling_kernel_init (LingStationX never does).
     crate::lingrt::ensure_init();
-    let buf = crate::mm::heap::alloc(4 + len);
-    if buf.is_null() {
-        crate::kernel_panic("out of memory (heap allocator exhausted)");
-    }
+    let base = crate::lingrt::gc_alloc(crate::lingrt::GC_HDR + 4 + len, crate::lingrt::GK_STR);
+    let buf = unsafe { base.add(crate::lingrt::GC_HDR) };
     let len_bytes = (len as u32).to_le_bytes();
     unsafe { ptr::copy_nonoverlapping(len_bytes.as_ptr(), buf, 4) };
     buf

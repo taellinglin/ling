@@ -97,9 +97,14 @@ pub fn run_program(prog: &ir::MirProgram, args: &[&str], root: &str) -> Option<S
         }
         crate::lingrt::run_isolated_with(|| {
             crate::lingrt::set_args(&owned);
+            // The interpreter's environments hold values the collector cannot
+            // see: no collection until it is done.
+            crate::lingrt::gc_block(true);
             let mut it = interp::Interp::new(prog);
             it.run();
             err = it.error.take();
+            drop(it);
+            crate::lingrt::gc_block(false);
             0
         });
     });
