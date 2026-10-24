@@ -1106,6 +1106,10 @@ pub static mut TRACE: bool = false;
 /// Builtin calls so far (the frame-timing overlay shows the per-frame count).
 pub static mut BUILTIN_CALLS: u64 = 0;
 const DISPATCH_SLOTS: usize = 1024;
+/// Off: with the cache on, serial input died after a Settings click in two
+/// of three QEMU runs (builtin dispatch is logically unchanged by it, so the
+/// mechanism is not understood yet -- see project memory); off, every run passes.
+const DISPATCH_ON: bool = false;
 static mut DISPATCH_CACHE: [(usize, u8); DISPATCH_SLOTS] = [(0, 0); DISPATCH_SLOTS];
 
 pub fn gc_runs() -> u32 {
@@ -1219,7 +1223,7 @@ pub unsafe extern "C" fn ling_builtin(
     // drawing call skips the long core match (hundreds of names) that way.
     let slot = ((name_ptr as usize) >> 3) & (DISPATCH_SLOTS - 1);
     let (cached_ptr, stage) = DISPATCH_CACHE[slot];
-    if cached_ptr == name_ptr as usize {
+    if DISPATCH_ON && cached_ptr == name_ptr as usize {
         let hit = match stage {
             1 => st_builtin(name, args),
             2 => crate::lingapp::dispatch(name, args),
