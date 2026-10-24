@@ -1183,6 +1183,11 @@ impl Input {
                 }
                 self.esc_num = 0;
             },
+            // `ESC TAB`: Alt+Tab as a terminal sends it (the desktop's window switcher).
+            (1, b'\t') => {
+                self.pressed.push("alt");
+                self.pressed.push("tab");
+            },
             // `ESC O P..S`: F1..F4 in application mode.
             (1, b'O') => {
                 self.esc = 3;

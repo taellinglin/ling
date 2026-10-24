@@ -63,6 +63,10 @@ ed25519-dalek = { version = "2.2", default-features = false }
 # AES-GCM) because it's pure software -- no AES-NI dependency.
 sha2 = { version = "0.10", default-features = false }
 hmac = { version = "0.12", default-features = false }
+# WPA2 4-way handshake in the kernel (arch/aarch64/wpa.rs): PBKDF2/PRF/MIC are
+# HMAC-SHA1, the group key arrives AES-key-wrapped.
+sha1 = { version = "0.10", default-features = false }
+aes = { version = "0.8", default-features = false }
 hkdf = { version = "0.12", default-features = false }
 chacha20poly1305 = { version = "0.10", default-features = false }
 # Raw ChaCha20 (legacy 64-bit-nonce variant) + Poly1305 for the SSH server's

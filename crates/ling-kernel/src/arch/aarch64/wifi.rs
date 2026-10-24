@@ -178,6 +178,10 @@ struct Radio {
     scan_hits: Vec<Network>,
     join_status: Option<u32>,
     psk_status: Option<u32>,
+    /// The kernel's WPA2 supplicant while joining a protected network (and
+    /// after, for group-key rekeys).
+    sup: Option<super::wpa::Handshake>,
+    sup_error: Option<&'static str>,
     /// Data frames that arrived while waiting for something else.
     rx_queue: Vec<Vec<u8>>,
     frames_in: u32,
@@ -996,9 +1000,14 @@ fn poll_rx() -> Option<Vec<u8>> {
                 if payload.len() > 4 {
                     let doff = 4 + (payload[3] as usize) * 4;
                     if payload.len() > doff {
-                        let r = radio()?;
-                        if r.rx_queue.len() < 64 {
-                            r.rx_queue.push(payload[doff..].to_vec());
+                        let eth = &payload[doff..];
+                        if eth.len() >= 14 && eth[12] == 0x88 && eth[13] == 0x8E {
+                            supplicant_rx(eth);
+                        } else {
+                            let r = radio()?;
+                            if r.rx_queue.len() < 64 {
+                                r.rx_queue.push(eth.to_vec());
+                            }
                         }
                     }
                 }
@@ -1017,6 +1026,73 @@ fn le32(b: &[u8], i: usize) -> u32 {
 }
 fn le16(b: &[u8], i: usize) -> u16 {
     u16::from_le_bytes([b[i], b[i + 1]])
+}
+
+/// An EAPOL frame from the access point: run it through the kernel's WPA2
+/// supplicant and carry out what it asks for (replies, keys to install).
+fn supplicant_rx(frame: &[u8]) {
+    let Some(r) = radio() else { return };
+    let Some(sup) = r.sup.as_mut() else { return };
+    let actions = match sup.rx(frame) {
+        Ok(a) => a,
+        Err(e) => {
+            out(b"wifi: handshake: ");
+            out(e.as_bytes());
+            out(b"\n");
+            r.sup_error = Some(e);
+            r.psk_status = Some(0xFFFF);
+            return;
+        },
+    };
+    let ap = sup.ap();
+    for a in actions {
+        match a {
+            super::wpa::Action::Send(f) => {
+                if send_eth(&f).is_none() {
+                    out(b"wifi: could not send a handshake message\n");
+                }
+            },
+            super::wpa::Action::Pairwise(tk) => {
+                // Let message 4 leave unencrypted before the key is in.
+                delay_us(20_000);
+                if let Err(e) = install_key(0, &tk, 0, &ap, None) {
+                    dec(b"wifi: pairwise key refused, code -", e.unsigned_abs() as u64);
+                    out(b"\n");
+                }
+            },
+            super::wpa::Action::Group { index, key, tx, rsc } => {
+                if let Err(e) = install_key(index as u32, &key, if tx { 2 } else { 0 }, &[0; 6], Some(rsc)) {
+                    dec(b"wifi: group key refused, code -", e.unsigned_abs() as u64);
+                    out(b"\n");
+                }
+            },
+            super::wpa::Action::Done => {
+                out(b"wifi: WPA2 handshake complete\n");
+                let Some(r) = radio() else { return };
+                r.psk_status = Some(6);
+            },
+        }
+    }
+}
+
+/// `wsec_key`: brcmfmac's `brcmf_wsec_key_le` (164 bytes). CCMP; `ea` is the
+/// access point for the pairwise key, zero for a group key; a group key's
+/// receive sequence counter comes from the handshake message.
+fn install_key(index: u32, key: &[u8], flags: u32, ea: &[u8; 6], rsc: Option<[u8; 8]>) -> Result<(), i32> {
+    let mut b = [0u8; 164];
+    b[0..4].copy_from_slice(&index.to_le_bytes());
+    b[4..8].copy_from_slice(&(key.len() as u32).to_le_bytes());
+    let n = key.len().min(32);
+    b[8..8 + n].copy_from_slice(&key[..n]);
+    b[112..116].copy_from_slice(&4u32.to_le_bytes()); // CRYPTO_ALGO_AES_CCM
+    b[116..120].copy_from_slice(&flags.to_le_bytes());
+    if let Some(rsc) = rsc {
+        b[132..136].copy_from_slice(&1u32.to_le_bytes()); // iv_initialized
+        b[140..144].copy_from_slice(&rsc[2..6]); // rxiv.hi
+        b[144..146].copy_from_slice(&rsc[0..2]); // rxiv.lo
+    }
+    b[156..162].copy_from_slice(ea);
+    set_iovar("wsec_key", &b)
 }
 
 fn handle_event(payload: &[u8]) {
@@ -1314,6 +1390,8 @@ fn radio_up() -> Option<()> {
             scan_hits: Vec::new(),
             join_status: None,
             psk_status: None,
+            sup: None,
+            sup_error: None,
             rx_queue: Vec::new(),
             frames_in: 0,
             frames_out: 0,
@@ -1535,25 +1613,26 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
         stepc("wpa_auth", set_iovar_u32("wpa_auth", 0x40000))?;
     } else if wpa {
         stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 4))?;
-        // The firmware's own supplicant does the 4-way handshake. For the
-        // main interface brcmfmac sends the plain iovar (the "bsscfg:" form
-        // the Pico W driver uses was refused by the Pi 5's firmware); it is
-        // kept as a fallback.
-        if set_iovar_u32("sup_wpa", 1).is_err() {
-            stepc("sup_wpa", set_iovar_u32x2("bsscfg:sup_wpa", 0, 1))?;
+        // This firmware has no internal supplicant (`sup_wpa` answers
+        // BCME_UNSUPPORTED, -23), so the kernel does the 4-way handshake
+        // itself (super::wpa) over the EAPOL frames the firmware passes up,
+        // and installs the keys with `wsec_key` -- the way Linux works too.
+        let pmk = super::wpa::pmk_from_passphrase(psk.as_bytes(), ssid.as_bytes());
+        let mut snonce = [0u8; 32];
+        if !crate::crypto::random_bytes(&mut snonce) {
+            let t = crate::arch::timer::now_us();
+            for (i, b) in snonce.iter_mut().enumerate() {
+                *b = (t.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(i as u32 * 5) >> (i % 8 * 8)) as u8;
+            }
         }
-        if set_iovar_u32("sup_wpa2_eapver", 0xFFFF_FFFF).is_err() {
-            let _ = set_iovar_u32x2("bsscfg:sup_wpa2_eapver", 0, 0xFFFF_FFFF);
+        r.sup = Some(super::wpa::Handshake::new(pmk, r.mac, snonce));
+        r.sup_error = None;
+        // The RSN IE the firmware associates with has to be the one message 2
+        // repeats, so hand it over rather than letting the firmware compose it.
+        if let Err(e) = set_iovar("wpaie", &super::wpa::RSN_IE) {
+            dec(b"  wifi: wpaie refused, code -", e.unsigned_abs() as u64);
+            out(b" (the firmware's own RSN IE will be used)\n");
         }
-        if set_iovar_u32("sup_wpa_tmo", 2500).is_err() {
-            let _ = set_iovar_u32x2("bsscfg:sup_wpa_tmo", 0, 2500);
-        }
-        delay_us(100_000);
-        let mut pmk = [0u8; 68];
-        pmk[..2].copy_from_slice(&(psk.len() as u16).to_le_bytes());
-        pmk[2..4].copy_from_slice(&1u16.to_le_bytes()); // passphrase, not a raw PMK
-        pmk[4..4 + psk.len()].copy_from_slice(psk.as_bytes());
-        stepc("wsec_pmk", ioctl(true, WLC_SET_WSEC_PMK, &pmk).map(|_| ()))?;
     } else {
         stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 0))?;
     }
@@ -1589,14 +1668,21 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
     }
     let r = radio().ok_or_else(|| String::from("radio not up"))?;
     if wpa {
-        match r.psk_status {
-            Some(6) => {},
-            Some(st) => {
+        match (r.psk_status, r.sup_error) {
+            (Some(6), _) => {},
+            (_, Some(e)) => {
+                let _ = ioctl(true, WLC_DISASSOC, &[]);
+                return Err(alloc::format!("WPA2 handshake: {e}"));
+            },
+            (Some(st), None) => {
                 dec(b"  wifi: WPA2 handshake status ", st as u64);
                 out(b"\n");
                 return Err(alloc::format!("wrong passphrase (the WPA2 handshake failed, status {st})"));
             },
-            None => out(b"  wifi: no handshake report; assuming joined\n"),
+            (None, None) => {
+                let _ = ioctl(true, WLC_DISASSOC, &[]);
+                return Err(String::from("the WPA2 handshake did not complete (wrong passphrase?)"));
+            },
         }
     }
     r.joined = true;
@@ -1614,8 +1700,17 @@ pub fn leave() {
         }
         r.joined = false;
         r.link = false;
+        r.sup = None;
         r.ssid.clear();
     }
+}
+
+/// One Ethernet frame to the firmware's data channel (BDC header first).
+fn send_eth(frame: &[u8]) -> Option<()> {
+    let mut p: Vec<u8> = Vec::with_capacity(4 + frame.len());
+    p.extend_from_slice(&[0x20, 0, 0, 0]); // BDC: protocol version 2, priority 0, if 0
+    p.extend_from_slice(frame);
+    send_frame(CHAN_DATA, &p)
 }
 
 /// One Ethernet frame to the air (after `join`).
@@ -1623,10 +1718,7 @@ pub fn transmit(frame: &[u8]) -> bool {
     if !is_joined() || frame.len() < 14 || frame.len() > 1600 {
         return false;
     }
-    let mut p: Vec<u8> = Vec::with_capacity(4 + frame.len());
-    p.extend_from_slice(&[0x20, 0, 0, 0]); // BDC: protocol version 2, priority 0, if 0
-    p.extend_from_slice(frame);
-    send_frame(CHAN_DATA, &p).is_some()
+    send_eth(frame).is_some()
 }
 
 /// One received Ethernet frame, if any arrived.

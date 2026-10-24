@@ -19,6 +19,7 @@ pub mod rp1;
 pub mod timer;
 pub mod xhci;
 pub mod wifi;
+pub mod wpa;
 pub mod netdev;
 pub mod sdcard;
 pub mod rng;

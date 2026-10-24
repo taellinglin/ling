@@ -2979,7 +2979,15 @@ fn expand_includes_in(root: &Path, includes: &[String]) -> Vec<(String, PathBuf)
     let mut skipped = 0usize;
 
     for pat in includes {
-        let pat = pat.trim().trim_start_matches("./").trim_start_matches('/');
+        // A leading `!` makes a glob / directory an explicit request too: its
+        // matches are embedded even where the app's ling.ignore excludes them
+        // (LingDev keeps projects/ out of publishing, but a LingOS image wants
+        // the sample projects' scenes on board).
+        let (pat, force) = match pat.trim().strip_prefix('!') {
+            Some(rest) => (rest, true),
+            None => (pat.trim(), false),
+        };
+        let pat = pat.trim_start_matches("./").trim_start_matches('/');
         if pat.is_empty() {
             continue;
         }
@@ -2991,7 +2999,7 @@ fn expand_includes_in(root: &Path, includes: &[String]) -> Vec<(String, PathBuf)
                 let prefix = format!("{}/", pat.replace('\\', "/"));
                 for (rel, abs) in &files {
                     if rel.starts_with(&prefix) {
-                        if is_ignored(&ignore, rel) {
+                        if !force && is_ignored(&ignore, rel) {
                             skipped += 1;
                             continue;
                         }
@@ -3016,7 +3024,7 @@ fn expand_includes_in(root: &Path, includes: &[String]) -> Vec<(String, PathBuf)
         let mut matched = false;
         for (rel, abs) in &files {
             if glob_match(pat, rel) {
-                if is_ignored(&ignore, rel) {
+                if !force && is_ignored(&ignore, rel) {
                     skipped += 1;
                     matched = true; // pattern did match; the file is just excluded
                     continue;
