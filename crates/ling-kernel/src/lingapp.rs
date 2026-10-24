@@ -1864,6 +1864,9 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"px_image" => boolean(px_image(args)),
+        // Picture handles (the PC decodes files into images it draws by id): not on the kernel yet.
+        b"image_load" | b"image_w" | b"image_h" => num(-1.0),
+        b"image_draw" | b"image_replace" | b"image_free" => UNIT,
         b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
         b"os_user" => mk_str(&os_user()),
         b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
