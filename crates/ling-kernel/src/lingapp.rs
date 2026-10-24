@@ -791,7 +791,11 @@ fn net_test() -> String {
             ns::tcp_close_h(h);
             out.push_str("TCP 1.1.1.1:443: connected (the router forwards our traffic)\n");
         },
-        None => out.push_str("TCP 1.1.1.1:443: no answer (the router is not forwarding this address: static lease / allow list?)\n"),
+        None => {
+            out.push_str("TCP 1.1.1.1:443: no answer\n");
+            out.push_str(&crate::wifi::last_frames());
+            out.push('\n');
+        },
     }
     let (dns1, _) = ns::dns_servers();
     let host = "ling-lang.org";
@@ -814,6 +818,8 @@ fn net_test() -> String {
     }
     let Some(hip) = hip else {
         out.push_str(&alloc::format!("DNS {host}: failed via {tried}\n"));
+        out.push_str(&crate::wifi::last_frames());
+        out.push('\n');
         return out;
     };
     out.push_str(&alloc::format!("DNS {host}: {} via {}{}\n", fmt_ip(hip), fmt_ip(via), if via != dns1 { " (your DNS entry did not answer)" } else { "" }));

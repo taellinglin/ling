@@ -162,6 +162,14 @@ pub fn status() -> String {
     }
 }
 
+/// The last frames in and out (the connection test).
+pub fn last_frames() -> String {
+    #[cfg(target_arch = "aarch64")]
+    return crate::arch::wifi::last_frames();
+    #[cfg(not(target_arch = "aarch64"))]
+    String::new()
+}
+
 pub fn ssid() -> String {
     unsafe { (&*(&raw const LAST)).clone() }
 }

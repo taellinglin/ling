@@ -190,6 +190,10 @@ struct Radio {
     rx_queue: Vec<Vec<u8>>,
     frames_in: u32,
     frames_out: u32,
+    /// One-line summaries of the last data frame out / in (the connection test).
+    last_tx: String,
+    last_rx: String,
+    rx_data: u32,
 }
 
 static mut RADIO: Option<Radio> = None;
@@ -1440,6 +1444,9 @@ fn radio_up() -> Option<()> {
             rx_queue: Vec::new(),
             frames_in: 0,
             frames_out: 0,
+            last_tx: String::new(),
+            last_rx: String::new(),
+            rx_data: 0,
         });
     }
     // Give the firmware a moment and take its first mailbox / credit frame.
@@ -1737,8 +1744,13 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
         }
     }
     // No firmware power save: a polling host with no interrupt line would
-    // otherwise see every frame the access point buffers arrive late.
+    // otherwise see every frame the access point buffers arrive late. No ARP
+    // or TCP offload either: the host's stack does all of it and must see
+    // every frame as it crossed the air.
     let _ = ioctl_set_u32(WLC_SET_PM, 0);
+    let _ = set_iovar_u32("arpoe", 0);
+    let _ = set_iovar_u32("arp_ol", 0);
+    let _ = set_iovar_u32("toe_ol", 0);
     r.joined = true;
     r.ssid = String::from(ssid);
     out(b"wifi: joined ");
@@ -1772,7 +1784,47 @@ pub fn transmit(frame: &[u8]) -> bool {
     if !is_joined() || frame.len() < 14 || frame.len() > 1600 {
         return false;
     }
-    send_eth(frame).is_some()
+    let ok = send_eth(frame).is_some();
+    if let Some(r) = radio() {
+        r.last_tx = frame_summary(frame, ok);
+    }
+    ok
+}
+
+/// "UDP 192.168.0.38:33012 > 1.1.1.1:53 (78 B)" and the like.
+fn frame_summary(f: &[u8], ok: bool) -> String {
+    if f.len() < 14 {
+        return String::from("short frame");
+    }
+    let et = u16::from_be_bytes([f[12], f[13]]);
+    let ip = |o: usize| alloc::format!("{}.{}.{}.{}", f[o], f[o + 1], f[o + 2], f[o + 3]);
+    let s = if et == 0x0806 && f.len() >= 42 {
+        alloc::format!("ARP {} {} > {}", if f[21] == 1 { "who-has" } else { "reply" }, ip(28), ip(38))
+    } else if et == 0x0800 && f.len() >= 34 {
+        let ihl = ((f[14] & 0x0F) as usize) * 4;
+        let t = 14 + ihl;
+        let ports = if f.len() >= t + 4 { alloc::format!(":{} > {}:{}", u16::from_be_bytes([f[t], f[t + 1]]), ip(30), u16::from_be_bytes([f[t + 2], f[t + 3]])) } else { alloc::format!(" > {}", ip(30)) };
+        let proto = match f[23] {
+            1 => "ICMP",
+            6 => "TCP",
+            17 => "UDP",
+            _ => "IP",
+        };
+        alloc::format!("{proto} {}{ports}", ip(26))
+    } else if et == 0x888E {
+        String::from("EAPOL")
+    } else {
+        alloc::format!("ethertype {et:04x}")
+    };
+    alloc::format!("{s} ({} B){}", f.len(), if ok { "" } else { " NOT SENT" })
+}
+
+/// What the last frames looked like, for the connection test.
+pub fn last_frames() -> String {
+    match radio() {
+        Some(r) => alloc::format!("wifi: {} frames in ({} data), {} out; last out: {}; last in: {}", r.frames_in, r.rx_data, r.frames_out, if r.last_tx.is_empty() { "-" } else { &r.last_tx }, if r.last_rx.is_empty() { "-" } else { &r.last_rx }),
+        None => String::from("wifi: radio not up"),
+    }
 }
 
 /// One received Ethernet frame, if any arrived.
@@ -1787,6 +1839,8 @@ pub fn receive(outbuf: &mut [u8]) -> Option<usize> {
     let f = r.rx_queue.remove(0);
     let n = f.len().min(outbuf.len());
     outbuf[..n].copy_from_slice(&f[..n]);
+    r.rx_data += 1;
+    r.last_rx = frame_summary(&f, true);
     Some(n)
 }
 
