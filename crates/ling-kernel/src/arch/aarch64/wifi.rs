@@ -182,6 +182,10 @@ struct Radio {
     /// after, for group-key rekeys).
     sup: Option<super::wpa::Handshake>,
     sup_error: Option<&'static str>,
+    /// Handshake message 1 that arrived before the association IEs were read.
+    pending_eapol: Option<Vec<u8>>,
+    /// The association request's RSN IE has been read back (or given up on).
+    ies_known: bool,
     /// Data frames that arrived while waiting for something else.
     rx_queue: Vec<Vec<u8>>,
     frames_in: u32,
@@ -1030,8 +1034,47 @@ fn le16(b: &[u8], i: usize) -> u16 {
 
 /// An EAPOL frame from the access point: run it through the kernel's WPA2
 /// supplicant and carry out what it asks for (replies, keys to install).
+/// After associating: the RSN IE the firmware put in the association request
+/// goes to the supplicant (message 2 must repeat it byte for byte), then a
+/// message 1 that arrived meanwhile is handled.
+fn assoc_ies_learned() {
+    let ies = get_iovar("assoc_req_ies", 512).unwrap_or_default();
+    let mut i = 0usize;
+    let mut found = false;
+    while i + 2 <= ies.len() {
+        let (id, l) = (ies[i], ies[i + 1] as usize);
+        if i + 2 + l > ies.len() {
+            break;
+        }
+        if id == 0x30 {
+            if let Some(sup) = radio().and_then(|r| r.sup.as_mut()) {
+                sup.set_rsn_ie(&ies[i..i + 2 + l]);
+                out(b"  wifi: association RSN IE taken from the firmware (");
+                dec(b"", l as u64 + 2);
+                out(b" bytes)\n");
+                found = true;
+            }
+            break;
+        }
+        i += 2 + l;
+    }
+    if !found {
+        out(b"  wifi: no RSN IE in the association request; using the default\n");
+    }
+    let Some(r) = radio() else { return };
+    r.ies_known = true;
+    if let Some(f) = r.pending_eapol.take() {
+        supplicant_rx(&f);
+    }
+}
+
 fn supplicant_rx(frame: &[u8]) {
     let Some(r) = radio() else { return };
+    if !r.ies_known {
+        // Message 1 can beat the SET_SSID event; answer it once the IEs are known.
+        r.pending_eapol = Some(frame.to_vec());
+        return;
+    }
     let Some(sup) = r.sup.as_mut() else { return };
     let actions = match sup.rx(frame) {
         Ok(a) => a,
@@ -1392,6 +1435,8 @@ fn radio_up() -> Option<()> {
             psk_status: None,
             sup: None,
             sup_error: None,
+            pending_eapol: None,
+            ies_known: true,
             rx_queue: Vec::new(),
             frames_in: 0,
             frames_out: 0,
@@ -1627,12 +1672,11 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
         }
         r.sup = Some(super::wpa::Handshake::new(pmk, r.mac, snonce));
         r.sup_error = None;
-        // The RSN IE the firmware associates with has to be the one message 2
-        // repeats, so hand it over rather than letting the firmware compose it.
-        if let Err(e) = set_iovar("wpaie", &super::wpa::RSN_IE) {
-            dec(b"  wifi: wpaie refused, code -", e.unsigned_abs() as u64);
-            out(b" (the firmware's own RSN IE will be used)\n");
-        }
+        // The firmware composes the association IEs itself (its RSN IE matches
+        // what the access point offers -- group cipher included); the exact IE
+        // it sent is read back after associating, for handshake message 2.
+        r.pending_eapol = None;
+        r.ies_known = false;
     } else {
         stepc("wsec", ioctl_set_u32(WLC_SET_WSEC, 0))?;
     }
@@ -1654,7 +1698,14 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
             if st != 0 {
                 dec(b"  wifi: join failed, status ", st as u64);
                 out(b"\n");
-                return Err(if st == 3 { String::from("network not found") } else { alloc::format!("the access point refused the join (status {st})") });
+                return Err(match st {
+                    3 => String::from("network not found"),
+                    1 => String::from("the access point refused the association (status 1): check the security type; a 5 GHz network needs `wifi country <CC>`"),
+                    _ => alloc::format!("the access point refused the join (status {st})"),
+                });
+            }
+            if !assoc && wpa {
+                assoc_ies_learned();
             }
             assoc = true;
         }
@@ -1685,6 +1736,9 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
             },
         }
     }
+    // No firmware power save: a polling host with no interrupt line would
+    // otherwise see every frame the access point buffers arrive late.
+    let _ = ioctl_set_u32(WLC_SET_PM, 0);
     r.joined = true;
     r.ssid = String::from(ssid);
     out(b"wifi: joined ");

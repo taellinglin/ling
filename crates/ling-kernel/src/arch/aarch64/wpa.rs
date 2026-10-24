@@ -47,6 +47,9 @@ pub struct Handshake {
     pmk: [u8; 32],
     own: [u8; 6],
     ap: [u8; 6],
+    /// The RSN IE message 2 repeats: the one the firmware put in the
+    /// association request (read back after associating), else [`RSN_IE`].
+    rsn: Vec<u8>,
     snonce: [u8; 32],
     anonce: [u8; 32],
     ptk: [u8; 48],
@@ -161,7 +164,14 @@ fn parse_gtk(plain: &[u8]) -> Option<(u8, bool, Vec<u8>)> {
 
 impl Handshake {
     pub fn new(pmk: [u8; 32], own: [u8; 6], snonce: [u8; 32]) -> Self {
-        Handshake { pmk, own, ap: [0; 6], snonce, anonce: [0; 32], ptk: [0; 48], have_ptk: false, last_replay: None, done: false }
+        Handshake { pmk, own, ap: [0; 6], rsn: RSN_IE.to_vec(), snonce, anonce: [0; 32], ptk: [0; 48], have_ptk: false, last_replay: None, done: false }
+    }
+
+    /// The RSN IE the association request carried (so message 2 matches it).
+    pub fn set_rsn_ie(&mut self, ie: &[u8]) {
+        if ie.len() >= 4 && ie[0] == 0x30 && ie[1] as usize + 2 == ie.len() {
+            self.rsn = ie.to_vec();
+        }
     }
 
     pub fn done(&self) -> bool {
@@ -259,7 +269,8 @@ impl Handshake {
             self.ptk = derive_ptk(&self.pmk, &self.ap, &self.own, &self.anonce, &self.snonce);
             self.have_ptk = true;
             self.last_replay = None;
-            let reply = self.build(ver, 2 | KI_PAIRWISE | KI_MIC, replay, &self.snonce, &RSN_IE);
+            let rsn = self.rsn.clone();
+            let reply = self.build(ver, 2 | KI_PAIRWISE | KI_MIC, replay, &self.snonce, &rsn);
             return Ok(alloc::vec![Action::Send(reply)]);
         }
         if !self.have_ptk {

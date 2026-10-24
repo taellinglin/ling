@@ -762,6 +762,52 @@ fn net_get() -> String {
     }
 }
 
+/// Step by step, what works: ARP to the gateway, DNS, TCP, HTTPS -- the
+/// lines the Settings window shows, so a failure can be named without a
+/// serial console.
+fn net_test() -> String {
+    use crate::drivers::netstack as ns;
+    let mut out = String::new();
+    let ip = ns::self_ip();
+    let gw = ns::gateway_ip();
+    out.push_str(&alloc::format!("address {}  gateway {}  ({})\n", fmt_ip(ip), fmt_ip(gw), crate::arch::netdev::kind()));
+    if ip == [0; 4] {
+        out.push_str("no address: join a network, or set a static address\n");
+        return out;
+    }
+    match ns::arp_resolve(gw) {
+        Some(m) => out.push_str(&alloc::format!("ARP gateway: ok ({})\n", fmt_mac(m))),
+        None => {
+            out.push_str("ARP gateway: no reply (frames do not reach the router, or it is not on this subnet)\n");
+            return out;
+        },
+    }
+    let (dns1, _) = ns::dns_servers();
+    let host = "ling-lang.org";
+    let Some(hip) = ns::dns_resolve(host) else {
+        out.push_str(&alloc::format!("DNS {host} via {}: failed\n", fmt_ip(dns1)));
+        return out;
+    };
+    out.push_str(&alloc::format!("DNS {host} via {}: {}\n", fmt_ip(dns1), fmt_ip(hip)));
+    match ns::tcp_connect_h(hip, 443, 4_000_000) {
+        Some(h) => {
+            ns::tcp_close_h(h);
+            out.push_str("TCP 443: connected\n");
+        },
+        None => {
+            out.push_str("TCP 443: no connection (SYN unanswered)\n");
+            return out;
+        },
+    }
+    let (code, body) = crate::netapi::http_get("https://ling-lang.org/");
+    if code == 0 {
+        out.push_str("HTTPS GET: failed (TLS handshake or no response)\n");
+    } else {
+        out.push_str(&alloc::format!("HTTPS GET: status {code}, {} bytes\n", body.len()));
+    }
+    out
+}
+
 /// Apply a configuration; the text is what to show the user.
 fn net_set(mode: &str, ip: &str, mask: &str, gw: &str, dns: &str) -> String {
     use crate::drivers::netstack as ns;
@@ -2334,6 +2380,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"os_net_get" => mk_str(&net_get()),
+        b"os_net_test" => mk_str(&net_test()),
         b"os_net_set" => mk_str(&net_set(&path_arg(args, 0), &path_arg(args, 1), &path_arg(args, 2), &path_arg(args, 3), &path_arg(args, 4))),
         b"os_storage_ready" => boolean(crate::fs::lingfs::is_mounted()),
         b"os_users" => list_from(users_list().iter().map(|s| mk_str(s)).collect()),
