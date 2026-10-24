@@ -18,7 +18,7 @@ pub mod heap;
 /// keeps it correct when called from a context that already had interrupts
 /// off (e.g. inside an interrupt handler).
 pub struct IrqLock {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     flags: u64,
 }
 
@@ -31,7 +31,13 @@ impl IrqLock {
             crate::arch::cpu::cli();
             IrqLock { flags }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            // The timer interrupt mixes audio: the heap and the mixer's tables
+            // must not change under it.
+            IrqLock { flags: crate::arch::cpu::irq_save() }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             IrqLock {}
         }
@@ -43,10 +49,11 @@ impl Drop for IrqLock {
     fn drop(&mut self) {
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            // IF is bit 9 of RFLAGS; only re-enable if it was set on entry.
-            if self.flags & (1 << 9) != 0 {
-                crate::arch::cpu::sti();
-            }
+            crate::arch::cpu::write_flags(self.flags);
+        }
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            crate::arch::cpu::irq_restore(self.flags);
         }
     }
 }

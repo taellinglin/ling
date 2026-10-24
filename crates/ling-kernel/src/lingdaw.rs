@@ -1450,6 +1450,12 @@ fn audio() -> &'static mut Audio {
     unsafe { &mut *(&raw mut AUDIO) }
 }
 
+/// Whether the engine is producing sound (the transport runs or notes ring out).
+pub fn engine_running() -> bool {
+    let a = unsafe { &*(&raw const AUDIO) };
+    a.running || !a.voices.is_empty()
+}
+
 /// Pause the transport (the desktop does this when LingStationX is suspended
 /// or closed, if the "pause music" setting is on). Nothing if no project is up.
 pub fn pause_transport() {

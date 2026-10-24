@@ -194,14 +194,18 @@ fn subframe(sample: i16, frame: u32, left: bool) -> u32 {
 }
 
 /// Render one ring block: the project's audio, a test tone, or silence.
-fn fill_block(st: &mut State, idx: usize) {
+/// The effects mix for one block (no allocation: the timer interrupt fills too).
+static mut FX: [i16; BLOCK_FRAMES * 2] = [0; BLOCK_FRAMES * 2];
+
+fn fill_block(st: &mut State, idx: usize, with_daw: bool) {
     let base = st.ring + (idx * BLOCK_BYTES) as u64;
     let now = now_ms();
-    let src: Option<&[i16]> = if st.tone_until_ms > now { None } else { crate::lingdaw::block(BLOCK_FRAMES) };
+    let src: Option<&[i16]> = if st.tone_until_ms > now || !with_daw { None } else { crate::lingdaw::block(BLOCK_FRAMES) };
     // Programs' sound effects and music (drivers::sfx), on top of the engine.
-    let mut fx: alloc::vec::Vec<i16> = alloc::vec![0i16; BLOCK_FRAMES * 2];
+    let fx = unsafe { &mut *(&raw mut FX) };
+    fx.fill(0);
     if crate::drivers::sfx::active() {
-        crate::drivers::sfx::mix_into(&mut fx);
+        crate::drivers::sfx::mix_into(fx);
     }
     for i in 0..BLOCK_FRAMES {
         let (l, r) = if st.tone_until_ms > now {
@@ -238,15 +242,33 @@ fn playing_block(st: &State) -> Option<usize> {
 
 /// Refill the ring blocks the DMA has finished with. Call every frame.
 pub fn pump() {
+    // The timer interrupt pumps too (`pump_irq`): one filler at a time.
+    let _irq = crate::mm::IrqLock::acquire();
+    pump_blocks(true);
+}
+
+fn pump_blocks(with_daw: bool) {
     let Some(st) = (unsafe { (*(&raw mut ST)).as_mut() }) else { return };
     let Some(cur) = playing_block(st) else { return };
     let mut guard = 0;
     while st.next_fill != cur && guard < BLOCKS {
         let i = st.next_fill;
-        fill_block(st, i);
+        fill_block(st, i, with_daw);
         st.next_fill = (st.next_fill + 1) % BLOCKS;
         guard += 1;
     }
+}
+
+/// From the 100 Hz timer interrupt: keep the ring fed with the effects mix
+/// while LingStationX's engine is idle, so a slow game frame no longer makes
+/// the sound stutter. (With the engine playing, the app loop's `pump` fills
+/// whole blocks of engine + effects itself: the engine's state is not
+/// interrupt-safe.)
+pub fn pump_irq() {
+    if crate::lingdaw::engine_running() {
+        return;
+    }
+    pump_blocks(false);
 }
 
 /// Stop playback: the DMA channel reset, the MAI flushed. Used when a
@@ -404,7 +426,7 @@ pub fn init(verbose: bool) -> bool {
     };
     let mut st = State { ring, cbs, next_fill: 0, frame: 0, tone_until_ms: 0, tone_phase: 0.0 };
     for i in 0..BLOCKS {
-        fill_block(&mut st, i); // valid (silent) frames before the DMA starts
+        fill_block(&mut st, i, false); // valid (silent) frames before the DMA starts
     }
     let mai_data = (HD + port().mai + MAI_DATA) as u64;
     let ti = TI_D_DREQ | TI_S_INC | TI_WAIT_RESP | ((port().dreq & 31) << 16);

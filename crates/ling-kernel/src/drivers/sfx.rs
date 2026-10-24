@@ -86,6 +86,7 @@ fn parse_wav(buf: &[u8]) -> Option<(usize, usize, u32, u8, u8)> {
 /// Decode a WAV (PCM 8 / 16 / 24 / 32-bit integer or 32-bit float, mono or
 /// stereo, any rate) into a sample; None if it is not one we can read.
 pub fn load_wav(bytes: &[u8]) -> Option<usize> {
+    let _irq = crate::mm::IrqLock::acquire();
     let (off, len, rate, ch, bits) = parse_wav(bytes)?;
     if rate == 0 || !(1..=2).contains(&ch) {
         return None;
@@ -121,6 +122,7 @@ pub fn load_wav(bytes: &[u8]) -> Option<usize> {
 /// A synthesised tone: `wave` 0 sine, 1 square, 2 saw, 3 triangle, 4 noise;
 /// `dur` seconds, a short fade in and out. Returns a sample id.
 pub fn synth(freq: f64, amp: f64, dur: f64, wave: u32) -> usize {
+    let _irq = crate::mm::IrqLock::acquire();
     let n = ((dur.clamp(0.01, 4.0)) * RATE) as usize;
     let mut data: Vec<i16> = Vec::with_capacity(n);
     let mut phase = 0.0f64;
@@ -173,6 +175,7 @@ pub fn duration(id: usize) -> f64 {
 
 /// Start a voice; `pitch` 1.0 = as recorded. Returns the voice index, or None.
 pub fn play(id: usize, vol: f32, pan: f32, looping: bool, pitch: f64, music: bool) -> Option<usize> {
+    let _irq = crate::mm::IrqLock::acquire();
     let s = samples().get(id)?;
     let step = s.rate as f64 / RATE * pitch.clamp(0.1, 8.0);
     let vs = voices();
@@ -217,6 +220,7 @@ pub fn set_listener(cos_yaw: f32, sin_yaw: f32) {
 }
 
 pub fn stop(voice: usize) {
+    let _irq = crate::mm::IrqLock::acquire();
     if voice < MAX_VOICES {
         voices()[voice].active = false;
     }
@@ -240,6 +244,7 @@ fn music_voice() -> Option<&'static mut Voice> {
 }
 
 pub fn stop_music() {
+    let _irq = crate::mm::IrqLock::acquire();
     if let Some(v) = music_voice() {
         v.active = false;
     }
@@ -247,12 +252,14 @@ pub fn stop_music() {
 }
 
 pub fn pause_music() {
+    let _irq = crate::mm::IrqLock::acquire();
     if let Some(v) = music_voice() {
         v.paused = !v.paused;
     }
 }
 
 pub fn seek_music(seconds: f64) {
+    let _irq = crate::mm::IrqLock::acquire();
     if let Some(v) = music_voice() {
         let s = &samples()[v.sample];
         let frames = s.data.len() / if s.stereo { 2 } else { 1 };

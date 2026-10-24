@@ -220,6 +220,7 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
             if crate::arch::intc::core_timer_pending() {
                 unsafe { TICKS += 1 };
                 crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
+                crate::arch::hdmi_audio::pump_irq();
                 if unsafe { TICKS } % 100 == 0 {
                     crate::lingrt::hang_tick();
                 }
@@ -256,6 +257,7 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
         4 => {
             if crate::arch::intc::core_timer_pending() {
                 unsafe { TICKS += 1 };
+                crate::arch::hdmi_audio::pump_irq();
                 crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
                 if unsafe { TICKS } % 100 == 0 {
                     crate::lingrt::hang_tick();
