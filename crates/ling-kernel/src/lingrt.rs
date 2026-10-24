@@ -1103,6 +1103,14 @@ static mut REPORTED: BTreeSet<Vec<u8>> = BTreeSet::new();
 /// Console `trace`: print each builtin name the first time a program calls
 /// it -- a cheap way to see how far a start-up got before a hang.
 pub static mut TRACE: bool = false;
+/// Builtin calls so far (the frame-timing overlay shows the per-frame count).
+pub static mut BUILTIN_CALLS: u64 = 0;
+const DISPATCH_SLOTS: usize = 1024;
+static mut DISPATCH_CACHE: [(usize, u8); DISPATCH_SLOTS] = [(0, 0); DISPATCH_SLOTS];
+
+pub fn gc_runs() -> u32 {
+    unsafe { GC_RUNS }
+}
 static mut TRACED: BTreeSet<Vec<u8>> = BTreeSet::new();
 
 fn trace_first(name: &[u8]) {
@@ -1205,19 +1213,42 @@ pub unsafe extern "C" fn ling_builtin(
     if TRACE {
         trace_first(name);
     }
+    BUILTIN_CALLS += 1;
+    // Compiled code hands over the same static name for a call site every
+    // time, so the dispatcher that answered it last time is tried first: a
+    // drawing call skips the long core match (hundreds of names) that way.
+    let slot = ((name_ptr as usize) >> 3) & (DISPATCH_SLOTS - 1);
+    let (cached_ptr, stage) = DISPATCH_CACHE[slot];
+    if cached_ptr == name_ptr as usize {
+        let hit = match stage {
+            1 => st_builtin(name, args),
+            2 => crate::lingapp::dispatch(name, args),
+            3 => crate::lingdaw::dispatch(name, args),
+            4 => crate::netapi::dispatch(name, args),
+            _ => core_builtin(name, args),
+        };
+        if let Some(v) = hit {
+            return v;
+        }
+    }
     if let Some(v) = core_builtin(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, 0);
         return v;
     }
     if let Some(v) = st_builtin(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, 1);
         return v;
     }
     if let Some(v) = crate::lingapp::dispatch(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, 2);
         return v;
     }
     if let Some(v) = crate::lingdaw::dispatch(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, 3);
         return v;
     }
     if let Some(v) = crate::netapi::dispatch(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, 4);
         return v;
     }
     for f in (*(&raw const EXT)).iter().flatten() {

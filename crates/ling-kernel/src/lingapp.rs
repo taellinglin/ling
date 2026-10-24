@@ -1449,10 +1449,52 @@ fn os_info(key: &str) -> String {
 /// cursor (`drivers::cursor`), so this is a no-op.
 static mut CURSOR_DOT: bool = false;
 
+/// Settings > System "Show frame timing": frame time, builtin calls and
+/// collections drawn over every frame (apps included).
+static mut PERF: bool = false;
+static mut PERF_LAST_US: u64 = 0;
+static mut PERF_FRAME_US: f64 = 0.0;
+static mut PERF_CALLS: u64 = 0;
+
+fn perf_overlay(w: &mut Window) {
+    let now = crate::arch::timer::now_us();
+    let (last, calls_before) = unsafe { (PERF_LAST_US, PERF_CALLS) };
+    let calls_now = unsafe { crate::lingrt::BUILTIN_CALLS };
+    unsafe {
+        PERF_LAST_US = now;
+        PERF_CALLS = calls_now;
+    }
+    if last == 0 {
+        return;
+    }
+    let dt = now.saturating_sub(last) as f64;
+    let ema = unsafe {
+        PERF_FRAME_US = if PERF_FRAME_US == 0.0 { dt } else { PERF_FRAME_US * 0.8 + dt * 0.2 };
+        PERF_FRAME_US
+    };
+    let fps = if ema > 0.0 { 1_000_000.0 / ema } else { 0.0 };
+    let line = alloc::format!(
+        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  gc {}  free {} MiB ",
+        ema / 1000.0,
+        fps,
+        calls_now.saturating_sub(calls_before),
+        crate::lingrt::gc_runs(),
+        crate::mm::frame::free_frame_count() * 4 / 1024
+    );
+    let (x, y) = (8i64, 8i64);
+    rect(w, x, y, line.len() as i64 * 8 + 4, 14, 0x10_0C18);
+    text8(w, x + 2, y + 3, 0xFF_E0_60, &line);
+}
+
 fn present() {
     crate::lingrt::mark_present();
     crate::lingrt::gc_maybe();
     let (mx, my, _) = mouse_state();
+    if unsafe { PERF } {
+        if let Some(w) = win() {
+            perf_overlay(w);
+        }
+    }
     if let Some(w) = win() {
         // Draw the pointer into the frame, blit, then put the pixels back so the
         // app's own buffer is untouched.
@@ -2508,8 +2550,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_apps_running" => list_from(apps_running().iter().map(|s| mk_str(s)).collect()),
         b"os_option" => {
             let v = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
-            if path_arg(args, 0) == "pause_audio" {
-                unsafe { PAUSE_AUDIO = v };
+            match path_arg(args, 0).as_str() {
+                "pause_audio" => unsafe { PAUSE_AUDIO = v },
+                "perf" => unsafe { PERF = v },
+                _ => {},
             }
             UNIT
         },

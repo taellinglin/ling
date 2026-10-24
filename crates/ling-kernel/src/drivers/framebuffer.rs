@@ -375,9 +375,22 @@ pub fn blit_rgb(src: &[u32], sw: usize, sh: usize) {
                     ptr::copy_nonoverlapping(row.as_ptr(), dst, w);
                 },
                 16 => {
+                    // Two pixels per 32-bit store: the Pi's screen is write-combined
+                    // memory, so wide plain stores go several times faster than
+                    // one volatile 16-bit write per pixel.
                     let dst = (base + ox * 2) as *mut u16;
-                    for (x, &c) in row.iter().enumerate() {
-                        ptr::write_volatile(dst.add(x), rgb565(c));
+                    let mut x = 0usize;
+                    if (dst as usize) & 3 == 0 {
+                        let d32 = dst as *mut u32;
+                        while x + 1 < w {
+                            let v = rgb565(row[x]) as u32 | ((rgb565(row[x + 1]) as u32) << 16);
+                            ptr::write(d32.add(x / 2), v);
+                            x += 2;
+                        }
+                    }
+                    while x < w {
+                        ptr::write(dst.add(x), rgb565(row[x]));
+                        x += 1;
                     }
                 },
                 24 => {
