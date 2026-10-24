@@ -1281,6 +1281,10 @@ fn pad() -> crate::drivers::hidpad::PadState {
     crate::drivers::hidpad::PadState::default()
 }
 
+fn fmt_mac(m: [u8; 6]) -> String {
+    alloc::format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5])
+}
+
 fn os_info(key: &str) -> String {
     use alloc::format;
     match key {
@@ -1304,6 +1308,28 @@ fn os_info(key: &str) -> String {
             } else {
                 format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
             }
+        },
+        // The hardware addresses (a router's static lease / allow list wants them).
+        "mac" => {
+            #[cfg(target_arch = "aarch64")]
+            {
+                if crate::arch::rp1_eth::ensure_init() {
+                    fmt_mac(crate::arch::rp1_eth::mac())
+                } else {
+                    String::from("no Ethernet controller")
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            fmt_mac(crate::drivers::net_e1000::mac())
+        },
+        "mac_wifi" => {
+            #[cfg(target_arch = "aarch64")]
+            {
+                let m = crate::arch::wifi::mac();
+                if m == [0; 6] { String::from("radio not started (open Wi-Fi networks once)") } else { fmt_mac(m) }
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            String::from("no Wi-Fi radio")
         },
         "display" => format!("{} x {}", framebuffer::width(), framebuffer::height()),
         "gamepad" => {
