@@ -33,13 +33,14 @@ const ENABLE_IRQS_2_OFF: usize = 0x214;
 /// cover peripheral IRQs 32..63, so it's bit (57-32).
 const UART0_IRQ_BIT: u32 = 1 << (57 - 32);
 
-/// Pi 5 (BCM2712) has neither this legacy VC controller nor the QA7 ARM-local
-/// block at 0x4000_0000 — it uses a GIC-400. Until a `gic.rs` exists, interrupt
-/// routing is simply skipped there (the Pi 5 bring-up path runs IRQ-free), so
-/// this must not poke those dead addresses.
+/// The Pi 4 (BCM2711) and Pi 5 (BCM2712) have neither this legacy VC controller
+/// nor the QA7 ARM-local block at 0x4000_0000 -- they route through a GIC-400
+/// (`gic.rs`), so these registers must not be poked there.
 #[inline]
 fn legacy_absent() -> bool {
-    board() == RpiBoard::Pi5
+    let _ = RpiBoard::Pi5;
+    let _ = board();
+    crate::arch::gic::active()
 }
 
 /// Route the non-secure physical timer's IRQ to core 0 and enable UART0's
@@ -48,6 +49,7 @@ fn legacy_absent() -> bool {
 /// x86_64 side's PIC setup before its first `cpu::sti`.
 pub fn init() {
     if legacy_absent() {
+        crate::arch::gic::init();
         return;
     }
     unsafe {

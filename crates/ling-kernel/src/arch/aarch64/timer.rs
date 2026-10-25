@@ -84,6 +84,13 @@ pub fn start_periodic(hz: u32) {
     }
 }
 
+/// Whether the physical timer has fired and not been re-armed (`CNTP_CTL_EL0.ISTATUS`).
+pub fn phys_pending() -> bool {
+    let ctl: u64;
+    unsafe { asm!("mrs {}, cntp_ctl_el0", out(reg) ctl, options(nomem, nostack)) };
+    ctl & 0b100 != 0
+}
+
 /// Re-arm the next tick — called from the IRQ handler after each fire.
 pub fn rearm_periodic(hz: u32) {
     unsafe {

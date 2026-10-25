@@ -245,12 +245,6 @@ struct LowerCtx<'a> {
     scope_names: Vec<std::collections::HashSet<String>>,
     /// Per-scope undo log of bindings shadowed on entry, restored on scope exit.
     shadowed: Vec<Vec<(String, Option<Local>)>>,
-    /// Parameter names not yet re-bound by the body. A `bind` of one of these
-    /// gets a fresh mutable local instead of assigning the argument slot: the
-    /// backends treat argument slots as single-assignment, so `bind dt =
-    /// min(dt, 0.033)` used to read its own (still empty) result and every
-    /// read of `dt` before that line went through the clobbered slot too.
-    params: std::collections::HashSet<String>,
     closures: Vec<MirFunction>,
     closure_vars: HashMap<String, ClosureInfo>,
     /// Module-level global names. A read of one of these (when not a local) is
@@ -275,7 +269,6 @@ impl<'a> LowerCtx<'a> {
             current: BasicBlockId(0),
             scope_names: vec![std::collections::HashSet::new()],
             shadowed: vec![Vec::new()],
-            params: std::collections::HashSet::new(),
             closures: Vec::new(),
             closure_vars: HashMap::new(),
             globals,
@@ -292,10 +285,20 @@ impl<'a> LowerCtx<'a> {
             .insert(name.to_string());
     }
 
-    /// Declare a function / closure parameter (see `params`).
+    /// Declare a function / closure parameter: the argument slot is copied
+    /// into a fresh mutable local and the name resolves to that local, so a
+    /// `bind name = …` anywhere in the body (same-scope mutation, like any
+    /// other local) and every read of the name -- before it, after it, in a
+    /// loop condition -- agree on one place. The backends treat the argument
+    /// slots themselves as single-assignment: assigning one made `bind dt =
+    /// min(dt, 0.033)` read its own empty result, and mapping the name to a
+    /// fresh local only at the first `bind` left reads lowered earlier (a
+    /// `while` condition) on the slot and reads after a loop that never ran on
+    /// an unassigned local.
     fn declare_param(&mut self, name: &str, local: Local) {
-        self.declare_in_scope(name, local);
-        self.params.insert(name.to_string());
+        let l = self.alloc_local(Some(name.to_string()), true);
+        self.emit(StatementKind::Assign(l, Rvalue::Use(Operand::Copy(local))));
+        self.declare_in_scope(name, l);
     }
 
     /// Resolve the local a `bind name = …` should target. Re-binding within the
@@ -303,11 +306,6 @@ impl<'a> LowerCtx<'a> {
     /// outer one until the scope exits.
     fn bind_local(&mut self, name: &str) -> Local {
         if self.scope_names.last().unwrap().contains(name) {
-            if self.params.remove(name) {
-                let l = self.alloc_local(Some(name.to_string()), true);
-                self.locals.insert(name.to_string(), l);
-                return l;
-            }
             return self.locals[name];
         }
         let prev = self.locals.get(name).copied();

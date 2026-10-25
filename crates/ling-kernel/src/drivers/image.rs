@@ -916,11 +916,8 @@ fn decode_svg_bg(data: &[u8], cap: u32, bg: u32) -> Option<Image> {
 
     // Wall-clock budget: a complex real-world SVG can accumulate enough
     // rasterization work to stall the UI. Bail out with a partial render
-    // rather than hang. x86_64 only (the SVG path isn't exercised on rpi).
-    #[cfg(target_arch = "x86_64")]
+    // rather than hang.
     let deadline = crate::arch::timer::now_us() + 1_500_000;
-    #[cfg(not(target_arch = "x86_64"))]
-    let deadline = 0u64;
 
     let content = &text[svg_tag_end + 1..];
     svg_render(content, text, root, &mut buf, cw, ch, 0, deadline);

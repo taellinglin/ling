@@ -185,6 +185,7 @@ pub fn init() {
         // the peripheral base, VideoCore mailbox, UART and interrupt controller
         // all moved between generations, and everything below reads this.
         arch::mmio::init_board();
+        arch::fdt::preserve(); // before anything allocates: the tree sits in free RAM
         uart::init(); // UART0+GPIO on Pi 3/4; the firmware-init debug UART10 on Pi 5
 
         // HDMI first: bring up the framebuffer via the VideoCore mailbox, paint
@@ -201,28 +202,77 @@ pub fn init() {
         arch::vectors::init();
         arch::timer::calibrate();
 
-        // Pi 5 uses a GIC-400, not the legacy BCM VC/QA7 controllers this
-        // kernel drives, so interrupt routing is skipped there for now. Arming
-        // the generic timer + unmasking IRQs without a controller that can
-        // acknowledge the line would just storm the core, so the Pi 5 path
-        // stays IRQ-free (the minimal kernel draws its banner and idles).
-        if arch::mmio::board() != arch::mmio::RpiBoard::Pi5 {
-            // Same ordering discipline as the x86_64 side: vector table before
-            // anything routes to it, every one-time setup before the first
-            // `cpu::sti` (`daifclr`) lets an IRQ land.
-            arch::intc::init();
-            arch::timer::start_periodic(100);
-            unsafe { cpu::sti() };
-            console_write(b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n");
+        // Same ordering discipline as the x86_64 side: vector table before
+        // anything routes to it, every one-time setup before the first
+        // `cpu::sti` (`daifclr`) lets an IRQ land. The Pi 3 routes through its
+        // legacy VC / QA7 controllers, the Pi 4 and 5 through the GIC-400.
+        arch::intc::init();
+        arch::timer::start_periodic(100);
+        unsafe { cpu::sti() };
+        console_write(if arch::gic::active() {
+            b"interrupts enabled (VBAR_EL1+GIC-400, 100Hz heartbeat)\n"
+        } else {
+            b"interrupts enabled (VBAR_EL1+intc, 100Hz heartbeat)\n"
+        });
+        if arch::gic::active() {
+            let (en, dctl, cctl, el) = arch::gic::status();
+            console_write(b"gic: ISENABLER0=0x");
+            print_hex64(en as u64);
+            console_write(b" GICD_CTLR=0x");
+            print_hex64(dctl as u64);
+            console_write(b" GICC_CTLR=0x");
+            print_hex64(cctl as u64);
+            console_write(b" IGROUPR0=0x");
+            print_hex64(arch::gic::group0() as u64);
+            console_write(b" EL");
+            print_decimal(el);
+            if !arch::gic::timer_enabled() {
+                console_write(b" -- timer PPI refused (group 0 interrupts: this firmware ran no ARM stub), no timer IRQs");
+            }
+            console_write(b"\n");
         }
 
         mm::init_physical_memory();
+        // what the firmware handed over in x0: the device tree (model + RAM
+        // ranges) or, on QEMU without -dtb, nothing (the mailbox answers then)
+        {
+            let (_, n) = arch::fdt::memory_regions();
+            console_write(b"dtb: ");
+            match arch::fdt::model() {
+                Some(m) => console_write(m.as_bytes()),
+                None if n == 0 => {
+                    console_write(b"none (x0=0x");
+                    print_hex64(arch::boot::dtb_ptr());
+                    let p = arch::boot::dtb_ptr();
+                    if p >= 0x1000 && p < mm::ram_end().max(1 << 30) && p & 3 == 0 {
+                        console_write(b" -> 0x");
+                        print_hex64(unsafe { core::ptr::read_volatile(p as *const u32) }.swap_bytes() as u64);
+                    }
+                    console_write(b", kernel end 0x");
+                    print_hex64(arch::boot::kernel_end());
+                    console_write(b"; RAM banks from the firmware mailbox + board revision)");
+                },
+                None => console_write(b"(no model string)"),
+            }
+            if n > 0 {
+                console_write(b", ");
+                print_decimal(n as u64);
+                console_write(b" RAM region(s)");
+            }
+            console_write(b"\n");
+        }
         console_write(b"mm: ");
         print_decimal((mm::frame::free_frame_count() * 4) as u64);
-        console_write(b" KiB free (frame allocator)\n");
+        console_write(b" KiB free (frame allocator), ");
+        print_decimal(mm::ram_region_count() as u64);
+        console_write(b" RAM bank(s), top 0x");
+        print_hex64(mm::ram_end());
+        console_write(b", board revision 0x");
+        print_hex64(arch::mailbox::board_revision().unwrap_or(0) as u64);
+        console_write(b"\n");
 
         // MMU + caches: RAM cacheable, framebuffer/DMA pool uncached, MMIO Device.
-        let ram_end = arch::mailbox::arm_memory().map(|(b, s)| b + s).unwrap_or(128 << 20);
+        let ram_end = mm::ram_end().max(128 << 20);
         arch::paging::init_rpi(ram_end);
         console_write(b"mmu: identity map on (caches enabled)\n");
     }
@@ -368,7 +418,7 @@ pub fn run_app_file(path: &str) -> Result<i32, &'static str> {
 /// Print `n` as decimal ASCII to the console — same shape as the
 /// x86_64-only `timer.rs`'s private `print_decimal`, kept separate since
 /// this one needs to work on both architectures.
-fn print_decimal(n: u64) {
+pub(crate) fn print_decimal(n: u64) {
     if n == 0 {
         console_write(b"0");
         return;
@@ -389,6 +439,23 @@ fn print_decimal(n: u64) {
 /// than `print_decimal`'s output (confirmed the hard way: misreading a
 /// decimal-formatted MAC as hex cost real debugging time chasing a bug that
 /// turned out not to exist).
+/// Print `n` as lowercase hex without leading zeros (addresses, register values).
+pub(crate) fn print_hex64(n: u64) {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut buf = [0u8; 16];
+    let mut i = buf.len();
+    let mut v = n;
+    loop {
+        i -= 1;
+        buf[i] = DIGITS[(v & 0xF) as usize];
+        v >>= 4;
+        if v == 0 {
+            break;
+        }
+    }
+    console_write(&buf[i..]);
+}
+
 fn print_hex_byte(n: u8) {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     console_write(&[DIGITS[(n >> 4) as usize], DIGITS[(n & 0xF) as usize]]);
@@ -748,7 +815,7 @@ fn rpi_console(nested: bool) {
 /// Minimal line-oriented shell for the Raspberry Pi serial console. Output goes
 /// through `console_write` (serial + HDMI). Grows as the Pi gains features.
 #[cfg(target_arch = "aarch64")]
-fn rpi_shell_exec(line: &[u8]) {
+pub(crate) fn rpi_shell_exec(line: &[u8]) {
     // Trim ASCII whitespace (incl. a trailing CR).
     let mut s = line;
     while let [b' ' | b'\t' | b'\r', rest @ ..] = s {
@@ -761,7 +828,22 @@ fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, board, usb, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, date, hostname, board, usb, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>, reboot, poweroff\n");
+    } else if s == b"date" {
+        let t = crate::lingapp::wall_time();
+        if t == 0 {
+            console_write(b"date: this board has no real-time clock (uptime only)\n");
+        } else {
+            console_write(crate::lingapp::format_utc(t).as_bytes());
+            console_write(b" UTC\n");
+        }
+    } else if s == b"hostname" {
+        console_write(crate::setup::hostname().as_bytes());
+        console_write(b"\n");
+    } else if s == b"reboot" {
+        arch::power::reboot();
+    } else if s == b"poweroff" || s == b"halt" || s == b"shutdown" {
+        arch::power::poweroff();
     } else if s == b"apps" {
         let apps = unsafe { &*(&raw const APPS) };
         console_write(b"built-in apps:");
@@ -918,11 +1000,15 @@ fn rpi_shell_exec(line: &[u8]) {
         ling_command(core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim());
     } else if s == b"uptime" {
         let secs = arch::timer::now_ms() / 1000;
-        let mut b = [0u8; 24];
+        let mut b = [0u8; 80];
         let mut n = 0;
         append_bytes(&mut b, &mut n, b"uptime: ");
         n += write_decimal(&mut b[n..], secs);
-        append_bytes(&mut b, &mut n, b"s\n");
+        append_bytes(&mut b, &mut n, b"s, ");
+        n += write_decimal(&mut b[n..], arch::vectors::ticks());
+        append_bytes(&mut b, &mut n, b" timer ticks, ");
+        n += write_decimal(&mut b[n..], arch::vectors::irq_entries());
+        append_bytes(&mut b, &mut n, b" IRQs\n");
         console_write(&b[..n]);
     } else if s == b"board" {
         let name = match arch::mmio::board() {
@@ -3249,7 +3335,14 @@ pub unsafe extern "C" fn ling_kernel_kbd_read_char() -> u64 {
     #[cfg(target_arch = "x86_64")]
     return keyboard::read_char() as u64;
     #[cfg(target_arch = "aarch64")]
-    return uart::read_byte() as u64;
+    {
+        loop {
+            if let Some(c) = poll_input() {
+                return c as u64;
+            }
+            arch::timer::delay_us(500);
+        }
+    }
 }
 
 /// Non-blocking poll of console input; returns 0 if nothing is waiting.
@@ -3258,7 +3351,7 @@ pub unsafe extern "C" fn ling_kernel_kbd_poll_char() -> u64 {
     #[cfg(target_arch = "x86_64")]
     return keyboard::poll_char() as u64;
     #[cfg(target_arch = "aarch64")]
-    return uart::poll_byte().unwrap_or(0) as u64;
+    return poll_input().unwrap_or(0) as u64;
 }
 
 #[no_mangle]

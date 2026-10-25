@@ -197,6 +197,13 @@ fn read_far_el1() -> u64 {
 const HEARTBEAT_HZ: u32 = 100;
 
 static mut TICKS: u64 = 0;
+/// IRQ exceptions taken (any source), for `uptime`'s diagnostics.
+static mut IRQ_ENTRIES: u64 = 0;
+static mut FIRST_IAR: u32 = u32::MAX;
+
+pub fn irq_entries() -> u64 {
+    unsafe { IRQ_ENTRIES }
+}
 
 pub fn ticks() -> u64 {
     unsafe { TICKS }
@@ -217,17 +224,7 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
     let frame_addr = frame as *mut TrapFrame as u64;
     match kind {
         1 => {
-            if crate::arch::intc::core_timer_pending() {
-                unsafe { TICKS += 1 };
-                crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
-                crate::arch::hdmi_audio::pump_irq();
-                if unsafe { TICKS } % 100 == 0 {
-                    crate::lingrt::hang_tick();
-                }
-            }
-            if crate::arch::intc::uart_pending() {
-                crate::drivers::uart::irq_drain();
-            }
+            service_irqs();
             frame_addr
         }
         0 => {
@@ -255,20 +252,61 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
             crate::proc::uproc::on_syscall_return(frame_addr)
         }
         4 => {
-            if crate::arch::intc::core_timer_pending() {
-                unsafe { TICKS += 1 };
-                crate::arch::hdmi_audio::pump_irq();
-                crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
-                if unsafe { TICKS } % 100 == 0 {
-                    crate::lingrt::hang_tick();
-                }
-            }
-            if crate::arch::intc::uart_pending() {
-                crate::drivers::uart::irq_drain();
-            }
+            service_irqs();
             crate::proc::uproc::on_timer_preempt(frame_addr)
         }
         _ => fault_halt("Unhandled Exception", frame, read_esr_el1(), read_far_el1()),
+    }
+}
+
+/// One heartbeat: re-arm the generic timer, keep the HDMI ring fed, watch for hangs.
+fn timer_tick() {
+    unsafe { TICKS += 1 };
+    if unsafe { TICKS } == 300 {
+        // one line, three seconds in: proof on the serial log that the timer IRQ runs
+        crate::console_write(b"irq: heartbeat alive (300 ticks)\n");
+    }
+    crate::arch::timer::rearm_periodic(HEARTBEAT_HZ);
+    crate::arch::hdmi_audio::pump_irq();
+    if unsafe { TICKS } % 100 == 0 {
+        crate::lingrt::hang_tick();
+    }
+}
+
+/// Dispatch whatever raised the IRQ: through the GIC on the Pi 4 / 5
+/// (acknowledge, handle, end), through the legacy controllers on the Pi 3.
+fn service_irqs() {
+    unsafe { IRQ_ENTRIES += 1 };
+    if crate::arch::gic::active() {
+        let mut guard = 0;
+        let mut ticked = false;
+        while let Some(iar) = crate::arch::gic::ack() {
+            if unsafe { FIRST_IAR } == u32::MAX {
+                unsafe { FIRST_IAR = iar };
+                print_hex64("irq: first interrupt from the GIC, IAR=", iar as u64);
+            }
+            if matches!(iar & 0x3FF, crate::arch::gic::IRQ_TIMER_PHYS_NS | crate::arch::gic::IRQ_TIMER_PHYS_S) {
+                timer_tick();
+                ticked = true;
+            }
+            crate::arch::gic::eoi(iar);
+            guard += 1;
+            if guard > 16 {
+                break;
+            }
+        }
+        // the timer under another id (or a spurious 1023): its own status
+        // bit says whether it fired, and re-arming it drops the level
+        if !ticked && crate::arch::timer::phys_pending() {
+            timer_tick();
+        }
+        return;
+    }
+    if crate::arch::intc::core_timer_pending() {
+        timer_tick();
+    }
+    if crate::arch::intc::uart_pending() {
+        crate::drivers::uart::irq_drain();
     }
 }
 

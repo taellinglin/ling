@@ -360,6 +360,11 @@ fn cpu_ticks() -> u64 {
     return unsafe { crate::arch::cpu::rdtsc() };
     #[allow(unreachable_code)]
     {
+        // the hardware random source first (the Pi 5's rng200), the clock as a fallback
+        let mut r = [0u8; 8];
+        if crate::crypto::random_bytes(&mut r) {
+            return u64::from_le_bytes(r);
+        }
         static mut N: u64 = 0;
         let n = unsafe {
             N = N.wrapping_add(1);

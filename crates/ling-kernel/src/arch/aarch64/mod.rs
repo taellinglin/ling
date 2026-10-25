@@ -13,6 +13,9 @@
 
 pub mod cpu;
 pub mod intc;
+pub mod gic;
+pub mod fdt;
+pub mod power;
 pub mod mailbox;
 pub mod mmio;
 pub mod rp1;

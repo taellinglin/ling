@@ -371,7 +371,7 @@ pub fn init_rpi(ram_end: u64) {
                 let uncached = (pool != 0 && a == pool) || (a >= fb.0 && a < fb.1);
                 let desc = if uncached {
                     a | BLOCK | AF | SH_INNER | ATTR_NORMAL_NC | UXN | PXN
-                } else if a < ram_end {
+                } else if a < ram_end && crate::mm::in_ram(a) {
                     a | BLOCK | AF | SH_INNER | ATTR_NORMAL | UXN // EL1 RWX
                 } else {
                     a | BLOCK | AF | ATTR_DEVICE | UXN | PXN

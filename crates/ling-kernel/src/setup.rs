@@ -389,8 +389,52 @@ fn edit_backspace(cfg: &mut SetupConfig, focus: usize) {
     }
 }
 
+/// The saved choices (`setup.conf` on the card): `key=value` lines.
+fn save(cfg: &SetupConfig) -> bool {
+    if !crate::fs::lingfs::is_mounted() {
+        return false;
+    }
+    let mut text = alloc::string::String::new();
+    text.push_str("hostname=");
+    text.push_str(core::str::from_utf8(cfg.hostname.as_bytes()).unwrap_or("lingos"));
+    text.push_str(&alloc::format!("\nlang={}\ntz={}\nssh={}\nssh_port=", cfg.lang, cfg.tz, if cfg.ssh { 1 } else { 0 }));
+    text.push_str(core::str::from_utf8(cfg.ssh_port.as_bytes()).unwrap_or("22"));
+    text.push('\n');
+    crate::fs::lingfs::write_path_any("setup.conf", text.as_bytes()).is_ok()
+}
+
+/// One value from the saved `setup.conf` ("" when unset or no storage).
+pub(crate) fn saved(key: &str) -> alloc::string::String {
+    if !crate::fs::lingfs::is_mounted() {
+        return alloc::string::String::new();
+    }
+    let mut buf = [0u8; 512];
+    let n = match crate::fs::lingfs::read_file_all("setup.conf", &mut buf) {
+        Ok(Some(n)) => n,
+        _ => return alloc::string::String::new(),
+    };
+    let text = core::str::from_utf8(&buf[..n]).unwrap_or("");
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix(key).and_then(|r| r.strip_prefix('=')) {
+            return alloc::string::String::from(v.trim());
+        }
+    }
+    alloc::string::String::new()
+}
+
+/// The machine's name: the wizard's choice when it was saved, else "lingos".
+pub(crate) fn hostname() -> alloc::string::String {
+    let h = saved("hostname");
+    if h.is_empty() {
+        alloc::string::String::from("lingos")
+    } else {
+        h
+    }
+}
+
 fn apply(cfg: &SetupConfig) {
     unsafe { core::ptr::write(&raw mut LAST_CONFIG, Some(*cfg)) };
+    crate::console_write(if save(cfg) { b"setup: saved to the card (setup.conf)\n" } else { b"setup: not saved (no LingOS storage on the card yet)\n" });
     // Echo a summary to the serial log (invisible on HDMI, useful when a cable
     // is attached / under QEMU).
     crate::console_write(b"\nsetup: applied configuration\n");

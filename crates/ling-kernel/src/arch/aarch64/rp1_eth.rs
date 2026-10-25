@@ -212,10 +212,22 @@ fn choose_mac(base: usize) -> [u8; 6] {
     [0x02, 0x4c, 0x69, 0x6e, 0x67, 0x4f]
 }
 
+/// Why the last `init` gave up ("" after a success): for Settings > Network.
+static mut LAST_ERR: &str = "";
+
+pub fn last_error() -> &'static str {
+    unsafe { LAST_ERR }
+}
+
+fn fail(why: &'static str) -> Result<(), ()> {
+    unsafe { LAST_ERR = why };
+    Err(())
+}
+
 pub fn init() -> Result<(), ()> {
     let Some(win) = rp1::rp1_window() else {
         out(b"eth: no RP1 (the wired port is a Pi 5 feature)\n");
-        return Err(());
+        return fail("no RP1 southbridge (Pi 5 only)");
     };
     let base = rp1::at(win, GEM_RP1);
     out(b"Ethernet (RP1 GEM):\n");
@@ -223,7 +235,7 @@ pub fn init() -> Result<(), ()> {
     hex(b"  module id=", id as u64, 8);
     if id == 0 || id == 0xFFFF_FFFF {
         out(b"  no GEM at the RP1 address\n");
-        return Err(());
+        return fail("no GEM controller at the RP1 address");
     }
     // Quiesce: MAC off, statistics and status cleared, interrupts masked.
     wr(base, NCR, 0);
@@ -258,7 +270,7 @@ pub fn init() -> Result<(), ()> {
     }
     if phy == 32 {
         out(b"  no PHY answered on the MDIO bus\n");
-        return Err(());
+        return fail("no PHY answered on the MDIO bus");
     }
     let id2 = mdio_read(base, phy, 3).unwrap_or(0);
     out(b"  PHY at address ");

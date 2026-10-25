@@ -25,6 +25,9 @@ use crate::lingrt::{boolean, list_from, mk_str, num, str_of, to_f64, to_string, 
 
 // ── State ────────────────────────────────────────────────────────────────────
 
+/// px_snap_save / px_snap_load: a copy of the framebuffer (the window behind a dialog)
+static mut SNAP: Vec<u32> = Vec::new();
+
 struct Window {
     buf: Vec<u32>,
     w: usize,
@@ -1461,9 +1464,9 @@ fn px_image(args: &[u64]) -> bool {
     true
 }
 
-/// The Pi has no storage driver yet, so its home is built in: the standard
-/// folders (an empty `.keep` makes each one listable) and starter files, under
-/// `home/<user>/`, served read-only from the image like the app's own files.
+/// The built-in home: the standard folders (an empty `.keep` makes each one
+/// listable) and starter files under `home/<user>/`, served from the image
+/// behind whatever the SD card's LingOS storage holds for the same paths.
 #[cfg(target_arch = "aarch64")]
 pub fn register_builtin_home(user: &str) {
     use alloc::boxed::Box;
@@ -1477,20 +1480,78 @@ pub fn register_builtin_home(user: &str) {
     let starters: [(&str, &'static [u8]); 3] = [
         ("Scripts/hello.ling", b"// A Ling script -- open it from Files, or `ling run` it from the console.\nbind main = do {\n    println(\"Hello from LingOS!\")\n    println(\"2 + 2 = \", 2 + 2)\n}\n"),
         ("Graphics/ling-badge.svg", b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\"><rect width=\"200\" height=\"200\" fill=\"#1b1b1b\"/><circle cx=\"100\" cy=\"100\" r=\"72\" style=\"fill:#3baaeb;stroke:#f7941e;stroke-width:6\"/><path d=\"M 100 40 A 60 60 0 0 1 160 100 L 100 100 Z\" fill=\"#f7d846\" opacity=\"0.85\"/><path d=\"M 55 125 Q 100 170 145 125 T 145 125\" style=\"fill:none;stroke:#ffffff;stroke-width:5;stroke-opacity:0.9\"/><polygon points=\"100,60 128,120 72,120\" fill=\"#ffffff\" fill-opacity=\"0.7\"/></svg>\n"),
-        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Scripts    - .ling scripts\n\nOn the Raspberry Pi this home is built into the image (read-only)\nuntil LingOS can read and write the SD card.\n"),
+        ("Documents/Welcome.txt", b"Welcome to LingOS!\n\nYour home folders:\n  Documents  - text and notes\n  Photos     - BMP / PNG / SVG pictures\n  Music      - WAV audio\n  Videos     - video files\n  Graphics   - SVG drawings and .ling graphics programs\n  3D Models  - 3D model files\n  Programs   - lingfu programs and downloaded source\n  Projects   - LingStationX / LingDev / LingModeler projects\n  Scripts    - .ling scripts\n\nOn the Raspberry Pi these live on the SD card's LingOS storage\n(Settings > System sets it up); the starter files come from the image.\n"),
     ];
     for (rel, data) in starters {
         crate::appfs::register(leak(alloc::format!("home/{user}/{rel}")), data);
     }
 }
 
-/// The signed-in user's name (x86: the lingfs session; Pi: "ling" until the
-/// setup screen's accounts persist).
+/// The signed-in user's name: the lingfs session (both architectures).
 fn os_user() -> String {
+    let u = crate::fs::lingfs::current_user();
+    if u.is_empty() {
+        String::from("ling")
+    } else {
+        String::from(u)
+    }
+}
+
+/// `os_time` for the console (`date`).
+pub(crate) fn wall_time() -> u64 {
+    os_time()
+}
+
+/// "YYYY-MM-DD HH:MM:SS" of a UTC epoch second.
+pub(crate) fn format_utc(t: u64) -> String {
+    let days = (t / 86_400) as i64;
+    let rem = t % 86_400;
+    // civil from days (Howard Hinnant)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    alloc::format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+/// Seconds since 1970-01-01 UTC, or 0 when the board has no clock to ask.
+/// x86: the CMOS clock; Pi 5: the firmware RTC, read once and carried by the
+/// uptime counter.
+fn os_time() -> u64 {
     #[cfg(target_arch = "x86_64")]
-    return String::from(crate::fs::lingfs::current_user());
-    #[allow(unreachable_code)]
-    String::from("ling")
+    {
+        let d = crate::arch::rtc::read();
+        if d.year < 2000 {
+            return 0;
+        }
+        let (y, m) = (d.year as i64, d.month as i64);
+        let (yy, mm) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+        let era = yy.div_euclid(400);
+        let yoe = yy - era * 400;
+        let doy = (153 * mm + 2) / 5 + d.day as i64 - 1;
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        let days = era * 146_097 + doe - 719_468;
+        (days * 86_400 + d.hour as i64 * 3600 + d.minute as i64 * 60 + d.second as i64).max(0) as u64
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        static mut BOOT_EPOCH: Option<u64> = None;
+        static mut TRIED: bool = false;
+        let up = crate::arch::timer::now_ms() / 1000;
+        unsafe {
+            if !TRIED {
+                TRIED = true;
+                BOOT_EPOCH = crate::arch::mailbox::rtc_time().map(|t| (t as u64).saturating_sub(up));
+            }
+            BOOT_EPOCH.map(|b| b + up).unwrap_or(0)
+        }
+    }
 }
 
 /// `os_info(key)`: facts about the running system for the desktop's About/tray.
@@ -1509,7 +1570,18 @@ fn fmt_mac(m: [u8; 6]) -> String {
 fn os_info(key: &str) -> String {
     use alloc::format;
     match key {
+        "hostname" => {
+            #[cfg(target_arch = "aarch64")]
+            return crate::setup::hostname();
+            #[allow(unreachable_code)]
+            String::from("lingos")
+        },
+        "time" => format_utc(os_time()),
         "board" => {
+            #[cfg(target_arch = "aarch64")]
+            if let Some(m) = crate::arch::fdt::model() {
+                return String::from(m);
+            }
             #[cfg(target_arch = "aarch64")]
             return String::from(match crate::arch::mmio::board() {
                 crate::arch::mmio::RpiBoard::Pi3 => "Raspberry Pi 3",
@@ -1537,7 +1609,12 @@ fn os_info(key: &str) -> String {
                 if crate::arch::rp1_eth::ensure_init() {
                     fmt_mac(crate::arch::rp1_eth::mac())
                 } else {
-                    String::from("no Ethernet controller")
+                    let why = crate::arch::rp1_eth::last_error();
+                    if why.is_empty() {
+                        String::from("no Ethernet controller")
+                    } else {
+                        format!("no Ethernet controller ({why})")
+                    }
                 }
             }
             #[cfg(target_arch = "x86_64")]
@@ -2498,6 +2575,25 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             px_line(arg);
             UNIT
         },
+        b"px_snap_save" => {
+            if let Some(w) = win() {
+                let snap = unsafe { &mut *(&raw mut SNAP) };
+                snap.clear();
+                snap.extend_from_slice(&w.buf);
+            }
+            UNIT
+        },
+        b"px_snap_load" => {
+            let mut ok = false;
+            if let Some(w) = win() {
+                let snap = unsafe { &*(&raw const SNAP) };
+                if snap.len() == w.buf.len() {
+                    w.buf.copy_from_slice(snap);
+                    ok = true;
+                }
+            }
+            num(ok as i32 as f64)
+        },
         b"px_hatch" => {
             px_hatch(arg);
             UNIT
@@ -2801,6 +2897,41 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"msg_status" => mk_str(crate::drivers::messenger::status()),
         b"os_uptime" => num(crate::arch::timer::now_ms() as f64 / 1000.0),
+        // os_shell(cmd): run a console command and return what it printed (the
+        // desktop's Terminal window). Commands that take the whole screen are
+        // refused here; the desktop sends those to the text console instead.
+        b"os_shell" => {
+            let cmd = path_arg(args, 0);
+            let c = cmd.trim();
+            #[cfg(target_arch = "aarch64")]
+            {
+                if c == "setup" || c.starts_with("ling run") || c.starts_with("ling demo") || c == "sd format" || c == "trace" {
+                    return Some(mk_str("(this command takes the whole screen: use the Console)"));
+                }
+                crate::console_capture_begin();
+                crate::rpi_shell_exec(c.as_bytes());
+                let out = crate::console_capture_end();
+                mk_str(&String::from_utf8_lossy(out))
+            }
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                mk_str("(the Terminal window is the window manager's on this machine)")
+            }
+        },
+        // the wall clock in seconds since 1970 UTC (0 = this board has none)
+        b"os_time" => num(os_time() as f64),
+        b"os_reboot" => {
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::power::reboot();
+            #[cfg(target_arch = "x86_64")]
+            crate::arch::power::reboot();
+        },
+        b"os_poweroff" => {
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::power::poweroff();
+            #[cfg(target_arch = "x86_64")]
+            crate::arch::power::poweroff();
+        },
         b"os_info" => mk_str(&os_info(&path_arg(args, 0))),
         #[cfg(target_arch = "aarch64")]
         b"os_boot" => {

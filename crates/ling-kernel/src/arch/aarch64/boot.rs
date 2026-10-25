@@ -9,6 +9,10 @@ global_asm!(
     ".section .text.boot",
     ".global _start",
     "_start:",
+    // The firmware's device tree address arrives in x0: keep it (in .data, so
+    // `zero_bss` cannot wipe it) before the register is reused.
+    "    ldr x1, =DTB_PTR",
+    "    str x0, [x1]",
     "    mrs x0, mpidr_el1",
     "    and x0, x0, #0xFF",
     "    cbz x0, primary",
@@ -67,6 +71,26 @@ extern "C" {
     static mut __bss_end: u8;
     static _kernel_end: u8;
     static _stack_top: u8;
+}
+
+/// The device tree address the firmware passed in `x0` (1 = never set; a
+/// non-zero initial value keeps this in .data rather than .bss).
+#[no_mangle]
+pub static mut DTB_PTR: u64 = 1;
+
+/// Repoint the tree (at a copy that survives memory init).
+pub fn set_dtb_ptr(p: u64) {
+    unsafe { core::ptr::write_volatile(&raw mut DTB_PTR, p) }
+}
+
+/// The device tree's address, or 0 when the boot did not provide one.
+pub fn dtb_ptr() -> u64 {
+    let v = unsafe { core::ptr::read_volatile(&raw const DTB_PTR) };
+    if v <= 1 || v & 3 != 0 {
+        0
+    } else {
+        v
+    }
 }
 
 /// Top of the boot stack `el1_entry` switched onto -- the one stack every

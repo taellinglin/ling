@@ -31,7 +31,7 @@ const MAX_ORDER: usize = 14; // orders 0..=14 => 4KiB..=64MiB blocks
 /// correctness bug, not a missed optimization — this cap keeps the two in
 /// lockstep until Phase 3's paging rewrite can map (and this allocator can
 /// track) more.
-const MAX_PHYS_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const MAX_PHYS_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const TOTAL_FRAMES: usize = (MAX_PHYS_BYTES / FRAME_SIZE as u64) as usize;
 
 const fn bitmap_bits(order: usize) -> usize {
