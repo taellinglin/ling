@@ -44,6 +44,9 @@ pub mod flags;
 pub mod font_unicode;
 #[cfg(target_arch = "x86_64")]
 pub mod gallery;
+
+/// Native 3-D (camera, z-buffer, textured meshes, shapes, particles) for compiled games.
+pub mod g3d;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod framebuffer;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

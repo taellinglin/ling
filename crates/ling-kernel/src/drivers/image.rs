@@ -31,6 +31,16 @@ fn paeth(a: i32, b: i32, c: i32) -> i32 {
 
 /// Decode a PNG (8-bit, color type 0/2/4/6, non-interlaced).
 pub fn decode_png(data: &[u8]) -> Option<Image> {
+    decode_png_impl(data, false)
+}
+
+/// `decode_png` keeping the alpha channel in the top byte (`0xAARRGGBB`;
+/// opaque colour types read as 0xFF). For textures.
+pub fn decode_png_rgba(data: &[u8]) -> Option<Image> {
+    decode_png_impl(data, true)
+}
+
+fn decode_png_impl(data: &[u8], keep_alpha: bool) -> Option<Image> {
     if data.len() < 8 || data[..8] != [137, 80, 78, 71, 13, 10, 26, 10] {
         return None;
     }
@@ -104,7 +114,16 @@ pub fn decode_png(data: &[u8]) -> Option<Image> {
                 0 | 4 => (cur[o], cur[o], cur[o]),
                 _ => (cur[o], cur[o + 1], cur[o + 2]),
             };
-            out.push(((r as u32) << 16) | ((g as u32) << 8) | b as u32);
+            let a: u32 = if !keep_alpha {
+                0
+            } else {
+                match color {
+                    4 => cur[o + 1] as u32,
+                    6 => cur[o + 3] as u32,
+                    _ => 255,
+                }
+            };
+            out.push((a << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32);
         }
         core::mem::swap(&mut prev, &mut cur);
     }
@@ -778,6 +797,75 @@ pub fn decode_svg(data: &[u8]) -> Option<Image> {
 /// coat-of-arms doesn't rasterize at full resolution (scanline fill is
 /// O(canvas x paths) -- a 1024px canvas can take seconds).
 pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
+    decode_svg_bg(data, cap, 0xff_ffff)
+}
+
+/// An SVG as a texture: `0xAARRGGBB` with the drawing's coverage as alpha.
+/// The rasterizer composites onto a solid canvas, so the picture is rendered
+/// over black and over white and the difference gives the alpha (exact for
+/// normal source-over blending); a small probe render first tells whether the
+/// picture is opaque, in which case one render on black is enough.
+pub fn decode_svg_alpha(data: &[u8], cap: u32) -> Option<Image> {
+    let probe = 48.min(cap);
+    let (pb, pw) = (decode_svg_bg(data, probe, 0)?, decode_svg_bg(data, probe, 0xff_ffff)?);
+    let opaque = pb.px.iter().zip(pw.px.iter()).all(|(&b, &w)| {
+        let d = |s: u32| ((w >> s) & 255).abs_diff((b >> s) & 255);
+        d(16) + d(8) + d(0) < 6
+    });
+    let mut black = decode_svg_bg(data, cap, 0)?;
+    if opaque {
+        for p in &mut black.px {
+            *p |= 0xff00_0000;
+        }
+        return Some(black);
+    }
+    let white = decode_svg_bg(data, cap, 0xff_ffff)?;
+    for (p, &w) in black.px.iter_mut().zip(white.px.iter()) {
+        let b = *p;
+        let ch = |s: u32| (((w >> s) & 255) as i32 - ((b >> s) & 255) as i32).clamp(0, 255);
+        let a = (255 - (ch(16) + ch(8) + ch(0)) / 3).clamp(0, 255) as u32;
+        let un = |s: u32| -> u32 {
+            if a == 0 {
+                0
+            } else {
+                ((((b >> s) & 255) * 255 + a / 2) / a).min(255)
+            }
+        };
+        *p = (a << 24) | (un(16) << 16) | (un(8) << 8) | un(0);
+    }
+    Some(black)
+}
+
+/// A BMP (24 / 32 bpp) keeping the 32-bpp alpha byte (`0xAARRGGBB`).
+pub fn decode_bmp_rgba(b: &[u8]) -> Option<Image> {
+    let rd32 = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+    if b.len() < 54 || &b[0..2] != b"BM" {
+        return None;
+    }
+    let off = rd32(10) as usize;
+    let sw = rd32(18) as i32;
+    let sh_raw = rd32(22) as i32;
+    let bpp = u16::from_le_bytes([b[28], b[29]]) as usize;
+    if sw <= 0 || sh_raw == 0 || (bpp != 24 && bpp != 32) {
+        return None;
+    }
+    let (sw, sh) = (sw as usize, sh_raw.unsigned_abs() as usize);
+    let stride = (sw * bpp / 8 + 3) & !3;
+    let mut px = vec![0u32; sw * sh];
+    for y in 0..sh {
+        let row = if sh_raw < 0 { y } else { sh - 1 - y };
+        for x in 0..sw {
+            let p = off + row * stride + x * bpp / 8;
+            if p + 2 < b.len() {
+                let a = if bpp == 32 && p + 3 < b.len() { b[p + 3] as u32 } else { 255 };
+                px[y * sw + x] = (a << 24) | ((b[p + 2] as u32) << 16) | ((b[p + 1] as u32) << 8) | b[p] as u32;
+            }
+        }
+    }
+    Some(Image { w: sw as u32, h: sh as u32, px })
+}
+
+fn decode_svg_bg(data: &[u8], cap: u32, bg: u32) -> Option<Image> {
     let text = core::str::from_utf8(data).ok()?;
     let svg_pos = text.find("<svg")?;
     let svg_tag_end = text[svg_pos..].find('>')? + svg_pos;
@@ -821,7 +909,7 @@ pub fn decode_svg_capped(data: &[u8], cap: u32) -> Option<Image> {
     // rather than re-scaled per shape.
     const SS: u32 = 2;
     let (cw, ch) = (w * SS, h * SS);
-    let mut buf = vec![0xffffffu32; (cw * ch) as usize];
+    let mut buf = vec![bg; (cw * ch) as usize];
     let sx = cw as f64 / vw;
     let sy = ch as f64 / vh;
     let root: Mat = [sx, 0.0, 0.0, sy, -vx * sx, -vy * sy];

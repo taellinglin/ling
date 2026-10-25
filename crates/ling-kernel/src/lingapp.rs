@@ -1051,8 +1051,21 @@ const EMB_MODEL: [u8; 8] = [0x3E, 0x46, 0xFA, 0x8A, 0x8C, 0x88, 0xF8, 0x00];
 const EMB_PROGRAM: [u8; 8] = [0xFF, 0x81, 0xA1, 0x91, 0xA1, 0x81, 0xFF, 0x00];
 const EMB_SCRIPT: [u8; 8] = [0x24, 0x42, 0x81, 0x00, 0x81, 0x42, 0x24, 0x00];
 
-fn gfx_color() -> u32 {
+pub(crate) fn gfx_color() -> u32 {
     unsafe { GFX_COLOR }
+}
+
+/// The app window's back buffer (`0xRRGGBB`), width and height -- the
+/// native 3-D renderer (`drivers::g3d`) draws into it directly.
+pub(crate) fn surface() -> Option<(&'static mut [u32], usize, usize)> {
+    let w = win()?;
+    let (ww, hh) = (w.w, w.h);
+    Some((&mut w.buf[..], ww, hh))
+}
+
+/// A loaded font's face (`font_load` id), for glyph textures.
+pub(crate) fn font_fd(id: f64) -> Option<&'static fontdue::Font> {
+    font(id).map(|f| &f.fd)
 }
 
 fn pack_rgb(r: f64, g: f64, b: f64) -> u32 {
@@ -1474,10 +1487,11 @@ fn perf_overlay(w: &mut Window) {
     };
     let fps = if ema > 0.0 { 1_000_000.0 / ema } else { 0.0 };
     let line = alloc::format!(
-        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  gc {}  free {} MiB ",
+        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  tris {}  gc {}  free {} MiB ",
         ema / 1000.0,
         fps,
         calls_now.saturating_sub(calls_before),
+        crate::drivers::g3d::take_stats(),
         crate::lingrt::gc_runs(),
         crate::mm::frame::free_frame_count() * 4 / 1024
     );
@@ -1489,6 +1503,7 @@ fn perf_overlay(w: &mut Window) {
 fn present() {
     crate::lingrt::mark_present();
     crate::lingrt::gc_maybe();
+    crate::drivers::g3d::end_frame();
     let (mx, my, _) = mouse_state();
     if unsafe { PERF } {
         if let Some(w) = win() {
@@ -1871,7 +1886,7 @@ fn mouse_state() -> (f64, f64, u8) {
 
 // ── Files (embedded, read-only until LingOS reads the SD card) ───────────────
 
-fn path_arg(args: &[u64], i: usize) -> String {
+pub(crate) fn path_arg(args: &[u64], i: usize) -> String {
     args.get(i).map(|&v| to_string(v)).unwrap_or_default().replace('\\', "/")
 }
 
@@ -2683,7 +2698,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
 
         _ => {
             let _ = str_of;
-            return None;
+            return crate::drivers::g3d::dispatch(name, args);
         },
     })
 }
