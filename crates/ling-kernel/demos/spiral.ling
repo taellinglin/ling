@@ -1,0 +1,40 @@
+// A LingOS graphics program: a hue-cycling spiral drawn with the px_* API the
+// LingOS desktop and LingStationX use. Run it with `ling run` from the
+// console / Terminal, or open it from Files. Esc or Q quits.
+
+fn rgb(r, g, b) { floor(r) * 65536.0 + floor(g) * 256.0 + floor(b) }
+
+// Hue 0..1 to a saturated colour.
+fn hue(h) {
+    bind k = (h - floor(h)) * 6.0
+    bind f = k - floor(k)
+    bind seg = floor(k)
+    if seg == 0.0 { return rgb(255.0, f * 255.0, 0.0) }
+    if seg == 1.0 { return rgb((1.0 - f) * 255.0, 255.0, 0.0) }
+    if seg == 2.0 { return rgb(0.0, 255.0, f * 255.0) }
+    if seg == 3.0 { return rgb(0.0, (1.0 - f) * 255.0, 255.0) }
+    if seg == 4.0 { return rgb(f * 255.0, 0.0, 255.0) }
+    rgb(255.0, 0.0, (1.0 - f) * 255.0)
+}
+
+bind W = 800.0
+bind H = 600.0
+
+bind main = do {
+    open_window(W, H, "Spiral", 1)
+    bind t = 0.0
+    while window_is_open() {
+        if key_pressed("escape") || key_pressed("q") { close_window() }
+        px_rect(0.0, 0.0, W, H, rgb(18.0, 14.0, 26.0))
+        bind i = 0.0
+        while i < 360.0 {
+            bind a = i * 0.08 + t
+            bind r = i * 0.7
+            px_disc(W / 2.0 + cos(a) * r, H / 2.0 + sin(a) * r, 2.0 + i / 60.0, hue(i / 360.0 + t / 8.0))
+            bind i = i + 1.0
+        }
+        px_text8(12.0, 12.0, 16777215.0, "spiral.ling -- running on the in-kernel Ling interpreter (Esc quits)")
+        present()
+        bind t = t + 0.03
+    }
+}

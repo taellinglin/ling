@@ -17,13 +17,14 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Example programs from the compiler's own `examples/`, baked into every
+/// Example programs (copies of the compiler's `examples/`, kept in `demos/`
+/// inside this crate so the published crates.io package builds), baked into every
 /// image so `ling run` has something to run before the SD card / network can
 /// supply programs; each user's home gets a copy (`Scripts`, `Graphics`).
 pub const EXAMPLES: &[(&str, &str)] = &[
-    ("Scripts/fib.ling", include_str!("../../../../examples/basics/fib.ling")),
-    ("Graphics/spiral.ling", include_str!("../../../../examples/lingos/spiral.ling")),
-    ("Graphics/gfx.ling", include_str!("../../../../examples/basics/gfx.ling")),
+    ("Scripts/fib.ling", include_str!("../../demos/fib.ling")),
+    ("Graphics/spiral.ling", include_str!("../../demos/spiral.ling")),
+    ("Graphics/gfx.ling", include_str!("../../demos/gfx.ling")),
 ];
 
 /// `ling demo`: a built-in program exercising the whole pipeline (functions,

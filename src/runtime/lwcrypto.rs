@@ -168,11 +168,10 @@ impl Interpreter {
                 _ => Err(Fail::Plain("handle is not a spend key".into())),
             },
             "lw_onetime_key_image" | "lw_onetime_public_of" => match plain(self.key(args, 0))? {
-                LwKey::OneTime(k) => Ok(Value::Str(to_hex(if name == "lw_onetime_key_image" {
-                    &k.key_image().0
-                } else {
-                    &k.public().0
-                }))),
+                LwKey::OneTime(k) => {
+                    let p = if name == "lw_onetime_key_image" { k.key_image().0 } else { k.public().0 };
+                    Ok(Value::Str(to_hex(&p)))
+                }
                 _ => Err(Fail::Plain("handle is not a one-time key".into())),
             },
             "lw_id_sign" => {
