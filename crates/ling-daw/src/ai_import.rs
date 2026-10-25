@@ -202,8 +202,8 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         ("trance", "rolling bass" | "sub bass") => &[("prism", "Rolling Bass"), ("prism", "Bajo Trance")],
         ("hardstyle", _) if lead => &[("prism", "Hardstyle Lead"), ("prism", "Hoover Dark")],
         ("hardstyle", "rolling bass" | "sub bass" | "pluck bass" | "growl bass") => &[("prism", "Bass Donk"), ("prism", "Mega Bass")],
-        ("dubstep" | "drum and bass", "rolling bass" | "sub bass" | "wobble bass" | "growl bass") => &[("growl", "wobble"), ("growl", "neuro"), ("growl", "reese")],
-        ("dubstep", _) if lead => &[("growl", "laser"), ("prism", "Dubstep Lead")],
+        ("dubstep" | "drum and bass", "rolling bass" | "sub bass" | "wobble bass" | "growl bass") => &[("growl", "wobble"), ("growl", "neuro"), ("growl", "reese"), ("growl", "comb growl"), ("growl", "riddim fold"), ("growl", "neuro reese"), ("growl", "brass growl")],
+        ("dubstep", _) if lead => &[("growl", "laser"), ("prism", "Dubstep Lead"), ("growl", "screech lead"), ("growl", "comb screech")],
         ("house" | "deep house", "rolling bass" | "sub bass") => &[("prism", "Offbeat Bass"), ("prism", "Offbeat Bass Two")],
         ("house" | "deep house", "stab chord" | "keys" | "piano") => &[("prism", "Deep Stab"), ("prism", "Dub Chord"), ("synth", "Electronic: House Piano")],
         ("disco", "rolling bass" | "sub bass" | "pluck bass") => &[("prism", "Octave Bass"), ("prism", "Funk Pluck")],
@@ -212,6 +212,11 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         ("synthwave", "warm pad" | "strings") => &[("prism", "Phaser Pad"), ("prism", "Dreamer Pad")],
         ("hyperpop", _) if lead => &[("prism", "Hyper Lead"), ("prism", "Sugar Stack")],
         ("witch house", "warm pad" | "dark pad" | "ambient pad" | "strings") => &[("prism", "Witch Drag"), ("prism", "Black Mass")],
+        ("chiptune", "pluck bass" | "rolling bass" | "sub bass") => &[("chip", "NES Triangle Bass"), ("chip", "GB Wave Bass"), ("chip", "SID Filter Bass")],
+        ("chiptune", "arp" | "pluck") => &[("chip", "GB Arp Shimmer"), ("chip", "Shimmer Arp"), ("chip", "Hyper Arp"), ("chip", "Sparkle Sweep")],
+        ("chiptune", "warm pad" | "ambient pad" | "strings" | "dark pad") => &[("chip", "SID PWM Pad"), ("chip", "SNES Strings")],
+        ("chiptune", "brass") => &[("chip", "SNES Brass")],
+        ("chiptune", _) if lead => &[("chip", "NES Square Lead"), ("chip", "NES Duty Lead"), ("chip", "SID Saw Lead"), ("chip", "GB Pulse Lead")],
         _ => return None,
     })
 }
@@ -232,13 +237,13 @@ fn candidates(role: &str) -> &'static [(&'static str, &'static str)] {
     match role {
         "sub bass" => &[("prism", "Warm Sub"), ("prism", "Void Sub")],
         "rolling bass" => &[("prism", "Rolling Bass"), ("prism", "Offbeat Bass")],
-        "wobble bass" => &[("growl", "wobble"), ("growl", "reese")],
-        "growl bass" => &[("growl", "growl"), ("growl", "neuro")],
+        "wobble bass" => &[("growl", "wobble"), ("growl", "reese"), ("growl", "electro wob"), ("growl", "color wobble")],
+        "growl bass" => &[("growl", "growl"), ("growl", "neuro"), ("growl", "comb growl"), ("growl", "brass growl"), ("growl", "shifted growl")],
         "acid bass" => &[("synth", "Electronic: Acid Bass"), ("prism", "Bubble Bass")],
         "pluck bass" => &[("prism", "Octave Bass"), ("synth", "Electronic: Techno Pluck Bass")],
         "supersaw lead" => &[("prism", "Supersaw Lead"), ("prism", "Sugar Stack")],
         "synth lead" => &[("synth", "Electronic: Square Lead"), ("prism", "Quarter Lead")],
-        "laser lead" => &[("growl", "laser"), ("growl", "stab")],
+        "laser lead" => &[("growl", "laser"), ("growl", "stab"), ("growl", "screech lead"), ("growl", "complextro stab")],
         "vocal lead" => &[("growl", "yoi"), ("voice", "aria")],
         "pluck" => &[("prism", "Trance Pluck"), ("prism", "Deep Pluck"), ("prism", "Funk Pluck")],
         "arp" => &[("prism", "Chipmunk Arp"), ("prism", "Cursed Arp"), ("prism", "Glitch Pluck")],
@@ -650,6 +655,7 @@ mod tests {
         };
         let prism = names("Prism", "Prism ");
         let growl = names("Growl", "Growl ");
+        let chip = names("Chip", "Chip ");
         let voice = names("Voice", "Voice ");
         let egm: Vec<String> = names("Electronic GM", "").into_iter().map(|n| format!("Electronic: {}", n.split_once(' ').map(|x| x.1).unwrap_or(&n))).collect();
         let kits = names(".", "");
@@ -658,6 +664,7 @@ mod tests {
                 let ok = match *plugin {
                     "prism" => prism.iter().any(|p| p == patch),
                     "growl" => growl.iter().any(|p| p == patch),
+                    "chip" => chip.iter().any(|p| p == patch),
                     "voice" => voice.iter().any(|p| p == patch),
                     _ => egm.iter().any(|p| p == patch),
                 };
@@ -676,6 +683,8 @@ mod tests {
                             "auto" => true,
                             "prism" => prism.iter().any(|p| p == patch),
                             "growl" => growl.iter().any(|p| p == patch),
+                            "chip" => chip.iter().any(|p| p == patch),
+                    "chip" => chip.iter().any(|p| p == patch),
                             "voice" => voice.iter().any(|p| p == patch),
                             _ => egm.iter().any(|p| p == patch),
                         };

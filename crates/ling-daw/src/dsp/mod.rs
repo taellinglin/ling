@@ -5,6 +5,9 @@ pub mod insert;
 pub mod pluck;
 pub mod scriptdsp;
 pub mod vocoder;
+pub mod articulator;
+pub mod bassfx;
+pub mod chip;
 pub mod fx;
 pub mod vox;
 pub mod hypergrowl;
@@ -33,6 +36,14 @@ pub trait Instrument: Send {
     fn all_off(&mut self);
     /// The project tempo, handed over before every render: instruments with a tempo-synced part (the Ling Voice arpeggiator) follow it.
     fn set_tempo(&mut self, _bpm: f64) {}
+    /// The track slept through `frames` samples (it was silent, so it was not rendered): free-running clocks (tempo-synced
+    /// modulation lanes) move on by that much, so the instrument wakes where it would have been.
+    fn idle(&mut self, _frames: usize) {}
+    /// May the engine skip this instrument while its track is silent? (false: it has free-running state that idle() does not
+    /// carry, so it always renders)
+    fn can_sleep(&self) -> bool {
+        true
+    }
     /// Render and ADD into `out` (interleaved stereo).
     fn render(&mut self, out: &mut [f32]);
     /// Named parameters, 0..1 normalised.
@@ -67,6 +78,10 @@ pub trait Instrument: Send {
         false
     }
     fn load_preset(&mut self, _name: &str) {}
+    /// What a built-in preset sounds like and is for, in a sentence (shown in the preset lists, read by the generators); "" = none.
+    fn preset_info(&self, _name: &str) -> String {
+        String::new()
+    }
     /// The category of each built-in preset: (preset name, category), empty when the instrument keeps its presets in one list.
     fn preset_categories(&self) -> Vec<(String, String)> {
         vec![]
@@ -149,6 +164,7 @@ pub fn make_instrument(kind: &str, sr: f32) -> Option<Box<dyn Instrument>> {
         "prism" => Some(Box::new(prism::Prism::new(sr))),
         "sampler" => Some(Box::new(sampler::Sampler::new(sr))),
         "pluck" => Some(Box::new(pluck::Pluck::new(sr))),
+        "chip" => Some(Box::new(chip::Chip::new(sr))),
         "script" => Some(Box::new(scriptdsp::ScriptSynth::new(sr))),
         _ => None,
     }

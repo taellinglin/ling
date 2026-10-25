@@ -54,6 +54,15 @@ pub fn unpack_resources(app: &str, resources: &[(&str, &[u8])]) {
     let base = std::env::temp_dir().join(format!("ling-pack-{app}"));
     for (rel, bytes) in resources {
         let dst = base.join(rel);
+        // already unpacked by an earlier launch: keep it, so big games start fast. Small files
+        // (scripts, scenes) are compared byte for byte; large media by size.
+        let same = match std::fs::metadata(&dst) {
+            Ok(m) if m.len() == bytes.len() as u64 => bytes.len() > 4 << 20 || std::fs::read(&dst).map(|d| d == *bytes).unwrap_or(false),
+            _ => false,
+        };
+        if same {
+            continue;
+        }
         if let Some(parent) = dst.parent() {
             let _ = std::fs::create_dir_all(parent);
         }

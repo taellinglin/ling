@@ -75,3 +75,84 @@ fn a_described_song_is_built() {
     let tags = list(&call(&mut d, "daw_arr_tags", &[]));
     assert!(tags.len() >= 7 * 3 - 1 || tags.iter().any(|t| st(t).contains("drop")), "{tags:?}");
 }
+
+#[test]
+fn a_dubstep_song_gets_sound_design() {
+    let lsx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../LingStationX");
+    if std::env::set_current_dir(lsx).is_err() {
+        return;
+    }
+    let mut d = Daw::new();
+    let desc = "heavy riddim dubstep at 140 bpm in F minor";
+    let p = list(&call(&mut d, "daw_song_plan", &[s(desc), s(""), s(""), s(""), n(1.0), n(11.0)]));
+    let line = st(&p[0]);
+    assert!(line.contains("design=0.85"), "{line}");
+    let r = list(&call(&mut d, "daw_song_build", &[s(&line), s(desc), s(""), s(""), n(11.0)]));
+    let summary = st(&r[4]);
+    assert!(summary.contains("Sound design") && summary.contains("Split Drive") && summary.contains("riddim skin"), "{summary}");
+    let nt = num(&call(&mut d, "daw_track_count", &[])) as usize;
+    let mut bass_ok = false;
+    for t in 0..nt {
+        let name = st(&call(&mut d, "daw_track_name", &[n(t as f64)]));
+        let fx: Vec<String> = (0..num(&call(&mut d, "daw_fx_count", &[n(t as f64)])) as usize).map(|i| st(&call(&mut d, "daw_fx_name", &[n(t as f64), n(i as f64)]))).collect();
+        let lanes: Vec<String> = match call(&mut d, "daw_auto_lanes", &[n(t as f64)]) {
+            Val::List(v) => v.into_iter().map(|x| st(&x)).collect(),
+            _ => vec![],
+        };
+        if name.contains("Growl Bass") || name.contains("Wobble Bass") {
+            assert!(fx.contains(&"Split Drive".to_string()) && fx.contains(&"OTT".to_string()) && fx.contains(&"Imager".to_string()), "{name}: {fx:?}");
+            assert!(lanes.iter().any(|l| l.starts_with("fx")), "{name}: no effect automation in {lanes:?}");
+            bass_ok = true;
+        }
+        if name == "Drums" {
+            assert!(fx.contains(&"Transient".to_string()), "drums: {fx:?}");
+        }
+    }
+    assert!(bass_ok, "no growl / wobble bass track");
+}
+
+/// not a test: builds the riddim song and renders it to $SONG_DEMO (a .wav path) so the sound design can be heard and measured
+#[test]
+#[ignore]
+fn render_a_dubstep_demo() {
+    let Ok(out) = std::env::var("SONG_DEMO") else { return };
+    let lsx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../LingStationX");
+    if std::env::set_current_dir(lsx).is_err() {
+        return;
+    }
+    let mut d = Daw::new();
+    let desc = "heavy riddim dubstep at 140 bpm in F minor";
+    let p = list(&call(&mut d, "daw_song_plan", &[s(desc), s(""), s(""), s(""), n(1.0), n(11.0)]));
+    let r = list(&call(&mut d, "daw_song_build", &[s(&st(&p[0])), s(desc), s(""), s(""), n(11.0)]));
+    println!("{}", st(&r[4]));
+    let end = num(&call(&mut d, "daw_end_beat", &[]));
+    call(&mut d, "daw_render_start", &[s(&out), n(0.0), n(end), n(2.0), n(16.0), s("wav"), n(0.5)]);
+    for _ in 0..1200 {
+        let state = num(&call(&mut d, "daw_render_state", &[]));
+        if state >= 2.0 {
+            println!("{}", st(&call(&mut d, "daw_render_message", &[])));
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    panic!("render did not finish");
+}
+
+#[test]
+fn a_chiptune_song_plays_on_the_chip_with_a_feel() {
+    let lsx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../LingStationX");
+    if std::env::set_current_dir(lsx).is_err() {
+        return;
+    }
+    let mut d = Daw::new();
+    let desc = "chiptune adventure at 150 bpm";
+    let p = list(&call(&mut d, "daw_song_plan", &[s(desc), s(""), s(""), s(""), n(1.0), n(5.0)]));
+    let line = st(&p[0]);
+    assert!(line.contains("arc="), "{line}");
+    assert!(st(&p[1]).contains("feel:"), "{}", st(&p[1]));
+    let r = list(&call(&mut d, "daw_song_build", &[s(&line), s(desc), s(""), s(""), n(5.0)]));
+    assert!(st(&r[4]).contains("Feel:"), "{}", st(&r[4]));
+    let nt = num(&call(&mut d, "daw_track_count", &[])) as usize;
+    let kinds: Vec<String> = (0..nt).map(|t| st(&call(&mut d, "daw_track_kind", &[n(t as f64)]))).collect();
+    assert!(kinds.iter().filter(|k| *k == "chip").count() >= 2, "{kinds:?}");
+}

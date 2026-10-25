@@ -859,7 +859,10 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
             }
         },
         "uname" => {
+            #[cfg(target_arch = "x86_64")]
             channel_write(sess, chan, b"LingOS x86_64 (a from-scratch OS written in Ling)\r\n");
+            #[cfg(target_arch = "aarch64")]
+            channel_write(sess, chan, b"LingOS aarch64 Raspberry Pi (a from-scratch OS written in Ling)\r\n");
         },
         "uptime" => {
             let secs = crate::arch::timer::now_ms() / 1000;

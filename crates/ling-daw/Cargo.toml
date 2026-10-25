@@ -1,6 +1,6 @@
 [package]
 name = "ling-daw"
-version = "2030.0.1"
+version = "2030.0.2"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>", "Sanny Lin <SannyLing53@gmail.com>"]
 description = "Ling DAW engine: synth, physical-modeling drums, effects, mixer, sequencer, project I/O"
@@ -23,6 +23,9 @@ rayon = { workspace = true }
 arboard = "3"
 flacenc = "0.5.1"
 vorbis-encoder = "0.1"
+# File > Save to Cloud (api/cloud_api.rs): HTTPS to studio.linglin.art (rustls, no OpenSSL) and the project folder as a zip
+ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [features]
 # set by the `ling` binary's own `llm` feature: the language-model builtins exist, so the DAW offers AI instrumentation
@@ -31,6 +34,7 @@ llm = ["dep:ling-ai", "ling-ai/llm"]
 [dependencies.ling-ai]
 # the native RVC voice conversion (Voice Skin without Python) and other candle models; only with the `llm` feature
 path = "../ling-ai"
+version = "2030.0.10"
 optional = true
 
 [lib]

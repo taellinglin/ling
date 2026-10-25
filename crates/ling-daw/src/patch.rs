@@ -90,6 +90,10 @@ pub fn parse(text: &str) -> Patch {
 pub fn build(p: &Patch, sr: f32) -> Option<Box<dyn Instrument>> {
     let mut inst = crate::dsp::make_instrument_file(&p.kind, sr, &p.file)?;
     inst.load_state(&p.params);
+    // a factory preset's file: the level trim that puts it with the rest of its instrument (presetinfo.rs)
+    if !p.name.is_empty() {
+        crate::presetinfo::apply_trim(inst.as_mut(), &p.kind, &p.name);
+    }
     Some(inst)
 }
 

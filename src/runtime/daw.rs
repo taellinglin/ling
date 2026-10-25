@@ -26,9 +26,38 @@ fn from_val(v: Val) -> Value {
 }
 
 #[inline]
+thread_local! {
+    /// px_snap_save / px_snap_load: (width, height, pixels)
+    static SNAP: std::cell::RefCell<(usize, usize, Vec<u32>)> = std::cell::RefCell::new((0, 0, Vec::new()));
+}
+
 fn blend(dst: u32, r: u32, g: u32, b: u32, a: f32) -> u32 {
-    let mix = |s: u32, d: u32| ((s as f32 * a + d as f32 * (1.0 - a)) as u32).min(255);
-    (mix(r, (dst >> 16) & 255) << 16) | (mix(g, (dst >> 8) & 255) << 8) | mix(b, dst & 255)
+    let ia = (a.clamp(0.0, 1.0) * 256.0) as u32;
+    blend_i(dst, r.min(255), g.min(255), b.min(255), ia)
+}
+
+/// integer blend, `ia` 0..256: the hot path of every fill
+#[inline(always)]
+fn blend_i(dst: u32, r: u32, g: u32, b: u32, ia: u32) -> u32 {
+    let na = 256 - ia;
+    let dr = (dst >> 16) & 255;
+    let dg = (dst >> 8) & 255;
+    let db = dst & 255;
+    (((r * ia + dr * na) >> 8) << 16) | (((g * ia + dg * na) >> 8) << 8) | ((b * ia + db * na) >> 8)
+}
+
+/// fill a span of one row with a colour at a constant alpha
+#[inline(always)]
+fn fill_span(row: &mut [u32], r: u32, g: u32, b: u32, ia: u32) {
+    if ia >= 256 {
+        row.fill((r << 16) | (g << 8) | b);
+    } else if ia > 0 {
+        let (pr, pg, pb, na) = (r * ia, g * ia, b * ia, 256 - ia);
+        for px in row.iter_mut() {
+            let d = *px;
+            *px = (((pr + ((d >> 16) & 255) * na) >> 8) << 16) | (((pg + ((d >> 8) & 255) * na) >> 8) << 8) | ((pb + (d & 255) * na) >> 8);
+        }
+    }
 }
 
 fn unpack(c: f64) -> (u32, u32, u32) {
@@ -167,7 +196,8 @@ impl Interpreter {
         let unit = Some(Ok(Value::Unit));
         match name {
             "px_text" => {
-                // px_text(font, x, y, size, colour, text) — anti-aliased, honours px_clip
+                // px_text(font, x, y, size, colour, text [, crisp]) — anti-aliased, honours px_clip; crisp > 0 sharpens the edge coverage
+                // (soft grey fringes pushed to clear or solid) so small labels stay legible
                 let id = n(0) as i64;
                 let (x, y, px) = (n(1) as f32, n(2) as f32, n(3) as f32);
                 let (r, g, b) = self.tu(n(4));
@@ -212,7 +242,8 @@ impl Interpreter {
                 let mut gfx = self.gfx.borrow_mut();
                 let (w, h) = (gfx.width, gfx.height);
                 let inside = bx0 >= cx0 && bx1 <= cx1 && by0 >= cy0 && by1 <= cy1;
-                if inside {
+                let crisp = Self::num(args, 6, 0.0) > 0.0;
+                if inside && !crisp {
                     for contours in &glyphs {
                         crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, false, contours);
                     }
@@ -229,9 +260,27 @@ impl Interpreter {
                         crate::gfx::raster::fill_contours_aa(&mut scratch, tw, th, color, false, &shifted);
                     }
                     let (ix0, iy0, ix1, iy1) = (bx0.max(cx0), by0.max(cy0), bx1.min(cx1), by1.min(cy1));
+                    let (cr, cg, cb) = ((color >> 16) & 255, (color >> 8) & 255, color & 255);
                     for yy in iy0..iy1 {
                         for xx in ix0..ix1 {
-                            gfx.buffer[yy as usize * w + xx as usize] = scratch[(yy - by0) as usize * tw + (xx - bx0) as usize];
+                            let i = yy as usize * w + xx as usize;
+                            let nv = scratch[(yy - by0) as usize * tw + (xx - bx0) as usize];
+                            if !crisp {
+                                gfx.buffer[i] = nv;
+                                continue;
+                            }
+                            // coverage from how far the pixel moved towards the text colour, then a contrast curve on it
+                            let o = gfx.buffer[i];
+                            let ch = |v: u32, sh: u32| ((v >> sh) & 255) as i32;
+                            let mut cov = 0.0f32;
+                            for (sh, c) in [(16u32, cr), (8, cg), (0, cb)] {
+                                let den = c as i32 - ch(o, sh);
+                                if den.abs() >= 24 {
+                                    cov = cov.max(((ch(nv, sh) - ch(o, sh)) as f32 / den as f32).clamp(0.0, 1.0));
+                                }
+                            }
+                            let c2 = ((cov - 0.25) / 0.5).clamp(0.0, 1.0);
+                            gfx.buffer[i] = blend_i(o, cr, cg, cb, (c2 * 256.0) as u32);
                         }
                     }
                 }
@@ -298,18 +347,16 @@ impl Interpreter {
                     cx1 = cx1.min(c[2]);
                     cy1 = cy1.min(c[3]);
                 }
+                let ia = if a >= 0.999 { 256 } else { (a.clamp(0.0, 1.0) * 256.0) as u32 };
+                let (r, g, b) = (r.min(255), g.min(255), b.min(255));
                 let mut fill = |x0: i32, y0: i32, x1: i32, y1: i32| {
                     let (x0, y0, x1, y1) = (x0.max(cx0), y0.max(cy0), x1.min(cx1), y1.min(cy1));
                     if x0 >= x1 || y0 >= y1 {
                         return;
                     }
-                    let col = (r.min(255) << 16) | (g.min(255) << 8) | b.min(255);
                     for yy in y0..y1 {
                         let row = (yy * bw) as usize;
-                        for xx in x0..x1 {
-                            let i = row + xx as usize;
-                            gfx.buffer[i] = if a >= 0.999 { col } else { blend(gfx.buffer[i], r.min(255), g.min(255), b.min(255), a) };
-                        }
+                        fill_span(&mut gfx.buffer[row + x0 as usize..row + x1 as usize], r, g, b, ia);
                     }
                 };
                 let (x0, y0) = (x.round() as i32, y.round() as i32);
@@ -348,10 +395,33 @@ impl Interpreter {
                 let x1 = ((x + w).ceil() as i32).min(cx1);
                 let y0 = (y.floor() as i32).max(cy0);
                 let y1 = ((y + h).ceil() as i32).min(cy1);
+                let (r, g, b) = (r.min(255), g.min(255), b.min(255));
+                let ia_full = (a.clamp(0.0, 1.0) * 256.0) as u32;
+                // the distance field only near the edges (corners, borders); the interior of a row is one constant span
+                let band = (rad.ceil() as i32) + 2;
                 for yy in y0..y1 {
+                    let py = (yy as f64 + 0.5) - ccy;
+                    let edge_row = py.abs() > hy - rad - 1.5;
+                    let (mut ix0, mut ix1) = (x1, x1);
+                    if !edge_row {
+                        ix0 = ((x.floor() as i32) + band).max(x0);
+                        ix1 = (((x + w).ceil() as i32) - band).min(x1);
+                        if ix1 <= ix0 {
+                            ix0 = x1;
+                            ix1 = x1;
+                        }
+                    }
+                    let row = (yy * bw) as usize;
                     for xx in x0..x1 {
+                        if xx == ix0 && ix1 > ix0 {
+                            if !outline {
+                                fill_span(&mut gfx.buffer[row + ix0 as usize..row + ix1 as usize], r, g, b, ia_full);
+                            }
+                        }
+                        if xx >= ix0 && xx < ix1 {
+                            continue;
+                        }
                         let px = (xx as f64 + 0.5) - ccx;
-                        let py = (yy as f64 + 0.5) - ccy;
                         let qx = px.abs() - (hx - rad);
                         let qy = py.abs() - (hy - rad);
                         let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - rad;
@@ -359,11 +429,168 @@ impl Interpreter {
                         if cov <= 0.0 {
                             continue;
                         }
-                        let i = (yy * bw + xx) as usize;
+                        let i = row + xx as usize;
                         gfx.buffer[i] = blend(gfx.buffer[i], r, g, b, a * cov);
                     }
                 }
                 let _ = bh;
+                unit
+            }
+            "px_snap_save" => {
+                // keep a copy of the whole framebuffer (the window behind a dialog)
+                let g = self.gfx.borrow();
+                SNAP.with(|sn| {
+                    let mut sn = sn.borrow_mut();
+                    sn.0 = g.width;
+                    sn.1 = g.height;
+                    sn.2.clear();
+                    sn.2.extend_from_slice(&g.buffer);
+                });
+                unit
+            }
+            "px_snap_load" => {
+                // put the kept copy back: 1 when it fitted the window, 0 otherwise (draw normally then)
+                let mut g = self.gfx.borrow_mut();
+                let ok = SNAP.with(|sn| {
+                    let sn = sn.borrow();
+                    if sn.0 == g.width && sn.1 == g.height && sn.2.len() == g.buffer.len() {
+                        g.buffer.copy_from_slice(&sn.2);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                return Some(Ok(Value::Number(ok as i32 as f64)));
+            }
+            "px_hatch" => {
+                // (x, y, w, h, colour, angle degrees, spacing, a): parallel 1 px anti-aliased lines filling the box (the design
+                // system's hatching), from each pixel's distance to the nearest line - no line drawing, no sqrt
+                let (x, y, w, h) = (n(0), n(1), n(2), n(3));
+                let (r, g, b) = self.tu(n(4));
+                let (ang, sp, a) = (n(5), n(6).max(1.0), Self::num(args, 7, 1.0).clamp(0.0, 1.0));
+                if !(w >= 1.0 && h >= 1.0) || a <= 0.0 {
+                    return unit;
+                }
+                let rr = ang.to_radians();
+                let (nx, ny) = (rr.sin(), rr.cos());
+                let corners = [x * nx + y * ny, (x + w) * nx + y * ny, x * nx + (y + h) * ny, (x + w) * nx + (y + h) * ny];
+                let lo = corners.iter().copied().fold(f64::MAX, f64::min);
+                let off = lo + sp * 0.5;
+                let clip = self.px_clip;
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width as i32, gfx.height as i32);
+                let (mut cx0, mut cy0, mut cx1, mut cy1) = (0, 0, bw, bh);
+                if let Some(c) = clip {
+                    cx0 = cx0.max(c[0]);
+                    cy0 = cy0.max(c[1]);
+                    cx1 = cx1.min(c[2]);
+                    cy1 = cy1.min(c[3]);
+                }
+                let x0 = (x.floor() as i32).max(cx0);
+                let x1 = ((x + w).ceil() as i32).min(cx1);
+                let y0 = (y.floor() as i32).max(cy0);
+                let y1 = ((y + h).ceil() as i32).min(cy1);
+                let (r, g, b) = (r.min(255), g.min(255), b.min(255));
+                let inv = 1.0 / sp;
+                for yy in y0..y1 {
+                    let row = (yy * bw) as usize;
+                    let pyn = (yy as f64 + 0.5) * ny;
+                    for xx in x0..x1 {
+                        let u = ((xx as f64 + 0.5) * nx + pyn - off) * inv;
+                        let d = (u - u.round()).abs() * sp;
+                        if d >= 1.0 {
+                            continue;
+                        }
+                        let ia = (((1.0 - d) * a) * 256.0) as u32;
+                        let i = row + xx as usize;
+                        gfx.buffer[i] = blend_i(gfx.buffer[i], r, g, b, ia);
+                    }
+                }
+                unit
+            }
+            "px_bars" => {
+                // (x0, mid, step, scale, peaks list, colour [, a]): a waveform as one bar per peak, mirrored around `mid`
+                let (x0, mid, step, scale) = (n(0), n(1), n(2), n(3));
+                let (r, g, b) = self.tu(n(5));
+                let ia = (Self::num(args, 6, 1.0).clamp(0.0, 1.0) * 256.0) as u32;
+                let Some(Value::List(pk)) = args.get(4) else { return unit };
+                let clip = self.px_clip;
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width as i32, gfx.height as i32);
+                let (mut cx0, mut cy0, mut cx1, mut cy1) = (0, 0, bw, bh);
+                if let Some(c) = clip {
+                    cx0 = cx0.max(c[0]);
+                    cy0 = cy0.max(c[1]);
+                    cx1 = cx1.min(c[2]);
+                    cy1 = cy1.min(c[3]);
+                }
+                let (r, g, b) = (r.min(255), g.min(255), b.min(255));
+                for (i, v) in pk.iter().enumerate() {
+                    let Value::Number(p) = v else { continue };
+                    let hgt = p * scale;
+                    if !(hgt > 0.0) {
+                        continue;
+                    }
+                    let bx = x0 + i as f64 * step;
+                    let (xa, xb) = ((bx.round() as i32).max(cx0), ((bx + step.max(1.0)).round() as i32).max(bx.round() as i32 + 1).min(cx1));
+                    let (ya, yb) = (((mid - hgt).round() as i32).max(cy0), ((mid + hgt.max(0.5)).round() as i32).max((mid - hgt).round() as i32 + 1).min(cy1));
+                    if xa >= xb || ya >= yb {
+                        continue;
+                    }
+                    for yy in ya..yb {
+                        let row = (yy * bw) as usize;
+                        fill_span(&mut gfx.buffer[row + xa as usize..row + xb as usize], r, g, b, ia);
+                    }
+                }
+                unit
+            }
+            "px_notes" => {
+                // (notes [start, len, key, vel, ...] stride 7, count, x, y, w, h, beat width, lowest key, key span, loop beats (0 = none),
+                //  visible x0, visible x1, colour a, colour b): the piano-roll thumbnail of a clip, 2 px per note, alpha from velocity
+                let Some(Value::List(nl)) = args.first() else { return unit };
+                let (cnt, x, y, w, h, bwd, lo, span, ll, vx0, vx1) = (n(1) as usize, n(2), n(3), n(4), n(5), n(6), n(7), n(8).max(1.0), n(9), n(10), n(11));
+                let (ca, cb) = (self.tu(n(12)), self.tu(n(13)));
+                let num = |i: usize| match nl.get(i) {
+                    Some(Value::Number(v)) => *v,
+                    _ => 0.0,
+                };
+                let clip = self.px_clip;
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width as i32, gfx.height as i32);
+                let (mut cx0, mut cy0, mut cx1, mut cy1) = (0, 0, bw, bh);
+                if let Some(c) = clip {
+                    cx0 = cx0.max(c[0]);
+                    cy0 = cy0.max(c[1]);
+                    cx1 = cx1.min(c[2]);
+                    cy1 = cy1.min(c[3]);
+                }
+                let cnt = cnt.min(nl.len() / 7);
+                let (reps, rp0) = if ll > 0.5 { (((vx1 - x) / bwd / ll).ceil().max(0.0) as usize, ((vx0 - x) / bwd / ll).floor().max(0.0) as usize) } else { (1, 0) };
+                for rp in rp0..reps.min(rp0 + 4096) {
+                    for i in 0..cnt {
+                        let ns = num(i * 7);
+                        let nx = x + (ns + rp as f64 * ll) * bwd;
+                        if nx >= vx1 || (ll > 0.5 && ns >= ll) {
+                            continue;
+                        }
+                        let nw = (num(i * 7 + 1) * bwd).max(1.5).min(x + w - nx);
+                        if nx + nw <= vx0 {
+                            continue;
+                        }
+                        let ny = y + (1.0 - (num(i * 7 + 2) - lo) / span) * (h - 3.0);
+                        let al = ((num(i * 7 + 3) * 200.0 + 30.0).clamp(40.0, 230.0) / 255.0 * 256.0) as u32;
+                        let (r, g, b) = if i % 2 == 0 { ca } else { cb };
+                        let (xa, xb) = ((nx.round() as i32).max(cx0), ((nx + nw).round() as i32).max(nx.round() as i32 + 1).min(cx1));
+                        let (ya, yb) = ((ny.round() as i32).max(cy0), ((ny + 2.0).round() as i32).min(cy1));
+                        if xa >= xb || ya >= yb {
+                            continue;
+                        }
+                        for yy in ya..yb {
+                            let row = (yy * bw) as usize;
+                            fill_span(&mut gfx.buffer[row + xa as usize..row + xb as usize], r.min(255), g.min(255), b.min(255), al);
+                        }
+                    }
+                }
                 unit
             }
             "px_disc" | "px_ring" => {

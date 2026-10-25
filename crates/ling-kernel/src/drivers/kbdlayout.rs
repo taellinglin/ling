@@ -171,6 +171,47 @@ pub fn selected() -> usize {
     unsafe { PICKED.unwrap_or(LAYOUTS.len()) }
 }
 
+/// The USB HID usage for a PS/2 set-1 scancode (the layouts are written in
+/// set-1 terms; the Pi's USB keyboards report usages). Only the keys a
+/// layout can override are listed.
+fn set1_to_hid(code: u8) -> Option<u8> {
+    const LETTERS: [(u8, u8); 26] = [
+        (0x1E, b'a'), (0x30, b'b'), (0x2E, b'c'), (0x20, b'd'), (0x12, b'e'), (0x21, b'f'), (0x22, b'g'),
+        (0x23, b'h'), (0x17, b'i'), (0x24, b'j'), (0x25, b'k'), (0x26, b'l'), (0x32, b'm'), (0x31, b'n'),
+        (0x18, b'o'), (0x19, b'p'), (0x10, b'q'), (0x13, b'r'), (0x1F, b's'), (0x14, b't'), (0x16, b'u'),
+        (0x2F, b'v'), (0x11, b'w'), (0x2D, b'x'), (0x15, b'y'), (0x2C, b'z'),
+    ];
+    if let Some(&(_, l)) = LETTERS.iter().find(|(c, _)| *c == code) {
+        return Some(0x04 + (l - b'a'));
+    }
+    Some(match code {
+        0x02..=0x0B => 0x1E + (code - 0x02), // 1..9, 0
+        0x0C => 0x2D,                        // - _
+        0x0D => 0x2E,                        // = +
+        0x1A => 0x2F,                        // [ {
+        0x1B => 0x30,                        // ] }
+        0x2B => 0x31,                        // \ |
+        0x27 => 0x33,                        // ; :
+        0x28 => 0x34,                        // ' "
+        0x29 => 0x35,                        // ` ~
+        0x33 => 0x36,                        // , <
+        0x34 => 0x37,                        // . >
+        0x35 => 0x38,                        // / ?
+        0x56 => 0x64,                        // the ISO key left of Z
+        _ => return None,
+    })
+}
+
+/// [`override_for`] keyed by USB HID usage, for the Pi's USB keyboards.
+pub fn override_for_hid(usage: u8, shifted: bool) -> Option<u8> {
+    let layout = LAYOUTS.get(unsafe { CURRENT })?;
+    layout
+        .overrides
+        .iter()
+        .find(|(c, _, _)| set1_to_hid(*c) == Some(usage))
+        .map(|(_, unshifted, shift)| if shifted { *shift } else { *unshifted })
+}
+
 /// Look up `code`'s override on the current layout, if any -- `None` means
 /// "no override, use the US table's value unchanged" (the common case for
 /// every scancode a layout doesn't touch).

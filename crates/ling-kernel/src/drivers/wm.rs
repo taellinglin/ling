@@ -477,7 +477,11 @@ pub fn menu_open() -> bool {
 fn menu_activate(kind: u8) {
     match kind {
         255 => {},
-        ACT_LOGOUT => unsafe { LOGOUT_REQUESTED = true },
+        ACT_LOGOUT => unsafe {
+            crate::drivers::messenger::lock_session();
+            crate::keyring::lock();
+            LOGOUT_REQUESTED = true
+        },
         ACT_RESTART => crate::arch::power::reboot(),
         ACT_SHUTDOWN => crate::arch::power::poweroff(),
         ACT_LAUNCH_PKG => launch_pkg(unsafe { PKG_LAUNCH }),

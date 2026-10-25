@@ -503,7 +503,6 @@ unsafe fn scan_stacks(work: &mut Vec<*mut ListBuf>) {
     for (lo, hi) in others {
         scan_range(lo, hi, work);
     }
-    #[cfg(target_arch = "x86_64")]
     crate::proc::sched::for_each_suspended_stack(|lo, hi| scan_range(lo, hi, work));
 }
 

@@ -130,6 +130,9 @@ pub fn run_to_completion(pid: usize) -> i32 {
         }
         switch_to(pid);
         trap::launch_first_process(frame_addr_of(&TABLE[pid]));
+        // back on the kernel's own context: the last process may have ended
+        // on the timer path, with interrupts still masked from the entry
+        crate::arch::cpu::sti();
         match TABLE[pid].state {
             State::Exited(code) => code,
             _ => -1,
@@ -238,11 +241,11 @@ pub fn on_timer_preempt(ist_frame_addr: u64) -> u64 {
             // `Ready` — timeslicing it out doesn't change that, just where
             // its saved frame lives.
             let dst = frame_addr_of(&TABLE[cur]);
-            core::ptr::copy_nonoverlapping(
-                ist_frame_addr as *const u8,
-                dst as *mut u8,
-                TRAPFRAME_SIZE as usize,
-            );
+            // on aarch64 the IRQ frame already sits on the process's own
+            // kernel stack (SP_EL1 is that stack): nothing to move then
+            if dst != ist_frame_addr {
+                core::ptr::copy(ist_frame_addr as *const u8, dst as *mut u8, TRAPFRAME_SIZE as usize);
+            }
             switch_to(next);
             frame_addr_of(&TABLE[next])
         },

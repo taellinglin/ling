@@ -907,18 +907,27 @@ fn run_build(
             "mac" | "macos" | "darwin" => {
                 build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
             },
+            "macarm" | "mac-arm" | "mac-arm64" | "macos-arm64" | "apple-silicon" => {
+                build_native(&project, out, NativePlatform::MacArm, icon, pack, aot)
+            },
             "kernel" | "bare" => {
                 build_native(&project, out, NativePlatform::BareMetal, icon, pack, aot)
             },
             "rpi" | "raspberrypi" => {
                 build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
             },
+            "pios" | "pi" | "raspios" | "linux-arm64" | "linarm" | "arm64" => {
+                build_native(&project, out, NativePlatform::PiOs, icon, pack, aot)
+            },
             "lingos" | "app" | "apps" => {
                 build_native(&project, out, NativePlatform::Lingos, icon, pack, aot)
             },
+            "lingos-rpi" | "apps-rpi" | "app-rpi" => {
+                build_native(&project, out, NativePlatform::LingosRpi, icon, pack, aot)
+            },
             other => {
                 eprintln!(
-                    "unknown platform '{}' — use web|win|lin|mac|kernel|rpi|lingos|all",
+                    "unknown platform '{}' — use web|win|lin|mac|macarm|pios|kernel|rpi|lingos|all",
                     other
                 );
                 std::process::exit(1);
@@ -1086,11 +1095,18 @@ enum NativePlatform {
     Windows,
     Linux,
     Mac,
+    /// macOS on Apple Silicon (aarch64-apple-darwin), always — unlike `Mac`, which is
+    /// x86_64 unless ling itself runs on an Apple Silicon Mac.
+    MacArm,
     BareMetal,
     /// Raspberry Pi (aarch64), bare-metal — see `RPI_LINKER_SCRIPT`.
     Rpi,
     /// LingOS ring-3 userspace ELF process linked against ling-user.
     Lingos,
+    /// The same LingOS userland ELF for the Raspberry Pi kernel (aarch64, EL0).
+    LingosRpi,
+    /// 64-bit Linux on ARM: Raspberry Pi OS (Pi 3 / 4 / 5) and other aarch64 boards.
+    PiOs,
 }
 
 impl NativePlatform {
@@ -1099,9 +1115,12 @@ impl NativePlatform {
             Self::Windows => "windows",
             Self::Linux => "linux",
             Self::Mac => "macos",
+            Self::MacArm => "macos-arm64",
             Self::BareMetal => "kernel",
             Self::Rpi => "rpi",
             Self::Lingos => "apps",
+            Self::LingosRpi => "apps-rpi",
+            Self::PiOs => "linux-arm64",
         }
     }
 
@@ -1116,7 +1135,10 @@ impl NativePlatform {
                 }
             },
             Self::Linux => {
-                if cfg!(target_os = "linux") {
+                // on an aarch64 Linux host (a Raspberry Pi) `lin` builds for that host
+                if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+                    "aarch64-unknown-linux-gnu"
+                } else if cfg!(target_os = "linux") {
                     "x86_64-unknown-linux-gnu"
                 } else {
                     "x86_64-unknown-linux-musl"
@@ -1130,17 +1152,19 @@ impl NativePlatform {
                     "x86_64-apple-darwin"
                 }
             },
+            Self::MacArm => "aarch64-apple-darwin",
+            Self::PiOs => "aarch64-unknown-linux-gnu",
             // Custom hardware-SSE target spec (see LINGOS_X86_64_TARGET_JSON);
             // emitted + resolved via RUST_TARGET_PATH in the kernel build below.
             Self::BareMetal | Self::Lingos => LINGOS_X86_64_TARGET,
-            Self::Rpi => "aarch64-unknown-none",
+            Self::Rpi | Self::LingosRpi => "aarch64-unknown-none",
         }
     }
 
     fn exe_suffix(self) -> &'static str {
         match self {
             Self::Windows => ".exe",
-            Self::Lingos => ".elf",
+            Self::Lingos | Self::LingosRpi => ".elf",
             Self::BareMetal | Self::Rpi => "",
             _ => "",
         }
@@ -1151,7 +1175,9 @@ impl NativePlatform {
             Self::Windows => cfg!(target_os = "windows"),
             Self::Linux => cfg!(target_os = "linux"),
             Self::Mac => cfg!(target_os = "macos"),
-            Self::BareMetal | Self::Rpi | Self::Lingos => false,
+            Self::MacArm => cfg!(all(target_os = "macos", target_arch = "aarch64")),
+            Self::PiOs => cfg!(all(target_os = "linux", target_arch = "aarch64")),
+            Self::BareMetal | Self::Rpi | Self::Lingos | Self::LingosRpi => false,
         }
     }
 
@@ -1163,7 +1189,7 @@ impl NativePlatform {
     fn cranelift_arch(self) -> &'static str {
         match self {
             Self::BareMetal | Self::Lingos => "x86_64",
-            Self::Rpi => "aarch64",
+            Self::Rpi | Self::LingosRpi => "aarch64",
             _ => unreachable!("cranelift_arch only used for kernel and lingos targets"),
         }
     }
@@ -1179,7 +1205,7 @@ fn build_native(
 ) {
     let triple = platform.triple();
     let is_kernel = matches!(platform, NativePlatform::BareMetal | NativePlatform::Rpi);
-    let is_lingos = matches!(platform, NativePlatform::Lingos);
+    let is_lingos = matches!(platform, NativePlatform::Lingos | NativePlatform::LingosRpi);
     let is_rpi = matches!(platform, NativePlatform::Rpi);
     // LingOS targets build the manifest's `entry_os` when it names one
     let os_project;
@@ -1854,7 +1880,10 @@ rustflags = ["-C", "relocation-model=static", "-Z", "unstable-options", {extra_f
     // since the compiled binary ends up in `target/<triple>/release/`, not
     // next to the sources copy_ling_sources placed in build_dir itself.
     // Harmless for single-file projects (nothing to copy beyond the exe).
-    if !is_kernel && !is_lingos {
+    // Portable builds skip this: their launcher runs the entry from the include tree (copied next
+    // to the exe below, or packed inside it), which keeps the modules' folder layout.
+    let portable_build = project.portable.is_some() || std::env::var("LING_APP_INTERP").is_ok();
+    if !is_kernel && !is_lingos && !portable_build {
         copy_ling_sources(module_root, &platform_dir);
     }
 
@@ -2698,16 +2727,27 @@ fn gen_main_rs(entry_file: &str, packed: bool, portable: Option<&str>) -> String
     // assembled by the caller), with the exe's folder as the working directory so assets, settings and projects live beside it.
     // Startup errors go to lingstation.log because the windows build has no console.
     // The manifest's `portable = "<dir>"` does the same as the environment variable.
+    // With --pack as well, the exe carries every include and the entry inside it: it unpacks them
+    // (ling::unpack_resources, which also makes that folder the working directory) and runs the
+    // interpreter there, so one self-contained file behaves exactly like `ling run --interp`.
     let portable_dir = std::env::var("LING_APP_INTERP").ok().or_else(|| portable.map(str::to_string));
     if let Some(dir) = portable_dir {
+        let (res_mod, unpack) = if packed {
+            ("mod resources;
+", "    ling::unpack_resources(env!(\"CARGO_PKG_NAME\"), resources::RESOURCES);
+")
+        } else {
+            ("", "")
+        };
         return format!(
             r#"// Built by ling build (portable launcher) — no console window on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+{res_mod}
 fn main() {{
     if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) {{
         let _ = std::env::set_current_dir(d);
     }}
-    let entry = "{dir}/{entry_file}";
+{unpack}    let entry = "{dir}/{entry_file}";
     let fail = |msg: String| -> ! {{
         let _ = std::fs::write("lingstation.log", &msg);
         eprintln!("{{msg}}");

@@ -214,9 +214,57 @@ pub fn set_mode(w: u32, h: u32) -> bool {
     true
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+/// The Pi: ask the firmware for a new surface (physical + virtual size), take
+/// whatever geometry it really gave (the Pi 5 quirks are handled in the
+/// mailbox code) and re-derive the overscan margin. The window layer re-sizes
+/// itself from `width()`/`height()` afterwards.
+#[cfg(target_arch = "aarch64")]
+pub fn set_mode(w: u32, h: u32) -> bool {
+    if w == 0 || h == 0 || (w as usize) * (h as usize) * 4 > BACKBUFFER_MAX {
+        return false;
+    }
+    let Some((addr, pitch, width, height, bpp)) = crate::arch::mailbox::allocate_framebuffer(w, h, 32) else {
+        return false;
+    };
+    unsafe {
+        ptr::write(&raw mut FB, Some(FbInfo { addr, pitch, width, height, bpp }));
+    }
+    set_safe_margin(width / 48, height / 48);
+    clear_physical(0);
+    // what the firmware really gave (its geometry / pitch / depth answers
+    // are not always what was asked): on the serial log for the test runs
+    let d = unsafe { crate::arch::mailbox::FB_DIAG };
+    crate::console_write(b"display: ");
+    crate::print_decimal(width as u64);
+    crate::console_write(b"x");
+    crate::print_decimal(height as u64);
+    crate::console_write(b" pitch ");
+    crate::print_decimal(pitch as u64);
+    crate::console_write(b" bpp ");
+    crate::print_decimal(bpp as u64);
+    crate::console_write(b" (phys ");
+    crate::print_decimal(d[0] as u64);
+    crate::console_write(b"x");
+    crate::print_decimal(d[1] as u64);
+    crate::console_write(b" virt ");
+    crate::print_decimal(d[2] as u64);
+    crate::console_write(b"x");
+    crate::print_decimal(d[3] as u64);
+    crate::console_write(b" size ");
+    crate::print_decimal(d[5] as u64);
+    crate::console_write(b")
+");
+    true
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub fn set_mode(_w: u32, _h: u32) -> bool {
     false
+}
+
+/// The surface's full size (before the overscan margin), for the mode row.
+pub fn mode_dims() -> (u32, u32) {
+    get().map(|f| (f.width, f.height)).unwrap_or((0, 0))
 }
 
 pub fn get() -> Option<FbInfo> {

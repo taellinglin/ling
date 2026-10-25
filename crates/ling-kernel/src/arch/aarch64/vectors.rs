@@ -219,6 +219,31 @@ const ESR_EC_BRK: u64 = 0x3C;
 /// `ESR_EL1[31:26]` exception class for an `svc` trap.
 const ESR_EC_SVC64: u64 = 0x15;
 
+/// Data abort taken from the current EL (a kernel load/store that faulted).
+const ESR_EC_DABT_CUR: u64 = 0x25;
+
+static mut PROBE_ACTIVE: bool = false;
+static mut PROBE_FAULTED: bool = false;
+
+/// Read a 32-bit MMIO register that may not exist: `None` when the access
+/// raised a data abort (synchronous external abort on an unmapped bus
+/// address), the value otherwise. Drivers use it once, before trusting an
+/// optional block (the hardware RNG on QEMU's Pi 4 model is absent).
+pub fn probe_read32(addr: usize) -> Option<u32> {
+    let v: u32;
+    unsafe {
+        PROBE_FAULTED = false;
+        PROBE_ACTIVE = true;
+        // one plain load, so the abort handler can step over exactly it
+        core::arch::asm!("ldr {v:w}, [{a}]", "dsb sy", a = in(reg) addr, v = out(reg) v, options(nostack));
+        PROBE_ACTIVE = false;
+        if PROBE_FAULTED {
+            return None;
+        }
+    }
+    Some(v)
+}
+
 #[no_mangle]
 extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
     let frame_addr = frame as *mut TrapFrame as u64;
@@ -233,6 +258,13 @@ extern "C" fn aarch64_trap_handler(frame: &mut TrapFrame, kind: u64) -> u64 {
             if ec == ESR_EC_BRK {
                 crate::console_write(b"\n!!! Breakpoint (brk)\n");
                 print_hex64("  elr=", frame.elr);
+                frame.elr += 4;
+                return frame_addr;
+            }
+            // A data abort inside `probe_read32`: the device is not there
+            // (an emulator without it, a board variant). Step over the load.
+            if ec == ESR_EC_DABT_CUR && unsafe { PROBE_ACTIVE } {
+                unsafe { PROBE_FAULTED = true };
                 frame.elr += 4;
                 return frame_addr;
             }

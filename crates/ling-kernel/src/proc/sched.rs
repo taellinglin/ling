@@ -77,14 +77,15 @@ extern "C" {
     /// called `switch_to` from (or `trampoline`, for a task's first run; see
     /// `spawn`'s fabricated stack). Plain SysV AMD64 (`rdi`, `rsi`), the
     /// same convention every `ling_kernel_*` intrinsic already uses.
-    fn switch_to(save_sp: *mut u64, new_sp: u64);
+    fn sched_switch_to(save_sp: *mut u64, new_sp: u64);
 }
 
+#[cfg(target_arch = "x86_64")]
 global_asm!(
     r#"
 .section .text
-.global switch_to
-switch_to:
+.global sched_switch_to
+sched_switch_to:
     push rbx
     push rbp
     push r12
@@ -105,6 +106,45 @@ switch_to:
 
 /// Lands here (via `ret`, out of `switch_to`) the first time a spawned
 /// task's slot is switched into — never called directly.
+// AArch64: the same shape as `lingapp`'s `ling_switch_stack` -- the callee-
+// saved x19-x30 and d8-d15 in a 176-byte frame, sp saved to `*save_sp`, then
+// the other stack's frame is popped and `ret` lands in x30 (`trampoline` on a
+// fresh stack).
+#[cfg(target_arch = "aarch64")]
+global_asm!(
+    r#"
+.section .text
+.global sched_switch_to
+sched_switch_to:
+    sub sp, sp, #176
+    stp x19, x20, [sp, #0]
+    stp x21, x22, [sp, #16]
+    stp x23, x24, [sp, #32]
+    stp x25, x26, [sp, #48]
+    stp x27, x28, [sp, #64]
+    stp x29, x30, [sp, #80]
+    stp d8, d9, [sp, #96]
+    stp d10, d11, [sp, #112]
+    stp d12, d13, [sp, #128]
+    stp d14, d15, [sp, #144]
+    mov x2, sp
+    str x2, [x0]
+    mov sp, x1
+    ldp x19, x20, [sp, #0]
+    ldp x21, x22, [sp, #16]
+    ldp x23, x24, [sp, #32]
+    ldp x25, x26, [sp, #48]
+    ldp x27, x28, [sp, #64]
+    ldp x29, x30, [sp, #80]
+    ldp d8, d9, [sp, #96]
+    ldp d10, d11, [sp, #112]
+    ldp d12, d13, [sp, #128]
+    ldp d14, d15, [sp, #144]
+    add sp, sp, #176
+    ret
+"#
+);
+
 extern "C" fn trampoline() -> ! {
     let idx = unsafe { CURRENT };
     let entry = unsafe { TASK_ENTRY[idx] };
@@ -152,12 +192,24 @@ pub fn spawn(entry: u64) -> u64 {
                 // address landing in `trampoline`.
                 // `ret` pops the trampoline address, leaving rsp at `top - 8` (8 mod 16) as if `trampoline` had been called: with
                 // hardware SSE enabled the compiler uses aligned `movaps` on the stack and faults when entered 16-byte aligned.
-                let mut sp = top - 16;
-                *(sp as *mut u64) = trampoline as *const () as usize as u64;
-                for _ in 0..6 {
-                    sp -= 8;
-                    *(sp as *mut u64) = 0;
-                }
+                #[cfg(target_arch = "x86_64")]
+                let sp = {
+                    let mut sp = top - 16;
+                    *(sp as *mut u64) = trampoline as *const () as usize as u64;
+                    for _ in 0..6 {
+                        sp -= 8;
+                        *(sp as *mut u64) = 0;
+                    }
+                    sp
+                };
+                #[cfg(target_arch = "aarch64")]
+                let sp = {
+                    // the frame `switch_to` pops: zeros, `trampoline` in x30
+                    let sp = top - 176;
+                    core::ptr::write_bytes(sp as *mut u8, 0, 176);
+                    *((sp + 88) as *mut u64) = trampoline as *const () as usize as u64;
+                    sp
+                };
 
                 TASKS[i].sp = sp;
                 TASKS[i].state = TaskState::Ready;
@@ -208,7 +260,7 @@ pub fn yield_now() {
 
         let save_ptr = &raw mut TASKS[prev].sp;
         let new_sp = TASKS[next].sp;
-        switch_to(save_ptr, new_sp);
+        sched_switch_to(save_ptr, new_sp);
     }
 }
 

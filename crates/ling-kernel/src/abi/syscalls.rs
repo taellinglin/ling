@@ -140,21 +140,15 @@ fn sys_spawn(pml4: u64, path_ptr: u64, path_len: u64) -> u64 {
         Err(_) => return EFAULT,
     };
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        let mut elf_buf = [0u8; crate::fs::lingfs::BLOCK_SIZE];
-        match crate::fs::lingfs::read_file(path, &mut elf_buf) {
-            Ok(Some(len)) => match uproc::spawn(&elf_buf[..len]) {
-                Ok(pid) => pid as u64,
-                Err(_) => EIO,
-            },
-            Ok(None) | Err(_) => ENOENT,
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = path;
-        ENOSYS
+    // multi-block read: real apps are bigger than one 4 KiB block
+    static mut SPAWN_BUF: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024];
+    let buf = unsafe { &mut *&raw mut SPAWN_BUF };
+    match crate::fs::lingfs::read_file_all(path, buf) {
+        Ok(Some(len)) => match uproc::spawn(&buf[..len]) {
+            Ok(pid) => pid as u64,
+            Err(_) => EIO,
+        },
+        Ok(None) | Err(_) => ENOENT,
     }
 }
 
@@ -216,7 +210,10 @@ fn sys_poll_input() -> u64 {
     (key << 40) | (btn << 32) | (my << 16) | mx
 }
 
+/// The Pi: the keyboard byte from the serial console or the USB keyboard;
+/// no pointer yet for native apps.
 #[cfg(not(target_arch = "x86_64"))]
 fn sys_poll_input() -> u64 {
-    0
+    let key = crate::poll_input().unwrap_or(0) as u64;
+    key << 40
 }

@@ -201,11 +201,11 @@ pub fn read(p: &str) -> Option<Vec<u8>> {
     let r = resolve(&n);
     if ready() {
         if let Some(v) = lingfs_read(&r) {
-            return Some(v);
+            return unseal_private(&r, v);
         }
         if r != n {
             if let Some(v) = lingfs_read(&n) {
-                return Some(v);
+                return unseal_private(&n, v);
             }
         }
     }
@@ -230,7 +230,22 @@ pub fn write(p: &str, data: &[u8]) -> bool {
     if let Some(i) = r.rfind('/') {
         let _ = crate::fs::lingfs::mkdir_p(&r[..i]);
     }
+    if crate::keyring::is_private_path(&r) {
+        // sealed under the signed-in user's keyring; refused while locked
+        let Some(blob) = crate::keyring::seal("vfs-private", r.as_bytes(), data) else { return false };
+        return crate::fs::lingfs::write_path_any(&r, &blob).is_ok();
+    }
     crate::fs::lingfs::write_path_any(&r, data).is_ok()
+}
+
+/// A private file's bytes come back decrypted (None while the keyring is
+/// locked or on a wrong key); a file written there before the keyring
+/// existed is plain and passes through.
+fn unseal_private(path: &str, bytes: Vec<u8>) -> Option<Vec<u8>> {
+    if !crate::keyring::is_private_path(path) || !crate::keyring::is_sealed(&bytes) {
+        return Some(bytes);
+    }
+    crate::keyring::open("vfs-private", path.as_bytes(), &bytes)
 }
 
 pub fn exists(p: &str) -> bool {
@@ -267,14 +282,24 @@ pub fn mkdir(p: &str) -> bool {
     ready() && crate::fs::lingfs::mkdir_p(&resolve(p)).is_ok()
 }
 
-/// Delete a file or an empty folder (removable media; the image's files and
-/// lingfs's are kept).
+/// Delete a file or an empty folder, on removable media or the SD card's
+/// lingfs (the image's built-in files stay).
 pub fn delete(p: &str) -> bool {
     let n = norm(p);
     if crate::fs::media::is_media_path(&n) {
         return crate::fs::media::delete(&n);
     }
-    false
+    if !ready() {
+        return false;
+    }
+    if is_dir(&n) && !list(&n).is_empty() {
+        return false;
+    }
+    let r = resolve(&n);
+    if crate::fs::lingfs::remove_path(&r).unwrap_or(false) {
+        return true;
+    }
+    r != n && crate::fs::lingfs::remove_path(&n).unwrap_or(false)
 }
 
 pub fn basename(p: &str) -> String {

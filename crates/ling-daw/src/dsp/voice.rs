@@ -1119,6 +1119,10 @@ impl Voice {
 }
 
 impl Instrument for Voice {
+    // vibrato and breath run free between phrases: always rendered (see Instrument::can_sleep)
+    fn can_sleep(&self) -> bool {
+        false
+    }
     fn note_on(&mut self, key: u8, vel: f32) {
         self.note_on_lyric(key, vel, 0.0, 0.5, 0.5, "", 0.0);
     }

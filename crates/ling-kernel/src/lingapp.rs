@@ -524,6 +524,55 @@ fn px_fit(args: &[u64]) -> u64 {
 
 // ── Window ───────────────────────────────────────────────────────────────────
 
+/// Standard modes up to what the back buffer holds, and no larger than the
+/// display's preferred (EDID) mode when it is known. The live mode is always
+/// in the list.
+fn display_modes() -> Vec<(u32, u32)> {
+    const CANDIDATES: [(u32, u32); 7] =
+        [(640, 480), (800, 600), (1024, 768), (1280, 720), (1366, 768), (1600, 900), (1920, 1080)];
+    #[cfg(target_arch = "aarch64")]
+    let pref = crate::arch::mailbox::edid_preferred_resolution();
+    #[cfg(not(target_arch = "aarch64"))]
+    let pref: Option<(u32, u32)> = None;
+    let cur = framebuffer::mode_dims();
+    let mut out: Vec<(u32, u32)> = CANDIDATES
+        .iter()
+        .copied()
+        .filter(|&(w, h)| match pref {
+            Some((pw, ph)) if pw > 0 && ph > 0 => w <= pw && h <= ph,
+            _ => true,
+        })
+        .collect();
+    if cur.0 > 0 && !out.contains(&cur) {
+        out.push(cur);
+        out.sort();
+    }
+    out
+}
+
+/// Switch the screen and re-create the window at the new size (the desktop
+/// reads `get_width` / `get_height` every frame; the wallpaper cache is keyed
+/// by the window size, so it re-decodes by itself).
+fn display_set(w: u32, h: u32) -> bool {
+    if (w, h) == framebuffer::mode_dims() {
+        return true;
+    }
+    if !framebuffer::set_mode(w, h) {
+        return false;
+    }
+    let (fw, fh) = (framebuffer::width() as usize, framebuffer::height() as usize);
+    unsafe {
+        if let Some(win) = (*(&raw mut WIN)).as_mut() {
+            win.buf = vec![0u32; fw * fh];
+            win.w = fw;
+            win.h = fh;
+            win.clip = None;
+        }
+        (*(&raw mut SNAP)).clear();
+    }
+    true
+}
+
 fn open_window(req_w: f64, req_h: f64) {
     // LingOS: the window is the whole screen (the safe area); fall back to the
     // requested size when there's no framebuffer, so the program still runs.
@@ -829,9 +878,6 @@ fn app_suspend() {
 /// For the collector: the top of the stack we are on, and every parked stack
 /// (the desktop's while an app runs, every suspended app's).
 pub fn gc_stacks() -> (u64, Vec<(u64, u64)>) {
-    #[cfg(target_arch = "aarch64")]
-    let host_top = crate::arch::boot::boot_stack_top();
-    #[cfg(target_arch = "x86_64")]
     let host_top = crate::proc::sched::current_stack_top();
     let mut others: Vec<(u64, u64)> = parked_apps().iter().map(|a| (a.sp, a.top)).collect();
     match active_app() {
@@ -882,7 +928,11 @@ fn net_test() -> String {
     let mut out = String::new();
     let ip = ns::self_ip();
     let gw = ns::gateway_ip();
-    out.push_str(&alloc::format!("address {}  gateway {}  ({})\n", fmt_ip(ip), fmt_ip(gw), crate::arch::netdev::kind()));
+    #[cfg(target_arch = "aarch64")]
+    let kind = crate::arch::netdev::kind();
+    #[cfg(not(target_arch = "aarch64"))]
+    let kind = "ethernet";
+    out.push_str(&alloc::format!("address {}  gateway {}  ({})\n", fmt_ip(ip), fmt_ip(gw), kind));
     // No link at all: Wi-Fi not joined and no wired controller -- nothing below can work.
     #[cfg(target_arch = "aarch64")]
     if !crate::wifi::joined() && !crate::arch::netdev::ethernet_present() {
@@ -1024,7 +1074,9 @@ fn user_login(name: &str, password: &str) -> bool {
     let group = core::str::from_utf8(&group[..n]).unwrap_or("users");
     crate::fs::lingfs::set_current_user(name, group);
     crate::fs::users::ensure_home(name);
-    crate::drivers::messenger::set_chat_key(password.as_bytes());
+    // the keyring opens with this password: chat history and private files
+    crate::keyring::unlock(name, password);
+    crate::drivers::messenger::unlock_for_session(password.as_bytes());
     true
 }
 
@@ -1709,6 +1761,9 @@ fn present() {
     crate::lingrt::gc_maybe();
     crate::drivers::g3d::end_frame();
     crate::wifi::tick();
+    // the background tasks (SSH server, chat listener) get the CPU once a frame
+    #[cfg(target_arch = "aarch64")]
+    crate::proc::sched::yield_now();
     let (mx, my, _) = mouse_state();
     unsafe {
         let last = MOUSE_LAST;
@@ -2517,10 +2572,9 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"sleep" | b"sleep_ms" => {
             let end = crate::arch::timer::now_ms() + a(0, 0.0).max(0.0) as u64;
             while crate::arch::timer::now_ms() < end {
-                #[cfg(target_arch = "x86_64")]
                 crate::proc::sched::yield_now();
                 #[cfg(target_arch = "aarch64")]
-                crate::arch::timer::delay_us(500);
+                crate::arch::timer::delay_us(200);
             }
             UNIT
         },
@@ -2862,9 +2916,13 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"msg_tick" => {
+            // the window is in front: whatever arrived has been seen
+            crate::drivers::messenger::clear_unread();
             crate::drivers::messenger::tick();
             UNIT
         },
+        // chat lines received while the Messenger window was closed or parked
+        b"msg_unread" => num(crate::drivers::messenger::unread() as f64),
         b"msg_me" => {
             let (h, id) = crate::drivers::messenger::me();
             mk_str(&alloc::format!("{h}\t{id}"))
@@ -2920,6 +2978,42 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         // the wall clock in seconds since 1970 UTC (0 = this board has none)
         b"os_time" => num(os_time() as f64),
+        // display modes: the list this screen can show, the live one, a switch
+        b"os_display_modes" => list_from(display_modes().iter().map(|&(w, h)| mk_str(&alloc::format!("{w}x{h}"))).collect()),
+        b"os_display_current" => {
+            let (w, h) = framebuffer::mode_dims();
+            mk_str(&alloc::format!("{w}x{h}"))
+        },
+        b"os_display_set" => {
+            let w = a(0, 0.0).max(0.0) as u32;
+            let h = a(1, 0.0).max(0.0) as u32;
+            let ok = display_set(w, h);
+            boolean(ok)
+        },
+        // the keyring: lock on screen lock / log out, status for Settings
+        b"os_lock" => {
+            crate::drivers::messenger::lock_session();
+            crate::keyring::lock();
+            UNIT
+        },
+        b"os_keyring" => mk_str(&crate::keyring::status()),
+        // the system clipboard (one text buffer shared by every app)
+        b"clipboard_set" => {
+            crate::drivers::clipboard::set_str(&path_arg(args, 0));
+            UNIT
+        },
+        b"clipboard_get" => mk_str(core::str::from_utf8(crate::drivers::clipboard::get()).unwrap_or("")),
+        // keyboard layouts: names, the active index, choose one
+        b"os_kbd_layouts" => {
+            let n = crate::drivers::kbdlayout::count();
+            list_from((0..n).map(|i| mk_str(crate::drivers::kbdlayout::name(i))).collect())
+        },
+        b"os_kbd_layout" => num(crate::drivers::kbdlayout::current() as f64),
+        b"os_kbd_layout_set" => {
+            let i = args.first().map(|&v| to_f64(v)).unwrap_or(0.0).max(0.0) as usize;
+            crate::drivers::kbdlayout::set_current(i);
+            num(crate::drivers::kbdlayout::current() as f64)
+        },
         b"os_reboot" => {
             #[cfg(target_arch = "aarch64")]
             crate::arch::power::reboot();

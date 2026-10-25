@@ -166,6 +166,15 @@ mod net;
 mod ssh;
 #[cfg(not(target_arch = "wasm32"))]
 mod lingtp;
+// ling-wallet runtime additions (see ../ling-wallet/docs/LING_API.md)
+#[cfg(not(target_arch = "wasm32"))]
+mod threads;
+#[cfg(not(target_arch = "wasm32"))]
+mod bytes;
+#[cfg(not(target_arch = "wasm32"))]
+mod lwcrypto;
+#[cfg(not(target_arch = "wasm32"))]
+mod p2p;
 #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
 pub mod web;
 use crate::gfx::{GfxState, Light};
@@ -1860,6 +1869,17 @@ impl Default for UiTheme {
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct Interpreter {
+    /// Capabilities of this isolate (LING_API.md §1). `None` = the main
+    /// thread, which has every capability.
+    pub(crate) caps: Option<std::collections::HashSet<String>>,
+    /// Per-isolate state of the ling-wallet builtin families; each type is
+    /// owned by its module (threads.rs, lwcrypto.rs, p2p.rs).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) threads_state: threads::ThreadsState,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) lw_state: lwcrypto::LwState,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) p2p_state: p2p::P2pState,
     globals: HashMap<String, Expr>,
     /// Globals evaluated ONCE at program start (immutable after load).
     /// call_named clones this instead of re-evaluating every global per call.
@@ -1909,6 +1929,8 @@ pub struct Interpreter {
     /// Persistent ML-DSA-65 (post-quantum) signing keypairs, referenced by handle.
     #[cfg(not(target_arch = "wasm32"))]
     mldsa_ids: Vec<ling_crypto::MlDsa65Keypair>,
+    /// ML-DSA-87 (FIPS 204 category 5) keypairs, for the mldsa87_* builtins
+    mldsa87_ids: Vec<ling_crypto::MlDsa87Keypair>,
     /// Editable text-input buffer (ling-ui text fields).
     text_buffer: String,
     /// Frame counter for record_frame().
@@ -2050,7 +2072,31 @@ impl Interpreter {
         let audio = AudioEngine::new()
             .map_err(|e| eprintln!("audio init failed (no sound): {e}"))
             .ok();
+        Self::build(
+            #[cfg(not(target_arch = "wasm32"))]
+            audio,
+        )
+    }
+
+    /// Lightweight interpreter for a thread isolate (threads.rs): no audio
+    /// device is opened (everything else in `build` is lazy/cheap), and it
+    /// holds only `caps`, so GUI/input builtins are refused.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn new_isolate(caps: std::collections::HashSet<String>) -> Self {
+        let mut me = Self::build(None);
+        me.caps = Some(caps);
+        me
+    }
+
+    fn build(#[cfg(not(target_arch = "wasm32"))] audio: Option<AudioEngine>) -> Self {
         Self {
+            caps: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            threads_state: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            lw_state: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            p2p_state: Default::default(),
             globals: HashMap::new(),
             global_seed: new_env(),
             functions: FxHashMap::default(),
@@ -2082,6 +2128,7 @@ impl Interpreter {
             ed25519_ids: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             mldsa_ids: Vec::new(),
+            mldsa87_ids: Vec::new(),
             text_buffer: String::new(),
             record_n: 0,
             #[cfg(not(target_arch = "wasm32"))]
@@ -2207,6 +2254,8 @@ impl Interpreter {
     where
         F: FnOnce(&mut Self) -> Result<T, EvalErr>,
     {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.check_cancel()?;
         self.frames.push(name.to_string());
         let result = body(self);
         if matches!(result, Err(EvalErr::Runtime(_))) && self.error_trace.is_none() {
@@ -3054,7 +3103,7 @@ impl Interpreter {
     ) -> Result<(), String> {
         // ── Wasm32: no filesystem — use the pre-registered module registry ──
         #[cfg(target_arch = "wasm32")]
-        let (source, sub_dir) = {
+        let (source, sub_dir, cache_key) = {
             // Skip if already loaded (circular import guard)
             if self.loaded_files.contains(path) {
                 return Ok(());
@@ -3064,12 +3113,12 @@ impl Interpreter {
             let src = crate::runtime::get_wasm_module(path)
                 .or_else(|| crate::runtime::get_wasm_module(&format!("{}.ling", path)))
                 .ok_or_else(|| format!("use: cannot find module '{path}'"))?;
-            (src, None::<std::path::PathBuf>)
+            (src, None::<std::path::PathBuf>, ())
         };
 
         // ── Native: resolve against filesystem ──
         #[cfg(not(target_arch = "wasm32"))]
-        let (source, sub_dir) = {
+        let (source, sub_dir, cache_key) = {
             let base_dir = self
                 .source_dir
                 .clone()
@@ -3106,11 +3155,19 @@ impl Interpreter {
             let src = std::fs::read_to_string(&resolved)
                 .map_err(|e| format!("use: failed to read '{path}': {e}"))?;
             let dir = resolved.parent().map(|p| p.to_path_buf());
-            (src, dir)
+            (src, dir, canonical)
         };
 
-        let program = crate::parser::parse(&source)
+        // Native: parsed modules are shared process-wide (threads.rs cache),
+        // so every isolate that `use`s a module reuses one parse.
+        #[cfg(not(target_arch = "wasm32"))]
+        let program = threads::parse_cached_source(&cache_key, source)
             .map_err(|e| format!("use: parse error in '{path}': {e}"))?;
+        #[cfg(target_arch = "wasm32")]
+        let program = {
+            let _ = cache_key;
+            crate::parser::parse(&source).map_err(|e| format!("use: parse error in '{path}': {e}"))?
+        };
 
         // Compute target namespace: parent_ns :: alias (or just alias, or just parent_ns)
         let target_ns = match (parent_ns.is_empty(), alias) {
@@ -3206,6 +3263,8 @@ impl Interpreter {
                 // `bind counter = counter + 1` persists across iterations,
                 // which is the expected behaviour in a scripting language.
                 loop {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.check_cancel()?;
                     let cv = self.eval_expr(cond, env)?;
                     if !self.is_truthy(&cv) {
                         break;
@@ -3223,6 +3282,8 @@ impl Interpreter {
                 let iter_val = self.eval_expr(iter, env)?;
                 let items = self.value_to_iter(iter_val)?;
                 for item in items {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.check_cancel()?;
                     let mut local = env.clone();
                     local.insert(var.clone(), item);
                     match self.exec_block(body, &mut local) {
@@ -3481,6 +3542,12 @@ impl Interpreter {
             };
         }
 
+        // Capability gate for isolates (threads.rs); the main thread skips it.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.caps.is_some() {
+            self.isolate_guard(name)?;
+        }
+
         #[cfg(target_arch = "wasm32")]
         if let Some(v) = self.wasm_music_builtin(name, &args)? {
             return Ok(v);
@@ -3488,6 +3555,23 @@ impl Interpreter {
 
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(r) = self.daw_builtin(name, &args) {
+            return r;
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.threads_builtin(name, &args) {
+            return r;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.bytes_builtin(name, &args) {
+            return r;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.lwcrypto_builtin(name, &args) {
+            return r;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(r) = self.p2p_builtin(name, &args) {
             return r;
         }
 
@@ -13230,6 +13314,43 @@ impl Interpreter {
                     .is_ok();
                 return Ok(Value::Bool(ok));
             },
+            // ML-DSA-87 (FIPS 204, NIST category 5): the same four calls as mldsa_* (which are ML-DSA-65), for signatures that
+            // must hold the longest - license files, release manifests. Compose with ed25519_* for a hybrid (both must verify).
+            // mldsa87_keygen_from_seed(seed hex 32 bytes) -> handle; mldsa87_keygen() -> handle (random)
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa87_keygen_from_seed" => {
+                let seed = hex_to_32(&self.arg_str(&args, 0, ""));
+                self.mldsa87_ids.push(ling_crypto::MlDsa87Keypair::from_seed(seed));
+                return Ok(Value::Number((self.mldsa87_ids.len() - 1) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa87_keygen" => {
+                self.mldsa87_ids.push(ling_crypto::MlDsa87Keypair::generate());
+                return Ok(Value::Number((self.mldsa87_ids.len() - 1) as f64));
+            },
+            // mldsa87_public(handle) -> verifying key hex (2592 bytes)
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa87_public" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let pk = self.mldsa87_ids.get(h).map(|kp| hex_encode(&kp.public_key())).unwrap_or_default();
+                return Ok(Value::Str(pk));
+            },
+            // mldsa87_sign(handle, message) -> signature hex (4627 bytes)
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa87_sign" => {
+                let h = self.arg_num(&args, 0, 0.0)? as usize;
+                let msg = self.arg_str(&args, 1, "");
+                let sig = self.mldsa87_ids.get(h).map(|kp| hex_encode(&kp.sign(msg.as_bytes()))).unwrap_or_default();
+                return Ok(Value::Str(sig));
+            },
+            // mldsa87_verify(pubkey hex, message, signature hex) -> bool
+            #[cfg(not(target_arch = "wasm32"))]
+            "mldsa87_verify" => {
+                let pk = hex_decode(&self.arg_str(&args, 0, ""));
+                let msg = self.arg_str(&args, 1, "");
+                let sig = hex_decode(&self.arg_str(&args, 2, ""));
+                return Ok(Value::Bool(ling_crypto::MlDsa87Keypair::verify(&pk, msg.as_bytes(), &sig).is_ok()));
+            },
             // Argon2id password hashing — password_hash(pw) → PHC string,
             // password_verify(pw, phc_string) → bool.
             #[cfg(not(target_arch = "wasm32"))]
@@ -14104,7 +14225,9 @@ impl Interpreter {
                 } else {
                     (i32::MIN, i32::MIN, i32::MAX, i32::MAX)
                 };
-                if id >= 0 && (id as usize) < self.images.len() && dw > 0 && dh > 0 {
+                // optional opacity 0..1 as argument 9 (after the clip rectangle): the image's own alpha is multiplied by it
+                let opacity = if args.len() >= 10 { (self.arg_num(&args, 9, 1.0)?.clamp(0.0, 1.0) * 255.0).round() as u32 } else { 255 };
+                if id >= 0 && (id as usize) < self.images.len() && dw > 0 && dh > 0 && opacity > 0 {
                     let img = &self.images[id as usize];
                     let sw = img.width() as i32;
                     let sh = img.height() as i32;
@@ -14124,7 +14247,7 @@ impl Interpreter {
                                 }
                                 let sx = (px * sw / dw).clamp(0, sw - 1) as u32;
                                 let p = img.get_pixel(sx, sy);
-                                let a = p[3] as u32;
+                                let a = p[3] as u32 * opacity / 255;
                                 if a == 0 {
                                     continue;
                                 }
@@ -16278,6 +16401,22 @@ impl Interpreter {
                 return Ok(Value::List(Rc::new(
                     bands.into_iter().map(|x| Value::Number(x as f64)).collect(),
                 )));
+            },
+
+            // music_fft_groups(track_id, size=8192, groups=7) -> `groups` log-spaced loudness values
+            // from a `size`-point FFT (size/2 frequency bands, 4096 for 8192) at the current playback
+            // position: one FFT per call, summed in Rust so a script reads a handful of numbers.
+            #[cfg(not(target_arch = "wasm32"))]
+            "music_fft_groups" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let size = self.arg_num(&args, 1, 8192.0)?.max(64.0) as usize;
+                let groups = self.arg_num(&args, 2, 7.0)?.clamp(1.0, 256.0) as usize;
+                let pos = self.music.as_ref().map(|m| m.position()).unwrap_or(0.0);
+                let out = match self.tracks.get(id.max(0) as usize) {
+                    Some(t) if id >= 0 => ling_music::analysis::fft_groups_at_pos(&t.mono, t.rate, pos as f32, size, groups),
+                    _ => vec![0.0; groups],
+                };
+                return Ok(Value::List(Rc::new(out.into_iter().map(|x| Value::Number(x as f64)).collect())));
             },
 
             // ── stop every one-shot SFX/morph/sample voice (scene cleanup) ──
@@ -19109,5 +19248,17 @@ fn truncate_name(s: &str) -> String {
         let mut t: String = s.chars().take(max - 1).collect();
         t.push('…');
         t
+    }
+}
+
+impl Interpreter {
+    /// Fail unless this isolate holds `cap` (LING_API.md §1). The main
+    /// thread (`caps == None`) holds every capability.
+    pub(crate) fn require_cap(&self, cap: &str) -> Result<(), EvalErr> {
+        match &self.caps {
+            None => Ok(()),
+            Some(set) if set.contains(cap) => Ok(()),
+            Some(_) => Err(EvalErr::Runtime(format!("capability \"{cap}\" not granted"))),
+        }
     }
 }

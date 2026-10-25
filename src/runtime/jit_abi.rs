@@ -393,7 +393,7 @@ pub unsafe extern "C" fn ling_time_now() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_print(cstr: *const u8) {
     if !cstr.is_null() {
-        let s = unsafe { std::ffi::CStr::from_ptr(cstr as *const i8) };
+        let s = unsafe { std::ffi::CStr::from_ptr(cstr as *const std::ffi::c_char) };
         if let Ok(s) = s.to_str() {
             print!("{}", s);
         }

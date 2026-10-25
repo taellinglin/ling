@@ -61,6 +61,14 @@ pub fn delay_us(us: u64) {
 pub fn poll_until(timeout_us: u64, mut cond: impl FnMut() -> bool) -> bool {
     let deadline = now_us() + timeout_us;
     loop {
+        // Hand the CPU to another cooperative task at most every ~16 ms (the
+        // x86 backend's cadence): a blocked SSH read or chat accept in a
+        // background task must not stall the desktop's frame.
+        let t = now_us();
+        if t.wrapping_sub(unsafe { LAST_YIELD_US }) >= YIELD_EVERY_US {
+            crate::proc::sched::yield_now();
+            unsafe { LAST_YIELD_US = now_us() };
+        }
         if cond() {
             return true;
         }
@@ -70,6 +78,9 @@ pub fn poll_until(timeout_us: u64, mut cond: impl FnMut() -> bool) -> bool {
         unsafe { super::cpu::pause() };
     }
 }
+
+const YIELD_EVERY_US: u64 = 16_000;
+static mut LAST_YIELD_US: u64 = 0;
 
 /// Arm the physical timer (`CNTP_*_EL0`) to fire an IRQ `hz` times per
 /// second via the ARM-local per-core timer line (`intc::init` routes

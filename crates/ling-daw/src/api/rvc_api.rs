@@ -23,6 +23,9 @@ enum Target {
 }
 
 enum Run {
+    /// rendering the part alone (a copy of the project, off the interface thread); it starts the conversion when done and hands
+    /// back the next stage; progress 0..1000, a cancel switch
+    Prep(Option<std::thread::JoinHandle<Result<Run, String>>>, Arc<std::sync::atomic::AtomicU32>, Arc<std::sync::atomic::AtomicBool>),
     Proc(Child),
     /// the native conversion: its thread and its progress 0..100
     Native(Option<std::thread::JoinHandle<Result<(), String>>>, Arc<std::sync::atomic::AtomicU32>),
@@ -36,6 +39,70 @@ struct Job {
     log: PathBuf,
     model: String,
     started: std::time::Instant,
+}
+
+/// everything needed to start a conversion (now, or after the background render of the part)
+struct Launch {
+    native: bool,
+    py: PathBuf,
+    rvc: PathBuf,
+    script: PathBuf,
+    model: PathBuf,
+    index: String,
+    semis: f64,
+    method: String,
+    index_rate: f64,
+    protect: f64,
+    mix: f64,
+    cpu: bool,
+    inp: PathBuf,
+    out: PathBuf,
+    log: PathBuf,
+    id: u64,
+}
+
+impl Launch {
+    fn start(&self) -> Result<Run, String> {
+        let abs = |p: PathBuf| if p.is_absolute() { p } else { std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p) };
+        if self.native {
+            #[cfg(feature = "llm")]
+            {
+                let hub = abs(hubert_for(&self.rvc).unwrap_or_default());
+                let prog = Arc::new(std::sync::atomic::AtomicU32::new(0));
+                let opts = ling_ai::rvc::Options { transpose: self.semis, rms_mix: self.mix.clamp(0.0, 1.0) as f32, speaker: 0, seed: self.id };
+                let device = if self.cpu { -1 } else { 0 };
+                let (p2, i2, o2, m2) = (prog.clone(), self.inp.clone(), self.out.clone(), self.model.clone());
+                let h = std::thread::spawn(move || native_convert(&hub, &m2, &i2, &o2, &opts, device, &p2));
+                return Ok(Run::Native(Some(h), prog));
+            }
+            #[cfg(not(feature = "llm"))]
+            return Err("this ling.exe has no native engine".into());
+        }
+        let logf = std::fs::File::create(&self.log).map_err(|e| e.to_string())?;
+        let mut cmd = std::process::Command::new(&self.py);
+        cmd.arg(&self.script)
+            .arg(&self.inp)
+            .arg(&self.out)
+            .arg(&self.model)
+            .arg(if self.index.is_empty() { "-".to_string() } else { self.index.clone() })
+            .arg(format!("{}", self.semis))
+            .arg(if self.method.is_empty() { "rmvpe".to_string() } else { self.method.clone() })
+            .arg(format!("{}", self.index_rate.clamp(0.0, 1.0)))
+            .arg(format!("{}", self.protect.clamp(0.0, 0.5)))
+            .arg(format!("{}", self.mix.clamp(0.0, 1.0)))
+            .arg(if self.cpu { "1" } else { "0" })
+            .current_dir(&self.rvc)
+            .env("PYTHONUNBUFFERED", "1")
+            .stdout(logf.try_clone().map_err(|e| e.to_string())?)
+            .stderr(logf);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // no console window
+        }
+        let child = cmd.spawn().map_err(|e| format!("could not start {}: {e}", self.py.display()))?;
+        Ok(Run::Proc(child))
+    }
 }
 
 fn job() -> &'static Mutex<Option<Job>> {
@@ -297,7 +364,9 @@ impl Daw {
                 let model_name = stem(&model);
                 let inp = work.join(format!("rvc_{id}_in.wav"));
                 let out = work.join(format!("rvc_{id}_{}.wav", model_name.replace(' ', "_")));
-                // what is converted: an audio clip's recording, or the track rendered alone over a MIDI clip
+                // what is converted: an audio clip's recording, or the track rendered alone over a MIDI clip (that render runs in the
+                // background job, from a copy of the project, so neither the interface nor the audio waits for it)
+                let mut prep: Option<(crate::project::ProjectDoc, f32, f64, f64)> = None;
                 let target = {
                     let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
                     let Some(tr) = en.project.tracks.get(t) else { ok!(false) };
@@ -313,21 +382,8 @@ impl Daw {
                         _ if span.is_some() => {
                             let (start, end) = span.unwrap();
                             let tname = tr.name.clone();
-                            let saved: Vec<(bool, bool)> = en.project.tracks.iter().map(|x| (x.mute, x.solo)).collect();
-                            for (i, x) in en.project.tracks.iter_mut().enumerate() {
-                                x.solo = i == t;
-                                if i == t {
-                                    x.mute = false;
-                                }
-                            }
-                            let sr = en.sr;
-                            let data = en.bounce_range(start, end, 0.6);
-                            for (x, (m, s)) in en.project.tracks.iter_mut().zip(saved) {
-                                x.mute = m;
-                                x.solo = s;
-                            }
+                            prep = Some((crate::project::to_doc(&en), en.sr, start, end));
                             drop(en);
-                            write_wav(&inp, &data, sr as u32)?;
                             Target::NewTrack { t, start, name: tname }
                         }
                         ClipData::Audio { sample, .. } => {
@@ -346,65 +402,63 @@ impl Daw {
                         }
                         ClipData::Midi(_) => {
                             let (start, end, tname) = (clip.start, clip.end(), tr.name.clone());
-                            // the track alone: solo it for the render, then put every switch back
-                            let saved: Vec<(bool, bool)> = en.project.tracks.iter().map(|x| (x.mute, x.solo)).collect();
-                            for (i, x) in en.project.tracks.iter_mut().enumerate() {
-                                x.solo = i == t;
-                                if i == t {
-                                    x.mute = false;
-                                }
-                            }
-                            let sr = en.sr;
-                            let data = en.bounce_range(start, end, 0.6);
-                            for (x, (m, s)) in en.project.tracks.iter_mut().zip(saved) {
-                                x.mute = m;
-                                x.solo = s;
-                            }
+                            prep = Some((crate::project::to_doc(&en), en.sr, start, end));
                             drop(en);
-                            write_wav(&inp, &data, sr as u32)?;
                             Target::NewTrack { t, start, name: tname }
                         }
                     }
                 };
                 let log = work.join(format!("rvc_{id}.log"));
-                if native {
-                    #[cfg(feature = "llm")]
-                    {
-                        let hub = abs(hubert_for(&rvc).unwrap_or_default());
-                        let prog = Arc::new(std::sync::atomic::AtomicU32::new(0));
-                        let opts = ling_ai::rvc::Options { transpose: a.n(6).round(), rms_mix: a.n(10).clamp(0.0, 1.0) as f32, speaker: 0, seed: id as u64 };
-                        let device = if a.n(11) > 0.5 { -1 } else { 0 };
-                        let (p2, i2, o2, m2) = (prog.clone(), inp.clone(), out.clone(), model.clone());
-                        let h = std::thread::spawn(move || native_convert(&hub, &m2, &i2, &o2, &opts, device, &p2));
-                        *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run: Run::Native(Some(h), prog), target, inp, out, log, model: model_name.clone(), started: std::time::Instant::now() });
-                        self.status = format!("Voice skin: converting with {model_name} (native) ...");
-                        ok!(true)
-                    }
+                let launch = Launch {
+                    native,
+                    py: py.clone(),
+                    rvc: rvc.clone(),
+                    script: abs(PathBuf::from(a.s(3))),
+                    model: model.clone(),
+                    index: a.s(5),
+                    semis: a.n(6).round(),
+                    method: a.s(7),
+                    index_rate: a.n(8),
+                    protect: a.n(9),
+                    mix: a.n(10),
+                    cpu: a.n(11) > 0.5,
+                    inp: inp.clone(),
+                    out: out.clone(),
+                    log: log.clone(),
+                    id: id as u64,
+                };
+                if let Some((doc, sr, start, end)) = prep {
+                    let solo = match &target {
+                        Target::NewTrack { t, .. } => *t,
+                        Target::Skin { t, .. } => *t,
+                    };
+                    let base = Path::new(&self.path).parent().map(|p| p.to_path_buf());
+                    let mut samples = self.samples.clone();
+                    let prog = Arc::new(std::sync::atomic::AtomicU32::new(0));
+                    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let (p2, c2) = (prog.clone(), cancel.clone());
+                    let h = std::thread::spawn(move || -> Result<Run, String> {
+                        let mut eng = crate::engine::Engine::new(sr);
+                        crate::project::apply_doc(&mut eng, &doc, base.as_deref(), &mut samples);
+                        for (i, x) in eng.project.tracks.iter_mut().enumerate() {
+                            x.solo = i == solo;
+                            if i == solo {
+                                x.mute = false;
+                            }
+                        }
+                        let Some(data) = eng.bounce_range_progress(start, end, 0.6, &p2, &c2, 0, 1000) else { return Err("cancelled".into()) };
+                        write_wav(&launch.inp, &data, sr as u32)?;
+                        if c2.load(std::sync::atomic::Ordering::Relaxed) {
+                            return Err("cancelled".into());
+                        }
+                        launch.start()
+                    });
+                    *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run: Run::Prep(Some(h), prog, cancel), target, inp, out, log, model: model_name.clone(), started: std::time::Instant::now() });
+                    self.status = format!("Voice skin: rendering the part, then {model_name} sings it ...");
+                    ok!(true)
                 }
-                let logf = std::fs::File::create(&log).map_err(|e| e.to_string())?;
-                let mut cmd = std::process::Command::new(&py);
-                cmd.arg(abs(PathBuf::from(a.s(3))))
-                    .arg(&inp)
-                    .arg(&out)
-                    .arg(&model)
-                    .arg(if a.s(5).is_empty() { "-".to_string() } else { a.s(5) })
-                    .arg(format!("{}", a.n(6).round()))
-                    .arg(if a.s(7).is_empty() { "rmvpe".to_string() } else { a.s(7) })
-                    .arg(format!("{}", a.n(8).clamp(0.0, 1.0)))
-                    .arg(format!("{}", a.n(9).clamp(0.0, 0.5)))
-                    .arg(format!("{}", a.n(10).clamp(0.0, 1.0)))
-                    .arg(if a.n(11) > 0.5 { "1" } else { "0" })
-                    .current_dir(&rvc)
-                    .env("PYTHONUNBUFFERED", "1")
-                    .stdout(logf.try_clone().map_err(|e| e.to_string())?)
-                    .stderr(logf);
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    cmd.creation_flags(0x0800_0000); // no console window
-                }
-                let child = cmd.spawn().map_err(|e| format!("could not start {}: {e}", py.display()))?;
-                *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run: Run::Proc(child), target, inp, out, log, model: model_name.clone(), started: std::time::Instant::now() });
+                let run = launch.start()?;
+                *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run, target, inp, out, log, model: model_name.clone(), started: std::time::Instant::now() });
                 self.status = format!("Voice skin: converting with {model_name} ...");
                 ok!(true)
             }
@@ -414,6 +468,28 @@ impl Daw {
                 let Some(j) = g.as_mut() else { ok!(Val::List(vec![Val::Num(0.0), Val::Str(String::new()), Val::Num(0.0), Val::Num(0.0)])) };
                 let secs = j.started.elapsed().as_secs_f64();
                 // where the job is: (still running? progress, what it does) and, when it ended, success or the reason
+                // the prep stage: rendering the part; when it is done its thread has started the conversion - the job moves on
+                if let Run::Prep(h, prog, _) = &mut j.run {
+                    if h.as_ref().map_or(false, |h| !h.is_finished()) {
+                        let pct = prog.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0 * 15.0;
+                        ok!(Val::List(vec![Val::Num(1.0), Val::Str(format!("rendering the part alone ({:.0} %)", pct / 15.0 * 100.0)), Val::Num(secs), Val::Num(pct)]))
+                    }
+                    let r = h.take().map_or(Err("the render stopped".into()), |h| h.join().unwrap_or_else(|_| Err("the render crashed".into())));
+                    match r {
+                        Ok(next) => {
+                            j.run = next;
+                            ok!(Val::List(vec![Val::Num(1.0), Val::Str("starting the voice model".into()), Val::Num(secs), Val::Num(15.0)]))
+                        }
+                        Err(e) => {
+                            let j = g.take().unwrap();
+                            drop(g);
+                            let _ = std::fs::remove_file(&j.inp);
+                            let m = format!("Voice skin failed: {e}");
+                            self.status = m.clone();
+                            ok!(Val::List(vec![Val::Num(-1.0), Val::Str(m), Val::Num(secs), Val::Num(0.0)]))
+                        }
+                    }
+                }
                 let (done, pct, what): (Option<Result<(), String>>, f64, String) = match &mut j.run {
                     Run::Proc(child) => {
                         let log = std::fs::read_to_string(&j.log).unwrap_or_default();
@@ -426,6 +502,7 @@ impl Daw {
                         };
                         (done, pct.parse().unwrap_or(0.0), what)
                     }
+                    Run::Prep(..) => (None, 0.0, String::new()),
                     Run::Native(h, prog) => {
                         let pct = prog.load(std::sync::atomic::Ordering::Relaxed) as f64;
                         (if h.as_ref().map_or(true, |h| h.is_finished()) { Some(Ok(())) } else { None }, pct, if pct < 10.0 { "loading the voice model".into() } else if pct < 20.0 { "tracking the pitch".into() } else { "converting (native)".into() })
@@ -439,7 +516,7 @@ impl Daw {
                         // a native thread's own answer
                         let res = match &mut j.run {
                             Run::Native(h, _) => h.take().map_or(Ok(()), |h| h.join().unwrap_or_else(|_| Err("the conversion crashed".into()))),
-                            Run::Proc(_) => res,
+                            Run::Proc(_) | Run::Prep(..) => res,
                         };
                         let reason = res.as_ref().err().cloned().unwrap_or_default();
                         // the copy of the vocal that was sent is not needed any more
@@ -466,9 +543,14 @@ impl Daw {
             "daw_rvc_cancel" => {
                 if let Some(j) = job().lock().unwrap_or_else(|p| p.into_inner()).take() {
                     // a process is stopped; a native thread finishes on its own and its result is dropped
-                    if let Run::Proc(mut child) = j.run {
-                        let _ = child.kill();
-                        let _ = child.wait();
+                    match j.run {
+                        Run::Proc(mut child) => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                        // the render stops at its next block and starts nothing
+                        Run::Prep(_, _, cancel) => cancel.store(true, std::sync::atomic::Ordering::Relaxed),
+                        Run::Native(..) => {}
                     }
                     for p in [&j.inp, &j.out, &j.log] {
                         let _ = std::fs::remove_file(p);

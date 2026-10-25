@@ -309,6 +309,51 @@ pub fn fft_bands_at_pos(mono: &[f32], rate: u32, pos_secs: f32, nbands: usize) -
     bands
 }
 
+/// Spectrum of the `size`-point Hann-windowed FFT (`size / 2` frequency bins, e.g. 8192 -> 4096)
+/// centred on `pos_secs`, summed into `groups` log-spaced groups between 30 Hz and 16 kHz.
+/// Each group is the mean bin magnitude, normalised by the window's coherent gain, so a
+/// full-scale sine reads about 0.5; not peak-normalised (callers keep their own running peak,
+/// so quiet passages stay quiet). The FFT plan is cached per thread.
+pub fn fft_groups_at_pos(mono: &[f32], rate: u32, pos_secs: f32, size: usize, groups: usize) -> Vec<f32> {
+    let size = size.clamp(64, 65536).next_power_of_two();
+    if mono.is_empty() || groups == 0 || rate == 0 {
+        return vec![0.0; groups];
+    }
+    thread_local! {
+        static PLAN: std::cell::RefCell<Option<(usize, std::sync::Arc<dyn rustfft::Fft<f32>>, Vec<f32>)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let centre = (pos_secs.max(0.0) * rate as f32) as usize;
+    let start = centre.saturating_sub(size / 2);
+    PLAN.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.as_ref().map(|p| p.0) != Some(size) {
+            let fft = FftPlanner::<f32>::new().plan_fft_forward(size);
+            let window = (0..size).map(|i| 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (size - 1) as f32).cos())).collect();
+            *slot = Some((size, fft, window));
+        }
+        let (_, fft, window) = slot.as_ref().expect("plan");
+        let mut buf: Vec<Complex<f32>> = (0..size)
+            .map(|i| Complex { re: mono.get(start + i).copied().unwrap_or(0.0) * window[i], im: 0.0 })
+            .collect();
+        fft.process(&mut buf);
+        let bins = size / 2;
+        let hz_per_bin = rate as f32 / size as f32;
+        let (lo, hi) = (30.0f32, (rate as f32 * 0.5).min(16000.0));
+        let norm = 2.0 / (size as f32 * 0.5);
+        (0..groups)
+            .map(|g| {
+                let hz0 = lo * (hi / lo).powf(g as f32 / groups as f32);
+                let hz1 = lo * (hi / lo).powf((g + 1) as f32 / groups as f32);
+                let k0 = ((hz0 / hz_per_bin) as usize).clamp(1, bins - 1);
+                let k1 = ((hz1 / hz_per_bin).ceil() as usize).clamp(k0 + 1, bins);
+                let sum: f32 = buf[k0..k1].iter().map(|c| (c.re * c.re + c.im * c.im).sqrt()).sum();
+                sum / (k1 - k0) as f32 * norm
+            })
+            .collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

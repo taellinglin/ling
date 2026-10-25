@@ -96,7 +96,17 @@ static mut NICK_OUTBOX: Vec<String> = Vec::new(); // new handle to broadcast to 
 // conversation's lines so they survive a reboot, encrypted at rest.
 static mut CHAT_KEY: Option<[u8; 32]> = None;
 static mut CHAT_HISTORY: Vec<(LingId, Vec<(bool, String)>)> = Vec::new();
-const CHATLOG_FILE: &str = "chatlog.enc";
+/// Lines that arrived while no one was signed in: sealed into the history
+/// the moment the keyring opens ("the messages while we were gone").
+static mut PENDING: Vec<(LingId, bool, String)> = Vec::new();
+/// The pre-keyring log at the lingfs root (sealed under SHA-256 of the
+/// password): imported into the per-user log once, then removed.
+const LEGACY_CHATLOG_FILE: &str = "chatlog.enc";
+
+/// The signed-in user's log, under the keyring.
+fn chatlog_path() -> Option<String> {
+    crate::keyring::user().map(|u| alloc::format!("home/{u}/.messenger/chatlog.enc"))
+}
 static mut MSG_TASK_SPAWNED: bool = false;
 static mut STATUS: &'static str = "arrows select, Enter chats/adds a friend; type + Enter with nothing selected sets your handle";
 
@@ -202,12 +212,73 @@ fn save_roster() {
 /// Called from `ling_kernel_user_login` right after a successful sign-in, so
 /// history is loaded once you've proven who you are -- and is unreadable
 /// (ChaCha20-Poly1305) to anyone who only has the disk. Idempotent.
-pub fn set_chat_key(password: &[u8]) {
+pub fn unlock_for_session(password: &[u8]) {
+    let Some(key) = crate::keyring::key("messenger-chat") else { return };
+    unsafe {
+        CHAT_KEY = Some(key);
+        (*(&raw mut CHAT_HISTORY)).clear();
+    }
+    load_history();
+    import_legacy(password);
+    // what came in while the screen was locked / before sign-in
+    let pending = unsafe { core::mem::take(&mut *(&raw mut PENDING)) };
+    let had = !pending.is_empty();
+    for (peer, from_me, text) in pending {
+        push_history(&peer, from_me, &text);
+    }
+    if had {
+        save_history();
+    }
+    let n: usize = unsafe { (*(&raw const CHAT_HISTORY)).iter().map(|(_, l)| l.len()).sum() };
+    crate::console_write(b"messenger: history unlocked (");
+    crate::print_decimal(n as u64);
+    crate::console_write(b" lines under the keyring)\n");
+}
+
+/// Screen lock / log out: forget the key and the decrypted history.
+pub fn lock_session() {
+    unsafe {
+        CHAT_KEY = None;
+        (*(&raw mut CHAT_HISTORY)).clear();
+    }
+}
+
+/// The old root-level log, opened with the old password-only key and folded
+/// into the per-user log; then removed from the disk.
+fn import_legacy(password: &[u8]) {
+    let mut raw = alloc::vec![0u8; 256 * 1024];
+    let n = match lingfs::read_file_all(LEGACY_CHATLOG_FILE, &mut raw) {
+        Ok(Some(n)) if n >= 28 => n,
+        _ => return,
+    };
     let mut ikm = Vec::with_capacity(12 + password.len());
     ikm.extend_from_slice(b"lingchat-v1:");
     ikm.extend_from_slice(password);
-    unsafe { CHAT_KEY = Some(crate::crypto::sha256(&ikm)) };
-    load_history();
+    let old_key = crate::crypto::sha256(&ikm);
+    let nonce: [u8; 12] = raw[0..12].try_into().unwrap();
+    let tag: [u8; 16] = raw[12..28].try_into().unwrap();
+    let mut buf = raw[28..n].to_vec();
+    if !crate::crypto::chachapoly_open(&old_key, &nonce, &[], &mut buf, &tag) {
+        return; // another user's, or the Pi's serial-keyed log: leave it
+    }
+    for (peer, lines) in parse_history(&buf) {
+        for (from_me, text) in lines {
+            push_history(&peer, from_me, &text);
+        }
+    }
+    save_history();
+    let _ = lingfs::remove_path(LEGACY_CHATLOG_FILE);
+    crate::console_write(b"messenger: older chat log moved under the keyring\n");
+}
+
+fn push_history(peer: &LingId, from_me: bool, text: &str) {
+    unsafe {
+        let hist = &mut *&raw mut CHAT_HISTORY;
+        match hist.iter_mut().find(|(l, _)| l == peer) {
+            Some(e) => e.1.push((from_me, text.to_string())),
+            None => hist.push((peer.clone(), alloc::vec![(from_me, text.to_string())])),
+        }
+    }
 }
 
 fn serialize_history() -> Vec<u8> {
@@ -239,13 +310,15 @@ fn save_history() {
     file.extend_from_slice(&nonce);
     file.extend_from_slice(&tag);
     file.extend_from_slice(&buf);
-    let _ = lingfs::write_file_any(CHATLOG_FILE, &file);
+    let Some(path) = chatlog_path() else { return };
+    let _ = lingfs::write_path_any(&path, &file);
 }
 
 fn load_history() {
     let Some(key) = (unsafe { CHAT_KEY }) else { return };
+    let Some(path) = chatlog_path() else { return };
     let mut raw = alloc::vec![0u8; 256 * 1024];
-    let n = match lingfs::read_file_all(CHATLOG_FILE, &mut raw) {
+    let n = match lingfs::read_file_all(&path, &mut raw) {
         Ok(Some(n)) if n >= 28 => n,
         _ => return,
     };
@@ -293,15 +366,11 @@ fn parse_history(b: &[u8]) -> Vec<(LingId, Vec<(bool, String)>)> {
 /// Append one line to a peer's persisted history and re-save (encrypted).
 fn remember(peer: &LingId, from_me: bool, text: &str) {
     if unsafe { CHAT_KEY.is_none() } {
+        // nobody signed in: keep it for the moment the keyring opens
+        unsafe { (*(&raw mut PENDING)).push((peer.clone(), from_me, text.to_string())) };
         return;
     }
-    unsafe {
-        let hist = &mut *&raw mut CHAT_HISTORY;
-        match hist.iter_mut().find(|(l, _)| l == peer) {
-            Some(e) => e.1.push((from_me, text.to_string())),
-            None => hist.push((peer.clone(), alloc::vec![(from_me, text.to_string())])),
-        }
-    }
+    push_history(peer, from_me, text);
     save_history();
 }
 
@@ -423,9 +492,6 @@ pub fn tick() {
     unsafe {
         (&mut *&raw mut NEARBY).retain(|p| now.wrapping_sub(p.last_seen_ms) < NEARBY_TIMEOUT_MS);
     }
-    // No scheduler on the Pi: the listener's round runs here, each frame.
-    #[cfg(target_arch = "aarch64")]
-    task_step();
 }
 
 /// The background chat listener: a cooperative task (spawned once by `tick`)
@@ -435,7 +501,6 @@ pub fn tick() {
 /// window is closed. Discipline: network calls (which yield) run on LOCAL data;
 /// every `CONVERSATIONS`/queue mutation is a non-yielding burst, so no `&mut`
 /// into shared state is ever live across a context switch.
-#[cfg(target_arch = "x86_64")]
 extern "C" fn messenger_task() {
     loop {
         task_step();
@@ -443,8 +508,19 @@ extern "C" fn messenger_task() {
     }
 }
 
-/// One round of the chat listener's work (what the background task loops
-/// on; on the Pi, where the kernel has no scheduler, `tick` runs it inline).
+/// Chat lines (and pings) received since the Messenger window last drew:
+/// the desktop's dock badge.
+static mut UNREAD: u32 = 0;
+
+pub fn unread() -> u32 {
+    unsafe { UNREAD }
+}
+
+pub fn clear_unread() {
+    unsafe { UNREAD = 0 };
+}
+
+/// One round of the chat listener's work (what the background task loops on).
 fn task_step() {
     {
         let now = timer::now_ms();
@@ -503,15 +579,9 @@ pub fn start() {
     // pump), so the desktop's draw never has to poll the NIC itself.
     netstack::udp_listen(MSG_PORT);
     crate::console_write(b"messenger: background listener online (chat port 41338)\n");
-    #[cfg(target_arch = "x86_64")]
     crate::proc::sched::spawn(messenger_task as *const () as usize as u64);
-    // The Pi signs in without a password: the chat log is sealed under a key
-    // from the board's serial (kept per device, not a secret the user types).
-    #[cfg(target_arch = "aarch64")]
-    if unsafe { CHAT_KEY.is_none() } {
-        let serial = crate::arch::mailbox::board_serial().unwrap_or(0);
-        set_chat_key(alloc::format!("pi-{serial:016x}").as_bytes());
-    }
+    // The history stays sealed until someone signs in (the keyring opens it);
+    // lines that arrive before that wait in memory.
 }
 
 fn ensure_task() {
@@ -552,6 +622,7 @@ fn recv_all_conversations() {
                                 if let Ok(text) = core::str::from_utf8(&msg) {
                                     convos[i].lines.push((false, text.to_string()));
                                     remembered = Some((peer, false, text.to_string()));
+                                    UNREAD = UNREAD.saturating_add(1);
                                 }
                             },
                             wire::KIND_PING => {
@@ -559,6 +630,7 @@ fn recv_all_conversations() {
                                 // even if the window is closed (the task runs in
                                 // the background).
                                 convos[i].lines.push((false, "*ping*".to_string()));
+                                UNREAD = UNREAD.saturating_add(1);
                                 #[cfg(target_arch = "x86_64")]
                                 mixer::jingle(mixer::EVENT_PING);
                                 remembered = Some((peer, false, "*ping*".to_string()));

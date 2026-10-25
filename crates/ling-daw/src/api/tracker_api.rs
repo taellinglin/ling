@@ -199,6 +199,41 @@ impl Daw {
                 self.status = format!("Export Tracker: {} page(s) in {dir}", pages.len());
                 ok!(Val::List(out))
             }
+            "daw_trk_export" => {
+                // (folder, base name, formats "mod,s3m,xm,it,mptm", options "rpb=4;seg=4;roots=6;title=...") -> [file names..., report].
+                // The samples are rendered from a copy of the project (see tracker_export.rs); every format shares the renders.
+                use crate::tracker_export::{self as tx, Fmt};
+                let (dir, base, fmts, opts) = (a.s(0), a.s(1), a.s(2), a.s(3));
+                let o = tx::Opts::parse(&opts);
+                let list: Vec<Fmt> = fmts.split(',').filter_map(Fmt::parse).collect();
+                if list.is_empty() {
+                    ok!(Val::List(vec![]))
+                }
+                let doc = {
+                    let en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
+                    crate::project::to_doc(&en)
+                };
+                let basep = std::path::Path::new(&self.path).parent().map(|p| p.to_path_buf());
+                let mut samples = self.samples.clone();
+                let mut eng = crate::engine::Engine::new(self.out.sr);
+                crate::project::apply_doc(&mut eng, &doc, basep.as_deref(), &mut samples);
+                let mut rend = tx::Renderer::new(eng);
+                let dirp = std::path::Path::new(&dir);
+                std::fs::create_dir_all(dirp).map_err(|e| format!("{dir}: {e}"))?;
+                let mut out = vec![];
+                let mut report = vec![];
+                for f in list {
+                    let song = tx::build(&mut rend, f, &o);
+                    let name = format!("{base}.{}", f.ext());
+                    std::fs::write(dirp.join(&name), tx::write(&song, f)).map_err(|e| format!("{name}: {e}"))?;
+                    report.push(format!("{}: {}{}", f.ext().to_uppercase(), tx::summary(&song), if song.report.is_empty() { String::new() } else { format!(" - {}", song.report.join("; ")) }));
+                    out.push(Val::Str(name));
+                }
+                self.status = format!("Export Tracker: {} module(s) in {dir}", out.len());
+                out.push(Val::Str(report.join("
+")));
+                ok!(Val::List(out))
+            }
             "daw_trk_ring" => {
                 // (track, first beat, beats, slots) -> loudest note start (0..1) in each slot, all channels of the track
                 let (t, beat0, beats, n) = (a.u(0), a.n(1), a.n(2).max(0.25), a.u(3).clamp(1, 128));

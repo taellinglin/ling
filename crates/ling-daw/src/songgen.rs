@@ -72,6 +72,257 @@ pub struct SongPlan {
     pub chorus_prog: String,
     /// how human the playing is: 0 = on the grid, 1 = a loose band (timing and velocity)
     pub human: f64,
+    /// the story the song tells: an arc ("rise", "fall", "journey", "dream", "battle", "hero", or "" for none) that shapes the
+    /// sections' energy, and a chapter title per section in the notes
+    pub story: String,
+    /// the emotional arc (emotion.rs): "auto" rolls one from the genre and the lyrics, else one of emotion::ARCS
+    pub arc: String,
+    /// added to every section's energy (-0.3 .. 0.3)
+    pub energy: f64,
+    /// how busy the parts play, 0.5 = as the style plays (scales the density)
+    pub drive: f64,
+    /// harmonic colour 0..1: the decorator on chord and pad parts (the key's 7ths / 9ths, voice leading, broken chords)
+    pub color: f64,
+    /// melodic ornament 0..1: the decorator on lead parts (passing and neighbour tones, turns, suspensions)
+    pub ornament: f64,
+    /// a theme (from a timeline selection) the melodic parts play in variations, section by section; normalized to start at 0
+    pub theme: Option<std::sync::Arc<Vec<N>>>,
+    /// the ensemble the description named ("" = the genre's instruments)
+    pub ensemble: String,
+    /// the composition dials (see [`Dials`]): how adventurous the choices are, how much the harmony changes between sections, how far
+    /// the mood swings, the vector around the wheel of fifths, the progression style, how gradually the parts come in
+    pub dials: Dials,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Dials {
+    /// 0..1: low = the safest choices; high = wider choices and chord substitutions (secondary dominants, borrowed chords)
+    pub temperature: f64,
+    /// 0..1: low = one progression for the whole song (the Pachelbel loop); high = every kind of section its own, cadences at the
+    /// section ends, a returning verse that moves
+    pub variety: f64,
+    /// 0..1: how far the mood swings: the energy contrast between sections, a bridge in the relative key, a last chorus a step up
+    pub mood: f64,
+    /// -3..3: where the bridge (break, development) goes on the wheel of fifths: + towards the dominant (brighter), - towards
+    /// the subdominant (darker); the song comes home after it
+    pub fifths: i32,
+    /// "auto", "loop", "circle", "modal", "andalusian", "borrowed"
+    pub style: String,
+    /// 0..1: how gradually the parts come in (high = one or two new parts a section, a budget of parts that follows the energy)
+    pub layering: f64,
+    /// 0..1: how much sound design the parts get (effect chains, their movement through the form, the Growl skin) - sounddesign.rs
+    pub design: f64,
+}
+
+pub const PROG_STYLES: [&str; 6] = ["auto", "loop", "circle", "modal", "andalusian", "borrowed"];
+
+/// each genre's own setting of the dials
+pub fn genre_dials(name: &str) -> Dials {
+    let d = |temperature: f64, variety: f64, mood: f64, fifths: i32, style: &str, layering: f64| Dials { temperature, variety, mood, fifths, style: style.into(), layering, design: crate::sounddesign::genre_design(name) };
+    match name {
+        "trance" | "house" | "deep house" | "techno" | "hardstyle" | "garage" => d(0.3, 0.35, 0.3, 0, "loop", 0.75),
+        "drum and bass" | "dubstep" => d(0.35, 0.4, 0.45, 0, "loop", 0.65),
+        "jazz" => d(0.6, 0.8, 0.4, -1, "circle", 0.4),
+        "lofi" | "hip hop" => d(0.45, 0.45, 0.25, 0, "circle", 0.45),
+        "cinematic" | "orchestral" => d(0.5, 0.7, 0.6, -2, "borrowed", 0.8),
+        "rock" => d(0.45, 0.5, 0.4, 1, "modal", 0.5),
+        "folk" => d(0.4, 0.5, 0.4, 1, "loop", 0.5),
+        "synthwave" => d(0.35, 0.45, 0.4, 0, "andalusian", 0.6),
+        "ambient" => d(0.5, 0.4, 0.3, 1, "modal", 0.85),
+        "witch house" => d(0.4, 0.4, 0.5, -1, "andalusian", 0.6),
+        "disco" | "afrobeat" | "reggaeton" | "dub" => d(0.4, 0.45, 0.3, 0, "circle", 0.5),
+        _ => d(0.4, 0.5, 0.35, 1, "auto", 0.55),
+    }
+}
+
+// ── the harmonic plan: a key and chords for every section ───────────────────
+
+/// the kind of section, harmonically: A = verse-like, B = chorus-like, C = bridge-like, D = a build into a chorus
+fn harm_group(tag: &str) -> char {
+    if is_chorus(tag) {
+        'B'
+    } else if is_bridge(tag) {
+        'C'
+    } else if matches!(tag, "build" | "buildup" | "pre" | "prechorus" | "pre-chorus") {
+        'D'
+    } else {
+        'A'
+    }
+}
+
+/// progressions of a style, for a major or a minor key
+fn style_progs(style: &str, minor: bool) -> &'static [&'static str] {
+    match (style, minor) {
+        ("circle", false) => &["vi ii V I", "I vi ii V", "iii vi ii V", "I IV vii° iii vi ii V I"],
+        ("circle", true) => &["i iv VII III", "VI ii° V i", "i iv VII III VI ii° V i", "iv VII III VI"],
+        ("modal", false) => &["I bVII IV I", "I II IV I", "I bVII bVI bVII", "I IV bVII IV"],
+        ("modal", true) => &["i IV i VII", "i bII i VII", "i IV VII i", "i ii VII i"],
+        ("andalusian", false) => &["vi V IV iii", "I V IV iii", "vi V IV V"],
+        ("andalusian", true) => &["i VII VI V", "i VII VI VII", "VI VII i i"],
+        ("borrowed", false) => &["I iv I bVI", "I bIII IV iv", "IV iv I I", "I bVI bVII I"],
+        ("borrowed", true) => &["i IV VI V", "i bII VI V", "VI iv V i", "i VI III bII"],
+        (_, false) => &["I V vi IV", "vi IV I V", "I vi IV V", "IV I V vi", "I IV vi V"],
+        (_, true) => &["i VI III VII", "i iv VII III", "i VII VI VII", "i VI iv V", "VI VII i i"],
+    }
+}
+
+/// a family that sounds different from `style`, for a bridge
+fn contrast_style(style: &str) -> &'static str {
+    match style {
+        "loop" | "auto" => "circle",
+        "circle" => "borrowed",
+        "modal" => "circle",
+        "andalusian" => "borrowed",
+        _ => "modal",
+    }
+}
+
+fn group_seed(plan: &SongPlan, g: char, k: usize) -> u64 {
+    plan.seed.wrapping_mul(0x9E37).wrapping_add(g as u64 * 131).wrapping_add(k as u64 * 7)
+}
+
+/// The key of a section: home, except a bridge (break, development) that goes `fifths` steps around the wheel (or, with a high
+/// mood and no vector, to the relative key), a build halfway there, a verse that comes back one step that way when variety is high,
+/// and a last chorus a whole step up when the mood is high.
+pub fn section_key(plan: &SongPlan, si: usize) -> Key {
+    let home = plan.key;
+    let Some(sec) = plan.sections.get(si) else { return home };
+    let d = &plan.dials;
+    let g = harm_group(&sec.tag);
+    let k = plan.sections[..si].iter().filter(|s| harm_group(&s.tag) == g).count();
+    let count = plan.sections.iter().filter(|s| harm_group(&s.tag) == g).count();
+    let around = |steps: i32| Key::new(((home.tonic as i32 + 7 * steps).rem_euclid(12)) as u8, home.minor);
+    match g {
+        'C' if d.fifths != 0 => around(d.fifths),
+        'C' if d.mood > 0.5 => {
+            if home.minor { Key::new((home.tonic + 3) % 12, false) } else { Key::new((home.tonic + 9) % 12, true) }
+        }
+        'D' if d.fifths.abs() >= 2 && d.variety > 0.5 && si + 1 < plan.sections.len() && harm_group(&plan.sections[si + 1].tag) == 'C' => around(d.fifths / 2),
+        'A' if plan.sections[..si].iter().any(|s| s.tag == sec.tag) && d.variety > 0.7 && d.fifths != 0 && si + 1 < plan.sections.len() => around(d.fifths.signum()),
+        'B' if count > 1 && k + 1 == count && d.mood > 0.65 => home.transposed(2),
+        _ => home,
+    }
+}
+
+/// The progression (Roman numerals in the section's key) of a section: the plan's own chords for the verses (and its chorus chords
+/// for the choruses) when it has them; otherwise one from the progression style - a different one for each kind of section as the
+/// variety rises (a bridge from a contrasting family, a build on predominant to dominant), the same loop everywhere when it is low;
+/// the temperature widens the choice and, above 0.6, swaps a chord for its secondary dominant or a borrowed one.
+pub fn section_prog(plan: &SongPlan, si: usize) -> String {
+    let Some(sec) = plan.sections.get(si) else { return String::new() };
+    let d = &plan.dials;
+    let key = section_key(plan, si);
+    let g = if d.variety < 0.25 { 'A' } else { harm_group(&sec.tag) };
+    if g == 'A' && !plan.prog.is_empty() {
+        return plan.prog.clone();
+    }
+    if g == 'B' && !plan.chorus_prog.is_empty() {
+        return plan.chorus_prog.clone();
+    }
+    let gst = genre(&plan.genre).style;
+    let style = if d.style == "auto" || d.style.is_empty() { if matches!(gst, "jazz" | "lofi" | "disco" | "deep house") { "circle" } else { "loop" } } else { d.style.as_str() };
+    let k = plan.sections[..si].iter().filter(|s| harm_group(&s.tag) == g).count();
+    let mut rng = compose::Rng::new(group_seed(plan, g, if d.variety > 0.75 { k } else { 0 }));
+    let pool: Vec<&str> = match g {
+        'C' => style_progs(contrast_style(style), key.minor).to_vec(),
+        'D' => {
+            if key.minor { vec!["iv V", "VI VII", "iv VII", "ii° V"] } else { vec!["IV V", "ii V", "IV I V V", "vi IV V V"] }
+        }
+        _ => style_progs(style, key.minor).to_vec(),
+    };
+    // how much of the pool the temperature lets in (the safest first)
+    let n = ((pool.len() as f64 * (0.35 + 0.65 * d.temperature)).ceil() as usize).clamp(1, pool.len());
+    let mut pick = pool[(rng.next() as usize) % n];
+    // a chorus does not repeat the verse's loop when variety asks for change
+    if g == 'B' && d.variety >= 0.3 {
+        let a = {
+            let ai = plan.sections.iter().position(|s| harm_group(&s.tag) == 'A');
+            ai.map(|ai| section_prog_plain(plan, ai)).unwrap_or_default()
+        };
+        if pick == a {
+            pick = pool[((rng.next() as usize) % pool.len().max(2)).max(1) % pool.len()];
+            if pick == a {
+                pick = pool[(pool.iter().position(|p| *p == a).unwrap_or(0) + 1) % pool.len()];
+            }
+        }
+    }
+    let mut out = pick.to_string();
+    if d.temperature > 0.6 && rng.chance((d.temperature - 0.6) * 1.5) {
+        // a secondary dominant (V/V) or, in a minor key, the Neapolitan, in place of the chord before the last
+        let mut toks: Vec<String> = out.split_whitespace().map(str::to_string).collect();
+        if toks.len() >= 3 {
+            let i = toks.len() - 2;
+            toks[i] = if key.minor { "bII".into() } else { "II".into() };
+            out = toks.join(" ");
+        }
+    }
+    out
+}
+
+/// the verse progression without the chorus rule (for the comparison above)
+fn section_prog_plain(plan: &SongPlan, si: usize) -> String {
+    let d = &plan.dials;
+    if !plan.prog.is_empty() {
+        return plan.prog.clone();
+    }
+    let key = section_key(plan, si);
+    let gst = genre(&plan.genre).style;
+    let style = if d.style == "auto" || d.style.is_empty() { if matches!(gst, "jazz" | "lofi" | "disco" | "deep house") { "circle" } else { "loop" } } else { d.style.as_str() };
+    let mut rng = compose::Rng::new(group_seed(plan, 'A', 0));
+    let pool = style_progs(style, key.minor);
+    let n = ((pool.len() as f64 * (0.35 + 0.65 * d.temperature)).ceil() as usize).clamp(1, pool.len());
+    pool[(rng.next() as usize) % n].to_string()
+}
+
+/// The chords of a section (start, length, root, quality), a chord per bar (or as the style's chord rate says), with a cadence:
+/// the last bar before a chorus / drop is the dominant (a half cadence) and the song's last bar the tonic, once there is variety.
+pub fn section_chords(plan: &SongPlan, si: usize, cpb: f64) -> (Key, Vec<(f64, f64, u8, usize)>) {
+    let key = section_key(plan, si);
+    let Some(sec) = plan.sections.get(si) else { return (key, vec![]) };
+    let prog = compose::parse_prog(&section_prog(plan, si), key);
+    if prog.is_empty() {
+        return (key, vec![]);
+    }
+    let total = sec.bars as f64 * 4.0;
+    let span = 4.0 / cpb.clamp(0.25, 4.0);
+    let n = (total / span).ceil() as usize;
+    let mut out: Vec<(f64, f64, u8, usize)> = (0..n)
+        .map(|i| {
+            let (r, q) = prog[i % prog.len()];
+            let st = i as f64 * span;
+            (st, span.min(total - st), r, q)
+        })
+        .collect();
+    if plan.dials.variety >= 0.3 && n >= 2 {
+        let major = theory::qual_index("").unwrap_or(0);
+        let next_chorus = plan.sections.get(si + 1).map(|s| is_chorus(&s.tag)).unwrap_or(false);
+        if next_chorus && !is_chorus(&sec.tag) {
+            let last = out.last_mut().unwrap();
+            last.2 = key.scale()[4];
+            last.3 = major;
+        } else if si + 1 == plan.sections.len() {
+            let last = out.last_mut().unwrap();
+            last.2 = key.tonic;
+            last.3 = theory::qual_index(if key.minor { "m" } else { "" }).unwrap_or(0);
+        }
+    }
+    (key, out)
+}
+
+/// what the harmonic plan does, for the plan's notes
+pub fn harmony_summary(plan: &SongPlan) -> String {
+    let mut seen: Vec<String> = vec![];
+    let mut parts = vec![];
+    for (si, sec) in plan.sections.iter().enumerate() {
+        let key = section_key(plan, si);
+        let p = section_prog(plan, si);
+        let line = format!("{} {}{}", sec.tag, p, if key != plan.key { format!(" in {}", key.name()) } else { String::new() });
+        if !seen.contains(&line) {
+            seen.push(line.clone());
+            parts.push(line);
+        }
+    }
+    format!("harmony: {}", parts.join("; "))
 }
 
 /// A genre the generator knows: its composer style, tempo, drum kit and pattern, song form, the roles it uses and its loudness.
@@ -133,6 +384,9 @@ pub fn genre(name: &str) -> &'static Genre {
 
 /// the compose kind a role writes
 pub fn role_kind(role: &str) -> Kind {
+    if let Some(i) = crate::ensemble::instrument(role) {
+        return i.kind;
+    }
     let r = role.to_lowercase();
     if r == "drums" {
         Kind::Drums
@@ -370,7 +624,15 @@ impl Fit {
 /// [`plan_with`] with a length rule (see [`Fit`])
 #[allow(clippy::too_many_arguments)]
 pub fn plan_fit(prompt: &str, lyrics: &str, model: &[(String, String)], reference: Option<&RefInfo>, length: f64, seed: u64, guide: Option<&std::sync::Arc<crate::guide::Guide>>, conform: f64, fit: &Fit) -> SongPlan {
+    plan_story(prompt, lyrics, model, reference, length, seed, guide, conform, fit, "")
+}
+
+/// [`plan_fit`] with the story the song should tell (free text: "a hero leaves home, loses everything and comes back")
+#[allow(clippy::too_many_arguments)]
+pub fn plan_story(prompt: &str, lyrics: &str, model: &[(String, String)], reference: Option<&RefInfo>, length: f64, seed: u64, guide: Option<&std::sync::Arc<crate::guide::Guide>>, conform: f64, fit: &Fit, story_text: &str) -> SongPlan {
     let conform = conform.clamp(0.0, 1.0);
+    // an ensemble named in the description (or the model's instruments) decides the parts, and the genre unless one is named
+    let ens = crate::ensemble::ensemble_in(prompt).or_else(|| field(model, "instruments").and_then(crate::ensemble::ensemble_in));
     // fitting to the MIDI uses its form and tempo even when none of its notes are followed
     let guide_form = guide.filter(|_| *fit == Fit::Midi);
     let guide = guide.filter(|_| conform > 0.0);
@@ -380,6 +642,9 @@ pub fn plan_fit(prompt: &str, lyrics: &str, model: &[(String, String)], referenc
     let g = if let Some(g) = prompt_genre(prompt) {
         notes.push(format!("genre {} (from the prompt)", g.name));
         g
+    } else if let Some(e) = ens {
+        notes.push(format!("genre {} (a {})", e.genre, e.name));
+        genre(e.genre)
     } else if let Some(m) = field(model, "genre").and_then(prompt_genre) {
         notes.push(format!("genre {} (from the model)", m.name));
         m
@@ -467,9 +732,25 @@ pub fn plan_fit(prompt: &str, lyrics: &str, model: &[(String, String)], referenc
         notes.push("no guide MIDI to fit to: the form's length is used".into());
     }
     fit_length(&mut sections, fit, lyrics, bpm.round().max(40.0), &mut notes);
-    // instruments: the genre's, plus what the prompt or the model asks for
-    let mut roles: Vec<String> = g.roles.iter().map(|r| r.to_string()).collect();
-    let mut asked = prompt_roles(prompt);
+    // the story: an arc over the sections' energy and a chapter title for each
+    let story = story_arc(&format!("{story_text} {prompt}"));
+    if !story.is_empty() {
+        apply_arc(&mut sections, &story);
+        let ch = chapters(&story, sections.len());
+        notes.push(format!("story ({story}): {}", sections.iter().zip(&ch).map(|(s, c)| format!("{} = {c}", s.tag)).collect::<Vec<_>>().join(", ")));
+    }
+    // instruments: the ensemble's, or the genre's; plus what the prompt or the model asks for (instruments by name too)
+    let mut roles: Vec<String> = match ens {
+        Some(e) => {
+            notes.push(format!("a {}: {}", e.name, e.parts.join(", ")));
+            e.parts.iter().map(|r| r.to_string()).collect()
+        }
+        None => g.roles.iter().map(|r| r.to_string()).collect(),
+    };
+    let mut asked: Vec<String> = crate::ensemble::instruments_in(prompt).into_iter().map(str::to_string).collect();
+    if ens.is_none() {
+        asked.extend(prompt_roles(prompt));
+    }
     if let Some(m) = field(model, "instruments") {
         asked.extend(prompt_roles(m));
     }
@@ -516,9 +797,46 @@ pub fn plan_fit(prompt: &str, lyrics: &str, model: &[(String, String)], referenc
     } else {
         genre_feel(g.name)
     };
-    let mut p = SongPlan { genre: g.name.into(), bpm: bpm.round(), key, prog, sections, parts: roles.into_iter().map(|role| Part { role }).collect(), singer, seed, notes, guide: guide.cloned(), conform, chorus_prog, human };
+    let (color, ornament) = genre_spice(g.name);
+    let mut p = SongPlan {
+        genre: g.name.into(),
+        bpm: bpm.round(),
+        key,
+        prog,
+        sections,
+        parts: roles.into_iter().map(|role| Part { role }).collect(),
+        singer,
+        seed,
+        notes,
+        guide: guide.cloned(),
+        conform,
+        chorus_prog,
+        human,
+        story,
+        arc: field(model, "arc").map(|a| a.trim().to_lowercase()).filter(|a| crate::emotion::ARCS.contains(&a.as_str())).unwrap_or_else(|| "auto".into()),
+        energy: 0.0,
+        drive: 0.5,
+        color,
+        ornament,
+        theme: None,
+        ensemble: ens.map(|e| e.name.to_string()).unwrap_or_default(),
+        dials: genre_dials(g.name),
+    };
+    // the mood dial widens the contrast between quiet and loud sections (a form borrowed from a reference keeps its own energy)
+    let borrowed = reference.map(|r| r.sections == p.sections).unwrap_or(false) || guide.map(|gd| gd.sections == p.sections).unwrap_or(false);
+    let mean = p.sections.iter().map(|s| s.energy).sum::<f64>() / p.sections.len().max(1) as f64;
+    let swing = if borrowed { 1.0 } else { 1.0 + (p.dials.mood - 0.35) * 0.8 };
+    for s in p.sections.iter_mut() {
+        s.energy = (mean + (s.energy - mean) * swing).clamp(0.05, 1.0);
+    }
+    let hs = harmony_summary(&p);
+    p.notes.push(hs);
     let a = arrange(&p);
     p.notes.extend(a.notes);
+    // the emotional plan, before a note is written (emotion.rs)
+    let words = lyrics_for_sections(lyrics, &p.sections);
+    let ep = crate::emotion::plan(&p.sections, &p.arc, &p.genre, &words, p.dials.mood, p.seed);
+    p.notes.push(format!("feel: {}", crate::emotion::summary(&ep, &p.sections)));
     p
 }
 
@@ -676,6 +994,118 @@ pub fn fit_line(notes: &mut Vec<N>, syllables: usize) {
     }
 }
 
+/// how much harmonic colour and melodic ornament a genre takes by default
+pub fn genre_spice(name: &str) -> (f64, f64) {
+    match name {
+        "jazz" | "lofi" | "deep house" | "disco" | "hip hop" => (0.6, 0.35),
+        "cinematic" | "orchestral" | "ambient" | "folk" => (0.35, 0.4),
+        "trance" | "techno" | "hardstyle" | "dubstep" | "drum and bass" => (0.15, 0.2),
+        _ => (0.25, 0.25),
+    }
+}
+
+// ── the story ────────────────────────────────────────────────────────────────
+
+/// the arc a story text describes ("" = none)
+pub fn story_arc(text: &str) -> String {
+    let t = text.to_lowercase();
+    let has = |ws: &[&str]| ws.iter().any(|w| t.contains(w));
+    let arc = if has(&["hero", "quest", "returns", "comes back", "homecoming", "redemption"]) {
+        "hero"
+    } else if has(&["tragedy", "tragic", "falls", "loses", "loss", "fades", "sunset", "farewell", "goodbye", "decline"]) {
+        "fall"
+    } else if has(&["battle", "war", "storm", "chase", "fight", "escape", "danger"]) {
+        "battle"
+    } else if has(&["dream", "sleep", "lullaby", "float", "calm", "meditat", "drift"]) {
+        "dream"
+    } else if has(&["journey", "travel", "voyage", "road", "adventure", "wander"]) {
+        "journey"
+    } else if has(&["rise", "rising", "triumph", "victory", "climb", "sunrise", "awaken", "hope"]) {
+        "rise"
+    } else {
+        ""
+    };
+    arc.to_string()
+}
+
+/// the energy an arc wants at a point of the song (0..1 through it)
+fn arc_level(arc: &str, x: f64) -> f64 {
+    match arc {
+        "rise" => 0.25 + 0.75 * x,
+        "fall" => 1.0 - 0.7 * x,
+        "battle" => 0.75 + 0.25 * (std::f64::consts::PI * x).sin(),
+        "dream" => 0.3 + 0.15 * (std::f64::consts::PI * x).sin(),
+        "journey" => 0.45 + 0.4 * (2.0 * std::f64::consts::PI * x - 1.2).sin().abs(),
+        // the hero's journey: the call, the descent to the lowest point two thirds in, the return in triumph
+        _ => {
+            if x < 0.25 {
+                0.35 + x
+            } else if x < 0.65 {
+                0.6 - (x - 0.25) * 0.8
+            } else {
+                0.3 + (x - 0.65) * 2.0
+            }
+        }
+    }
+}
+
+/// the sections' energy pulled towards the arc (each keeps 40 % of its own, so a chorus is still louder than its verse)
+pub fn apply_arc(sections: &mut [Section], arc: &str) {
+    let total: u32 = sections.iter().map(|s| s.bars).sum::<u32>().max(1);
+    let mut at = 0u32;
+    for s in sections.iter_mut() {
+        let x = (at as f64 + s.bars as f64 * 0.5) / total as f64;
+        s.energy = (0.4 * s.energy + 0.6 * arc_level(arc, x).clamp(0.05, 1.0)).clamp(0.05, 1.0);
+        at += s.bars;
+    }
+}
+
+/// a chapter title per section for an arc
+pub fn chapters(arc: &str, n: usize) -> Vec<String> {
+    let names: &[&str] = match arc {
+        "rise" => &["Before Dawn", "First Light", "Climbing", "The Summit", "Daylight"],
+        "fall" => &["Golden Hour", "Cracks", "Letting Go", "Embers", "Silence"],
+        "battle" => &["The Horizon Darkens", "First Clash", "The Storm", "The Turn", "Aftermath"],
+        "dream" => &["Drifting Off", "Clouds", "The Deep Dream", "Floating", "Waking"],
+        "journey" => &["Departure", "Open Road", "Strange Lands", "Crossroads", "Arrival"],
+        _ => &["The Call", "Leaving Home", "Trials", "The Abyss", "Return"],
+    };
+    (0..n).map(|i| names[(i * names.len() / n.max(1)).min(names.len() - 1)].to_string()).collect()
+}
+
+// ── the radar: what the planned song is like ─────────────────────────────────
+
+pub const METRICS: [&str; 7] = ["Energy", "Beat", "Harmony", "Melody", "Groove", "Structure", "Story"];
+
+/// seven 0..1 measures of a plan, like a dance game's groove radar: energy (how loud the sections are, peak and average), beat
+/// (tempo and how busy the drums / bass play), harmony (chord colour: sevenths, borrowed chords, a chorus with its own chords, the
+/// colour amount), melody (a lead or a singer, a theme, ornament), groove (human feel and swing), structure (how many different
+/// sections and how long), story (an arc and how far the energy travels)
+pub fn metrics(p: &SongPlan) -> Vec<f64> {
+    let e: Vec<f64> = p.sections.iter().map(|s| (s.energy + p.energy).clamp(0.0, 1.0)).collect();
+    let mean = e.iter().sum::<f64>() / e.len().max(1) as f64;
+    let peak = e.iter().copied().fold(0.0, f64::max);
+    let low = e.iter().copied().fold(1.0, f64::min);
+    let g = genre(&p.genre);
+    let has = |k: Kind| p.parts.iter().any(|x| role_kind(&x.role) == k);
+    let style = compose::spec_from_style(g.style, Kind::Drums, 4, p.key, 1);
+    let beat = (0.45 * ((p.bpm - 60.0) / 120.0).clamp(0.0, 1.0) + 0.35 * style.density * (p.drive * 2.0).clamp(0.2, 1.6) / 1.6 + if has(Kind::Drums) { 0.2 } else { 0.0 }).clamp(0.0, 1.0);
+    let prog = if p.prog.is_empty() { String::new() } else { p.prog.clone() };
+    let toks: Vec<&str> = prog.split_whitespace().collect();
+    let rich = toks.iter().filter(|t| t.contains('7') || t.contains('9') || t.starts_with('b') || t.starts_with('#') || t.contains("sus")).count() as f64 / toks.len().max(1) as f64;
+    let harmony = (0.15 + 0.2 * rich + if p.chorus_prog.is_empty() { 0.0 } else { 0.1 } + 0.25 * p.color + 0.25 * p.dials.variety + 0.05 * p.dials.fifths.abs() as f64 + 0.1 * p.dials.temperature).clamp(0.0, 1.0);
+    let lead = has(Kind::Melody) || !p.singer.is_empty();
+    let melody = ((if lead { 0.4 } else { 0.1 }) + if p.theme.is_some() { 0.25 } else { 0.0 } + if !p.singer.is_empty() { 0.1 } else { 0.0 } + 0.35 * p.ornament).clamp(0.0, 1.0);
+    let swing = matches!(style.feel.as_str(), "swing" | "syncopated" | "offbeat") as u8 as f64;
+    let groove = (0.6 * p.human + 0.3 * swing + 0.1).clamp(0.0, 1.0);
+    let mut tags: Vec<&str> = p.sections.iter().map(|s| s.tag.as_str()).collect();
+    tags.sort_unstable();
+    tags.dedup();
+    let structure = (0.6 * (tags.len() as f64 / 6.0) + 0.4 * (p.sections.len() as f64 / 10.0)).clamp(0.0, 1.0);
+    let story = ((if p.story.is_empty() { 0.15 } else { 0.5 }) + 0.5 * (peak - low)).clamp(0.0, 1.0);
+    vec![(0.6 * mean + 0.4 * peak).clamp(0.0, 1.0), beat, harmony, melody, groove, structure, story]
+}
+
 /// how loosely a genre is played by default (0 = sequenced on the grid, 1 = a live band)
 pub fn genre_feel(name: &str) -> f64 {
     match name {
@@ -695,7 +1125,7 @@ impl SongPlan {
         let st: Vec<String> = self.sections.iter().map(|s| format!("{} {}", s.tag, s.bars)).collect();
         let parts: Vec<&str> = self.parts.iter().map(|p| p.role.as_str()).collect();
         format!(
-            "genre={}; bpm={}; key={}; prog={}; chorus={}; structure={}; parts={}; voice={}; human={:.2}; seed={}",
+            "genre={}; bpm={}; key={}; prog={}; chorus={}; structure={}; parts={}; voice={}; human={:.2}; story={}; energy={:+.2}; drive={:.2}; color={:.2}; ornament={:.2}; temp={:.2}; variety={:.2}; mood={:.2}; fifths={:+}; progstyle={}; layering={:.2}; design={:.2}; arc={}; seed={}",
             self.genre,
             self.bpm,
             self.key.name(),
@@ -705,6 +1135,19 @@ impl SongPlan {
             parts.join(", "),
             if self.singer.is_empty() { "none" } else { &self.singer },
             self.human,
+            if self.story.is_empty() { "none" } else { &self.story },
+            self.energy,
+            self.drive,
+            self.color,
+            self.ornament,
+            self.dials.temperature,
+            self.dials.variety,
+            self.dials.mood,
+            self.dials.fifths,
+            self.dials.style,
+            self.dials.layering,
+            self.dials.design,
+            self.arc,
             self.seed
         )
     }
@@ -724,6 +1167,77 @@ impl SongPlan {
                 "key" => p.key = compose::Spec::from_fields(&[&[("key".to_string(), v.to_string())]], p.key, Kind::Chords).key,
                 "prog" => p.prog = if v.eq_ignore_ascii_case("auto") { String::new() } else { v.to_string() },
                 "chorus" => p.chorus_prog = if v.eq_ignore_ascii_case("same") || v.eq_ignore_ascii_case("auto") { String::new() } else { v.to_string() },
+                "arc" => {
+                    let lv = v.trim().to_lowercase();
+                    p.arc = if crate::emotion::ARCS.contains(&lv.as_str()) { lv } else { "auto".into() };
+                }
+                "story" => {
+                    let lv = v.trim().to_lowercase();
+                    let arc = if lv == "none" { String::new() } else if ["rise", "fall", "battle", "dream", "journey", "hero"].contains(&lv.as_str()) { lv } else { story_arc(&lv) };
+                    let arc = if ["rise", "fall", "battle", "dream", "journey", "hero"].contains(&arc.as_str()) { arc } else { String::new() };
+                    if arc != p.story {
+                        if !arc.is_empty() {
+                            apply_arc(&mut p.sections, &arc);
+                        }
+                        p.story = arc;
+                    }
+                }
+                "energy" => {
+                    if let Ok(x) = v.trim_start_matches('+').parse::<f64>() {
+                        p.energy = x.clamp(-0.3, 0.3);
+                    }
+                }
+                "drive" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.drive = x.clamp(0.0, 1.0);
+                    }
+                }
+                "color" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.color = x.clamp(0.0, 1.0);
+                    }
+                }
+                "temp" | "temperature" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.dials.temperature = x.clamp(0.0, 1.0);
+                    }
+                }
+                "variety" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.dials.variety = x.clamp(0.0, 1.0);
+                    }
+                }
+                "mood" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.dials.mood = x.clamp(0.0, 1.0);
+                    }
+                }
+                "fifths" => {
+                    if let Ok(x) = v.trim_start_matches('+').parse::<i32>() {
+                        p.dials.fifths = x.clamp(-3, 3);
+                    }
+                }
+                "progstyle" => {
+                    let lv = v.trim().to_lowercase();
+                    if PROG_STYLES.contains(&lv.as_str()) {
+                        p.dials.style = lv;
+                    }
+                }
+                "layering" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.dials.layering = x.clamp(0.0, 1.0);
+                    }
+                }
+                "design" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.dials.design = x.clamp(0.0, 1.0);
+                    }
+                }
+                "ornament" => {
+                    if let Ok(x) = v.parse::<f64>() {
+                        p.ornament = x.clamp(0.0, 1.0);
+                    }
+                }
                 "human" => {
                     if let Ok(h) = v.parse::<f64>() {
                         p.human = h.clamp(0.0, 1.0);
@@ -761,8 +1275,30 @@ pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: 
     if plan.parts[part].role == "riser" {
         return notes;
     }
-    if kind == Kind::Melody {
+    let themed = kind == Kind::Melody && plan.theme.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
+    if themed {
+        if let Some(v) = theme_notes(plan, part, sec, &spec, singer_range) {
+            notes = v;
+        }
+    } else if kind == Kind::Melody {
         develop(plan, part, sec, &spec, singer_range, &mut notes);
+    }
+    // the decorator: ornament on the lead (not the singer: the lyrics want a plain line), colour on chords and pads
+    let amount = match kind {
+        Kind::Melody if singer_range.is_none() => plan.ornament,
+        Kind::Chords | Kind::Pad => plan.color,
+        _ => 0.0,
+    };
+    if amount > 0.05 && !notes.is_empty() {
+        let mut rng = compose::Rng::new(spec.seed);
+        let harmony: Vec<(f64, f64, u8, usize)> = compose::plan(&spec, &mut rng).iter().map(|s| (s.start, s.len, s.chord.root, s.chord.q)).collect();
+        notes = crate::decorate::decorate(&notes, spec.key, &harmony, amount * (0.6 + 0.6 * sec.energy).min(1.0), spec.seed ^ 0xDEC0);
+        let top = spec.hi.saturating_add(5);
+        for n in notes.iter_mut() {
+            while n.key > top && n.key >= 12 {
+                n.key -= 12;
+            }
+        }
     }
     if kind == Kind::Bass {
         lock_to_kick(plan, sec, &spec, &mut notes);
@@ -780,15 +1316,24 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
     let tag_seed = sec.tag.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
     let seed = plan.seed.wrapping_mul(1_000_003).wrapping_add(part as u64 * 7919).wrapping_add(tag_seed);
     let mut spec = compose::spec_from_style(g.style, kind, sec.bars, plan.key, seed);
-    let prog = if is_chorus(&sec.tag) && !plan.chorus_prog.is_empty() { &plan.chorus_prog } else { &plan.prog };
-    if !prog.is_empty() {
-        let p = compose::parse_prog(prog, plan.key);
-        if !p.is_empty() {
-            spec.prog = p;
-            spec.prog_text = prog.clone();
+    // the harmonic plan: the section's own key (a bridge somewhere else on the wheel of fifths) and chords, with its cadence
+    if let Some(si) = section_index(plan, sec) {
+        let (key, chords) = section_chords(plan, si, spec.cpb);
+        spec.key = key;
+        if !chords.is_empty() {
+            spec.prog_text = section_prog(plan, si);
+            spec.harmony = chords;
         }
     }
-    spec.density = (spec.density * (0.55 + 0.65 * sec.energy)).clamp(0.05, 1.0);
+    let energy = (sec.energy + plan.energy).clamp(0.05, 1.0);
+    spec.density = (spec.density * (0.55 + 0.65 * energy) * (0.6 + 0.8 * plan.drive)).clamp(0.05, 1.0);
+    // a real instrument plays in its own register
+    if let Some(inst) = crate::ensemble::instrument(role) {
+        if inst.kind != Kind::Drums {
+            spec.lo = inst.lo;
+            spec.hi = inst.hi;
+        }
+    }
     if kind == Kind::Drums {
         spec.pattern = g.drums.to_string();
         spec.fills = if sec.tag == "build" { 1.0 } else { 0.5 };
@@ -814,6 +1359,61 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
     }
     notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
     (spec, kind, notes)
+}
+
+/// The theme (from a timeline selection) as this part plays it in this section: a variation chosen by the section (the theme in
+/// the first verse, decorated when a section comes back, a step higher in the chorus and as the finale in the last one, inverted in
+/// a bridge, augmented in the intro / outro, in diminution in a build), moved into the song's key and the part's register, repeated
+/// to fill the section and fitted onto its chords.
+fn theme_notes(plan: &SongPlan, part: usize, sec: &Section, spec: &compose::Spec, singer_range: Option<(u8, u8)>) -> Option<Vec<N>> {
+    let theme = plan.theme.as_ref()?;
+    let si = section_index(plan, sec)?;
+    let tag = sec.tag.as_str();
+    let k = plan.sections[..si].iter().filter(|s| s.tag == tag).count();
+    let count = plan.sections.iter().filter(|s| s.tag == tag).count();
+    // the theme in the song's key: its own key is read from its notes
+    let (tk, _, _) = theory::detect_key(theme, 0.0, theme.iter().map(|n| n.start + n.len).fold(0.0, f64::max));
+    let shift = crate::guide::key_shift(tk, spec.key);
+    let moved: Vec<N> = theme.iter().map(|n| N { key: (n.key as i32 + shift).clamp(0, 127) as u8, ..*n }).collect();
+    let which = if is_chorus(tag) {
+        if count > 1 && k + 1 == count { 6 } else { 2 }
+    } else if is_bridge(tag) {
+        3
+    } else if tag == "intro" || tag == "outro" {
+        4
+    } else if tag == "build" || tag == "pre" || tag == "prechorus" {
+        5
+    } else if k > 0 {
+        1
+    } else {
+        0
+    };
+    let vars = crate::decorate::variations(&moved, spec.key, 7, plan.ornament.max(0.35), plan.seed.wrapping_add(part as u64));
+    let (_, v) = vars.get(which).or(vars.first())?;
+    if v.is_empty() {
+        return None;
+    }
+    let tl = (v.iter().map(|n| n.start + n.len).fold(0.0, f64::max) / 4.0).ceil().max(1.0) * 4.0;
+    // into the part's register: the theme's middle to the range's middle, by octaves
+    let mut keys: Vec<i32> = v.iter().map(|n| n.key as i32).collect();
+    keys.sort_unstable();
+    let mid = (spec.lo as i32 + spec.hi as i32) / 2;
+    let oct = ((mid - keys[keys.len() / 2]) as f64 / 12.0).round() as i32 * 12;
+    let len = sec.bars as f64 * 4.0;
+    let mut out = vec![];
+    let mut at = 0.0;
+    while at < len - 1e-6 {
+        for n in v {
+            let st = at + n.start;
+            if st < len - 1e-6 {
+                out.push(N { start: st, len: n.len.min(len - st), key: (n.key as i32 + oct).clamp(0, 127) as u8, vel: n.vel });
+            }
+        }
+        at += tl;
+    }
+    let top = spec.hi.saturating_add(if singer_range.is_some() { 2 } else { 5 });
+    soft_fit(spec, &mut out, top);
+    Some(out)
 }
 
 fn is_chorus(tag: &str) -> bool {
@@ -890,6 +1490,35 @@ fn fit_to_chords(spec: &compose::Spec, notes: &mut [N], top: u8, bars: &[(f64, f
     }
 }
 
+/// A melody kept as it is except where it clashes: a note on a strong beat (1 or 3) that is not a chord tone and sits a semitone
+/// or a tritone from one moves to the nearest chord tone; passing and neighbour notes, 9ths and 6ths stay. Kept in the range.
+fn soft_fit(spec: &compose::Spec, notes: &mut [N], top: u8) {
+    let mut rng = compose::Rng::new(spec.seed);
+    let spans = compose::plan(spec, &mut rng);
+    for n in notes.iter_mut() {
+        let strong = (n.start / 2.0 - (n.start / 2.0).round()).abs() < 0.01;
+        if strong {
+            if let Some(sp) = spans.iter().find(|s| n.start >= s.start - 1e-6 && n.start < s.start + s.len - 1e-6) {
+                let pc = n.key % 12;
+                if !sp.chord.has(pc) {
+                    let clash = sp.chord.pcs().iter().any(|c| matches!((pc + 12 - c) % 12, 1 | 11 | 6));
+                    if clash {
+                        if let Some(k) = (1..=6i32).flat_map(|d| [-d, d]).map(|d| n.key as i32 + d).find(|k| (0..128).contains(k) && sp.chord.has((*k % 12) as u8)) {
+                            n.key = k as u8;
+                        }
+                    }
+                }
+            }
+        }
+        if !spec.key.accepts(n.key % 12) {
+            n.key = dia(spec.key, n.key, 0);
+        }
+        while n.key > top && n.key >= 12 {
+            n.key -= 12;
+        }
+    }
+}
+
 /// Motivic development of a melodic part (an instrument lead, or the singer's line): the song's motif is the first bar of the part in
 /// its first main section (verse, theme, else the first drop / chorus). The chorus opens with it a third higher, a bridge turns it upside
 /// down, a verse that comes back ends with its own first bar a step higher, and the last time a section comes back it is lifted an octave
@@ -903,7 +1532,7 @@ fn develop(plan: &SongPlan, part: usize, sec: &Section, spec: &compose::Spec, si
     let k = plan.sections[..si].iter().filter(|s| s.tag == tag).count();
     let count = plan.sections.iter().filter(|s| s.tag == tag).count();
     let len = sec.bars as f64 * 4.0;
-    let key = plan.key;
+    let key = spec.key;
     let top = spec.hi.saturating_add(if singer_range.is_some() { 2 } else { 5 });
     let home = ["verse", "theme", "drop", "chorus", "climax"].iter().find_map(|t| plan.sections.iter().find(|s| s.tag == *t));
     let motif: Vec<N> = match home {
@@ -1009,8 +1638,9 @@ fn humanize(plan: &SongPlan, part: usize, sec: &Section, kind: Kind, notes: &mut
         if laid_back && kind == Kind::Drums && (n.key == compose::K_SNARE || n.key == compose::K_CLAP) {
             off += 0.012 * h;
         }
+        // the bar line is the band's anchor: on the grid
         if step % 16 == 0 {
-            off = off.max(0.0);
+            off = 0.0;
         }
         if !on_grid {
             off *= 0.5;
@@ -1104,6 +1734,54 @@ pub fn arrange(plan: &SongPlan) -> Arrangement {
                 on[p][first] = false;
                 notes.push(format!("the {} {} for the last {}", name(p), if name(p).ends_with('s') { "wait" } else { "waits" }, plan.sections[last].tag));
             }
+        }
+    }
+    // gradual layering: a budget of parts that follows the energy, and only a few new parts at each section change (a chorus or a
+    // drop may bring one more) - the rest wait for the next section
+    let lay = plan.dials.layering.clamp(0.0, 1.0);
+    if lay > 0.05 && np > 2 {
+        let keep_rank = |k: Kind, e: f64| -> u8 {
+            // what matters most in a quiet section and in a loud one
+            match k {
+                Kind::Melody => 0,
+                Kind::Bass => if e >= 0.5 { 1 } else { 3 },
+                Kind::Drums => if e >= 0.5 { 2 } else { 5 },
+                Kind::Chords => if e >= 0.5 { 3 } else { 1 },
+                Kind::Pad => if e >= 0.5 { 4 } else { 2 },
+                Kind::Arp => 6,
+            }
+        };
+        let mut prev: Vec<usize> = vec![];
+        let mut held: Vec<String> = vec![];
+        for si in 0..ns {
+            let sec = &plan.sections[si];
+            let e = sec.energy;
+            let budget = ((np as f64 * (0.3 + 0.7 * e)) * (1.0 - 0.3 * lay)).round().clamp(1.0, np as f64) as usize;
+            let mut playing: Vec<usize> = (0..np).filter(|p| on[*p][si]).collect();
+            playing.sort_by_key(|p| (keep_rank(kinds[*p], e), *p));
+            // the newcomers allowed now
+            let allowed_new = if is_chorus(&sec.tag) { 3 } else { 2 } + if lay < 0.5 { 1 } else { 0 };
+            let mut kept: Vec<usize> = vec![];
+            let mut new_n = 0;
+            for p in playing {
+                let is_new = !prev.contains(&p) && si > 0;
+                if kept.len() >= budget || (is_new && new_n >= allowed_new && plan.parts[p].role != "riser") {
+                    on[p][si] = false;
+                    if is_new {
+                        held.push(format!("{} waits for {}", name(p), plan.sections.get(si + 1).map(|s| s.tag.as_str()).unwrap_or("the end")));
+                    }
+                    continue;
+                }
+                if is_new {
+                    new_n += 1;
+                }
+                kept.push(p);
+            }
+            prev = kept;
+        }
+        if !held.is_empty() {
+            held.dedup();
+            notes.push(format!("layering: {}", held.into_iter().take(4).collect::<Vec<_>>().join(", ")));
         }
     }
     for si in 0..ns {
@@ -1675,7 +2353,8 @@ mod tests {
         let mut p = plan("pop song in C major", "", &[], None, 1.0, 9);
         let di = p.parts.iter().position(|x| x.role == "drums").unwrap();
         let bi = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Bass).unwrap();
-        let v = p.sections.iter().position(|s| s.tag == "verse").unwrap();
+        let arr = arrange(&p);
+        let v = (0..p.sections.len()).find(|si| arr.on[di][*si] && arr.on[bi][*si] && p.sections[*si].tag == "verse").or_else(|| (0..p.sections.len()).find(|si| arr.on[di][*si] && arr.on[bi][*si])).unwrap();
         let bars = p.sections[v].bars;
         for human in [0.0, 0.8] {
             p.human = human;
@@ -1749,6 +2428,92 @@ mod tests {
         let mut busy: Vec<N> = (0..32).map(|i| N { start: i as f64 * 0.25, len: 0.25, key: 64, vel: 0.8 }).collect();
         fit_line(&mut busy, 6);
         assert!(busy.len() <= 9 && busy.iter().map(|n| n.len).fold(0.0, f64::max) >= 1.0, "{busy:?}");
+    }
+
+    #[test]
+    fn ensembles_story_theme_and_the_radar() {
+        // an orchestra: its sections, each in its own register
+        let p = plan("a sweeping full orchestra piece in D minor", "", &[], None, 1.0, 3);
+        assert_eq!(p.ensemble, "orchestra");
+        assert!(p.parts.iter().any(|x| x.role == "violins") && p.parts.iter().any(|x| x.role == "contrabasses") && p.parts.iter().any(|x| x.role == "timpani"), "{:?}", p.parts);
+        for (i, part) in p.parts.iter().enumerate() {
+            let Some(inst) = crate::ensemble::instrument(&part.role) else { continue };
+            for sec in &p.sections {
+                for n in section_notes(&p, i, sec, None) {
+                    assert!(n.key + 12 >= inst.lo && n.key <= inst.hi + 12, "{} plays {} outside {}-{}", part.role, n.key, inst.lo, inst.hi);
+                }
+            }
+        }
+        // an exotic lute duet: two parts, no drums
+        let d = plan("an exotic lute duet at dusk", "", &[], None, 1.0, 3);
+        assert_eq!(d.parts.iter().map(|x| x.role.as_str()).collect::<Vec<_>>(), vec!["oud", "lute"]);
+        // a story shapes the energy: a fall ends quieter than it starts
+        let f = plan_story("pop song in C major", "", &[], None, 1.0, 3, None, 0.0, &Fit::Auto, "a tragic farewell that fades away");
+        assert_eq!(f.story, "fall");
+        let first = f.sections.iter().take(3).map(|s| s.energy).sum::<f64>();
+        let last = f.sections.iter().rev().take(3).map(|s| s.energy).sum::<f64>();
+        assert!(first > last, "{:?}", f.sections);
+        assert!(f.notes.iter().any(|n| n.starts_with("story")), "{:?}", f.notes);
+        // a theme: the lead plays it (its notes come back in the first verse)
+        let mut t = plan("pop song with a synth lead in C major", "", &[], None, 1.0, 4);
+        t.human = 0.0;
+        t.ornament = 0.0;
+        let theme: Vec<N> = [60u8, 62, 64, 67, 64, 62, 60, 55].iter().enumerate().map(|(i, k)| N { start: i as f64, len: 1.0, key: *k, vel: 0.8 }).collect();
+        t.theme = Some(std::sync::Arc::new(theme));
+        let li = t.parts.iter().position(|x| x.role == "synth lead").unwrap();
+        let v = t.sections.iter().find(|s| s.tag == "verse").unwrap();
+        let notes = section_notes(&t, li, v, None);
+        assert!(notes.len() >= 8 && notes.iter().take(8).zip([60u8, 62, 64, 67, 64, 62, 60, 55]).filter(|(n, k)| n.key % 12 == k % 12).count() >= 5, "{notes:?}");
+        // the radar: seven values in 0..1, and the steering moves them
+        let m = metrics(&t);
+        assert_eq!(m.len(), METRICS.len());
+        assert!(m.iter().all(|x| (0.0..=1.0).contains(x)));
+        let mut more = t.clone();
+        more.color = 1.0;
+        more.human = 1.0;
+        let m2 = metrics(&more);
+        assert!(m2[2] > m[2] && m2[4] > m[4]);
+        // the line carries the new fields and reads them back
+        let back = SongPlan::from_line(&more.to_line().replace("story=none", "story=journey").replace("drive=0.50", "drive=0.80"), &more);
+        assert_eq!((back.story.as_str(), back.drive, back.color), ("journey", 0.8, 1.0));
+    }
+
+    #[test]
+    fn the_harmony_travels_and_the_parts_come_in_gradually() {
+        let mut p = plan("pop song in C major", "", &[], None, 1.0, 11);
+        p.dials.variety = 0.8;
+        p.dials.fifths = 1;
+        let idx = |tag: &str| p.sections.iter().position(|s| s.tag == tag).unwrap();
+        let (v, c, b) = (idx("verse"), idx("chorus"), idx("bridge"));
+        // each kind of section has its own chords, and the bridge sits a fifth up (G major)
+        assert_ne!(section_prog(&p, v), section_prog(&p, c));
+        assert_ne!(section_prog(&p, b), section_prog(&p, v));
+        assert_eq!(section_key(&p, b), Key::new(7, false));
+        assert_eq!(section_key(&p, v), Key::new(0, false));
+        // the bar before a chorus is the dominant: a half cadence
+        let before = c - 1;
+        let cpb = 1.0;
+        let (k, ch) = section_chords(&p, before, cpb);
+        assert_eq!(ch.last().unwrap().2, k.scale()[4], "{:?}", ch);
+        // low variety: one loop for the whole song (and the parts follow the section's chords)
+        p.dials.variety = 0.1;
+        let all: Vec<String> = (0..p.sections.len()).map(|i| section_prog(&p, i)).collect();
+        assert!(all.iter().all(|x| *x == all[0]), "{all:?}");
+        // a bridge's notes are in the bridge's key
+        p.dials.variety = 0.8;
+        let pi = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Chords || role_kind(&x.role) == Kind::Pad).unwrap();
+        let notes = section_notes(&p, pi, &p.sections[b].clone(), None);
+        assert!(notes.iter().all(|n| Key::new(7, false).accepts(n.key % 12)), "{notes:?}");
+        // gradual layering: no section change brings in more than three new parts, the first section is small
+        let mut q = plan("trance anthem with supersaw lead, warm pad, arp and pluck", "", &[], None, 1.0, 5);
+        q.dials.layering = 0.9;
+        let a = arrange(&q);
+        let count = |si: usize| (0..q.parts.len()).filter(|pi| a.on[*pi][si]).count();
+        assert!(count(0) <= 2, "{}", count(0));
+        for si in 1..q.sections.len() {
+            let new = (0..q.parts.len()).filter(|pi| a.on[*pi][si] && !a.on[*pi][si - 1]).count();
+            assert!(new <= 3, "section {si} brings {new} new parts");
+        }
     }
 
     #[test]

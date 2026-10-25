@@ -7,6 +7,7 @@
 //! - `grpc`      — tonic + prost
 //! - `lingtp`    — lingtp:// (raw-TCP, PQ-secure: ML-DSA-87 + hybrid KEM
 //!   handshake, XChaCha20-Poly1305 + DICE-42 cascade record layer)
+//! - `lwp`       — LWP-1, the ling-wallet P2P transport (see `lwp` module)
 
 pub mod error;
 pub mod types;
@@ -16,6 +17,9 @@ pub mod http;
 
 #[cfg(feature = "lingtp")]
 pub mod lingtp;
+
+#[cfg(feature = "lwp")]
+pub mod lwp;
 
 pub use error::NetError;
 pub use types::{HttpMethod, Request, Response};

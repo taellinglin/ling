@@ -1446,3 +1446,365 @@ l2_p6=0.375 l2_p7=0.438 l2_p8=0.500 l2_p9=0.562 l2_p10=0.625 l2_p11=0.688 l2_p12
 l2_p13=0.812 l2_p14=0.875 l2_p15=0.938 l3_len=0.200 l3_int=0.500 l3_loop=1.000
 l3_trig=0.000 l4_len=0.200 l4_int=0.500 l4_loop=1.000 l4_trig=0.000 m_l1a=0.000
 m_l2c=0.875 m_whlc=0.750
+
+[comb growl]
+# growl wavetable through a note-tuned comb, the comb swept a full octave by lane 1 while the cutoff follows
+name = "comb growl"
+type = growl
+table=0.333 pos=0.350 detn=0.150 sub=0.550 ftype=0.000 cut=0.620 res=0.300 drv=0.450
+shaper=0.000 comb=0.550 c_fb=0.900 c_damp=0.200 fold=0.150 l1_len=0.400 l1_int=1.000
+l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500
+l1_p5=0.625 l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875 l1_p10=0.750 l1_p11=0.625
+l1_p12=0.500 l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 m_l1k=0.875 m_l1c=0.750 m_l1w=0.750
+fx Split_Drive drive=0.400 mode=0.000 tone=0.700
+fx OTT depth=0.550
+
+[spectral comb]
+# five-voice saw stack into a resonant comb that sweeps two octaves on a beat-long sine: the glassy spectral bass
+name = "spectral comb"
+type = growl
+table=0.000 pos=0.000 uni=0.333 detn=0.250 sub=0.500 cut=0.780 res=0.150 drv=0.350 comb=0.700
+c_fb=0.930 c_damp=0.100 fshift=0.522 l2_len=0.200 l2_int=1.000 l2_loop=1.000 l2_trig=1.000
+l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500 l2_p5=0.691 l2_p6=0.854 l2_p7=0.962
+l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691 l2_p12=0.500 l2_p13=0.309 l2_p14=0.146
+l2_p15=0.038 m_l2k=1.000 m_l2c=0.625
+fx OTT depth=0.600
+fx Imager width=0.600
+
+[comb screech]
+# hard-synced lead with the comb an octave up, lane 3 dragging both the sync ratio and the comb: a metallic scream
+name = "comb screech"
+type = growl
+table=0.000 pos=0.200 sync=0.350 s_mod=0.600 ftype=0.250 cut=0.720 res=0.450 drv=0.550
+shaper=1.000 comb=0.500 c_tune=0.750 c_fb=0.920 c_damp=0.150 sub=0.400 l3_len=0.400
+l3_int=0.500 l3_loop=1.000 l3_trig=1.000 l3_p0=0.000 l3_p1=0.062 l3_p2=0.125 l3_p3=0.188
+l3_p4=0.250 l3_p5=0.312 l3_p6=0.375 l3_p7=0.438 l3_p8=0.500 l3_p9=0.562 l3_p10=0.625
+l3_p11=0.688 l3_p12=0.750 l3_p13=0.812 l3_p14=0.875 l3_p15=0.938 m_l3k=0.875
+fx OTT depth=0.700
+fx Split_Drive drive=0.350 mode=0.667
+
+[hollow comb]
+# square through a negative-feedback comb (odd harmonics, an octave up, hollow), stepped by an eighth-note lane
+name = "hollow comb"
+type = growl
+table=0.000 pos=1.000 comb=0.600 c_fb=0.080 c_damp=0.200 cut=0.600 res=0.250 drv=0.400
+sub=0.600 l1_len=0.000 l1_int=0.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.000
+l1_p2=0.000 l1_p3=0.000 l1_p4=1.000 l1_p5=1.000 l1_p6=1.000 l1_p7=1.000 l1_p8=0.500 l1_p9=0.500
+l1_p10=0.500 l1_p11=0.500 l1_p12=0.250 l1_p13=0.250 l1_p14=0.250 l1_p15=0.250 m_l1k=0.750
+fx OTT depth=0.500
+
+[vowel comb talk]
+# talking vowels over a comb a fifth up: speech with a metallic throat
+name = "vowel comb talk"
+type = growl
+table=0.667 pos=0.400 ftype=1.000 vow=0.300 res=0.550 talk=0.550 t_rate=0.500 t_glid=0.400
+comb=0.400 c_tune=0.646 c_fb=0.880 drv=0.450 sub=0.500 l1_len=0.400 l1_int=1.000 l1_loop=1.000
+l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691
+l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500
+l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 m_l1v=0.875
+fx OTT depth=0.500
+
+[comb pluck]
+# a short pluck rung through a bright comb, the comb falling an octave with the envelope
+name = "comb pluck"
+type = growl
+table=0.000 uni=0.333 detn=0.200 cut=0.450 res=0.300 comb=0.500 c_fb=0.900 c_damp=0.050
+amp_d=0.450 amp_s=0.000 amp_r=0.250 env_a=0.000 env_d=0.350 env_s=0.000 sub=0.300 verb=0.200
+dely=0.200 m_envc=1.000 m_envk=0.875
+fx Imager width=0.700
+
+[color bass]
+# wide seven-voice saw chords with a keytracked comb an octave up and an enveloped filter: melodic dubstep chords
+name = "color bass"
+type = growl
+table=0.000 uni=0.667 detn=0.350 cut=0.500 res=0.250 comb=0.300 c_tune=0.750 c_fb=0.850
+env_a=0.000 env_d=0.400 env_s=0.250 amp_r=0.300 drv=0.300 wide=0.600 verb=0.200 sub=0.450
+m_envc=0.875 m_velc=0.625
+fx OTT depth=0.600
+fx Imager width=0.700 mono_below=0.350
+
+[color wobble]
+# color-bass chord stack that wobbles in triplet-ish half-beat sweeps
+name = "color wobble"
+type = growl
+table=0.000 uni=0.667 detn=0.300 cut=0.350 res=0.350 drv=0.400 comb=0.250 c_tune=0.750
+c_fb=0.800 wide=0.500 sub=0.500 l1_len=0.000 l1_int=1.000 l1_loop=1.000 l1_trig=1.000
+l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962
+l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500 l1_p13=0.309 l1_p14=0.146
+l1_p15=0.038 m_l1c=1.000
+fx OTT depth=0.600
+fx Imager width=0.650
+
+[future chord]
+# soft saw chord with a slow-opening filter and a slight frequency-shift shimmer
+name = "future chord"
+type = growl
+table=0.000 uni=1.000 detn=0.300 cut=0.450 res=0.200 env_a=0.350 env_d=0.600 env_s=0.600
+amp_a=0.150 amp_r=0.400 fshift=0.519 wide=0.700 verb=0.300 sub=0.300 m_envc=0.875
+fx Imager width=0.750
+fx OTT depth=0.350
+
+[riddim fold]
+# square bass with a wavefolder pumped by a half-beat lane, offset drive for grit, sub held clean
+name = "riddim fold"
+type = growl
+table=0.000 pos=1.000 fold=0.300 asym=0.300 cut=0.550 res=0.200 drv=0.450 shaper=1.000
+sub=0.700 l1_len=0.000 l1_int=0.500 l1_loop=1.000 l1_trig=1.000 l1_p0=1.000 l1_p1=0.938
+l1_p2=0.875 l1_p3=0.812 l1_p4=0.750 l1_p5=0.688 l1_p6=0.625 l1_p7=0.562 l1_p8=0.500 l1_p9=0.438
+l1_p10=0.375 l1_p11=0.312 l1_p12=0.250 l1_p13=0.188 l1_p14=0.125 l1_p15=0.062 m_l1o=0.875
+m_l1c=0.750
+fx Split_Drive drive=0.550 mode=0.333
+fx OTT depth=0.600 out=0.460
+
+[fold growl]
+# growl table into a heavy folder swept by the mod envelope on every hit
+name = "fold growl"
+type = growl
+table=0.333 pos=0.500 fold=0.250 cut=0.600 res=0.350 drv=0.400 env_d=0.400 env_s=0.200
+sub=0.600 l1_len=0.200 l1_int=1.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.125
+l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625 l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875
+l1_p10=0.750 l1_p11=0.625 l1_p12=0.500 l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 m_envo=0.875
+m_l1w=0.875
+fx Split_Drive drive=0.450 mode=0.000
+fx OTT depth=0.550
+
+[crushed riddim]
+# bit- and rate-crushed square, the cutoff stepping in sixteenths: lo-fi riddim
+name = "crushed riddim"
+type = growl
+table=0.000 pos=1.000 crush=0.350 fold=0.150 cut=0.500 res=0.400 drv=0.400 sub=0.700
+l1_len=0.200 l1_int=0.000 l1_loop=1.000 l1_trig=1.000 l1_p0=1.000 l1_p1=1.000 l1_p2=0.300
+l1_p3=0.300 l1_p4=0.700 l1_p5=0.700 l1_p6=0.000 l1_p7=0.000 l1_p8=1.000 l1_p9=1.000
+l1_p10=0.500 l1_p11=0.500 l1_p12=0.200 l1_p13=0.200 l1_p14=0.800 l1_p15=0.800 m_l1c=0.875
+fx OTT depth=0.500
+
+[metal tearout]
+# metal table, sync, comb and folder all at once, driven hard and glued by full OTT
+name = "metal tearout"
+type = growl
+table=1.000 pos=0.400 sync=0.300 s_mod=0.500 fold=0.400 comb=0.350 c_fb=0.900 drv=0.600
+shaper=1.000 cut=0.700 res=0.300 sub=0.550 l3_len=0.000 l3_int=0.500 l3_loop=1.000
+l3_trig=1.000 l3_p0=0.000 l3_p1=0.062 l3_p2=0.125 l3_p3=0.188 l3_p4=0.250 l3_p5=0.312
+l3_p6=0.375 l3_p7=0.438 l3_p8=0.500 l3_p9=0.562 l3_p10=0.625 l3_p11=0.688 l3_p12=0.750
+l3_p13=0.812 l3_p14=0.875 l3_p15=0.938 l1_len=0.200 l1_int=1.000 l1_loop=1.000 l1_trig=1.000
+l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962
+l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500 l1_p13=0.309 l1_p14=0.146
+l1_p15=0.038 m_l1k=0.750 m_l1o=0.750
+fx Split_Drive drive=0.600 mode=0.667
+fx OTT depth=1.000 out=0.340
+
+[machine gun]
+# growl gated in sixteenths by lane 1 on the amp (tempo-synced), each gate a fresh bite of the folder
+name = "machine gun"
+type = growl
+table=0.333 pos=0.500 fold=0.200 cut=0.650 res=0.300 drv=0.500 sub=0.600 l1_len=0.200
+l1_int=0.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.000 l1_p2=0.000 l1_p3=1.000
+l1_p4=0.000 l1_p5=0.000 l1_p6=0.000 l1_p7=1.000 l1_p8=0.000 l1_p9=0.000 l1_p10=0.000
+l1_p11=1.000 l1_p12=0.000 l1_p13=0.000 l1_p14=0.000 l1_p15=1.000 l2_len=0.400 l2_int=1.000
+l2_loop=1.000 l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309 l2_p4=0.500
+l2_p5=0.691 l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854 l2_p11=0.691
+l2_p12=0.500 l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 m_l1a=0.000 m_l2o=0.750 m_l2w=0.750
+fx OTT depth=0.600
+fx Transient attack=0.750 sustain=0.350 out=0.300
+
+[shifted growl]
+# vox-table growl through the frequency shifter, lane 2 swinging the shift: inharmonic, talking, alive
+name = "shifted growl"
+type = growl
+table=0.667 pos=0.300 ftype=1.000 vow=0.400 res=0.500 fshift=0.561 drv=0.450 sub=0.550
+l1_len=0.200 l1_int=1.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250
+l1_p3=0.375 l1_p4=0.500 l1_p5=0.625 l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875
+l1_p10=0.750 l1_p11=0.625 l1_p12=0.500 l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 l2_len=0.400
+l2_int=1.000 l2_loop=1.000 l2_trig=0.000 l2_p0=0.000 l2_p1=0.038 l2_p2=0.146 l2_p3=0.309
+l2_p4=0.500 l2_p5=0.691 l2_p6=0.854 l2_p7=0.962 l2_p8=1.000 l2_p9=0.962 l2_p10=0.854
+l2_p11=0.691 l2_p12=0.500 l2_p13=0.309 l2_p14=0.146 l2_p15=0.038 m_l1v=1.000 m_l2s=0.750
+fx OTT depth=0.550
+
+[robot shifter]
+# talk sequencer and a 120 Hz shift: a robot voice that is not on any pitch
+name = "robot shifter"
+type = growl
+table=0.667 pos=0.600 talk=0.600 t_rate=0.750 fshift=0.622 cut=0.700 res=0.300 drv=0.350
+sub=0.400
+fx OTT depth=0.450
+
+[barber growl]
+# the shifter swept up in a saw on every note: an endlessly rising growl
+name = "barber growl"
+type = growl
+table=0.333 pos=0.400 fshift=0.535 cut=0.650 res=0.350 drv=0.500 sub=0.550 l1_len=0.200
+l1_int=0.500 l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.062 l1_p2=0.125 l1_p3=0.188
+l1_p4=0.250 l1_p5=0.312 l1_p6=0.375 l1_p7=0.438 l1_p8=0.500 l1_p9=0.562 l1_p10=0.625
+l1_p11=0.688 l1_p12=0.750 l1_p13=0.812 l1_p14=0.875 l1_p15=0.938 m_l1s=0.875 m_l1w=0.750
+fx Phaser rate=0.300 feedback=0.750
+
+[complextro stab]
+# tight, distorted saw stab: short amp, a filter snap and a pitch blip, punched by the transient shaper
+name = "complextro stab"
+type = growl
+table=0.000 uni=0.333 detn=0.300 stack=0.500 cut=0.450 res=0.350 env_a=0.000 env_d=0.300
+env_s=0.000 amp_d=0.350 amp_s=0.100 amp_r=0.150 penv=0.521 pdec=0.120 drv=0.550 shaper=1.000
+sub=0.400 m_envc=1.000
+fx OTT depth=0.700
+fx Transient attack=0.800 sustain=0.350 out=0.300
+
+[electro wob]
+# resonant saw wobble in half beats, crushed a touch: electro house bass
+name = "electro wob"
+type = growl
+table=0.000 cut=0.300 res=0.550 drv=0.500 shaper=0.000 crush=0.120 sub=0.550 detn=0.200
+l1_len=0.000 l1_int=1.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146
+l1_p3=0.309 l1_p4=0.500 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962
+l1_p10=0.854 l1_p11=0.691 l1_p12=0.500 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 m_l1c=1.000
+m_l1q=0.625
+fx OTT depth=0.600
+fx Split_Drive drive=0.350
+
+[fidget squeal]
+# band-pass squeal stepping through a jumpy lane, small pitch blips: fidget house
+name = "fidget squeal"
+type = growl
+table=0.000 pos=0.500 ftype=0.250 cut=0.600 res=0.700 drv=0.450 penv=0.552 pdec=0.080 sub=0.400
+l1_len=0.200 l1_int=0.000 l1_loop=1.000 l1_trig=1.000 l1_p0=0.200 l1_p1=0.900 l1_p2=0.400
+l1_p3=1.000 l1_p4=0.100 l1_p5=0.700 l1_p6=0.300 l1_p7=0.950 l1_p8=0.200 l1_p9=0.900
+l1_p10=0.500 l1_p11=1.000 l1_p12=0.000 l1_p13=0.600 l1_p14=0.350 l1_p15=0.850 m_l1c=0.875
+fx OTT depth=0.600
+
+[big room lead]
+# nine-voice saw stack in octaves, open filter, delay and reverb: the festival lead
+name = "big room lead"
+type = growl
+table=0.000 uni=1.000 detn=0.450 stack=0.500 cut=0.820 res=0.100 drv=0.250 amp_r=0.350
+wide=0.600 dely=0.250 verb=0.300 sub=0.200 m_velc=0.625
+fx OTT depth=0.400
+fx Imager width=0.700
+
+[screech lead]
+# synced, shifted, band-passed lead for drops: cuts through anything
+name = "screech lead"
+type = growl
+table=0.000 sync=0.450 s_mod=0.500 ftype=0.250 cut=0.750 res=0.400 fshift=0.543 drv=0.500
+shaper=1.000 sub=0.200 l3_len=0.400 l3_int=1.000 l3_loop=1.000 l3_trig=1.000 l3_p0=0.000
+l3_p1=0.125 l3_p2=0.250 l3_p3=0.375 l3_p4=0.500 l3_p5=0.625 l3_p6=0.750 l3_p7=0.875 l3_p8=1.000
+l3_p9=0.875 l3_p10=0.750 l3_p11=0.625 l3_p12=0.500 l3_p13=0.375 l3_p14=0.250 l3_p15=0.125
+m_whls=0.875
+fx OTT depth=0.600
+
+[prog pluck]
+# clean saw pluck, the filter snapping shut, dotted delay and room: progressive house
+name = "prog pluck"
+type = growl
+table=0.000 uni=0.333 detn=0.200 cut=0.350 res=0.300 env_a=0.000 env_d=0.450 env_s=0.000
+amp_d=0.500 amp_s=0.350 amp_r=0.300 glid=0.000 dely=0.350 verb=0.300 wide=0.400 sub=0.200
+m_envc=1.000 m_velc=0.625
+fx Imager width=0.650
+
+[prog chord stab]
+# major-triad stack (one key plays the chord) with a filter envelope: house chord stab
+name = "prog chord stab"
+type = growl
+table=0.000 stack=1.000 uni=0.333 detn=0.200 cut=0.420 res=0.250 env_a=0.000 env_d=0.400
+env_s=0.100 amp_d=0.450 amp_s=0.200 amp_r=0.250 dely=0.250 verb=0.250 sub=0.150 m_envc=1.000
+fx Imager width=0.650
+
+[minor chord stab]
+# the same stab on a minor triad
+name = "minor chord stab"
+type = growl
+table=0.000 stack=0.750 uni=0.333 detn=0.200 cut=0.420 res=0.250 env_a=0.000 env_d=0.400
+env_s=0.100 amp_d=0.450 amp_s=0.200 amp_r=0.250 dely=0.250 verb=0.250 sub=0.150 m_envc=1.000
+fx Imager width=0.650
+
+[saw bass prog]
+# round saw bass, slow resonant filter envelope and a little glide
+name = "saw bass prog"
+type = growl
+table=0.000 detn=0.150 cut=0.300 res=0.450 env_a=0.050 env_d=0.550 env_s=0.300 glid=0.250
+drv=0.300 sub=0.550 m_envc=0.875
+fx Transient attack=0.600 sustain=0.450
+
+[slow filter saw]
+# long four-bar filter sweep on a detuned saw: the build-up chord
+name = "slow filter saw"
+type = growl
+table=0.000 uni=0.667 detn=0.300 cut=0.250 res=0.400 drv=0.250 wide=0.500 verb=0.250 sub=0.300
+l1_len=1.000 l1_int=1.000 l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250
+l1_p3=0.375 l1_p4=0.500 l1_p5=0.625 l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.875
+l1_p10=0.750 l1_p11=0.625 l1_p12=0.500 l1_p13=0.375 l1_p14=0.250 l1_p15=0.125 m_l1c=1.000
+fx Imager width=0.700
+
+[zap]
+# three-octave pitch drop in a few milliseconds: laser zap
+name = "zap"
+type = growl
+table=0.000 pos=0.500 penv=0.875 pdec=0.120 amp_d=0.300 amp_s=0.000 amp_r=0.100 cut=0.800
+drv=0.400 sub=0.000
+
+[pew pluck]
+# an octave-and-a-half chirp into a short pluck
+name = "pew pluck"
+type = growl
+table=0.000 uni=0.333 penv=0.688 pdec=0.150 cut=0.550 res=0.300 env_d=0.350 env_s=0.000
+amp_d=0.400 amp_s=0.000 amp_r=0.150 dely=0.200 sub=0.200 m_envc=0.875
+
+[kick bass]
+# sine-ish body with a two-octave pitch drop and the sub on the note: an 808-style kick bass
+name = "kick bass"
+type = growl
+table=0.000 pos=1.000 cut=0.300 res=0.100 penv=0.750 pdec=0.100 sub=0.800 sub_oct=1.000
+drv=0.300 amp_d=0.700 amp_s=0.300 amp_r=0.300
+fx Transient attack=0.750 sustain=0.500 out=0.300
+
+[neuro reese]
+# detuned five-voice reese, slow filter movement, a hint of frequency shift and comb: neurofunk
+name = "neuro reese"
+type = growl
+table=0.000 uni=0.333 detn=0.700 cut=0.350 res=0.350 drv=0.500 fshift=0.519 comb=0.200
+c_fb=0.850 sub=0.600 glid=0.300 l1_len=0.600 l1_int=1.000 l1_loop=1.000 l1_trig=0.000
+l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500 l1_p5=0.691 l1_p6=0.854 l1_p7=0.962
+l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691 l1_p12=0.500 l1_p13=0.309 l1_p14=0.146
+l1_p15=0.038 m_l1c=0.750 m_l1k=0.625
+fx Split_Drive drive=0.450
+fx Flanger rate=0.120 feedback=0.700 mix=0.300
+
+[phaser growl]
+# growl through a deep notch phaser: the swirl that makes a static growl move
+name = "phaser growl"
+type = growl
+table=0.333 pos=0.500 cut=0.600 res=0.300 drv=0.450 sub=0.550 l1_len=0.400 l1_int=1.000
+l1_loop=1.000 l1_trig=0.000 l1_p0=0.000 l1_p1=0.038 l1_p2=0.146 l1_p3=0.309 l1_p4=0.500
+l1_p5=0.691 l1_p6=0.854 l1_p7=0.962 l1_p8=1.000 l1_p9=0.962 l1_p10=0.854 l1_p11=0.691
+l1_p12=0.500 l1_p13=0.309 l1_p14=0.146 l1_p15=0.038 m_l1w=0.875
+fx Phaser stages=0.750 rate=0.400 depth=0.900 feedback=0.300 mix=0.600
+fx OTT depth=0.500
+
+[flanged reese]
+# reese through a jet flanger for the long metallic sweeps
+name = "flanged reese"
+type = growl
+table=0.000 detn=0.650 uni=0.333 cut=0.400 res=0.250 drv=0.400 sub=0.600
+fx Flanger rate=0.120 feedback=0.880 mix=0.500
+fx OTT depth=0.450
+
+[brass growl]
+# brostep brass: octave stack, filter envelope and the wavetable moving on every note
+name = "brass growl"
+type = growl
+table=0.333 uni=0.333 stack=0.500 detn=0.200 cut=0.450 res=0.300 env_a=0.050 env_d=0.500
+env_s=0.400 drv=0.500 fold=0.100 sub=0.500 l1_len=0.200 l1_int=1.000 l1_loop=1.000
+l1_trig=1.000 l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625
+l1_p6=0.750 l1_p7=0.875 l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750
+l1_p13=0.688 l1_p14=0.625 l1_p15=0.562 m_envc=0.875 m_l1w=0.875
+fx OTT depth=0.650
+fx Split_Drive drive=0.400
+
+[yoi comb]
+# the yoi vowel sweep with a comb an octave up following it
+name = "yoi comb"
+type = growl
+table=0.667 pos=0.600 ftype=1.000 vow=0.080 res=0.500 drv=0.500 glid=0.200 comb=0.350
+c_tune=0.750 c_fb=0.880 sub=0.500 l1_len=0.400 l1_int=1.000 l1_loop=1.000 l1_trig=1.000
+l1_p0=0.000 l1_p1=0.125 l1_p2=0.250 l1_p3=0.375 l1_p4=0.500 l1_p5=0.625 l1_p6=0.750 l1_p7=0.875
+l1_p8=1.000 l1_p9=0.938 l1_p10=0.875 l1_p11=0.812 l1_p12=0.750 l1_p13=0.688 l1_p14=0.625
+l1_p15=0.562 m_l1v=1.000 m_l1k=0.750
+fx OTT depth=0.550

@@ -1,6 +1,6 @@
 [package]
 name = "ling-kernel"
-version = "2030.1.36"
+version = "2030.1.37"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 description = "Minimal kernel runtime for Ling — no_std CPU intrinsics, VGA, serial, and boot support"
@@ -26,7 +26,7 @@ request_framebuffer = []
 # needs a `cc` cross-compiler that doesn't exist for this bare-metal
 # target — confirmed by an actual failed RPi build). Slower, portably
 # correct on every architecture instead.
-ling-osdaw = { path = "../ling-osdaw", version = "2030.0.1" }
+ling-osdaw = { path = "../ling-osdaw", version = "2030.0.2" }
 # Pure-Rust no_std maths (sin/cos/pow/log10/exp/floor…) for the Ling value
 # runtime (`lingrt`) — compiled `.ling` code calls these through the AOT ABI.
 libm = "0.2"
@@ -89,7 +89,7 @@ miniz_oxide = { version = "0.8", default-features = false, features = ["with-all
 # `cargo test` and stays reusable outside the kernel. no_std, zero deps,
 # pure functions: HTML-subset in, styled wrapped lines + a link table
 # out. The kernel side (drivers/browser.rs) only fetches, scrolls, draws.
-bring-browser = { path = "../../../bring-browser" }
+bring-browser = { path = "../../../bring-browser", version = "0.1.0" }
 
 # horizon: LingOS's second web engine, sibling to bring-browser -- a real
 # DOM + CSS box-model layout with a <canvas> 2D surface, producing a pixel
@@ -97,7 +97,7 @@ bring-browser = { path = "../../../bring-browser" }
 # and dynamic display list don't fit fixed buffers the way bring's do),
 # zero third-party deps. The kernel side (drivers/horizon.rs) only
 # fetches, scrolls, draws -- same division of labor as bring-browser.
-horizon-browser = { path = "../../../horizon-browser" }
+horizon-browser = { path = "../../../horizon-browser", version = "0.1.0" }
 
 # ling-messenger: P2P end-to-end-encrypted chat core -- identity, an
 # authenticated handshake, and encrypted framing. no_std + alloc, real
@@ -106,11 +106,11 @@ horizon-browser = { path = "../../../horizon-browser" }
 # does LAN discovery, UDP I/O, and the desktop UI -- see its own README
 # for exactly what security properties the handshake does and doesn't
 # provide.
-ling-messenger = { path = "../../../ling-messenger" }
+ling-messenger = { path = "../../../ling-messenger", version = "0.1.0" }
 
 # Qwen3 inference, freestanding (no_std + alloc + libm): the `ask` command and the model task in drivers/llm.rs. The weights live on a
 # raw second IDE disk (see live/make-model-disk.py in LingOS), so the kernel image itself stays small.
-ling-llm = { path = "../ling-llm" }
+ling-llm = { path = "../ling-llm", version = "2030.0.2" }
 
 [profile.release]
 lto = "fat"

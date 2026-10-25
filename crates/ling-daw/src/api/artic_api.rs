@@ -27,6 +27,10 @@ pub struct Job {
     written: usize,
     kept: usize,
     tracks: Vec<usize>,
+    /// bars per phrase, 0 = read from the music
+    phrase: f64,
+    /// the form of the last track written (8-bar phrases: A A B A)
+    form: String,
 }
 
 const CHUNK: usize = 10;
@@ -144,9 +148,14 @@ impl Daw {
                     }
                     let mut c = candidates(t, ti, &mut kept);
                     if mode != "random" {
-                        // the parameters that shape a sound most come first when the cap bites
+                        // the parameters that shape a sound most come first when the cap bites; the effects keep up to 12 places so a
+                        // big instrument does not crowd them out
                         c.sort_by_key(|x| art::priority(x.role));
-                        c.truncate(PER_TRACK);
+                        let (mut fx, mut inst): (Vec<Cand>, Vec<Cand>) = c.into_iter().partition(|x| x.key.starts_with("fx"));
+                        fx.truncate(12);
+                        inst.truncate(PER_TRACK.saturating_sub(fx.len()));
+                        inst.extend(fx);
+                        c = inst;
                     }
                     if !c.is_empty() {
                         per.push((ti, c));
@@ -183,7 +192,9 @@ impl Daw {
                 let prompt = a.s(5);
                 let n = chunks.len();
                 drop(en);
-                self.artic = Some(Job { chunks, intent: art::read_prompt(&prompt), prompt, amount: a.n(4).clamp(0.0, 1.0) as f32, seed, written: 0, kept, tracks });
+                // (7th) phrase length in bars: 4 .. 64, 0 = read from the music
+                let phrase = a.n(6).clamp(0.0, 64.0);
+                self.artic = Some(Job { chunks, intent: art::read_prompt(&prompt), prompt, amount: a.n(4).clamp(0.0, 1.0) as f32, seed, written: 0, kept, tracks, phrase, form: String::new() });
                 ok!(n)
             }
             "daw_artic_prompt" => {
@@ -211,7 +222,22 @@ impl Daw {
                 let picks = art::parse_reply(&a.s(1));
                 let (b0, b1) = track_range(&en, ti);
                 let notes = en.project.tracks.get(ti).map(track_notes).unwrap_or_default();
-                let block = if b1 - b0 >= 128.0 { 32.0 } else if b1 - b0 >= 32.0 { 16.0 } else { 8.0 };
+                // the rest of the song's onsets, drums first: what a lane locks to when its own track has no notes
+                let mut groove: Vec<f64> = vec![];
+                for (oi, ot) in en.project.tracks.iter().enumerate() {
+                    if oi != ti && ot.inst_kind == "drums" {
+                        groove.extend(track_notes(ot).into_iter().map(|n| n.0));
+                    }
+                }
+                if groove.len() < 8 {
+                    for (oi, ot) in en.project.tracks.iter().enumerate() {
+                        if oi != ti && ot.inst_kind != "drums" {
+                            groove.extend(track_notes(ot).into_iter().map(|n| n.0));
+                        }
+                    }
+                }
+                groove.sort_by(f64::total_cmp);
+                job.form = art::form_text(&art::phrase_map(b0, b1, &notes, job.phrase));
                 let mut wrote = 0usize;
                 // a small model tends to repeat one answer for every parameter: after the second copy of the same pick the rest are chosen locally
                 let sig = |p: &art::Pick| format!("{}|{:?}|{:?}|{:?}", p.pattern.to_lowercase(), p.rate, p.lo.map(|x| (x * 20.0) as i32), p.hi.map(|x| (x * 20.0) as i32));
@@ -232,7 +258,7 @@ impl Daw {
                     let mut rng = Rng::new(job.seed ^ ((a.u(0) as u64) << 20) ^ ((k as u64 + 1) * 0x9E37));
                     let pick = usable[k];
                     let spec = art::spec_for(c.role, c.cur, job.amount, &job.intent, pick, &mut rng, !notes.is_empty());
-                    let ctx = art::Ctx { b0, b1, block, notes: &notes, seed: (job.seed as u32).wrapping_add((ti * 131 + k) as u32), fills: job.intent.fills };
+                    let ctx = art::Ctx { b0, b1, phrase: job.phrase, notes: &notes, groove: &groove, seed: (job.seed as u32).wrapping_add((ti * 131 + k) as u32), fills: job.intent.fills };
                     let mut pts = art::render(&spec, &ctx);
                     if pts.len() < 2 {
                         continue;
@@ -272,7 +298,18 @@ impl Daw {
                     tr.len(),
                     if tr.len() == 1 { "" } else { "s" },
                     if job.kept > 0 { format!(" ({} you drew yourself left alone)", job.kept) } else { String::new() }
-                ))
+                ) + &if job.form.is_empty() { String::new() } else { format!(", {}", job.form) })
+            }
+            "daw_artic_skin" => {
+                // (track, style "auto"|"riddim"|"brostep"|"neuro"|"melodic", amount 0..1, flair 0..1, seed) -> a sentence: the track's
+                // MIDI is re-performed as a dubstep bass (gated hits, per-hit envelopes, risers, chirps, glides) - see growlskin.rs.
+                // The loop range when one is set, else the track's clips. Ctrl+Z (the caller pushes undo) brings it all back.
+                let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                let (b0, b1) = track_range(&en, a.u(0));
+                let r = skin_track(&mut en, a.u(0), b0, b1, &a.s(1), a.n(2) as f32, a.n(3) as f32, a.n(4).abs() as u64 + 1);
+                drop(en);
+                self.touch();
+                ok!(r)
             }
             "daw_artic_end" => {
                 self.artic = None;
@@ -281,4 +318,92 @@ impl Daw {
             _ => Err(format!("unknown builtin {name}")),
         }
     }
+}
+
+/// Skin a Growl track's notes in b0..b1 (see growlskin.rs): the notes inside are re-performed and the lanes' points inside are
+/// replaced; everything outside the range stays. Returns the summary sentence (or why nothing was done).
+pub(crate) fn skin_track(en: &mut crate::engine::Engine, ti: usize, b0: f64, b1: f64, style: &str, amount: f32, flair: f32, seed: u64) -> String {
+    let Some(t) = en.project.tracks.get_mut(ti) else { return String::new() };
+    let params: Vec<(String, f32)> = t.inst.as_ref().map(|i| i.params().into_iter().map(|(n, v)| (n.to_string(), v)).collect()).unwrap_or_default();
+    if !params.iter().any(|p| p.0 == "cut") {
+        return "This track's instrument has no filter cutoff to shape: the skin is made for Ling Growl".to_string();
+    }
+    // every MIDI note in absolute beats, looped clips unrolled; (key, start, len, vel), the clip it lives in, the note itself
+    let mut src: Vec<((u8, f64, f64, f32), usize, Note)> = vec![];
+    for (ci, c) in t.clips.iter().enumerate() {
+        let ClipData::Midi(notes) = &c.data else { continue };
+        let reps = if c.loop_len > 0.1 { ((c.len / c.loop_len).ceil() as usize).clamp(1, 512) } else { 1 };
+        for r in 0..reps {
+            let off = r as f64 * c.loop_len;
+            for n in notes {
+                if c.loop_len > 0.1 && n.start >= c.loop_len {
+                    continue;
+                }
+                let on = c.start + off + n.start;
+                if on < c.end() - 1e-6 {
+                    let mut m = n.clone();
+                    m.start = off + n.start;
+                    src.push(((n.key, on, n.len.min(c.end() - on), n.vel), ci, m));
+                }
+            }
+        }
+    }
+    src.sort_by(|x, y| x.0 .1.total_cmp(&y.0 .1));
+    let inr: Vec<usize> = (0..src.len()).filter(|k| src[*k].0 .1 >= b0 - 1e-6 && src[*k].0 .1 < b1).collect();
+    if inr.is_empty() {
+        return "No notes to skin in this track (or in the loop range)".to_string();
+    }
+    let part: Vec<(u8, f64, f64, f32)> = inr.iter().map(|k| src[*k].0).collect();
+    let style = crate::growlskin::style_for(style, &part);
+    let lookup = |n: &str| params.iter().find(|p| p.0 == n).map(|p| p.1).unwrap_or(f32::NAN);
+    let sk = crate::growlskin::skin(&part, b0, b1, style, amount, flair, seed, &lookup);
+    // back into the clips: the notes outside the range stay, the skinned ones go to the clip their source came from
+    let mut per: Vec<Vec<Note>> = t.clips.iter().map(|_| vec![]).collect();
+    for (k, (n, ci, m)) in src.iter().enumerate() {
+        if !inr.contains(&k) {
+            let mut m = m.clone();
+            m.len = m.len.min(n.2.max(0.01));
+            per[*ci].push(m);
+        }
+    }
+    for sn in &sk.notes {
+        let (_, ci, m) = &src[inr[sn.src.min(inr.len() - 1)]];
+        let c = &t.clips[*ci];
+        let mut m = m.clone();
+        m.key = sn.key;
+        m.start = sn.start - c.start;
+        m.len = sn.len.min(c.len - m.start).max(0.01);
+        m.vel = sn.vel;
+        m.lyric = String::new();
+        if m.start >= 0.0 && m.start < c.len {
+            per[*ci].push(m);
+        }
+    }
+    for (ci, c) in t.clips.iter_mut().enumerate() {
+        if !matches!(c.data, ClipData::Midi(_)) {
+            continue;
+        }
+        let mut v = std::mem::take(&mut per[ci]);
+        v.sort_by(|x, y| x.start.total_cmp(&y.start));
+        c.loop_len = 0.0;
+        c.data = ClipData::Midi(v);
+    }
+    // the lanes: points inside the range are replaced, the rest of a lane is kept
+    for (name, pts) in sk.lanes {
+        if !params.iter().any(|p| p.0 == name) || pts.len() < 2 {
+            continue;
+        }
+        let li = match t.auto.iter().position(|l| l.param == name) {
+            Some(i) => i,
+            None => {
+                t.auto.push(AutoLane { param: name.to_string(), points: vec![] });
+                t.auto.len() - 1
+            }
+        };
+        let lane = &mut t.auto[li].points;
+        lane.retain(|p| p.0 < b0 - 1e-6 || p.0 > b1 + 1e-6);
+        lane.extend(pts);
+        lane.sort_by(|x, y| x.0.total_cmp(&y.0));
+    }
+    sk.summary
 }

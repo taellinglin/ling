@@ -40,7 +40,7 @@ impl Daw {
                     }
                 };
                 fx.set_label(&a.s(1));
-                let slot = EffectSlot { name: a.s(1), params: fx.defaults(), bypass: false, fx: Box::new(fx) };
+                let slot = EffectSlot { name: a.s(1), params: fx.defaults(), bypass: false, wet: 1.0, fx: Box::new(fx) };
                 let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
                 let Some(v) = target_fx(&mut en, a.n(0) as i64) else { return ok!(-1.0) };
                 v.push(slot);

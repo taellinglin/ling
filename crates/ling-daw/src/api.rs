@@ -126,6 +126,7 @@ mod scriptdsp_api;
 mod vocmidi_api;
 mod vedit_api;
 mod rvc_api;
+mod cloud_api;
 mod song_api;
 
 /// The patch file a role table's (plugin, name) means, for the sound catalogue.
@@ -231,6 +232,22 @@ fn fx_target(e: &mut Engine, t: i64) -> Option<&mut Vec<EffectSlot>> {
     }
 }
 
+type PrepResult = Result<(Option<Arc<crate::midi_import::ImportedMidi>>, HashMap<String, Arc<Sample>>), String>;
+
+/// a background import prepare (see daw_import_prepare)
+struct ImportPrep {
+    path: String,
+    handle: Option<std::thread::JoinHandle<PrepResult>>,
+    pct: Arc<AtomicU32>,
+    stage: Arc<std::sync::Mutex<String>>,
+    done: Option<PrepResult>,
+}
+
+fn import_prep() -> &'static std::sync::Mutex<Option<ImportPrep>> {
+    static P: std::sync::OnceLock<std::sync::Mutex<Option<ImportPrep>>> = std::sync::OnceLock::new();
+    P.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 impl Daw {
     pub fn new() -> Daw {
         install_panic_log();
@@ -266,6 +283,26 @@ impl Daw {
         true
     }
 
+    /// what a background import prepare left for `path`: the parsed song (None for an audio file), its decoded samples going into
+    /// the sample cache; None while it runs or when it was for another file
+    fn take_prepared(&mut self, path: &str, consume: bool) -> Option<Option<Arc<crate::midi_import::ImportedMidi>>> {
+        let mut g = import_prep().lock().unwrap_or_else(|p| p.into_inner());
+        let ready = g.as_mut().filter(|p| p.path == path)?;
+        if ready.done.is_none() && ready.handle.as_ref().map_or(false, |h| h.is_finished()) {
+            ready.done = Some(ready.handle.take().map_or(Err("stopped".into()), |h| h.join().unwrap_or_else(|_| Err("the import crashed".into()))));
+        }
+        let Some(Ok((mid, samples))) = ready.done.as_ref() else { return None };
+        let (mid, samples) = (mid.clone(), samples.clone());
+        if consume {
+            *g = None;
+        }
+        drop(g);
+        for (k, v) in samples {
+            self.samples.insert(k, v);
+        }
+        Some(mid)
+    }
+
     fn load_sample_cached(&mut self, path: &str) -> Result<Arc<Sample>, String> {
         if let Some(s) = self.samples.get(path) {
             return Ok(s.clone());
@@ -293,7 +330,7 @@ impl Daw {
         if name.starts_with("daw_script_") {
             return self.scriptdsp_dispatch(name, a);
         }
-        if name.starts_with("daw_song_") {
+        if name.starts_with("daw_song_") || name.starts_with("daw_deco_") {
             return self.song_dispatch(name, a);
         }
         if name.starts_with("daw_rvc_") {
@@ -313,6 +350,9 @@ impl Daw {
         }
         if name.starts_with("daw_kar_") {
             return self.kar_dispatch(name, a);
+        }
+        if name.starts_with("daw_cloud_") {
+            return self.cloud_dispatch(name, a);
         }
         if name.starts_with("daw_trk_") {
             return self.trk_dispatch(name, a);
@@ -755,7 +795,7 @@ impl Daw {
                 let valid = if a.n(0) < 0.0 {
                     param == "vol"
                         || param.strip_prefix("fx").and_then(|r| r.split_once('.')).map(|(i, p)| {
-                            i.parse::<usize>().ok().and_then(|i| en.project.master_effects.get(i)).map(|e| p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false)
+                            i.parse::<usize>().ok().and_then(|i| en.project.master_effects.get(i)).map(|e| p == "wet" || p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false)
                         }).unwrap_or(false)
                 } else {
                     match en.project.tracks.get(a.u(0)) {
@@ -765,7 +805,7 @@ impl Daw {
                                 || param == "pan"
                                 || t.inst.as_ref().map(|i| i.params().iter().any(|(n, _)| *n == param)).unwrap_or(false)
                                 || param.strip_prefix("fx").and_then(|r| r.split_once('.')).map(|(i, p)| {
-                                    i.parse::<usize>().ok().and_then(|i| t.effects.get(i)).map(|e| p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false)
+                                    i.parse::<usize>().ok().and_then(|i| t.effects.get(i)).map(|e| p == "wet" || p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false)
                                 }).unwrap_or(false)
                         }
                     }
@@ -810,7 +850,7 @@ impl Daw {
                     || param
                         .strip_prefix("fx")
                         .and_then(|r| r.split_once('.'))
-                        .map(|(i, p)| i.parse::<usize>().ok().and_then(|i| t.effects.get(i)).map(|e| p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false))
+                        .map(|(i, p)| i.parse::<usize>().ok().and_then(|i| t.effects.get(i)).map(|e| p == "wet" || p.parse::<usize>().map(|p| p < e.params.len()).unwrap_or(false)).unwrap_or(false))
                         .unwrap_or(false);
                 let li = a.u(1);
                 if !valid || li >= t.auto.len() {
@@ -1227,6 +1267,7 @@ impl Daw {
                     "solo" => t.solo as i32 as f64,
                     "meter_l" => t.meter[0] as f64,
                     "meter_r" => t.meter[1] as f64,
+                    "asleep" => en.asleep(a.u(0)) as i32 as f64,
                     "audio" => matches!(t.kind, TrackKind::Audio) as i32 as f64,
                     "cr" => ((t.color >> 16) & 255) as f64,
                     "cg" => ((t.color >> 8) & 255) as f64,
@@ -1268,6 +1309,8 @@ impl Daw {
             }
             "daw_clip_add_audio" => {
                 let path = a.s(1);
+                // a background prepare may have decoded it already
+                let _ = self.take_prepared(&path, true);
                 let smp = match self.load_sample_cached(&path) {
                     Ok(s) => s,
                     Err(x) => {
@@ -1339,10 +1382,68 @@ impl Daw {
             }
             "daw_ai_roles" => ok!(crate::ai_import::ROLES.join(", ")),
             "daw_ai_style" => ok!(crate::ai_import::parse_reply(&a.s(0)).style),
+            "daw_import_prepare" => {
+                // (path) -> starts reading / parsing / decoding the file in the background (MIDI, tracker modules, FL Studio projects,
+                // audio); daw_import_poll follows it, and daw_midi_scan / daw_midi_import / daw_clip_add_audio use what it made
+                let path = a.s(0);
+                let pct = Arc::new(AtomicU32::new(0));
+                let stage = Arc::new(std::sync::Mutex::new("reading the file".to_string()));
+                let (p2, s2, path2) = (pct.clone(), stage.clone(), path.clone());
+                let set = move |p: u32, st: &str| {
+                    p2.store(p, Ordering::Relaxed);
+                    *s2.lock().unwrap_or_else(|x| x.into_inner()) = st.to_string();
+                };
+                let h = std::thread::spawn(move || -> PrepResult {
+                    let ext = std::path::Path::new(&path2).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    let mut samples: HashMap<String, Arc<Sample>> = HashMap::new();
+                    if ["wav", "mp3", "flac", "ogg", "wv", "aif", "aiff", "m4a"].contains(&ext.as_str()) {
+                        set(10, "decoding the audio");
+                        samples.insert(path2.clone(), load_sample(&path2)?);
+                        set(1000, "ready");
+                        return Ok((None, samples));
+                    }
+                    set(20, "reading the file");
+                    let data = std::fs::read(&path2).map_err(|x| format!("{path2}: {x}"))?;
+                    set(80, if crate::tracker::looks_like_module(&data) { "unpacking the module samples" } else { "reading the parts" });
+                    let m = crate::midi_import::parse_any(&path2, &data)?;
+                    let paths: Vec<String> = m.tracks.iter().flat_map(|t| t.samples.iter().map(|(_, p)| p.clone())).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+                    for (i, sp) in paths.iter().enumerate() {
+                        set(300 + (650 * i / paths.len().max(1)) as u32, &format!("decoding sample {} of {}", i + 1, paths.len()));
+                        if let Ok(smp) = load_sample(sp) {
+                            samples.insert(sp.clone(), smp);
+                        }
+                    }
+                    set(1000, "ready");
+                    Ok((Some(Arc::new(m)), samples))
+                });
+                *import_prep().lock().unwrap_or_else(|p| p.into_inner()) = Some(ImportPrep { path, handle: Some(h), pct, stage, done: None });
+                ok!(true)
+            }
+            "daw_import_poll" => {
+                // () -> [state (0 none, 1 working, 2 ready, -1 failed), progress 0..1, what it is doing / why it failed]
+                let mut g = import_prep().lock().unwrap_or_else(|p| p.into_inner());
+                let Some(pr) = g.as_mut() else { return ok!(Val::List(vec![Val::Num(0.0), Val::Num(0.0), Val::Str(String::new())])) };
+                if pr.done.is_none() && pr.handle.as_ref().map_or(false, |h| h.is_finished()) {
+                    pr.done = Some(pr.handle.take().map_or(Err("stopped".into()), |h| h.join().unwrap_or_else(|_| Err("the import crashed".into()))));
+                }
+                let pct = pr.pct.load(Ordering::Relaxed) as f64 / 1000.0;
+                let stage = pr.stage.lock().unwrap_or_else(|x| x.into_inner()).clone();
+                ok!(Val::List(match &pr.done {
+                    None => vec![Val::Num(1.0), Val::Num(pct), Val::Str(stage)],
+                    Some(Ok(_)) => vec![Val::Num(2.0), Val::Num(1.0), Val::Str("ready".into())],
+                    Some(Err(e)) => vec![Val::Num(-1.0), Val::Num(0.0), Val::Str(e.clone())],
+                }))
+            }
             "daw_midi_scan" => {
                 // path -> flat [name, program (-1 = drums, -2 = audio, -3 = module samples), channel, notes, bank, GM name, percussive 0/1, has own samples 0/1] per part, in import order; [] on error
-                let Ok(data) = std::fs::read(a.s(0)) else { return ok!(Val::List(vec![])) };
-                match crate::midi_import::parse_any(&a.s(0), &data) {
+                let parsed = match self.take_prepared(&a.s(0), false) {
+                    Some(Some(m)) => Ok(m),
+                    _ => match std::fs::read(a.s(0)) {
+                        Ok(data) => crate::midi_import::parse_any(&a.s(0), &data).map(Arc::new),
+                        Err(_) => return ok!(Val::List(vec![])),
+                    },
+                };
+                match parsed {
                     Ok(m) => {
                         let mut v = vec![];
                         for t in &m.tracks {
@@ -1366,8 +1467,15 @@ impl Daw {
             "daw_midi_import" => {
                 // (path, beat) -> number of tracks created; each MIDI track/channel gets its own track,
                 // GM program -> synth patch, channel 10 -> drum kit
-                let data = std::fs::read(a.s(0)).map_err(|x| format!("{}: {x}", a.s(0)))?;
-                let mid = match crate::midi_import::parse_any(&a.s(0), &data) {
+                let prepared = self.take_prepared(&a.s(0), true).flatten();
+                let parsed = match prepared {
+                    Some(m) => Ok(m),
+                    None => {
+                        let data = std::fs::read(a.s(0)).map_err(|x| format!("{}: {x}", a.s(0)))?;
+                        crate::midi_import::parse_any(&a.s(0), &data).map(Arc::new)
+                    }
+                };
+                let mid = match parsed {
                     Ok(m) => m,
                     Err(x) => {
                         self.status = format!("MIDI import failed: {x}");
@@ -1603,6 +1711,8 @@ impl Daw {
                     _ => vec![],
                 };
                 let (mut mapped, mut loose) = (0usize, 0usize);
+                // the raw file again for the FL Studio automation clips (only when they are wanted)
+                let data = if auto_mode != "skip" { std::fs::read(a.s(0)).unwrap_or_default() } else { vec![] };
                 if auto_mode != "skip" && crate::flp_import::looks_like_flp(&data) {
                     let made_range = n0..en.project.tracks.len();
                     for (k, au) in crate::flp_import::automation(&data).iter().enumerate() {
@@ -2117,18 +2227,79 @@ impl Daw {
                 let en = e!();
                 ok!(Val::List(en.project.tracks.get(a.u(0)).and_then(|t| t.inst.as_ref()).map(|i| i.presets().iter().map(|s| Val::Str(s.to_string())).collect()).unwrap_or_default()))
             }
+            "daw_inst_preset_info" => {
+                // (track, preset) -> what the preset sounds like and is for, "" when it has no description
+                let en = e!();
+                ok!(en
+                    .project
+                    .tracks
+                    .get(a.u(0))
+                    .map(|t| {
+                        // the measured table (with the preset's own words inside), else what the instrument says
+                        let m = crate::presetinfo::info(&t.inst_kind, &a.s(1));
+                        if m.is_empty() { t.inst.as_ref().map(|i| i.preset_info(&a.s(1))).unwrap_or_default() } else { m }
+                    })
+                    .unwrap_or_default())
+            }
+            "daw_inst_command" => {
+                // (track, command, text) -> the instrument's answer as a list of numbers (Ling Chip: "load" a WAV, "unload")
+                let r = {
+                    let mut en = e!();
+                    en.project.tracks.get_mut(a.u(0)).and_then(|t| t.inst.as_mut()).map(|i| i.command(&a.s(1), &[], &a.s(2))).unwrap_or_default()
+                };
+                self.touch();
+                ok!(Val::List(r.into_iter().map(Val::Num).collect()))
+            }
+            "daw_inst_info" => {
+                // (track, what) -> instrument-specific text (Ling Chip: "sample", "samples", "file")
+                let en = e!();
+                ok!(en.project.tracks.get(a.u(0)).and_then(|t| t.inst.as_ref()).map(|i| i.info(&a.s(1))).unwrap_or_default())
+            }
             "daw_inst_categories" => {
                 // (track) -> [preset, category, ...] for instruments whose presets are grouped (Prism); [] otherwise
                 let en = e!();
                 ok!(Val::List(en.project.tracks.get(a.u(0)).and_then(|t| t.inst.as_ref()).map(|i| i.preset_categories().into_iter().flat_map(|(n, c)| [Val::Str(n), Val::Str(c)]).collect()).unwrap_or_default()))
             }
             "daw_inst_preset" => {
-                if let Some(i) = e!().project.tracks.get_mut(a.u(0)).and_then(|t| t.inst.as_mut()) {
-                    i.load_preset(&a.s(1));
+                let mut lifted = false;
+                if let Some(t) = e!().project.tracks.get_mut(a.u(0)) {
+                    if let Some(i) = t.inst.as_mut() {
+                        i.load_preset(&a.s(1));
+                        crate::presetinfo::apply_trim(i.as_mut(), &t.inst_kind, &a.s(1));
+                    }
+                    lifted = lift_low_bass(t, &a.s(1));
+                }
+                if lifted {
+                    self.status = format!("{}: the bassline moved up an octave (this bass preset already sounds an octave down)", a.s(1));
                 }
                 self.touch();
                 Ok(Val::Unit)
             }
+            "daw_inst_preset_fx" => {
+                // (track, preset) -> effects loaded: the Growl preset's suggested chain replaces the track's effects (-1 = it has none)
+                let chain = crate::dsp::growl::Growl::preset_fx(&a.s(1));
+                if chain.is_empty() {
+                    return Ok(Val::Num(-1.0));
+                }
+                let mut en = e!();
+                let Some(t) = en.project.tracks.get_mut(a.u(0)) else { return Ok(Val::Num(-1.0)) };
+                t.effects.clear();
+                for (fxn, ps) in chain {
+                    if let Some(mut slot) = crate::model::EffectSlot::new(&fxn, sr) {
+                        for (k, v) in ps {
+                            if let Some(i) = slot.params.iter().position(|p| p.0 == k) {
+                                slot.set(i, v);
+                            }
+                        }
+                        t.effects.push(slot);
+                    }
+                }
+                let n = t.effects.len();
+                drop(en);
+                self.touch();
+                ok!(n)
+            }
+            "daw_inst_preset_has_fx" => ok!(crate::dsp::growl::Growl::preset_fx(&a.s(0)).len()),
             "daw_inst_parts" => {
                 let en = e!();
                 ok!(Val::List(en.project.tracks.get(a.u(0)).and_then(|t| t.inst.as_ref()).map(|i| i.parts().iter().map(|s| Val::Str(s.to_string())).collect()).unwrap_or_default()))
@@ -2179,6 +2350,11 @@ impl Daw {
                     t.name = p.name.clone();
                 }
                 t.effects = project::patch_effects(&p, sr);
+                let lifted = lift_low_bass(t, &p.name);
+                drop(en);
+                if lifted {
+                    self.status = format!("{}: the bassline moved up an octave (this bass preset already sounds an octave down)", if p.name.is_empty() { "Bass preset" } else { &p.name });
+                }
                 self.touch();
                 ok!(true)
             }
@@ -2317,6 +2493,25 @@ impl Daw {
                         v.insert(j, s);
                     }
                 }
+                self.touch();
+                Ok(Val::Unit)
+            }
+            "daw_fx_wet" => {
+                // (target, idx) -> the effect's dry / wet, 0..1
+                let mut en = e!();
+                ok!(fx_target(&mut en, a.n(0) as i64).and_then(|v| v.get(a.u(1)).map(|s| s.wet as f64)).unwrap_or(1.0))
+            }
+            "daw_fx_set_wet" => {
+                // (target, idx, 0..1): the dry / wet of the whole effect; moving it while recording automation writes a point on "fx<i>.wet"
+                let mut en = e!();
+                let v = (a.n(2) as f32).clamp(0.0, 1.0);
+                if let Some(s) = fx_target(&mut en, a.n(0) as i64).and_then(|v| v.get_mut(a.u(1))) {
+                    if v.is_finite() {
+                        s.wet = v;
+                    }
+                }
+                let pname = format!("fx{}.wet", a.u(1));
+                en.record_auto(if a.n(0) >= 0.0 { Some(a.u(0)) } else { None }, &pname, v);
                 self.touch();
                 Ok(Val::Unit)
             }

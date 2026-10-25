@@ -61,10 +61,7 @@ const WAIT_BUDGET_US: u64 = 8_000_000;
 static mut NET_OWNER: i64 = -1;
 static mut NET_DEPTH: u32 = 0;
 
-/// Acquire the net lock (re-entrant per task). Yields until free. x86_64 only
-/// -- aarch64 has no cooperative kernel scheduler (no concurrent netstack
-/// users there), so the lock is a no-op.
-#[cfg(target_arch = "x86_64")]
+/// Acquire the net lock (re-entrant per task). Yields until free.
 pub fn net_acquire() {
     let me = crate::proc::sched::getpid() as i64;
     unsafe {
@@ -75,11 +72,7 @@ pub fn net_acquire() {
         NET_DEPTH += 1;
     }
 }
-#[cfg(not(target_arch = "x86_64"))]
-pub fn net_acquire() {}
-
 /// Release one level of the net lock.
-#[cfg(target_arch = "x86_64")]
 pub fn net_release() {
     unsafe {
         if NET_DEPTH > 0 {
@@ -90,8 +83,6 @@ pub fn net_release() {
         }
     }
 }
-#[cfg(not(target_arch = "x86_64"))]
-pub fn net_release() {}
 
 /// RAII guard for `net_acquire`/`net_release` -- covers the many early returns
 /// in a fetch path without a manual release at each.

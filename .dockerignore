@@ -14,3 +14,7 @@ AST/
 docs/
 editors/
 cache/
+
+# The macOS SDK goes in through its own named build context (--build-context macos-sdk=...),
+# never the main one, so a multi-GB .xip is not sent or COPYed with every build
+docker/macos-sdk/

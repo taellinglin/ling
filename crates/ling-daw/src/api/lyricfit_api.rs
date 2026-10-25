@@ -36,6 +36,20 @@ impl Daw {
                 let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
                 let Some(clip) = en.project.tracks.get_mut(a.u(0)).and_then(|t| t.clips.get_mut(a.u(1))) else { return ok!(Val::List(vec![])) };
                 let ClipData::Midi(notes) = &mut clip.data else { return ok!(Val::List(vec![])) };
+                // "shape": the sung line is first reshaped to the words (a note per syllable, the last word held, a breath after it)
+                if opts.shape && apply && !notes.is_empty() {
+                    let input: Vec<NoteIn> = notes.iter().map(|n| NoteIn { start: n.start, len: n.len, key: n.key }).collect();
+                    let shaped = lyricfit::shape(&input, &raw, &opts);
+                    let old = notes.clone();
+                    *notes = shaped
+                        .iter()
+                        .map(|s| {
+                            // velocity and expression from the note that was sounding there
+                            let src = old.iter().filter(|n| n.start <= s.start + 1e-6).last().or(old.first()).cloned().unwrap_or_else(|| Note::new(0.0, 1.0, s.key, 0.8));
+                            Note { start: s.start, len: s.len, key: s.key, lyric: String::new(), ..src }
+                        })
+                        .collect();
+                }
                 let input: Vec<NoteIn> = notes.iter().map(|n| NoteIn { start: n.start, len: n.len, key: n.key }).collect();
                 let (lyrics, info) = lyricfit::fit(&input, &raw, &opts);
                 let given = lyrics.iter().filter(|l| !l.is_empty()).count();

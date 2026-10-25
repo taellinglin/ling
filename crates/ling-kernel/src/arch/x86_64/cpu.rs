@@ -85,6 +85,11 @@ pub unsafe fn write_msr(msr: u32, val: u64) {
     asm!("wrmsr", in("eax") lo, in("edx") hi, in("ecx") msr, options(nomem, nostack));
 }
 
+/// Restore RFLAGS saved by [`read_flags`] (the interrupt flag with it).
+pub unsafe fn write_flags(flags: u64) {
+    core::arch::asm!("push {0}", "popfq", in(reg) flags, options(nomem));
+}
+
 pub unsafe fn read_flags() -> u64 {
     let val: u64;
     asm!("pushfq; pop {}", out(reg) val, options(nomem, nostack));

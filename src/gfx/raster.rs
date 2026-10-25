@@ -2333,8 +2333,36 @@ pub fn fill_triangle_tex_shaded(
                     if pass {
                         if iw > 1e-12 {
                             let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };
-                            let u = (v[0].uw * w0 + v[1].uw * w1 + v[2].uw * w2) * inv;
-                            let vv = (v[0].vw * w0 + v[1].vw * w1 + v[2].vw * w2) * inv;
+                            let mut u = (v[0].uw * w0 + v[1].uw * w1 + v[2].uw * w2) * inv;
+                            let mut vv = (v[0].vw * w0 + v[1].vw * w1 + v[2].vw * w2) * inv;
+                            // shockwave rings: the wave height h = env * sin(phase) is never
+                            // drawn as geometry; its radial slope bends the texture lookup like
+                            // light through a rippling surface, lights one flank and darkens the
+                            // other, and the crests catch a soft highlight
+                            let (mut bump, mut glint) = (1.0f32, 0.0f32);
+                            if let Some(rp) = shade.map(|s| &s.ripples).filter(|r| !r.is_empty()) {
+                                let wx = (v[0].wx * w0 + v[1].wx * w1 + v[2].wx * w2) * inv;
+                                let wz = (v[0].wz * w0 + v[1].wz * w1 + v[2].wz * w2) * inv;
+                                let (mut gu, mut gv, mut sl) = (0.0f32, 0.0f32, 0.0f32);
+                                for r in rp {
+                                    let (dx, dz) = (wx - r[0], wz - r[1]);
+                                    let d = (dx * dx + dz * dz).sqrt().max(1e-3);
+                                    let x = d - r[2];
+                                    if x.abs() < r[5] * 3.0 {
+                                        let env = r[3] * (-(x / r[5]) * (x / r[5])).exp();
+                                        let ph = x * std::f32::consts::TAU / r[4];
+                                        let slope = env * ph.cos();
+                                        gu += dx / d * slope;
+                                        gv += dz / d * slope;
+                                        sl += slope;
+                                        glint += (env * ph.sin()).max(0.0);
+                                    }
+                                }
+                                u += gu * 0.035;
+                                vv += gv * 0.035;
+                                bump = (1.0 + sl * 0.55).clamp(0.35, 1.9);
+                                glint = (glint * glint * 90.0).min(110.0);
+                            }
                             let s = tex_bilinear(tex, u * tw, vv * th);
                             let mut a = s[3] / 255.0 * alpha;
                             if hole_on && z < hd {
@@ -2346,9 +2374,9 @@ pub fn fill_triangle_tex_shaded(
                                 a *= 0.12 + 0.88 * t;
                             }
                             if a > 0.004 {
-                                let mut sr = s[0] * tr;
-                                let mut sg = s[1] * tg;
-                                let mut sb = s[2] * tb;
+                                let mut sr = s[0] * tr * bump + glint;
+                                let mut sg = s[1] * tg * bump + glint;
+                                let mut sb = s[2] * tb * bump + glint;
                                 if lit {
                                     if let Some(sh) = shade {
                                         let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };

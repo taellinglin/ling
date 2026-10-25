@@ -19,6 +19,7 @@ pub mod dsp;
 pub mod engine;
 pub mod midi_import;
 pub mod tracker;
+pub mod tracker_export;
 pub mod midi_io;
 pub mod model;
 pub mod patch;
@@ -32,10 +33,19 @@ pub mod structure;
 pub mod harmonize;
 pub mod vocal;
 pub mod songgen;
+pub mod decorate;
+pub mod ensemble;
+pub mod tunecheck;
+pub mod growlskin;
+pub mod sounddesign;
+pub mod redesign;
+pub mod agent;
+pub mod presetinfo;
+pub mod emotion;
 pub mod guide;
 pub mod soundcat;
 
-pub use engine::{set_parallel_render, Engine, SharedEngine};
+pub use engine::{set_parallel_render, set_track_sleep, Engine, SharedEngine, SLEEP_AFTER};
 pub use model::*;
 
 pub use api::{Daw, Val};

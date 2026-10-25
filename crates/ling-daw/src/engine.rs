@@ -54,6 +54,8 @@ pub struct Engine {
     outs: Vec<Vec<f32>>,
     /// Per-track pre-fader peak of the last slice (sidechain key tap).
     key_pk: Vec<f32>,
+    /// samples each track has been silent for; past SLEEP_AFTER a track with nothing to play is not rendered at all
+    quiet: Vec<u32>,
     order: Vec<usize>,
     /// `order` grouped into dependency levels (tracks within a level are independent)
     levels: Vec<Vec<usize>>,
@@ -165,6 +167,7 @@ impl Engine {
             mix: vec![],
             outs: vec![],
             key_pk: vec![],
+            quiet: vec![],
             order: vec![],
             levels: vec![],
             route_sig: u64::MAX,
@@ -241,6 +244,7 @@ impl Engine {
     /// Live (keyboard/preview) note on the given track. Captured into a clip
     /// when the track is armed and the transport is running.
     pub fn live_note(&mut self, track: usize, key: u8, vel: f32, on: bool) {
+        self.wake(track);
         if let Some(i) = self.project.tracks.get_mut(track).and_then(|t| t.inst.as_mut()) {
             if on {
                 i.note_on(key, vel)
@@ -251,6 +255,18 @@ impl Engine {
         if self.playing && self.rec_arm == Some(track) {
             self.record_note(track, key, vel, on);
         }
+    }
+
+    /// Wake a sleeping track (it renders from the next block on).
+    pub fn wake(&mut self, track: usize) {
+        if let Some(q) = self.quiet.get_mut(track) {
+            *q = 0;
+        }
+    }
+
+    /// Is the track asleep (silent for a while with nothing to play, so not rendered)?
+    pub fn asleep(&self, track: usize) -> bool {
+        self.quiet.get(track).map(|q| *q >= SLEEP_AFTER).unwrap_or(false)
     }
 
     /// Transport position as the player heard it (the engine renders ahead of the speakers).
@@ -322,10 +338,12 @@ impl Engine {
             "vol" => track.volume = v.clamp(0.0, 2.0),
             "pan" => track.pan = v.clamp(-1.0, 1.0),
             p if p.starts_with("fx") => {
-                // "fx<i>.<p>"
+                // "fx<i>.<p>", or "fx<i>.wet" for the effect's dry / wet
                 if let Some((a, b)) = p[2..].split_once('.') {
-                    if let (Ok(i), Ok(pi)) = (a.parse::<usize>(), b.parse::<usize>()) {
-                        if let Some(e) = track.effects.get_mut(i) {
+                    if let Some(e) = a.parse::<usize>().ok().and_then(|i| track.effects.get_mut(i)) {
+                        if b == "wet" {
+                            e.wet = v.clamp(0.0, 1.0);
+                        } else if let Ok(pi) = b.parse::<usize>() {
                             e.set(pi, v);
                         }
                     }
@@ -361,8 +379,10 @@ impl Engine {
             if param == "vol" {
                 self.project.master_volume = v.clamp(0.0, 2.0);
             } else if let Some((a, b)) = param.strip_prefix("fx").and_then(|r| r.split_once('.')) {
-                if let (Ok(i), Ok(pi)) = (a.parse::<usize>(), b.parse::<usize>()) {
-                    if let Some(e) = self.project.master_effects.get_mut(i) {
+                if let Some(e) = a.parse::<usize>().ok().and_then(|i| self.project.master_effects.get_mut(i)) {
+                    if b == "wet" {
+                        e.wet = v.clamp(0.0, 1.0);
+                    } else if let Ok(pi) = b.parse::<usize>() {
                         e.set(pi, v);
                     }
                 }
@@ -534,6 +554,9 @@ impl Engine {
         if i < self.key_pk.len() {
             self.key_pk.remove(i);
         }
+        if i < self.quiet.len() {
+            self.quiet.remove(i);
+        }
         self.rec_arm = match self.rec_arm {
             Some(t) if t == i => None,
             Some(t) if t > i => Some(t - 1),
@@ -565,6 +588,7 @@ impl Engine {
         }
         self.outs.clear();
         self.key_pk.clear();
+        self.quiet.clear();
         self.rec_arm = self.rec_arm.map(map);
         if let Some((t, c)) = self.rec_clip {
             self.rec_clip = Some((map(t), c));
@@ -678,6 +702,9 @@ impl Engine {
         if self.key_pk.len() < n {
             self.key_pk.resize(n, 0.0);
         }
+        if self.quiet.len() < n {
+            self.quiet.resize(n, 0);
+        }
         self.mix.clear();
         self.mix.resize(out.len(), 0.0);
         if playing {
@@ -735,12 +762,13 @@ impl Engine {
                 in_level[t] = true;
             }
             let results: Vec<(usize, TrackResult)> = {
-                let (outs, key_pk, sess_play) = (&self.outs, &self.key_pk, &self.sess_play);
+                let (outs, key_pk, sess_play, quiet) = (&self.outs, &self.key_pk, &self.sess_play, &self.quiet);
                 let items: Vec<(usize, &mut Track)> = self.project.tracks.iter_mut().enumerate().filter(|(i, _)| in_level[*i]).collect();
-                run_parallel(items, |(ti, track)| (ti, render_track(track, ti, &ctx, sess_play[ti], outs, key_pk)))
+                run_parallel(items, |(ti, track)| (ti, render_track(track, ti, &ctx, sess_play[ti], outs, key_pk, quiet[ti])))
             };
             for (ti, r) in results {
                 self.key_pk[ti] = r.key_pk;
+                self.quiet[ti] = r.quiet;
                 if audible[ti] {
                     for (d, s) in self.mix.iter_mut().zip(r.out.iter()) {
                         *d += *s;
@@ -754,8 +782,12 @@ impl Engine {
         self.order = order;
         self.project.routes = routes;
         self.audible = audible;
+        let bpm_now = self.project.bpm_at(p0);
+        for e in self.project.master_effects.iter_mut() {
+            e.fx.set_transport(bpm_now, p0);
+        }
         for e in self.project.master_effects.iter_mut().filter(|e| !e.bypass) {
-            e.fx.process(&mut self.mix);
+            e.process(&mut self.mix);
             scrub(&mut self.mix);
         }
         let mv = self.project.master_volume;
@@ -949,7 +981,22 @@ struct TrackResult {
     out: Vec<f32>,
     /// pre-fader peak (sidechain key)
     key_pk: f32,
+    /// samples of silence so far (see SLEEP_AFTER)
+    quiet: u32,
 }
+
+/// A track silent (below -100 dB after its effects, so every tail has died away) for this many samples - about 3 s - with no
+/// note held, no audio clip under the playhead and nothing routed into it, sleeps: its instrument and effects are skipped until
+/// something arrives. What would have come out is silence, so the sound is the same; the CPU (and the engine lock the interface
+/// waits on) is free for the tracks that play.
+pub const SLEEP_AFTER: u32 = 131_072;
+static SLEEP_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Switch track sleeping on or off (on by default; silent tracks only, so the output is the same either way).
+pub fn set_track_sleep(on: bool) {
+    SLEEP_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+const SILENT: f32 = 1e-5;
 
 thread_local! {
     static TRACK_TMP: std::cell::RefCell<Vec<f32>> = const { std::cell::RefCell::new(Vec::new()) };
@@ -957,8 +1004,13 @@ thread_local! {
 
 /// Render one track for one slice: its clips and notes, the instrument, sends from earlier tracks, its effect chain,
 /// fader and pan. Touches only this track plus read-only data, so tracks in one dependency level can run in parallel.
-fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<Playing>, outs: &[Vec<f32>], key_pk: &[f32]) -> TrackResult {
+fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<Playing>, outs: &[Vec<f32>], key_pk: &[f32], quiet_in: u32) -> TrackResult {
     let SliceCtx { p0, p1, s0, s1, bps, bps_a, spb, bpm, frames, out_len, start_clock, arr_on, sess_on, n, routes, audible, duck } = *c;
+    // a muted track nothing listens to (no send, sidechain key or modulator route from it) is not rendered at all
+    if !audible[ti] && SLEEP_ON.load(std::sync::atomic::Ordering::Relaxed) && !routes.iter().any(|r| r.from == ti && r.to != ti) {
+        track.meter = [track.meter[0] * 0.995, track.meter[1] * 0.995];
+        return TrackResult { out: vec![0.0; out_len], key_pk: 0.0, quiet: quiet_in.max(SLEEP_AFTER) };
+    }
     TRACK_TMP.with(|cell| {
         let mut tmp_buf = cell.borrow_mut();
         let mut tmp: Vec<f32> = std::mem::take(&mut *tmp_buf);
@@ -1016,6 +1068,18 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
                             }
                         }
                     }
+                }
+            }
+            // asleep and still nothing to do: no notes held, no audio under the playhead, nothing routed in -> silence, unrendered
+            if quiet_in >= SLEEP_AFTER && SLEEP_ON.load(std::sync::atomic::Ordering::Relaxed) && track.held.is_empty() && track.inst.as_ref().map(|i| i.can_sleep()).unwrap_or(true) && tmp.iter().all(|x| x.abs() < SILENT) {
+                let fed = routes.iter().any(|r| r.to == ti && r.from < n && r.from != ti && matches!(r.kind, RouteKind::Send | RouteKind::Mod) && outs[r.from].iter().any(|x| x.abs() >= SILENT));
+                if !fed {
+                    if let Some(i) = track.inst.as_mut() {
+                        i.idle(frames);
+                    }
+                    track.meter = [track.meter[0] * 0.995, track.meter[1] * 0.995];
+                    *tmp_buf = tmp;
+                    return TrackResult { out: vec![0.0; out_len], key_pk: 0.0, quiet: quiet_in };
                 }
             }
             // note-offs due within this slice
@@ -1078,9 +1142,10 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
                 e.fx.set_sidechain(sc_level);
                 e.fx.set_aux(aux.as_deref());
                 e.fx.set_triggers(&duck[ti]);
+                e.fx.set_transport(bpm, p0);
             }
             for e in track.effects.iter_mut().filter(|e| !e.bypass) {
-                e.fx.process(&mut tmp);
+                e.process(&mut tmp);
                 scrub(&mut tmp);
             }
             let kpk = tmp.iter().fold(0.0f32, |a, b| a.max(b.abs()));
@@ -1100,7 +1165,8 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
             track.meter[1] = pk[1].max(track.meter[1] * 0.995);
 
         *tmp_buf = tmp;
-        TrackResult { out: ob, key_pk: kpk }
+        let quiet = if kpk < SILENT { quiet_in.saturating_add(frames as u32) } else { 0 };
+        TrackResult { out: ob, key_pk: kpk, quiet }
     })
 }
 
@@ -1149,4 +1215,37 @@ fn render_pool() -> Option<&'static rayon::ThreadPool> {
             .ok()
     })
     .as_ref()
+}
+
+#[cfg(test)]
+mod wet_tests {
+    use super::*;
+    use crate::model::{AutoLane, EffectSlot, Track, TrackKind};
+
+    #[test]
+    fn a_lane_on_fx_wet_moves_the_dry_wet_and_the_project_remembers_it() {
+        let mut e = Engine::new(48000.0);
+        let mut t = Track::new("T", TrackKind::Instrument, 0, None);
+        t.effects.push(EffectSlot::new("Articulator", 48000.0).unwrap());
+        t.auto.push(AutoLane { param: "fx0.wet".into(), points: vec![(0.0, 1.0), (4.0, 0.0)] });
+        e.project.tracks.push(t);
+        e.apply_automation(2.0);
+        let w = e.project.tracks[0].effects[0].wet;
+        assert!((w - 0.5).abs() < 1e-5, "halfway down the lane: {w}");
+        e.apply_automation(4.0);
+        assert!(e.project.tracks[0].effects[0].wet < 1e-5);
+        // saved and opened again, the dry/wet comes back
+        e.project.tracks[0].effects[0].wet = 0.25;
+        let dir = std::env::temp_dir().join(format!("wet-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.json");
+        crate::project::save(&e, path.to_str().unwrap()).unwrap();
+        let mut e2 = Engine::new(48000.0);
+        let doc = crate::project::read(path.to_str().unwrap()).unwrap();
+        crate::project::apply_doc(&mut e2, &doc, path.parent(), &mut std::collections::HashMap::new());
+        assert_eq!(e2.project.tracks[0].effects[0].name, "Articulator");
+        assert!((e2.project.tracks[0].effects[0].wet - 0.25).abs() < 1e-6);
+        assert_eq!(e2.project.tracks[0].auto[0].param, "fx0.wet");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

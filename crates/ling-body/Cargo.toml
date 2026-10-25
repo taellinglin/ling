@@ -1,6 +1,6 @@
 [package]
 name = "ling-body"
-version = "2030.0.1"
+version = "2030.0.2"
 edition = "2021"
 authors = ["Ling Lin <taellinglin@gmail.com>"]
 description = "Acoustic body toolkit for Ling: humanoid SDF scaffolds, FDTD wave solver, level-set membrane, surface extraction, mesh and WAV codecs"
@@ -12,7 +12,7 @@ rustfft = "6.2"
 serde_json = "1.0"
 flate2 = "1"
 glam = "0.33"
-ling-music = { path = "../ling-music", version = "2030.0.8" }
+ling-music = { path = "../ling-music", version = "2030.0.9" }
 
 [lib]
 name = "ling_body"

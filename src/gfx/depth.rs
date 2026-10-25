@@ -391,6 +391,10 @@ pub struct TexShade {
     pub fog_end: f32,
     pub fog_color: u32,
     pub lit: bool,
+    /// Floor shockwaves, each `[cx, cz, front radius, amplitude, wavelength, ring width]` in world
+    /// units on the XZ plane: per pixel they bend the texture lookup (refraction) and shade the
+    /// wave's slopes (a bump map), see `fill_triangle_tex_shaded`.
+    pub ripples: Vec<[f32; 6]>,
 }
 
 /// A texture for [`DrawKind::TriangleT`]: power-of-two size, 0xAARRGGBB texels.
@@ -464,6 +468,15 @@ impl DepthQueue {
         zwrite: bool,
     ) {
         self.push_triangle_tex_shaded(v, tex, tint, hole, zwrite, None);
+    }
+
+    /// Move the last `n` queued calls `bias` units nearer in the back-to-front order, so a decal
+    /// (a shadow on a translucent floor) draws after the big triangles it lies on.
+    pub fn bias_last(&mut self, n: usize, bias: f32) {
+        let k = self.calls.len().saturating_sub(n);
+        for c in &mut self.calls[k..] {
+            c.depth -= bias;
+        }
     }
 
     /// As [`Self::push_triangle_tex`] with lighting / fog. Translucent triangles

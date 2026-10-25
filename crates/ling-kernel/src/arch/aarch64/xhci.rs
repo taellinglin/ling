@@ -1731,6 +1731,10 @@ pub fn key_held(usage: u8) -> bool {
 
 /// US-layout HID usage → ASCII (None for keys with no single-byte meaning).
 fn usage_to_ascii(u: u8, shift: bool) -> Option<u8> {
+    // the chosen keyboard layout first (Settings > System), US below
+    if let Some(b) = crate::drivers::kbdlayout::override_for_hid(u, shift) {
+        return Some(b);
+    }
     const DIGITS: &[u8; 10] = b"1234567890";
     const SHIFTED: &[u8; 10] = b"!@#$%^&*()";
     let pick = |plain: u8, shifted: u8| if shift { shifted } else { plain };

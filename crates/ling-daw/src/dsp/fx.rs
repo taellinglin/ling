@@ -7,6 +7,9 @@ pub trait Effect: Send {
     fn name(&self) -> &'static str;
     /// Level (linear) of an external sidechain key for this block; None = no key.
     fn set_sidechain(&mut self, _level: Option<f32>) {}
+    /// Where the transport is for this block: the project tempo and the beat of its first frame (the same beat block after block
+    /// when the transport is stopped). Effects that work in musical time (the Articulator's gate and LFO) read it.
+    fn set_transport(&mut self, _bpm: f64, _beat: f64) {}
     /// Trigger events for this block: (frame in the block, velocity 0..1). The Ducker starts its envelope on each one.
     fn set_triggers(&mut self, _events: &[(u32, f32)]) {}
     /// Live values for the effect's display (0..1 each), empty when it has none.
@@ -505,7 +508,7 @@ impl Effect for Chorus {
     }
 }
 
-pub const EFFECT_NAMES: [&str; 13] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm"];
+pub const EFFECT_NAMES: [&str; 22] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm", "OTT", "Split Drive", "Comb", "Phaser", "Flanger", "Freq Shifter", "Imager", "Transient", "Articulator"];
 
 /// Parameter names + default normalised values shown in the UI.
 pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
@@ -522,6 +525,15 @@ pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
         "Rainbow Hypergrowl" => &super::hypergrowl::PARAMS,
         "Vocoder" => &super::vocoder::PARAMS,
         "Ringstorm" => &super::guitar::PARAMS,
+        "OTT" => &super::bassfx::OTT_PARAMS,
+        "Split Drive" => &super::bassfx::SPLIT_PARAMS,
+        "Comb" => &super::bassfx::COMB_PARAMS,
+        "Phaser" => &super::bassfx::PHASER_PARAMS,
+        "Flanger" => &super::bassfx::FLANGER_PARAMS,
+        "Freq Shifter" => &super::bassfx::FSHIFT_PARAMS,
+        "Imager" => &super::bassfx::IMAGER_PARAMS,
+        "Transient" => &super::bassfx::TRANSIENT_PARAMS,
+        "Articulator" => &super::articulator::PARAMS,
         "Ducker" => &[("depth", 0.45), ("attack", 0.08), ("hold", 0.15), ("release", 0.2), ("curve", 0.35), ("thresh", 0.5), ("mix", 1.0)],
         _ => &[],
     }
@@ -542,6 +554,15 @@ pub fn make(name: &str, sr: f32) -> Option<Box<dyn Effect>> {
         "Ducker" => Box::new(Ducker::new(sr)),
         "Vocoder" => Box::new(super::vocoder::Vocoder::new(sr)),
         "Ringstorm" => Box::new(super::guitar::Rig::new(sr)),
+        "OTT" => Box::new(super::bassfx::Ott::new(sr)),
+        "Split Drive" => Box::new(super::bassfx::SplitDrive::new(sr)),
+        "Comb" => Box::new(super::bassfx::Comb::new(sr)),
+        "Phaser" => Box::new(super::bassfx::Phaser::new(sr)),
+        "Flanger" => Box::new(super::bassfx::Flanger::new(sr)),
+        "Freq Shifter" => Box::new(super::bassfx::FreqShifter::new(sr)),
+        "Imager" => Box::new(super::bassfx::Imager::new(sr)),
+        "Transient" => Box::new(super::bassfx::Transient::new(sr)),
+        "Articulator" => Box::new(super::articulator::Articulator::new(sr)),
         _ => return None,
     };
     for (n, v) in defaults(name) {
@@ -556,6 +577,15 @@ pub fn presets(name: &str) -> &'static [(&'static str, &'static [(&'static str, 
         "Rainbow Hypergrowl" => &super::hypergrowl::PRESETS,
         "Vocoder" => &super::vocoder::PRESETS,
         "Ringstorm" => &super::guitar::PRESETS,
+        "OTT" => &super::bassfx::OTT_PRESETS,
+        "Split Drive" => &super::bassfx::SPLIT_PRESETS,
+        "Comb" => &super::bassfx::COMB_PRESETS,
+        "Phaser" => &super::bassfx::PHASER_PRESETS,
+        "Flanger" => &super::bassfx::FLANGER_PRESETS,
+        "Freq Shifter" => &super::bassfx::FSHIFT_PRESETS,
+        "Imager" => &super::bassfx::IMAGER_PRESETS,
+        "Transient" => &super::bassfx::TRANSIENT_PRESETS,
+        "Articulator" => &super::articulator::PRESETS,
         "Ducker" => &[
             ("Kick duck", &[("depth", 0.5), ("attack", 0.06), ("hold", 0.12), ("release", 0.2), ("curve", 0.35)]),
             ("Hard pump", &[("depth", 0.85), ("attack", 0.04), ("hold", 0.2), ("release", 0.32), ("curve", 0.2)]),

@@ -166,12 +166,29 @@ pub struct EffectSlot {
     pub name: String,
     pub params: Vec<(&'static str, f32)>,
     pub bypass: bool,
+    /// dry / wet of the whole effect, 0 = only the input, 1 = only the effect (any effect, not just the ones with a mix knob);
+    /// automatable as "fx<i>.wet"
+    pub wet: f32,
     pub fx: Box<dyn Effect>,
 }
 impl EffectSlot {
     pub fn new(name: &str, sr: f32) -> Option<EffectSlot> {
         let fx = fx::make(name, sr)?;
-        Some(EffectSlot { name: name.into(), params: fx::defaults(name).to_vec(), bypass: false, fx })
+        Some(EffectSlot { name: name.into(), params: fx::defaults(name).to_vec(), bypass: false, wet: 1.0, fx })
+    }
+    /// Run the effect on a block (interleaved stereo, in place) and blend it with the untouched input by `wet`.
+    pub fn process(&mut self, buf: &mut [f32]) {
+        let w = self.wet.clamp(0.0, 1.0);
+        if w >= 0.999 {
+            self.fx.process(buf);
+            return;
+        }
+        let dry = buf.to_vec();
+        self.fx.process(buf);
+        let (kd, kw) = (1.0 - w, w);
+        for (o, d) in buf.iter_mut().zip(dry.iter()) {
+            *o = *d * kd + *o * kw;
+        }
     }
     pub fn set(&mut self, idx: usize, v: f32) {
         if !v.is_finite() {
@@ -478,6 +495,49 @@ impl Project {
         self.tracks.iter().flat_map(|t| t.clips.iter().map(|c| c.end())).fold(0.0, f64::max)
     }
 }
+/// A bass preset whose sound already sits an octave (or more) below the written note: its name (the patch file or the preset) says
+/// "bass" and, for Prism, the sub oscillator is up or the louder oscillator is set below octave 0. A bassline written in the bass
+/// register on such a track sounds two octaves down - see [`lift_low_bass`].
+pub fn plays_octave_down(t: &Track, preset_name: &str) -> bool {
+    let stem = std::path::Path::new(&t.patch).file_stem().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let named = stem.contains("bass") || preset_name.to_lowercase().contains("bass");
+    if !named {
+        return false;
+    }
+    let Some(i) = t.inst.as_ref() else { return false };
+    if t.inst_kind != "prism" {
+        return false;
+    }
+    let g = |n: &str, d: f32| i.get_param(n).unwrap_or(d);
+    // Prism's octave knobs have five steps, 0.5 = octave 0
+    let below = |oct: f32| ((oct * 4.0).round() as i32) < 2;
+    g("sub", 0.0) >= 0.3 || (below(g("a oct", 0.5)) && g("a lvl", 0.8) >= 0.3) || (below(g("b oct", 0.5)) && g("b lvl", 0.0) >= 0.3)
+}
+
+/// Every MIDI note of the track an octave up when the track plays an octave down ([`plays_octave_down`]) and its notes are written
+/// low (median below C3, MIDI 48). Returns whether it moved anything.
+pub fn lift_low_bass(t: &mut Track, preset_name: &str) -> bool {
+    if !plays_octave_down(t, preset_name) {
+        return false;
+    }
+    let mut keys: Vec<u8> = t.clips.iter().filter_map(|c| if let ClipData::Midi(n) = &c.data { Some(n.iter().map(|x| x.key).collect::<Vec<_>>()) } else { None }).flatten().collect();
+    if keys.is_empty() {
+        return false;
+    }
+    keys.sort_unstable();
+    if keys[keys.len() / 2] >= 48 {
+        return false;
+    }
+    for c in t.clips.iter_mut() {
+        if let ClipData::Midi(n) = &mut c.data {
+            for x in n.iter_mut() {
+                x.key = (x.key as u16 + 12).min(127) as u8;
+            }
+        }
+    }
+    true
+}
+
 impl Default for Project {
     fn default() -> Self {
         Self::new()
@@ -503,4 +563,38 @@ pub fn load_midi_clip(path: &str, bpm: f64, start: f64) -> Result<Clip, String> 
     let len = notes.iter().map(|n| n.start + n.len).fold(0.0, f64::max).ceil().max(1.0);
     let name = std::path::Path::new(path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(Clip { start, len, name, loop_len: 0.0, lyric_text: String::new(), lyric_lang: String::new(), tag: String::new(), data: ClipData::Midi(notes) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bass_preset_that_sounds_an_octave_down_lifts_a_low_bassline_once() {
+        let inst = crate::dsp::make_instrument("prism", 44100.0);
+        let mut t = Track::new("Bass", TrackKind::Instrument, 0, inst);
+        t.inst_kind = "prism".into();
+        t.patch = "instruments/Prism/Prism_rolling_bass.ling".into();
+        if let Some(i) = t.inst.as_mut() {
+            i.set_param("sub", 0.45);
+            i.set_param("b oct", 0.25);
+            i.set_param("b lvl", 0.55);
+        }
+        let mut c = Clip::midi(0.0, 4.0, "bass");
+        if let ClipData::Midi(n) = &mut c.data {
+            for k in [33u8, 36, 40, 33] {
+                n.push(Note::new(0.0, 1.0, k, 0.8));
+            }
+        }
+        t.clips.push(c);
+        assert!(plays_octave_down(&t, ""));
+        assert!(lift_low_bass(&mut t, ""));
+        let keys = |t: &Track| if let ClipData::Midi(n) = &t.clips[0].data { n.iter().map(|x| x.key).collect::<Vec<_>>() } else { vec![] };
+        assert_eq!(keys(&t), vec![45, 48, 52, 45]);
+        // already up there: not again
+        assert!(!lift_low_bass(&mut t, ""));
+        // a pad named nothing like a bass is never touched
+        t.patch = "instruments/Prism/Prism_uplift_pad.ling".into();
+        assert!(!plays_octave_down(&t, "Uplift Pad"));
+    }
 }

@@ -1246,6 +1246,36 @@ impl Instrument for Prism {
         }
     }
 
+    fn idle(&mut self, frames: usize) {
+        // exactly what render() does with no voice sounding, sample by sample (no audio): the two global LFOs (a fresh random
+        // sample-and-hold value at every wrap) and the bend glide; nothing once Prism would have stopped rendering by itself
+        if self.voices.iter().any(|v| v.active) || self.silent as f32 > self.sr * 8.0 {
+            return;
+        }
+        self.refresh();
+        let p = |k: P, v: &[f32]| v[k as usize];
+        let dt = 1.0 / self.sr;
+        let l1_hz = 0.05 * 2f32.powf(p(P::L1RATE, &self.v) * 9.0);
+        let l2_hz = 0.05 * 2f32.powf(p(P::L2RATE, &self.v) * 9.0);
+        let (l1_shp, l2_shp) = (self.sel(P::L1SHP as usize, 5), self.sel(P::L2SHP as usize, 5));
+        let bend_target = (p(P::BEND, &self.v) - 0.5) * 2.0 * 2.0;
+        for _ in 0..frames {
+            for l in 0..2 {
+                let hz = if l == 0 { l1_hz } else { l2_hz };
+                self.lfo_ph[l] += hz * dt;
+                if self.lfo_ph[l] >= 1.0 {
+                    self.lfo_ph[l] -= 1.0;
+                    self.lfo_hold[l] = self.rng.next();
+                }
+            }
+            self.bend_s += (bend_target - self.bend_s) * 0.002;
+        }
+        for l in 0..2 {
+            self.lfo_val[l] = Prism::lfo_shape(if l == 0 { l1_shp } else { l2_shp }, self.lfo_ph[l], self.lfo_hold[l]);
+        }
+        self.silent = self.silent.saturating_add(frames as u32);
+    }
+
     fn params(&self) -> Vec<(&'static str, f32)> {
         names().list.iter().zip(self.v.iter()).map(|(n, v)| (*n, *v)).collect()
     }

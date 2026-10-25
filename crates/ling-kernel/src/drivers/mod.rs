@@ -14,7 +14,6 @@ pub mod ata;
 pub mod browser;
 #[cfg(target_arch = "x86_64")]
 pub mod daw;
-#[cfg(target_arch = "x86_64")]
 pub mod clipboard;
 #[cfg(target_arch = "x86_64")]
 pub mod display;
@@ -51,7 +50,6 @@ pub mod g3d;
 pub mod framebuffer;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod cursor;
-#[cfg(target_arch = "x86_64")]
 pub mod kbdlayout;
 #[cfg(target_arch = "x86_64")]
 pub mod keyboard;
@@ -74,7 +72,6 @@ pub mod net_e1000;
 pub mod netstack;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
-#[cfg(target_arch = "x86_64")]
 pub mod sshd;
 #[cfg(target_arch = "x86_64")]
 pub mod term;

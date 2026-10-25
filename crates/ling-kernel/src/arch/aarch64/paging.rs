@@ -143,7 +143,9 @@ fn leaf_attrs(flags: u64, device: bool) -> u64 {
 /// [`NX`].
 pub fn map4k(l0_phys: u64, virt: u64, phys: u64, flags: u64) {
     let (i0, i1, i2, i3) = indices(virt);
-    let device = phys >= peripheral_base() as u64;
+    // RAM is Normal memory wherever it is (a 4 / 8 GB Pi 4 has banks above
+    // its 0xFE00_0000 peripheral window); everything else is Device.
+    let device = !crate::mm::in_ram(phys);
     unsafe {
         let l1 = next_level(l0_phys, i0);
         let l2 = next_level(l1, i1);

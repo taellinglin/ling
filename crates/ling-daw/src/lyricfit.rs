@@ -11,6 +11,10 @@
 //! * `Strict`: one syllable per group in order, nothing more.
 //!
 //! `looped` repeats the lyrics (lines across phrases, syllables across notes) when the notes outlast them.
+//!
+//! `shape` (option string mode "shape") first reshapes a sung line to the words ([`shape`]): the lines are laid over the melody where it
+//! breathes, then each line gets one note per syllable (long notes split, surplus short notes joined to the note before), the last word
+//! of every line is held and a breath follows before the next line. The fit after it is then one syllable per note.
 use crate::lyrics::{self, Lang};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -38,11 +42,13 @@ pub struct Opts {
     /// a rest this long (beats) between notes starts a new phrase
     pub gap: f64,
     pub lang: Lang,
+    /// reshape the notes to the lyrics before fitting (see [`shape`])
+    pub shape: bool,
 }
 
 impl Default for Opts {
     fn default() -> Opts {
-        Opts { mode: Mode::Fit, looped: false, short: 0.3, chord: Chord::All, gap: 1.0, lang: Lang::Auto }
+        Opts { mode: Mode::Fit, looped: false, short: 0.3, chord: Chord::All, gap: 1.0, lang: Lang::Auto, shape: false }
     }
 }
 
@@ -55,6 +61,7 @@ impl Opts {
         }
         let mut o = Opts::default();
         if let Some(m) = p.get(1) {
+            o.shape = *m == "shape";
             o.mode = match *m {
                 "even" => Mode::Even,
                 "strict" => Mode::Strict,
@@ -804,6 +811,93 @@ fn split_lines(gs: &[Group], singable: &[usize], counts: &[usize]) -> Option<Vec
     Some(out)
 }
 
+/// a note split in two on the sixteenth grid (the first half rounded), when it is at least `min` beats long
+fn split_longest(line: &mut Vec<NoteIn>, min: f64) -> bool {
+    let Some(i) = (0..line.len()).filter(|i| line[*i].len >= min - 1e-9).max_by(|a, b| line[*a].len.total_cmp(&line[*b].len)) else { return false };
+    let n = NoteIn { start: line[i].start, len: line[i].len, key: line[i].key };
+    let half = ((n.len / 2.0 / 0.25).round() * 0.25).max(0.25);
+    line[i].len = half;
+    line.insert(i + 1, NoteIn { start: n.start + half, len: n.len - half, key: n.key });
+    true
+}
+
+/// The sung line reshaped to the lyrics (a monophonic line: the top note of every chord). The lines of the lyrics are laid over the
+/// notes where the music breathes (the same cut the fitter uses); each line then gets exactly one note per syllable - the longest notes
+/// split (never below a sixteenth), surplus notes joined to the note before them (shortest first, so the melody keeps its long notes) -
+/// and its last note, the line's last word, is held (at least a beat and a half when there is room, at most four) with a breath before
+/// the next line. With `looped` the lyrics repeat while the melody has room for another round. Fitting the result is one syllable per
+/// note; only a line with more syllables than sixteenths left gets two on its longest notes.
+pub fn shape(notes: &[NoteIn], raw: &str, o: &Opts) -> Vec<NoteIn> {
+    let base: Vec<usize> = clean(raw).iter().map(|l| syllabify_line(l, o.lang).iter().filter(|s| !s.ipa.is_empty()).count()).filter(|c| *c > 0).collect();
+    let gs = groups(notes);
+    let mut line: Vec<NoteIn> = gs.iter().map(|g| NoteIn { start: g.start, len: g.len, key: notes[g.top].key }).collect();
+    for i in 0..line.len().saturating_sub(1) {
+        let next = line[i + 1].start;
+        if line[i].start + line[i].len > next {
+            line[i].len = (next - line[i].start).max(0.05);
+        }
+    }
+    if base.is_empty() || line.is_empty() {
+        return line;
+    }
+    let mut counts = base.clone();
+    if o.looped {
+        let per: usize = base.iter().sum();
+        let mut rounds = 1;
+        while (rounds + 1) * per <= line.len() && rounds < 16 {
+            counts.extend(&base);
+            rounds += 1;
+        }
+    }
+    let need: usize = counts.iter().sum();
+    while line.len() < need && split_longest(&mut line, 0.5) {}
+    let gl = groups(&line);
+    let singable: Vec<usize> = (0..gl.len()).collect();
+    let ranges = if counts.len() >= 2 { split_lines(&gl, &singable, &counts) } else { None }.unwrap_or_else(|| {
+        if counts.len() == 1 {
+            vec![(0, line.len())]
+        } else {
+            // not enough notes for the lines even after splitting: share them out evenly
+            let n = line.len();
+            let l = counts.len();
+            (0..l).map(|k| (k * n / l, ((k + 1) * n / l).max(k * n / l + 1).min(n))).collect()
+        }
+    });
+    let mut out: Vec<NoteIn> = vec![];
+    for (k, (a, b)) in ranges.iter().enumerate() {
+        if a >= b {
+            continue;
+        }
+        let mut seg: Vec<NoteIn> = line[*a..*b].iter().map(|n| NoteIn { start: n.start, len: n.len, key: n.key }).collect();
+        let s = counts[k];
+        while seg.len() < s && split_longest(&mut seg, 0.5) {}
+        while seg.len() > s && seg.len() > 1 {
+            // the shortest note (not the line's first or last) joins the one before it
+            let cand = if seg.len() > 2 { 1..seg.len() - 1 } else { 1..seg.len() };
+            let Some(i) = cand.min_by(|x, y| seg[*x].len.total_cmp(&seg[*y].len)) else { break };
+            let end = seg[i].start + seg[i].len;
+            seg.remove(i);
+            let p = &mut seg[i - 1];
+            p.len = (end - p.start).max(p.len);
+        }
+        // the last word is held, then a breath before the next line
+        let next = ranges.get(k + 1).filter(|(a2, b2)| a2 < b2).map(|(a2, _)| line[*a2].start);
+        if let Some(last) = seg.last_mut() {
+            let hold = last.len.max(1.5).min(4.0).max(last.len.min(4.0));
+            last.len = match next {
+                Some(ns) => {
+                    let room = ns - last.start;
+                    let breath = if room >= 2.0 { 0.5 } else { 0.25 };
+                    (room - breath).min(hold).max(0.25)
+                }
+                None => hold,
+            };
+        }
+        out.extend(seg);
+    }
+    out
+}
+
 /// what a note stores for a set of syllables: `~` alone sustains, otherwise the IPA syllables joined by `-`
 fn compose(units: &[String]) -> String {
     let parts: Vec<&str> = units.iter().map(|u| u.as_str()).filter(|u| !u.is_empty()).collect();
@@ -933,6 +1027,32 @@ mod tests {
 
     fn syl(w: &str) -> Vec<String> {
         syllabify_en(w)
+    }
+
+    #[test]
+    fn a_line_shaped_to_the_lyrics_sings_one_syllable_per_note_and_holds_its_last_word() {
+        // a melody of 4 bars: busy sixteenths in bar 1, two long notes, a rest, then four quarter notes
+        let mut spec: Vec<(f64, f64, u8)> = (0..16).map(|i| (i as f64 * 0.25, 0.25, 60 + (i % 5) as u8)).collect();
+        spec.extend([(4.0, 2.0, 67), (6.0, 2.0, 65), (9.0, 1.0, 64), (10.0, 1.0, 62), (11.0, 1.0, 60), (12.0, 1.0, 62)]);
+        let n = notes(&spec);
+        let lyr = "walking in the city lights tonight\nhold me now";
+        let mut o = Opts::parse("fit:shape:0:0.3:top:1.0:auto").unwrap();
+        assert!(o.shape);
+        let shaped = shape(&n, lyr, &o);
+        // 9 + 3 syllables: 12 notes, nothing shorter than a sixteenth
+        assert_eq!(shaped.len(), 12, "{:?}", shaped.iter().map(|x| (x.start, x.len)).collect::<Vec<_>>());
+        assert!(shaped.iter().all(|x| x.len >= 0.25 - 1e-9));
+        o.short = 0.0;
+        let (ly, _) = fit(&shaped, lyr, &o);
+        assert!(ly.iter().all(|l| !l.is_empty() && !l.contains('-') && l != "~"), "one syllable on every note: {ly:?}");
+        // the last word of the first line is held and followed by a breath
+        let end1 = &shaped[8];
+        assert!(end1.len >= 1.0, "{:?}", (end1.start, end1.len));
+        assert!(shaped[9].start - (end1.start + end1.len) >= 0.25 - 1e-9);
+        // too few notes: long ones are split so every syllable gets its own
+        let few = notes(&[(0.0, 4.0, 60), (4.0, 4.0, 62)]);
+        let s2 = shape(&few, "one two three four five six", &o);
+        assert_eq!(s2.len(), 6);
     }
 
     #[test]

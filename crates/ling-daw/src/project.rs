@@ -17,6 +17,9 @@ pub struct FxDoc {
     /// the whole state of an effect that has more than named knobs (the Ringstorm's pedal graph) as JSON, empty for none
     #[serde(default)]
     pub config: String,
+    /// dry / wet of the whole effect (1 = all effect)
+    #[serde(default = "one")]
+    pub wet: f32,
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NoteDoc {
@@ -168,7 +171,7 @@ impl ProjectDoc {
 }
 
 fn fx_doc(e: &EffectSlot) -> FxDoc {
-    FxDoc { name: e.name.clone(), params: e.params.iter().map(|(n, v)| (n.to_string(), *v)).collect(), bypass: e.bypass, source: e.fx.source(), config: e.fx.info("config") }
+    FxDoc { name: e.name.clone(), params: e.params.iter().map(|(n, v)| (n.to_string(), *v)).collect(), bypass: e.bypass, source: e.fx.source(), config: e.fx.info("config"), wet: e.wet }
 }
 fn auto_doc(l: &AutoLane) -> AutoDoc {
     AutoDoc { param: l.param.clone(), points: l.points.clone() }
@@ -254,7 +257,7 @@ pub fn to_doc(e: &Engine) -> ProjectDoc {
                 clips: t.clips.iter().map(clip_doc).collect(),
                 session: t.session.iter().map(clip_doc).collect(),
                 auto: t.auto.iter().map(auto_doc).collect(),
-                config: if t.inst_kind == "sampler" || t.inst_kind == "script" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
+                config: if t.inst_kind == "sampler" || t.inst_kind == "script" || t.inst_kind == "chip" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
             })
             .collect(),
     }
@@ -282,6 +285,7 @@ fn fx_slot(d: &FxDoc, sr: f32, base: Option<&std::path::Path>) -> Option<EffectS
         s.fx.command("load_config", &[], &d.config);
     }
     s.bypass = d.bypass;
+    s.wet = d.wet.clamp(0.0, 1.0);
     Some(s)
 }
 
@@ -396,6 +400,10 @@ pub fn apply_doc(e: &mut Engine, d: &ProjectDoc, base: Option<&std::path::Path>,
             };
             if let Some(i) = i.as_mut() {
                 i.load_state(&state);
+                // Ling Chip: its own sample, stored relative to the project (samples/...)
+                if kind == "chip" && !td.config.is_empty() {
+                    i.command("load", &[], &resolve_file(&td.config, base));
+                }
             }
             i
         };
@@ -558,8 +566,41 @@ fn pack_soundfonts(doc: &mut ProjectDoc, dir: &std::path::Path) {
     }
 }
 
-/// The audio files a Sampler plays are copied into `<project>/samples/` and the zones refer to them relatively.
+/// a file into `<project>/samples/` (unless it is inside the project already); the path to use from then on, relative
+fn pack_one(file: &str, dir: &std::path::Path) -> Option<String> {
+    let src = std::path::PathBuf::from(file);
+    if file.is_empty() || !src.is_absolute() || !src.is_file() {
+        return None;
+    }
+    let canon_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if let Ok(cs) = src.canonicalize() {
+        if let Ok(r) = cs.strip_prefix(&canon_dir) {
+            return Some(r.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    let sdir = dir.join("samples");
+    let name = src.file_name()?;
+    let mut dst = sdir.join(name);
+    let mut n = 1;
+    while dst.exists() && std::fs::metadata(&dst).map(|m| m.len()).ok() != std::fs::metadata(&src).map(|m| m.len()).ok() {
+        n += 1;
+        dst = sdir.join(format!("{}_{n}.{}", src.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), src.extension().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()));
+    }
+    if !dst.exists() {
+        let _ = std::fs::create_dir_all(&sdir);
+        std::fs::copy(&src, &dst).ok()?;
+    }
+    Some(format!("samples/{}", dst.file_name()?.to_string_lossy()))
+}
+
+/// The audio files a Sampler plays are copied into `<project>/samples/` and the zones refer to them relatively; so is a Ling Chip's
+/// own sample.
 fn pack_samples(doc: &mut ProjectDoc, dir: &std::path::Path) {
+    for t in doc.tracks.iter_mut().filter(|t| t.instrument == "chip" && !t.config.is_empty()) {
+        if let Some(r) = pack_one(&t.config, dir) {
+            t.config = r;
+        }
+    }
     let sdir = dir.join("samples");
     for t in doc.tracks.iter_mut().filter(|t| t.instrument == "sampler" && !t.config.is_empty()) {
         let Ok(mut cfg) = serde_json::from_str::<crate::dsp::sampler::Config>(&t.config) else { continue };

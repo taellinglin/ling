@@ -96,15 +96,12 @@ pub fn mount() -> Result<(), ()> {
 // of it, and the later one would silently drop the earlier's change (e.g. the
 // Messenger task's roster write vanishing under the desktop's writes). The
 // guard is re-entrant per task and yields until free, exactly like the net
-// lock. x86_64 only -- aarch64 has no cooperative scheduler.
-#[cfg(target_arch = "x86_64")]
+// lock.
 static mut FS_OWNER: i64 = -1;
-#[cfg(target_arch = "x86_64")]
 static mut FS_DEPTH: u32 = 0;
 
 pub struct FsGuard;
 impl FsGuard {
-    #[cfg(target_arch = "x86_64")]
     pub fn new() -> Self {
         let me = crate::proc::sched::getpid() as i64;
         unsafe {
@@ -116,13 +113,8 @@ impl FsGuard {
         }
         FsGuard
     }
-    #[cfg(not(target_arch = "x86_64"))]
-    pub fn new() -> Self {
-        FsGuard
-    }
 }
 impl Drop for FsGuard {
-    #[cfg(target_arch = "x86_64")]
     fn drop(&mut self) {
         unsafe {
             if FS_DEPTH > 0 {
@@ -133,8 +125,6 @@ impl Drop for FsGuard {
             }
         }
     }
-    #[cfg(not(target_arch = "x86_64"))]
-    fn drop(&mut self) {}
 }
 
 pub fn upsert_root_entry(name: &str, hash: Hash, kind: Kind, default_meta: Meta) -> Result<(), ()> {
@@ -718,6 +708,64 @@ fn upsert_deep(tree: Hash, segs: &[&str], leaf: (Hash, Kind, Meta), keep_dir: bo
         refs[i] = (core::str::from_utf8(&buf[..*len]).unwrap_or(""), entries[i].1, entries[i].2, entries[i].3);
     }
     put_tree(&refs[..count])
+}
+
+/// The tree `tree` without `segs` (one name per level): `Ok(None)` when the
+/// path is not there, else the hash of the rewritten tree. Content-addressed
+/// like every other write: the parent trees up to the root are re-put, the
+/// dropped entry's objects simply stop being referenced.
+fn remove_deep(tree: Hash, segs: &[&str]) -> Result<Option<Hash>, ()> {
+    if tree == ZERO_HASH {
+        return Ok(None);
+    }
+    let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+    let Some(count) = get_tree(&tree, &mut entries)? else { return Ok(None) };
+    let name = segs[0];
+    let Some(at) = (0..count).find(|&i| name_eq(&entries[i].0, name)) else { return Ok(None) };
+    let drop_at = if segs.len() == 1 {
+        true
+    } else {
+        if !matches!(entries[at].2, Kind::Tree) {
+            return Ok(None);
+        }
+        match remove_deep(entries[at].1, &segs[1..])? {
+            Some(sub) => {
+                entries[at].1 = sub;
+                entries[at].3.modified_seq = next_seq();
+            },
+            None => return Ok(None),
+        }
+        false
+    };
+    let mut refs = [("", ZERO_HASH, Kind::Blob, EMPTY_META); MAX_TREE_ENTRIES];
+    let mut n = 0;
+    for i in 0..count {
+        if drop_at && i == at {
+            continue;
+        }
+        let (buf, len) = &entries[i].0;
+        refs[n] = (core::str::from_utf8(&buf[..*len]).unwrap_or(""), entries[i].1, entries[i].2, entries[i].3);
+        n += 1;
+    }
+    Ok(Some(put_tree(&refs[..n])?))
+}
+
+/// Remove the file or folder (with everything in it) at `path`, absolute and
+/// `/`-separated. `Ok(false)` when there is no such path.
+pub fn remove_path(path: &str) -> Result<bool, ()> {
+    let _g = FsGuard::new();
+    let mut segs = [""; 16];
+    let n = path_segments(path, &mut segs);
+    if n == 0 {
+        return Err(());
+    }
+    match remove_deep(root(), &segs[..n])? {
+        Some(new_root) => {
+            commit(new_root)?;
+            Ok(true)
+        },
+        None => Ok(false),
+    }
 }
 
 fn path_segments<'a>(path: &'a str, out: &mut [&'a str; 16]) -> usize {

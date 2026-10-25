@@ -107,10 +107,35 @@ pub fn load(pml4: u64, elf: &[u8]) -> Result<u64, &'static str> {
                 }
             }
 
+            sync_code_page(phys);
             paging::map4k(pml4, page, phys, flags);
             page += PAGE_SIZE;
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        core::arch::asm!("dsb ish", "isb", options(nostack));
+    }
     Ok(entry)
 }
+
+/// The page was written through the data cache; make sure the instruction
+/// side sees it before the process runs (identity map: phys is the VA).
+#[cfg(target_arch = "aarch64")]
+fn sync_code_page(phys: u64) {
+    let mut a = phys;
+    while a < phys + PAGE_SIZE {
+        unsafe { core::arch::asm!("dc cvau, {0}", in(reg) a, options(nostack)) };
+        a += 64;
+    }
+    unsafe { core::arch::asm!("dsb ish", options(nostack)) };
+    let mut a = phys;
+    while a < phys + PAGE_SIZE {
+        unsafe { core::arch::asm!("ic ivau, {0}", in(reg) a, options(nostack)) };
+        a += 64;
+    }
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+fn sync_code_page(_phys: u64) {}

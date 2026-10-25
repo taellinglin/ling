@@ -11,7 +11,17 @@
 //!   * SYNC: hard sync of osc A, the neuro screech: the stack is reset by a master at the note's pitch while it runs `1 + sync * 7` times
 //!     faster, and lane 3 sweeps the ratio by `s mod`.
 //!
-//! Signal path: (osc A + osc B + noise) -> filter -> drive -> 11 kHz low-pass -> amp envelope ->
+//! The sound-design block (appended last, all neutral by default, so older patches sound as they did):
+//!   * COMB (`comb`, `c tune`, `c fb`, `c damp`): a feedback comb after the filter, tuned relative to the note (+-24 semitones, matrix
+//!     destination k in cents): positive feedback rings on the harmonics (metal), negative on the odd ones an octave up (hollow).
+//!   * FREQ SHIFT (`fshift`, matrix s in Hz): a Hilbert frequency shifter after the comb - every partial moves by the same Hz.
+//!   * FOLD / ASYM / CRUSH: a sine wavefolder before the drive (matrix o), an offset into the shaper for even harmonics, a bit and
+//!     sample-rate crusher after it. The folder and the drive share the shaper's oversampling.
+//!   * PITCH ENVELOPE (`penv` +-48 semitones, `pdec` its decay): zaps, chirps, kick-like drops on each new note.
+//!   * `uni`: 3, 5, 7 or 9 stacked voices (the extra ones spread around the stack's notes by `detn`); `sub oct` puts the sub on the
+//!     note instead of an octave below.
+//!
+//! Signal path: (osc A + osc B + noise) -> filter -> talk -> comb -> freq shift -> fold -> drive -> crush -> 11 kHz low-pass -> amp envelope ->
 //! amp modulation -> pan -> width / delay / reverb sends -> limiter -> output. The sub joins after the
 //! drive so it stays clean.
 use super::fx::{Effect, Reverb};
@@ -21,7 +31,7 @@ use std::sync::OnceLock;
 pub const NLANE: usize = 4;
 pub const NPTS: usize = 16;
 pub const NSRC: usize = 7;
-pub const NDST: usize = 10;
+pub const NDST: usize = 13;
 
 const CORE: [&str; 33] = [
     "table", "pos", "detn", "stack", "b wave", "b rat", "b fm", "b lvl", "sub", "nois", "ftype", "cut", "res", "vow", "drv", "shaper", "amp a", "amp d", "amp s", "amp r", "env a",
@@ -71,12 +81,30 @@ const P_TSH: usize = EXT_BASE + 5;
 const P_SYNC: usize = EXT_BASE + 6;
 const P_SMOD: usize = EXT_BASE + 7;
 pub const P_TSTEP: usize = EXT_BASE + 8;
-pub const NPARAM: usize = EXT_BASE + 8 + NSTEP;
+/// the sound-design block after the talk steps
+pub const SD_BASE: usize = EXT_BASE + 8 + NSTEP;
+const SD: [&str; 12] = ["comb", "c tune", "c fb", "c damp", "fold", "crush", "asym", "fshift", "penv", "pdec", "uni", "sub oct"];
+const P_COMB: usize = SD_BASE;
+const P_CTUNE: usize = SD_BASE + 1;
+const P_CFB: usize = SD_BASE + 2;
+const P_CDAMP: usize = SD_BASE + 3;
+const P_FOLD: usize = SD_BASE + 4;
+const P_CRUSH: usize = SD_BASE + 5;
+const P_ASYM: usize = SD_BASE + 6;
+const P_FSHIFT: usize = SD_BASE + 7;
+const P_PENV: usize = SD_BASE + 8;
+const P_PDEC: usize = SD_BASE + 9;
+const P_UNI: usize = SD_BASE + 10;
+const P_SUBOCT: usize = SD_BASE + 11;
+pub const NPARAM: usize = SD_BASE + SD.len();
+/// voices per `uni` step, and where the voices past the first three sit (times `detn` x 40 cents)
+const UNI: [usize; 4] = [3, 5, 7, 9];
+const UNI_SPREAD: [f32; 6] = [-0.5, 0.5, -0.8, 0.8, -0.2, 0.2];
 /// steps per beat for `t rate`
 const T_RATES: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
 
 pub const SRC_NAMES: [&str; NSRC] = ["l1", "l2", "l3", "l4", "env", "vel", "whl"];
-pub const DST_NAMES: &str = "pwfcqvdanr";
+pub const DST_NAMES: &str = "pwfcqvdanrkos";
 pub const LANE_LEN: [f32; 6] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
 const B_RATIOS: [f32; 8] = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0];
 const STACKS: [[f32; 3]; 5] = [[0.0, 0.0, 0.0], [0.0, 700.0, 1200.0], [0.0, 1200.0, -1200.0], [0.0, 300.0, 700.0], [0.0, 400.0, 700.0]];
@@ -93,6 +121,10 @@ const MOD_AMT: [[f32; 4]; NDST] = [
     [0.1, 0.25, 0.5, 1.0],
     [0.1, 0.25, 0.5, 1.0],
     [240.0, 600.0, 1200.0, 2400.0],
+    // k: comb tune (cents), o: fold, s: frequency shift (Hz)
+    [100.0, 300.0, 1200.0, 2400.0],
+    [0.1, 0.25, 0.5, 1.0],
+    [10.0, 50.0, 200.0, 800.0],
 ];
 const VOWELS: [[f32; 3]; 5] = [[300.0, 870.0, 2240.0], [570.0, 840.0, 2410.0], [730.0, 1090.0, 2440.0], [530.0, 1840.0, 2480.0], [270.0, 2290.0, 3010.0]];
 const VOW_GAIN: [f32; 3] = [1.6, 1.1, 0.7];
@@ -119,6 +151,9 @@ pub fn param_names() -> &'static [&'static str] {
         }
         for k in 0..NSTEP {
             v.push(Box::leak(format!("t s{k}").into_boxed_str()));
+        }
+        for n in SD {
+            v.push(n);
         }
         v
     })
@@ -165,6 +200,13 @@ fn defaults() -> Vec<f32> {
     for (k, x) in [0.0, 0.5, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.0, 0.25, 0.5, 1.0, 0.75, 0.5, 0.25, 0.0].iter().enumerate() {
         v[P_TSTEP + k] = *x;
     }
+    // the sound-design block: off / centred
+    v[P_CTUNE] = 0.5;
+    v[P_CFB] = 0.8;
+    v[P_CDAMP] = 0.25;
+    v[P_FSHIFT] = 0.5;
+    v[P_PENV] = 0.5;
+    v[P_PDEC] = 0.3;
     v
 }
 
@@ -375,7 +417,7 @@ pub struct Growl {
     note: f32,
     target: f32,
     vel: f32,
-    ph_a: [f32; 3],
+    ph_a: [f32; 9],
     ph_b: f32,
     ph_sub: f32,
     amp: Env,
@@ -406,6 +448,18 @@ pub struct Growl {
     /// the shaper's oversampling memory: the last input and its shaped value
     os_y: f32,
     os_sh: f32,
+    /// comb delay, its damping memory; the frequency shifter; seconds since the last new note (pitch envelope); crusher and DC blocker
+    comb_line: DelayLine,
+    comb_lp: f32,
+    hil: super::bassfx::Hilbert,
+    fs_ph: f64,
+    p_t: f32,
+    cr_h: f32,
+    cr_n: u32,
+    dc_x: f32,
+    dc_y: f32,
+    /// a DC blocker at the voice output (about 3 Hz)
+    out_dc: (f32, f32),
 }
 
 pub const ARCHETYPES: [&str; 10] = ["wobble", "talk", "screech", "riddim", "lead", "pad", "pluck", "sub", "fm", "vox"];
@@ -655,6 +709,23 @@ impl Growl {
                 self.set_mat(0, 5, 3 + pick!(2) as i32);
             }
         }
+        // the sound-design block, now and then: a comb swept by lane 2, a folder on the drive, a pitch zap, wider unison
+        if matches!(ARCHETYPES[a], "screech" | "riddim" | "fm" | "wobble") && pick!(3) == 0 {
+            self.v[P_COMB] = rn!(0.25, 0.6);
+            self.v[P_CTUNE] = [0.5, 0.75, 0.625][pick!(3)];
+            self.v[P_CFB] = rn!(0.75, 0.95);
+            self.set_mat(1, 10, 1 + pick!(3) as i32);
+        }
+        if matches!(ARCHETYPES[a], "riddim" | "screech" | "talk") && pick!(3) == 0 {
+            self.v[P_FOLD] = rn!(0.15, 0.5);
+        }
+        if matches!(ARCHETYPES[a], "pluck" | "lead" | "sub") && pick!(3) == 0 {
+            self.v[P_PENV] = rn!(0.55, 0.75);
+            self.v[P_PDEC] = rn!(0.1, 0.25);
+        }
+        if matches!(ARCHETYPES[a], "lead" | "pad") {
+            self.v[P_UNI] = selv(1 + pick!(3), 4);
+        }
         // two more things that make a patch feel alive: a velocity touch on the drive, the wheel on the cutoff
         if pick!(2) == 0 {
             self.set_mat(5, 6, 1);
@@ -666,7 +737,7 @@ impl Growl {
         a
     }
 
-    pub const PRESETS: [&'static str; 106] = ["wobble", "growl", "yoi", "reese", "laser", "stab", "riser", "neuro", "talkbox", "robot vowels", "formant bass", "yoi talk", "alien talk", "vox pad", "choir stack", "glitch talk", "screech", "neuro sync", "hard lead", "sync sweep", "sync pluck", "tear out", "dub wobble", "half-time wob", "triplet wob", "riddim", "riddim 2", "minimal wub", "mid growl", "rasp", "gnarl", "future bass", "supersaw", "detune lead", "fm bell", "pluck bass", "sub drop", "808 growl", "acid squeal", "chirp", "swarm", "wide stab", "gentle wub", "sunken speaker", "rural shriek", "gravel stab", "brass hook", "crimson pad", "solar pop", "thunder drop", "molten metal", "violet throat", "sweet wub", "ghost speaker", "neon shriek", "wooden stab", "narrow anthem", "marble pad", "velvet tick", "savage drop", "rapid metal", "ancient throat", "satin wub", "static voice", "tidal shriek", "polar riddim", "whisper anthem", "silver pad", "scarlet tick", "salty drop", "shadow bell", "dusty throat", "liquid wobble", "mean voice", "copper shriek", "acid riddim", "frozen anthem", "heavy haze", "future tick", "chrome boom", "cosmic bell", "ashen throat", "tribal wobble", "razor voice", "toxic squeal", "amber riddim", "smoky beacon", "ember haze", "feral tick", "rotten boom", "kind bell", "carbon formant", "glass wobble", "burnt talker", "thin squeal", "retro riddim", "jade beacon", "bitter pad", "urban pop", "cotton drop", "hollow metal", "cobalt yoi", "stormy wub", "frost speaker", "lunar shriek", "golden stab"];
+    pub const PRESETS: [&'static str; 141] = ["wobble", "growl", "yoi", "reese", "laser", "stab", "riser", "neuro", "talkbox", "robot vowels", "formant bass", "yoi talk", "alien talk", "vox pad", "choir stack", "glitch talk", "screech", "neuro sync", "hard lead", "sync sweep", "sync pluck", "tear out", "dub wobble", "half-time wob", "triplet wob", "riddim", "riddim 2", "minimal wub", "mid growl", "rasp", "gnarl", "future bass", "supersaw", "detune lead", "fm bell", "pluck bass", "sub drop", "808 growl", "acid squeal", "chirp", "swarm", "wide stab", "gentle wub", "sunken speaker", "rural shriek", "gravel stab", "brass hook", "crimson pad", "solar pop", "thunder drop", "molten metal", "violet throat", "sweet wub", "ghost speaker", "neon shriek", "wooden stab", "narrow anthem", "marble pad", "velvet tick", "savage drop", "rapid metal", "ancient throat", "satin wub", "static voice", "tidal shriek", "polar riddim", "whisper anthem", "silver pad", "scarlet tick", "salty drop", "shadow bell", "dusty throat", "liquid wobble", "mean voice", "copper shriek", "acid riddim", "frozen anthem", "heavy haze", "future tick", "chrome boom", "cosmic bell", "ashen throat", "tribal wobble", "razor voice", "toxic squeal", "amber riddim", "smoky beacon", "ember haze", "feral tick", "rotten boom", "kind bell", "carbon formant", "glass wobble", "burnt talker", "thin squeal", "retro riddim", "jade beacon", "bitter pad", "urban pop", "cotton drop", "hollow metal", "cobalt yoi", "stormy wub", "frost speaker", "lunar shriek", "golden stab", "comb growl", "spectral comb", "comb screech", "hollow comb", "vowel comb talk", "comb pluck", "color bass", "color wobble", "future chord", "riddim fold", "fold growl", "crushed riddim", "metal tearout", "machine gun", "shifted growl", "robot shifter", "barber growl", "complextro stab", "electro wob", "fidget squeal", "big room lead", "screech lead", "prog pluck", "prog chord stab", "minor chord stab", "saw bass prog", "slow filter saw", "zap", "pew pluck", "kick bass", "neuro reese", "phaser growl", "flanged reese", "brass growl", "yoi comb"];
 
     pub fn new(sr: f32) -> Self {
         let mut verb = Reverb::new(sr);
@@ -683,7 +754,7 @@ impl Growl {
             note: 48.0,
             target: 48.0,
             vel: 0.8,
-            ph_a: [0.0, 0.31, 0.67],
+            ph_a: [0.0, 0.31, 0.67, 0.13, 0.52, 0.88, 0.24, 0.71, 0.45],
             ph_b: 0.0,
             ph_sub: 0.0,
             amp: Env::new(),
@@ -711,6 +782,16 @@ impl Growl {
             ph_sync: 0.0,
             os_y: 0.0,
             os_sh: 0.0,
+            comb_line: DelayLine::new((sr * 0.06) as usize),
+            comb_lp: 0.0,
+            hil: Default::default(),
+            fs_ph: 0.0,
+            p_t: 10.0,
+            cr_h: 0.0,
+            cr_n: 0,
+            dc_x: 0.0,
+            dc_y: 0.0,
+            out_dc: (0.0, 0.0),
         };
         s.resolve_matrix();
         s
@@ -772,6 +853,26 @@ impl Growl {
         }
     }
 
+/// The effect chain a preset suggests (`fx Name k=v` lines in growl_presets.txt; `_` stands for a space in names): (effect, params).
+    pub fn preset_fx(name: &str) -> Vec<(String, Vec<(String, f32)>)> {
+        static F: OnceLock<Vec<(String, Vec<(String, Vec<(String, f32)>)>)>> = OnceLock::new();
+        let all = F.get_or_init(|| {
+            let mut out: Vec<(String, Vec<(String, Vec<(String, f32)>)>)> = vec![];
+            for line in include_str!("../growl_presets.txt").lines() {
+                if line.starts_with('[') && line.ends_with(']') {
+                    out.push((line[1..line.len() - 1].to_string(), vec![]));
+                } else if let (Some(rest), Some(cur)) = (line.trim().strip_prefix("fx "), out.last_mut()) {
+                    let mut it = rest.split_whitespace();
+                    let Some(fxn) = it.next() else { continue };
+                    let ps = it.filter_map(|t| t.split_once('=')).filter_map(|(k, v)| v.parse::<f32>().ok().map(|v| (k.replace('_', " "), v))).collect();
+                    cur.1.push((fxn.replace('_', " "), ps));
+                }
+            }
+            out
+        });
+        all.iter().find(|(n, _)| n == name).map(|(_, f)| f.clone()).unwrap_or_default()
+    }
+
     fn preset_state(name: &str) -> Option<Vec<(String, f32)>> {
         static P: OnceLock<Vec<(String, Vec<(String, f32)>)>> = OnceLock::new();
         let all = P.get_or_init(|| {
@@ -814,6 +915,7 @@ impl Instrument for Growl {
             self.trigger();
             self.talk_t = 0.0;
             self.ph_sync = 0.0;
+            self.p_t = 0.0;
             self.gate = true;
         }
     }
@@ -880,6 +982,22 @@ impl Instrument for Growl {
         let t_q = 1.0 / (4.0 + self.v[P_TRES] * 14.0);
         let mut t_g = [0.0f32; 3];
         let sync_p = self.v[P_SYNC];
+        let comb = self.v[P_COMB];
+        let c_tune = (self.v[P_CTUNE] - 0.5) * 48.0;
+        let c_fb = (self.v[P_CFB] * 2.0 - 1.0) * 0.97;
+        let c_damp = 1.0 - self.v[P_CDAMP] * 0.92;
+        let c_norm = 1.0 - c_fb.abs() * 0.85;
+        let fold_p = self.v[P_FOLD];
+        let crush = self.v[P_CRUSH];
+        let asym = self.v[P_ASYM] * 0.8;
+        let fshift = super::bassfx::shift_hz(self.v[P_FSHIFT]);
+        let penv = (self.v[P_PENV] - 0.5) * 96.0;
+        let ptau = 0.004 + self.v[P_PDEC] * self.v[P_PDEC] * 0.8;
+        let nuni = UNI[self.sel(P_UNI, 4)];
+        let uni_g = (3.0 / nuni as f32).sqrt();
+        let sub_mul = if self.v[P_SUBOCT] > 0.5 { 1.0 } else { 0.5 };
+        let cr_hold = 1 + (crush * crush * 24.0) as u32;
+        let cr_bits = 2f32.powf(12.0 - crush * 9.0);
         let active = self.amp.stage != Stage::Idle;
         let mut g_main = 0.0f32;
         let mut k_main = 1.0f32;
@@ -920,7 +1038,9 @@ impl Instrument for Growl {
 
             let (mut l_out, mut r_out) = (0.0f32, 0.0f32);
             if active || amp_v > 0.0 {
-                let semis = self.note + (bend_c + m[0]) / 100.0;
+                let pe = if penv != 0.0 && self.p_t < ptau * 8.0 { penv * (-self.p_t / ptau).exp() } else { 0.0 };
+                self.p_t += dt;
+                let semis = self.note + (bend_c + m[0]) / 100.0 + pe;
                 let f0 = midi_hz(semis);
                 // osc B first: it drives the FM
                 let fb = f0 * brat;
@@ -949,21 +1069,22 @@ impl Instrument for Growl {
                     self.ph_sync += f0 / sr;
                     if self.ph_sync >= 1.0 {
                         self.ph_sync -= self.ph_sync.floor();
-                        self.ph_a = [0.0; 3];
+                        self.ph_a = [0.0; 9];
                     }
                 }
                 let allowed = (0.45 * sr / (f0 * ratio).max(10.0)).floor() as usize;
                 let lvl = LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1);
                 let (tx, ty) = (&tb.w[tbl][0][lvl], &tb.w[tbl][1][lvl]);
                 let mut a_sum = 0.0;
-                for k in 0..3 {
-                    let cents = stack[k] + DETN_SPREAD[k] * self.v[P_DETN] * 40.0;
+                for k in 0..nuni {
+                    let spread = if k < 3 { DETN_SPREAD[k] } else { UNI_SPREAD[k - 3] };
+                    let cents = stack[k % 3] + spread * self.v[P_DETN] * 40.0;
                     let fk = f0 * ratio * 2f32.powf(cents / 1200.0) + fm_dev;
                     self.ph_a[k] += fk / sr;
                     self.ph_a[k] -= self.ph_a[k].floor();
                     a_sum += cx * rd(tx, self.ph_a[k]) + cy * rd(ty, self.ph_a[k]);
                 }
-                let mut x = a_sum * 0.5 + b_out * self.v[P_BLVL] * 0.6 * 0.6 + self.rng.next() * self.v[P_NOIS] * 0.5;
+                let mut x = a_sum * 0.5 * uni_g + b_out * self.v[P_BLVL] * 0.6 * 0.6 + self.rng.next() * self.v[P_NOIS] * 0.5;
 
                 // filter (coefficients every 4 samples)
                 let cut_c = m[3];
@@ -1020,12 +1141,34 @@ impl Instrument for Growl {
                     }
                     filtered = filtered * (1.0 - talk) + vs * talk * 1.8;
                 }
-                // drive
+                // comb: tuned to the note (plus `c tune` and matrix k), damped feedback, level kept even across the feedback
+                if comb > 0.001 {
+                    let fc = (f0 * 2f32.powf((c_tune + m[10] / 100.0) / 12.0)).clamp(20.0, sr * 0.4);
+                    let y = self.comb_line.read(sr / fc);
+                    self.comb_lp += (y - self.comb_lp) * c_damp;
+                    if !self.comb_lp.is_finite() {
+                        self.comb_lp = 0.0;
+                    }
+                    self.comb_line.push((filtered + self.comb_lp * c_fb).clamp(-8.0, 8.0));
+                    filtered = filtered * (1.0 - comb) + y * c_norm * 1.4 * comb;
+                }
+                // frequency shift: every partial up or down by the same Hz
+                let fs = fshift + m[12];
+                if fs.abs() > 0.5 {
+                    let (re, im) = self.hil.run(filtered);
+                    self.fs_ph = (self.fs_ph + fs as f64 / sr as f64).rem_euclid(1.0);
+                    let a = (std::f64::consts::TAU * self.fs_ph) as f32;
+                    filtered = re * a.cos() + im * a.sin();
+                }
+                // drive (the folder and the asymmetry live in the shaper below)
                 let pre = 1.0 + (self.v[P_DRV] * 30.0 + m[6]).max(0.0) * 1.0;
-                let y = filtered * pre;
+                let fold = (fold_p + m[11]).clamp(0.0, 1.0);
                 // the shaper runs at twice the rate (an extra point halfway to the last sample, and a 1-2-1 average back down), which keeps
                 // the new harmonics a fold or a clip makes from aliasing down into the audible range
-                let sh = |y: f32| {
+                let sh = |u: f32| {
+                    // fold first (a sine folder blended in), then the drive gain and the offset for even harmonics
+                    let u = if fold > 0.001 { u * (1.0 - fold) + (u * (1.0 + 5.0 * fold) * std::f32::consts::FRAC_PI_2).sin() * fold } else { u };
+                    let y = u * pre + asym;
                     let v = match shaper {
                         0 => (2.5 * y).tanh() / 2.5f32.tanh(),
                         1 => (3.5 * std::f32::consts::PI * (y / 24.0)).sin(),
@@ -1033,21 +1176,41 @@ impl Instrument for Growl {
                     };
                     v * 0.4
                 };
-                let (cur, mid) = (sh(y), sh(0.5 * (self.os_y + y)));
-                let shaped = 0.25 * self.os_sh + 0.5 * mid + 0.25 * cur;
-                self.os_y = y;
+                let u = filtered;
+                let (cur, mid) = (sh(u), sh(0.5 * (self.os_y + u)));
+                let mut shaped = 0.25 * self.os_sh + 0.5 * mid + 0.25 * cur;
+                self.os_y = u;
                 self.os_sh = cur;
+                // the offset's DC out again
+                if asym > 0.0 {
+                    let d = shaped - self.dc_x + 0.995 * self.dc_y;
+                    self.dc_x = shaped;
+                    self.dc_y = d;
+                    shaped = d;
+                }
+                // crush: fewer bits, a held sample
+                if crush > 0.001 {
+                    self.cr_n += 1;
+                    if self.cr_n >= cr_hold {
+                        self.cr_n = 0;
+                        self.cr_h = (shaped / 0.4 * cr_bits).round() / cr_bits * 0.4;
+                    }
+                    shaped = self.cr_h;
+                }
                 x = shaped;
                 // 11 kHz low-pass
                 let (lpo, _) = self.f_lp.run(x, lp11, k07);
                 x = lpo;
                 // sub, after the drive
-                self.ph_sub += f0 * 0.5 / sr;
+                self.ph_sub += f0 * sub_mul / sr;
                 self.ph_sub -= self.ph_sub.floor();
                 x += (TAU * self.ph_sub).sin() * self.v[P_SUB] * 0.8;
                 // amp
                 let g = (1.0 + m[7]).clamp(0.0, 2.0);
                 x *= amp_v * g * (0.3 + 0.7 * self.vel);
+                let d = x - self.out_dc.0 + 0.9995 * self.out_dc.1;
+                self.out_dc = (x, d);
+                x = d;
                 // pan
                 let pan = m[8].clamp(-1.0, 1.0);
                 let a = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
@@ -1103,6 +1266,39 @@ impl Instrument for Growl {
         } else {
             self.silent = 0;
         }
+    }
+
+    fn idle(&mut self, frames: usize) {
+        // exactly what render() does to the free-running clocks when no note sounds, sample by sample (no audio): the lanes, the
+        // talk sequencer, the width modulation; nothing at all once the Growl would have stopped rendering by itself
+        if self.amp.stage == Stage::Idle && self.silent as f32 > self.sr * 6.0 {
+            return;
+        }
+        let bpm = 60.0 + self.v[P_TEMPO] * 140.0;
+        let bps = (bpm / 60.0) as f64 / self.sr as f64;
+        let talk = self.v[P_TALK];
+        let t_rate = T_RATES[self.sel(P_TRATE, 5)];
+        let t_len = 1 + (self.v[P_TLEN] * 15.0).round() as usize;
+        let dt = 1.0 / self.sr;
+        let t_k = 1.0 - (-dt / (0.002 + self.v[P_TGLID] * self.v[P_TGLID] * 0.15)).exp();
+        let r_cents = self.last_mod[9];
+        for _ in 0..frames {
+            for l in 0..NLANE {
+                let rate = if l == 0 { 2f64.powf(r_cents as f64 / 1200.0) } else { 1.0 };
+                self.lane_t[l] += bps * rate;
+            }
+            if talk > 0.002 {
+                self.talk_t += bps * t_rate;
+                let step = (self.talk_t as usize) % t_len;
+                let target = self.v[P_TSTEP + step];
+                self.talk_pos += (target - self.talk_pos) * t_k;
+            }
+            self.wide_ph += 1.0 / self.sr;
+        }
+        for l in 0..NLANE {
+            self.lane_val[l] = self.lane_value(l);
+        }
+        self.silent = self.silent.saturating_add(frames as u32);
     }
 
     fn params(&self) -> Vec<(&'static str, f32)> {
@@ -1243,6 +1439,7 @@ impl Instrument for Growl {
         }
         self.mat_dirty = true;
         self.dly.clear();
+        self.comb_line.clear();
         self.lane_t = [0.0; NLANE];
     }
 }
@@ -1279,15 +1476,131 @@ mod tests {
         v.iter().fold(0.0f32, |m, x| m.max(x.abs()))
     }
 
+    /// The new presets with their effect chains, one after another on a 4-bar riff at 140 bpm, into a WAV (and a cue list) at
+    /// $GROWL_SHOWCASE (a folder). `cargo test -p ling-daw --release --lib render_preset_showcase -- --ignored`
+    #[test]
+    #[ignore]
+    fn render_preset_showcase() {
+        let dir = std::env::var("GROWL_SHOWCASE").unwrap_or_else(|_| ".".into());
+        let sr = 44100.0f32;
+        let spb = 60.0 / 140.0;
+        let first = Growl::PRESETS.iter().position(|p| *p == "comb growl").unwrap_or(0);
+        let mut all: Vec<f32> = vec![];
+        let mut cues = String::new();
+        for name in &Growl::PRESETS[first..] {
+            let mut g = Growl::new(sr);
+            g.load_preset(name);
+            g.set_param("tempo", (140.0 - 60.0) / 140.0);
+            let high = ["lead", "pluck", "chord", "stab", "pew", "future", "color", "zap", "screech", "squeal", "slow"].iter().any(|w| name.contains(w));
+            let root: i32 = if high { 57 } else { 41 };
+            // (beat, length, semitones): a held note, hits, a glide, a fall
+            let riff: [(f64, f64, i32); 9] = [(0.0, 1.5, 0), (1.5, 0.5, 0), (2.0, 0.5, 3), (2.5, 1.5, 5), (4.0, 0.75, 0), (4.75, 0.75, 0), (5.5, 0.5, 7), (6.0, 1.0, 5), (6.9, 1.1, 3)];
+            let mut chain: Vec<Box<dyn crate::dsp::fx::Effect>> = vec![];
+            for (fxn, ps) in Growl::preset_fx(name) {
+                if let Some(mut e) = crate::dsp::fx::make(&fxn, sr) {
+                    for (k, v) in ps {
+                        e.set_param(&k, v);
+                    }
+                    chain.push(e);
+                }
+            }
+            let total = ((8.0 * 2.0 + 1.0) * spb * sr as f64) as usize;
+            let mut out = vec![0f32; total * 2];
+            let mut ev: Vec<(usize, bool, u8)> = vec![];
+            for bar2 in 0..2 {
+                for (b, l, o) in riff {
+                    let st = b + bar2 as f64 * 8.0;
+                    let k = (root + o) as u8;
+                    ev.push(((st * spb * sr as f64) as usize, true, k));
+                    ev.push((((st + l) * spb * sr as f64) as usize, false, k));
+                }
+            }
+            ev.sort_by_key(|e| (e.0, e.1));
+            let mut k = 0;
+            let blk = 256;
+            let mut f = 0;
+            while f < total {
+                while k < ev.len() && ev[k].0 <= f {
+                    if ev[k].1 { g.note_on(ev[k].2, 0.9) } else { g.note_off(ev[k].2) }
+                    k += 1;
+                }
+                let n = blk.min(total - f);
+                let mut buf = vec![0f32; n * 2];
+                g.render(&mut buf);
+                for e in chain.iter_mut() {
+                    e.process(&mut buf);
+                }
+                out[f * 2..(f + n) * 2].copy_from_slice(&buf);
+                f += n;
+            }
+            let pk = out.iter().fold(1e-6f32, |m, x| m.max(x.abs()));
+            let gain = 0.7 / pk;
+            cues.push_str(&format!("{:7.2}s  {}  (peak before levelling {:.2})
+", all.len() as f32 / 2.0 / sr, name, pk));
+            all.extend(out.iter().map(|x| x * gain));
+            all.extend(std::iter::repeat(0.0).take((sr * 0.4) as usize * 2));
+        }
+        let spec = hound::WavSpec { channels: 2, sample_rate: sr as u32, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let path = std::path::Path::new(&dir).join("growl_showcase.wav");
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for x in &all {
+            w.write_sample((x.clamp(-1.0, 1.0) * 32767.0) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("growl_showcase.txt"), cues).unwrap();
+    }
+
+    #[test]
+    fn the_sound_design_block_stays_sane_at_its_extremes_and_does_what_it_says() {
+        let sr = 44100.0;
+        let base = |g: &mut Growl| {
+            g.load_preset("growl");
+        };
+        for (k, v) in [("comb", 1.0), ("c fb", 0.0), ("c fb", 1.0), ("c tune", 0.0), ("c tune", 1.0), ("fold", 1.0), ("crush", 1.0), ("asym", 1.0), ("fshift", 0.0), ("fshift", 1.0), ("penv", 1.0), ("penv", 0.0), ("uni", 1.0), ("sub oct", 1.0)] {
+            let mut g = Growl::new(sr);
+            base(&mut g);
+            g.set_param("comb", 0.6);
+            g.set_param(k, v);
+            for key in [24u8, 48, 84] {
+                g.note_on(key, 1.0);
+                let o = render(&mut g, 0.4);
+                g.note_off(key);
+                assert!(o.iter().all(|x| x.is_finite()), "{k}={v} key {key}: NaN");
+                assert!(peak(&o) <= 1.0, "{k}={v} key {key}: peak {}", peak(&o));
+                assert!(peak(&o) > 0.005, "{k}={v} key {key}: silent");
+            }
+        }
+        // the pitch envelope: the first milliseconds are far higher than the rest (zero crossings per second)
+        let mut g = Growl::new(sr);
+        g.load_preset("zap");
+        g.note_on(48, 1.0);
+        let o = render(&mut g, 0.5);
+        let zc = |v: &[f32]| v.chunks(2).map(|c| c[0]).collect::<Vec<_>>().windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
+        let n = (sr * 0.015) as usize * 2;
+        assert!(zc(&o[..n]) * 2 > 3 * zc(&o[o.len() - n..]), "{} vs {}", zc(&o[..n]), zc(&o[o.len() - n..]));
+        // every effect a preset suggests exists, with real parameter names
+        for name in Growl::PRESETS {
+            for (fxn, ps) in Growl::preset_fx(name) {
+                let names: Vec<&str> = crate::dsp::fx::defaults(&fxn).iter().map(|p| p.0).collect();
+                assert!(!names.is_empty(), "{name}: no effect {fxn}");
+                for (p, _) in ps {
+                    assert!(names.contains(&p.as_str()), "{name}: {fxn} has no {p}");
+                }
+            }
+        }
+        assert!(Growl::preset_fx("comb growl").len() == 2);
+    }
+
     #[test]
     fn param_layout_is_consistent() {
         assert_eq!(param_names().len(), NPARAM);
         assert_eq!(param_names()[MAT_BASE], "m l1p");
         assert_eq!(param_names()[LANE_BASE + 4], "l1 p0");
-        assert_eq!(param_names()[EXT_BASE - 1], "m whlr");
+        assert_eq!(param_names()[EXT_BASE - 1], "m whls");
         assert_eq!(param_names()[EXT_BASE], "talk");
         assert_eq!(param_names()[P_TSTEP], "t s0");
-        assert_eq!(param_names()[NPARAM - 1], "t s15");
+        assert_eq!(param_names()[SD_BASE - 1], "t s15");
+        assert_eq!(param_names()[NPARAM - 1], "sub oct");
     }
 
     #[test]

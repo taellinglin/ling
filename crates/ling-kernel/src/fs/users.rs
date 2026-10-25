@@ -81,7 +81,7 @@ fn append(buf: &mut [u8; RECORD_MAX], len: &mut usize, s: &[u8]) {
 /// are stored with (`kdf:argon2id`); the memory comes from the frame
 /// allocator for the duration of one hash. None only if that memory is
 /// not there.
-fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
+pub(crate) fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
     use argon2::{Algorithm, Argon2, Params, Version};
     let params = Params::new(16 * 1024, 3, 1, Some(32)).ok()?;
     let a = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -92,7 +92,7 @@ fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
 
 /// A salt from the hardware random source (RDRAND / the Pi's RNG), the
 /// timer-derived ticks only when there is none.
-fn fresh_salt(out: &mut [u8]) {
+pub(crate) fn fresh_salt(out: &mut [u8]) {
     if crate::crypto::random_bytes(out) {
         return;
     }
@@ -293,6 +293,14 @@ pub fn group_of(username: &str, out: &mut [u8; 32]) -> Option<usize> {
 /// Change `username`'s password, keeping every other field. `false` if the
 /// user doesn't exist.
 pub fn set_password(username: &str, new_password: &str) -> bool {
+    let ok = set_password_record(username, new_password);
+    if ok && !crate::keyring::rewrap(username, new_password) && crate::keyring::user().is_none() {
+        crate::console_write(b"passwd: the keyring was not open, so it was not re-wrapped -- sign in with the old password first to keep private files readable\n");
+    }
+    ok
+}
+
+fn set_password_record(username: &str, new_password: &str) -> bool {
     let mut buf = [0u8; BLOCK_SIZE];
     let Some(len) = load_record(username, &mut buf) else { return false };
     let record_copy: [u8; BLOCK_SIZE] = buf;

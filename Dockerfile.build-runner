@@ -8,6 +8,10 @@
 # not a crates.io version — so baking the full source in here and building it once is
 # both how we get the `ling` binary itself AND how we warm the cargo registry cache for
 # every later offline `cargo build` a real user package triggers.
+#
+# Always build with  --build-context macos-sdk=docker/macos-sdk  (the folder exists even without an
+# SDK in it — see the osxcross step below). A default `FROM scratch AS macos-sdk` stage does NOT
+# work: BuildKit binds the stage, not the named context, for RUN --mount from=, so it was dropped.
 FROM rust:1-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,6 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     mingw-w64 \
     binutils-aarch64-linux-gnu \
+    grub-pc-bin \
+    grub-efi-amd64-bin \
+    grub-common \
+    xorriso \
+    mtools \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,6 +50,8 @@ RUN rustup target add wasm32-unknown-unknown && \
 #  - lingos: LingOS ring-3 app, custom x86_64-lingos.json spec  } both no_std + build-std,
 #  - rpi:    Pi 5 kernel8.img, aarch64-unknown-none             } so nightly + rust-src;
 #            rpi's raw-image step needs aarch64-linux-gnu-objcopy (binutils-aarch64-linux-gnu)
+#  - kernel: the x86-64 LingOS kernel booting straight into the package (Multiboot2 ELF + a GRUB .iso, from grub-pc-bin /
+#            grub-efi-amd64-bin / xorriso / mtools above), the same nightly + rust-src path
 #  - mac is NOT here: x86_64-apple-darwin from Linux needs osxcross + a macOS SDK.
 RUN rustup target add x86_64-pc-windows-gnu && \
     rustup toolchain install nightly --profile minimal --component rust-src && \
@@ -51,19 +62,40 @@ RUN rustup target add x86_64-pc-windows-gnu && \
 # for web) use it, so it needs the same targets as the default toolchain.
 RUN rustup toolchain install stable --profile minimal &&     rustup target add --toolchain stable wasm32-unknown-unknown x86_64-pc-windows-gnu
 
+
 # Optional mac target: osxcross + a macOS SDK. Apple's SDK is not redistributable, so the image
 # only gains `mac` when docker/macos-sdk/ holds either
 #   - Xcode_*.xip, straight from https://developer.apple.com/download/all/?q=xcode (the SDK is
 #     extracted here with osxcross's gen_sdk_package_pbzx.sh - no Mac needed), or
 #   - a ready MacOSX*.sdk.tar.xz packaged on a Mac with osxcross's tools/gen_sdk_package.sh.
-# The folder is bind-mounted, not COPYed, so a multi-GB .xip never lands in an image layer.
+# The folder comes in as its own named build context (--build-context macos-sdk=docker/macos-sdk,
+# excluded from the main context by .dockerignore) and is bind-mounted, not COPYed, so a
+# multi-GB .xip is neither re-sent with every build nor lands in an image layer.
 # Without either file this step is a no-op and the toolchain's platforms list should omit mac.
-RUN --mount=type=bind,source=docker/macos-sdk,target=/opt/macos-sdk \
-    if ls /opt/macos-sdk/MacOSX*.sdk.tar.* /opt/macos-sdk/Xcode*.xip >/dev/null 2>&1; then \
-        apt-get update && apt-get install -y --no-install-recommends clang llvm-dev libclang-dev lld make cmake python3 \
-            libxml2-dev libssl-dev lzma-dev libbz2-dev bzip2 zlib1g-dev uuid-dev cpio git patch xz-utils file && \
-        git clone --depth 1 https://github.com/tpoechtrager/osxcross /opt/osxcross && \
-        cd /opt/osxcross && \
+#
+# SDK 26+/27 headers need a much newer Clang than bookworm's 14, so this step pulls Clang
+# ${MAC_LLVM} from apt.llvm.org and makes it the plain `clang` the osxcross wrapper invokes.
+# osxcross is pinned (bump OSXCROSS_REV deliberately); its SDK table only lists "27|27.0*",
+# so the sed adds a 27.x row whose target keeps the minor version (MacOSX27.2.sdk -> darwin27.2):
+# the wrapper derives the SDK folder from that target name, so reusing plain darwin27 makes it
+# look for MacOSX27.sdk and fail its self-test.
+ARG MAC_LLVM=21
+ARG OSXCROSS_REV=27d21e4977c9751d01199c7a226a6faf494c3dd9
+RUN --mount=type=bind,from=macos-sdk,target=/opt/macos-sdk \
+    if ls /opt/macos-sdk | grep -Eq '^(MacOSX.*[.]sdk[.]tar[.].*|Xcode.*[.]xip)$'; then \
+        apt-get update && apt-get install -y --no-install-recommends make cmake python3 \
+            libxml2-dev libssl-dev lzma-dev libbz2-dev bzip2 zlib1g-dev uuid-dev cpio git patch xz-utils file \
+            wget gnupg lsb-release software-properties-common && \
+        curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh && bash /tmp/llvm.sh ${MAC_LLVM} && rm /tmp/llvm.sh && \
+        apt-get install -y --no-install-recommends llvm-${MAC_LLVM}-dev libclang-${MAC_LLVM}-dev && \
+        ln -sf /usr/bin/clang-${MAC_LLVM} /usr/local/bin/clang && \
+        ln -sf /usr/bin/clang++-${MAC_LLVM} /usr/local/bin/clang++ && \
+        ln -sf /usr/bin/llvm-config-${MAC_LLVM} /usr/local/bin/llvm-config && \
+        ln -sf /usr/bin/ld.lld-${MAC_LLVM} /usr/local/bin/ld.lld && \
+        git init -q /opt/osxcross && cd /opt/osxcross && \
+        git fetch -q --depth 1 https://github.com/tpoechtrager/osxcross ${OSXCROSS_REV} && git checkout -q FETCH_HEAD && \
+        sed -i '/^  27|27\.0\*)/a\  27.*) TARGET=darwin$(echo $SDK_VERSION | cut -d. -f1,2); SUPPORTED_ARCHS="arm64 arm64e x86_64 x86_64h"; NEED_TAPI_SUPPORT=1; OSX_VERSION_MIN_INT=11.0 ;;' build.sh && \
+        grep -q '^ *27\.\*) TARGET=darwin' build.sh && \
         if ls /opt/macos-sdk/MacOSX*.sdk.tar.* >/dev/null 2>&1; then \
             cp /opt/macos-sdk/MacOSX*.sdk.tar.* tarballs/; \
         else \
@@ -77,21 +109,44 @@ RUN --mount=type=bind,source=docker/macos-sdk,target=/opt/macos-sdk \
         rustup target add --toolchain stable x86_64-apple-darwin && \
         rm -rf /var/lib/apt/lists/* /opt/osxcross/build /opt/osxcross/tarballs/*; \
     else echo 'no macOS SDK or Xcode .xip in docker/macos-sdk: the mac target stays off'; fi
+# osxcross names every tool after the SDK's darwin version (x86_64-apple-darwin27.2-ar, ...);
+# add unversioned aliases (x86_64-apple-darwin-ar, aarch64-apple-darwin-ar, ...) so the ENV
+# below survives an SDK bump. Also adds Rust's Apple Silicon target for `macarm` here (kept
+# out of the osxcross step above so changing it doesn't redo that ~10 min step).
+RUN if [ -d /opt/osxcross/target/bin ]; then cd /opt/osxcross/target/bin && \
+        for a in x86_64 aarch64; do \
+            for t in $a-apple-darwin[0-9]*-*; do ln -sf "$t" "$a-apple-darwin-${t#$a-apple-darwin*-}"; done; \
+        done && \
+        ls x86_64-apple-darwin-ar aarch64-apple-darwin-ar oa64-clang && \
+        rustup target add aarch64-apple-darwin && \
+        rustup target add --toolchain stable aarch64-apple-darwin; fi
 ENV PATH="/opt/osxcross/target/bin:${PATH}"
-# cargo / cc-rs use these for x86_64-apple-darwin (only meaningful when osxcross was installed;
-# osxcross names its tools after the SDK's darwin version - o64-clang is the stable alias).
+# cargo / cc-rs use these for x86_64-apple-darwin (mac) and aarch64-apple-darwin (macarm) - only
+# meaningful when osxcross was installed; o64-clang / oa64-clang are its stable compiler aliases.
 # coreaudio-sys (cpal's macOS backend) runs bindgen against the SDK: it reads COREAUDIO_SDK_PATH
-# instead of asking xcrun, which does not exist here.
+# instead of asking xcrun, which does not exist here. MACOSX_DEPLOYMENT_TARGET: rustc defaults
+# x86_64-apple-darwin to 10.12, below osxcross's minimum (11.0) for SDK 27.
 ENV CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="o64-clang" \
     CC_x86_64_apple_darwin="o64-clang" \
     CXX_x86_64_apple_darwin="o64-clang++" \
     AR_x86_64_apple_darwin="x86_64-apple-darwin-ar" \
+    CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="oa64-clang" \
+    CC_aarch64_apple_darwin="oa64-clang" \
+    CXX_aarch64_apple_darwin="oa64-clang++" \
+    AR_aarch64_apple_darwin="aarch64-apple-darwin-ar" \
     COREAUDIO_SDK_PATH="/opt/osxcross/target/SDK/current" \
-    SDKROOT="/opt/osxcross/target/SDK/current"
+    SDKROOT="/opt/osxcross/target/SDK/current" \
+    MACOSX_DEPLOYMENT_TARGET="11.0"
+
+# pios: 64-bit Raspberry Pi OS (aarch64-unknown-linux-gnu), cross-built - the aarch64 gcc as the
+# linker and Debian's arm64 multiarch -dev packages for ALSA / X11 / GL / Wayland / udev, found by
+# pkg-config through its per-target variables (the pkg-config crate reads them).
+RUN dpkg --add-architecture arm64 && apt-get update && apt-get install -y --no-install-recommends         gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross         libasound2-dev:arm64 libudev-dev:arm64 libx11-dev:arm64 libxi-dev:arm64 libxcursor-dev:arm64         libxrandr-dev:arm64 libgl1-mesa-dev:arm64 libxkbcommon-dev:arm64 libwayland-dev:arm64 &&     rm -rf /var/lib/apt/lists/* &&     rustup target add aarch64-unknown-linux-gnu &&     rustup target add --toolchain stable aarch64-unknown-linux-gnu
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"     CC_aarch64_unknown_linux_gnu="aarch64-linux-gnu-gcc"     CXX_aarch64_unknown_linux_gnu="aarch64-linux-gnu-g++"     AR_aarch64_unknown_linux_gnu="aarch64-linux-gnu-ar"     PKG_CONFIG_ALLOW_CROSS="1"     PKG_CONFIG_PATH_aarch64_unknown_linux_gnu="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"     PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu="/"
 
 # crates/ling-kernel depends on three sibling repositories by path (../../../<name> from
 # /opt/ling/crates/ling-kernel = /opt/<name>). Build with named contexts for them:
-#   docker build -f Dockerfile.build-runner #     --build-context bring-browser=../bring-browser #     --build-context horizon-browser=../horizon-browser #     --build-context ling-messenger=../ling-messenger #     -t fu-build-runner:2030.1 .
+#   docker build -f Dockerfile.build-runner #     --build-context macos-sdk=docker/macos-sdk #     --build-context bring-browser=../bring-browser #     --build-context horizon-browser=../horizon-browser #     --build-context ling-messenger=../ling-messenger #     -t fu-build-runner:2030.1 .
 # Only their manifests and sources are copied (not their target/ folders).
 COPY --from=bring-browser Cargo.toml Cargo.lock /opt/bring-browser/
 COPY --from=bring-browser src /opt/bring-browser/src
@@ -147,7 +202,7 @@ ENV CARGO_TARGET_DIR="/opt/cargo-target-shared"
 RUN mkdir -p /opt/warmup && \
     printf 'ผูก เริ่ม = ทำ {\n    พิมพ์("build farm warmup ok")\n}\n' > /opt/warmup/hello.ling && \
     cd /opt/warmup && ling build hello.ling --platform web,lin --out dist && \
-    for p in win lingos rpi $(test -x /opt/osxcross/target/bin/o64-clang && echo mac); do \
+    for p in win pios lingos kernel rpi $(test -x /opt/osxcross/target/bin/o64-clang && echo mac macarm); do \
         ling build hello.ling --platform $p --out dist-$p \
             || echo "WARNING: build farm warmup for '$p' failed; its package builds will fail too"; \
     done && \

@@ -6,6 +6,26 @@ use crate::arch::mmio::{board, read32, write32, RpiBoard};
 use crate::arch::timer::delay_us;
 
 static mut STARTED: bool = false;
+/// The block answered a data abort when first touched: no RNG here.
+static mut ABSENT: bool = false;
+
+/// First touch: is the block on the bus at all?
+fn present(base: usize) -> bool {
+    unsafe {
+        if ABSENT {
+            return false;
+        }
+        if STARTED {
+            return true;
+        }
+        if crate::arch::vectors::probe_read32(base).is_none() {
+            ABSENT = true;
+            crate::console_write(b"rng: no hardware random-number block on this board/emulator\n");
+            return false;
+        }
+        true
+    }
+}
 
 /// One random 32-bit word, or None when this board has no usable RNG.
 pub fn random_u32() -> Option<u32> {
@@ -24,6 +44,9 @@ pub fn random_u64() -> Option<u64> {
 /// iproc-rng200: CTRL 0x00 (RBGEN in bits 12:0), RNG_SOFT_RESET 0x04,
 /// RBG_SOFT_RESET 0x08, FIFO_DATA 0x20, FIFO_COUNT 0x24 (words in bits 7:0).
 fn rng200(base: usize) -> Option<u32> {
+    if !present(base) {
+        return None;
+    }
     unsafe {
         if !STARTED {
             write32(base + 0x00, 0);
@@ -48,6 +71,9 @@ fn rng200(base: usize) -> Option<u32> {
 /// BCM2835 RNG: CTRL 0x0 (bit 0 enable), STATUS 0x4 (warm-up count on write,
 /// words available in bits 31:24 on read), DATA 0x8.
 fn bcm2835(base: usize) -> Option<u32> {
+    if !present(base) {
+        return None;
+    }
     unsafe {
         if !STARTED {
             write32(base + 0x4, 0x40000);

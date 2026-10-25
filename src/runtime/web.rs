@@ -340,6 +340,8 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
         String::from_utf8_lossy(&body_bytes).into_owned()
     };
 
+    // the embeddable player (/embed) is meant to be framed by other sites; every other page forbids it
+    let frameable = path.starts_with("/embed");
     let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
     let sent = state.tx.send(PendingRequest {
         method,
@@ -382,14 +384,16 @@ async fn catch_all(State(state): State<ServerState>, req: Request) -> Response {
             // <iframe>/<frame>/<embed>. `X-Frame-Options: DENY` covers legacy
             // browsers; CSP `frame-ancestors 'none'` is the modern equivalent
             // (and the only one that reliably applies to `<embed>`/`<object>`).
-            r.headers_mut().insert(
-                axum::http::header::X_FRAME_OPTIONS,
-                axum::http::HeaderValue::from_static("DENY"),
-            );
-            r.headers_mut().insert(
-                axum::http::header::CONTENT_SECURITY_POLICY,
-                axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
-            );
+            if !frameable {
+                r.headers_mut().insert(
+                    axum::http::header::X_FRAME_OPTIONS,
+                    axum::http::HeaderValue::from_static("DENY"),
+                );
+                r.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static("frame-ancestors 'none'"),
+                );
+            }
             r
         },
         Err(_) => (

@@ -72,6 +72,7 @@ pub mod lingapp;
 pub mod appfs;
 // Files for programs: lingfs in front of appfs, per-program data roots.
 pub mod vfs;
+pub mod keyring;
 // Networking builtins for programs (net_*, http_*) over the netstack.
 pub mod netapi;
 pub mod wifi;
@@ -97,7 +98,6 @@ use crate::drivers::{
 };
 #[cfg(target_arch = "x86_64")]
 use crate::fs::{blockdev, lingfs, packages, users};
-#[cfg(target_arch = "x86_64")]
 use crate::proc::sched;
 
 static mut KERNEL_INIT_DONE: bool = false;
@@ -275,6 +275,9 @@ pub fn init() {
         let ram_end = mm::ram_end().max(128 << 20);
         arch::paging::init_rpi(ram_end);
         console_write(b"mmu: identity map on (caches enabled)\n");
+        // The cooperative task table: slot 0 is this boot stack; the SSH
+        // server and the Messenger listener get their own 2 MiB stacks.
+        sched::init_main_task();
     }
 }
 
@@ -387,6 +390,16 @@ pub fn console_capture_end() -> &'static [u8] {
 /// with a *real compiler-produced* program, not a hand-assembled one.
 #[cfg(target_arch = "x86_64")]
 pub static HELLO_APP_ELF: &[u8] = include_bytes!("../testbins/hello_app.elf");
+/// The Pi's hello: an EL0 process (testbins/hello_aarch64.S) that writes a
+/// line through SYS_WRITE and exits 42 -- the `run hello` / `proctest` proof
+/// that the loader, the user address space, `svc` and the exit path work.
+#[cfg(target_arch = "aarch64")]
+pub static HELLO_APP_ELF: &[u8] = include_bytes!("../testbins/hello_aarch64.elf");
+/// testbins/hello_app.ling built with `ling build --platform lingos-rpi`: the
+/// compiler-produced counterpart (Cranelift AOT -> ling-user -> ELF -> EL0),
+/// what `run demo` launches on the Pi.
+#[cfg(target_arch = "aarch64")]
+pub static HELLO_LING_ELF: &[u8] = include_bytes!("../testbins/hello_app_aarch64.elf");
 
 /// A spinning donut (testbins/donut.ling), AOT-compiled to native code and
 /// rendered straight to the framebuffer via SYS_FB_MAP -- the graphics
@@ -397,7 +410,6 @@ pub static DONUT_APP_ELF: &[u8] = include_bytes!("../testbins/donut.elf");
 /// Load an ELF image into a new ring-3 process and run it to completion,
 /// returning its exit code. The kernel-side launcher behind the Terminal's
 /// `run` command.
-#[cfg(target_arch = "x86_64")]
 pub fn run_app_bytes(elf: &[u8]) -> Result<i32, &'static str> {
     let pid = proc::uproc::spawn(elf)?;
     Ok(proc::uproc::run_to_completion(pid))
@@ -405,7 +417,6 @@ pub fn run_app_bytes(elf: &[u8]) -> Result<i32, &'static str> {
 
 /// Read an app ELF from lingfs (multi-block, so real ling-user apps that
 /// exceed one 4KiB block work) and run it. Returns the exit code.
-#[cfg(target_arch = "x86_64")]
 pub fn run_app_file(path: &str) -> Result<i32, &'static str> {
     static mut APPBUF: [u8; 2 * 1024 * 1024] = [0; 2 * 1024 * 1024];
     let buf = unsafe { &mut *&raw mut APPBUF };
@@ -640,6 +651,13 @@ pub(crate) fn desktop_boot() {
     // HDMI audio: brought up at boot so LingStationX plays straight away;
     // the console's `hdmiaudio` repeats it verbosely with a test tone.
     arch::hdmi_audio::init(false);
+    // Background services, as the x86 desktop starts them: the chat listener
+    // (so messages arrive with the window closed) and, when the setup wizard
+    // enabled it, the SSH server.
+    crate::drivers::messenger::start();
+    if crate::setup::saved("ssh") == "1" {
+        crate::drivers::sshd::start();
+    }
 }
 
 /// The wired network: bring the RP1 Ethernet up and ask DHCP for an address
@@ -828,7 +846,7 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         return;
     }
     if s == b"help" {
-        console_write(b"commands: help, apps, <app name>, setup, uptime, date, hostname, board, usb, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>, reboot, poweroff\n");
+        console_write(b"commands: help, apps, <app name>, setup, uptime, date, hostname, board, usb, sshd, keyring [path], run [hello|<file.elf>], ps, wifi [scan|join <ssid> <psk>|leave|status], net, dhcp, curl <url>, lingfu install <name>, sd [format], ls [path], cat <file>, cp/mv <src> <dst>, rm <path>, mkdir <path>, media, hdmiaudio [0|1], ling run <file> [args] | eval <src> | demo | list, echo <text>, reboot, poweroff\n");
     } else if s == b"date" {
         let t = crate::lingapp::wall_time();
         if t == 0 {
@@ -840,6 +858,81 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
     } else if s == b"hostname" {
         console_write(crate::setup::hostname().as_bytes());
         console_write(b"\n");
+    } else if s == b"keyring" || s.starts_with(b"keyring ") {
+        // the session's keyring, and whether a stored file is sealed under it
+        console_write(b"keyring: ");
+        console_write(crate::keyring::status().as_bytes());
+        console_write(b"
+");
+        let arg = core::str::from_utf8(&s[7.min(s.len())..]).unwrap_or("").trim();
+        if !arg.is_empty() {
+            let r = crate::vfs::resolve(arg);
+            let mut raw = alloc::vec![0u8; 64 * 1024];
+            match fs::lingfs::read_file_all(&r, &mut raw) {
+                Ok(Some(n)) => {
+                    console_write(arg.as_bytes());
+                    console_write(if crate::keyring::is_sealed(&raw[..n]) { b": sealed (LPRV1, " } else { b": plain (" });
+                    print_decimal(n as u64);
+                    console_write(b" bytes on disk)
+");
+                },
+                _ => console_write(b"no such file
+"),
+            }
+        }
+    } else if s == b"sshd" {
+        crate::drivers::sshd::start();
+    } else if s == b"run" || s.starts_with(b"run ") || s == b"proctest" {
+        // a native EL0 process: the built-in hello, or an ELF file on the SD card
+        let arg = if s == b"proctest" { "" } else { core::str::from_utf8(&s[3.min(s.len())..]).unwrap_or("").trim() };
+        console_write(b"launching native app (EL0)...\n");
+        let result = if arg.is_empty() || arg == "hello" {
+            run_app_bytes(HELLO_APP_ELF)
+        } else if arg == "demo" {
+            run_app_bytes(HELLO_LING_ELF)
+        } else {
+            run_app_file(arg)
+        };
+        match result {
+            Ok(code) => {
+                console_write(b"exit code ");
+                print_decimal(code as i64 as u64 & 0xFFFF_FFFF);
+                console_write(b"\n");
+            },
+            Err(e) => {
+                console_write(b"run: ");
+                console_write(e.as_bytes());
+                console_write(b"\n");
+            },
+        }
+    } else if s == b"ps" {
+        // kernel tasks (the cooperative scheduler) and EL0 processes
+        for i in 0..sched::MAX_TASKS {
+            let st = match sched::task_state(i) {
+                Some(sched::TaskStateInfo::Running) => "running",
+                Some(sched::TaskStateInfo::Ready) => "ready",
+                Some(sched::TaskStateInfo::Exited) => "exited",
+                _ => continue,
+            };
+            console_write(b"task ");
+            print_decimal(i as u64);
+            console_write(b": ");
+            console_write(st.as_bytes());
+            console_write(if i == 0 { b" (desktop)\n" } else { b"\n" });
+        }
+        let mut procs = [(0usize, 0u8, 0i32); proc::uproc::MAX_PROCESSES];
+        let n = proc::uproc::snapshot(&mut procs);
+        for &(pid, tag, code) in procs.iter().take(n) {
+            console_write(b"pid ");
+            print_decimal(pid as u64);
+            console_write(b": ");
+            console_write(&[tag]);
+            if tag == b'Z' {
+                console_write(b" exit ");
+                print_decimal(code as i64 as u64 & 0xFFFF_FFFF);
+            }
+            console_write(b"\n");
+        }
     } else if s == b"reboot" {
         arch::power::reboot();
     } else if s == b"poweroff" || s == b"halt" || s == b"shutdown" {
@@ -1175,7 +1268,6 @@ pub unsafe extern "C" fn ling_kernel_serial_write(ptr: u64, len: u64) -> u64 {
 /// Spawn `entry` (a function pointer already linked into this same kernel
 /// image — see `sched`'s module doc) as a new cooperative task. Returns its
 /// slot index, or `u64::MAX` if every slot is taken.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_spawn(entry: u64) -> u64 {
     sched::spawn(entry)
@@ -1185,7 +1277,6 @@ pub unsafe extern "C" fn ling_kernel_spawn(entry: u64) -> u64 {
 /// timer heartbeat isn't wired to preemption, so nothing else ever runs
 /// unless something calls this (or `ling_kernel_exit`) — see `sched`'s
 /// module doc.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_yield() -> u64 {
     sched::yield_now();
@@ -1194,14 +1285,12 @@ pub unsafe extern "C" fn ling_kernel_yield() -> u64 {
 
 /// End the calling task and hand off to whatever's `Ready` next. Never
 /// returns.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_exit() -> u64 {
     sched::exit()
 }
 
 /// The calling task's own slot index.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_getpid() -> u64 {
     sched::getpid()
@@ -2921,10 +3010,10 @@ pub unsafe extern "C" fn ling_kernel_user_login(username: u64, password: u64) ->
     let group = core::str::from_utf8(&group_buf[..group_len]).unwrap_or("users");
     lingfs::set_current_user(username, group);
     users::ensure_home(username);
-    // Unlock encrypted chat history with a key derived from this password, so
-    // past conversations load only after a real sign-in (and stay unreadable
-    // to anyone who just has the disk).
-    crate::drivers::messenger::set_chat_key(password.as_bytes());
+    // The keyring opens with this password; the chat history and private
+    // files decrypt only after a real sign-in and lock again on log out.
+    crate::keyring::unlock(username, password);
+    crate::drivers::messenger::unlock_for_session(password.as_bytes());
     1
 }
 
@@ -3538,7 +3627,6 @@ pub unsafe extern "C" fn ling_kernel_services_boot_configure() -> u64 {
 /// Proves TCP accept + identification works against a real `ssh` client; the
 /// encrypted transport (KEX/cipher/auth) and a shell are the remaining stages
 /// (see `drivers::sshd`). Returns 1 if a client connected, else 0.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_sshd_serve() -> u64 {
     console_write(b"sshd: listening on port 22 for one connection (30s)...\n");
@@ -3555,7 +3643,6 @@ pub unsafe extern "C" fn ling_kernel_sshd_serve() -> u64 {
 /// Start the SSH server as a background task (idempotent). The desktop calls
 /// this at boot when SSH is enabled, so an external `ssh` client can reach the
 /// running system without anyone typing a command first.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_sshd_start() -> u64 {
     crate::drivers::sshd::start();
@@ -3575,7 +3662,6 @@ pub unsafe extern "C" fn ling_kernel_services_ssh_enabled() -> u64 {
 }
 /// Start the Messenger background listener (idempotent). The desktop calls this
 /// at boot so chats can be received even when the Messenger window is closed.
-#[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_messenger_start() -> u64 {
     crate::drivers::messenger::start();

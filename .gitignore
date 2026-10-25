@@ -86,3 +86,10 @@ docs/book/
 benchmarks/bin/
 # Python bytecode cache
 __pycache__/
+
+# Apple SDK inputs for the build farm (not redistributable) — see docker/macos-sdk/README.md
+docker/macos-sdk/*.xip
+docker/macos-sdk/*.sdk.tar.*
+
+# extra cargo target dirs (CARGO_TARGET_DIR experiments)
+/target-*/

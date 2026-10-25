@@ -1,0 +1,599 @@
+growl	wobble	bass, warm, sustained, moving, deep sub	0.0
+growl	growl	bass, dark, sustained, moving, deep sub	0.0
+growl	yoi	bass, bright, sustained, moving, deep sub	0.0
+growl	reese	bass, dark, sustained, deep sub	0.0
+growl	laser	fx / percussion, warm, plucky, moving	6.0
+growl	stab	pluck / keys, warm, plucky, wide	6.0
+growl	riser	fx / percussion, dark, sustained	0.0
+growl	neuro	bass, bright, sustained, moving, deep sub	0.0
+growl	talkbox	a bass that talks: the Talk sequencer through a yoi-oi-yoi figure (lead, dark, sustained, moving, deep sub)	0.0
+growl	robot vowels	hard, stepped vowels like a vocoded robot (bass, airy / very bright, sustained, deep sub)	0.0
+growl	formant bass	a slow, round talking bass (bass, dark, sustained, moving, deep sub)	0.0
+growl	yoi talk	the classic yoi sweep with the Talk sequencer on top (lead, warm, sustained, deep sub, microtonal / detuned (not 12-TET))	0.0
+growl	alien talk	formants pushed up: a thin, speaking, not-quite-human voice (lead, bright, sustained, deep sub)	0.0
+growl	vox pad	a slow pad that breathes through the vowels (pad, bright, sustained, slow attack, moving, wide)	0.0
+growl	choir stack	stacked fifths with a slow vowel (pad, bright, sustained, slow attack, wide)	0.0
+growl	glitch talk	chopped amplitude with a fast talking filter (lead, warm, sustained, moving, deep sub)	0.0
+growl	screech	hard-synced saw with the ratio swept by lane 3 (lead, bright, sustained, deep sub, microtonal / detuned (not 12-TET))	0.0
+growl	neuro sync	sync wobble under a filter wobble (bass, airy / very bright, sustained, deep sub, microtonal / detuned (not 12-TET))	0.0
+growl	hard lead	a screaming synced lead that holds (lead, bright, sustained, microtonal / detuned (not 12-TET))	0.0
+growl	sync sweep	one long sync sweep from the note on, like a riser (bass, dark, sustained, moving)	0.0
+growl	sync pluck	a short plucked sync bass (pluck / keys, bright, plucky, moving)	6.0
+growl	tear out	everything at once: FM, detune, sync and drive (fx / percussion, airy / very bright, sustained, deep sub)	0.0
+growl	dub wobble	the plain one-beat wobble (bass, dark, sustained, moving, deep sub)	0.0
+growl	half-time wob	a two-beat wobble that breathes with the drop (bass, warm, sustained, moving, deep sub)	0.0
+growl	triplet wob	fast triplet-feel wobble (bass, warm, sustained, moving, deep sub)	0.0
+growl	riddim	the on-off riddim stab (bass, bright, decaying, moving, deep sub)	0.0
+growl	riddim 2	a busier riddim with a little talk (bass, warm, sustained, moving, deep sub)	0.0
+growl	minimal wub	clean and low: a sub with one slow wub (bass, dark, sustained, moving, deep sub)	0.0
+growl	mid growl	bandpassed mids, the gritty centre of a growl (bass, bright, sustained, deep sub)	2.9
+growl	rasp	a hissing, high-passed rasp (lead, bright, sustained)	0.0
+growl	gnarl	FM and a fold: knotted and nasty (bass, airy / very bright, sustained, deep sub)	0.0
+growl	future bass	wide detuned saw chords with a slow filter lift (bass, warm, sustained)	0.0
+growl	supersaw	a thick supersaw for leads and stabs (lead, warm, sustained)	0.0
+growl	detune lead	a plain detuned lead (lead, warm, sustained, deep sub, microtonal / detuned (not 12-TET))	0.0
+growl	fm bell	a bright FM bell (pluck / keys, airy / very bright, plucky)	6.0
+growl	pluck bass	a short, punchy plucked bass (bass, dark, plucky, moving, deep sub)	6.0
+growl	sub drop	a sine-ish drop: the pitch falls fast then settles (bass, dark, sustained, moving, deep sub)	0.0
+growl	808 growl	an 808 with a growling edge (bass, warm, sustained, moving, deep sub)	0.0
+growl	acid squeal	a resonant squelch driven by the envelope (lead, dark, sustained, moving)	1.3
+growl	chirp	a short rising chirp (fx / percussion, warm, plucky)	6.0
+growl	swarm	random cutoff steps on a fat detuned stack (fx / percussion, bright, sustained)	0.0
+growl	wide stab	a short, wide house-style stab (pluck / keys, warm, plucky)	6.0
+growl	gentle wub	bass, dark, sustained, moving, deep sub	0.0
+growl	sunken speaker	lead, warm, sustained	0.0
+growl	rural shriek	lead, warm, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	gravel stab	pluck / keys, warm, sustained, moving	0.0
+growl	brass hook	lead, airy / very bright, sustained	1.0
+growl	crimson pad	pad, bright, sustained, slow attack, wide	0.0
+growl	solar pop	pluck / keys, warm, plucky, moving	6.0
+growl	thunder drop	bass, dark, sustained, moving, deep sub	0.0
+growl	molten metal	lead, airy / very bright, decaying, moving, deep sub	1.1
+growl	violet throat	bass, warm, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	sweet wub	bass, dark, sustained, moving, deep sub	0.0
+growl	ghost speaker	bass, dark, sustained, moving, deep sub	0.0
+growl	neon shriek	bass, bright, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	wooden stab	pluck / keys, bright, sustained, moving	0.0
+growl	narrow anthem	lead, bright, sustained, microtonal / detuned (not 12-TET)	0.0
+growl	marble pad	pad, bright, sustained, slow attack, wide, deep sub	0.0
+growl	velvet tick	bass, dark, plucky, moving, deep sub	6.0
+growl	savage drop	bass, dark, sustained, moving, deep sub	-1.4
+growl	rapid metal	lead, bright, decaying, deep sub, microtonal / detuned (not 12-TET)	4.6
+growl	ancient throat	bass, dark, sustained, moving, deep sub	0.0
+growl	satin wub	bass, bright, sustained, moving, deep sub	0.0
+growl	static voice	lead, warm, sustained, deep sub	0.0
+growl	tidal shriek	bass, airy / very bright, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	polar riddim	bass, warm, sustained, moving, deep sub	0.0
+growl	whisper anthem	lead, airy / very bright, sustained	0.0
+growl	silver pad	pad, bright, sustained, slow attack, wide, deep sub	0.0
+growl	scarlet tick	bass, airy / very bright, plucky, moving, deep sub	6.0
+growl	salty drop	bass, dark, sustained, moving, deep sub	0.0
+growl	shadow bell	pluck / keys, airy / very bright, decaying, moving, deep sub	2.4
+growl	dusty throat	lead, dark, sustained, moving, deep sub	0.0
+growl	liquid wobble	bass, dark, sustained, deep sub	0.0
+growl	mean voice	lead, warm, sustained, moving	0.0
+growl	copper shriek	lead, bright, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	acid riddim	bass, dark, decaying, moving	0.0
+growl	frozen anthem	lead, airy / very bright, sustained, microtonal / detuned (not 12-TET)	1.7
+growl	heavy haze	pad, bright, sustained, slow attack, wide	0.0
+growl	future tick	pluck / keys, dark, plucky, moving	6.0
+growl	chrome boom	bass, dark, sustained, moving, deep sub	0.0
+growl	cosmic bell	pluck / keys, warm, plucky, deep sub	5.9
+growl	ashen throat	bass, dark, sustained, deep sub	0.0
+growl	tribal wobble	bass, dark, sustained, deep sub	-1.0
+growl	razor voice	lead, dark, sustained, microtonal / detuned (not 12-TET)	0.0
+growl	toxic squeal	bass, airy / very bright, sustained, deep sub, microtonal / detuned (not 12-TET)	1.7
+growl	amber riddim	bass, bright, decaying, moving, deep sub	0.0
+growl	smoky beacon	fx / percussion, bright, sustained	0.0
+growl	ember haze	pad, airy / very bright, sustained, slow attack	0.0
+growl	feral tick	pluck / keys, bright, plucky, moving	6.0
+growl	rotten boom	lead, dark, sustained, moving	0.0
+growl	kind bell	pluck / keys, airy / very bright, decaying, moving, deep sub	5.6
+growl	carbon formant	bass, dark, sustained, deep sub	0.0
+growl	glass wobble	bass, dark, sustained, moving, deep sub	0.0
+growl	burnt talker	lead, bright, sustained, moving, deep sub	0.0
+growl	thin squeal	bass, airy / very bright, sustained	0.0
+growl	retro riddim	bass, dark, decaying, moving, deep sub	0.0
+growl	jade beacon	lead, airy / very bright, sustained, microtonal / detuned (not 12-TET)	2.0
+growl	bitter pad	pad, warm, sustained, slow attack, wide	0.0
+growl	urban pop	bass, dark, plucky, moving, deep sub	6.0
+growl	cotton drop	lead, dark, sustained, moving	0.0
+growl	hollow metal	lead, bright, decaying, deep sub	1.0
+growl	cobalt yoi	pad, dark, sustained, moving, deep sub	0.0
+growl	stormy wub	bass, warm, sustained, moving, deep sub	0.0
+growl	frost speaker	bass, warm, sustained, microtonal / detuned (not 12-TET)	0.0
+growl	lunar shriek	bass, bright, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+growl	golden stab	pluck / keys, warm, decaying, moving	0.0
+growl	comb growl	growl wavetable through a note-tuned comb, the comb swept a full octave by lane 1 while the cutoff follows (bass, bright, sustained, moving, deep sub)	0.0
+growl	spectral comb	five-voice saw stack into a resonant comb that sweeps two octaves on a beat-long sine: the glassy spectral bass (bass, dark, sustained, moving, deep sub)	0.0
+growl	comb screech	hard-synced lead with the comb an octave up, lane 3 dragging both the sync ratio and the comb: a metallic scream (lead, airy / very bright, sustained)	0.0
+growl	hollow comb	square through a negative-feedback comb (odd harmonics, an octave up, hollow), stepped by an eighth-note lane (bass, dark, sustained, moving, deep sub)	0.0
+growl	vowel comb talk	talking vowels over a comb a fifth up: speech with a metallic throat (lead, bright, sustained, deep sub)	0.0
+growl	comb pluck	a short pluck rung through a bright comb, the comb falling an octave with the envelope (pluck / keys, warm, plucky, moving)	6.0
+growl	color bass	wide seven-voice saw chords with a keytracked comb an octave up and an enveloped filter: melodic dubstep chords (bass, bright, sustained, moving)	0.0
+growl	color wobble	color-bass chord stack that wobbles in triplet-ish half-beat sweeps (bass, warm, sustained, moving, deep sub)	0.0
+growl	future chord	soft saw chord with a slow-opening filter and a slight frequency-shift shimmer (pluck / keys, warm, sustained, moving)	0.0
+growl	riddim fold	square bass with a wavefolder pumped by a half-beat lane, offset drive for grit, sub held clean (bass, dark, sustained, moving, deep sub)	0.0
+growl	fold growl	growl table into a heavy folder swept by the mod envelope on every hit (bass, warm, sustained, moving, deep sub)	0.0
+growl	crushed riddim	bit- and rate-crushed square, the cutoff stepping in sixteenths: lo-fi riddim (bass, warm, sustained, deep sub)	0.0
+growl	metal tearout	metal table, sync, comb and folder all at once, driven hard and glued by full OTT (bass, bright, sustained, moving, deep sub)	0.0
+growl	machine gun	growl gated in sixteenths by lane 1 on the amp (tempo-synced), each gate a fresh bite of the folder (bass, bright, sustained, moving, deep sub)	0.0
+growl	shifted growl	vox-table growl through the frequency shifter, lane 2 swinging the shift: inharmonic, talking, alive (bass, warm, sustained, moving, deep sub)	0.0
+growl	robot shifter	talk sequencer and a 120 Hz shift: a robot voice that is not on any pitch (bass, bright, sustained, deep sub)	0.0
+growl	barber growl	the shifter swept up in a saw on every note: an endlessly rising growl (bass, bright, sustained, moving, deep sub)	0.0
+growl	complextro stab	tight, distorted saw stab: short amp, a filter snap and a pitch blip, punched by the transient shaper (pluck / keys, warm, plucky, deep sub)	6.0
+growl	electro wob	resonant saw wobble in half beats, crushed a touch: electro house bass (bass, dark, sustained, moving, deep sub)	0.0
+growl	fidget squeal	band-pass squeal stepping through a jumpy lane, small pitch blips: fidget house (bass, airy / very bright, sustained, deep sub)	0.0
+growl	big room lead	nine-voice saw stack in octaves, open filter, delay and reverb: the festival lead (lead, bright, sustained, moving)	0.0
+growl	screech lead	synced, shifted, band-passed lead for drops: cuts through anything (lead, airy / very bright, sustained)	0.0
+growl	prog pluck	clean saw pluck, the filter snapping shut, dotted delay and room: progressive house (pluck / keys, warm, decaying, moving)	3.2
+growl	prog chord stab	major-triad stack (one key plays the chord) with a filter envelope: house chord stab (pluck / keys, warm, decaying)	5.2
+growl	minor chord stab	the same stab on a minor triad (pluck / keys, warm, decaying)	5.1
+growl	saw bass prog	round saw bass, slow resonant filter envelope and a little glide (bass, dark, sustained, moving, deep sub)	0.0
+growl	slow filter saw	long four-bar filter sweep on a detuned saw: the build-up chord (lead, bright, sustained, moving)	0.0
+growl	zap	three-octave pitch drop in a few milliseconds: laser zap (fx / percussion, dark, plucky, moving)	6.0
+growl	pew pluck	an octave-and-a-half chirp into a short pluck (pluck / keys, warm, plucky, moving)	6.0
+growl	kick bass	sine-ish body with a two-octave pitch drop and the sub on the note: an 808-style kick bass (fx / percussion, dark, sustained, moving)	5.0
+growl	neuro reese	detuned five-voice reese, slow filter movement, a hint of frequency shift and comb: neurofunk (bass, dark, sustained, moving, deep sub)	0.0
+growl	phaser growl	growl through a deep notch phaser: the swirl that makes a static growl move (bass, bright, sustained, moving, deep sub)	0.0
+growl	flanged reese	reese through a jet flanger for the long metallic sweeps (bass, dark, sustained, deep sub)	0.0
+growl	brass growl	brostep brass: octave stack, filter envelope and the wavetable moving on every note (bass, warm, sustained, moving, deep sub)	0.0
+growl	yoi comb	the yoi vowel sweep with a comb an octave up following it (bass, warm, sustained, deep sub)	0.0
+prism	Supersaw Lead	leads - lead, warm, sustained, moving, wide	0.0
+prism	Rolling Bass	basses - bass, dark, sustained, mono, deep sub	-3.3
+prism	Trance Pluck	plucks - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Uplift Pad	pads - pad, dark, decaying, slow attack, moving, wide	-1.0
+prism	Gated Pad	pads - pad, dark, decaying, slow attack, moving, wide, deep sub	-5.2
+prism	Offbeat Bass	basses - bass, dark, sustained, mono, deep sub	-3.8
+prism	Deep Stab	stabs - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Warm Sub	basses - bass, dark, sustained, mono, deep sub	-2.6
+prism	Dream Keys	keys & organs - pluck / keys, dark, plucky, wide, deep sub	0.0
+prism	Dub Chord	pads - pad, warm, plucky, wide	6.0
+prism	Deep Pluck	plucks - pluck / keys, dark, plucky	4.6
+prism	Disco Strings	strings & orchestra - pad, dark, sustained, moving, wide, deep sub	-1.2
+prism	Octave Bass	basses - bass, dark, decaying, mono	1.8
+prism	Funk Pluck	plucks - pluck / keys, dark, plucky, moving, mono, deep sub	6.0
+prism	Phaser Pad	pads - pad, dark, decaying, slow attack, moving, wide, deep sub	-4.2
+prism	Brass Stab	stabs - pluck / keys, dark, sustained, moving, wide	0.0
+prism	Witch Drag	fx & textures - fx / percussion, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Ritual Bell	fx & textures - fx / percussion, warm, decaying, wide	0.0
+prism	Dark Choir	vocals & choir - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Void Sub	atmos & space - bass, dark, sustained, slow attack, deep sub, microtonal / detuned (not 12-TET)	-4.2
+prism	Cursed Arp	fx & textures - fx / percussion, warm, plucky, deep sub	6.0
+prism	Black Mass	atmos & space - pad, dark, plucky, moving, wide, deep sub	4.1
+prism	Hyper Lead	leads - lead, warm, sustained, deep sub	-6.0
+prism	Glitch Pluck	plucks - pluck / keys, dark, plucky, moving, wide, deep sub	6.0
+prism	Bubble Bass	basses - bass, dark, decaying, mono, deep sub	0.0
+prism	Sugar Stack	pads - pad, warm, sustained, moving, wide	0.0
+prism	Chipmunk Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Candy Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	19 EDO Glass	microtonal - lead, dark, decaying, wide, microtonal / detuned (not 12-TET)	0.0
+prism	Slendro Pad	microtonal - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Bohlen Drone	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Quarter Lead	microtonal - lead, dark, sustained, moving, wide	0.0
+prism	Analog Hum	atmos & space - pad, dark, sustained, slow attack, moving, deep sub	0.0
+prism	Tape Dream	fx & textures - fx / percussion, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Radio Ghost	atmos & space - pad, airy / very bright, sustained, slow attack, moving	2.3
+prism	Prism Bloom	fx & textures - fx / percussion, dark, decaying, slow attack, moving, wide	-1.2
+prism	Classic Trance Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Classic Trance Pad Two	pads - pad, warm, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Dark Pad One	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Dark Pad Two	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Dark Pad Three	pads - pad, dark, decaying, slow attack, moving, wide, deep sub	-1.9
+prism	Dreamer Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	-2.0
+prism	Dreamer Pad Wide	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Earth Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Ether Pad	atmos & space - pad, warm, sustained, slow attack, moving, wide	0.0
+prism	Tender Gated Pad	pads - pad, dark, decaying, moving, wide, deep sub	-2.5
+prism	Pedro Gated Pad	pads - pad, dark, decaying, moving, wide, deep sub	-2.0
+prism	Choir Pad Classic	vocals & choir - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Oldskool Choir Pad	vocals & choir - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Polar Pad	pads - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Nebula Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	1.2
+prism	Rainy Day Pad	pads - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Spacey Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Soft Pad	pads - pad, dark, sustained, slow attack, moving, wide	-1.9
+prism	Strange Pad	pads - pad, dark, sustained, slow attack, wide, deep sub	0.0
+prism	Netherworld Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	2.8
+prism	Monk Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Fire Pad	pads - pad, warm, decaying, slow attack, moving, wide, deep sub	0.0
+prism	Heavy Pad	pads - pad, dark, decaying, slow attack, moving, wide, deep sub	-3.2
+prism	Pad of Many	pads - pad, warm, sustained, slow attack, moving, wide	0.0
+prism	Electric Pad	pads - pad, dark, sustained, slow attack, moving, wide	-1.2
+prism	Organ Pad	keys & organs - pad, warm, sustained, slow attack, wide, deep sub	0.0
+prism	Hardstyle Lead	leads - lead, warm, sustained	-4.0
+prism	Hardstyle Lead Tuned	leads - lead, warm, sustained, moving, wide, deep sub	0.0
+prism	Hardstyle Lead Two	leads - lead, bright, sustained	-4.0
+prism	Simple Trance Lead	leads - lead, dark, sustained, wide	0.0
+prism	Hoover Dark	leads - lead, dark, sustained, slow attack, moving, wide	0.0
+prism	Hoover Heaven	leads - lead, warm, sustained, moving, wide	0.0
+prism	Hoover Jump	leads - fx / percussion, dark, sustained, moving, wide, deep sub	-2.2
+prism	Hoover Epic	keys & organs - pluck / keys, dark, sustained, moving, wide	0.0
+prism	Glass Lead With Bell	bells & mallets - pluck / keys, warm, sustained, slow attack, moving, wide, deep sub	-1.5
+prism	Dance Lead Phobia	leads - lead, dark, sustained, wide, deep sub	0.0
+prism	Retro Lead	leads - lead, warm, sustained, slow attack, wide	0.0
+prism	Spacer Lead	leads - lead, warm, sustained, wide, deep sub	0.0
+prism	Funky Lead	leads - lead, warm, sustained, deep sub	0.0
+prism	Shoop Lead	leads - lead, warm, sustained, wide	0.0
+prism	Dubble Lead	leads - lead, dark, sustained, wide, deep sub	0.0
+prism	Happy Hardcore Lead	leads - lead, warm, sustained, moving, wide	0.0
+prism	Panama Synth	leads - lead, warm, sustained, moving, wide	0.0
+prism	Panama Synth Four	leads - lead, warm, sustained, moving, wide	0.0
+prism	Super Synth	leads - lead, dark, sustained, moving, wide, deep sub	0.0
+prism	Super Synth Hard	leads - lead, warm, sustained	-2.2
+prism	Perfecto Synth	leads - lead, warm, sustained, wide, deep sub	0.0
+prism	Heard It Synth	leads - lead, dark, sustained, moving, deep sub	0.0
+prism	Hard Synth	leads - lead, dark, sustained, moving, wide, deep sub	0.0
+prism	Dirty Lead	leads - lead, dark, decaying, moving, wide, deep sub	0.0
+prism	Screaming Electro	pads - pad, warm, sustained, wide	0.0
+prism	Bass Donk	basses - bass, dark, decaying, mono, deep sub	0.0
+prism	Bass Donk Hard	basses - bass, dark, decaying, mono	1.1
+prism	Offbeat Bass Two	basses - bass, dark, sustained, mono, deep sub	-3.8
+prism	Offbeat Bass Three	basses - bass, dark, sustained, mono, deep sub	-3.1
+prism	Heavy Saw Bass	basses - bass, dark, sustained	-1.2
+prism	Fuzzy Synth Bass	basses - bass, dark, sustained, mono, deep sub	-1.1
+prism	Sine Bass	basses - bass, dark, sustained, mono, deep sub, microtonal / detuned (not 12-TET)	-3.8
+prism	Mega Bass	basses - bass, dark, sustained, moving, deep sub	-1.3
+prism	Fallout Bass	basses - bass, dark, sustained, mono, deep sub	-2.1
+prism	Punch Bass	basses - bass, dark, decaying, mono	0.0
+prism	Electric Bass	basses - bass, dark, decaying, mono	0.0
+prism	Bass Guitar Pluck	plucks - bass, dark, decaying, mono	1.1
+prism	Fretless Bass	basses - bass, dark, sustained, mono	0.0
+prism	Flute Bass	strings & orchestra - bass, dark, sustained, mono	0.0
+prism	Circulating Bass	basses - bass, dark, sustained, mono, deep sub	-3.3
+prism	Nasty Bass	basses - bass, dark, sustained, moving, mono, deep sub	0.0
+prism	Knarzy Bass	basses - bass, dark, sustained, moving, mono, deep sub	-1.6
+prism	Dub Steppy Bass	basses - bass, dark, sustained, slow attack, moving, mono, deep sub	-4.0
+prism	Dub Steppy Bass Two	basses - bass, dark, sustained, moving, mono, deep sub	-4.8
+prism	Greasy Wobble	basses - bass, dark, sustained, moving, deep sub	-3.4
+prism	Basic Wobble	basses - bass, dark, sustained, moving, mono, deep sub	-4.2
+prism	Neuro Bass	basses - bass, dark, decaying, slow attack, moving, deep sub	-2.0
+prism	Tunnel Bass	basses - bass, dark, decaying, moving, mono, deep sub	-3.3
+prism	Space Bass	atmos & space - bass, dark, sustained	-3.3
+prism	Bajo Growl One	basses - bass, dark, decaying, slow attack, moving, mono, deep sub	-4.0
+prism	Bajo Growl Laser	basses - fx / percussion, dark, sustained, mono, deep sub	-2.1
+prism	Bajo Psy	basses - bass, dark, plucky, moving, mono, deep sub	6.0
+prism	Bajo Melbourne	basses - bass, dark, sustained, moving, wide, deep sub	-1.3
+prism	Bajo Trance	basses - bass, dark, sustained, mono, deep sub	-1.9
+prism	Bajo Techno	basses - bass, dark, decaying, mono	2.9
+prism	Bajo Sweat	basses - bass, dark, decaying, slow attack, moving, mono, deep sub	-5.2
+prism	Analog Bass One	basses - bass, dark, sustained, mono, deep sub	0.0
+prism	Seq Or Die Bass	arps & sequences - bass, dark, plucky, moving, mono, deep sub	6.0
+prism	Face Eater	basses - bass, warm, sustained, moving, wide, deep sub	-2.4
+prism	Knarky Arp One	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Knarky Arp Two	arps & sequences - pluck / keys, dark, plucky, deep sub	6.0
+prism	Knarky Arp Three	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Anero Synth Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Slow Lizzy Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	5.1
+prism	Peace Synth Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	5.9
+prism	Poltergeist Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Special Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Tiny Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Dreamers Synth Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Tronic Arp	arps & sequences - pluck / keys, warm, plucky, moving	6.0
+prism	Cubist Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Zombitronic Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Machine Wriggle Arp	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Nyan Sequence	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	5.4
+prism	Plankton Sequence	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Filter Sequence	arps & sequences - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Bass Machine Sequence	arps & sequences - bass, dark, plucky, moving, deep sub	6.0
+prism	Devils Piano	keys & organs - pluck / keys, warm, decaying, wide	0.0
+prism	Devils Piano Low	keys & organs - pluck / keys, warm, decaying, wide	0.0
+prism	Heavens Piano	keys & organs - pluck / keys, warm, decaying, deep sub	0.0
+prism	Real Piano	keys & organs - pluck / keys, dark, decaying, moving, wide	3.3
+prism	Broken Piano	keys & organs - pluck / keys, dark, plucky, wide, deep sub	3.3
+prism	Wannabe Piano	keys & organs - pluck / keys, dark, plucky	0.0
+prism	Moonlight EP	keys & organs - pluck / keys, dark, decaying, wide, deep sub	0.0
+prism	Rhodes Dream	keys & organs - pluck / keys, warm, decaying, deep sub	0.0
+prism	Hammond Drawbar	keys & organs - pluck / keys, warm, sustained, deep sub	0.0
+prism	Hammond Two	keys & organs - pluck / keys, warm, sustained, wide, deep sub	0.0
+prism	Dirty Organ	keys & organs - pluck / keys, dark, sustained, wide, deep sub	0.0
+prism	Cathedral Orgel	keys & organs - pluck / keys, dark, sustained, deep sub	-1.0
+prism	Church Organ	keys & organs - pluck / keys, warm, sustained, deep sub, microtonal / detuned (not 12-TET)	0.0
+prism	Steampunk Organ	keys & organs - pluck / keys, dark, sustained, wide, deep sub	0.0
+prism	Accordiola	keys & organs - pluck / keys, dark, sustained, moving, wide, deep sub	0.0
+prism	Clav	keys & organs - pluck / keys, dark, plucky, deep sub	6.0
+prism	Harp of Illusion	keys & organs - pluck / keys, dark, plucky, moving, wide	1.4
+prism	Church Bell Toll	bells & mallets - pluck / keys, warm, decaying, moving, wide, deep sub	0.0
+prism	Dance Bell	bells & mallets - pluck / keys, warm, plucky, wide, deep sub	1.8
+prism	Bells From Distance	bells & mallets - pluck / keys, dark, decaying, moving, wide, deep sub	0.0
+prism	Fairy Bells	bells & mallets - pluck / keys, warm, decaying, wide, deep sub	0.0
+prism	Ice Bells	bells & mallets - pluck / keys, warm, decaying, wide, deep sub	0.0
+prism	Gong Hit	bells & mallets - fx / percussion, dark, decaying, moving, wide	0.0
+prism	Crystal Sphere	atmos & space - pad, warm, decaying, moving, wide	0.0
+prism	Labyrinth Bell	bells & mallets - pluck / keys, dark, decaying, moving, wide, deep sub	0.0
+prism	String Orkestro	strings & orchestra - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Symphonic Strings	strings & orchestra - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Lazy String	strings & orchestra - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Dramatic Strings	strings & orchestra - pad, dark, decaying, moving, wide, deep sub	-2.0
+prism	Basson Reed	strings & orchestra - bass, dark, sustained, mono, deep sub	0.0
+prism	Flutes Breath	strings & orchestra - pad, dark, sustained	0.0
+prism	Simple Harmonica	strings & orchestra - pad, dark, sustained, moving, wide, deep sub	0.0
+prism	Train Horn Mess	strings & orchestra - pad, dark, sustained, deep sub	-1.8
+prism	Stab Laser Sword	stabs - fx / percussion, warm, plucky, moving, wide, deep sub	6.0
+prism	Stab Fireworks	stabs - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Stab Dark Noise	stabs - fx / percussion, warm, plucky, moving, wide, deep sub	6.0
+prism	Stab Dinosaur Walk	stabs - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Stab Unlocked	stabs - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Stab Broken TV	stabs - pluck / keys, dark, plucky, moving, wide	6.0
+prism	Stab Buggy	stabs - pluck / keys, warm, plucky, wide	6.0
+prism	Stab Eye	stabs - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Kick Basic	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	4.8
+prism	Kick Building Site	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	6.0
+prism	Kick Nu Style	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	5.9
+prism	Kick 808 Long	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	0.0
+prism	Kick Trance	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	5.6
+prism	Kick Psy	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	6.0
+prism	Hardcore Kick	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	6.0
+prism	Kick Machine	drums & percussion - fx / percussion, dark, plucky, moving, mono, deep sub	6.0
+prism	Hihat Closed	drums & percussion - fx / percussion, airy / very bright, plucky, moving, mono	6.0
+prism	Hihat Open	drums & percussion - fx / percussion, airy / very bright, plucky, moving, mono	6.0
+prism	Perc Metal	drums & percussion - fx / percussion, airy / very bright, plucky, moving, mono	6.0
+prism	Perc Snap	drums & percussion - fx / percussion, bright, plucky, moving, mono	6.0
+prism	Snare Thin	drums & percussion - fx / percussion, bright, plucky, moving, mono	6.0
+prism	Clap Classic	drums & percussion - fx / percussion, bright, plucky	6.0
+prism	Moon Drum	drums & percussion - fx / percussion, dark, plucky, microtonal / detuned (not 12-TET)	1.2
+prism	Helicopter	fx & textures - fx / percussion, bright, sustained, slow attack, moving	0.0
+prism	Motor Going Up	fx & textures - fx / percussion, dark, sustained, wide, deep sub, microtonal / detuned (not 12-TET)	-1.4
+prism	Motor Going Down	fx & textures - fx / percussion, bright, sustained, wide	-1.5
+prism	Rain Drops	fx & textures - fx / percussion, dark, plucky, moving, deep sub	6.0
+prism	Broken TV FX	fx & textures - fx / percussion, airy / very bright, decaying, moving	6.0
+prism	Rise of Terror	fx & textures - fx / percussion, dark, sustained, slow attack, moving, wide, deep sub	-1.6
+prism	Drop FX	fx & textures - fx / percussion, bright, sustained, wide, microtonal / detuned (not 12-TET)	0.0
+prism	Power Up	fx & textures - fx / percussion, warm, plucky, moving	0.0
+prism	Blue Screen	fx & textures - fx / percussion, warm, sustained, moving, wide	-2.2
+prism	Haunted Place	atmos & space - pad, warm, sustained, slow attack, moving, wide	6.0
+prism	Ice Rain	atmos & space - pad, bright, plucky, wide	6.0
+prism	Lynchian Texture	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	4.4
+prism	Magic Swamp	atmos & space - pad, warm, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Steam Starship	atmos & space - pad, dark, sustained, slow attack, moving	4.9
+prism	Snake Stop	fx & textures - fx / percussion, dark, plucky, moving, wide, deep sub	2.3
+prism	Space Distortion	atmos & space - pad, dark, sustained, wide, deep sub	0.0
+prism	Atlantis Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Supersaw Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Trance Pad Wash	pads - pad, dark, decaying, slow attack, moving, wide	0.0
+prism	Starlight Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Aquarius Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	-2.1
+prism	Sunroom Pad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Sherpad	pads - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Oblivion Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	3.2
+prism	Dreamland Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Gotham Pad	pads - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Amber Pad	pads - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Mirage Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Equinox Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Voice of Mist	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Moving Choir	vocals & choir - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Old Vox	vocals & choir - pad, dark, sustained, slow attack, wide, deep sub	0.0
+prism	Ahh Choir	vocals & choir - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Chorus Ensemble	vocals & choir - pad, warm, sustained, slow attack, wide, deep sub	0.0
+prism	Pluck Mau Style	plucks - pluck / keys, warm, plucky	6.0
+prism	Pluck Rhodes	keys & organs - pluck / keys, warm, plucky	0.0
+prism	Pluck Piano E	keys & organs - pluck / keys, warm, plucky, wide	1.6
+prism	Pluck Tropical	plucks - pluck / keys, dark, plucky	2.8
+prism	Pluck Strobe	plucks - pluck / keys, warm, plucky, wide	6.0
+prism	Pluck Vocal	vocals & choir - pad, warm, plucky, wide, deep sub	6.0
+prism	Pluck Metallic	plucks - pluck / keys, warm, plucky, deep sub	2.2
+prism	Pluck Detuned	plucks - pluck / keys, warm, plucky, moving, wide	6.0
+prism	Pluck Warm	plucks - pluck / keys, dark, plucky, wide	6.0
+prism	Pluck Sweet	plucks - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Pluck Heaven	plucks - pluck / keys, warm, plucky, wide, deep sub	1.3
+prism	Pluck Neutron	plucks - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Pluck Space	atmos & space - pad, warm, plucky, moving, wide	6.0
+prism	Strum Chord Pluck	plucks - pluck / keys, dark, plucky, moving, wide, deep sub	5.9
+prism	Supersaw Lead Two	leads - lead, warm, sustained, wide	0.0
+prism	Hoover Lead Harmor	leads - lead, warm, sustained, wide, deep sub	0.0
+prism	Dubstep Lead	leads - lead, warm, sustained, moving, wide, deep sub	0.0
+prism	Future Bass Lead	basses - bass, warm, sustained, moving, wide, deep sub	0.0
+prism	Wah Lead	leads - lead, airy / very bright, sustained, slow attack, wide	6.0
+prism	Brass Lead	leads - lead, warm, sustained, wide	0.0
+prism	Gamer Lead	leads - lead, dark, sustained, mono	-3.7
+prism	Arcade Lead	leads - lead, warm, sustained, mono, deep sub	0.0
+prism	Robot Lead	leads - lead, dark, sustained, wide, deep sub	0.0
+prism	Waspinator Lead	leads - lead, airy / very bright, sustained, slow attack, moving, wide	6.0
+prism	Monolith Lead	leads - lead, dark, decaying, moving, wide, deep sub	0.0
+prism	Classic Rave Stab	stabs - pluck / keys, dark, decaying, moving, wide, deep sub	4.9
+prism	Viking Stab	stabs - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Shorty Stab	stabs - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Ploc Stab	stabs - pluck / keys, dark, plucky, moving	6.0
+prism	Stab Fall	stabs - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Growler Synth	basses - bass, warm, sustained, moving, wide, deep sub	0.0
+prism	Grunge Synth	leads - lead, dark, sustained, wide, deep sub	0.0
+prism	Filthy Synth	leads - lead, dark, sustained, wide, deep sub	0.0
+prism	Rachel Synth	leads - lead, dark, sustained, wide	0.0
+prism	Samsara Synth	leads - lead, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Tranquility Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Butterfly Pad	atmos & space - pad, dark, decaying, slow attack, moving, wide	-1.6
+prism	Space Dust Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	8th Note Chords	pads - pad, dark, sustained, moving, wide	0.0
+prism	Ridge Groove	pads - pad, dark, sustained, moving, wide, deep sub	0.0
+prism	Intro Sapphire	pads - pad, warm, decaying, wide, deep sub	0.0
+prism	Intro Quartz	pads - pad, warm, plucky	0.0
+prism	Intro Jade	pads - pad, dark, decaying, moving, wide	1.0
+prism	Intro Gold Pluck	plucks - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Intro Friendly Drip	pads - pad, dark, plucky	5.1
+prism	Intro Smoothy	pads - pad, dark, decaying, slow attack, moving, wide	-1.1
+prism	Intro Water	pads - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Intro Freakenstein	pads - pad, dark, sustained, wide, deep sub	0.0
+prism	Pad of Many 31 EDO	microtonal - pad, warm, sustained, slow attack, moving, wide	0.0
+prism	Bell 22 Shruti	microtonal - pluck / keys, warm, decaying, wide	0.0
+prism	Pluck Just Intonation	microtonal - pluck / keys, dark, plucky, wide	6.0
+prism	Pelog Dreamers	microtonal - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Hyper Glitch Lead	hyperpop - lead, bright, sustained	0.0
+prism	Pixel Pop Lead	hyperpop - lead, warm, sustained, moving, deep sub	0.0
+prism	Bubble Pluck Pop	hyperpop - pluck / keys, dark, plucky, moving	6.0
+prism	Sugar Rush Arp	hyperpop - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Autotune Stab	hyperpop - pluck / keys, warm, plucky, wide	6.0
+prism	Gum Bass	hyperpop - bass, dark, sustained, mono, deep sub, microtonal / detuned (not 12-TET)	-1.6
+prism	Pitched Vox Lead	hyperpop - lead, warm, sustained, wide, deep sub	0.0
+prism	Nightcore Saw	hyperpop - lead, warm, sustained, wide, deep sub	0.0
+prism	Crash Pad Hyper	hyperpop - pad, bright, sustained, moving, wide	0.0
+prism	Glitter Bell	hyperpop - pluck / keys, warm, plucky, wide	0.0
+prism	Hyper 808	hyperpop - bass, dark, plucky, mono, deep sub, microtonal / detuned (not 12-TET)	1.3
+prism	Rainbow Chord Pop	hyperpop - pluck / keys, warm, sustained, moving, wide	0.0
+prism	Deep House Chord	deep house - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Warm Organ Stab	deep house - pluck / keys, dark, plucky, wide	6.0
+prism	Rolling Deep Bass	deep house - bass, dark, sustained, mono, deep sub	-3.0
+prism	Sub Pulse Deep	deep house - bass, dark, sustained, mono, deep sub, microtonal / detuned (not 12-TET)	-1.7
+prism	Dub Stab Deep	deep house - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Velvet Pad	deep house - pad, dark, sustained, slow attack, moving, wide, deep sub	-1.6
+prism	Rhodes House	deep house - lead, dark, decaying, wide	0.0
+prism	Pluck Chord Deep	deep house - pluck / keys, warm, plucky, wide, deep sub	5.2
+prism	Late Night Pad	deep house - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Piano Stab Italo	deep house - pluck / keys, dark, plucky, wide, deep sub	5.8
+prism	Chord Smear House	deep house - pluck / keys, dark, sustained, moving, wide, deep sub	0.0
+prism	Deep Lead Whisper	deep house - lead, dark, sustained, slow attack, moving, wide	0.0
+prism	Disco Strings Lush	disco - pad, warm, sustained, moving, wide, deep sub	0.0
+prism	Funky Clav Stab	disco - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Octave Disco Bass	disco - bass, dark, sustained, mono, deep sub	0.0
+prism	Philly Strings	disco - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Guitar Chop Disco	disco - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Brass Section Disco	disco - lead, warm, plucky, moving, wide, deep sub	6.0
+prism	Disco Lead Whistle	disco - lead, dark, sustained, microtonal / detuned (not 12-TET)	-1.8
+prism	Moroder Arp	disco - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Nu Disco Pad	disco - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Slap Bass Synth	disco - bass, dark, decaying, mono	3.8
+prism	Glitter Keys Disco	disco - pluck / keys, warm, plucky, wide, deep sub	1.9
+prism	Disco Chord Stab	disco - pluck / keys, warm, plucky, wide	6.0
+prism	Eurodance Lead	dance - lead, warm, sustained, wide	-1.0
+prism	Rave Piano Stab	dance - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Dance Pad Anthem	dance - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Piano House Chord	dance - pluck / keys, warm, plucky, wide, deep sub	5.3
+prism	Dance Bass Pump	dance - bass, dark, sustained, mono, deep sub	-2.2
+prism	Rave Organ Stab	dance - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Club Pluck	dance - pluck / keys, dark, plucky, wide, deep sub	6.0
+prism	Euro Arp	dance - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Diva Lead Synth	dance - lead, dark, sustained, moving, wide, deep sub	0.0
+prism	Hands Up Lead	dance - lead, warm, sustained, wide	0.0
+prism	Bounce Bass	dance - bass, dark, decaying, mono, deep sub	0.0
+prism	Dance Whistle	dance - lead, dark, sustained, microtonal / detuned (not 12-TET)	-1.9
+prism	Big Room Lead	edm - lead, bright, sustained	-1.6
+prism	Festival Supersaw	edm - lead, warm, sustained, moving, wide, deep sub	0.0
+prism	Future Bass Chord	edm - bass, warm, decaying, slow attack, moving, wide	0.0
+prism	Drop Growl Bass	edm - bass, dark, sustained, slow attack, moving, deep sub	-2.4
+prism	Riser Sweep EDM	edm - fx / percussion, bright, sustained, slow attack, moving	6.0
+prism	Pluck Lead Drop	edm - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Progressive Pad	edm - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Anthem Stab	edm - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Sidechain Pad	edm - pad, dark, decaying, slow attack, moving, wide	-2.6
+prism	Chain Bass EDM	edm - bass, dark, sustained, mono, deep sub	-2.8
+prism	Brostep Lead	edm - lead, bright, sustained, moving, wide, deep sub	0.0
+prism	EDM Pluck Arp	edm - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Industrial Bass	industrial - bass, dark, sustained, moving, mono, deep sub	-1.3
+prism	Metal Clang Lead	industrial - lead, warm, sustained, wide, deep sub	0.0
+prism	Machine Drone	industrial - pad, dark, sustained, slow attack, moving, deep sub	0.0
+prism	Rust Pad	industrial - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Factory Stab	industrial - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Noise Seq Industrial	industrial - fx / percussion, dark, plucky, moving, deep sub	6.0
+prism	Distorted Kick Tone	industrial - fx / percussion, dark, plucky, moving, mono, deep sub	6.0
+prism	Gnash Lead	industrial - lead, warm, sustained, moving, wide, deep sub	0.0
+prism	Grinder Arp	industrial - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Concrete Pad	industrial - pad, dark, sustained, slow attack, moving, wide	1.0
+prism	Ring Mod Machine	industrial - pad, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Cold Steel Bell	industrial - pluck / keys, warm, decaying, moving, wide	0.0
+prism	Deep Space Drone	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	4.1
+prism	Nebula Wash	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	4.4
+prism	Orbit Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Cosmic Choir	atmos & space - pad, dark, sustained, slow attack, moving, wide	1.0
+prism	Event Horizon	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	5.9
+prism	Aurora Pad	atmos & space - pad, dark, sustained, slow attack, moving, wide	1.7
+prism	Solar Wind	atmos & space - pad, dark, sustained, slow attack, moving, wide	2.8
+prism	Zero Gravity	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	2.7
+prism	Crystal Cave	atmos & space - pad, warm, decaying, wide	0.0
+prism	Satellite Ping	atmos & space - pad, dark, plucky, moving	0.0
+prism	Interstellar Bell	atmos & space - pad, warm, decaying, moving, wide, deep sub	0.0
+prism	Dark Matter	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	5.8
+prism	Stellar Swell	atmos & space - pad, dark, sustained, slow attack, moving, wide, deep sub	6.0
+prism	Lunar Surface	atmos & space - pad, dark, sustained, slow attack, moving, wide	1.1
+prism	Neon Lead	synthwave - lead, warm, sustained, wide	0.0
+prism	Outrun Bass	synthwave - bass, dark, sustained, mono, deep sub	-2.6
+prism	Retrowave Pad	synthwave - pad, dark, sustained, slow attack, moving, wide, deep sub	-1.9
+prism	Sunset Arp	synthwave - pluck / keys, dark, plucky, moving, deep sub	6.0
+prism	Eighties Brass Stab	synthwave - pluck / keys, warm, plucky, moving, wide, deep sub	6.0
+prism	Night Drive Lead	synthwave - lead, dark, sustained, slow attack, moving, wide, deep sub	0.0
+prism	Chrome Pad	synthwave - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Synthwave Pluck	synthwave - pluck / keys, warm, plucky, wide, deep sub	6.0
+prism	Arcade Bass	synthwave - bass, dark, sustained, mono	0.0
+prism	Miami Chord	synthwave - pluck / keys, dark, sustained, moving, wide, deep sub	0.0
+prism	Dusty Rhodes	lo-fi - lead, dark, decaying, wide, deep sub	0.0
+prism	Vinyl Pad	lo-fi - pad, dark, sustained, slow attack, moving, wide	0.0
+prism	Chill Keys	lo-fi - pluck / keys, dark, decaying, wide, deep sub	0.0
+prism	Tape Pluck	lo-fi - pluck / keys, dark, plucky, moving, wide	6.0
+prism	Lo-Fi Bell	lo-fi - pluck / keys, warm, plucky, wide	0.0
+prism	Mellow Sub	lo-fi - bass, dark, sustained, mono, deep sub, microtonal / detuned (not 12-TET)	-1.0
+prism	Warm Wobble Lead	lo-fi - bass, dark, sustained, slow attack, moving, wide	0.0
+prism	Late Study Chord	lo-fi - pluck / keys, dark, decaying, moving, wide	0.0
+pluck	Nylon Guitar	pluck / keys, warm, plucky, moving	0.0
+pluck	Steel Guitar	pluck / keys, warm, plucky, moving	0.0
+pluck	12-String	pad, bright, plucky, moving	0.0
+pluck	Muted Pluck	pluck / keys, dark, plucky, moving	6.0
+pluck	Harp	pluck / keys, warm, plucky	-2.7
+pluck	Concert Harp	pluck / keys, warm, decaying, moving	-5.1
+pluck	Lute	pluck / keys, warm, plucky, moving	0.0
+pluck	Oud	pluck / keys, warm, plucky, moving	2.4
+pluck	Banjo	pluck / keys, warm, plucky, moving	1.4
+pluck	Koto	pluck / keys, warm, plucky, moving	0.0
+pluck	Shamisen	pluck / keys, warm, plucky, moving	2.5
+pluck	Sitar	pluck / keys, warm, plucky, moving	0.0
+pluck	Tanpura Drone	pad, dark, sustained, moving	-3.0
+pluck	Santoor	pluck / keys, dark, plucky, moving	-4.1
+pluck	Kalimba	pluck / keys, dark, plucky	0.0
+pluck	Mandolin	pluck / keys, warm, plucky, moving	4.8
+pluck	Ukulele	fx / percussion, warm, plucky, moving	2.1
+pluck	Bass Pluck	bass, warm, plucky, moving	0.0
+pluck	Dulcimer	pluck / keys, dark, plucky, moving	-2.3
+pluck	Zither	pluck / keys, warm, plucky, moving	0.0
+pluck	Guzheng	pluck / keys, warm, plucky, moving	0.0
+pluck	Celtic Harp	pluck / keys, warm, plucky, moving	-1.8
+pluck	Pizzicato	fx / percussion, dark, plucky, moving	6.0
+pluck	Slide Guitar	pluck / keys, warm, plucky, moving	0.0
+pluck	Dreamy Pad Pluck	pad, dark, decaying, moving	0.0
+pluck	Hammered Bell String	pad, dark, decaying, moving	-6.0
+chip	Coin	the classic pickup: a square blip jumping up a fourth, short and bright (fx / percussion, airy / very bright, plucky, moving)	2.6
+chip	Jump	a rising square sweep - a quick upward chirp that dies away (fx / percussion, airy / very bright, plucky, moving)	2.2
+chip	Power Up	an arpeggio climbing octaves while the pitch sweeps up - collect a mushroom (fx / percussion, airy / very bright, plucky, moving)	0.0
+chip	1-Up	six bright notes in a row up the major chord - an extra life (fx / percussion, bright, plucky, moving)	0.0
+chip	Laser	a fast falling square sweep with a ring-modulated edge - pew (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	Explosion	long noise falling in pitch with a low rumble - boom (fx / percussion, warm, plucky, moving)	0.0
+chip	Hit	a short burst of metallic noise and a pitch drop - damage taken (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	Menu Blip	a tiny high square tick for cursors and menus (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	Select	two quick rising notes - confirm (fx / percussion, airy / very bright, plucky, moving)	2.2
+chip	Warp	a wobbling upward sweep with vibrato and echo - teleport (fx / percussion, dark, plucky, moving)	0.0
+chip	Fireball	noise with a quick downward sweep and a soft filter - whoosh (fx / percussion, dark, plucky, moving, deep sub)	0.0
+chip	Spring	a boing: a triangle bouncing up and down with fast vibrato (fx / percussion, dark, plucky, moving)	2.9
+chip	Alarm	two alternating tones, looping - danger (fx / percussion, warm, sustained, microtonal / detuned (not 12-TET))	-6.0
+chip	Rocket	a long rising noise with a sweeping filter - lift-off (fx / percussion, warm, sustained)	-4.0
+chip	Pickup Gem	a sparkling arpeggio up a major seventh chord with echo (fx / percussion, bright, plucky)	0.0
+chip	Game Over	a slow descending minor arpeggio with a falling pitch - the end (fx / percussion, warm, plucky, microtonal / detuned (not 12-TET))	-2.9
+chip	NES Square Lead	the 2A03 square at 50 % with a delayed vibrato - the classic lead (lead, warm, sustained)	-4.5
+chip	NES Duty Lead	a square whose duty steps 12.5 -> 25 -> 50 % on every note: a bright, moving attack (lead, warm, sustained)	-3.8
+chip	NES Triangle Bass	the stepped 2A03 triangle - round, buzzy bass (bass, dark, sustained)	-2.2
+chip	NES Kick	a triangle pitch drop - the 8-bit kick drum (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	NES Snare	noise with a fast decay and a short square body (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	NES Hi-Hat	short metallic noise - a closed hat (fx / percussion, airy / very bright, plucky, moving)	6.0
+chip	NES Echo Lead	a 25 % square played twice: the trick of a quieter copy a few ticks late (via the volume sequence) (lead, warm, decaying)	-2.1
+chip	SID Saw Lead	the SID sawtooth through the low-pass filter with vibrato - soaring (lead, warm, sustained)	-2.0
+chip	SID PWM Pad	a pulse with slow pulse-width modulation and a soft attack - lush 8-bit pad (pad, dark, sustained, slow attack, deep sub)	-6.0
+chip	SID Filter Bass	a pulse bass with a resonant low-pass - the C64 squelch (bass, dark, sustained)	-4.0
+chip	SID Ring Bell	a triangle ring-modulated into a metallic bell (pluck / keys, warm, plucky, deep sub)	1.2
+chip	C64 Arp Chords	chords as one fast arpeggio of the held notes - the C64 trick for harmony on one voice (pluck / keys, warm, sustained)	-6.0
+chip	SID Drum Kick	a fast falling triangle with a click of noise (fx / percussion, dark, plucky, moving)	6.0
+chip	GB Pulse Lead	the Game Boy square at 25 % - nasal, bright, pocket-sized (lead, warm, sustained)	-3.9
+chip	GB Wave Bass	the wave channel's coarse saw - a fat little bass (bass, warm, sustained)	-1.7
+chip	GB Arp Shimmer	a fast major arpeggio over two octaves with echo - sparkle (pluck / keys, bright, sustained)	-4.0
+chip	SNES Strings	a looped string sample with soft interpolation and the SNES echo - 16-bit RPG strings (pad, warm, sustained, moving)	2.4
+chip	SNES Choir	an 'aah' choir sample, looped, with echo (pad, warm, sustained, slow attack, moving)	0.0
+chip	SNES Orchestra Hit	the orchestra stab every 16-bit game had (fx / percussion, bright, plucky)	6.0
+chip	SNES Slap Bass	a funky slap bass sample (recorded at C2) (bass, airy / very bright, plucky, moving)	6.0
+chip	SNES Steel Drum	a bright steel pan for island levels (fx / percussion, dark, plucky)	3.4
+chip	SNES Brass	a brass section sample, looped - heroic fanfares (lead, warm, sustained, moving)	1.5
+chip	SNES Flute	a breathy flute sample with delayed vibrato (lead, dark, sustained)	-2.2
+chip	Voice Ah	a sung 'ah' sample for chip-tune vocals (lead, warm, sustained, microtonal / detuned (not 12-TET))	-1.3
+chip	Shimmer Arp	an add9 arpeggio over three octaves synced to the tempo, with a long ping-pong echo - glittering (pluck / keys, bright, sustained, moving, wide)	-6.0
+chip	Hyper Arp	a very fast octave arpeggio - the chiptune shred (pluck / keys, airy / very bright, sustained, moving)	-5.1
+chip	Held-Note Arp	hold a chord, hear it as a tempo-synced arpeggio of exactly those notes (pluck / keys, warm, sustained, microtonal / detuned (not 12-TET))	-6.0
+chip	Sparkle Sweep	a random arpeggio over a maj7 chord with an upward sweep on every note and echo - fairy dust (pluck / keys, airy / very bright, decaying, moving, wide)	0.0
+chip	Echo Pluck	a short triangle pluck with a tempo echo - soft rain (pluck / keys, dark, plucky)	4.8
+chip	Chip Bell	a pulse with ring modulation and a fast decay - a little bell (pluck / keys, warm, plucky)	0.0
+chip	Lo-Fi Square	a square crushed to 4 bits at a low rate - gritty handheld lead (pluck / keys, warm, sustained)	-6.0

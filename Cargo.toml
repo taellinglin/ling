@@ -1,6 +1,6 @@
 [package]
 name = "ling-lang"
-version = "2030.1.51"
+version = "2030.1.53"
 edition = "2021"
 description = "Ling - The Omniglot Systems Language"
 authors = [
@@ -161,9 +161,9 @@ flate2 = "1"
 rand = "0.8"   # random_hex builtin (session ids / nonces) — a real ling-crypto dep already, pinned here too for direct use in runtime/mod.rs
 sha2 = "0.10"   # sha256_hex builtin — ling-crypto has Blake3/SHA-3/SHAKE but not plain SHA-256, which is what browsers' native SubtleCrypto provides for client-side proof-of-work mining; server-side verification needs to match exactly
 ling-physics = { workspace = true, features = ["with-gltf"] }
-ling-gpu = { path = "crates/ling-gpu", version = "2030.0.9" }
-ling-graphics = { path = "crates/ling-graphics", version = "2030.0.12" }
-ling-game = { path = "crates/ling-game", version = "2030.1" }
+ling-gpu = { path = "crates/ling-gpu", version = "2030.0.10" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.13" }
+ling-game = { path = "crates/ling-game", version = "2030.1.9" }
 ling-animation = { workspace = true }
 ling-mir = { workspace = true }
 ling-ast = { workspace = true }
@@ -174,18 +174,19 @@ fontdue = "0.9"   # rasterizes a kernel project's idle-timeout font (font/*.otf)
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 serde_json = "1.0"   # stt_* builtins read faster-whisper output
-ling-daw = { path = "crates/ling-daw" }
-ling-body = { path = "crates/ling-body" }
+ling-daw = { path = "crates/ling-daw", version = "2030.0.2" }
+ling-body = { path = "crates/ling-body", version = "2030.0.2" }
 minifb = "0.27"
 rayon = { workspace = true }   # parallel software rasteriser (banded flush)
-ling-ai = { path = "crates/ling-ai", version = "2030.0.9" }
-ling-icon = { path = "crates/ling-icon", version = "2030.0.8" }
+ling-ai = { path = "crates/ling-ai", version = "2030.0.10" }
+ling-icon = { path = "crates/ling-icon", version = "2030.0.9" }
 ling-audio = { workspace = true }
-ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic = { path = "crates/ling-mic", version = "2030.0.11" }
-ling-crypto = { path = "crates/ling-crypto", version = "2030.1.12" }
+ling-music = { path = "crates/ling-music", version = "2030.0.9" }
+ling-mic = { path = "crates/ling-mic", version = "2030.0.12" }
+ling-crypto = { path = "crates/ling-crypto", version = "2030.1.13" }
 subtle = "2.6"   # constant-time compare for lingtp_*'s handshake Finished-MAC check
-ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
+ling-net = { path = "crates/ling-net", version = "2030.0.9", default-features = false, features = ["lwp"] }   # p2p_* builtins: LWP-1 transport (ling-wallet LING_API.md §4)
+ling-ui = { path = "crates/ling-ui", version = "2030.0.9" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
@@ -198,6 +199,7 @@ tar = { version = "0.4", optional = true }   # tar_gz_list/tar_gz_read builtins 
 hmac = { version = "0.12", optional = true }   # TOTP (2FA) builtins (feature = "web")
 sha1 = { version = "0.10", optional = true }   # TOTP HMAC-SHA1 (feature = "web")
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }   # qr_svg builtin — scannable otpauth:// codes for 2FA setup
+bip39 = "2"   # lw_mnemonic_from / lw_mnemonic_to builtins (ling-wallet: 24-word BIP-39 English encoding of the master seed)
 # Optional native GPU rasteriser backend (feature = "gpu").
 wgpu = { version = "22", optional = true }
 pollster = { version = "0.3", optional = true }
@@ -208,11 +210,11 @@ tokio = { workspace = true }   # async runtime backing ssh_* builtins (russh is 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-ling-crypto = { path = "crates/ling-crypto", version = "2030.1.12" }
-ling-music = { path = "crates/ling-music", version = "2030.0.8" }
+ling-crypto = { path = "crates/ling-crypto", version = "2030.1.13" }
+ling-music = { path = "crates/ling-music", version = "2030.0.9" }
 # Pure-geometry vector UI (holo brackets/text + easings) — wasm-safe, so the
 # ui_* / ease builtins render on the web via the software framebuffer too.
-ling-ui = { path = "crates/ling-ui", version = "2030.0.8" }
+ling-ui = { path = "crates/ling-ui", version = "2030.0.9" }
 web-sys = { version = "0.3", features = [
     # Console
     "console",
@@ -268,42 +270,42 @@ winresource = "0.1"
 
 [workspace.dependencies]
 # Core
-ling-core     = { path = "crates/ling-core", version = "2030.0.8" }
-ling-lex      = { path = "crates/ling-lex", version = "2030.0.7" }
-ling-ast      = { path = "crates/ling-ast", version = "2030.0.7" }
-ling-mir      = { path = "crates/ling-mir", version = "2030.0.11" }
-ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.12" }
-ling-runtime  = { path = "crates/ling-runtime", version = "2030.0.7" }
-ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.7" }
-ling-macro    = { path = "crates/ling-macro", version = "2030.0.7" }
+ling-core     = { path = "crates/ling-core", version = "2030.0.9" }
+ling-lex      = { path = "crates/ling-lex", version = "2030.0.8" }
+ling-ast      = { path = "crates/ling-ast", version = "2030.0.8" }
+ling-mir      = { path = "crates/ling-mir", version = "2030.0.12" }
+ling-codegen  = { path = "crates/ling-codegen", version = "2030.0.13" }
+ling-runtime  = { path = "crates/ling-runtime", version = "2030.0.8" }
+ling-polyglot = { path = "crates/ling-polyglot", version = "2030.0.8" }
+ling-macro    = { path = "crates/ling-macro", version = "2030.0.8" }
 
 # Graphics & Game
-ling-graphics = { path = "crates/ling-graphics", version = "2030.0.12" }
-ling-ui       = { path = "crates/ling-ui", version = "2030.0.8" }
-ling-game     = { path = "crates/ling-game", version = "2030.1.8" }
-ling-animation = { path = "crates/ling-animation", version = "2030.0.7" }
-ling-input    = { path = "crates/ling-input", version = "2030.0.8" }
+ling-graphics = { path = "crates/ling-graphics", version = "2030.0.13" }
+ling-ui       = { path = "crates/ling-ui", version = "2030.0.9" }
+ling-game     = { path = "crates/ling-game", version = "2030.1.9" }
+ling-animation = { path = "crates/ling-animation", version = "2030.0.8" }
+ling-input    = { path = "crates/ling-input", version = "2030.0.9" }
 
 # AI
-ling-ai = { path = "crates/ling-ai", version = "2030.0.9" }
+ling-ai = { path = "crates/ling-ai", version = "2030.0.10" }
 
 # Crypto
-ling-crypto   = { path = "crates/ling-crypto", version = "2030.1.12" }
+ling-crypto   = { path = "crates/ling-crypto", version = "2030.1.13" }
 aes-gcm       = "0.10"
 curve25519-dalek = "4.1"
 blake3        = "1.5"
 
 # Audio
-ling-audio = { path = "crates/ling-audio", version = "2030.0.12" }
-ling-music = { path = "crates/ling-music", version = "2030.0.8" }
-ling-mic   = { path = "crates/ling-mic", version = "2030.0.11" }
+ling-audio = { path = "crates/ling-audio", version = "2030.0.13" }
+ling-music = { path = "crates/ling-music", version = "2030.0.9" }
+ling-mic   = { path = "crates/ling-mic", version = "2030.0.12" }
 cpal       = "0.15"
 hound      = "3.5"
 half       = "2"
 
 # Networking
-ling-net = { path = "crates/ling-net", version = "2030.0.8" }
-ling-http = { path = "crates/ling-http", version = "0.1.7" }
+ling-net = { path = "crates/ling-net", version = "2030.0.9" }
+ling-http = { path = "crates/ling-http", version = "0.1.8" }
 tokio    = { version = "1.37", features = ["full"] }
 quinn    = "0.11"
 
@@ -318,7 +320,7 @@ wasm-bindgen = "0.2.95"
 
 
 # Physics & math
-ling-physics = { path = "crates/ling-physics", version = "2030.1.17" }
+ling-physics = { path = "crates/ling-physics", version = "2030.1.18" }
 glam         = "0.33"
 
 # Shared

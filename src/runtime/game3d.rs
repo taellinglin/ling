@@ -69,6 +69,19 @@ pub(super) struct G3dState {
     glow: Option<Arc<TexData>>,
     rng: u64,
     max_parts: usize,
+    ripples: Vec<Ripple>,
+    ripple_on: bool,
+}
+
+/// A floor shockwave started by `tm_ripple`.
+struct Ripple {
+    x: f32,
+    z: f32,
+    t0: std::time::Instant,
+    amp: f32,
+    speed: f32,
+    wl: f32,
+    life: f32,
 }
 
 impl Default for G3dState {
@@ -80,6 +93,8 @@ impl Default for G3dState {
             parts: Vec::new(),
             hole: [0.0; 4],
             glow: None,
+            ripples: Vec::new(),
+            ripple_on: false,
             rng: 0x9E37_79B9_7F4A_7C15,
             max_parts: 6000,
         }
@@ -118,6 +133,248 @@ impl G3dState {
         self.glow = Some(t.clone());
         t
     }
+}
+
+/// Vertices (unit radius) and edges of a `tm_wire` shape.
+fn wire_shape(kind: i32, detail: usize) -> (Vec<[f32; 3]>, Vec<(usize, usize)>) {
+    let mut v: Vec<[f32; 3]> = Vec::new();
+    let mut e: Vec<(usize, usize)> = Vec::new();
+    // every pair of vertices at the polyhedron's edge length
+    fn by_length(v: &[[f32; 3]], e: &mut Vec<(usize, usize)>) {
+        let d2 = |a: [f32; 3], b: [f32; 3]| (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2);
+        let mut best = f32::MAX;
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                best = best.min(d2(v[i], v[j]));
+            }
+        }
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                if d2(v[i], v[j]) < best * 1.01 {
+                    e.push((i, j));
+                }
+            }
+        }
+    }
+    let tau = std::f32::consts::TAU;
+    match kind {
+        1 => {
+            let k = 1.0 / 3f32.sqrt();
+            v = vec![[k, k, k], [k, -k, -k], [-k, k, -k], [-k, -k, k]];
+            by_length(&v, &mut e);
+        },
+        2 => {
+            v = vec![[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]];
+            by_length(&v, &mut e);
+        },
+        3 => {
+            let g = (1.0 + 5f32.sqrt()) / 2.0;
+            let n = (1.0 + g * g).sqrt();
+            for &(a, b) in &[(1.0f32, g), (-1.0, g), (1.0, -g), (-1.0, -g)] {
+                v.push([0.0, a / n, b / n]);
+                v.push([a / n, b / n, 0.0]);
+                v.push([b / n, 0.0, a / n]);
+            }
+            by_length(&v, &mut e);
+        },
+        4 => {
+            let (maj, min) = (detail, (detail / 2).max(4));
+            for i in 0..maj {
+                let a = i as f32 / maj as f32 * tau;
+                for j in 0..min {
+                    let b = j as f32 / min as f32 * tau;
+                    let r = 0.72 + 0.28 * b.cos();
+                    v.push([r * a.cos(), 0.28 * b.sin(), r * a.sin()]);
+                    let here = i * min + j;
+                    e.push((here, i * min + (j + 1) % min));
+                    e.push((here, ((i + 1) % maj) * min + j));
+                }
+            }
+        },
+        5 => {
+            let (rings, segs) = ((detail / 2).max(3), detail);
+            for i in 1..rings {
+                let p = i as f32 / rings as f32 * std::f32::consts::PI;
+                for j in 0..segs {
+                    let a = j as f32 / segs as f32 * tau;
+                    v.push([p.sin() * a.cos(), p.cos(), p.sin() * a.sin()]);
+                    let here = (i - 1) * segs + j;
+                    e.push((here, (i - 1) * segs + (j + 1) % segs));
+                    if i + 1 < rings {
+                        e.push((here, i * segs + j));
+                    }
+                }
+            }
+        },
+        6 => {
+            for j in 0..detail {
+                let a = j as f32 / detail as f32 * tau;
+                v.push([a.cos(), a.sin(), 0.0]);
+                e.push((j, (j + 1) % detail));
+            }
+        },
+        7 => {
+            for layer in 0..2 {
+                let z = if layer == 0 { -0.25 } else { 0.25 };
+                for j in 0..10 {
+                    let a = j as f32 / 10.0 * tau - std::f32::consts::FRAC_PI_2;
+                    let r = if j % 2 == 0 { 1.0 } else { 0.42 };
+                    v.push([r * a.cos(), r * a.sin(), z]);
+                    e.push((layer * 10 + j, layer * 10 + (j + 1) % 10));
+                }
+            }
+            for j in 0..10 {
+                e.push((j, 10 + j));
+            }
+        },
+        8 => {
+            let n = detail;
+            for i in 0..=n {
+                let t = i as f32 / n as f32 * 2.0 - 1.0;
+                v.push([t, 0.0, -1.0]);
+                v.push([t, 0.0, 1.0]);
+                v.push([-1.0, 0.0, t]);
+                v.push([1.0, 0.0, t]);
+                let k = i * 4;
+                e.push((k, k + 1));
+                e.push((k + 2, k + 3));
+            }
+        },
+        _ => {
+            for &x in &[-1.0f32, 1.0] {
+                for &y in &[-1.0f32, 1.0] {
+                    for &z in &[-1.0f32, 1.0] {
+                        let k = 1.0 / 3f32.sqrt();
+                        v.push([x * k, y * k, z * k]);
+                    }
+                }
+            }
+            by_length(&v, &mut e);
+        },
+    }
+    (v, e)
+}
+
+/// Vertices (unit radius) and triangle faces of a `tm_solid` shape.
+fn solid_shape(kind: i32) -> (Vec<[f32; 3]>, Vec<[usize; 3]>) {
+    if kind == 0 {
+        let k = 1.0 / 3f32.sqrt();
+        let v: Vec<[f32; 3]> = (0..8).map(|i| [if i & 1 == 0 { -k } else { k }, if i & 2 == 0 { -k } else { k }, if i & 4 == 0 { -k } else { k }]).collect();
+        let quads = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+        let mut f = Vec::new();
+        for q in quads {
+            f.push([q[0], q[1], q[2]]);
+            f.push([q[0], q[2], q[3]]);
+        }
+        return (v, f);
+    }
+    // triangular-faced polyhedra: every triple of mutually connected vertices is a face
+    let (v, e) = wire_shape(if kind == 9 { 2 } else { kind }, 12);
+    let has = |i: usize, j: usize| e.iter().any(|&(a, b)| (a == i && b == j) || (a == j && b == i));
+    let mut f = Vec::new();
+    for i in 0..v.len() {
+        for j in i + 1..v.len() {
+            if !has(i, j) {
+                continue;
+            }
+            for k in j + 1..v.len() {
+                if has(i, k) && has(j, k) {
+                    f.push([i, j, k]);
+                }
+            }
+        }
+    }
+    (v, f)
+}
+
+/// One near-clipped, projected, depth-sorted 3-D line (twice, a pixel apart, when `thick`).
+fn wire_line(gfx: &mut crate::gfx::GfxState, a: [f32; 3], b: [f32; 3], col: u32, thick: bool) {
+    let near = -gfx.camera.zdist + 0.05;
+    let (mut a, mut b) = (a, b);
+    let da = gfx.camera.depth(a[0], a[1], a[2]);
+    let db = gfx.camera.depth(b[0], b[1], b[2]);
+    if da <= near && db <= near {
+        return;
+    }
+    if da <= near {
+        let t = (near - da) / (db - da);
+        a = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    } else if db <= near {
+        let t = (near - da) / (db - da);
+        b = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    }
+    let (ax, ay, az) = gfx.camera.project(a[0], a[1], a[2]);
+    let (bx, by, bz) = gfx.camera.project(b[0], b[1], b[2]);
+    if !(ax.is_finite() && ay.is_finite() && bx.is_finite() && by.is_finite()) {
+        return;
+    }
+    let lim = 20000.0;
+    if ax.abs() > lim || ay.abs() > lim || bx.abs() > lim || by.abs() > lim {
+        return;
+    }
+    let col = gfx.fog_apply(col, (az + bz) * 0.5);
+    let depth = (az + bz) * 0.5;
+    gfx.depth_queue.push_line(depth, col, ax, ay, bx, by);
+    if thick {
+        gfx.depth_queue.push_line(depth, col, ax + 1.0, ay, bx + 1.0, by);
+        gfx.depth_queue.push_line(depth, col, ax, ay + 1.0, bx, by + 1.0);
+    }
+}
+
+/// Start `script` where the user can see it (see `tm_sys_run`).
+#[cfg(not(target_arch = "wasm32"))]
+fn sys_run_script(script: &std::path::Path, dir: &std::path::Path) -> bool {
+    use std::process::Command;
+    let sp = script.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        return Command::new("cmd").args(["/C", "start", "", &sp.replace('/', "\\")]).current_dir(dir).spawn().is_ok();
+    }
+    if cfg!(target_os = "macos") {
+        let _ = Command::new("chmod").args(["+x", &sp]).status();
+        return Command::new("open").args(["-a", "Terminal", &sp]).spawn().is_ok();
+    }
+    let _ = Command::new("chmod").args(["+x", &sp]).status();
+    // Raspberry Pi OS ships lxterminal; the rest are common desktop terminals
+    let hold = format!("sh '{}'; echo; echo '[press Enter to close]'; read _", sp.replace('\'', ""));
+    for (term, flag) in [("x-terminal-emulator", "-e"), ("lxterminal", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xfce4-terminal", "-x"), ("xterm", "-e")] {
+        let ok = Command::new(term).arg(flag).args(["sh", "-c", &hold]).current_dir(dir).spawn().is_ok();
+        if ok {
+            return true;
+        }
+    }
+    let log = std::fs::File::create(dir.join("build.log"));
+    match log {
+        Ok(f) => {
+            let err = f.try_clone().ok();
+            let mut c = Command::new("sh");
+            c.arg(&sp).current_dir(dir).stdout(f);
+            if let Some(e) = err {
+                c.stderr(e);
+            }
+            c.spawn().is_ok()
+        },
+        Err(_) => Command::new("sh").arg(&sp).current_dir(dir).spawn().is_ok(),
+    }
+}
+
+/// A soft round shadow: white with alpha falling smoothly from 1 at the centre to 0 at the rim.
+fn soft_tex() -> Arc<TexData> {
+    static SOFT: std::sync::OnceLock<Arc<TexData>> = std::sync::OnceLock::new();
+    SOFT.get_or_init(|| {
+        let n = 64u32;
+        let mut px = vec![0u32; (n * n) as usize];
+        for y in 0..n {
+            for x in 0..n {
+                let dx = (x as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+                let dy = (y as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+                let t = (1.0 - (dx * dx + dy * dy).sqrt()).clamp(0.0, 1.0);
+                let a = t * t * (3.0 - 2.0 * t);
+                px[(y * n + x) as usize] = (((a * 255.0) as u32) << 24) | 0x00FF_FFFF;
+            }
+        }
+        Arc::new(TexData { w: n, h: n, px })
+    })
+    .clone()
 }
 
 // ── argument helpers ─────────────────────────────────────────────────────────
@@ -434,6 +691,55 @@ impl Interpreter {
 
     fn game3d_call(&mut self, name: &str, args: &[Value]) -> EvalResult {
         match name {
+            // tm_collide(ax, ay, ar, bx, by, br) -> [i0, j0, i1, j1, ...]: every pair of overlapping
+            //   circles between set A and set B (lists of x, y; radius a number or a list per item).
+            //   Native, so a shooter can test every bullet against every rock in one call.
+            "tm_collide" => {
+                let fl = |v: Option<&Value>| -> Vec<f32> {
+                    match v {
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n as f32 } else { 0.0 }).collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                let rad = |v: Option<&Value>, n: usize| -> Vec<f32> {
+                    match v {
+                        Some(Value::Number(r)) => vec![*r as f32; n],
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n as f32 } else { 0.0 }).collect(),
+                        _ => vec![0.0; n],
+                    }
+                };
+                let (ax, ay) = (fl(args.first()), fl(args.get(1)));
+                let (bx, by) = (fl(args.get(3)), fl(args.get(4)));
+                let ar = rad(args.get(2), ax.len());
+                let br = rad(args.get(5), bx.len());
+                let mut out = Vec::new();
+                for i in 0..ax.len().min(ay.len()).min(ar.len()) {
+                    for j in 0..bx.len().min(by.len()).min(br.len()) {
+                        let (dx, dy, r) = (ax[i] - bx[j], ay[i] - by[j], ar[i] + br[j]);
+                        if dx * dx + dy * dy < r * r {
+                            out.push(Value::Number(i as f64));
+                            out.push(Value::Number(j as f64));
+                        }
+                    }
+                }
+                Ok(Value::List(Rc::new(out)))
+            },
+            // tm_sys_os() -> "windows" | "linux" | "macos" | ...; tm_sys_arch() -> "x86_64" | "aarch64" | ...
+            "tm_sys_os" => Ok(Value::Str(std::env::consts::OS.into())),
+            "tm_sys_arch" => Ok(Value::Str(std::env::consts::ARCH.into())),
+            // tm_sys_run(script) - run a build / run script in a terminal window the user can watch:
+            //   a .bat in its own console on Windows, Terminal on macOS, on Linux (a Raspberry Pi
+            //   desktop included) the first terminal found, else `sh script` in the background with
+            //   its output in build.log next to it. The script's folder is the working directory.
+            //   -> true when something was started.
+            #[cfg(not(target_arch = "wasm32"))]
+            "tm_sys_run" => {
+                let script = text(args, 0);
+                let path = std::path::Path::new(&script);
+                let dir = path.parent().map(|d| d.to_path_buf()).unwrap_or_default();
+                let started = sys_run_script(path, &dir);
+                Ok(Value::Bool(started))
+            },
             // tm_tex_load(path, size=256) -> id or -1
             "tm_tex_load" => {
                 let path = self.g3d_path(&text(args, 0));
@@ -640,6 +946,228 @@ impl Interpreter {
                 if let Some(tex) = tex {
                     let p = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
                     self.g3d_billboard(&tex, p, f(args, 4, 1.0), f(args, 5, 0.0), rgb(num(args, 6, 16777215.0)), f(args, 7, 1.0), num(args, 8, 0.0) as u8);
+                }
+                Ok(Value::Unit)
+            },
+
+            // tm_wire(kind, x, y, z, size, rx, ry, rz, colour, detail=12, thick=0) - a wireframe shape
+            //   drawn natively as depth-sorted 3-D lines in the current blend mode (set_blend(1) for
+            //   additive neon). kind: 0 cube, 1 tetrahedron, 2 octahedron, 3 icosahedron, 4 torus,
+            //   5 sphere (detail rings), 6 ring (detail sides, in the XY plane), 7 star prism,
+            //   8 grid (detail x detail in the XZ plane). size = radius; rx, ry, rz in radians.
+            //   thick 1 doubles every stroke one pixel over, for a bolder line under bloom.
+            "tm_wire" => {
+                let kind = num(args, 0, 0.0) as i32;
+                let c = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
+                let size = f(args, 4, 1.0);
+                let (rx, ry, rz) = (f(args, 5, 0.0), f(args, 6, 0.0), f(args, 7, 0.0));
+                let col = rgb(num(args, 8, 16777215.0));
+                let detail = (num(args, 9, 12.0) as usize).clamp(3, 64);
+                let thick = num(args, 10, 0.0) > 0.5;
+                let (verts, edges) = wire_shape(kind, detail);
+                let (sx, cx) = rx.sin_cos();
+                let (sy, cy) = ry.sin_cos();
+                let (sz, cz) = rz.sin_cos();
+                let world: Vec<[f32; 3]> = verts
+                    .iter()
+                    .map(|v| {
+                        // Rz * Ry * Rx
+                        let (x, y, z) = (v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx);
+                        let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
+                        let (x, y) = (x * cz - y * sz, x * sz + y * cz);
+                        [c[0] + x * size, c[1] + y * size, c[2] + z * size]
+                    })
+                    .collect();
+                let mut gfx = self.gfx.borrow_mut();
+                for (i, j) in edges {
+                    wire_line(&mut gfx, world[i], world[j], col, thick);
+                }
+                Ok(Value::Unit)
+            },
+            // tm_solid(kind, x, y, z, size, rx, ry, rz, colour, alpha=1, blend=0, stretch=1) - a faceted,
+            //   flat-shaded low-poly solid: every face gets its own tone from a fixed key light (the
+            //   crystal / shard look). kind: 0 cube, 1 tetrahedron, 2 octahedron, 3 icosahedron,
+            //   9 shard (an octahedron stretched along its local y by `stretch`). alpha < 1 is
+            //   translucent; blend 1 adds (glowing glass).
+            "tm_solid" => {
+                let kind = num(args, 0, 3.0) as i32;
+                let c = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
+                let size = f(args, 4, 1.0);
+                let (rx, ry, rz) = (f(args, 5, 0.0), f(args, 6, 0.0), f(args, 7, 0.0));
+                let col = rgb(num(args, 8, 16777215.0));
+                let alpha = f(args, 9, 1.0);
+                let blend = num(args, 10, 0.0) as u8;
+                let stretch = f(args, 11, if kind == 9 { 2.4 } else { 1.0 });
+                let (verts, faces) = solid_shape(kind);
+                let (sx, cx) = rx.sin_cos();
+                let (sy, cy) = ry.sin_cos();
+                let (sz, cz) = rz.sin_cos();
+                let world: Vec<[f32; 3]> = verts
+                    .iter()
+                    .map(|v| {
+                        let (x, y, z) = (v[0], v[1] * stretch, v[2]);
+                        let (x, y, z) = (x, y * cx - z * sx, y * sx + z * cx);
+                        let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
+                        let (x, y) = (x * cz - y * sz, x * sz + y * cz);
+                        [c[0] + x * size, c[1] + y * size, c[2] + z * size]
+                    })
+                    .collect();
+                let mut gfx = self.gfx.borrow_mut();
+                let near = -gfx.camera.zdist + 0.05;
+                let (pm, pa) = (gfx.blend, gfx.alpha);
+                gfx.depth_queue.set_state(blend, alpha);
+                // key light from up-left-front (y is down), a little ambient
+                let l = { let v = [0.45f32, -0.75, -0.5]; let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt(); [v[0] / n, v[1] / n, v[2] / n] };
+                for f3 in &faces {
+                    let (a, b, d) = (world[f3[0]], world[f3[1]], world[f3[2]]);
+                    let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                    let v = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+                    let mut n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+                    let nl = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
+                    n = [n[0] / nl, n[1] / nl, n[2] / nl];
+                    // face normals point outward from the centre
+                    let fc = [(a[0] + b[0] + d[0]) / 3.0 - c[0], (a[1] + b[1] + d[1]) / 3.0 - c[1], (a[2] + b[2] + d[2]) / 3.0 - c[2]];
+                    if n[0] * fc[0] + n[1] * fc[1] + n[2] * fc[2] < 0.0 {
+                        n = [-n[0], -n[1], -n[2]];
+                    }
+                    let k = 0.28 + 0.72 * (n[0] * l[0] + n[1] * l[1] + n[2] * l[2]).max(0.0) + 0.12 * (-n[2]).max(0.0);
+                    let shade = |ch: u32| ((ch as f32 * k).min(255.0)) as u32;
+                    let fcol = (shade((col >> 16) & 255) << 16) | (shade((col >> 8) & 255) << 8) | shade(col & 255);
+                    let da = gfx.camera.depth(a[0], a[1], a[2]);
+                    let db = gfx.camera.depth(b[0], b[1], b[2]);
+                    let dd = gfx.camera.depth(d[0], d[1], d[2]);
+                    if da <= near || db <= near || dd <= near {
+                        continue;
+                    }
+                    let (ax, ay, az) = gfx.camera.project(a[0], a[1], a[2]);
+                    let (bx, by, bz) = gfx.camera.project(b[0], b[1], b[2]);
+                    let (dx, dy, dz) = gfx.camera.project(d[0], d[1], d[2]);
+                    let fcol = gfx.fog_apply(fcol, (az + bz + dz) / 3.0);
+                    gfx.depth_queue.push_triangle_zv(fcol, ax, ay, az, bx, by, bz, dx, dy, dz);
+                }
+                gfx.depth_queue.set_state(pm, pa);
+                Ok(Value::Unit)
+            },
+            // tm_ripple(x, z, strength, speed=60, wavelength=5, life=1.8): a shockwave ring spreading
+            //   over the floor from (x, z) at `speed` units/s; strength ~0..1.5 is the wave's slope.
+            //   Up to 12 live rings (the oldest gives way). Only draws made while tm_ripple_use(1)
+            //   show them - the floor, not the walls.
+            "tm_ripple" => {
+                if self.g3d.ripples.len() >= 12 {
+                    self.g3d.ripples.remove(0);
+                }
+                self.g3d.ripples.push(Ripple {
+                    x: f(args, 0, 0.0),
+                    z: f(args, 1, 0.0),
+                    t0: std::time::Instant::now(),
+                    amp: f(args, 2, 1.0).clamp(0.0, 3.0),
+                    speed: f(args, 3, 60.0).max(1.0),
+                    wl: f(args, 4, 5.0).max(0.5),
+                    life: f(args, 5, 1.8).max(0.05),
+                });
+                Ok(Value::Unit)
+            },
+            "tm_ripple_use" => {
+                self.g3d.ripple_on = num(args, 0, 1.0) > 0.5;
+                Ok(Value::Unit)
+            },
+            "tm_ripple_clear" => {
+                self.g3d.ripples.clear();
+                Ok(Value::Unit)
+            },
+            // tm_glyph(font, "c", px=256) -> [tex, span]: the glyph filled solid (non-zero winding,
+            //   anti-aliased) into a px x px white texture whose alpha is the coverage, centred on
+            //   the glyph's ink. `span` is the square's side in ems, so a tm_quad with half-extents
+            //   span * size / 2 draws the letter at `size` world units per em. -1 when the font or
+            //   glyph has no outline (a space).
+            #[cfg(not(target_arch = "wasm32"))]
+            "tm_glyph" => {
+                let fid = num(args, 0, -1.0);
+                let ch = text(args, 1).chars().next().unwrap_or(' ');
+                let px = pow2((num(args, 2, 256.0) as u32).clamp(16, 2048));
+                if fid < 0.0 || fid as usize >= self.fonts.len() {
+                    return Ok(nums(&[-1.0, 0.0]));
+                }
+                let go = self.fonts[fid as usize].glyph_outline(ch, 0.002);
+                let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                for pl in &go.polylines {
+                    for p in pl {
+                        x0 = x0.min(p[0]);
+                        x1 = x1.max(p[0]);
+                        y0 = y0.min(p[1]);
+                        y1 = y1.max(p[1]);
+                    }
+                }
+                if x1 <= x0 || y1 <= y0 {
+                    return Ok(nums(&[-1.0, 0.0]));
+                }
+                // a square around the ink with a 6% margin; glyph y is up, texture rows go down
+                let span = (x1 - x0).max(y1 - y0) * 1.12;
+                let (mx, my) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+                let k = px as f32 / span;
+                let mut pb = resvg::tiny_skia::PathBuilder::new();
+                for pl in &go.polylines {
+                    if pl.len() < 3 {
+                        continue;
+                    }
+                    for (i, p) in pl.iter().enumerate() {
+                        let (x, y) = ((p[0] - mx) * k + px as f32 * 0.5, (my - p[1]) * k + px as f32 * 0.5);
+                        if i == 0 {
+                            pb.move_to(x, y);
+                        } else {
+                            pb.line_to(x, y);
+                        }
+                    }
+                    pb.close();
+                }
+                let (Some(path), Some(mut pm)) = (pb.finish(), resvg::tiny_skia::Pixmap::new(px, px)) else {
+                    return Ok(nums(&[-1.0, 0.0]));
+                };
+                let mut paint = resvg::tiny_skia::Paint::default();
+                paint.set_color_rgba8(255, 255, 255, 255);
+                paint.anti_alias = true;
+                pm.fill_path(&path, &paint, resvg::tiny_skia::FillRule::Winding, resvg::tiny_skia::Transform::identity(), None);
+                let data: Vec<u32> = pm.pixels().iter().map(|c| ((c.alpha() as u32) << 24) | 0x00FF_FFFF).collect();
+                self.g3d.texs.push(Arc::new(TexData { w: px, h: px, px: data }));
+                Ok(nums(&[(self.g3d.texs.len() - 1) as f32, span]))
+            },
+            // tm_quad(tex, x, y, z, ux, uy, uz, vx, vy, vz, tint, alpha, blend, bias=0) - a textured quad in
+            //   any orientation: centre (x, y, z), half-extent vectors u and v (texture u runs along
+            //   u, v along v). tex -1 = the glow dot, -2 = a soft round shadow (tint 0 = black).
+            //   Depth-tested and fogged like the meshes; for decals such as a blob shadow laid on
+            //   the ground along its normal. `bias` (world units) sorts it that much nearer, so a
+            //   decal draws after the large translucent triangles under it.
+            "tm_quad" => {
+                let id = num(args, 0, -1.0);
+                let tex = if id <= -1.5 {
+                    Some(soft_tex())
+                } else if id < 0.0 {
+                    Some(self.g3d.glow_tex())
+                } else {
+                    self.g3d.texs.get(id as usize).cloned()
+                };
+                if let Some(tex) = tex {
+                    let c = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
+                    let u = [f(args, 4, 1.0), f(args, 5, 0.0), f(args, 6, 0.0)];
+                    let v = [f(args, 7, 0.0), f(args, 8, 0.0), f(args, 9, 1.0)];
+                    let tint = rgb(num(args, 10, 16777215.0));
+                    let alpha = f(args, 11, 1.0);
+                    let blend = num(args, 12, 0.0) as u8;
+                    let at = |a: f32, b: f32| [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b, c[2] + u[2] * a + v[2] * b];
+                    let q = [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)];
+                    let t = [[0.0, 0.0], [0.999, 0.0], [0.999, 0.999], [0.0, 0.999]];
+                    let mut gfx = self.gfx.borrow_mut();
+                    let fog = TexShade { amb: 1.0, lights: Vec::new(), fog_start: gfx.fog_start, fog_end: gfx.fog_end, fog_color: gfx.fog_color, lit: false, ripples: Vec::new() };
+                    let shade = if fog.fog_end > 0.0 { Some(&fog) } else { None };
+                    let (pm, pa) = (gfx.blend, gfx.alpha);
+                    gfx.depth_queue.set_state(blend, alpha);
+                    let n = Self::g3d_push_poly(&mut gfx, [q[0], q[1], q[2]], [t[0], t[1], t[2]], &tex, tint, [0.0; 4], false, 0, shade)
+                        + Self::g3d_push_poly(&mut gfx, [q[0], q[2], q[3]], [t[0], t[2], t[3]], &tex, tint, [0.0; 4], false, 0, shade);
+                    let bias = f(args, 13, 0.0);
+                    if bias != 0.0 {
+                        gfx.depth_queue.bias_last(n, bias);
+                    }
+                    gfx.depth_queue.set_state(pm, pa);
                 }
                 Ok(Value::Unit)
             },
@@ -869,7 +1397,13 @@ impl Interpreter {
             for q in &wp {
                 rad = rad.max(dot(sub(*q, c), sub(*q, c)).sqrt());
             }
-            let mut sh = TexShade { amb: base.amb, lights: Vec::new(), fog_start: base.fog_start, fog_end: base.fog_end, fog_color: base.fog_color, lit: base.lit };
+            let mut sh = TexShade { amb: base.amb, lights: Vec::new(), fog_start: base.fog_start, fog_end: base.fog_end, fog_color: base.fog_color, lit: base.lit, ripples: Vec::new() };
+            for r in &base.ripples {
+                let d = ((c[0] - r[0]) * (c[0] - r[0]) + (c[2] - r[1]) * (c[2] - r[1])).sqrt();
+                if (d - r[2]).abs() < rad + r[5] * 3.0 {
+                    sh.ripples.push(*r);
+                }
+            }
             if base.lit {
                 for l in &base.lights {
                     let d = sub([l[0], l[1], l[2]], c);
@@ -914,6 +1448,23 @@ impl Interpreter {
         let cull = num(args, 16, 0.0) as u8;
         let lit_amb = f(args, 17, -1.0);
         let hole_w = self.g3d.hole;
+        // the live shockwaves, for draws made while tm_ripple_use(1) is on
+        let ripples: Vec<[f32; 6]> = if self.g3d.ripple_on {
+            let now = std::time::Instant::now();
+            self.g3d.ripples.retain(|r| now.duration_since(r.t0).as_secs_f32() < r.life);
+            self.g3d
+                .ripples
+                .iter()
+                .map(|r| {
+                    let age = now.duration_since(r.t0).as_secs_f32();
+                    let front = r.speed * age;
+                    let k = 1.0 - age / r.life;
+                    [r.x, r.z, front, r.amp * k * k / (1.0 + front * 0.03), r.wl * (1.0 + age * 0.6), r.wl * 0.9 + front * 0.12]
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut gfx = self.gfx.borrow_mut();
         let base = TexShade {
             amb: lit_amb.max(0.0),
@@ -926,12 +1477,15 @@ impl Interpreter {
             fog_end: gfx.fog_end,
             fog_color: gfx.fog_color,
             lit: lit_amb >= 0.0,
+            ripples,
         };
-        let shade_opt = if base.lit || base.fog_end > 0.0 { Some(&base) } else { None };
+        let shade_opt = if base.lit || base.fog_end > 0.0 || !base.ripples.is_empty() { Some(&base) } else { None };
         let hole = if hole_w[3] > 0.0 {
             let (hx, hy, hd) = gfx.camera.project(hole_w[0], hole_w[1], hole_w[2]);
             let r = gfx.camera.focal * hole_w[3] / (hd + gfx.camera.zdist).max(0.1);
-            [hx, hy, r, hd]
+            // only what is clearly in front of the point fades: a margin of a fifth of the radius
+            // keeps the ground the point rests on (slopes included) out of the circle
+            [hx, hy, r, hd - hole_w[3] * 0.2]
         } else {
             [0.0; 4]
         };
