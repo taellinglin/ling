@@ -28,6 +28,10 @@ target/
 dist/
 .ling-build/
 .ling-shared-target/
+target-*
+
+# Local-only toolchain payloads (gitignored, multi-GB)
+docker/macos-sdk/
 benchmarks/bin/
 __pycache__/
 
