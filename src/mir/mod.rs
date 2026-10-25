@@ -216,7 +216,7 @@ fn lower_function(
     let mut lctx = LowerCtx::new(&mut func, arg_count, globals);
 
     for (i, pname) in fndef.params.iter().enumerate() {
-        lctx.declare_in_scope(pname, Local(i + 1));
+        lctx.declare_param(pname, Local(i + 1));
     }
 
     let last = lower_stmts(&fndef.body, &mut lctx);
@@ -245,6 +245,12 @@ struct LowerCtx<'a> {
     scope_names: Vec<std::collections::HashSet<String>>,
     /// Per-scope undo log of bindings shadowed on entry, restored on scope exit.
     shadowed: Vec<Vec<(String, Option<Local>)>>,
+    /// Parameter names not yet re-bound by the body. A `bind` of one of these
+    /// gets a fresh mutable local instead of assigning the argument slot: the
+    /// backends treat argument slots as single-assignment, so `bind dt =
+    /// min(dt, 0.033)` used to read its own (still empty) result and every
+    /// read of `dt` before that line went through the clobbered slot too.
+    params: std::collections::HashSet<String>,
     closures: Vec<MirFunction>,
     closure_vars: HashMap<String, ClosureInfo>,
     /// Module-level global names. A read of one of these (when not a local) is
@@ -269,6 +275,7 @@ impl<'a> LowerCtx<'a> {
             current: BasicBlockId(0),
             scope_names: vec![std::collections::HashSet::new()],
             shadowed: vec![Vec::new()],
+            params: std::collections::HashSet::new(),
             closures: Vec::new(),
             closure_vars: HashMap::new(),
             globals,
@@ -285,11 +292,22 @@ impl<'a> LowerCtx<'a> {
             .insert(name.to_string());
     }
 
+    /// Declare a function / closure parameter (see `params`).
+    fn declare_param(&mut self, name: &str, local: Local) {
+        self.declare_in_scope(name, local);
+        self.params.insert(name.to_string());
+    }
+
     /// Resolve the local a `bind name = …` should target. Re-binding within the
     /// same scope reuses the local (mutation); otherwise a fresh local shadows the
     /// outer one until the scope exits.
     fn bind_local(&mut self, name: &str) -> Local {
         if self.scope_names.last().unwrap().contains(name) {
+            if self.params.remove(name) {
+                let l = self.alloc_local(Some(name.to_string()), true);
+                self.locals.insert(name.to_string(), l);
+                return l;
+            }
             return self.locals[name];
         }
         let prev = self.locals.get(name).copied();
@@ -406,7 +424,7 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) -> Option<Operand> {
                     let mut closure_ctx =
                         LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
                     for (i, pname) in params.iter().enumerate() {
-                        closure_ctx.declare_in_scope(pname, Local(i + 1));
+                        closure_ctx.declare_param(pname, Local(i + 1));
                     }
                     for (ci, fv) in free_vars.iter().enumerate() {
                         closure_ctx
@@ -525,7 +543,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                 );
                 for (i, pname) in params.iter().enumerate() {
                     let local = Local(i + 1);
-                    closure_ctx.declare_in_scope(pname, local);
+                    closure_ctx.declare_param(pname, local);
                 }
                 // Map captures to extra params
                 for (ci, fv) in free_vars.iter().enumerate() {
@@ -779,7 +797,7 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             let mut closure_ctx = LowerCtx::new(&mut closure_func, total_args, ctx.globals.clone());
             for (i, pname) in params.iter().enumerate() {
                 let local = Local(i + 1);
-                closure_ctx.declare_in_scope(pname, local);
+                closure_ctx.declare_param(pname, local);
             }
             for (ci, fv) in free_vars.iter().enumerate() {
                 let param_local = Local(arg_count + 1 + ci);

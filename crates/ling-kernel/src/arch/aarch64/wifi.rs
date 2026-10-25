@@ -194,6 +194,11 @@ struct Radio {
     last_tx: String,
     last_rx: String,
     rx_data: u32,
+    /// What ended the last association ("link down", "deauth reason 15 ...") and when (ms).
+    link_note: String,
+    link_lost_ms: u64,
+    /// The link went away by itself after a join (not `leave`).
+    dropped: bool,
 }
 
 static mut RADIO: Option<Radio> = None;
@@ -1173,18 +1178,56 @@ fn handle_event(payload: &[u8]) {
             if !r.link && r.joined {
                 out(b"wifi: link down\n");
                 r.joined = false;
+                r.dropped = true;
+                r.link_lost_ms = now_ms();
+                r.link_note = alloc::format!("link down (status {status}, reason {})", be32(m, 12));
             }
         },
         EV_PSK_SUP => r.psk_status = Some(status),
         EV_AUTH => {},
         EV_DEAUTH | EV_DEAUTH_IND | EV_DISASSOC | EV_DISASSOC_IND => {
+            let reason = be32(m, 12);
             if r.joined {
                 out(b"wifi: disconnected by the access point\n");
+                r.dropped = true;
+                r.link_lost_ms = now_ms();
+                r.link_note = alloc::format!(
+                    "{} by the access point, reason {} ({})",
+                    if ev == EV_DEAUTH || ev == EV_DEAUTH_IND { "deauthenticated" } else { "disassociated" },
+                    reason,
+                    reason_text(reason)
+                );
             }
             r.joined = false;
             r.link = false;
         },
         _ => {},
+    }
+}
+
+/// IEEE 802.11 reason codes an access point sends when it drops a station.
+fn reason_text(code: u32) -> &'static str {
+    match code {
+        1 => "unspecified",
+        2 => "previous authentication no longer valid",
+        3 => "station is leaving",
+        4 => "inactivity",
+        5 => "access point is full",
+        6 | 7 => "frame from a station that is not authenticated / associated",
+        8 => "station left the BSS",
+        13 => "invalid information element",
+        14 => "message integrity check failed",
+        15 => "4-way handshake timed out",
+        16 => "group key handshake timed out",
+        17 => "information element mismatch in the handshake",
+        18 => "invalid group cipher",
+        19 => "invalid pairwise cipher",
+        20 => "invalid AKM",
+        22 => "invalid RSN capabilities",
+        23 => "802.1X authentication failed",
+        24 => "cipher suite rejected by the security policy",
+        34 => "poor channel conditions",
+        _ => "no description",
     }
 }
 
@@ -1447,6 +1490,9 @@ fn radio_up() -> Option<()> {
             last_tx: String::new(),
             last_rx: String::new(),
             rx_data: 0,
+        link_note: String::new(),
+        link_lost_ms: 0,
+        dropped: false,
         });
     }
     // Give the firmware a moment and take its first mailbox / credit frame.
@@ -1568,6 +1614,30 @@ pub fn is_joined() -> bool {
     radio().is_some_and(|r| r.joined)
 }
 
+/// The link was lost on its own after a join (cleared by the next `join` / `leave`).
+pub fn dropped() -> bool {
+    radio().is_some_and(|r| r.dropped)
+}
+
+/// Why the last association ended and how long ago ("" while joined / never joined).
+pub fn link_note() -> String {
+    match radio() {
+        Some(r) if !r.link_note.is_empty() && !r.joined => {
+            let ago = now_ms().saturating_sub(r.link_lost_ms) / 1000;
+            alloc::format!("{} -- {}:{:02} ago", r.link_note, ago / 60, ago % 60)
+        },
+        _ => String::new(),
+    }
+}
+
+/// Handle whatever the firmware queued (link events, data) without taking a
+/// data frame: for an idle desktop, so a lost link is noticed when it happens.
+pub fn poll_events() {
+    if radio().is_some() {
+        let _ = poll_rx();
+    }
+}
+
 pub fn mac() -> [u8; 6] {
     radio().map(|r| r.mac).unwrap_or([0; 6])
 }
@@ -1647,6 +1717,8 @@ pub fn join(ssid: &str, psk: &str) -> Result<(), String> {
     r.join_status = None;
     r.psk_status = None;
     r.link = false;
+    r.dropped = false;
+    r.link_note.clear();
     let wpa = !psk.is_empty();
     // What the last scan saw for this network: 4 = WPA3-only (SAE).
     let sae = r.scan_hits.iter().any(|n| n.ssid == ssid && n.secure == 4);
@@ -1766,6 +1838,8 @@ pub fn leave() {
         }
         r.joined = false;
         r.link = false;
+        r.dropped = false;
+        r.link_note.clear();
         r.sup = None;
         r.ssid.clear();
     }
@@ -1855,6 +1929,7 @@ pub fn status() -> String {
             }
         },
         Some(r) if r.joined => alloc::format!("joined {} ({} frames in, {} out)", r.ssid, r.frames_in, r.frames_out),
+        Some(r) if !r.link_note.is_empty() => alloc::format!("not joined: {}", link_note()),
         Some(_) => String::from("radio up, not joined"),
     }
 }

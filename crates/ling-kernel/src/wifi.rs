@@ -19,6 +19,14 @@ pub struct Network {
 
 static mut DEMO: bool = false;
 static mut LAST: String = String::new();
+/// The user left on purpose (tray Disconnect / console leave): no automatic rejoin
+/// until the next connect.
+static mut USER_LEFT: bool = false;
+/// Rejoin pacing: when the last attempt ran, the current back-off, what happened.
+static mut REJOIN_LAST_MS: u64 = 0;
+static mut REJOIN_WAIT_MS: u64 = 15_000;
+static mut REJOIN_NOTE: String = String::new();
+static mut TICK_LAST_MS: u64 = 0;
 
 const CONF: &str = "wifi.conf";
 
@@ -79,6 +87,7 @@ pub fn connect(ssid: &str, psk: &str) -> Result<String, String> {
     }
     #[cfg(target_arch = "aarch64")]
     {
+        unsafe { USER_LEFT = false };
         crate::arch::wifi::join(ssid, psk)?;
         unsafe { *(&raw mut LAST) = String::from(ssid) };
         remember(ssid, psk);
@@ -99,7 +108,10 @@ pub fn connect(ssid: &str, psk: &str) -> Result<String, String> {
 
 /// Leave the network but keep it remembered (the tray's Disconnect).
 pub fn disconnect() {
-    unsafe { (*(&raw mut LAST)).clear() };
+    unsafe {
+        (*(&raw mut LAST)).clear();
+        USER_LEFT = true;
+    }
     #[cfg(target_arch = "aarch64")]
     crate::arch::wifi::leave();
 }
@@ -177,6 +189,76 @@ pub fn ssid() -> String {
 fn remember(ssid: &str, psk: &str) {
     if crate::fs::lingfs::is_mounted() {
         let _ = crate::fs::lingfs::write_path_any(CONF, format!("{ssid}\n{psk}\n").as_bytes());
+    }
+}
+
+/// Why the link is gone and what the rejoin is doing (for the tray / Settings / Test).
+pub fn link_note() -> String {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let mut s = crate::arch::wifi::link_note();
+        let note = unsafe { (&*(&raw const REJOIN_NOTE)).clone() };
+        if !note.is_empty() {
+            if !s.is_empty() {
+                s.push_str("; ");
+            }
+            s.push_str(&note);
+        }
+        s
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        String::new()
+    }
+}
+
+/// Called every presented frame. Services the radio's event queue so a lost
+/// link is noticed while the desktop idles, and rejoins the remembered network
+/// after a drop (15 s, then doubling up to 2 min between attempts) unless the
+/// user disconnected on purpose.
+pub fn tick() {
+    #[cfg(target_arch = "aarch64")]
+    {
+        if !available() || demo() {
+            return;
+        }
+        let now = crate::arch::timer::now_ms();
+        if now.saturating_sub(unsafe { TICK_LAST_MS }) < 1000 {
+            return;
+        }
+        unsafe { TICK_LAST_MS = now };
+        crate::arch::wifi::poll_events();
+        if crate::arch::wifi::is_joined() || unsafe { USER_LEFT } || !crate::arch::wifi::dropped() {
+            return;
+        }
+        if now.saturating_sub(unsafe { REJOIN_LAST_MS }) < unsafe { REJOIN_WAIT_MS } {
+            return;
+        }
+        let Some((ssid, psk)) = remembered() else { return };
+        unsafe { REJOIN_LAST_MS = now };
+        crate::console_write(b"wifi: link lost, rejoining ");
+        crate::console_write(ssid.as_bytes());
+        crate::console_write(b"\n");
+        match crate::arch::wifi::join(&ssid, &psk) {
+            Ok(()) => {
+                unsafe {
+                    *(&raw mut LAST) = ssid.clone();
+                    REJOIN_WAIT_MS = 15_000;
+                    *(&raw mut REJOIN_NOTE) = String::new();
+                }
+                let got = crate::drivers::netstack::configure();
+                crate::console_write(if got { b"wifi: rejoined, address configured\n" } else { b"wifi: rejoined, no address yet\n" });
+            },
+            Err(e) => {
+                unsafe {
+                    REJOIN_WAIT_MS = (REJOIN_WAIT_MS * 2).min(120_000);
+                    *(&raw mut REJOIN_NOTE) = format!("rejoin failed: {e} (next try in {} s)", REJOIN_WAIT_MS / 1000);
+                }
+                crate::console_write(b"wifi: rejoin failed: ");
+                crate::console_write(e.as_bytes());
+                crate::console_write(b"\n");
+            },
+        }
     }
 }
 

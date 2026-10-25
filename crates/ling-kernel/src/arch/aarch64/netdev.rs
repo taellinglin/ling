@@ -14,6 +14,12 @@ pub fn link_up() -> bool {
     wifi::is_joined() || rp1_eth::link_up()
 }
 
+/// The wired controller came up (false on a board without one, or when its
+/// driver failed): frames sent "over Ethernet" then go nowhere.
+pub fn ethernet_present() -> bool {
+    rp1_eth::ensure_init()
+}
+
 pub fn mac() -> [u8; 6] {
     if wifi::is_joined() {
         wifi::mac()

@@ -113,6 +113,115 @@ fn clip_box(w: &Window) -> (i32, i32, i32, i32) {
 /// Argument accessor: `a(i, default)` as a number (host `Self::num`).
 type Arg<'a> = &'a dyn Fn(usize, f64) -> f64;
 
+/// fill rows y0..y1, columns x0..x1 (already clipped) with a colour at alpha `al`
+fn fill_box(w: &mut Window, x0: i32, y0: i32, x1: i32, y1: i32, r: u32, g: u32, b: u32, al: f32) {
+    let bw = w.w as i32;
+    for yy in y0..y1 {
+        let row = (yy * bw) as usize;
+        for xx in x0..x1 {
+            let i = row + xx as usize;
+            w.buf[i] = blend(w.buf[i], r, g, b, al);
+        }
+    }
+}
+
+/// px_hatch(x, y, w, h, colour, angle, spacing, a): parallel 1 px lines across the box (the design system's hatching)
+fn px_hatch(a: Arg) {
+    let Some(w) = win() else { return };
+    let (x, y, ww, hh) = (a(0, 0.0), a(1, 0.0), a(2, 0.0), a(3, 0.0));
+    let (r, g, b) = tu(w, a(4, 0.0));
+    let (ang, sp, al) = (a(5, 45.0), a(6, 4.0).max(1.0), a(7, 1.0).clamp(0.0, 1.0));
+    if !(ww >= 1.0 && hh >= 1.0) || al <= 0.0 {
+        return;
+    }
+    let rr = ang * core::f64::consts::PI / 180.0;
+    let (nx, ny) = (libm::sin(rr), libm::cos(rr));
+    let cs = [x * nx + y * ny, (x + ww) * nx + y * ny, x * nx + (y + hh) * ny, (x + ww) * nx + (y + hh) * ny];
+    let lo = cs.iter().copied().fold(f64::MAX, f64::min);
+    let off = lo + sp * 0.5;
+    let (cx0, cy0, cx1, cy1) = clip_box(w);
+    let x0 = (libm::floor(x) as i32).max(cx0);
+    let x1 = (libm::ceil(x + ww) as i32).min(cx1);
+    let y0 = (libm::floor(y) as i32).max(cy0);
+    let y1 = (libm::ceil(y + hh) as i32).min(cy1);
+    let bw = w.w as i32;
+    for yy in y0..y1 {
+        let row = (yy * bw) as usize;
+        let pyn = (yy as f64 + 0.5) * ny;
+        for xx in x0..x1 {
+            let u = ((xx as f64 + 0.5) * nx + pyn - off) / sp;
+            let d = libm::fabs(u - libm::round(u)) * sp;
+            if d >= 1.0 {
+                continue;
+            }
+            let i = row + xx as usize;
+            w.buf[i] = blend(w.buf[i], r.min(255), g.min(255), b.min(255), ((1.0 - d) * al) as f32);
+        }
+    }
+}
+
+fn num_at(list: u64, i: usize) -> f64 {
+    crate::lingrt::list_items(list).get(i).map(|&v| to_f64(v)).unwrap_or(0.0)
+}
+
+/// px_bars(x0, mid, step, scale, peaks, colour [, a]): a waveform, one bar per peak mirrored around `mid`
+fn px_bars(args: &[u64], a: Arg) {
+    let Some(w) = win() else { return };
+    let (x0, mid, step, scale) = (a(0, 0.0), a(1, 0.0), a(2, 1.0), a(3, 1.0));
+    let (r, g, b) = tu(w, a(5, 0.0));
+    let al = a(6, 1.0) as f32;
+    let Some(&pk) = args.get(4) else { return };
+    let n = crate::lingrt::list_items(pk).len();
+    let (cx0, cy0, cx1, cy1) = clip_box(w);
+    for i in 0..n {
+        let hgt = num_at(pk, i) * scale;
+        if !(hgt > 0.0) {
+            continue;
+        }
+        let bx = x0 + i as f64 * step;
+        let xa = (libm::round(bx) as i32).max(cx0);
+        let xb = (libm::round(bx + step.max(1.0)) as i32).max(libm::round(bx) as i32 + 1).min(cx1);
+        let ya = (libm::round(mid - hgt) as i32).max(cy0);
+        let yb = (libm::round(mid + hgt.max(0.5)) as i32).max(libm::round(mid - hgt) as i32 + 1).min(cy1);
+        if xa < xb && ya < yb {
+            fill_box(w, xa, ya, xb, yb, r.min(255), g.min(255), b.min(255), al);
+        }
+    }
+}
+
+/// px_notes(notes stride 7, count, x, y, w, h, beat width, lowest key, span, loop beats, visible x0, x1, colour a, colour b)
+fn px_notes(args: &[u64], a: Arg) {
+    let Some(w) = win() else { return };
+    let Some(&nl) = args.first() else { return };
+    let (cnt, x, y, ww, hh, bwd, lo, span, ll, vx0, vx1) = (a(1, 0.0) as usize, a(2, 0.0), a(3, 0.0), a(4, 0.0), a(5, 0.0), a(6, 1.0), a(7, 0.0), a(8, 1.0).max(1.0), a(9, 0.0), a(10, 0.0), a(11, 0.0));
+    let (ca, cb) = (tu(w, a(12, 0.0)), tu(w, a(13, 0.0)));
+    let cnt = cnt.min(crate::lingrt::list_items(nl).len() / 7);
+    let (cx0, cy0, cx1, cy1) = clip_box(w);
+    let (reps, rp0) = if ll > 0.5 { (libm::ceil((vx1 - x) / bwd / ll).max(0.0) as usize, libm::floor((vx0 - x) / bwd / ll).max(0.0) as usize) } else { (1, 0) };
+    for rp in rp0..reps.min(rp0 + 4096) {
+        for i in 0..cnt {
+            let ns = num_at(nl, i * 7);
+            let nx = x + (ns + rp as f64 * ll) * bwd;
+            if nx >= vx1 || (ll > 0.5 && ns >= ll) {
+                continue;
+            }
+            let nw = (num_at(nl, i * 7 + 1) * bwd).max(1.5).min(x + ww - nx);
+            if nx + nw <= vx0 {
+                continue;
+            }
+            let ny = y + (1.0 - (num_at(nl, i * 7 + 2) - lo) / span) * (hh - 3.0);
+            let al = ((num_at(nl, i * 7 + 3) * 200.0 + 30.0).clamp(40.0, 230.0) / 255.0) as f32;
+            let (r, g, b) = if i % 2 == 0 { ca } else { cb };
+            let xa = (libm::round(nx) as i32).max(cx0);
+            let xb = (libm::round(nx + nw) as i32).max(libm::round(nx) as i32 + 1).min(cx1);
+            let (ya, yb) = ((libm::round(ny) as i32).max(cy0), (libm::round(ny + 2.0) as i32).min(cy1));
+            if xa < xb && ya < yb {
+                fill_box(w, xa, ya, xb, yb, r.min(255), g.min(255), b.min(255), al);
+            }
+        }
+    }
+}
+
 fn px_rect_like(name: &[u8], a: Arg) {
     let Some(w) = win() else { return };
     let (x, y, mut ww, mut hh) = (a(0, 0.0), a(1, 0.0), a(2, 0.0), a(3, 0.0));
@@ -771,6 +880,23 @@ fn net_test() -> String {
     let ip = ns::self_ip();
     let gw = ns::gateway_ip();
     out.push_str(&alloc::format!("address {}  gateway {}  ({})\n", fmt_ip(ip), fmt_ip(gw), crate::arch::netdev::kind()));
+    // No link at all: Wi-Fi not joined and no wired controller -- nothing below can work.
+    #[cfg(target_arch = "aarch64")]
+    if !crate::wifi::joined() && !crate::arch::netdev::ethernet_present() {
+        let note = crate::wifi::link_note();
+        out.push_str("link: NONE -- Wi-Fi is not joined");
+        if !note.is_empty() {
+            out.push_str(": ");
+            out.push_str(&note);
+        }
+        out.push_str("\n   (the Wi-Fi window joins a network; a remembered one is rejoined by itself)\n");
+        return out;
+    }
+    #[cfg(target_arch = "aarch64")]
+    if !crate::wifi::joined() && !crate::arch::netdev::link_up() {
+        out.push_str("link: Ethernet controller up but no cable / link\n");
+        return out;
+    }
     // TLS cannot run without hardware randomness (client random, key share).
     let mut rb = [0u8; 8];
     out.push_str(if crate::crypto::random_bytes(&mut rb) { "random source: ok\n" } else { "random source: NONE -- HTTPS cannot work on this board yet\n" });
@@ -1487,11 +1613,12 @@ fn perf_overlay(w: &mut Window) {
     };
     let fps = if ema > 0.0 { 1_000_000.0 / ema } else { 0.0 };
     let line = alloc::format!(
-        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  tris {}  gc {}  free {} MiB ",
+        " frame {:.1} ms ({:.0} fps)  builtins/frame {}  tris {}{}  gc {}  free {} MiB ",
         ema / 1000.0,
         fps,
         calls_now.saturating_sub(calls_before),
         crate::drivers::g3d::take_stats(),
+        crate::drivers::g3d::scale_note(),
         crate::lingrt::gc_runs(),
         crate::mm::frame::free_frame_count() * 4 / 1024
     );
@@ -1504,7 +1631,13 @@ fn present() {
     crate::lingrt::mark_present();
     crate::lingrt::gc_maybe();
     crate::drivers::g3d::end_frame();
+    crate::wifi::tick();
     let (mx, my, _) = mouse_state();
+    unsafe {
+        let last = MOUSE_LAST;
+        MOUSE_DELTA = if last.0.is_finite() && mx > -1000.0 && last.0 > -1000.0 { (mx - last.0, my - last.1) } else { (0.0, 0.0) };
+        MOUSE_LAST = (mx, my);
+    }
     if unsafe { PERF } {
         if let Some(w) = win() {
             perf_overlay(w);
@@ -1864,6 +1997,9 @@ fn key_pressed(name: &str) -> bool {
 /// x86 reads the PS/2 mouse, the Pi its USB mouse; with no mouse it's off-screen.
 /// The pointer as last reported over the serial line (x, y, buttons), if any.
 static mut SERIAL_MOUSE: Option<(i32, i32, u8)> = None;
+/// The pointer's position at the last two presents, for `mouse_dx` / `mouse_dy`.
+static mut MOUSE_LAST: (f64, f64) = (f64::NAN, f64::NAN);
+static mut MOUSE_DELTA: (f64, f64) = (0.0, 0.0);
 
 fn mouse_state() -> (f64, f64, u8) {
     if let Some((x, y, b)) = unsafe { *(&raw const SERIAL_MOUSE) } {
@@ -2362,6 +2498,18 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             px_line(arg);
             UNIT
         },
+        b"px_hatch" => {
+            px_hatch(arg);
+            UNIT
+        },
+        b"px_bars" => {
+            px_bars(args, arg);
+            UNIT
+        },
+        b"px_notes" => {
+            px_notes(args, arg);
+            UNIT
+        },
         b"px_text" => {
             px_text(args);
             UNIT
@@ -2378,6 +2526,9 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         // Input: PS/2 (x86) or USB HID (Pi) mouse + keyboard, serial on the Pi.
         b"mouse_x" => num(mouse_state().0),
         b"mouse_y" => num(mouse_state().1),
+        // pointer movement since the previous frame (the host's relative-mouse look / paddle)
+        b"mouse_dx" => num(unsafe { MOUSE_DELTA.0 }),
+        b"mouse_dy" => num(unsafe { MOUSE_DELTA.1 }),
         b"mouse_down" => boolean(mouse_state().2 & 1 != 0),
         b"mouse_down_right" => boolean(mouse_state().2 & 2 != 0),
         b"mouse_down_middle" => boolean(mouse_state().2 & 4 != 0),

@@ -146,6 +146,13 @@ pub fn resolve(p: &str) -> String {
     if n.is_empty() {
         return root();
     }
+    // `<data root>/projects/...` is the app's Projects folder too (apps build
+    // project paths from their `fs_cwd()`).
+    if let Some(rel) = under_root(&n) {
+        if let Some(p) = projects_path(&rel) {
+            return p;
+        }
+    }
     if n == "home" || n.starts_with("home/") || n.starts_with("pkg-") || n == "packages" || n.starts_with("packages/") {
         return n;
     }

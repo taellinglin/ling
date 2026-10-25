@@ -999,6 +999,7 @@ fn core_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
         b"ceil" => num(libm::ceil(n(0, 0.0))),
         b"round" => num(libm::round(n(0, 0.0))),
         b"sqrt" => num(libm::sqrt(n(0, 0.0))),
+        b"atan2" => num(libm::atan2(n(0, 0.0), n(1, 1.0))),
         b"sin" => num(libm::sin(n(0, 0.0))),
         b"cos" => num(libm::cos(n(0, 0.0))),
         b"exp" => num(libm::exp(n(0, 0.0))),
@@ -1035,7 +1036,7 @@ fn core_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
             let sep = if sep.is_empty() { String::from("\n") } else { sep };
             new_list(s.split(sep.as_str()).map(mk_str).collect())
         },
-        b"str_trim" => mk_str(arg_str(args, 0, "").trim()),
+        b"str_trim" | b"trim" => mk_str(arg_str(args, 0, "").trim()),
         b"str_starts_with" => boolean(arg_str(args, 0, "").starts_with(arg_str(args, 1, "").as_str())),
         b"str_ends_with" => boolean(arg_str(args, 0, "").ends_with(arg_str(args, 1, "").as_str())),
         b"str_replace" => {
@@ -1052,7 +1053,7 @@ fn core_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
             let needle = arg_str(args, 1, "");
             num(s.find(needle.as_str()).map(|bi| char_count(&s[..bi]) as f64).unwrap_or(-1.0))
         },
-        b"str_slice" => {
+        b"str_slice" | b"substr" => {
             let s = arg_str(args, 0, "");
             let start = n(1, 0.0).max(0.0) as usize;
             let total = char_count(&s);
@@ -1109,8 +1110,20 @@ const DISPATCH_SLOTS: usize = 1024;
 /// Off: with the cache on, serial input died after a Settings click in two
 /// of three QEMU runs (builtin dispatch is logically unchanged by it, so the
 /// mechanism is not understood yet -- see project memory); off, every run passes.
-const DISPATCH_ON: bool = false;
-static mut DISPATCH_CACHE: [(usize, u8); DISPATCH_SLOTS] = [(0, 0); DISPATCH_SLOTS];
+const DISPATCH_ON: bool = true;
+/// (name pointer, FNV-1a of the name's bytes, dispatcher) per slot: the hash keeps a
+/// reused pointer holding a different name from being routed to the wrong dispatcher.
+static mut DISPATCH_CACHE: [(usize, u64, u8); DISPATCH_SLOTS] = [(0, 0, 0); DISPATCH_SLOTS];
+
+#[inline]
+fn name_hash(name: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in name {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
 
 pub fn gc_runs() -> u32 {
     unsafe { GC_RUNS }
@@ -1192,6 +1205,7 @@ pub fn hang_tick() {
     }
 }
 
+
 /// Note (once per name) that a builtin isn't implemented in-kernel yet.
 pub(crate) fn report_missing(name: &[u8]) {
     let rep = unsafe { &mut *(&raw mut REPORTED) };
@@ -1222,8 +1236,9 @@ pub unsafe extern "C" fn ling_builtin(
     // time, so the dispatcher that answered it last time is tried first: a
     // drawing call skips the long core match (hundreds of names) that way.
     let slot = ((name_ptr as usize) >> 3) & (DISPATCH_SLOTS - 1);
-    let (cached_ptr, stage) = DISPATCH_CACHE[slot];
-    if DISPATCH_ON && cached_ptr == name_ptr as usize {
+    let (cached_ptr, cached_hash, stage) = DISPATCH_CACHE[slot];
+    let hash = name_hash(name);
+    if DISPATCH_ON && cached_ptr == name_ptr as usize && cached_hash == hash {
         let hit = match stage {
             1 => st_builtin(name, args),
             2 => crate::lingapp::dispatch(name, args),
@@ -1236,23 +1251,23 @@ pub unsafe extern "C" fn ling_builtin(
         }
     }
     if let Some(v) = core_builtin(name, args) {
-        DISPATCH_CACHE[slot] = (name_ptr as usize, 0);
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 0);
         return v;
     }
     if let Some(v) = st_builtin(name, args) {
-        DISPATCH_CACHE[slot] = (name_ptr as usize, 1);
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 1);
         return v;
     }
     if let Some(v) = crate::lingapp::dispatch(name, args) {
-        DISPATCH_CACHE[slot] = (name_ptr as usize, 2);
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 2);
         return v;
     }
     if let Some(v) = crate::lingdaw::dispatch(name, args) {
-        DISPATCH_CACHE[slot] = (name_ptr as usize, 3);
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 3);
         return v;
     }
     if let Some(v) = crate::netapi::dispatch(name, args) {
-        DISPATCH_CACHE[slot] = (name_ptr as usize, 4);
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 4);
         return v;
     }
     for f in (*(&raw const EXT)).iter().flatten() {

@@ -696,6 +696,15 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
     let ztest = p.ztest && !p.sprite;
     let zwrite = p.zwrite && !p.sprite;
     let blend = p.blend;
+    let path: u8 = if alpha8 >= 256 && blend == 0 && !fog_on && !hole_on {
+        if texpx.is_empty() {
+            1
+        } else {
+            2
+        }
+    } else {
+        0
+    };
 
     for py in y_start..y_end {
         let fy = py as f32 + 0.5;
@@ -770,54 +779,115 @@ fn raster(env: &mut Env, v: &[A; 3], p: &Params) {
             let dz = (z1 - z0) / blf;
             let mut z = z0;
             let (mut u, mut vv) = (u0, v0);
-            for px in x..xe {
-                let idx = row + px as usize;
-                if !ztest || iw > env.zb[idx] {
-                    let t = if texpx.is_empty() { 0xFFFF_FFFFu32 } else { texpx[((((vv >> 16) as u32) & mask) << tsh | (((u >> 16) as u32) & mask)) as usize] };
-                    let mut a = ((t >> 24) * alpha8) >> 8;
-                    if hole_on && a > 0 && z < p.hole[3] {
-                        let dx = px as f32 + 0.5 - p.hole[0];
-                        let dy = py as f32 + 0.5 - p.hole[1];
-                        let d = sqrt(dx * dx + dy * dy);
-                        let k = ((d - p.hole[2] * 0.55) / (p.hole[2] * 0.45)).clamp(0.0, 1.0);
-                        let k = k * k * (3.0 - 2.0 * k);
-                        a = (a as f32 * (0.12 + 0.88 * k)) as u32;
-                    }
-                    if a > 0 {
-                        let mut sr = ((((t >> 16) & 255) as i32 * (mr >> 8)) >> 8).clamp(0, 255);
-                        let mut sg = ((((t >> 8) & 255) as i32 * (mg >> 8)) >> 8).clamp(0, 255);
-                        let mut sb = (((t & 255) as i32 * (mb >> 8)) >> 8).clamp(0, 255);
-                        if fog_on {
-                            sr += ((fcr - sr) * (ff >> 8)) >> 8;
-                            sg += ((fcg - sg) * (ff >> 8)) >> 8;
-                            sb += ((fcb - sb) * (ff >> 8)) >> 8;
-                        }
-                        if a >= 255 && blend == 0 {
+            match path {
+                // opaque, untextured, no fog / hole: shapes
+                1 => {
+                    for px in x..xe {
+                        let idx = row + px as usize;
+                        if !ztest || iw > env.zb[idx] {
+                            let sr = ((mr >> 8).clamp(0, 256) * 255) >> 8;
+                            let sg = ((mg >> 8).clamp(0, 256) * 255) >> 8;
+                            let sb = ((mb >> 8).clamp(0, 256) * 255) >> 8;
                             env.buf[idx] = ((sr as u32) << 16) | ((sg as u32) << 8) | sb as u32;
-                        } else {
-                            let d = env.buf[idx];
-                            let (dr, dg, db) = (((d >> 16) & 255) as i32, ((d >> 8) & 255) as i32, (d & 255) as i32);
-                            let a = a.min(255) as i32;
-                            let (r, g, b) = if blend == 1 {
-                                ((dr + ((sr * a) >> 8)).min(255), (dg + ((sg * a) >> 8)).min(255), (db + ((sb * a) >> 8)).min(255))
-                            } else {
-                                (dr + (((sr - dr) * a) >> 8), dg + (((sg - dg) * a) >> 8), db + (((sb - db) * a) >> 8))
-                            };
-                            env.buf[idx] = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+                            if zwrite {
+                                env.zb[idx] = iw;
+                            }
                         }
-                        if zwrite && a > 247 {
-                            env.zb[idx] = iw;
-                        }
+                        iw += diw;
+                        mr += dm[0];
+                        mg += dm[1];
+                        mb += dm[2];
                     }
-                }
-                iw += diw;
-                z += dz;
-                u += du;
-                vv += dv;
-                mr += dm[0];
-                mg += dm[1];
-                mb += dm[2];
-                ff += dff;
+                },
+                // opaque textured, no fog / hole: meshes and cut-out textures
+                2 => {
+                    for px in x..xe {
+                        let idx = row + px as usize;
+                        if !ztest || iw > env.zb[idx] {
+                            let t = texpx[((((vv >> 16) as u32) & mask) << tsh | (((u >> 16) as u32) & mask)) as usize];
+                            let a = t >> 24;
+                            if a > 0 {
+                                let sr = ((((t >> 16) & 255) as i32 * (mr >> 8)) >> 8).clamp(0, 255);
+                                let sg = ((((t >> 8) & 255) as i32 * (mg >> 8)) >> 8).clamp(0, 255);
+                                let sb = (((t & 255) as i32 * (mb >> 8)) >> 8).clamp(0, 255);
+                                if a >= 255 {
+                                    env.buf[idx] = ((sr as u32) << 16) | ((sg as u32) << 8) | sb as u32;
+                                    if zwrite {
+                                        env.zb[idx] = iw;
+                                    }
+                                } else {
+                                    let d = env.buf[idx];
+                                    let (dr, dg, db) = (((d >> 16) & 255) as i32, ((d >> 8) & 255) as i32, (d & 255) as i32);
+                                    let a = a as i32;
+                                    let r = dr + (((sr - dr) * a) >> 8);
+                                    let g = dg + (((sg - dg) * a) >> 8);
+                                    let b = db + (((sb - db) * a) >> 8);
+                                    env.buf[idx] = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+                                    if zwrite && a > 247 {
+                                        env.zb[idx] = iw;
+                                    }
+                                }
+                            }
+                        }
+                        iw += diw;
+                        u += du;
+                        vv += dv;
+                        mr += dm[0];
+                        mg += dm[1];
+                        mb += dm[2];
+                    }
+                },
+                _ => {
+                    for px in x..xe {
+                        let idx = row + px as usize;
+                        if !ztest || iw > env.zb[idx] {
+                            let t = if texpx.is_empty() { 0xFFFF_FFFFu32 } else { texpx[((((vv >> 16) as u32) & mask) << tsh | (((u >> 16) as u32) & mask)) as usize] };
+                            let mut a = ((t >> 24) * alpha8) >> 8;
+                            if hole_on && a > 0 && z < p.hole[3] {
+                                let dx = px as f32 + 0.5 - p.hole[0];
+                                let dy = py as f32 + 0.5 - p.hole[1];
+                                let d = sqrt(dx * dx + dy * dy);
+                                let k = ((d - p.hole[2] * 0.55) / (p.hole[2] * 0.45)).clamp(0.0, 1.0);
+                                let k = k * k * (3.0 - 2.0 * k);
+                                a = (a as f32 * (0.12 + 0.88 * k)) as u32;
+                            }
+                            if a > 0 {
+                                let mut sr = ((((t >> 16) & 255) as i32 * (mr >> 8)) >> 8).clamp(0, 255);
+                                let mut sg = ((((t >> 8) & 255) as i32 * (mg >> 8)) >> 8).clamp(0, 255);
+                                let mut sb = (((t & 255) as i32 * (mb >> 8)) >> 8).clamp(0, 255);
+                                if fog_on {
+                                    sr += ((fcr - sr) * (ff >> 8)) >> 8;
+                                    sg += ((fcg - sg) * (ff >> 8)) >> 8;
+                                    sb += ((fcb - sb) * (ff >> 8)) >> 8;
+                                }
+                                if a >= 255 && blend == 0 {
+                                    env.buf[idx] = ((sr as u32) << 16) | ((sg as u32) << 8) | sb as u32;
+                                } else {
+                                    let d = env.buf[idx];
+                                    let (dr, dg, db) = (((d >> 16) & 255) as i32, ((d >> 8) & 255) as i32, (d & 255) as i32);
+                                    let a = a.min(255) as i32;
+                                    let (r, g, b) = if blend == 1 {
+                                        ((dr + ((sr * a) >> 8)).min(255), (dg + ((sg * a) >> 8)).min(255), (db + ((sb * a) >> 8)).min(255))
+                                    } else {
+                                        (dr + (((sr - dr) * a) >> 8), dg + (((sg - dg) * a) >> 8), db + (((sb - db) * a) >> 8))
+                                    };
+                                    env.buf[idx] = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+                                }
+                                if zwrite && a > 247 {
+                                    env.zb[idx] = iw;
+                                }
+                            }
+                        }
+                        iw += diw;
+                        z += dz;
+                        u += du;
+                        vv += dv;
+                        mr += dm[0];
+                        mg += dm[1];
+                        mb += dm[2];
+                        ff += dff;
+                    }
+                },
             }
             x = xe;
             a0 = a1;
@@ -1068,6 +1138,28 @@ struct State {
     rng: u32,
     scratch: Vec<u32>,
     pub tris: usize,
+    /// Render scale: 1 = the window, 0.5 = a quarter of the pixels, upscaled at flush.
+    scale: f32,
+    auto_scale: bool,
+    rbuf: Vec<u32>,
+    rw: usize,
+    rh: usize,
+    frame_open: bool,
+    win_w: usize,
+    win_h: usize,
+    /// Microseconds spent rasterizing / post-processing / upscaling this frame.
+    raster_us: u64,
+    slow_frames: u32,
+    fast_frames: u32,
+    /// Toon post: ink outline half-width in pixels (0 = off), colour, depth threshold.
+    toon_px: f32,
+    toon_color: u32,
+    toon_thresh: f32,
+    /// The host's 3-band tone ramp as a brightness-scale table (8.8) per luminance.
+    ramp_lut: [u16; 256],
+    ramp_on: bool,
+    drew_3d: bool,
+    post_done: bool,
 }
 
 static mut G: Option<State> = None;
@@ -1106,6 +1198,24 @@ fn st() -> &'static mut State {
             rng: 0x9E37_79B9,
             scratch: Vec::new(),
             tris: 0,
+            scale: 1.0,
+            auto_scale: true,
+            rbuf: Vec::new(),
+            rw: 0,
+            rh: 0,
+            frame_open: false,
+            win_w: 0,
+            win_h: 0,
+            raster_us: 0,
+            slow_frames: 0,
+            fast_frames: 0,
+            toon_px: 0.0,
+            toon_color: 0,
+            toon_thresh: 0.05,
+            ramp_lut: build_ramp_lut(),
+            ramp_on: true,
+            drew_3d: false,
+            post_done: false,
         });
     }
     g.as_mut().unwrap()
@@ -1119,6 +1229,287 @@ pub fn take_stats() -> usize {
     n
 }
 
+/// " 3d x0.5" while rendering below the window's resolution, "" otherwise.
+pub fn scale_note() -> String {
+    let s = st();
+    if s.scale < 0.999 {
+        alloc::format!(" 3d x{:.2}", s.scale)
+    } else {
+        String::new()
+    }
+}
+
+// ── toon post: the host's tone ramp (gfx/toon.rs) as a table ─────────────────
+
+fn smoothstep01(f: f32) -> f32 {
+    let f = f.clamp(0.0, 1.0);
+    f * f * (3.0 - 2.0 * f)
+}
+
+/// The default 3-band cel ramp: shadow 0.08 below 0.25, mid 0.5 below 0.6, lit 1.0;
+/// soft 0.32 band edges, sheen 0.65 above 0.72.
+fn sample_ramp(t: f32) -> f32 {
+    const STOPS: [(f32, f32); 4] = [(0.0, 0.08), (0.25, 0.50), (0.60, 1.00), (1.0, 1.0)];
+    const SOFT: f32 = 0.32;
+    let t = t.clamp(0.0, 1.0);
+    if t <= STOPS[0].0 {
+        return STOPS[0].1;
+    }
+    let last = STOPS.len() - 1;
+    if t >= STOPS[last].0 {
+        return STOPS[last].1;
+    }
+    for i in 0..last {
+        if t < STOPS[i + 1].0 {
+            let v = STOPS[i].1;
+            let gap_u = STOPS[i + 1].0 - STOPS[i].0;
+            let gap_u2 = if i + 2 <= last { STOPS[i + 2].0 - STOPS[i + 1].0 } else { gap_u };
+            let hw_u = 0.5 * SOFT * gap_u.min(gap_u2);
+            if hw_u > 1e-6 && t > STOPS[i + 1].0 - hw_u {
+                let s = smoothstep01((t - (STOPS[i + 1].0 - hw_u)) / (2.0 * hw_u));
+                return v + s * (STOPS[i + 1].1 - v);
+            }
+            if i > 0 {
+                let gap_l = STOPS[i].0 - STOPS[i - 1].0;
+                let hw_l = 0.5 * SOFT * gap_l.min(gap_u);
+                if hw_l > 1e-6 && t < STOPS[i].0 + hw_l {
+                    let s = smoothstep01((t - (STOPS[i].0 - hw_l)) / (2.0 * hw_l));
+                    return STOPS[i - 1].1 + s * (v - STOPS[i - 1].1);
+                }
+            }
+            return v;
+        }
+    }
+    STOPS[last].1
+}
+
+fn build_ramp_lut() -> [u16; 256] {
+    let mut lut = [256u16; 256];
+    for (lum, e) in lut.iter_mut().enumerate() {
+        let l = lum as f32;
+        if l < 1.5 {
+            continue;
+        }
+        let t = l / 255.0;
+        let mut v = sample_ramp(t);
+        let k = smoothstep01((t - 0.72) / 0.20) * 0.65;
+        v += (t - v) * k;
+        let maxs = if l < 14.0 { 2.2 } else { 4.0 };
+        let scale = (v * 255.0 / l).clamp(0.0, maxs);
+        *e = (scale * 256.0) as u16;
+    }
+    lut
+}
+
+/// Luminance-preserving-hue tone ramp over the whole buffer (the host applies it every frame).
+fn apply_ramp(buf: &mut [u32], lut: &[u16; 256]) {
+    for p in buf.iter_mut() {
+        let c = *p;
+        let (r, g, b) = ((c >> 16) & 255, (c >> 8) & 255, c & 255);
+        let lum = ((77 * r + 150 * g + 29 * b) >> 8) as usize;
+        let s = lut[lum.min(255)] as u32;
+        if s == 256 {
+            continue;
+        }
+        let r2 = ((r * s) >> 8).min(255);
+        let g2 = ((g * s) >> 8).min(255);
+        let b2 = ((b * s) >> 8).min(255);
+        *p = (r2 << 16) | (g2 << 8) | b2;
+    }
+}
+
+/// Ink where the depth buffer (1/w) jumps: silhouettes and creases. `thresh` is in
+/// camera depth units like the host's; a neighbour's depth difference is taken from
+/// the 1/w difference scaled by w^2 (one divide per pixel).
+#[allow(clippy::too_many_arguments)]
+fn draw_outlines(buf: &mut [u32], zb: &[f32], w: usize, h: usize, thick: f32, color: u32, thresh: f32) {
+    if w < 3 || h < 3 || zb.len() < w * h || buf.len() < w * h {
+        return;
+    }
+    let t = thick.clamp(0.5, 6.0);
+    let ti = ceil(t) as i32;
+    let t2 = t * t;
+    // coverage of the stamp per offset
+    let kw = (2 * ti + 1) as usize;
+    let mut cov = vec![0u8; kw * kw];
+    for dy in -ti..=ti {
+        for dx in -ti..=ti {
+            let d2 = (dx * dx + dy * dy) as f32;
+            if d2 <= t2 {
+                let c = (sqrt(t2 - d2) / if t > 1.0 { t } else { 1.0 }).clamp(0.0, 1.0);
+                cov[((dy + ti) as usize) * kw + (dx + ti) as usize] = (c * 255.0) as u8;
+            }
+        }
+    }
+    let (ir, ig, ib) = ((color >> 16) & 255, (color >> 8) & 255, color & 255);
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let idx = y * w + x;
+            let iw = zb[idx];
+            if iw <= 0.0 {
+                continue;
+            }
+            let inv = 1.0 / iw;
+            let k = inv * inv;
+            let d = |j: usize| (zb[j] - iw).abs() * k;
+            let dmax = d(idx - w).max(d(idx + w)).max(d(idx - 1)).max(d(idx + 1));
+            if dmax < thresh {
+                continue;
+            }
+            for dy in -ti..=ti {
+                let ny = y as i32 + dy;
+                if ny < 0 || ny >= h as i32 {
+                    continue;
+                }
+                for dx in -ti..=ti {
+                    let c = cov[((dy + ti) as usize) * kw + (dx + ti) as usize] as u32;
+                    if c == 0 {
+                        continue;
+                    }
+                    let nx = x as i32 + dx;
+                    if nx < 0 || nx >= w as i32 {
+                        continue;
+                    }
+                    let ni = ny as usize * w + nx as usize;
+                    if c >= 255 {
+                        buf[ni] = color;
+                    } else {
+                        let dst = buf[ni];
+                        let (dr, dg, db) = ((dst >> 16) & 255, (dst >> 8) & 255, dst & 255);
+                        let r = (ir * c + dr * (255 - c)) / 255;
+                        let g = (ig * c + dg * (255 - c)) / 255;
+                        let b = (ib * c + db * (255 - c)) / 255;
+                        buf[ni] = (r << 16) | (g << 8) | b;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[inline]
+fn avg2(p: u32, q: u32) -> u32 {
+    (((p ^ q) & 0x00FE_FEFE) >> 1) + (p & q)
+}
+
+/// The wireframe primitives of the host's `tm_wire`: unit-size vertices and edges.
+fn wire_shape(kind: i32, detail: usize) -> (Vec<V3>, Vec<(usize, usize)>) {
+    let mut v: Vec<V3> = Vec::new();
+    let mut e: Vec<(usize, usize)> = Vec::new();
+    fn by_length(v: &[V3], e: &mut Vec<(usize, usize)>) {
+        let d2 = |a: V3, b: V3| dot(sub(a, b), sub(a, b));
+        let mut best = f32::MAX;
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                best = best.min(d2(v[i], v[j]));
+            }
+        }
+        for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                if d2(v[i], v[j]) < best * 1.01 {
+                    e.push((i, j));
+                }
+            }
+        }
+    }
+    match kind {
+        1 => {
+            let k = 1.0 / sqrt(3.0);
+            v = vec![[k, k, k], [k, -k, -k], [-k, k, -k], [-k, -k, k]];
+            by_length(&v, &mut e);
+        },
+        2 => {
+            v = vec![[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0]];
+            by_length(&v, &mut e);
+        },
+        3 => {
+            let g = (1.0 + sqrt(5.0)) / 2.0;
+            let nn = sqrt(1.0 + g * g);
+            for &(a, b) in &[(1.0f32, g), (-1.0, g), (1.0, -g), (-1.0, -g)] {
+                v.push([0.0, a / nn, b / nn]);
+                v.push([a / nn, b / nn, 0.0]);
+                v.push([b / nn, 0.0, a / nn]);
+            }
+            by_length(&v, &mut e);
+        },
+        4 => {
+            let (maj, min) = (detail, (detail / 2).max(4));
+            for i in 0..maj {
+                let a = i as f32 / maj as f32 * TAU;
+                for j in 0..min {
+                    let b = j as f32 / min as f32 * TAU;
+                    let r = 0.72 + 0.28 * cos(b);
+                    v.push([r * cos(a), 0.28 * sin(b), r * sin(a)]);
+                    let here = i * min + j;
+                    e.push((here, i * min + (j + 1) % min));
+                    e.push((here, ((i + 1) % maj) * min + j));
+                }
+            }
+        },
+        5 => {
+            let (rings, segs) = ((detail / 2).max(3), detail);
+            for i in 1..rings {
+                let p = i as f32 / rings as f32 * PI;
+                for j in 0..segs {
+                    let a = j as f32 / segs as f32 * TAU;
+                    v.push([sin(p) * cos(a), cos(p), sin(p) * sin(a)]);
+                    let here = (i - 1) * segs + j;
+                    e.push((here, (i - 1) * segs + (j + 1) % segs));
+                    if i + 1 < rings {
+                        e.push((here, i * segs + j));
+                    }
+                }
+            }
+        },
+        6 => {
+            for j in 0..detail {
+                let a = j as f32 / detail as f32 * TAU;
+                v.push([cos(a), sin(a), 0.0]);
+                e.push((j, (j + 1) % detail));
+            }
+        },
+        7 => {
+            for layer in 0..2 {
+                let z = if layer == 0 { -0.25 } else { 0.25 };
+                for j in 0..10 {
+                    let a = j as f32 / 10.0 * TAU - PI * 0.5;
+                    let r = if j % 2 == 0 { 1.0 } else { 0.42 };
+                    v.push([r * cos(a), r * sin(a), z]);
+                    e.push((layer * 10 + j, layer * 10 + (j + 1) % 10));
+                }
+            }
+            for j in 0..10 {
+                e.push((j, 10 + j));
+            }
+        },
+        8 => {
+            let n = detail;
+            for i in 0..=n {
+                let t = i as f32 / n as f32 * 2.0 - 1.0;
+                v.push([t, 0.0, -1.0]);
+                v.push([t, 0.0, 1.0]);
+                v.push([-1.0, 0.0, t]);
+                v.push([1.0, 0.0, t]);
+                let k = i * 4;
+                e.push((k, k + 1));
+                e.push((k + 2, k + 3));
+            }
+        },
+        _ => {
+            let k = 1.0 / sqrt(3.0);
+            for &x in &[-1.0f32, 1.0] {
+                for &y in &[-1.0f32, 1.0] {
+                    for &z in &[-1.0f32, 1.0] {
+                        v.push([x * k, y * k, z * k]);
+                    }
+                }
+            }
+            by_length(&v, &mut e);
+        },
+    }
+    (v, e)
+}
+
 impl State {
     fn rand(&mut self) -> f32 {
         let mut x = self.rng;
@@ -1129,11 +1520,170 @@ impl State {
         (x >> 8) as f32 / 16_777_216.0
     }
 
-    /// The window's centre and focal length for this frame.
-    fn view(&self, bw: usize, bh: usize) -> (f32, f32, f32) {
-        let (cx, cy) = self.cam.center.unwrap_or((bw as f32 * 0.5, bh as f32 * 0.5));
-        let focal = if self.cam.focal > 0.0 { self.cam.focal } else { bh as f32 };
+    /// The window's size (None without a window), remembered for the render target.
+    fn win_dims(&mut self) -> Option<(usize, usize)> {
+        let (_, w, h) = crate::lingapp::surface()?;
+        self.win_w = w;
+        self.win_h = h;
+        Some((w, h))
+    }
+
+    /// The render target's size: the window's scaled by the render scale.
+    fn tdims(&self) -> (usize, usize) {
+        if self.scale < 0.999 {
+            (((self.win_w as f32 * self.scale) as usize).max(1), ((self.win_h as f32 * self.scale) as usize).max(1))
+        } else {
+            (self.win_w, self.win_h)
+        }
+    }
+
+    /// The view's centre and focal length in render-target pixels.
+    fn view(&self) -> (f32, f32, f32) {
+        let (tw, th) = self.tdims();
+        let sc = if self.scale < 0.999 { self.scale } else { 1.0 };
+        let (cx, cy) = match self.cam.center {
+            Some((x, y)) => (x * sc, y * sc),
+            None => (tw as f32 * 0.5, th as f32 * 0.5),
+        };
+        let focal = if self.cam.focal > 0.0 { self.cam.focal * sc } else { th as f32 };
         (cx, cy, focal)
+    }
+
+    /// Where 3-D pixels go: the scaled buffer (opened from the window's current
+    /// contents) below scale 1, else the window itself.
+    fn target(&mut self) -> Option<(*mut u32, usize, usize)> {
+        self.win_dims()?;
+        if self.scale < 0.999 {
+            self.open_frame();
+            Some((self.rbuf.as_mut_ptr(), self.rw, self.rh))
+        } else {
+            let (buf, w, h) = crate::lingapp::surface()?;
+            Some((buf.as_mut_ptr(), w, h))
+        }
+    }
+
+    /// Start a scaled frame: the window's pixels, decimated, become the backdrop.
+    fn open_frame(&mut self) {
+        if self.frame_open {
+            return;
+        }
+        let Some((win, ww, wh)) = crate::lingapp::surface() else { return };
+        let (rw, rh) = self.tdims();
+        if self.rbuf.len() != rw * rh {
+            self.rbuf = vec![0u32; rw * rh];
+        }
+        self.rw = rw;
+        self.rh = rh;
+        let step = ((ww << 16) / rw) as u32;
+        for y in 0..rh {
+            let sy = (y * wh / rh).min(wh - 1);
+            let src = &win[sy * ww..sy * ww + ww];
+            let row = &mut self.rbuf[y * rw..y * rw + rw];
+            let mut fx = 0u32;
+            for px in row.iter_mut() {
+                *px = src[((fx >> 16) as usize).min(ww - 1)];
+                fx += step;
+            }
+        }
+        self.frame_open = true;
+    }
+
+    /// End a scaled frame: the scaled buffer goes back onto the window (a smooth
+    /// 2x expansion at half scale, nearest otherwise).
+    fn close_frame(&mut self) {
+        if !self.frame_open {
+            return;
+        }
+        self.frame_open = false;
+        let Some((win, ww, wh)) = crate::lingapp::surface() else { return };
+        let (rw, rh) = (self.rw, self.rh);
+        if rw == 0 || rh == 0 || self.rbuf.len() < rw * rh {
+            return;
+        }
+        let src = &self.rbuf;
+        if ww + 1 >= 2 * rw && wh + 1 >= 2 * rh && ww <= 2 * rw && wh <= 2 * rh {
+            for sy in 0..rh {
+                let s = &src[sy * rw..sy * rw + rw];
+                let ny = (sy + 1).min(rh - 1);
+                let n = &src[ny * rw..ny * rw + rw];
+                let y0 = 2 * sy;
+                let y1 = (y0 + 1).min(wh - 1);
+                for sx in 0..rw {
+                    let a = s[sx];
+                    let b = s[(sx + 1).min(rw - 1)];
+                    let c = n[sx];
+                    let d = n[(sx + 1).min(rw - 1)];
+                    let x0 = 2 * sx;
+                    let x1 = (x0 + 1).min(ww - 1);
+                    let ab = avg2(a, b);
+                    win[y0 * ww + x0] = a;
+                    win[y0 * ww + x1] = ab;
+                    win[y1 * ww + x0] = avg2(a, c);
+                    win[y1 * ww + x1] = avg2(ab, avg2(c, d));
+                }
+            }
+        } else {
+            let step = ((rw << 16) / ww) as u32;
+            for y in 0..wh {
+                let sy = (y * rh / wh).min(rh - 1);
+                let s = &src[sy * rw..sy * rw + rw];
+                let row = &mut win[y * ww..y * ww + ww];
+                let mut fx = 0u32;
+                for px in row.iter_mut() {
+                    *px = s[((fx >> 16) as usize).min(rw - 1)];
+                    fx += step;
+                }
+            }
+        }
+    }
+
+    /// The toon post pass over the render target, once per frame: tone ramp, then ink.
+    fn post(&mut self) {
+        if self.post_done || !self.drew_3d {
+            return;
+        }
+        self.post_done = true;
+        let t0 = crate::arch::timer::now_us();
+        let Some((ptr, w, h)) = self.target() else { return };
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, w * h) };
+        if self.ramp_on {
+            apply_ramp(buf, &self.ramp_lut);
+        }
+        if self.toon_px > 0.0 && self.zw == w && self.zh == h {
+            // the ink is specified in window pixels: thinner on a scaled target
+            let px = if self.scale < 0.999 { self.toon_px * self.scale } else { self.toon_px };
+            draw_outlines(buf, &self.zbuf, w, h, px, self.toon_color, self.toon_thresh);
+        }
+        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
+    }
+
+    /// Pick the render scale for the next frame from this frame's pixel work
+    /// (auto mode): below the window's resolution when the 3-D takes more than
+    /// 14 ms, back to full when it takes less than 3 ms for a second.
+    fn adapt(&mut self) {
+        let t = self.raster_us;
+        self.raster_us = 0;
+        if !self.auto_scale || !self.drew_3d {
+            return;
+        }
+        if t > 14_000 {
+            self.slow_frames += 1;
+            self.fast_frames = 0;
+            if self.slow_frames >= 3 && self.scale > 0.5 {
+                self.scale = 0.5;
+                self.slow_frames = 0;
+            }
+        } else if t < 3_000 && self.scale < 1.0 {
+            self.fast_frames += 1;
+            self.slow_frames = 0;
+            if self.fast_frames >= 60 {
+                self.scale = 1.0;
+                self.fast_frames = 0;
+            }
+        } else {
+            self.slow_frames = 0;
+            self.fast_frames = 0;
+        }
     }
 
     fn ensure_z(&mut self, bw: usize, bh: usize) {
@@ -1148,13 +1698,15 @@ impl State {
         }
     }
 
-    /// Draw one screen-space triangle now.
+    /// Draw one screen-space triangle now (2-D sprites go to the window, 3-D to the target).
     fn draw_now(&mut self, v: &[A; 3], p: &Params) {
-        let Some((buf, bw, bh)) = crate::lingapp::surface() else { return };
+        let t0 = crate::arch::timer::now_us();
+        let got = if p.sprite { crate::lingapp::surface().map(|(b, w, h)| (b.as_mut_ptr(), w, h)) } else { self.target() };
+        let Some((ptr, bw, bh)) = got else { return };
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
         if !p.sprite {
             self.ensure_z(bw, bh);
-        } else if self.zw != bw || self.zh != bh {
-            self.ensure_z(bw, bh);
+            self.drew_3d = true;
         }
         self.tris += 1;
         let State { zbuf, texs, glow, soft, solid, lights, fog_color, fog_start, fog_end, cam, .. } = self;
@@ -1170,6 +1722,7 @@ impl State {
         }
         let mut env = Env { buf, bw, bh, zb: &mut zbuf[..], tex, lights: &lights[..], fog_color: *fog_color, fog_start: *fog_start, fog_end: *fog_end, zdist: cam.zdist };
         raster(&mut env, v, p);
+        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
     }
 
     /// Clip a world-space triangle against the near plane, project it and
@@ -1177,7 +1730,9 @@ impl State {
     /// per-vertex colour; `cull` 1 / 2 drops one screen winding.
     #[allow(clippy::too_many_arguments)]
     fn push_tri(&mut self, wp: [V3; 3], uv: [[f32; 2]; 3], col: [V3; 3], p: Params, cull: u8, bias: f32) -> usize {
-        let Some((_, bw, bh)) = crate::lingapp::surface() else { return 0 };
+        if self.win_dims().is_none() {
+            return 0;
+        }
         let near = -self.cam.zdist + 0.05;
         let d = [self.cam.depth(wp[0]), self.cam.depth(wp[1]), self.cam.depth(wp[2])];
         if d[0] <= near && d[1] <= near && d[2] <= near {
@@ -1206,7 +1761,7 @@ impl State {
         if cn < 3 {
             return 0;
         }
-        let (cx, cy, focal) = self.view(bw, bh);
+        let (cx, cy, focal) = self.view();
         let zd = self.cam.zdist;
         let mut tv = [A::default(); 4];
         for k in 0..cn {
@@ -1236,18 +1791,77 @@ impl State {
         count
     }
 
-    /// Draw the translucent triangles kept since the last flush, far to near.
+    /// Draw the translucent triangles kept since the last flush, far to near, run
+    /// the post pass and put a scaled frame back onto the window.
     fn flush(&mut self) {
-        if self.deferred.is_empty() {
-            return;
+        if !self.deferred.is_empty() {
+            let mut list = core::mem::take(&mut self.deferred);
+            list.sort_by(|a, b| a.key.partial_cmp(&b.key).unwrap_or(core::cmp::Ordering::Equal));
+            for d in &list {
+                self.draw_now(&d.v, &d.p);
+            }
+            list.clear();
+            self.deferred = list;
         }
-        let mut list = core::mem::take(&mut self.deferred);
-        list.sort_by(|a, b| a.key.partial_cmp(&b.key).unwrap_or(core::cmp::Ordering::Equal));
-        for d in &list {
-            self.draw_now(&d.v, &d.p);
+        self.post();
+        let t0 = crate::arch::timer::now_us();
+        self.close_frame();
+        self.raster_us += crate::arch::timer::now_us().saturating_sub(t0);
+    }
+
+    /// `tm_wire(kind, x, y, z, size, rx, ry, rz, colour, detail, thick)`: a wireframe
+    /// primitive (1 tetrahedron, 2 octahedron, 3 icosahedron, 4 torus, 5 sphere,
+    /// 6 ring, 7 star prism, 8 grid, else cube), fogged lines, no depth.
+    fn tm_wire(&mut self, args: &[u64]) {
+        let kind = n(args, 0, 0.0) as i32;
+        let c = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
+        let size = f(args, 4, 1.0);
+        let (rx, ry, rz) = (f(args, 5, 0.0), f(args, 6, 0.0), f(args, 7, 0.0));
+        let col = rgb(n(args, 8, 16777215.0));
+        let detail = (n(args, 9, 12.0) as usize).clamp(3, 64);
+        let thick = n(args, 10, 0.0) > 0.5;
+        let Some((ptr, bw, bh)) = self.target() else { return };
+        let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
+        let (verts, edges) = wire_shape(kind, detail);
+        let (sx, cx) = (sin(rx), cos(rx));
+        let (sy, cy) = (sin(ry), cos(ry));
+        let (sz, cz) = (sin(rz), cos(rz));
+        let world: Vec<V3> = verts
+            .iter()
+            .map(|v| {
+                let (x, y, z) = (v[0], v[1] * cx - v[2] * sx, v[1] * sx + v[2] * cx);
+                let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
+                let (x, y) = (x * cz - y * sz, x * sz + y * cz);
+                [c[0] + x * size, c[1] + y * size, c[2] + z * size]
+            })
+            .collect();
+        let (vcx, vcy, focal) = self.view();
+        let near = -self.cam.zdist + 0.05;
+        for (i, j) in edges {
+            let (mut a, mut b) = (world[i], world[j]);
+            let da = self.cam.depth(a);
+            let db = self.cam.depth(b);
+            if da <= near && db <= near {
+                continue;
+            }
+            if da <= near {
+                a = lerp3(a, b, (near - da) / (db - da));
+            } else if db <= near {
+                b = lerp3(a, b, (near - da) / (db - da));
+            }
+            let (ax, ay, az) = self.cam.project(a, vcx, vcy, focal);
+            let (bx, by, bz) = self.cam.project(b, vcx, vcy, focal);
+            if ax.abs() > 20000.0 || ay.abs() > 20000.0 || bx.abs() > 20000.0 || by.abs() > 20000.0 {
+                continue;
+            }
+            let lc = self.fog_apply(col, (az + bz) * 0.5);
+            line2d(buf, bw, bh, ax, ay, bx, by, lc);
+            if thick {
+                line2d(buf, bw, bh, ax + 1.0, ay, bx + 1.0, by, lc);
+                line2d(buf, bw, bh, ax, ay + 1.0, bx, by + 1.0, lc);
+            }
         }
-        list.clear();
-        self.deferred = list;
+        self.drew_3d = true;
     }
 
     fn fog_apply(&self, color: u32, depth: f32) -> u32 {
@@ -1381,8 +1995,9 @@ impl State {
             }
         }
         if want_wire {
-            let Some((buf, bw, bh)) = crate::lingapp::surface() else { return };
-            let (vcx, vcy, focal) = self.view(bw, bh);
+            let Some((ptr, bw, bh)) = self.target() else { return };
+            let buf = unsafe { core::slice::from_raw_parts_mut(ptr, bw * bh) };
+            let (vcx, vcy, focal) = self.view();
             let near = -self.cam.zdist + 0.05;
             let col = pack3(color);
             let edges: Vec<[u32; 2]> = self.bases.get(&(kind, e0, e1)).unwrap().edges.clone();
@@ -1424,9 +2039,11 @@ impl State {
         let blend = n(args, 15, 0.0) as u8;
         let cull = n(args, 16, 0.0) as u8;
         let lit_amb = f(args, 17, -1.0);
-        let Some((_, bw, bh)) = crate::lingapp::surface() else { return 0 };
+        if self.win_dims().is_none() {
+            return 0;
+        }
         let hole = if self.hole[3] > 0.0 {
-            let (cx, cy, focal) = self.view(bw, bh);
+            let (cx, cy, focal) = self.view();
             let (hx, hy, hd) = self.cam.project([self.hole[0], self.hole[1], self.hole[2]], cx, cy, focal);
             let r = focal * self.hole[3] / (hd + self.cam.zdist).max(0.1);
             [hx, hy, r, hd - self.hole[3] * 0.2]
@@ -1481,8 +2098,10 @@ impl State {
     /// A camera-facing textured square at `p`, `size` world units wide.
     #[allow(clippy::too_many_arguments)]
     fn billboard(&mut self, tex: TexId, p: V3, size: f32, rot: f32, tint: u32, alpha: f32, blend: u8) {
-        let Some((_, bw, bh)) = crate::lingapp::surface() else { return };
-        let (cx, cy, focal) = self.view(bw, bh);
+        if self.win_dims().is_none() {
+            return;
+        }
+        let (cx, cy, focal) = self.view();
         let near = -self.cam.zdist + 0.05;
         let (sx, sy, z) = self.cam.project(p, cx, cy, focal);
         if z <= near {
@@ -1531,8 +2150,8 @@ impl State {
             match p.kind {
                 1 => {
                     // streak: a thin additive quad from the particle back along its velocity
-                    if let Some((_, bw, bh)) = crate::lingapp::surface() {
-                        let (cx, cy, focal) = self.view(bw, bh);
+                    if self.win_dims().is_some() {
+                        let (cx, cy, focal) = self.view();
                         let near = -self.cam.zdist + 0.05;
                         let tail = [p.p[0] - p.v[0] * 0.06, p.p[1] - p.v[1] * 0.06, p.p[2] - p.v[2] * 0.06];
                         let (ax, ay, az) = self.cam.project(p.p, cx, cy, focal);
@@ -1731,9 +2350,12 @@ impl State {
 pub fn end_frame() {
     let g = unsafe { &mut *(&raw mut G) };
     if let Some(s) = g.as_mut() {
-        if !s.deferred.is_empty() {
+        if !s.deferred.is_empty() || s.frame_open || (s.drew_3d && !s.post_done) {
             s.flush();
         }
+        s.adapt();
+        s.post_done = false;
+        s.drew_3d = false;
     }
 }
 
@@ -1808,7 +2430,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"tm_fov" => {
             let deg = f(args, 0, 0.0);
-            let bw = crate::lingapp::surface().map(|(_, w, _)| w as f32).unwrap_or(1280.0);
+            let bw = s.win_dims().map(|(w, _)| w as f32).unwrap_or(1280.0);
             let vw = f(args, 1, bw);
             s.cam.focal = if deg > 1.0 && deg < 179.0 { (vw * 0.5) / libm::tanf(deg.to_radians() * 0.5) } else { 0.0 };
             UNIT
@@ -1869,8 +2491,35 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             s.flush();
             UNIT
         },
+        b"toon_outlines" => {
+            s.toon_px = f(args, 0, 0.0);
+            s.toon_color = rgb(n(args, 1, 0.0));
+            s.toon_thresh = f(args, 2, 0.05);
+            UNIT
+        },
+        b"set_tone_ramp" => {
+            s.ramp_on = n(args, 0, 1.0) > 0.5;
+            UNIT
+        },
+        // g3d_scale(s): 0 = automatic (full resolution while it is fast enough, else half),
+        // 0.25..1 = fixed
+        b"g3d_scale" => {
+            let v = f(args, 0, 0.0);
+            if v <= 0.0 {
+                s.auto_scale = true;
+                s.scale = 1.0;
+            } else {
+                s.auto_scale = false;
+                s.scale = v.clamp(0.25, 1.0);
+            }
+            UNIT
+        },
+        b"tm_wire" => {
+            s.tm_wire(args);
+            UNIT
+        },
         // post-processing the kernel does not do (yet): accepted, no effect
-        b"mesh_hue" | b"toon_outlines" | b"set_bloom" | b"set_frame_blur" | b"screen_distort" | b"set_depth_blur" | b"set_antialias" | b"tm_ripple" | b"tm_ripple_use" | b"tm_ripple_clear" | b"tm_voice" | b"font_text_3d" | b"set_normal_override" | b"set_flat_shade" => UNIT,
+        b"mesh_hue" | b"set_bloom" | b"set_fxaa" | b"set_ssao" | b"set_frame_blur" | b"screen_distort" | b"set_depth_blur" | b"set_antialias" | b"tm_ripple" | b"tm_ripple_use" | b"tm_ripple_clear" | b"tm_voice" | b"font_text_3d" | b"set_normal_override" | b"set_flat_shade" => UNIT,
 
         // ── textures and meshes ──
         b"tm_tex_load" => {
