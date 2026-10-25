@@ -79,7 +79,7 @@ pub fn poll_until(timeout_us: u64, mut cond: impl FnMut() -> bool) -> bool {
     }
 }
 
-const YIELD_EVERY_US: u64 = 16_000;
+const YIELD_EVERY_US: u64 = 4_000;
 static mut LAST_YIELD_US: u64 = 0;
 
 /// Arm the physical timer (`CNTP_*_EL0`) to fire an IRQ `hz` times per

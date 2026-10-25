@@ -243,6 +243,10 @@ pub fn yield_now() {
             return;
         }
         check_stack_guards();
+        // every switch is a safe point (nobody is inside a USB transfer):
+        // take the keyboard's reports now, not only once a frame
+        #[cfg(target_arch = "aarch64")]
+        crate::arch::xhci::service();
         let prev = CURRENT;
         let mut next = (prev + 1) % MAX_TASKS;
         while next != prev && TASKS[next].state != TaskState::Ready {

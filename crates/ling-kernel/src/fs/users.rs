@@ -292,6 +292,66 @@ pub fn group_of(username: &str, out: &mut [u8; 32]) -> Option<usize> {
 
 /// Change `username`'s password, keeping every other field. `false` if the
 /// user doesn't exist.
+// ── Password reset ─────────────────────────────────────────────────────────
+// `password_reset` in lingfs lists the accounts waiting for a new password
+// ("*" = all). Set from the boot partition's config.txt (setup.rs); the
+// sign-in screen asks for the new password twice; typing the OLD password
+// instead just signs in and cancels the reset (nothing is lost).
+
+const RESET_FILE: &str = "password_reset";
+
+fn reset_list() -> alloc::vec::Vec<alloc::string::String> {
+    let mut buf = [0u8; 1024];
+    match lingfs::read_file_all(RESET_FILE, &mut buf) {
+        Ok(Some(n)) => core::str::from_utf8(&buf[..n])
+            .unwrap_or("")
+            .split_whitespace()
+            .map(alloc::string::String::from)
+            .collect(),
+        _ => alloc::vec::Vec::new(),
+    }
+}
+
+fn reset_store(list: &[alloc::string::String]) {
+    let text = list.join("\n");
+    let _ = lingfs::write_file_any(RESET_FILE, text.as_bytes());
+}
+
+/// Is `username` waiting to choose a new password?
+pub fn reset_pending(username: &str) -> bool {
+    if username.is_empty() {
+        return false;
+    }
+    reset_list().iter().any(|u| u == "*" || u == username)
+}
+
+/// Put `who` ("*" for every account) into reset mode.
+pub fn mark_reset(who: &str) {
+    let mut l = reset_list();
+    if !l.iter().any(|u| u == who) {
+        l.push(alloc::string::String::from(who));
+    }
+    reset_store(&l);
+}
+
+/// The reset is done for `username` (a "*" entry becomes the list of the
+/// other accounts still waiting).
+pub fn clear_reset(username: &str, all_users: &[alloc::string::String]) {
+    let mut out: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
+    for u in reset_list() {
+        if u == "*" {
+            for o in all_users {
+                if o != username && !out.contains(o) {
+                    out.push(o.clone());
+                }
+            }
+        } else if u != username && !out.contains(&u) {
+            out.push(u);
+        }
+    }
+    reset_store(&out);
+}
+
 pub fn set_password(username: &str, new_password: &str) -> bool {
     let ok = set_password_record(username, new_password);
     if ok && !crate::keyring::rewrap(username, new_password) && crate::keyring::user().is_none() {

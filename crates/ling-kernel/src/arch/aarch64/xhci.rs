@@ -1624,6 +1624,13 @@ fn hid_queue(x: &Xhci, h: &mut Hid) {
     unsafe { write32(x.db + h.slot as usize * 4, h.dci) };
 }
 
+/// The scheduler's hook: deliver whatever the keyboard / mouse reported
+/// since the last frame (each HID endpoint has one request in flight, so a
+/// key tapped between two slow frames would otherwise be missed).
+pub fn service() {
+    poll();
+}
+
 /// Service every controller: deliver pending reports, recover halted
 /// endpoints, and handle port changes (plus a 1 s scan as a safety net for a
 /// missed event). Cheap when nothing happened.

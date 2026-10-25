@@ -646,6 +646,7 @@ pub(crate) fn desktop_boot() {
     crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
     storage_boot();
+    crate::setup::check_password_reset();
     net_boot();
     crate::wifi::boot_autojoin();
     // HDMI audio: brought up at boot so LingStationX plays straight away;

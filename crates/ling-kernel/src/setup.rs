@@ -403,6 +403,72 @@ fn save(cfg: &SetupConfig) -> bool {
     crate::fs::lingfs::write_path_any("setup.conf", text.as_bytes()).is_ok()
 }
 
+/// The card's sector reader for the FAT driver (the boot partition).
+struct SdDisk;
+
+impl crate::fs::fat::Disk for SdDisk {
+    fn read(&mut self, lba: u32, buf: &mut [u8]) -> Result<(), ()> {
+        let mut s = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+        for (i, chunk) in buf.chunks_mut(s.len()).enumerate() {
+            crate::arch::sdcard::read_sector(lba + i as u32, &mut s)?;
+            let n = chunk.len();
+            chunk.copy_from_slice(&s[..n]);
+        }
+        Ok(())
+    }
+    fn write(&mut self, _lba: u32, _buf: &[u8]) -> Result<(), ()> {
+        Err(()) // read-only: the boot partition belongs to the firmware
+    }
+}
+
+/// `lingos_reset_password=<token>[:<user>]` in the boot partition's
+/// config.txt (the Pi firmware ignores keys it does not know): each new token
+/// puts the named account -- or every account -- into "choose a new
+/// password" mode once. Recovery needs the card in another computer, the
+/// same trust as any other edit of the boot files.
+pub(crate) fn check_password_reset() {
+    if !crate::fs::lingfs::is_mounted() || !crate::arch::sdcard::ready() {
+        return;
+    }
+    let mut mbr = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+    if crate::arch::sdcard::read_sector(0, &mut mbr).is_err() || mbr[510] != 0x55 || mbr[511] != 0xAA {
+        return;
+    }
+    let mut disk = SdDisk;
+    for i in 0..4 {
+        let e = &mbr[446 + i * 16..446 + (i + 1) * 16];
+        if !matches!(e[4], 0x0b | 0x0c | 0x0e | 0x06) {
+            continue;
+        }
+        let start = u32::from_le_bytes([e[8], e[9], e[10], e[11]]);
+        let Some(mut vol) = crate::fs::fat::Volume::mount(&mut disk, start) else { continue };
+        let Ok(cfg) = vol.read_file(&mut disk, "config.txt") else { continue };
+        let text = alloc::string::String::from_utf8_lossy(&cfg).into_owned();
+        let Some(v) = text.lines().find_map(|l| l.trim().strip_prefix("lingos_reset_password=")) else { return };
+        let v = v.trim();
+        if v.is_empty() || v == "0" {
+            return;
+        }
+        // one-shot per token
+        let mut seen = [0u8; 128];
+        if let Ok(Some(n)) = crate::fs::lingfs::read_file_all("password_reset_token", &mut seen) {
+            if &seen[..n] == v.as_bytes() {
+                return;
+            }
+        }
+        let who = match v.split_once(':') {
+            Some((_, u)) if !u.trim().is_empty() => u.trim(),
+            _ => "*",
+        };
+        crate::fs::users::mark_reset(who);
+        let _ = crate::fs::lingfs::write_file_any("password_reset_token", v.as_bytes());
+        crate::console_write(b"users: password reset requested in config.txt for ");
+        crate::console_write(if who == "*" { b"every account" } else { who.as_bytes() });
+        crate::console_write(b" -- the sign-in screen asks for a new password\n");
+        return;
+    }
+}
+
 /// One value from the saved `setup.conf` ("" when unset or no storage).
 pub(crate) fn saved(key: &str) -> alloc::string::String {
     if !crate::fs::lingfs::is_mounted() {

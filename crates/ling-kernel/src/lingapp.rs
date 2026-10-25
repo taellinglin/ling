@@ -1080,6 +1080,28 @@ fn user_login(name: &str, password: &str) -> bool {
     true
 }
 
+/// Sign in while a password reset is pending: the old password still works
+/// (and cancels the reset); anything else becomes the new password.
+fn user_reset(name: &str, password: &str) -> bool {
+    if !crate::fs::users::reset_pending(name) || password.chars().count() < 4 {
+        return false;
+    }
+    let all = users_list();
+    if !all.iter().any(|u| u == name) {
+        return false;
+    }
+    if !crate::fs::users::verify(name, password) {
+        if !crate::fs::users::set_password(name, password) {
+            return false;
+        }
+        crate::console_write(b"users: new password set for ");
+        crate::console_write(name.as_bytes());
+        crate::console_write(b" (reset from the boot partition)\n");
+    }
+    crate::fs::users::clear_reset(name, &all);
+    user_login(name, password)
+}
+
 fn user_create(name: &str, password: &str) -> bool {
     if name.is_empty() || password.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') {
         return false;
@@ -2997,6 +3019,11 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"os_keyring" => mk_str(&crate::keyring::status()),
+        b"os_user_reset_pending" => boolean(crate::fs::users::reset_pending(&path_arg(args, 0))),
+        b"os_user_reset" => {
+            let (n, p) = (path_arg(args, 0), path_arg(args, 1));
+            boolean(user_reset(&n, &p))
+        },
         // the system clipboard (one text buffer shared by every app)
         b"clipboard_set" => {
             crate::drivers::clipboard::set_str(&path_arg(args, 0));
