@@ -288,7 +288,8 @@ mod imp {
 
     // ── HTTP ─────────────────────────────────────────────────────────────────
 
-    static mut RESP: [u8; 256 * 1024] = [0; 256 * 1024];
+    // 4 MiB: whole modern pages (a Wikipedia article is 0.3-1 MB); 256 KiB cut them off
+    static mut RESP: [u8; 4 * 1024 * 1024] = [0; 4 * 1024 * 1024];
 
     fn parse_status(resp: &[u8]) -> u16 {
         // "HTTP/1.x NNN"
@@ -432,6 +433,11 @@ fn url_decode(s: &str) -> String {
 /// `(status, body)` of a GET -- the console's `curl`.
 pub fn http_get(url: &str) -> (u16, String) {
     imp::request("GET", url, "", "")
+}
+
+/// A header of the last response (case-insensitive), "" if absent.
+pub fn last_header(name: &str) -> String {
+    imp::last_header(name)
 }
 
 /// The networking builtins; `None` for any other name.

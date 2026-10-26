@@ -1035,6 +1035,27 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
         "clear" => {
             channel_write(sess, chan, b"\x1b[2J\x1b[H");
         },
+        "get" => {
+            // the same fetch Horizon uses (DNS, TCP, TLS, HTTP): status, size, a peek
+            if arg.is_empty() {
+                channel_write(sess, chan, b"usage: get <http(s)://url>\r\n");
+            } else {
+                let t0 = crate::arch::timer::now_ms();
+                let (status, body) = crate::netapi::http_get(arg);
+                let ms = crate::arch::timer::now_ms() - t0;
+                let mut s = alloc::format!("HTTP {status}, {} bytes in {ms} ms\r\n", body.len());
+                for h in ["content-type", "location", "transfer-encoding", "server"] {
+                    let v = crate::netapi::last_header(h);
+                    if !v.is_empty() {
+                        s.push_str(&alloc::format!("{h}: {v}\r\n"));
+                    }
+                }
+                let peek: String = body.chars().take(160).filter(|c| !c.is_control() || *c == '\n').collect();
+                s.push_str(&peek.replace('\n', "\r\n"));
+                s.push_str("\r\n");
+                channel_write(sess, chan, s.as_bytes());
+            }
+        },
         "net" => {
             // Concurrency probe: open a CLIENT TCP connection (a separate
             // netstack socket) while this SSH server session is live. With the
