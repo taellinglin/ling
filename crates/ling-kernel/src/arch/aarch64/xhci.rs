@@ -456,6 +456,12 @@ struct Hid {
     halted: bool,
     last_cc: u32,
     fails: u8,
+    /// Report requests queued / completed: HID_SLOTS stay in flight, each
+    /// with its own 64-byte slot of `rbuf`, so the controller keeps polling
+    /// the device at its interval and no state change is lost between two
+    /// slow frames (a lost "Shift held" report turns a capital lowercase).
+    fill: u32,
+    done: u32,
 }
 
 /// One HID interrupt-IN endpoint found in a configuration descriptor.
@@ -596,10 +602,13 @@ impl Ctl {
         let h = self.hids[i].as_mut().unwrap();
         let cc = (status >> 24) & 0xFF;
         if cc == 1 || cc == 13 {
+            // completions come back in the order the requests were queued
+            let buf = h.rbuf + (h.done % HID_SLOTS) as u64 * HID_SLOT_BYTES;
+            h.done = h.done.wrapping_add(1);
             let mut cur = [0u8; 8];
             let n = (h.mps as usize).min(8);
             for (k, b) in cur.iter_mut().enumerate().take(n) {
-                *b = unsafe { core::ptr::read_volatile((h.rbuf + k as u64) as *const u8) };
+                *b = unsafe { core::ptr::read_volatile((buf + k as u64) as *const u8) };
             }
             match h.kind {
                 HidKind::Kbd => {
@@ -612,7 +621,7 @@ impl Ctl {
                     let got = (h.mps as usize).saturating_sub((status & 0xFF_FFFF) as usize).min(64);
                     let mut rep = [0u8; 64];
                     for (k, b) in rep.iter_mut().enumerate().take(got) {
-                        *b = unsafe { core::ptr::read_volatile((h.rbuf + k as u64) as *const u8) };
+                        *b = unsafe { core::ptr::read_volatile((buf + k as u64) as *const u8) };
                     }
                     let st = unsafe { &mut *(&raw mut PAD) };
                     crate::drivers::hidpad::decode(&h.pad, &rep[..got], st);
@@ -677,7 +686,9 @@ impl Ctl {
             }
         }
         h.halted = false;
-        hid_queue(&self.x, &mut h);
+        // the dequeue pointer skipped every request still queued: start over
+        h.done = h.fill;
+        hid_arm_all(&self.x, &mut h);
         self.hids[i] = Some(h);
         out(b"  endpoint re-armed\n");
     }
@@ -1362,8 +1373,10 @@ fn enumerate_device(ctl: &mut Ctl, port: u32, psc: u32) {
             halted: false,
             last_cc: 0,
             fails: 0,
+            fill: 0,
+            done: 0,
         };
-        hid_queue(&ctl.x, &mut h); // arm the first interrupt transfer
+        hid_arm_all(&ctl.x, &mut h); // queue the interrupt transfers
         ctl.hids[hi] = Some(h);
         if kind == HidKind::Pad {
             unsafe {
@@ -1612,8 +1625,22 @@ pub fn msd_reset() -> bool {
     with_msd(|ctl, m| ctl.control(m.di, 0x21, 0xFF, 0, m.iface as u16, 0, 0).is_some()).unwrap_or(false)
 }
 
+const HID_SLOTS: u32 = 8;
+const HID_SLOT_BYTES: u64 = 64;
+
+/// Queue report requests until HID_SLOTS are in flight.
+fn hid_arm_all(x: &Xhci, h: &mut Hid) {
+    while h.fill.wrapping_sub(h.done) < HID_SLOTS {
+        hid_queue(x, h);
+    }
+}
+
+/// Queue one report request into the next slot of `rbuf`.
 fn hid_queue(x: &Xhci, h: &mut Hid) {
-    trb_write(h.ring, h.enq, dma(h.rbuf), h.mps, (TRB_NORMAL << 10) | (1 << 5) | h.cycle);
+    let buf = h.rbuf + (h.fill % HID_SLOTS) as u64 * HID_SLOT_BYTES;
+    h.fill = h.fill.wrapping_add(1);
+    let len = h.mps.min(HID_SLOT_BYTES as u32);
+    trb_write(h.ring, h.enq, dma(buf), len, (TRB_NORMAL << 10) | (1 << 5) | h.cycle);
     h.enq += 1;
     if h.enq == RING_TRBS - 1 {
         trb_write(h.ring, h.enq, dma(h.ring), 0, (TRB_LINK << 10) | (1 << 1) | h.cycle);
