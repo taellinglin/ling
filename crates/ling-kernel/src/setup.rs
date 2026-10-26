@@ -117,7 +117,7 @@ impl SetupConfig {
             root_pw: TextBuf::new(),
             username: TextBuf::new(),
             user_pw: TextBuf::new(),
-            ssh: false,
+            ssh: true,
             ssh_port: TextBuf::new(),
         };
         c.hostname.set(b"lingos");
@@ -421,6 +421,78 @@ impl crate::fs::fat::Disk for SdDisk {
     }
 }
 
+/// A `key=value` from the boot partition's config.txt (None without one).
+pub(crate) fn boot_config(key: &str) -> Option<alloc::string::String> {
+    if !crate::arch::sdcard::ready() {
+        return None;
+    }
+    let mut mbr = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+    if crate::arch::sdcard::read_sector(0, &mut mbr).is_err() || mbr[510] != 0x55 || mbr[511] != 0xAA {
+        return None;
+    }
+    let mut disk = SdDisk;
+    for i in 0..4 {
+        let e = &mbr[446 + i * 16..446 + (i + 1) * 16];
+        if !matches!(e[4], 0x0b | 0x0c | 0x0e | 0x06) {
+            continue;
+        }
+        let start = u32::from_le_bytes([e[8], e[9], e[10], e[11]]);
+        let mut vol = crate::fs::fat::Volume::mount(&mut disk, start)?;
+        let cfg = vol.read_file(&mut disk, "config.txt").ok()?;
+        let text = alloc::string::String::from_utf8_lossy(&cfg).into_owned();
+        let prefix = alloc::format!("{key}=");
+        return text.lines().find_map(|l| l.trim().strip_prefix(prefix.as_str()).map(|v| alloc::string::String::from(v.trim())));
+    }
+    None
+}
+
+/// The space after the partitions held something else and lingfs would not
+/// mount: format it only when config.txt asks with a token not used before
+/// (recorded on the data partition, which formatting lingfs never touches).
+pub(crate) fn format_requested() -> bool {
+    let Some(token) = boot_config("lingos_format_storage") else { return false };
+    if token.is_empty() || token == "0" {
+        return false;
+    }
+    mount_data_partition();
+    if !crate::fs::media::has("card") {
+        return false; // nowhere to record it: never format on a token we can't remember
+    }
+    let used = crate::fs::media::read("media/card/.lingos-storage-token").unwrap_or_default();
+    if used == token.as_bytes() {
+        return false;
+    }
+    crate::fs::media::write("media/card/.lingos-storage-token", token.as_bytes())
+}
+
+/// The card's data partition: the first FAT partition after the boot
+/// partition, mounted as `media/card` (home folders live on it).
+pub(crate) fn mount_data_partition() {
+    if !crate::arch::sdcard::ready() || crate::fs::media::has("card") {
+        return;
+    }
+    let mut mbr = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+    if crate::arch::sdcard::read_sector(0, &mut mbr).is_err() || mbr[510] != 0x55 || mbr[511] != 0xAA {
+        return;
+    }
+    let mut seen_boot = false;
+    for i in 0..4 {
+        let e = &mbr[446 + i * 16..446 + (i + 1) * 16];
+        if !matches!(e[4], 0x0b | 0x0c | 0x0e | 0x06) {
+            continue;
+        }
+        if !seen_boot {
+            seen_boot = true; // partition 1: the firmware's boot files
+            continue;
+        }
+        let start = u32::from_le_bytes([e[8], e[9], e[10], e[11]]);
+        if crate::fs::media::mount_part(crate::fs::media::Device::SdCard, "card", start).is_ok() {
+            crate::console_write(b"storage: home folders are on the card's data partition (media/card)\n");
+        }
+        return;
+    }
+}
+
 /// `lingos_reset_password=<token>[:<user>]` in the boot partition's
 /// config.txt (the Pi firmware ignores keys it does not know): each new token
 /// puts the named account -- or every account -- into "choose a new
@@ -470,6 +542,33 @@ pub(crate) fn check_password_reset() {
 }
 
 /// One value from the saved `setup.conf` ("" when unset or no storage).
+/// Change one `setup.conf` value, keeping the others.
+pub(crate) fn set_saved(key: &str, value: &str) -> bool {
+    if !crate::fs::lingfs::is_mounted() {
+        return false;
+    }
+    let mut buf = [0u8; 512];
+    let old = match crate::fs::lingfs::read_file_all("setup.conf", &mut buf) {
+        Ok(Some(n)) => alloc::string::String::from(core::str::from_utf8(&buf[..n]).unwrap_or("")),
+        _ => alloc::string::String::new(),
+    };
+    let mut out = alloc::string::String::new();
+    let mut done = false;
+    for line in old.lines() {
+        if line.strip_prefix(key).is_some_and(|r| r.starts_with('=')) {
+            out.push_str(&alloc::format!("{key}={value}\n"));
+            done = true;
+        } else if !line.trim().is_empty() {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !done {
+        out.push_str(&alloc::format!("{key}={value}\n"));
+    }
+    crate::fs::lingfs::write_path_any("setup.conf", out.as_bytes()).is_ok()
+}
+
 pub(crate) fn saved(key: &str) -> alloc::string::String {
     if !crate::fs::lingfs::is_mounted() {
         return alloc::string::String::new();

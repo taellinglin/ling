@@ -209,7 +209,7 @@ const TCP_RST: u8 = 0x04;
 const TCP_ACK: u8 = 0x10;
 const TCP_PSH: u8 = 0x08;
 
-const MAX_SOCKS: usize = 4;
+const MAX_SOCKS: usize = 12;
 const SOCK_RX_CAP: usize = 64 * 1024;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -238,7 +238,39 @@ struct Sock {
     /// scan skips it thereafter -- otherwise a second "accept" runs a second
     /// handshake on the LIVE socket and closes it.
     accepted: bool,
+    /// Oldest sequence number the peer has not acknowledged yet.
+    snd_una: u32,
+    /// The peer's advertised receive window (bytes we may have in flight).
+    snd_wnd: u32,
+    /// Duplicate ACKs seen for `snd_una` (three trigger a fast retransmit).
+    dupacks: u8,
+    /// When the socket was created (half-open sockets time out).
+    born_ms: u64,
+    /// The receive window we last advertised (a window update follows when
+    /// the application frees space after it had shrunk).
+    last_adv: u32,
 }
+
+// Unacknowledged segments per socket, resent on timeout or after three
+// duplicate ACKs; a socket whose oldest segment fails TX_MAX_TRIES times is
+// declared dead (the peer rebooted or left), so callers notice instead of
+// waiting forever on a half-open connection.
+const TXQ_N: usize = 16;
+const TX_MAX_TRIES: u8 = 8;
+
+#[derive(Clone, Copy)]
+struct TxSeg {
+    used: bool,
+    seq: u32,
+    flags: u8,
+    len: usize,
+    sent_ms: u64,
+    tries: u8,
+    data: [u8; MSS],
+}
+
+const EMPTY_TXSEG: TxSeg = TxSeg { used: false, seq: 0, flags: 0, len: 0, sent_ms: 0, tries: 0, data: [0; MSS] };
+static mut TXQ: [[TxSeg; TXQ_N]; MAX_SOCKS] = [[EMPTY_TXSEG; TXQ_N]; MAX_SOCKS];
 
 const EMPTY_SOCK: Sock = Sock {
     state: SockState::Free,
@@ -251,6 +283,11 @@ const EMPTY_SOCK: Sock = Sock {
     rx_len: 0,
     got_fin: false,
     accepted: false,
+    snd_una: 0,
+    snd_wnd: 0,
+    dupacks: 0,
+    born_ms: 0,
+    last_adv: 0,
 };
 
 static mut SOCKS: [Sock; MAX_SOCKS] = [const { EMPTY_SOCK }; MAX_SOCKS];
@@ -270,6 +307,11 @@ fn sock_alloc() -> Option<usize> {
                 s.rx_len = 0;
                 s.got_fin = false;
                 s.accepted = false;
+                s.snd_una = 0;
+                s.snd_wnd = RX_WINDOW as u32;
+                s.dupacks = 0;
+                s.born_ms = timer::now_ms();
+                txq_clear(i);
                 return Some(i);
             }
         }
@@ -282,6 +324,7 @@ fn sock_free(idx: usize) {
         return;
     }
     ooo_reset_sock(idx);
+    txq_clear(idx);
     unsafe {
         SOCKS[idx].state = SockState::Free;
         SOCKS[idx].rx_len = 0;
@@ -294,22 +337,181 @@ fn seq_ge(a: u32, b: u32) -> bool {
     a.wrapping_sub(b) < 0x8000_0000
 }
 
+fn txq_clear(idx: usize) {
+    if idx >= MAX_SOCKS {
+        return;
+    }
+    unsafe {
+        for s in (&mut *&raw mut TXQ)[idx].iter_mut() {
+            s.used = false;
+        }
+    }
+}
+
+fn txq_count(idx: usize) -> usize {
+    unsafe { (&*&raw const TXQ)[idx].iter().filter(|s| s.used).count() }
+}
+
+/// Remember a segment that consumes sequence space until it is acknowledged.
+fn txq_push(idx: usize, seq: u32, flags: u8, data: &[u8]) {
+    unsafe {
+        let q = &mut (&mut *&raw mut TXQ)[idx];
+        if let Some(s) = q.iter_mut().find(|s| !s.used) {
+            s.used = true;
+            s.seq = seq;
+            s.flags = flags;
+            s.len = data.len().min(MSS);
+            s.data[..s.len].copy_from_slice(&data[..s.len]);
+            s.sent_ms = timer::now_ms();
+            s.tries = 0;
+        }
+    }
+}
+
+/// Sequence space a queued segment covers (SYN and FIN count one each).
+fn seg_span(s: &TxSeg) -> u32 {
+    s.len as u32 + (s.flags & (TCP_SYN | TCP_FIN) != 0) as u32
+}
+
+/// An ACK arrived: drop what it covers, count duplicates, take the window.
+fn on_ack(idx: usize, ack: u32, win: u16, payload_len: usize) {
+    unsafe {
+        let s = &mut SOCKS[idx];
+        s.snd_wnd = win as u32;
+        if seq_ge(ack, s.snd_una) && ack != s.snd_una && seq_ge(s.snd_nxt, ack) {
+            s.snd_una = ack;
+            s.dupacks = 0;
+            for q in (&mut *&raw mut TXQ)[idx].iter_mut() {
+                if q.used && seq_ge(ack, q.seq.wrapping_add(seg_span(q))) {
+                    q.used = false;
+                }
+            }
+        } else if ack == s.snd_una && payload_len == 0 && txq_count(idx) > 0 {
+            s.dupacks = s.dupacks.saturating_add(1);
+            if s.dupacks == 3 {
+                retransmit_oldest(idx);
+            }
+        }
+    }
+}
+
+fn oldest_seg(idx: usize) -> Option<usize> {
+    let q = unsafe { &(&*&raw const TXQ)[idx] };
+    let una = unsafe { SOCKS[idx].snd_una };
+    (0..TXQ_N).filter(|&k| q[k].used).min_by_key(|&k| q[k].seq.wrapping_sub(una))
+}
+
+fn retransmit_oldest(idx: usize) {
+    let Some(k) = oldest_seg(idx) else { return };
+    let (seq, flags, len, data) = unsafe {
+        let s = &mut (&mut *&raw mut TXQ)[idx][k];
+        s.sent_ms = timer::now_ms();
+        s.tries = s.tries.saturating_add(1);
+        (s.seq, s.flags, s.len, s.data)
+    };
+    sock_send_seq(idx, flags, seq, &data[..len]);
+}
+
+/// Retransmission timeouts and half-open clean-up; runs on every pump.
+fn tcp_timers() {
+    let now = timer::now_ms();
+    for idx in 0..MAX_SOCKS {
+        let st = unsafe { SOCKS[idx].state };
+        match st {
+            SockState::Free | SockState::Listen => continue,
+            _ => {},
+        }
+        if let Some(k) = oldest_seg(idx) {
+            let (sent, tries) = unsafe {
+                let s = &(&*&raw const TXQ)[idx][k];
+                (s.sent_ms, s.tries)
+            };
+            let rto = (300u64 << tries.min(4)).min(4000);
+            if now.wrapping_sub(sent) >= rto {
+                if tries >= TX_MAX_TRIES {
+                    // the peer is gone: fail the socket so its owner notices
+                    unsafe { SOCKS[idx].state = SockState::Closed };
+                    txq_clear(idx);
+                } else {
+                    retransmit_oldest(idx);
+                }
+            }
+        }
+        // a half-open passive socket that never completed, or one that died
+        // before anyone accepted it: nobody holds it, free it
+        let listener = unsafe {
+            let lp = SOCKS[idx].local_port;
+            (0..MAX_SOCKS).any(|i| SOCKS[i].state == SockState::Listen && SOCKS[i].local_port == lp)
+        };
+        let (born, accepted) = unsafe { (SOCKS[idx].born_ms, SOCKS[idx].accepted) };
+        let age = now.wrapping_sub(born);
+        if listener && !accepted && ((st == SockState::SynRcvd && age > 8_000) || (st == SockState::Closed && age > 10_000)) {
+            sock_free(idx);
+        }
+    }
+}
+
+/// A fresh initial sequence number (hardware random where there is a source).
+fn new_isn() -> u32 {
+    let mut b = [0u8; 4];
+    if crate::crypto::random_bytes(&mut b) {
+        return u32::from_le_bytes(b);
+    }
+    static mut CTR: u32 = 0x4C49_4E47;
+    unsafe {
+        CTR = CTR.wrapping_mul(1_664_525).wrapping_add(1_013_904_223) ^ (timer::now_us() as u32);
+        CTR
+    }
+}
+
+/// A random ephemeral port no socket is using.
+fn new_local_port() -> u16 {
+    for _ in 0..32 {
+        let p = 49152 + (new_isn() % 16000) as u16;
+        let used = unsafe { (0..MAX_SOCKS).any(|i| SOCKS[i].state != SockState::Free && SOCKS[i].local_port == p) };
+        if !used {
+            return p;
+        }
+    }
+    49152 + (timer::now_ms() % 16000) as u16
+}
+
+/// RST is honoured only inside the receive window (a blind attacker on the
+/// LAN can no longer kill a chat by guessing the port).
+fn rst_acceptable(idx: usize, flags: u8, seq: u32, ack: u32) -> bool {
+    unsafe {
+        let s = &SOCKS[idx];
+        match s.state {
+            SockState::SynSent => flags & TCP_ACK != 0 && ack == s.snd_nxt,
+            _ => seq.wrapping_sub(s.rcv_nxt) < RX_WINDOW as u32,
+        }
+    }
+}
+
 /// Build + transmit one TCP segment for socket `idx`. The advertised window is
 /// that socket's remaining receive-buffer space (real flow control), capped at
 /// `RX_WINDOW`.
 fn sock_send(idx: usize, flags: u8, payload: &[u8]) -> bool {
-    let (remote_ip, remote_port, local_port, snd_nxt, rcv_nxt, win) = unsafe {
-        let s = &SOCKS[idx];
+    let seq = unsafe { SOCKS[idx].snd_nxt };
+    sock_send_seq(idx, flags, seq, payload)
+}
+
+/// Like `sock_send` at an explicit sequence number (retransmissions).
+fn sock_send_seq(idx: usize, flags: u8, seq: u32, payload: &[u8]) -> bool {
+    let (remote_ip, remote_port, local_port, rcv_nxt, win) = unsafe {
+        let s = &mut SOCKS[idx];
         let free = SOCK_RX_CAP.saturating_sub(s.rx_len);
-        (
-            s.remote_ip,
-            s.remote_port,
-            s.local_port,
-            s.snd_nxt,
-            s.rcv_nxt,
-            free.min(RX_WINDOW as usize) as u16,
-        )
+        let win = free.min(RX_WINDOW as usize) as u16;
+        s.last_adv = win as u32;
+        (s.remote_ip, s.remote_port, s.local_port, s.rcv_nxt, win)
     };
+    raw_tcp_send(remote_ip, remote_port, local_port, seq, rcv_nxt, flags, win, payload)
+}
+
+/// One TCP segment with every header field given (also the RST answer to a
+/// segment that matches no socket).
+#[allow(clippy::too_many_arguments)]
+fn raw_tcp_send(remote_ip: [u8; 4], remote_port: u16, local_port: u16, snd_nxt: u32, rcv_nxt: u32, flags: u8, win: u16, payload: &[u8]) -> bool {
     // Next hop: a same-subnet peer (LAN peer-to-peer, e.g. two LingOS on a
     // QEMU socket segment) is ARP'd directly; anything off-subnet goes via the
     // gateway. This used to always use the gateway MAC, which can't reach a
@@ -489,16 +691,23 @@ fn recv_into(idx: usize, seq: u32, data: &[u8]) {
 }
 
 /// Advance one connected socket's state machine for a received segment.
-fn handle_conn(idx: usize, flags: u8, seq: u32, ack: u32, payload: &[u8]) {
+fn handle_conn(idx: usize, flags: u8, seq: u32, ack: u32, win: u16, payload: &[u8]) {
     unsafe {
         if flags & TCP_RST != 0 {
-            SOCKS[idx].state = SockState::Closed;
+            if rst_acceptable(idx, flags, seq, ack) {
+                SOCKS[idx].state = SockState::Closed;
+                txq_clear(idx);
+            }
             return;
+        }
+        if flags & TCP_ACK != 0 && SOCKS[idx].state != SockState::SynSent {
+            on_ack(idx, ack, win, payload.len());
         }
         match SOCKS[idx].state {
             SockState::SynSent => {
                 if flags & TCP_SYN != 0 && flags & TCP_ACK != 0 && ack == SOCKS[idx].snd_nxt {
                     SOCKS[idx].rcv_nxt = seq.wrapping_add(1);
+                    on_ack(idx, ack, win, 0);
                     SOCKS[idx].state = SockState::Established;
                     sock_send(idx, TCP_ACK, &[]);
                 }
@@ -536,10 +745,12 @@ fn handle_conn(idx: usize, flags: u8, seq: u32, ack: u32, payload: &[u8]) {
 // dropping frames (a lost SYN-ACK led to a duplicate connection that closed
 // the live chat socket). Single slot is fine: beacons repeat every 2s.
 static mut UDP_INBOX_PORT: u16 = 0;
-static mut UDP_INBOX_IP: [u8; 4] = [0; 4];
-static mut UDP_INBOX_BUF: [u8; 512] = [0; 512];
-static mut UDP_INBOX_LEN: usize = 0;
-static mut UDP_INBOX_READY: bool = false;
+const UDP_SLOTS: usize = 16;
+static mut UDP_INBOX_IP: [[u8; 4]; UDP_SLOTS] = [[0; 4]; UDP_SLOTS];
+static mut UDP_INBOX_BUF: [[u8; 512]; UDP_SLOTS] = [[0; 512]; UDP_SLOTS];
+static mut UDP_INBOX_LEN: [usize; UDP_SLOTS] = [0; UDP_SLOTS];
+static mut UDP_HEAD: usize = 0; // next to read
+static mut UDP_COUNT: usize = 0;
 
 /// Register the UDP port whose datagrams `route_packet` should capture into
 /// the inbox (read with [`udp_recv_beacon`]).
@@ -551,13 +762,15 @@ pub fn udp_listen(port: u16) {
 /// touch the NIC -- safe to call from the UI thread without racing the pump.
 pub fn udp_recv_beacon(out: &mut [u8]) -> Option<([u8; 4], usize)> {
     unsafe {
-        if !UDP_INBOX_READY {
+        if UDP_COUNT == 0 {
             return None;
         }
-        let n = UDP_INBOX_LEN.min(out.len());
-        out[..n].copy_from_slice(&UDP_INBOX_BUF[..n]);
-        UDP_INBOX_READY = false;
-        Some((UDP_INBOX_IP, n))
+        let k = UDP_HEAD;
+        let n = UDP_INBOX_LEN[k].min(out.len());
+        out[..n].copy_from_slice(&UDP_INBOX_BUF[k][..n]);
+        UDP_HEAD = (UDP_HEAD + 1) % UDP_SLOTS;
+        UDP_COUNT -= 1;
+        Some((UDP_INBOX_IP[k], n))
     }
 }
 
@@ -583,11 +796,17 @@ fn route_packet(buf: &[u8]) {
             let ulen = u16::from_be_bytes([buf[u + 4], buf[u + 5]]) as usize;
             let n = ulen.saturating_sub(8).min(buf.len() - u - 8);
             unsafe {
-                let m = n.min(UDP_INBOX_BUF.len());
-                UDP_INBOX_BUF[..m].copy_from_slice(&buf[u + 8..u + 8 + m]);
-                UDP_INBOX_LEN = m;
-                UDP_INBOX_IP.copy_from_slice(&buf[26..30]);
-                UDP_INBOX_READY = true;
+                if UDP_COUNT == UDP_SLOTS {
+                    // full: drop the oldest
+                    UDP_HEAD = (UDP_HEAD + 1) % UDP_SLOTS;
+                    UDP_COUNT -= 1;
+                }
+                let k = (UDP_HEAD + UDP_COUNT) % UDP_SLOTS;
+                let m = n.min(512);
+                UDP_INBOX_BUF[k][..m].copy_from_slice(&buf[u + 8..u + 8 + m]);
+                UDP_INBOX_LEN[k] = m;
+                UDP_INBOX_IP[k].copy_from_slice(&buf[26..30]);
+                UDP_COUNT += 1;
             }
             return;
         }
@@ -609,6 +828,7 @@ fn route_packet(buf: &[u8]) {
     let ack = u32::from_be_bytes([buf[t + 8], buf[t + 9], buf[t + 10], buf[t + 11]]);
     let doff = ((buf[t + 12] >> 4) as usize) * 4;
     let flags = buf[t + 13];
+    let win = u16::from_be_bytes([buf[t + 14], buf[t + 15]]);
     let payload_off = t + doff;
     let payload_end = (14 + ip_total).min(buf.len());
     let payload: &[u8] = if payload_end > payload_off {
@@ -634,7 +854,18 @@ fn route_packet(buf: &[u8]) {
         }
     }
     if let Some(i) = idx {
-        handle_conn(i, flags, seq, ack, payload);
+        handle_conn(i, flags, seq, ack, win, payload);
+        return;
+    }
+    if dst_ip_is_us(buf) && flags & TCP_RST == 0 && !(flags & TCP_SYN != 0 && flags & TCP_ACK == 0) {
+        // a segment for a connection we do not have (we rebooted, or it was
+        // closed): reset it, so the peer stops waiting on a dead socket
+        let span = payload.len() as u32 + (flags & (TCP_SYN | TCP_FIN) != 0) as u32;
+        if flags & TCP_ACK != 0 {
+            raw_tcp_send(src_ip, src_port, dst_port, ack, 0, TCP_RST, 0, &[]);
+        } else {
+            raw_tcp_send(src_ip, src_port, dst_port, 0, seq.wrapping_add(span), TCP_RST | TCP_ACK, 0, &[]);
+        }
         return;
     }
 
@@ -646,6 +877,7 @@ fn route_packet(buf: &[u8]) {
         };
         if listening {
             if let Some(n) = sock_alloc() {
+                let isn = new_isn();
                 unsafe {
                     let s = &mut SOCKS[n];
                     s.state = SockState::SynRcvd;
@@ -653,14 +885,26 @@ fn route_packet(buf: &[u8]) {
                     s.remote_port = src_port;
                     s.local_port = dst_port;
                     s.rcv_nxt = seq.wrapping_add(1);
-                    s.snd_nxt = 0x4C49_4E47;
+                    s.snd_nxt = isn;
+                    s.snd_una = isn;
+                    s.snd_wnd = win as u32;
                 }
                 sock_send(n, TCP_SYN | TCP_ACK, &[]);
+                txq_push(n, isn, TCP_SYN | TCP_ACK, &[]);
                 unsafe { SOCKS[n].snd_nxt = SOCKS[n].snd_nxt.wrapping_add(1) };
+            } else {
+                // no socket free: refuse cleanly instead of leaving it hanging
+                raw_tcp_send(src_ip, src_port, dst_port, 0, seq.wrapping_add(1), TCP_RST | TCP_ACK, 0, &[]);
             }
+        } else if dst_ip_is_us(buf) {
+            raw_tcp_send(src_ip, src_port, dst_port, 0, seq.wrapping_add(1), TCP_RST | TCP_ACK, 0, &[]);
         }
     }
-    // else: stray/unmatched -- ignore.
+}
+
+/// Is this IPv4 frame addressed to our own unicast address?
+fn dst_ip_is_us(buf: &[u8]) -> bool {
+    buf.len() >= 34 && buf[30..34] == self_ip() && self_ip() != [0, 0, 0, 0]
 }
 
 /// Drain all currently-available NIC packets, routing each to its socket.
@@ -682,6 +926,7 @@ fn pump() {
             break;
         }
     }
+    tcp_timers();
 }
 
 /// Copy up to `sink.len()` bytes of socket `handle`'s buffered receive data into
@@ -699,6 +944,12 @@ fn drain_rx(handle: usize, sink: &mut [u8]) -> usize {
         sink[..take].copy_from_slice(&s.rx[..take]);
         s.rx.copy_within(take..s.rx_len, 0);
         s.rx_len -= take;
+        // the window had closed (or nearly): say it is open again, or the
+        // sender waits for its persist timer (seconds per window)
+        let free = SOCK_RX_CAP.saturating_sub(s.rx_len).min(RX_WINDOW as usize) as u32;
+        if s.last_adv < (4 * MSS) as u32 && free >= (8 * MSS) as u32 && s.state == SockState::Established {
+            sock_send(handle, TCP_ACK, &[]);
+        }
         take
     }
 }
@@ -746,18 +997,51 @@ pub fn tcp_listen_accept(port: u16, budget_us: u64) -> Option<usize> {
     accepted
 }
 
+/// Stop listening on `port` (connections already accepted stay).
+pub fn tcp_unlisten(port: u16) {
+    let _net = NetGuard::new();
+    for i in 0..MAX_SOCKS {
+        if unsafe { SOCKS[i].state == SockState::Listen && SOCKS[i].local_port == port } {
+            sock_free(i);
+        }
+    }
+}
+
 /// Send application data on socket `handle` (one segment, <= MSS).
 pub fn tcp_write_h(handle: usize, data: &[u8]) -> bool {
     if handle >= MAX_SOCKS || data.len() > MSS {
         return false;
     }
+    // room in the retransmission queue and in the peer's window first
+    let fits = || unsafe {
+        let s = &SOCKS[handle];
+        let in_flight = s.snd_nxt.wrapping_sub(s.snd_una);
+        txq_count(handle) < TXQ_N && (in_flight + data.len() as u32 <= s.snd_wnd.max(MSS as u32) || in_flight == 0)
+    };
+    if !fits() {
+        let mut ok = false;
+        timer::poll_until(WAIT_BUDGET_US, || {
+            let _net = NetGuard::new();
+            pump();
+            if unsafe { SOCKS[handle].state } != SockState::Established {
+                return true;
+            }
+            ok = fits();
+            ok
+        });
+        if !ok {
+            return false;
+        }
+    }
     let _net = NetGuard::new();
     if unsafe { SOCKS[handle].state } != SockState::Established {
         return false;
     }
+    let seq = unsafe { SOCKS[handle].snd_nxt };
     if !sock_send(handle, TCP_ACK | TCP_PSH, data) {
         return false;
     }
+    txq_push(handle, seq, TCP_ACK | TCP_PSH, data);
     unsafe {
         SOCKS[handle].snd_nxt = SOCKS[handle].snd_nxt.wrapping_add(data.len() as u32);
     }
@@ -790,12 +1074,38 @@ pub fn tcp_close_h(handle: usize) {
     if handle >= MAX_SOCKS {
         return;
     }
-    {
-        let _net = NetGuard::new();
-        if unsafe { SOCKS[handle].state } == SockState::Established {
-            let _ = sock_send(handle, TCP_FIN | TCP_ACK, &[]);
+    // Graceful: let what we sent be acknowledged (up to 2 s), then FIN and
+    // keep resending it until acknowledged (up to 1.5 s) -- the last frames of
+    // a session (an SSH channel close) must not be lost to an early free.
+    if unsafe { SOCKS[handle].state } == SockState::Established {
+        timer::poll_until(2_000_000, || {
+            let _net = NetGuard::new();
+            pump();
+            txq_count(handle) == 0 || unsafe { SOCKS[handle].state } != SockState::Established
+        });
+        let fin_sent = {
+            let _net = NetGuard::new();
+            if unsafe { SOCKS[handle].state } == SockState::Established {
+                let seq = unsafe { SOCKS[handle].snd_nxt };
+                let ok = sock_send(handle, TCP_FIN | TCP_ACK, &[]);
+                if ok {
+                    txq_push(handle, seq, TCP_FIN | TCP_ACK, &[]);
+                    unsafe { SOCKS[handle].snd_nxt = seq.wrapping_add(1) };
+                }
+                ok
+            } else {
+                false
+            }
+        };
+        if fin_sent {
+            timer::poll_until(1_500_000, || {
+                let _net = NetGuard::new();
+                pump();
+                txq_count(handle) == 0
+            });
         }
     }
+    let _net = NetGuard::new();
     sock_free(handle);
 }
 
@@ -815,15 +1125,19 @@ pub fn tcp_connect_h(ip: [u8; 4], port: u16, budget_us: u64) -> Option<usize> {
             s.state = SockState::SynSent;
             s.remote_ip = ip;
             s.remote_port = port;
-            s.local_port = 49152 + (timer::now_ms() % 16000) as u16;
-            s.snd_nxt = 0x4C49_4E47;
+            s.local_port = new_local_port();
+            s.snd_nxt = new_isn();
+            s.snd_una = s.snd_nxt;
             s.rcv_nxt = 0;
         }
         if !sock_send(h, TCP_SYN, &[]) {
             sock_free(h);
             return None;
         }
-        unsafe { SOCKS[h].snd_nxt = SOCKS[h].snd_nxt.wrapping_add(1) };
+        unsafe {
+            txq_push(h, SOCKS[h].snd_nxt, TCP_SYN, &[]);
+            SOCKS[h].snd_nxt = SOCKS[h].snd_nxt.wrapping_add(1);
+        }
         h
     };
     let mut ok = false;
@@ -866,15 +1180,19 @@ pub fn tcp_connect(ip: [u8; 4], port: u16) -> bool {
             s.state = SockState::SynSent;
             s.remote_ip = ip;
             s.remote_port = port;
-            s.local_port = 49152 + (timer::now_ms() % 16000) as u16;
-            s.snd_nxt = 0x4C49_4E47; // "LING" ISN, no security claim
+            s.local_port = new_local_port();
+            s.snd_nxt = new_isn();
+            s.snd_una = s.snd_nxt;
             s.rcv_nxt = 0;
             CLIENT_HANDLE = h;
         }
         if !sock_send(h, TCP_SYN, &[]) {
             return false;
         }
-        unsafe { SOCKS[h].snd_nxt = SOCKS[h].snd_nxt.wrapping_add(1) };
+        unsafe {
+            txq_push(h, SOCKS[h].snd_nxt, TCP_SYN, &[]);
+            SOCKS[h].snd_nxt = SOCKS[h].snd_nxt.wrapping_add(1);
+        }
         h
     };
     let mut ok = false;

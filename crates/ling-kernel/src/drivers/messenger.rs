@@ -70,7 +70,31 @@ struct Conversation {
     rx: Vec<u8>,       // stream-reassembly buffer for length-framed messages
     session: Session,
     lines: Vec<(bool, String)>, // (from_me, text)
+    since_ms: u64,     // when this connection was authenticated
+    we_dialed: bool,   // we were the initiator (tie-break for simultaneous dials)
+    last_ping_ms: u64, // receive-side ping rate limit
+    dead: bool,        // send/decrypt failed: drop it, the next send re-dials
 }
+
+/// A received text longer than this is dropped (memory / screen abuse).
+const MAX_TEXT: usize = 4096;
+/// At most this many peers in the nearby list (a beacon flood can't grow it).
+const MAX_NEARBY: usize = 64;
+/// Unsent messages kept for retry, oldest dropped beyond this.
+const MAX_OUTBOX: usize = 200;
+/// A whole handshake (every read and write) must finish within this.
+const HANDSHAKE_MS: u64 = 8_000;
+/// Two connections to the same peer authenticated within this window are a
+/// simultaneous dial: the one started by the smaller LingId wins on both sides.
+const SIMUL_DIAL_MS: u64 = 5_000;
+static mut LAST_DIAL: Vec<(LingId, u64)> = Vec::new();
+static mut HISTORY_DIRTY: bool = false;
+static mut HISTORY_BLOCKED: bool = false;
+static mut LAST_SAVE_MS: u64 = 0;
+/// The account whose identity / friends / history the task serves (the last
+/// one signed in -- so chats keep arriving while the screen is locked).
+static mut OWNER: Option<String> = None;
+static mut PENDING_OWNER: Option<String> = None;
 
 static mut IDENTITY: Option<Identity> = None;
 static mut ROSTER: Roster = Roster::new();
@@ -116,6 +140,82 @@ const COMPOSE_MAX: usize = 400;
 static mut COMPOSE: [u8; COMPOSE_MAX] = [0; COMPOSE_MAX];
 static mut COMPOSE_LEN: usize = 0;
 
+/// Where the signed-in (or last signed-in) account keeps its Messenger files.
+fn owner() -> Option<String> {
+    unsafe {
+        if (*(&raw const OWNER)).is_none() {
+            let mut b = [0u8; 64];
+            if let Ok(Some(n)) = lingfs::read_file_all("messenger_owner", &mut b) {
+                if let Ok(s) = core::str::from_utf8(&b[..n]) {
+                    if !s.trim().is_empty() {
+                        *(&raw mut OWNER) = Some(s.trim().to_string());
+                    }
+                }
+            }
+        }
+        (*(&raw const OWNER)).clone()
+    }
+}
+
+/// `home/<owner>/.messenger/<name>`, or the legacy root file with no owner yet.
+fn store_path(name: &str, legacy: &str) -> String {
+    match owner() {
+        Some(u) => alloc::format!("home/{u}/.messenger/{name}"),
+        None => String::from(legacy),
+    }
+}
+
+/// Read a store file of any size; the first owner inherits the old root file.
+fn store_read(name: &str, legacy: &str) -> Option<Vec<u8>> {
+    let path = store_path(name, legacy);
+    let read = |p: &str| -> Option<Vec<u8>> {
+        let size = lingfs::file_size(p)?;
+        let mut buf = alloc::vec![0u8; size.max(1) + 16];
+        match lingfs::read_file_all(p, &mut buf) {
+            Ok(Some(n)) => {
+                buf.truncate(n);
+                Some(buf)
+            },
+            _ => None,
+        }
+    };
+    if let Some(v) = read(&path) {
+        return Some(v);
+    }
+    if path != legacy {
+        if let Some(v) = read(legacy) {
+            let _ = lingfs::write_path_any(&path, &v);
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn store_write(name: &str, legacy: &str, data: &[u8]) {
+    let _ = lingfs::write_path_any(&store_path(name, legacy), data);
+}
+
+/// Another account signed in: serve its identity, friends and history.
+fn switch_owner(user: &str) {
+    if owner().as_deref() == Some(user) {
+        return;
+    }
+    unsafe {
+        *(&raw mut OWNER) = Some(user.to_string());
+        let convos = &mut *&raw mut CONVERSATIONS;
+        for c in convos.drain(..) {
+            netstack::tcp_close_h(c.handle);
+        }
+        (*(&raw mut OUTBOX)).clear();
+        (*(&raw mut CONNECT_REQ)).clear();
+        *(&raw mut IDENTITY) = None;
+        *(&raw mut ROSTER) = Roster::new();
+        ROSTER_LOADED = false;
+        SELECTED = None;
+    }
+    let _ = lingfs::write_file_any("messenger_owner", user.as_bytes());
+}
+
 fn identity() -> &'static Identity {
     unsafe {
         let slot = &mut *&raw mut IDENTITY;
@@ -127,20 +227,25 @@ fn identity() -> &'static Identity {
 }
 
 fn load_or_create_identity() -> Identity {
-    let mut buf = [0u8; 32];
-    if let Ok(Some(n)) = lingfs::read_file_all("messenger_identity", &mut buf) {
-        if n == 32 {
-            return Identity::from_seed(buf);
+    if let Some(v) = store_read("identity", "messenger_identity") {
+        if v.len() == 32 {
+            let mut seed = [0u8; 32];
+            seed.copy_from_slice(&v);
+            return Identity::from_seed(seed);
         }
     }
     let mut seed = [0u8; 32];
-    // RDRAND -- the same real CSPRNG `crypto.rs` already uses for TLS's
-    // ephemeral X25519 secrets (see its module doc). If the CPU somehow lacks
-    // RDRAND, fall back to whatever `random_bytes` leaves in `seed` (zeroed)
-    // rather than panicking the desktop -- a degraded identity is still better
-    // than the window failing to open.
-    crate::crypto::random_bytes(&mut seed);
-    let _ = lingfs::write_file("messenger_identity", &seed);
+    if !crate::crypto::random_bytes(&mut seed) {
+        // no hardware random source (an emulator): never an all-zero seed --
+        // mix the clock and the account name (weak, and said so)
+        let mut m = Vec::new();
+        m.extend_from_slice(b"lingos-messenger-seed");
+        m.extend_from_slice(&timer::now_us().to_le_bytes());
+        m.extend_from_slice(owner().unwrap_or_default().as_bytes());
+        seed = crate::crypto::sha256(&m);
+        crate::console_write(b"messenger: no hardware RNG -- identity seeded from the clock\n");
+    }
+    store_write("identity", "messenger_identity", &seed);
     Identity::from_seed(seed)
 }
 
@@ -169,7 +274,9 @@ fn pub_id_to_bytes(pi: &PublicIdentity) -> Vec<u8> {
 }
 
 fn pub_id_from_bytes(b: &[u8]) -> Option<PublicIdentity> {
-    if b.len() <= 32 {
+    // Ed25519 (32) + an ML-DSA-87 verifying key (2592); anything far off is
+    // garbage or an attempt to bloat the roster
+    if b.len() <= 32 || b.len() > 32 + 4096 {
         return None;
     }
     let mut ed = [0u8; 32];
@@ -181,9 +288,8 @@ fn pub_id_from_bytes(b: &[u8]) -> Option<PublicIdentity> {
 /// One friend per line: `hex(pub_identity)<TAB>handle`. A hybrid identity is
 /// large (~2.6KB -> ~5.2KB hex), so the read buffer is sized generously.
 fn load_roster() {
-    let mut buf = alloc::vec![0u8; 128 * 1024];
-    let Ok(Some(n)) = lingfs::read_file_all("messenger_friends", &mut buf) else { return };
-    let Ok(text) = core::str::from_utf8(&buf[..n]) else { return };
+    let Some(buf) = store_read("friends", "messenger_friends") else { return };
+    let Ok(text) = core::str::from_utf8(&buf) else { return };
     for line in text.lines() {
         let Some((hex, handle)) = line.split_once('\t') else { continue };
         let Some(bytes) = hex_decode(hex) else { continue };
@@ -203,7 +309,7 @@ fn save_roster() {
     // Multi-block: each friend's hybrid PQ identity (Ed25519 + ML-DSA-87 vk,
     // hex-encoded) is ~5KB, well over the single-block write_file cap -- so
     // write_file here silently dropped the whole roster.
-    let _ = lingfs::write_file_any("messenger_friends", out.as_bytes());
+    store_write("friends", "messenger_friends", out.as_bytes());
 }
 
 // -- Encrypted chat history -------------------------------------------------
@@ -214,17 +320,37 @@ fn save_roster() {
 /// (ChaCha20-Poly1305) to anyone who only has the disk. Idempotent.
 pub fn unlock_for_session(password: &[u8]) {
     let Some(key) = crate::keyring::key("messenger-chat") else { return };
+    let user = crate::keyring::user().unwrap_or_default();
+    switch_owner(&user);
     unsafe {
         CHAT_KEY = Some(key);
+        HISTORY_BLOCKED = false;
         (*(&raw mut CHAT_HISTORY)).clear();
     }
     load_history();
     import_legacy(password);
-    // what came in while the screen was locked / before sign-in
-    let pending = unsafe { core::mem::take(&mut *(&raw mut PENDING)) };
+    // what came in while the screen was locked / before sign-in -- for this
+    // account only
+    let mut pending = unsafe { core::mem::take(&mut *(&raw mut PENDING)) };
+    if unsafe { (*(&raw const PENDING_OWNER)).as_deref() } != Some(user.as_str()) {
+        pending.clear();
+    }
+    // the open chats show their history again
+    unsafe {
+        let convos = &mut *&raw mut CONVERSATIONS;
+        for c in convos.iter_mut() {
+            c.lines = history_for(&c.peer);
+        }
+    }
     let had = !pending.is_empty();
     for (peer, from_me, text) in pending {
         push_history(&peer, from_me, &text);
+        unsafe {
+            let convos = &mut *&raw mut CONVERSATIONS;
+            if let Some(c) = convos.iter_mut().find(|c| c.peer == peer) {
+                c.lines.push((from_me, text.clone()));
+            }
+        }
     }
     if had {
         save_history();
@@ -237,16 +363,27 @@ pub fn unlock_for_session(password: &[u8]) {
 
 /// Screen lock / log out: forget the key and the decrypted history.
 pub fn lock_session() {
+    if unsafe { HISTORY_DIRTY } {
+        save_history();
+    }
     unsafe {
         CHAT_KEY = None;
         (*(&raw mut CHAT_HISTORY)).clear();
+        // the screen shows nothing of the chats while locked; the sockets stay
+        // up, so messages keep arriving (held for this account until sign-in)
+        let convos = &mut *&raw mut CONVERSATIONS;
+        for c in convos.iter_mut() {
+            c.lines.clear();
+        }
+        *(&raw mut PENDING_OWNER) = owner();
+        SELECTED = None;
     }
 }
 
 /// The old root-level log, opened with the old password-only key and folded
 /// into the per-user log; then removed from the disk.
 fn import_legacy(password: &[u8]) {
-    let mut raw = alloc::vec![0u8; 256 * 1024];
+    let mut raw = alloc::vec![0u8; lingfs::file_size(LEGACY_CHATLOG_FILE).unwrap_or(0).max(64) + 16];
     let n = match lingfs::read_file_all(LEGACY_CHATLOG_FILE, &mut raw) {
         Ok(Some(n)) if n >= 28 => n,
         _ => return,
@@ -302,6 +439,13 @@ fn serialize_history() -> Vec<u8> {
 
 fn save_history() {
     let Some(key) = (unsafe { CHAT_KEY }) else { return };
+    if unsafe { HISTORY_BLOCKED } {
+        return; // the saved log did not open: never write over it
+    }
+    unsafe {
+        HISTORY_DIRTY = false;
+        LAST_SAVE_MS = timer::now_ms();
+    }
     let mut buf = serialize_history();
     let mut nonce = [0u8; 12];
     crate::crypto::random_bytes(&mut nonce);
@@ -317,7 +461,7 @@ fn save_history() {
 fn load_history() {
     let Some(key) = (unsafe { CHAT_KEY }) else { return };
     let Some(path) = chatlog_path() else { return };
-    let mut raw = alloc::vec![0u8; 256 * 1024];
+    let mut raw = alloc::vec![0u8; lingfs::file_size(&path).unwrap_or(0).max(64) + 16];
     let n = match lingfs::read_file_all(&path, &mut raw) {
         Ok(Some(n)) if n >= 28 => n,
         _ => return,
@@ -326,7 +470,12 @@ fn load_history() {
     let tag: [u8; 16] = raw[12..28].try_into().unwrap();
     let mut buf = raw[28..n].to_vec();
     if !crate::crypto::chachapoly_open(&key, &nonce, &[], &mut buf, &tag) {
-        return; // wrong password or tampered -- leave history empty
+        // wrong key or a damaged file: keep it on disk untouched
+        unsafe {
+            HISTORY_BLOCKED = true;
+            STATUS = "the saved chat history could not be decrypted -- it is kept, new lines are not saved";
+        }
+        return;
     }
     unsafe { CHAT_HISTORY = parse_history(&buf) };
 }
@@ -367,11 +516,19 @@ fn parse_history(b: &[u8]) -> Vec<(LingId, Vec<(bool, String)>)> {
 fn remember(peer: &LingId, from_me: bool, text: &str) {
     if unsafe { CHAT_KEY.is_none() } {
         // nobody signed in: keep it for the moment the keyring opens
-        unsafe { (*(&raw mut PENDING)).push((peer.clone(), from_me, text.to_string())) };
+        unsafe {
+            let p = &mut *(&raw mut PENDING);
+            if p.len() < 2000 {
+                p.push((peer.clone(), from_me, text.to_string()));
+            }
+            if (*(&raw const PENDING_OWNER)).is_none() {
+                *(&raw mut PENDING_OWNER) = owner();
+            }
+        }
         return;
     }
     push_history(peer, from_me, text);
-    save_history();
+    unsafe { HISTORY_DIRTY = true };
 }
 
 /// A peer's saved messages, for prefilling a freshly opened conversation.
@@ -545,10 +702,27 @@ fn task_step() {
         for (lid, ip) in reqs {
             connect_and_chat(lid, ip);
         }
-        // Send any messages the UI queued.
+        // Send queued messages; whatever can't go now waits (and re-dials).
         let out = unsafe { core::mem::take(&mut *&raw mut OUTBOX) };
+        let mut keep: Vec<(LingId, String)> = Vec::new();
         for (lid, text) in out {
-            send_to(&lid, &text);
+            let connected = unsafe {
+                (&*&raw const CONVERSATIONS).iter().any(|c| c.peer == lid && !c.dead && netstack::tcp_established_h(c.handle))
+            };
+            if connected && send_to(&lid, &text) {
+                continue;
+            }
+            redial(&lid);
+            keep.push((lid, text));
+        }
+        unsafe {
+            let o = &mut *&raw mut OUTBOX;
+            // anything the UI queued meanwhile goes after the retries
+            let newer = core::mem::take(o);
+            keep.extend(newer);
+            let drop_n = keep.len().saturating_sub(MAX_OUTBOX);
+            keep.drain(..drop_n);
+            *o = keep;
         }
         // Send any pings the UI queued.
         let pings = unsafe { core::mem::take(&mut *&raw mut PING_OUTBOX) };
@@ -562,6 +736,46 @@ fn task_step() {
         }
         // Receive frames on open conversations.
         recv_all_conversations();
+        reap_conversations();
+        if unsafe { HISTORY_DIRTY } && timer::now_ms().wrapping_sub(unsafe { LAST_SAVE_MS }) >= 2_000 {
+            save_history();
+        }
+    }
+}
+
+/// Drop conversations whose socket died or whose session broke; their
+/// queued messages stay in OUTBOX and the next send re-dials.
+fn reap_conversations() {
+    unsafe {
+        let convos = &mut *&raw mut CONVERSATIONS;
+        convos.retain(|c| {
+            let alive = !c.dead && netstack::tcp_established_h(c.handle);
+            if !alive {
+                netstack::tcp_close_h(c.handle);
+            }
+            alive
+        });
+    }
+}
+
+/// Dial a peer again if it is on the LAN and we haven't tried in 10 s.
+fn redial(lid: &LingId) {
+    let now = timer::now_ms();
+    unsafe {
+        let ld = &mut *&raw mut LAST_DIAL;
+        if let Some((_, t)) = ld.iter().find(|(l, _)| l == lid) {
+            if now.wrapping_sub(*t) < 10_000 {
+                return;
+            }
+        }
+        ld.retain(|(l, _)| l != lid);
+        ld.push((lid.clone(), now));
+        let ip = (&*&raw const NEARBY).iter().find(|p| &p.ling_id == lid).map(|p| p.ip);
+        if let Some(ip) = ip {
+            if !(&*&raw const CONNECT_REQ).iter().any(|(l, _)| l == lid) {
+                (&mut *&raw mut CONNECT_REQ).push((lid.clone(), ip));
+            }
+        }
     }
 }
 
@@ -615,25 +829,37 @@ fn recv_all_conversations() {
             if i < convos.len() && convos[i].handle == handle {
                 convos[i].rx = rx;
                 if let Some(f) = frame {
-                    if let Some((kind, msg)) = wire::open(&mut convos[i].session, &f) {
+                    let opened = wire::open(&mut convos[i].session, &f);
+                    if opened.is_none() {
+                        // out of step (a lost frame, a replay, tampering):
+                        // this session is over, a fresh handshake follows
+                        convos[i].dead = true;
+                    }
+                    if let Some((kind, msg)) = opened {
                         let peer = convos[i].peer.clone();
                         match kind {
                             wire::KIND_TEXT => {
-                                if let Ok(text) = core::str::from_utf8(&msg) {
-                                    convos[i].lines.push((false, text.to_string()));
-                                    remembered = Some((peer, false, text.to_string()));
-                                    UNREAD = UNREAD.saturating_add(1);
+                                if msg.len() <= MAX_TEXT {
+                                    if let Ok(text) = core::str::from_utf8(&msg) {
+                                        convos[i].lines.push((false, text.to_string()));
+                                        remembered = Some((peer, false, text.to_string()));
+                                        UNREAD = UNREAD.saturating_add(1);
+                                    }
                                 }
                             },
                             wire::KIND_PING => {
                                 // Attention nudge: note it in the log and chime,
-                                // even if the window is closed (the task runs in
-                                // the background).
-                                convos[i].lines.push((false, "*ping*".to_string()));
-                                UNREAD = UNREAD.saturating_add(1);
-                                #[cfg(target_arch = "x86_64")]
-                                mixer::jingle(mixer::EVENT_PING);
-                                remembered = Some((peer, false, "*ping*".to_string()));
+                                // even if the window is closed -- at most one
+                                // per 10 s from a peer.
+                                let now = timer::now_ms();
+                                if now.wrapping_sub(convos[i].last_ping_ms) >= 10_000 {
+                                    convos[i].last_ping_ms = now;
+                                    convos[i].lines.push((false, "*ping*".to_string()));
+                                    UNREAD = UNREAD.saturating_add(1);
+                                    #[cfg(target_arch = "x86_64")]
+                                    mixer::jingle(mixer::EVENT_PING);
+                                    remembered = Some((peer, false, "*ping*".to_string()));
+                                }
                             },
                             wire::KIND_NICK => {
                                 // Peer renamed themselves. Re-label them in the
@@ -641,7 +867,7 @@ fn recv_all_conversations() {
                                 // so messages keep routing) + note it in-stream.
                                 if let Ok(new) = core::str::from_utf8(&msg) {
                                     let new = new.trim();
-                                    if !new.is_empty() {
+                                    if !new.is_empty() && new.len() <= 64 {
                                         let mut note = String::from("* now known as ");
                                         note.push_str(new);
                                         note.push_str(" *");
@@ -660,7 +886,10 @@ fn recv_all_conversations() {
             remember(&peer, from_me, &text);
         }
         if let Some((peer, new)) = renamed {
-            rename_peer(&peer, &new);
+            // a friend may not take another friend's name
+            let taken = roster().friends.iter().any(|f| f.ling_id != peer && f.handle.eq_ignore_ascii_case(&new));
+            let label = if taken { alloc::format!("{new} ({})", &peer.0[..peer.0.len().min(6)]) } else { new };
+            rename_peer(&peer, &label);
         }
     }
 }
@@ -668,16 +897,27 @@ fn recv_all_conversations() {
 /// Seal + send one queued message to a peer, appending the local echo on
 /// success. Seals under a non-yield burst, sends on the local frame (yields),
 /// then appends non-yield.
-fn send_to(lid: &LingId, text: &str) {
+fn send_to(lid: &LingId, text: &str) -> bool {
     let sealed = unsafe {
         let convos = &mut *&raw mut CONVERSATIONS;
         convos
             .iter_mut()
-            .find(|c| &c.peer == lid)
+            .find(|c| &c.peer == lid && !c.dead)
             .map(|c| (c.handle, wire::seal(&mut c.session, wire::KIND_TEXT, text.as_bytes())))
     };
-    let Some((handle, frame)) = sealed else { return };
+    let Some((handle, frame)) = sealed else { return false };
     let ok = send_framed(handle, &frame);
+    if !ok {
+        // the counter moved on but the frame did not arrive whole: this
+        // session can't continue; mark it, the caller keeps the text
+        unsafe {
+            let convos = &mut *&raw mut CONVERSATIONS;
+            if let Some(c) = convos.iter_mut().find(|c| &c.peer == lid) {
+                c.dead = true;
+            }
+        }
+        return false;
+    }
     if ok {
         unsafe {
             let convos = &mut *&raw mut CONVERSATIONS;
@@ -687,6 +927,7 @@ fn send_to(lid: &LingId, text: &str) {
         }
         remember(lid, true, text);
     }
+    true
 }
 
 /// Presence beacon: `PKT_BEACON, ling_id_len (1B), ling_id, handle`. Small on
@@ -704,11 +945,10 @@ fn send_beacon() {
 
 fn local_handle() -> String {
     // A custom handle, if one was ever set (see `set_local_handle`).
-    let mut buf = [0u8; 64];
-    if let Ok(Some(n)) = lingfs::read_file_all("messenger_handle", &mut buf) {
-        if let Ok(s) = core::str::from_utf8(&buf[..n]) {
-            if !s.is_empty() {
-                return s.to_string();
+    if let Some(b) = store_read("handle", "messenger_handle") {
+        if let Ok(s) = core::str::from_utf8(&b) {
+            if !s.trim().is_empty() {
+                return s.trim().to_string();
             }
         }
     }
@@ -725,7 +965,7 @@ fn local_handle() -> String {
 /// Set and persist a custom display handle (shown to nearby peers in
 /// discovery beacons instead of the raw LingId).
 pub fn set_local_handle(handle: &str) {
-    let _ = lingfs::write_file("messenger_handle", handle.as_bytes());
+    store_write("handle", "messenger_handle", handle.as_bytes());
 }
 
 fn handle_packet(src_ip: [u8; 4], pkt: &[u8]) {
@@ -755,18 +995,20 @@ fn handle_beacon(src_ip: [u8; 4], body: &[u8]) {
         // their in-memory roster label current so the sidebar/chat show it even
         // before any KIND_NICK frame (persisted when that frame arrives). This
         // also covers a peer who renamed while offline and has now reconnected.
-        let roster_mut = &mut *&raw mut ROSTER;
-        if let Some(f) = roster_mut.friends.iter_mut().find(|f| f.ling_id == ling_id) {
-            if f.handle != handle {
-                f.handle = handle.clone();
-            }
-        }
+        // Beacons are unauthenticated: they never rename a friend (only an
+        // authenticated KIND_NICK does) and the list is capped.
+        let handle: String = handle.chars().take(64).collect();
         let nearby = &mut *&raw mut NEARBY;
         if let Some(p) = nearby.iter_mut().find(|p| p.ling_id == ling_id) {
             p.ip = src_ip;
             p.handle = handle;
             p.last_seen_ms = now;
         } else {
+            if nearby.len() >= MAX_NEARBY {
+                if let Some(k) = (0..nearby.len()).min_by_key(|&k| nearby[k].last_seen_ms) {
+                    nearby.remove(k);
+                }
+            }
             nearby.push(NearbyPeer { ip: src_ip, ling_id, handle, last_seen_ms: now });
         }
     }
@@ -794,6 +1036,15 @@ fn send_framed(handle: usize, data: &[u8]) -> bool {
 /// Read one length-framed message, accumulating stream bytes in `rx` across
 /// calls. None if the peer is silent this budget (a partial message stays in
 /// `rx` for the next call, so this is safe to poll incrementally).
+/// `recv_framed` against an absolute deadline (a handshake's whole budget).
+fn recv_framed_by(handle: usize, rx: &mut Vec<u8>, deadline_ms: u64) -> Option<Vec<u8>> {
+    let now = timer::now_ms();
+    if now >= deadline_ms {
+        return None;
+    }
+    recv_framed(handle, rx, (deadline_ms - now) * 1000)
+}
+
 fn recv_framed(handle: usize, rx: &mut Vec<u8>, budget_us: u64) -> Option<Vec<u8>> {
     while rx.len() < 4 {
         let mut tmp = [0u8; 2048];
@@ -844,8 +1095,9 @@ fn roster_add_tofu(peer: &PublicIdentity) {
 /// identities (TOFU), run the hybrid handshake, verify the initiator's finish,
 /// then keep the socket for the conversation.
 fn responder_handshake(handle: usize) {
+    let deadline = timer::now_ms() + HANDSHAKE_MS;
     let mut rx = Vec::new();
-    let Some(peer_bytes) = recv_framed(handle, &mut rx, 3_000_000) else {
+    let Some(peer_bytes) = recv_framed_by(handle, &mut rx, deadline) else {
         netstack::tcp_close_h(handle);
         return;
     };
@@ -857,8 +1109,7 @@ fn responder_handshake(handle: usize) {
         netstack::tcp_close_h(handle);
         return;
     }
-    roster_add_tofu(&peer_id);
-    let Some(initmsg) = recv_framed(handle, &mut rx, 3_000_000) else {
+    let Some(initmsg) = recv_framed_by(handle, &mut rx, deadline) else {
         netstack::tcp_close_h(handle);
         return;
     };
@@ -889,7 +1140,7 @@ fn responder_handshake(handle: usize) {
         netstack::tcp_close_h(handle);
         return;
     }
-    let Some(finmsg) = recv_framed(handle, &mut rx, 3_000_000) else {
+    let Some(finmsg) = recv_framed_by(handle, &mut rx, deadline) else {
         netstack::tcp_close_h(handle);
         return;
     };
@@ -904,8 +1155,9 @@ fn responder_handshake(handle: usize) {
         netstack::tcp_close_h(handle);
         return;
     }
+    roster_add_tofu(&peer_id); // only now: the peer proved it holds this key
     let peer_lid = LingId::from_public(&peer_id);
-    open_conversation(peer_lid, handle, session, rx);
+    open_conversation(peer_lid, handle, session, rx, false);
     unsafe { STATUS = "friend connected" };
 }
 
@@ -920,38 +1172,39 @@ fn connect_and_chat(peer_lid: LingId, ip: [u8; 4]) {
         unsafe { STATUS = "couldn't reach that peer -- is Messenger open on their side?" };
         return;
     };
+    let deadline = timer::now_ms() + HANDSHAKE_MS;
+    let fail = |msg: &'static str| {
+        netstack::tcp_close_h(handle);
+        unsafe { STATUS = msg };
+    };
     let mut rx = Vec::new();
     if !send_framed(handle, &pub_id_to_bytes(&identity().public())) {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("the connection dropped during the handshake");
     }
-    let Some(peer_bytes) = recv_framed(handle, &mut rx, 3_000_000) else {
-        netstack::tcp_close_h(handle);
-        unsafe { STATUS = "no reply from peer" };
-        return;
+    let Some(peer_bytes) = recv_framed_by(handle, &mut rx, deadline) else {
+        return fail("no reply from peer");
     };
     let Some(peer_id) = pub_id_from_bytes(&peer_bytes) else {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("the peer sent an invalid identity");
     };
-    roster_add_tofu(&peer_id);
+    if LingId::from_public(&peer_id) != peer_lid {
+        // someone else answered at that address (a spoofed beacon, or the IP
+        // now belongs to another machine): not who was asked for
+        return fail("a different identity answered at that address -- not connected");
+    }
     let (Some(eph), Some(nonce)) = (fresh_bytes::<96>(), fresh_bytes::<{ handshake::NONCE_LEN }>())
     else {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("no randomness for the handshake");
     };
     let (kp, init) = handshake::initiate(eph, nonce);
     let mut initmsg = Vec::new();
     put_lp(&mut initmsg, &init.hybrid_pub);
     initmsg.extend_from_slice(&init.nonce);
     if !send_framed(handle, &initmsg) {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("the connection dropped during the handshake");
     }
-    let Some(respmsg) = recv_framed(handle, &mut rx, 3_000_000) else {
-        netstack::tcp_close_h(handle);
-        unsafe { STATUS = "handshake timed out" };
-        return;
+    let Some(respmsg) = recv_framed_by(handle, &mut rx, deadline) else {
+        return fail("handshake timed out");
     };
     let mut ro = 0usize;
     let (Some(hybrid_ct), Some(rnonce), Some(sig)) = (
@@ -959,8 +1212,7 @@ fn connect_and_chat(peer_lid: LingId, ip: [u8; 4]) {
         take_nonce(&respmsg, &mut ro),
         take_lp(&respmsg, &mut ro).map(|s| s.to_vec()),
     ) else {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("the peer's handshake reply was malformed");
     };
     let resp = handshake::HandshakeResp { hybrid_ct, nonce: rnonce, sig };
     let Some((finish, session)) =
@@ -973,38 +1225,40 @@ fn connect_and_chat(peer_lid: LingId, ip: [u8; 4]) {
     let mut finmsg = Vec::new();
     put_lp(&mut finmsg, &finish.sig);
     if !send_framed(handle, &finmsg) {
-        netstack::tcp_close_h(handle);
-        return;
+        return fail("the connection dropped during the handshake");
     }
+    roster_add_tofu(&peer_id); // verified: the key answered for itself
     let real_lid = LingId::from_public(&peer_id);
-    open_conversation(real_lid, handle, session, rx);
+    open_conversation(real_lid, handle, session, rx, true);
     unsafe { STATUS = "connected" };
 }
 
-fn open_conversation(peer: LingId, handle: usize, session: Session, rx: Vec<u8>) {
+fn open_conversation(peer: LingId, handle: usize, session: Session, rx: Vec<u8>, we_dialed: bool) {
+    let now = timer::now_ms();
     unsafe {
         let convos = &mut *&raw mut CONVERSATIONS;
-        // Duplicate connection: both peers can dial/accept near-simultaneously.
-        // If we already hold a LIVE socket to this peer, keep it and drop the
-        // newcomer -- tearing down a working socket to install a fresh one is
-        // exactly what dropped the chat (the sender then wrote to a closed
-        // socket). Only replace a conversation whose socket is already dead.
-        if let Some(c) = convos.iter().find(|c| c.peer == peer) {
-            if netstack::tcp_established_h(c.handle) {
-                netstack::tcp_close_h(handle);
-                return;
+        let mut carried: Option<Vec<(bool, String)>> = None;
+        if let Some(k) = convos.iter().position(|c| c.peer == peer) {
+            let old = &convos[k];
+            let old_live = !old.dead && netstack::tcp_established_h(old.handle);
+            if old_live && now.wrapping_sub(old.since_ms) < SIMUL_DIAL_MS && old.we_dialed != we_dialed {
+                // both sides dialled at once: keep the connection started by
+                // the smaller LingId -- both machines reach the same answer
+                let we_are_smaller = my_ling_id().0 < peer.0;
+                let keep_new = we_dialed == we_are_smaller;
+                if !keep_new {
+                    netstack::tcp_close_h(handle);
+                    return;
+                }
             }
+            // otherwise the newest authenticated connection wins: the old one
+            // is dead or half-open (the peer rebooted / changed address)
+            let old = convos.remove(k);
+            netstack::tcp_close_h(old.handle);
+            carried = Some(old.lines);
         }
-        convos.retain(|c| {
-            if c.peer == peer {
-                netstack::tcp_close_h(c.handle);
-                false
-            } else {
-                true
-            }
-        });
-        let lines = history_for(&peer);
-        convos.push(Conversation { peer, handle, rx, session, lines });
+        let lines = carried.unwrap_or_else(|| history_for(&peer));
+        convos.push(Conversation { peer, handle, rx, session, lines, since_ms: now, we_dialed, last_ping_ms: 0, dead: false });
     }
 }
 
@@ -1066,13 +1320,20 @@ pub fn send_current_compose() {
     if text.is_empty() {
         return;
     }
+    if text.len() > MAX_TEXT {
+        unsafe { STATUS = "that message is too long (4 KB at most)" };
+        return;
+    }
+    let connected = unsafe { (&*&raw const CONVERSATIONS).iter().any(|c| c.peer == friend_lid && !c.dead) };
     unsafe {
-        if !(&*&raw const CONVERSATIONS).iter().any(|c| c.peer == friend_lid) {
-            STATUS = "not connected yet -- select the friend and press Enter to connect";
-            return;
-        }
-        (&mut *&raw mut OUTBOX).push((friend_lid, text));
+        (&mut *&raw mut OUTBOX).push((friend_lid.clone(), text));
         COMPOSE_LEN = 0;
+        if !connected {
+            STATUS = "queued -- it is sent as soon as your friend is reachable";
+        }
+    }
+    if !connected {
+        redial(&friend_lid);
     }
 }
 
@@ -1274,13 +1535,9 @@ pub fn key(k: u8) {
                     }
                 },
                 None => {
-                    // Nothing selected: typed text sets your own display handle.
+                    // Nothing selected: say how to chat / rename, keep the text.
                     if !compose.is_empty() {
-                        set_local_handle(&compose);
-                        unsafe {
-                            COMPOSE_LEN = 0;
-                            STATUS = "handle updated";
-                        }
+                        unsafe { STATUS = "select a friend to send this (or type /nick <name> to rename yourself)" };
                     }
                 },
             }
@@ -1372,12 +1629,20 @@ pub fn activate_row(row: usize) {
 pub fn selected_lines() -> Vec<(bool, String)> {
     let Some(sel) = (unsafe { SELECTED }) else { return Vec::new() };
     let Some(lid) = roster().friends.get(sel).map(|f| f.ling_id.clone()) else { return Vec::new() };
+    let mut lines = unsafe {
+        match (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == lid) {
+            Some(c) => c.lines.clone(),
+            None => history_for(&lid),
+        }
+    };
     unsafe {
-        if let Some(c) = (&*&raw const CONVERSATIONS).iter().find(|c| c.peer == lid) {
-            return c.lines.clone();
+        for (l, text) in (&*&raw const OUTBOX).iter() {
+            if *l == lid {
+                lines.push((true, alloc::format!("{text}   (sending...)")));
+            }
         }
     }
-    history_for(&lid)
+    lines
 }
 
 pub fn selected_connected() -> bool {
@@ -1534,6 +1799,7 @@ fn wrapped_line_count(s: &str, max_w: u32) -> usize {
 #[cfg(target_arch = "x86_64")]
 pub fn draw(x: u32, y: u32, w: u32, h: u32) {
     tick();
+    clear_unread();
     let bg = theme::color(theme::SLOT_BG);
     let panel = theme::color(theme::SLOT_PANEL);
     let border = theme::color(theme::SLOT_PANEL_BORDER);

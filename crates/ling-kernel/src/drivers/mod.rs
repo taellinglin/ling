@@ -73,6 +73,7 @@ pub mod netstack;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
 pub mod sshd;
+pub mod sftp;
 #[cfg(target_arch = "x86_64")]
 pub mod term;
 #[cfg(target_arch = "x86_64")]

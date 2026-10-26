@@ -27,6 +27,18 @@ pub fn ready() -> bool {
 
 /// The signed-in user's home folder ("ling", the image's built-in home, until
 /// storage is mounted and a user signed in).
+/// With the SD card's data partition mounted (`media/card`), the files under
+/// `home/` live there: `home/ling/Music/x` is `media/card/home/ling/Music/x`.
+/// Reads fall back to lingfs (anything stored before the partition existed),
+/// listings merge both. Accounts, the keyring and settings stay in lingfs.
+fn card_path(r: &str) -> Option<String> {
+    if (r == "home" || r.starts_with("home/")) && crate::fs::media::has("card") {
+        Some(format!("media/card/{r}"))
+    } else {
+        None
+    }
+}
+
 pub fn home() -> String {
     let u = crate::fs::lingfs::current_user();
     if u.is_empty() || !ready() {
@@ -199,6 +211,11 @@ pub fn read(p: &str) -> Option<Vec<u8>> {
         return crate::fs::media::read(&n);
     }
     let r = resolve(&n);
+    if let Some(c) = card_path(&r) {
+        if let Some(v) = crate::fs::media::read(&c) {
+            return unseal_private(&r, v);
+        }
+    }
     if ready() {
         if let Some(v) = lingfs_read(&r) {
             return unseal_private(&r, v);
@@ -220,10 +237,20 @@ pub fn write(p: &str, data: &[u8]) -> bool {
     if crate::fs::media::is_media_path(&norm(p)) {
         return crate::fs::media::write(&norm(p), data);
     }
+    let r = resolve(p);
+    if let Some(c) = card_path(&r) {
+        if let Some(i) = c.rfind('/') {
+            crate::fs::media::mkdir_p(&c[..i]);
+        }
+        if crate::keyring::is_private_path(&r) {
+            let Some(blob) = crate::keyring::seal("vfs-private", r.as_bytes(), data) else { return false };
+            return crate::fs::media::write(&c, &blob);
+        }
+        return crate::fs::media::write(&c, data);
+    }
     if !ready() {
         return false;
     }
-    let r = resolve(p);
     if r.is_empty() {
         return false;
     }
@@ -254,6 +281,9 @@ pub fn exists(p: &str) -> bool {
         return crate::fs::media::exists(&n);
     }
     let r = resolve(&n);
+    if card_path(&r).is_some_and(|c| crate::fs::media::exists(&c)) {
+        return true;
+    }
     if ready() && (crate::fs::lingfs::path_kind(&r).is_some() || crate::fs::lingfs::path_kind(&n).is_some()) {
         return true;
     }
@@ -269,6 +299,9 @@ pub fn is_dir(p: &str) -> bool {
         return crate::fs::media::is_dir(&n);
     }
     let r = resolve(&n);
+    if card_path(&r).is_some_and(|c| crate::fs::media::is_dir(&c)) {
+        return true;
+    }
     if ready() && (crate::fs::lingfs::path_kind(&r) == Some(true) || crate::fs::lingfs::path_kind(&n) == Some(true)) {
         return true;
     }
@@ -278,6 +311,9 @@ pub fn is_dir(p: &str) -> bool {
 pub fn mkdir(p: &str) -> bool {
     if crate::fs::media::is_media_path(&norm(p)) {
         return crate::fs::media::mkdir(&norm(p));
+    }
+    if let Some(c) = card_path(&resolve(p)) {
+        return crate::fs::media::mkdir_p(&c);
     }
     ready() && crate::fs::lingfs::mkdir_p(&resolve(p)).is_ok()
 }
@@ -289,10 +325,15 @@ pub fn delete(p: &str) -> bool {
     if crate::fs::media::is_media_path(&n) {
         return crate::fs::media::delete(&n);
     }
-    if !ready() {
+    if is_dir(&n) && !list(&n).is_empty() {
         return false;
     }
-    if is_dir(&n) && !list(&n).is_empty() {
+    if let Some(c) = card_path(&resolve(&n)) {
+        if crate::fs::media::exists(&c) {
+            return crate::fs::media::delete(&c);
+        }
+    }
+    if !ready() {
         return false;
     }
     let r = resolve(&n);
@@ -397,6 +438,11 @@ pub fn list(p: &str) -> Vec<(String, bool, usize)> {
     let mut items: Vec<(String, bool, usize)> = Vec::new();
     if n.is_empty() && !crate::fs::media::names().is_empty() {
         items.push((String::from("media"), true, 0));
+    }
+    if let Some(c) = card_path(&r) {
+        for (name, d, size) in crate::fs::media::list(&c) {
+            push_entry(&mut items, &name, d, size);
+        }
     }
     if ready() {
         lingfs_list_into(&r, &mut items);

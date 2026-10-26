@@ -67,6 +67,8 @@ const MSG_CHANNEL_EOF: u8 = 96;
 const MSG_CHANNEL_CLOSE: u8 = 97;
 const MSG_CHANNEL_REQUEST: u8 = 98;
 const MSG_CHANNEL_SUCCESS: u8 = 99;
+const MSG_CHANNEL_FAILURE: u8 = 100;
+const MSG_CHANNEL_OPEN_FAILURE: u8 = 92;
 
 // ── SSH wire encoding helpers ────────────────────────────────────────────────
 
@@ -184,6 +186,9 @@ struct Session {
     enc_in: bool,      // decrypt incoming (after we receive NEWKEYS)
     k_s2c: [u8; 64],   // server->client key (main[0..32] || header[32..64])
     k_c2s: [u8; 64],   // client->server key
+    authed: bool,      // signed in: idle is fine, the session lasts while TCP does
+    peer_window: u64,  // bytes the client still accepts on our channel
+    deferred: Vec<Vec<u8>>, // messages read while waiting for window space
 }
 
 impl Session {
@@ -197,6 +202,9 @@ impl Session {
             enc_in: false,
             k_s2c: [0; 64],
             k_c2s: [0; 64],
+            authed: false,
+            peer_window: 1 << 20,
+            deferred: Vec::new(),
         }
     }
 
@@ -208,6 +216,12 @@ impl Session {
             let mut tmp = [0u8; 4096];
             let got = netstack::tcp_read_h(self.handle, &mut tmp, 2_000_000);
             if got == 0 {
+                if !netstack::tcp_established_h(self.handle) {
+                    return false; // the client went away
+                }
+                if self.authed {
+                    continue; // a signed-in shell may sit idle as long as it likes
+                }
                 idle += 1;
                 if idle > 8 {
                     return false;
@@ -455,8 +469,10 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
     // Our ephemeral X25519 keypair + shared secret.
     let mut eph_secret = [0u8; 32];
     if !crate::crypto::random_bytes(&mut eph_secret) {
+        log(b"sshd: no hardware random source -- cannot run the key exchange
+");
         netstack::tcp_close_h(handle);
-        return Err("no RDRAND");
+        return Err("no hardware random source");
     }
     let q_s = crate::crypto::x25519_public(eph_secret);
     let k = crate::crypto::x25519(eph_secret, q_c_arr);
@@ -548,6 +564,7 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
                     let pws = core::str::from_utf8(pw).unwrap_or("");
                     if !pws.is_empty() && users::verify(uname, pws) {
                         username = uname.to_string();
+                        sess.authed = true;
                         sess.send(&[MSG_USERAUTH_SUCCESS]);
                         log(b"sshd: password auth OK for ");
                         log(&user);
@@ -585,8 +602,8 @@ pub fn serve(budget_us: u64) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Handle the connection layer: accept a `session` channel, its pty-req/shell
-/// requests, then run a small interactive shell over CHANNEL_DATA.
+/// Handle the connection layer: a `session` channel, then an interactive
+/// shell, a one-shot `exec` command, or the `sftp` subsystem.
 fn run_channel(sess: &mut Session, username: &str) {
     let mut peer_chan: u32 = 0;
     let my_chan: u32 = 0;
@@ -595,66 +612,137 @@ fn run_channel(sess: &mut Session, username: &str) {
     let mut banner_sent = false;
     // Per-session working directory (lingfs path, no leading slash; "" = root).
     // Kept local so an SSH session doesn't move the console shell's CWD.
-    let mut cwd = String::new();
+    let mut cwd = alloc::format!("home/{username}");
+    let mut sftp: Option<crate::drivers::sftp::Sftp> = None;
+    // channel data taken since our last window grant
+    let mut consumed: u32 = 0;
 
     loop {
-        let Some(msg) = sess.recv() else { return };
+        let msg = if !sess.deferred.is_empty() {
+            sess.deferred.remove(0)
+        } else {
+            match sess.recv() {
+                Some(m) => m,
+                None => {
+                    if let Some(s) = sftp.as_mut() {
+                        s.finish();
+                    }
+                    return;
+                },
+            }
+        };
         match msg.first().copied() {
             Some(MSG_CHANNEL_OPEN) => {
                 let mut p = 1;
-                let ctype = get_string(&msg, &mut p).unwrap_or(b"");
-                if p + 4 <= msg.len() {
-                    peer_chan =
-                        u32::from_be_bytes([msg[p], msg[p + 1], msg[p + 2], msg[p + 3]]);
-                }
-                if ctype == b"session" {
+                let ctype = get_string(&msg, &mut p).unwrap_or(b"").to_vec();
+                let rd = |o: usize| -> u32 {
+                    if o + 4 <= msg.len() {
+                        u32::from_be_bytes([msg[o], msg[o + 1], msg[o + 2], msg[o + 3]])
+                    } else {
+                        0
+                    }
+                };
+                peer_chan = rd(p);
+                let window = rd(p + 4);
+                if ctype == b"session" && !have_channel {
+                    sess.peer_window = window as u64;
                     let mut r = Vec::new();
                     r.push(MSG_CHANNEL_OPEN_CONFIRMATION);
                     put_u32(&mut r, peer_chan);
                     put_u32(&mut r, my_chan);
-                    put_u32(&mut r, 0x0010_0000); // window
+                    put_u32(&mut r, 0x0010_0000); // window we grant
                     put_u32(&mut r, 0x0000_8000); // max packet
                     sess.send(&r);
                     have_channel = true;
+                } else {
+                    let mut r = Vec::new();
+                    r.push(MSG_CHANNEL_OPEN_FAILURE);
+                    put_u32(&mut r, peer_chan);
+                    put_u32(&mut r, 3); // SSH_OPEN_UNKNOWN_CHANNEL_TYPE
+                    put_string(&mut r, b"only one session channel");
+                    put_string(&mut r, b"en");
+                    sess.send(&r);
                 }
             },
             Some(MSG_CHANNEL_REQUEST) => {
-                // uint32 chan, string type, bool want_reply, ...
+                // uint32 chan, string type, bool want_reply, type-specific...
                 let mut p = 1 + 4;
                 let rtype = get_string(&msg, &mut p).unwrap_or(b"").to_vec();
                 let want_reply = msg.get(p).copied().unwrap_or(0) != 0;
+                p += 1;
+                let arg = get_string(&msg, &mut p).unwrap_or(b"").to_vec();
+                let ok = match rtype.as_slice() {
+                    b"shell" | b"exec" | b"pty-req" | b"env" | b"window-change" => have_channel,
+                    b"subsystem" => have_channel && arg == b"sftp" && sftp.is_none(),
+                    _ => false,
+                };
                 if want_reply {
                     let mut r = Vec::new();
-                    r.push(MSG_CHANNEL_SUCCESS);
+                    r.push(if ok { MSG_CHANNEL_SUCCESS } else { MSG_CHANNEL_FAILURE });
                     put_u32(&mut r, peer_chan);
                     sess.send(&r);
                 }
-                if (rtype == b"shell" || rtype == b"exec") && have_channel && !banner_sent {
-                    banner_sent = true;
-                    channel_write(sess, peer_chan, b"\r\n  LingOS SSH -- welcome, ");
-                    channel_write(sess, peer_chan, username.as_bytes());
-                    channel_write(sess, peer_chan, b"\r\n  type 'help' for commands\r\n");
-                    send_prompt(sess, peer_chan, &cwd);
+                if !ok {
+                    continue;
+                }
+                match rtype.as_slice() {
+                    b"shell" if !banner_sent => {
+                        banner_sent = true;
+                        channel_write(sess, peer_chan, b"\r\n  LingOS SSH -- welcome, ");
+                        channel_write(sess, peer_chan, username.as_bytes());
+                        channel_write(sess, peer_chan, b"\r\n  type 'help' for commands\r\n");
+                        send_prompt(sess, peer_chan, &cwd);
+                    },
+                    b"exec" => {
+                        // `ssh host command`: run it, report, close
+                        let cmd = String::from_utf8_lossy(&arg).trim().to_string();
+                        let _ = run_cmd(sess, peer_chan, &cmd, username, &mut cwd);
+                        let mut st = Vec::new();
+                        st.push(MSG_CHANNEL_REQUEST);
+                        put_u32(&mut st, peer_chan);
+                        put_string(&mut st, b"exit-status");
+                        st.push(0);
+                        put_u32(&mut st, 0);
+                        sess.send(&st);
+                        close_channel(sess, peer_chan);
+                        return;
+                    },
+                    b"subsystem" => {
+                        log(b"sshd: sftp session for ");
+                        log(username.as_bytes());
+                        log(b"\n");
+                        sftp = Some(crate::drivers::sftp::Sftp::new(username));
+                    },
+                    _ => {},
                 }
             },
             Some(MSG_CHANNEL_DATA) => {
                 let mut p = 1 + 4;
                 let data = get_string(&msg, &mut p).unwrap_or(b"").to_vec();
+                // grant the client more window as we take its data (uploads
+                // would stall at the first megabyte otherwise)
+                consumed = consumed.saturating_add(data.len() as u32);
+                if consumed >= 0x4_0000 {
+                    let mut r = Vec::new();
+                    r.push(MSG_CHANNEL_WINDOW_ADJUST);
+                    put_u32(&mut r, peer_chan);
+                    put_u32(&mut r, consumed);
+                    sess.send(&r);
+                    consumed = 0;
+                }
+                if let Some(s) = sftp.as_mut() {
+                    for resp in s.feed(&data) {
+                        channel_write(sess, peer_chan, &resp);
+                    }
+                    continue;
+                }
                 for &b in &data {
                     if b == b'\r' || b == b'\n' {
                         channel_write(sess, peer_chan, b"\r\n");
                         let cmd = core::str::from_utf8(&line).unwrap_or("").trim().to_string();
                         line.clear();
                         if run_cmd(sess, peer_chan, &cmd, username, &mut cwd) {
-                            // exit requested
-                            let mut eof = Vec::new();
-                            eof.push(MSG_CHANNEL_EOF);
-                            put_u32(&mut eof, peer_chan);
-                            sess.send(&eof);
-                            let mut cl = Vec::new();
-                            cl.push(MSG_CHANNEL_CLOSE);
-                            put_u32(&mut cl, peer_chan);
-                            sess.send(&cl);
+                            close_channel(sess, peer_chan);
                             return;
                         }
                         send_prompt(sess, peer_chan, &cwd);
@@ -662,28 +750,82 @@ fn run_channel(sess: &mut Session, username: &str) {
                         if line.pop().is_some() {
                             channel_write(sess, peer_chan, b"\x08 \x08");
                         }
-                    } else if b >= 0x20 && b < 0x7f {
+                    } else if b == 0x03 {
+                        // Ctrl+C: drop the line
+                        line.clear();
+                        channel_write(sess, peer_chan, b"^C\r\n");
+                        send_prompt(sess, peer_chan, &cwd);
+                    } else if b == 0x04 && line.is_empty() {
+                        // Ctrl+D on an empty line: log out
+                        channel_write(sess, peer_chan, b"logout\r\n");
+                        close_channel(sess, peer_chan);
+                        return;
+                    } else if (0x20..0x7f).contains(&b) {
                         line.push(b);
                         channel_write(sess, peer_chan, &[b]); // echo
                     }
                 }
             },
-            Some(MSG_CHANNEL_EOF) => {},
+            Some(MSG_CHANNEL_EOF) => {
+                // the sftp client is done: store what is open, report success
+                // and close our side (the client waits for that)
+                if let Some(s) = sftp.as_mut() {
+                    s.finish();
+                    let mut st = Vec::new();
+                    st.push(MSG_CHANNEL_REQUEST);
+                    put_u32(&mut st, peer_chan);
+                    put_string(&mut st, b"exit-status");
+                    st.push(0);
+                    put_u32(&mut st, 0);
+                    sess.send(&st);
+                    close_channel(sess, peer_chan);
+                    return;
+                }
+            },
             Some(MSG_CHANNEL_CLOSE) => {
+                if let Some(s) = sftp.as_mut() {
+                    s.finish();
+                }
                 let mut cl = Vec::new();
                 cl.push(MSG_CHANNEL_CLOSE);
                 put_u32(&mut cl, peer_chan);
                 sess.send(&cl);
                 return;
             },
-            Some(MSG_CHANNEL_WINDOW_ADJUST) => {},
-            Some(MSG_GLOBAL_REQUEST) => {
-                sess.send(&[MSG_REQUEST_FAILURE]);
+            Some(MSG_CHANNEL_WINDOW_ADJUST) => {
+                let p = 1 + 4;
+                if p + 4 <= msg.len() {
+                    let add = u32::from_be_bytes([msg[p], msg[p + 1], msg[p + 2], msg[p + 3]]);
+                    sess.peer_window = sess.peer_window.saturating_add(add as u64);
+                }
             },
-            Some(MSG_DISCONNECT) => return,
+            Some(MSG_GLOBAL_REQUEST) => {
+                let mut p = 1;
+                let _name = get_string(&msg, &mut p);
+                if msg.get(p).copied().unwrap_or(0) != 0 {
+                    sess.send(&[MSG_REQUEST_FAILURE]);
+                }
+            },
+            Some(MSG_DISCONNECT) => {
+                if let Some(s) = sftp.as_mut() {
+                    s.finish();
+                }
+                return;
+            },
             _ => {},
         }
     }
+}
+
+fn close_channel(sess: &mut Session, chan: u32) {
+    let mut eof = Vec::new();
+    eof.push(MSG_CHANNEL_EOF);
+    put_u32(&mut eof, chan);
+    sess.send(&eof);
+    let mut cl = Vec::new();
+    cl.push(MSG_CHANNEL_CLOSE);
+    put_u32(&mut cl, chan);
+    sess.send(&cl);
 }
 
 /// Write channel data, split into <=1024-byte pieces so each SSH packet stays
@@ -692,6 +834,18 @@ fn channel_write(sess: &mut Session, chan: u32, data: &[u8]) {
     let mut off = 0usize;
     while off < data.len() {
         let end = (off + 1024).min(data.len());
+        // never send past the client's window: wait for its WINDOW_ADJUST,
+        // keeping anything else that arrives meanwhile for the main loop
+        while sess.peer_window < (end - off) as u64 {
+            let Some(m) = sess.recv() else { return };
+            if m.first().copied() == Some(MSG_CHANNEL_WINDOW_ADJUST) && m.len() >= 9 {
+                let add = u32::from_be_bytes([m[5], m[6], m[7], m[8]]);
+                sess.peer_window = sess.peer_window.saturating_add(add as u64);
+            } else {
+                sess.deferred.push(m);
+            }
+        }
+        sess.peer_window -= (end - off) as u64;
         let mut r = Vec::new();
         r.push(MSG_CHANNEL_DATA);
         put_u32(&mut r, chan);
@@ -904,9 +1058,27 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
             }
         },
         _ => {
-            let mut s = String::from(name);
-            s.push_str(": command not found (try 'help')\r\n");
-            channel_write(sess, chan, s.as_bytes());
+            // On the Pi every console command works over SSH too (date,
+            // board, wifi, net, ps, run, lingfu, sd, ...), its output captured.
+            #[cfg(target_arch = "aarch64")]
+            {
+                let full_screen = cmd == "setup" || cmd.starts_with("ling run") || cmd.starts_with("ling demo") || cmd == "sd format" || cmd == "trace";
+                if !full_screen {
+                    crate::console_capture_begin();
+                    crate::rpi_shell_exec(cmd.as_bytes());
+                    let out = crate::console_capture_end().to_vec();
+                    channel_write_text(sess, chan, &out);
+                    return false;
+                }
+                channel_write(sess, chan, b"that command takes over the Pi's screen -- run it on the Pi\r\n");
+                return false;
+            }
+            #[allow(unreachable_code)]
+            {
+                let mut s = String::from(name);
+                s.push_str(": command not found (try 'help')\r\n");
+                channel_write(sess, chan, s.as_bytes());
+            }
         },
     }
     false
@@ -915,6 +1087,21 @@ fn run_cmd(sess: &mut Session, chan: u32, cmd: &str, username: &str, cwd: &mut S
 // ── Boot-time background listener ────────────────────────────────────────────
 
 static mut SSHD_STARTED: bool = false;
+static mut SSHD_ENABLED: bool = true;
+
+/// Turn the server on or off (Settings); off closes the listener on port 22.
+pub fn set_enabled(on: bool) {
+    unsafe { SSHD_ENABLED = on };
+    if on {
+        start();
+    } else {
+        netstack::tcp_unlisten(SSH_PORT);
+    }
+}
+
+pub fn enabled() -> bool {
+    unsafe { SSHD_STARTED && SSHD_ENABLED }
+}
 
 /// Cooperative background task (same model as `pkgman::icon_task`): loop
 /// accepting SSH connections. It does NOT hold the net lock across the session
@@ -929,7 +1116,11 @@ extern "C" fn sshd_task() {
         // 400ms accept window per idle iteration; a real SYN completes the
         // handshake + session inside this call. Errors (incl. "no client") are
         // silent here -- only a real connection logs (see `serve`).
-        let _ = serve(400_000);
+        if unsafe { SSHD_ENABLED } {
+            let _ = serve(400_000);
+        } else {
+            crate::arch::timer::delay_us(2_000);
+        }
         crate::proc::sched::yield_now();
     }
 }
@@ -939,6 +1130,7 @@ extern "C" fn sshd_task() {
 /// main task exists.
 pub fn start() {
     unsafe {
+        SSHD_ENABLED = true;
         if SSHD_STARTED {
             return;
         }

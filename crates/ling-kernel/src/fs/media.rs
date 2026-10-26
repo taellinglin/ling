@@ -12,12 +12,28 @@ use alloc::vec::Vec;
 pub enum Device {
     Usb,
     AtaSlave,
+    /// A FAT partition on the Pi's own SD card (the data partition).
+    SdCard,
 }
 
 struct DevIo(Device);
 
 impl Disk for DevIo {
     fn read(&mut self, lba: u32, buf: &mut [u8]) -> Result<(), ()> {
+        if self.0 == Device::SdCard {
+            #[cfg(target_arch = "aarch64")]
+            {
+                let mut s = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+                for (i, chunk) in buf.chunks_mut(s.len()).enumerate() {
+                    crate::arch::sdcard::read_sector(lba + i as u32, &mut s)?;
+                    let n = chunk.len();
+                    chunk.copy_from_slice(&s[..n]);
+                }
+                return Ok(());
+            }
+            #[allow(unreachable_code)]
+            return Err(());
+        }
         match self.0 {
             Device::Usb => {
                 #[cfg(target_arch = "aarch64")]
@@ -37,10 +53,24 @@ impl Disk for DevIo {
                     Err(())
                 }
             },
+            Device::SdCard => Err(()),
         }
     }
 
     fn write(&mut self, lba: u32, buf: &[u8]) -> Result<(), ()> {
+        if self.0 == Device::SdCard {
+            #[cfg(target_arch = "aarch64")]
+            {
+                let mut s = [0u8; crate::arch::sdcard::SECTOR_SIZE];
+                for (i, chunk) in buf.chunks(s.len()).enumerate() {
+                    s[..chunk.len()].copy_from_slice(chunk);
+                    crate::arch::sdcard::write_sector(lba + i as u32, &s)?;
+                }
+                return Ok(());
+            }
+            #[allow(unreachable_code)]
+            return Err(());
+        }
         match self.0 {
             Device::Usb => {
                 #[cfg(target_arch = "aarch64")]
@@ -60,6 +90,7 @@ impl Disk for DevIo {
                     Err(())
                 }
             },
+            Device::SdCard => Err(()),
         }
     }
 }
@@ -114,6 +145,43 @@ pub fn mount(dev: Device, name: &str) -> Result<String, ()> {
     crate::console_write(format!("media: {label} ({fat}) mounted as media/{name}\n").as_bytes());
     mounts().push(Mount { name: String::from(name), dev, vol });
     Ok(label)
+}
+
+/// Mount the FAT volume that starts at sector `part_lba` of `dev`.
+pub fn mount_part(dev: Device, name: &str, part_lba: u32) -> Result<String, ()> {
+    unmount(dev);
+    let mut io = DevIo(dev);
+    let vol = Volume::mount(&mut io, part_lba).ok_or(())?;
+    let label = if vol.label.is_empty() { String::from(name) } else { vol.label.clone() };
+    let fat = if vol.is_fat32() { "FAT32" } else { "FAT16" };
+    crate::console_write(format!("media: {label} ({fat}) mounted as media/{name}\n").as_bytes());
+    mounts().push(Mount { name: String::from(name), dev, vol });
+    Ok(label)
+}
+
+/// Is a volume mounted under this name?
+pub fn has(name: &str) -> bool {
+    mounts().iter().any(|m| m.name == name)
+}
+
+/// `mkdir -p` on a media path.
+pub fn mkdir_p(path: &str) -> bool {
+    let p = path.trim_matches('/');
+    let Some(rest) = p.strip_prefix("media/") else { return false };
+    let mut parts = rest.split('/');
+    let Some(volname) = parts.next() else { return false };
+    let mut cur = format!("media/{volname}");
+    for seg in parts {
+        if seg.is_empty() {
+            continue;
+        }
+        cur.push('/');
+        cur.push_str(seg);
+        if !is_dir(&cur) && !mkdir(&cur) {
+            return false;
+        }
+    }
+    true
 }
 
 /// Forget a device's volume (it was unplugged). Nothing is written: every

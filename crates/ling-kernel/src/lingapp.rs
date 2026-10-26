@@ -2967,12 +2967,14 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"msg_lines" => list_from(
             crate::drivers::messenger::selected_lines()
                 .iter()
-                .map(|(me, t)| mk_str(&alloc::format!("{}\t{t}", if *me { "me" } else { "them" })))
+                .map(|(me, t)| mk_str(&alloc::format!("{}\t{}", if *me { "me" } else { "them" }, t.replace(['\t', '\n', '\r'], " "))))
                 .collect(),
         ),
         b"msg_connected" => boolean(crate::drivers::messenger::selected_connected()),
         b"msg_submit" => {
-            crate::drivers::messenger::submit(&path_arg(args, 0));
+            // the text as typed (path_arg would turn every backslash into a slash)
+            let text = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            crate::drivers::messenger::submit(&text);
             UNIT
         },
         b"msg_status" => mk_str(crate::drivers::messenger::status()),
@@ -3092,6 +3094,14 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"fs_mkdir" => num(crate::vfs::mkdir(&path_arg(args, 0)) as i32 as f64),
         b"fs_delete" => num(crate::vfs::delete(&path_arg(args, 0)) as i32 as f64),
         b"fs_copy" => num(crate::vfs::copy(&path_arg(args, 0), &path_arg(args, 1)) as i32 as f64),
+        b"os_ssh" => boolean(crate::drivers::sshd::enabled()),
+        b"os_ssh_set" => {
+            let on = args.first().map(|&v| to_f64(v) != 0.0 && v != crate::lingrt::boolean(false)).unwrap_or(false);
+            crate::drivers::sshd::set_enabled(on);
+            #[cfg(target_arch = "aarch64")]
+            crate::setup::set_saved("ssh", if on { "1" } else { "0" });
+            boolean(on)
+        },
         b"fs_move" | b"fs_rename" => num(crate::vfs::rename(&path_arg(args, 0), &path_arg(args, 1)) as i32 as f64),
         b"fs_basename" => mk_str(&crate::vfs::basename(&path_arg(args, 0))),
         b"fs_reveal" => num(0.0),

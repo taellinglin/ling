@@ -646,6 +646,7 @@ pub(crate) fn desktop_boot() {
     crate::lingapp::register_builtin_home("ling");
     arch::rp1::usb_probe();
     storage_boot();
+    crate::setup::mount_data_partition();
     crate::setup::check_password_reset();
     net_boot();
     crate::wifi::boot_autojoin();
@@ -656,7 +657,8 @@ pub(crate) fn desktop_boot() {
     // (so messages arrive with the window closed) and, when the setup wizard
     // enabled it, the SSH server.
     crate::drivers::messenger::start();
-    if crate::setup::saved("ssh") == "1" {
+    // the SSH + SFTP server is on unless switched off in Settings / setup
+    if crate::setup::saved("ssh") != "0" {
         crate::drivers::sshd::start();
     }
 }
@@ -703,7 +705,15 @@ pub(crate) fn storage_boot() {
             fs::lingfs::set_current_user("ling", "ling");
             fs::users::ensure_home("ling");
         },
-        Err(()) => console_write(b"storage: the space after the partitions holds other data -- lingfs not mounted\n"),
+        Err(()) => {
+            if crate::setup::format_requested() && fs::lingfs::format_region(base).is_ok() {
+                console_write(b"storage: formatted lingfs after the partitions (requested in config.txt)\n");
+                fs::lingfs::set_current_user("ling", "ling");
+                fs::users::ensure_home("ling");
+            } else {
+                console_write(b"storage: the space after the partitions holds other data -- lingfs not mounted\n");
+            }
+        },
     }
 }
 
