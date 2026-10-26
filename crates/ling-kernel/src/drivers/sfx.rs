@@ -86,6 +86,14 @@ fn parse_wav(buf: &[u8]) -> Option<(usize, usize, u32, u8, u8)> {
 /// Decode a WAV (PCM 8 / 16 / 24 / 32-bit integer or 32-bit float, mono or
 /// stereo, any rate) into a sample; None if it is not one we can read.
 pub fn load_wav(bytes: &[u8]) -> Option<usize> {
+    // Ogg Vorbis / FLAC: decoded whole (outside the IRQ lock -- it takes a
+    // while), then stored like any WAV
+    if matches!(crate::codec::sniff(bytes), Some("ogg") | Some("flac")) {
+        let (rate, ch, data) = crate::codec::decode(bytes)?;
+        let _irq = crate::mm::IrqLock::acquire();
+        samples().push(Sample { rate, stereo: ch == 2, data });
+        return Some(samples().len() - 1);
+    }
     let _irq = crate::mm::IrqLock::acquire();
     let (off, len, rate, ch, bits) = parse_wav(bytes)?;
     if rate == 0 || !(1..=2).contains(&ch) {

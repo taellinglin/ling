@@ -35,6 +35,7 @@ pub mod mm;
 // entropy (RDRAND / the Pi's RNG) -- the foundation HTTPS/lingtp/fu.ling-lang.org
 // build on.
 pub mod crypto;
+pub mod codec;
 // TLS 1.3 client (HTTPS) built on crypto + netstack.
 pub mod tls;
 pub mod ed25519;
