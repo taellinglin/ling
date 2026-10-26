@@ -86,8 +86,30 @@ pub(crate) fn argon2id(salt: &[u8], password: &[u8]) -> Option<[u8; 32]> {
     let params = Params::new(16 * 1024, 3, 1, Some(32)).ok()?;
     let a = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; 32];
-    a.hash_password_into(password, salt, &mut out).ok()?;
-    Some(out)
+    // The Pi: a permanent 16 MiB workspace. A heap block for it would need
+    // 32 MiB of contiguous memory (the allocator's header pushes 16 MiB to
+    // the next power of two), which a busy desktop may not have -- and a
+    // failed allocation here reads as "wrong password". Hashing never runs
+    // twice at once (it does not yield), so one workspace serves everyone.
+    #[cfg(target_arch = "aarch64")]
+    {
+        static mut WORK: [argon2::Block; 16 * 1024] = [argon2::Block::new(); 16 * 1024];
+        let work = unsafe { &mut *(&raw mut WORK) };
+        a.hash_password_into_with_memory(password, salt, &mut out, &mut work[..]).ok()?;
+        return Some(out);
+    }
+    #[allow(unreachable_code)]
+    {
+        a.hash_password_into(password, salt, &mut out).ok()?;
+        Some(out)
+    }
+}
+
+/// Why the last `verify` said no ("" after a success).
+static mut LAST_VERIFY_ERR: &str = "";
+
+pub fn last_verify_error() -> &'static str {
+    unsafe { LAST_VERIFY_ERR }
 }
 
 /// A salt from the hardware random source (RDRAND / the Pi's RNG), the
@@ -246,8 +268,12 @@ fn load_record(username: &str, out: &mut [u8; BLOCK_SIZE]) -> Option<usize> {
 /// Whether `password` matches the stored (salted) hash for `username`.
 /// `false` if the user doesn't exist or the record is malformed.
 pub fn verify(username: &str, password: &str) -> bool {
+    unsafe { LAST_VERIFY_ERR = "wrong password" };
     let mut buf = [0u8; BLOCK_SIZE];
-    let Some(len) = load_record(username, &mut buf) else { return false };
+    let Some(len) = load_record(username, &mut buf) else {
+        unsafe { LAST_VERIFY_ERR = "no such account" };
+        return false;
+    };
     let record = &buf[..len];
     let Some(salt_hex) = field(record, "salt") else { return false };
     let Some(hash_hex) = field(record, "hash") else { return false };
@@ -260,7 +286,10 @@ pub fn verify(username: &str, password: &str) -> bool {
     let computed = match field(record, "kdf") {
         Some(k) if k == b"argon2id" => match argon2id(&salt[..salt_len], password.as_bytes()) {
             Some(h) => h,
-            None => return false,
+            None => {
+                unsafe { LAST_VERIFY_ERR = "the password check could not get its memory" };
+                return false;
+            },
         },
         _ => {
             if salt_len != SALT_BYTES {
@@ -275,6 +304,9 @@ pub fn verify(username: &str, password: &str) -> bool {
     let mut diff = 0u8;
     for (a, b) in computed.iter().zip(stored.iter()) {
         diff |= a ^ b;
+    }
+    if diff == 0 {
+        unsafe { LAST_VERIFY_ERR = "" };
     }
     diff == 0
 }

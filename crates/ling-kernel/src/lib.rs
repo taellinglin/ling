@@ -696,6 +696,15 @@ pub(crate) fn storage_boot() {
     }
     // 64 MiB of room is the least worth formatting.
     let Some(base) = arch::sdcard::free_region_after_partitions(131_072) else { return };
+    // a new `lingos_format_storage` token in config.txt is a fresh install:
+    // LingOS storage (accounts, keyring, settings) starts empty; the data
+    // partition with the home folders is not touched
+    if crate::setup::format_requested() && fs::lingfs::format_region(base).is_ok() {
+        console_write(b"storage: fresh LingOS storage (requested in config.txt)\n");
+        fs::lingfs::set_current_user("ling", "ling");
+        fs::users::ensure_home("ling");
+        return;
+    }
     match fs::lingfs::mount_region(base) {
         Ok(fresh) => {
             console_write(if fresh { b"storage: formatted lingfs after the partitions (sector " } else { b"storage: lingfs mounted (sector " });
@@ -706,15 +715,7 @@ pub(crate) fn storage_boot() {
             fs::lingfs::set_current_user("ling", "ling");
             fs::users::ensure_home("ling");
         },
-        Err(()) => {
-            if crate::setup::format_requested() && fs::lingfs::format_region(base).is_ok() {
-                console_write(b"storage: formatted lingfs after the partitions (requested in config.txt)\n");
-                fs::lingfs::set_current_user("ling", "ling");
-                fs::users::ensure_home("ling");
-            } else {
-                console_write(b"storage: the space after the partitions holds other data -- lingfs not mounted\n");
-            }
-        },
+        Err(()) => console_write(b"storage: the space after the partitions holds other data -- lingfs not mounted (a new lingos_format_storage token in config.txt formats it)\n"),
     }
 }
 

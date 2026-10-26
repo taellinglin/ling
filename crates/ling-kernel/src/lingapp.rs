@@ -1109,7 +1109,8 @@ fn user_create(name: &str, password: &str) -> bool {
     if !crate::fs::users::create(name, password, "", "", "", "", "users") {
         return false;
     }
-    user_login(name, password)
+    // just created with this password: no second hash needed to sign in
+    user_session(name, password)
 }
 
 /// The home folder name of a bundled app (`Projects/<App>`, `Programs/<App>`).
@@ -1134,6 +1135,11 @@ pub fn with_own_window(body: impl FnOnce()) {
     crate::vfs::restore_scope(scope);
     unsafe {
         core::ptr::write(&raw mut WIN, saved);
+    user_session(name, password)
+}
+
+/// The signed-in part of a login (the password is known to be right).
+fn user_session(name: &str, password: &str) -> bool {
         CURSOR_DOT = dot;
     }
 }
@@ -3102,6 +3108,7 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             crate::setup::set_saved("ssh", if on { "1" } else { "0" });
             boolean(on)
         },
+        b"os_login_error" => mk_str(crate::fs::users::last_verify_error()),
         b"fs_move" | b"fs_rename" => num(crate::vfs::rename(&path_arg(args, 0), &path_arg(args, 1)) as i32 as f64),
         b"fs_basename" => mk_str(&crate::vfs::basename(&path_arg(args, 0))),
         b"fs_reveal" => num(0.0),
