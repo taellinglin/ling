@@ -1499,6 +1499,16 @@ fn selectable_rows() -> Vec<(bool, usize, String)> {
     rows
 }
 
+/// UTF-8 typed into the message being written (from the input method).
+pub fn insert_text(b: &[u8]) {
+    unsafe {
+        if COMPOSE_LEN + b.len() <= COMPOSE_MAX {
+            (&mut *&raw mut COMPOSE)[COMPOSE_LEN..COMPOSE_LEN + b.len()].copy_from_slice(b);
+            COMPOSE_LEN += b.len();
+        }
+    }
+}
+
 pub fn key(k: u8) {
     match k {
         10 => {
@@ -1546,9 +1556,7 @@ pub fn key(k: u8) {
         0x11 => move_selection(-1),
         0x12 => move_selection(1),
         0x08 => unsafe {
-            if COMPOSE_LEN > 0 {
-                COMPOSE_LEN -= 1;
-            }
+            COMPOSE_LEN = crate::drivers::ime::utf8_pop(&(&*&raw const COMPOSE)[..], COMPOSE_LEN);
         },
         0x20..=0x7E => unsafe {
             if COMPOSE_LEN < COMPOSE_MAX {

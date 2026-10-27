@@ -187,6 +187,34 @@ pub fn draw_str(x: u32, y: u32, s: &[u8], fg: u32, bg: u32) {
     for (i, &c) in s.iter().enumerate() {
         draw_char(x + i as u32 * adv, y, c, fg, bg);
     }
+    // UTF-8 (file names, titles, messages in any script): the bytes above drew blank cells; draw
+    // those characters into them from the UI font (see `lingapp::utf8_cells_overlay`)
+    if s.iter().any(|&b| b >= 0x80) {
+        overlay_utf8(x, y, s, adv, 8 * scale(), fg, bg, usize::MAX);
+    }
+}
+
+/// The non-ASCII characters of a UTF-8 line drawn in `cell_w` x `cell_h` byte cells at `(x, y)`,
+/// anti-aliased against `bg`. Callers that draw text a byte at a time (terminal, editor) call this
+/// after their pass; ASCII cells are left as they are.
+pub fn overlay_utf8(x: u32, y: u32, s: &[u8], cell_w: u32, cell_h: u32, fg: u32, bg: u32, max_cells: usize) {
+    crate::lingapp::utf8_cells_overlay(s, cell_w as i32, cell_h as i32, max_cells, |dx, dy, cv| {
+        let (px, py) = (x as i32 + dx, y as i32 + dy);
+        if px < 0 || py < 0 {
+            return;
+        }
+        let c = if cv == 255 { fg } else { mix(bg, fg, cv as u32) };
+        put_pixel(px as u32, py as u32, c);
+    });
+}
+
+/// `a` blended toward `b` by `t`/255, per channel.
+fn mix(a: u32, b: u32, t: u32) -> u32 {
+    let ch = |s: u32| {
+        let (ca, cb) = ((a >> s) & 0xFF, (b >> s) & 0xFF);
+        ((ca * (255 - t) + cb * t) / 255) << s
+    };
+    ch(16) | ch(8) | ch(0)
 }
 
 /// Integer-scaled glyph: each source pixel becomes a `scale`x`scale` block.

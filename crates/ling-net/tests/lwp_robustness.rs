@@ -169,3 +169,23 @@ fn shutdown_closes_event_channel() {
         }
     }
 }
+
+#[test]
+fn peer_shutdown_is_seen_as_disconnect() {
+    let (a, arx) = node(Opts::default());
+    let (b, brx) = node(Opts { listen: false, manual: vec![addr(&a)], ..Opts::default() });
+    let pa = connected(&arx, Duration::from_secs(10)).expect("A connected");
+    let pb = connected(&brx, Duration::from_secs(10)).expect("B connected");
+    let _ = pa;
+    let t = std::time::Instant::now();
+    drop(arx);
+    a.shutdown();
+    eprintln!("A shutdown took {:?}", t.elapsed());
+    let d = wait_for(&brx, Duration::from_secs(15), |e| match e {
+        NetEvent::Disconnected(p) if *p == pb.id => Some(()),
+        _ => None,
+    });
+    eprintln!("B disconnect after {:?}", t.elapsed());
+    assert!(d.is_some(), "B never saw A go away");
+    b.shutdown();
+}

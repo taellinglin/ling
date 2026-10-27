@@ -131,6 +131,26 @@ pub fn draw_utf8_str(x: u32, y: u32, bytes: &[u8], fg: u32, bg: u32, daemon: boo
             }
             continue;
         }
+        // Anything else, from the UI font (DaemonSans: every script) when the image has it; the
+        // baked atlas below is the fallback for images without it.
+        if cp >= 0x80 && !daemon && crate::lingapp::ui_font().is_some() {
+            if let Some(ch) = char::from_u32(cp) {
+                let s = super::font8x8::scale();
+                let cw = 8 * s;
+                let mut tmp = [0u8; 4];
+                let bytes = ch.encode_utf8(&mut tmp).as_bytes();
+                if crate::lingapp::ui_is_mark(ch) {
+                    super::font8x8::overlay_utf8(x + last_base, y, bytes, cw, 8 * s, fg, bg, usize::MAX);
+                    continue;
+                }
+                let cells = if crate::lingapp::wide_char(ch) { 2 } else { 1 };
+                framebuffer::back_fill_rect(x + cursor, y, cells * cw, 8 * s, bg);
+                super::font8x8::overlay_utf8(x + cursor, y, bytes, cw, 8 * s, fg, bg, usize::MAX);
+                last_base = cursor;
+                cursor += cells * cw;
+                continue;
+            }
+        }
         if cp < 0x80 && !daemon {
             super::font8x8::draw_char(x + cursor, y, cp as u8, fg, bg);
             // Honor the DPI font scale so mixed/ASCII strings don't overlap at

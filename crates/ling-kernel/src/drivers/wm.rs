@@ -866,9 +866,7 @@ fn web_key(k: u8) {
                 },
                 0x1B => WEB_EDITING = false,
                 0x08 => {
-                    if WEB_INPUT_LEN > 0 {
-                        WEB_INPUT_LEN -= 1;
-                    }
+                    WEB_INPUT_LEN = utf8_pop(&(&*&raw const WEB_INPUT)[..], WEB_INPUT_LEN);
                 },
                 0x20..=0x7E => {
                     if WEB_INPUT_LEN < WEB_INPUT_MAX {
@@ -927,9 +925,7 @@ fn horizon_key(k: u8) {
                 },
                 0x1B => HZ_EDITING = false,
                 0x08 => {
-                    if HZ_INPUT_LEN > 0 {
-                        HZ_INPUT_LEN -= 1;
-                    }
+                    HZ_INPUT_LEN = utf8_pop(&(&*&raw const HZ_INPUT)[..], HZ_INPUT_LEN);
                 },
                 0x20..=0x7E => {
                     if HZ_INPUT_LEN < HZ_INPUT_MAX {
@@ -2050,6 +2046,93 @@ pub fn key(k: u8) {
     if tray_key(k) {
         return;
     }
+    // Typing in any script (drivers/ime.rs): Ctrl+Space picks the input mode; printable keys go
+    // through it, finished non-ASCII text reaches the window through `key_text`.
+    use crate::drivers::ime;
+    if k == crate::drivers::keyboard::CTRL_SPACE {
+        let mut done = alloc::string::String::new();
+        ime::cycle(&mut done);
+        deliver_text(&done);
+        return;
+    }
+    if ime::active() || !ime::preedit().is_empty() {
+        match k {
+            0x20..=0x7E => {
+                let mut done = alloc::string::String::new();
+                ime::feed(k as char, &mut done);
+                deliver_text(&done);
+                return;
+            },
+            0x08 => {
+                if ime::backspace() {
+                    return;
+                }
+            },
+            _ => {
+                // Enter, Tab, Esc, arrows: what is being composed is finished first
+                let mut done = alloc::string::String::new();
+                ime::flush(&mut done);
+                deliver_text(&done);
+            },
+        }
+    }
+    dispatch_key(k);
+}
+
+/// Text from the input method: ASCII as keys (so shortcuts and line editing behave), the rest
+/// as UTF-8 to the focused window's text.
+fn deliver_text(s: &str) {
+    for ch in s.chars() {
+        if (ch as u32) < 0x80 {
+            dispatch_key(ch as u8);
+        } else {
+            let mut tmp = [0u8; 4];
+            key_text(ch.encode_utf8(&mut tmp));
+        }
+    }
+}
+
+/// UTF-8 text typed into the focused window (anything the 8-bit key path cannot carry: its
+/// bytes 0x80 and up are the Ctrl chords).
+pub fn key_text(s: &str) {
+    let focused_kind = unsafe {
+        if Z_LEN == 0 {
+            return;
+        }
+        windows()[Z[Z_LEN - 1]].kind
+    };
+    let b = s.as_bytes();
+    unsafe {
+        match focused_kind {
+            KIND_TERM => terminal::insert_text(b),
+            KIND_EDIT => editor::insert_text(b),
+            KIND_MESSENGER => messenger::insert_text(b),
+            KIND_WEB => {
+                WEB_EDITING = true;
+                for &x in b {
+                    if WEB_INPUT_LEN < WEB_INPUT_MAX {
+                        (&mut *&raw mut WEB_INPUT)[WEB_INPUT_LEN] = x;
+                        WEB_INPUT_LEN += 1;
+                    }
+                }
+            },
+            KIND_HORIZON => {
+                HZ_EDITING = true;
+                for &x in b {
+                    if HZ_INPUT_LEN < HZ_INPUT_MAX {
+                        (&mut *&raw mut HZ_INPUT)[HZ_INPUT_LEN] = x;
+                        HZ_INPUT_LEN += 1;
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+use crate::drivers::ime::utf8_pop;
+
+fn dispatch_key(k: u8) {
     let focused_kind = unsafe {
         if Z_LEN == 0 {
             return;
@@ -2697,6 +2780,24 @@ pub fn draw_tray(net_up: bool) {
     let accent = theme::color(theme::SLOT_ACCENT);
     let dim = theme::color(theme::SLOT_DIM);
     let text = theme::color(theme::SLOT_TEXT);
+
+    // The input mode (Ctrl+Space cycles it) and what is being composed, left of the speaker.
+    {
+        use crate::drivers::ime;
+        let pe = ime::preedit();
+        if ime::active() || !pe.is_empty() {
+            let mut s = alloc::string::String::from(ime::label());
+            if !pe.is_empty() {
+                s.push(' ');
+                s.push_str(&pe);
+            }
+            let w = s.len() as u32 * font8x8::advance() + 12;
+            let x = (tray_vol_x() as u32).saturating_sub(w + 10);
+            framebuffer::back_fill_rounded_rect(x, 7, w, 18, 4, accent);
+            framebuffer::back_fill_rounded_rect(x + 1, 8, w - 2, 16, 3, panel);
+            font_unicode::draw_utf8_str(x + 6, 11, s.as_bytes(), text, panel, false);
+        }
+    }
 
     // Speaker: box + cone triangle-ish (two rects) + a sound arc dot.
     let vx = tray_vol_x() as u32;

@@ -1825,8 +1825,15 @@ fn decode_report(prev: &[u8; 8], cur: &[u8; 8]) {
             0x52 => b"\x1b[A", // Up
             _ => {
                 if let Some(a) = usage_to_ascii(u, shift) {
-                    // Ctrl+letter → its control code (Ctrl+Q = 0x11), like a terminal.
-                    kq_push(if ctrl && a.is_ascii_alphabetic() { a & 0x1F } else { a });
+                    // Ctrl+letter → its control code (Ctrl+Q = 0x11), like a terminal;
+                    // Ctrl+Space → NUL, as terminals send it (the input-mode switch).
+                    kq_push(if ctrl && a.is_ascii_alphabetic() {
+                        a & 0x1F
+                    } else if ctrl && a == b' ' {
+                        0
+                    } else {
+                        a
+                    });
                 }
                 continue;
             },

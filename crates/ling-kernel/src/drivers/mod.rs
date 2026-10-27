@@ -41,6 +41,7 @@ pub mod font8x8;
 pub mod flags;
 #[cfg(target_arch = "x86_64")]
 pub mod font_unicode;
+pub mod ime;
 #[cfg(target_arch = "x86_64")]
 pub mod gallery;
 

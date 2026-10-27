@@ -56,6 +56,8 @@ static mut WIN: Option<Window> = None;
 static mut GFX_COLOR: u32 = 0xFF_FFFF;
 static mut FRAMES: u64 = 0;
 static mut FONTS: Vec<Font> = Vec::new();
+/// Per font: the font (and size factor) that draws the chars it has no glyph for (`font_fallback`).
+static mut FONT_FB: Vec<Option<(usize, f32)>> = Vec::new();
 
 fn win() -> Option<&'static mut Window> {
     unsafe { (*(&raw mut WIN)).as_mut() }
@@ -410,22 +412,159 @@ fn px_line(a: Arg) {
 /// share big fonts (a CJK face takes seconds to parse on a Pi) instead of
 /// re-parsing them on every launch.
 static mut FONT_PATHS: BTreeMap<String, usize> = BTreeMap::new();
+/// (length, FNV-1a hash) of each loaded font's bytes: the same file under another path or in another
+/// app (every studio app carries the same DaemonSans.ttf) is parsed once and shared.
+static mut FONT_HASHES: BTreeMap<(usize, u64), usize> = BTreeMap::new();
+
+fn fnv64(b: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &x in b {
+        h ^= x as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
 
 fn font_load(path: &str) -> f64 {
     let paths = unsafe { &mut *(&raw mut FONT_PATHS) };
-    if let Some(&i) = paths.get(path) {
+    // keyed by the resolved path: "assets/font.ttf" is a different file in each app
+    let key = crate::vfs::resolve(path);
+    if let Some(&i) = paths.get(&key) {
         return i as f64;
     }
     let Some(bytes) = crate::vfs::read(path) else { return -1.0 };
+    let hashes = unsafe { &mut *(&raw mut FONT_HASHES) };
+    let h = (bytes.len(), fnv64(&bytes));
+    if let Some(&i) = hashes.get(&h) {
+        paths.insert(key, i);
+        return i as f64;
+    }
     match fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
         Ok(fd) => {
             let f = fonts();
             f.push(Font { fd, cache: BTreeMap::new() });
-            paths.insert(String::from(path), f.len() - 1);
+            paths.insert(key, f.len() - 1);
+            hashes.insert(h, f.len() - 1);
             (f.len() - 1) as f64
         },
         Err(_) => -1.0,
     }
+}
+
+// ── Unicode in the kernel's own text (desktop, terminal, editor, 8x8 apps) ──
+// The 8x8 bitmap font only has ASCII. Everything else is drawn from the UI font: DaemonSans.ttf from
+// the image (any app's copy: they are one file) or from storage (system/fonts/DaemonSans.ttf).
+
+static mut UI_FONT: i64 = -2; // -2 = not looked for yet, -1 = none
+
+/// The font index of the UI font, loaded the first time non-ASCII text is drawn.
+pub(crate) fn ui_font() -> Option<usize> {
+    unsafe {
+        if UI_FONT == -2 {
+            UI_FONT = -1;
+            let mut found: Option<String> = None;
+            crate::appfs::each_file(|n| {
+                if found.is_none() && n.ends_with("fonts/DaemonSans.ttf") {
+                    found = Some(String::from(n));
+                }
+            });
+            let mut cands: Vec<String> = Vec::new();
+            if let Some(p) = found {
+                cands.push(p);
+            }
+            cands.push(String::from("system/fonts/DaemonSans.ttf"));
+            cands.push(String::from("fonts/DaemonSans.ttf"));
+            for p in &cands {
+                let id = font_load(p);
+                if id >= 0.0 {
+                    UI_FONT = id as i64;
+                    break;
+                }
+            }
+        }
+        if UI_FONT >= 0 { Some(UI_FONT as usize) } else { None }
+    }
+}
+
+/// Characters that are drawn two cells wide (CJK, Hangul, kana, full-width forms).
+pub(crate) fn wide_char(c: char) -> bool {
+    let u = c as u32;
+    (0x1100..=0x115F).contains(&u)
+        || (0x2E80..=0xA4CF).contains(&u)
+        || (0xAC00..=0xD7A3).contains(&u)
+        || (0xF900..=0xFAFF).contains(&u)
+        || (0xFE30..=0xFE4F).contains(&u)
+        || (0xFF00..=0xFF60).contains(&u)
+        || (0xFFE0..=0xFFE6).contains(&u)
+        || (0x20000..=0x3FFFD).contains(&u)
+}
+
+/// Is `c` a zero-width mark in the UI font (it goes onto the character before it)?
+#[allow(dead_code)]
+pub(crate) fn ui_is_mark(c: char) -> bool {
+    match ui_font() {
+        Some(fid) => fonts()[fid].fd.lookup_glyph_index(c) != 0 && fonts()[fid].fd.metrics(c, 16.0).advance_width < 0.5,
+        None => false,
+    }
+}
+
+/// Draw the non-ASCII characters of a UTF-8 `row` laid out in fixed cells (`cell_w` x `cell_h`
+/// px; byte `k` sits in cell `k`, as the 8x8 code lays text out). A character that takes L bytes
+/// owns L cells and is drawn into the first one, or the first two for wide scripts, so text never
+/// runs past where the byte layout ends; zero-width marks go onto the previous character.
+/// `put(dx, dy, coverage)` paints one pixel relative to the row's top-left; ASCII is left alone.
+/// Returns false when there is no UI font (the caller's ASCII-only drawing stands).
+pub(crate) fn utf8_cells_overlay(row: &[u8], cell_w: i32, cell_h: i32, max_cells: usize, mut put: impl FnMut(i32, i32, u8)) -> bool {
+    if row.iter().all(|&b| b < 0x80) {
+        return true;
+    }
+    let Some(fid) = ui_font() else { return false };
+    let Ok(s) = core::str::from_utf8(row) else {
+        // a cut multi-byte char at the end (a full terminal line): draw what decodes
+        let good = core::str::from_utf8(row).err().map(|e| e.valid_up_to()).unwrap_or(0);
+        return utf8_cells_overlay(&row[..good], cell_w, cell_h, max_cells, put);
+    };
+    let f = &mut fonts()[fid];
+    let mut last_x = 0i32;
+    for (k, c) in s.char_indices() {
+        if (c as u32) < 0x80 || k >= max_cells {
+            continue;
+        }
+        let wide = wide_char(c);
+        let cells = if wide { 2.min(c.len_utf8()) } else { 1 } as i32;
+        // narrow text fits the cell height; wide glyphs need 16 px to stay legible
+        // narrow text at the 8x8 font's letter size (its x-height), wide glyphs at 16 px or more
+        let px = if wide { (cell_h.max(16) as f32) * 0.95 } else { cell_h as f32 * 1.25 };
+        if f.fd.lookup_glyph_index(c) == 0 {
+            continue;
+        }
+        let adv = f.fd.metrics(c, px).advance_width;
+        let gl = f.cache.entry((c, px.to_bits())).or_insert_with(|| {
+            let (m, cov) = f.fd.rasterize(c, px);
+            Glyph { w: m.width, h: m.height, xmin: m.xmin, ymin: m.ymin, cov }
+        });
+        let span = cells * cell_w;
+        let cx = if adv < 0.5 {
+            last_x // a combining mark: onto the character before it
+        } else {
+            k as i32 * cell_w + ((span as f32 - adv) / 2.0).max(0.0) as i32
+        };
+        if adv >= 0.5 {
+            last_x = k as i32 * cell_w + ((span as f32 - adv) / 2.0).max(0.0) as i32;
+        }
+        let baseline = if wide { (cell_h as f32 * 0.78) as i32 + if cell_h < 16 { (16 - cell_h) / 2 } else { 0 } } else { (cell_h as f32 * 0.88) as i32 };
+        let ox = cx + gl.xmin;
+        let oy = baseline - gl.ymin - gl.h as i32;
+        for gy in 0..gl.h {
+            for gx in 0..gl.w {
+                let cv = gl.cov[gy * gl.w + gx];
+                if cv != 0 {
+                    put(ox + gx as i32, oy + gy as i32, cv);
+                }
+            }
+        }
+    }
+    true
 }
 
 fn font(id: f64) -> Option<&'static mut Font> {
@@ -435,9 +574,64 @@ fn font(id: f64) -> Option<&'static mut Font> {
     fonts().get_mut(id as usize)
 }
 
-/// Width of `text` at `px`: the sum of glyph advances (the host's `measure`).
-fn measure(f: &Font, text: &str, px: f32) -> f32 {
-    text.chars().map(|c| f.fd.metrics(c, px).advance_width).sum()
+fn font_fb() -> &'static mut Vec<Option<(usize, f32)>> {
+    unsafe { &mut *(&raw mut FONT_FB) }
+}
+
+/// `font_fallback(primary, fallback [, scale])`: the chars `primary` has no glyph for are drawn
+/// and measured with `fallback` at `scale` times the size; fallback -1 removes it.
+fn font_fallback(id: f64, fb: f64, scale: f64) -> f64 {
+    let n = fonts().len();
+    if id < 0.0 || id as usize >= n {
+        return -1.0;
+    }
+    let fbs = font_fb();
+    if fbs.len() < n {
+        fbs.resize(n, None);
+    }
+    let i = id as usize;
+    fbs[i] = if fb >= 0.0 && (fb as usize) < n && fb as usize != i {
+        Some((fb as usize, if scale > 0.0 { scale as f32 } else { 1.0 }))
+    } else {
+        None
+    };
+    id
+}
+
+/// The font that draws `c` for font `id`, and the size factor: `id` when it has the glyph (or
+/// none down its fallback chain does), else the first fallback that has it.
+fn pick(id: usize, c: char) -> (usize, f32) {
+    let fbs = font_fb();
+    if c.is_whitespace() || c.is_control() || fbs.get(id).map_or(true, |f| f.is_none()) {
+        return (id, 1.0);
+    }
+    let fs = fonts();
+    let (mut cur, mut scale) = (id, 1.0f32);
+    for _ in 0..6 {
+        if fs[cur].fd.lookup_glyph_index(c) != 0 {
+            return (cur, scale);
+        }
+        match fbs.get(cur).copied().flatten() {
+            Some((fb, s)) if fb < fs.len() && fb != cur => {
+                cur = fb;
+                scale *= s;
+            },
+            _ => break,
+        }
+    }
+    (id, 1.0)
+}
+
+/// Width of `text` at `px` for font `id`: the sum of glyph advances (the host's `measure`),
+/// each char measured in the font that draws it.
+fn measure(id: usize, text: &str, px: f32) -> f32 {
+    let fs = fonts();
+    text.chars()
+        .map(|c| {
+            let (fid, s) = pick(id, c);
+            fs[fid].fd.metrics(c, px * s).advance_width
+        })
+        .sum()
 }
 
 fn ascent(f: &Font, px: f32) -> f32 {
@@ -449,6 +643,7 @@ fn px_text(args: &[u64]) {
     let (x, y, px) = (a(1) as f32, a(2) as f32, a(3) as f32);
     let Some(w) = win() else { return };
     let Some(f) = font(a(0)) else { return };
+    let fid0 = a(0) as usize;
     if px <= 0.0 {
         return;
     }
@@ -466,14 +661,18 @@ fn px_text(args: &[u64]) {
     let bw = w.w as i32;
     let mut pen = 0.0f32;
     for c in text.chars() {
-        let adv = f.fd.metrics(c, px).advance_width;
+        // the char's own font: this one, or the fallback that has the glyph
+        let (fid, s) = pick(fid0, c);
+        let gf = &mut fonts()[fid];
+        let gpx = px * s;
+        let adv = gf.fd.metrics(c, gpx).advance_width;
         let gx0 = libm::floorf(x + pen) as i32;
         pen += adv;
         if gx0 > cx1 {
             break;
         }
-        let gl = f.cache.entry((c, px.to_bits())).or_insert_with(|| {
-            let (m, cov) = f.fd.rasterize(c, px);
+        let gl = gf.cache.entry((c, gpx.to_bits())).or_insert_with(|| {
+            let (m, cov) = gf.fd.rasterize(c, gpx);
             Glyph { w: m.width, h: m.height, xmin: m.xmin, ymin: m.ymin, cov }
         });
         let ox = gx0 + gl.xmin;
@@ -505,8 +704,11 @@ fn px_fit(args: &[u64]) -> u64 {
     let a = |i: usize| args.get(i).map(|&v| to_f64(v)).unwrap_or(0.0);
     let text = args.get(3).map(|&v| to_string(v)).unwrap_or_default();
     let (px, maxw) = (a(1) as f32, a(2) as f32);
-    let Some(f) = font(a(0)) else { return mk_str(&text) };
-    if measure(f, &text, px) <= maxw {
+    if font(a(0)).is_none() {
+        return mk_str(&text);
+    }
+    let fid = a(0) as usize;
+    if measure(fid, &text, px) <= maxw {
         return mk_str(&text);
     }
     let chars: Vec<char> = text.chars().collect();
@@ -514,7 +716,7 @@ fn px_fit(args: &[u64]) -> u64 {
     while end > 0 {
         let mut cand: String = chars[..end].iter().collect();
         cand.push_str("..");
-        if measure(f, &cand, px) <= maxw {
+        if measure(fid, &cand, px) <= maxw {
             return mk_str(&cand);
         }
         end -= 1;
@@ -1069,6 +1271,11 @@ fn user_login(name: &str, password: &str) -> bool {
     if !crate::fs::users::verify(name, password) {
         return false;
     }
+    user_session(name, password)
+}
+
+/// The signed-in part of a login (the password is known to be right).
+fn user_session(name: &str, password: &str) -> bool {
     let mut group = [0u8; 32];
     let n = crate::fs::users::group_of(name, &mut group).unwrap_or(0);
     let group = core::str::from_utf8(&group[..n]).unwrap_or("users");
@@ -1159,11 +1366,6 @@ pub fn with_own_window(body: impl FnOnce()) {
     crate::vfs::restore_scope(scope);
     unsafe {
         core::ptr::write(&raw mut WIN, saved);
-    user_session(name, password)
-}
-
-/// The signed-in part of a login (the password is known to be right).
-fn user_session(name: &str, password: &str) -> bool {
         CURSOR_DOT = dot;
     }
 }
@@ -1182,6 +1384,17 @@ fn px_text8(args: &[u64]) {
         None => (0, 0, w.w as i64, w.h as i64),
     };
     let (cx0, cy0, cx1, cy1) = (cx0.max(0), cy0.max(0), cx1.min(w.w as i64), cy1.min(w.h as i64));
+    // non-ASCII: drawn from the UI font into the byte cells (the 8x8 pass below leaves them blank)
+    let (r8, g8, b8) = ((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+    let ww = w.w;
+    let buf = &mut w.buf;
+    utf8_cells_overlay(text.as_bytes(), 8 * sc as i32, 8 * sc as i32, usize::MAX, |dx, dy, cv| {
+        let (x, y) = (x0 + dx as i64, y0 + dy as i64);
+        if x >= cx0 && x < cx1 && y >= cy0 && y < cy1 {
+            let i = y as usize * ww + x as usize;
+            buf[i] = if cv == 255 { color } else { blend(buf[i], r8, g8, b8, cv as f32 / 255.0) };
+        }
+    });
     for (k, ch) in text.bytes().enumerate() {
         let gx = x0 + k as i64 * 8 * sc;
         let rows = crate::drivers::font8x8::glyph(ch);
@@ -1297,8 +1510,16 @@ pub(crate) fn surface() -> Option<(&'static mut [u32], usize, usize)> {
 }
 
 /// A loaded font's face (`font_load` id), for glyph textures.
+#[allow(dead_code)]
 pub(crate) fn font_fd(id: f64) -> Option<&'static fontdue::Font> {
     font(id).map(|f| &f.fd)
+}
+
+/// The face that draws `c` for font `id` (its own, or a `font_fallback` that has the glyph).
+pub(crate) fn font_fd_for(id: f64, c: char) -> Option<&'static fontdue::Font> {
+    font(id)?;
+    let (fid, _) = pick(id as usize, c);
+    fonts().get(fid).map(|f| &f.fd)
 }
 
 fn pack_rgb(r: f64, g: f64, b: f64) -> u32 {
@@ -1831,6 +2052,27 @@ fn present() {
         // Draw the pointer into the frame, blit, then put the pixels back so the
         // app's own buffer is untouched.
         let mut saved: Vec<(usize, u32)> = Vec::new();
+        // The input mode (Ctrl+Space) and what is being composed, bottom right, while not Latin.
+        let pe = crate::drivers::ime::preedit();
+        if crate::drivers::ime::active() || !pe.is_empty() {
+            let mut s = String::from(crate::drivers::ime::label());
+            if !pe.is_empty() {
+                s.push_str("  ");
+                s.push_str(&pe);
+            }
+            let bw = (s.len() as i64 * 8 + 16).min(w.w as i64);
+            let bh = 26i64;
+            let (bx, by) = (w.w as i64 - bw - 10, w.h as i64 - bh - 10);
+            for yy in by.max(0)..(by + bh).min(w.h as i64) {
+                for xx in bx.max(0)..(bx + bw).min(w.w as i64) {
+                    let i = yy as usize * w.w + xx as usize;
+                    saved.push((i, w.buf[i]));
+                    let edge = yy == by || yy == by + bh - 1 || xx == bx || xx == bx + bw - 1;
+                    w.buf[i] = if edge { 0x9A53D6 } else { 0x1B1B1B };
+                }
+            }
+            text8(w, bx + 8, by + 5, 0xF5F5F5, &s);
+        }
         if mx >= 0.0 && my >= 0.0 {
             use crate::drivers::cursor;
             let fill = cursor::fill_color(crate::arch::timer::now_ms());
@@ -1888,6 +2130,7 @@ fn present() {
             match crate::drivers::keyboard::poll_char() {
                 0 => break,
                 0x91 => input.feed(0x11),
+                crate::drivers::keyboard::CTRL_SPACE => crate::drivers::ime::cycle(&mut input.text),
                 // Ctrl+letter chords (keyboard.rs): the letter pressed with
                 // Ctrl held this frame, as apps test with key_down("ctrl").
                 c @ 0x81..=0x9A => {
@@ -1919,6 +2162,11 @@ fn present() {
 /// `key_pressed` on keys that send no bytes, like Super or F-keys).
 struct Input {
     text: String,
+    /// `text_set` was called: `text_poll` works as on the desktop runtime from then on (the whole
+    /// field's text, typing appended and Backspace applied) instead of handing out what was typed
+    /// since the last call. Apps written for the desktop (LingStationX, LingDev) need that.
+    buf_mode: bool,
+    buf: String,
     /// Digits of a `CSI n ~` key sequence being read (F5..F12 over serial).
     esc_num: u32,
     /// `CSI < b ; x ; y M|m` mouse report being read: the three numbers.
@@ -1935,6 +2183,8 @@ struct Input {
 
 static mut INPUT: Input = Input {
     text: String::new(),
+    buf_mode: false,
+    buf: String::new(),
     esc_num: 0,
     esc_args: [0; 3],
     esc_argi: 0,
@@ -2059,20 +2309,28 @@ impl Input {
                 return;
             },
             (_, 0x11) => self.quit = true,
+            // Ctrl+Space (NUL from a terminal or the USB keyboard): the next input mode
+            (_, 0x00) => crate::drivers::ime::cycle(&mut self.text),
             (_, b'\r' | b'\n') => {
+                crate::drivers::ime::flush(&mut self.text);
                 self.pressed.push("enter");
                 self.text.push('\n');
             },
             (_, 0x08 | 0x7F) => {
-                self.pressed.push("backspace");
-                self.text.push('\u{8}');
+                // a step back in a composition (a Hangul jamo, romaji) is the input method's
+                if !crate::drivers::ime::backspace() {
+                    self.pressed.push("backspace");
+                    self.text.push('\u{8}');
+                }
             },
             (_, b'\t') => {
+                crate::drivers::ime::flush(&mut self.text);
                 self.pressed.push("tab");
                 self.text.push('\t'); // in the text stream too: forms move on in order
             },
             (_, 0x20..=0x7E) => {
-                self.text.push(c as char);
+                // typed text in the current input mode (drivers/ime.rs); key names stay the keys
+                crate::drivers::ime::feed(c as char, &mut self.text);
                 if let Some(n) = key_name_of_byte(c) {
                     self.pressed.push(n);
                 }
@@ -2284,6 +2542,16 @@ fn dlg_entries(dir: &str, kind: Dlg, exts: &[String]) -> Vec<(String, bool)> {
 
 /// 8x8 text, unclipped (the dialog ignores the program's clip rectangle).
 fn text8(w: &mut Window, x: i64, y: i64, color: u32, s: &str) {
+    // file names in any script: non-ASCII from the UI font, in the byte cells
+    let (r8, g8, b8) = ((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+    let mut pts: Vec<(i64, i64, u8)> = Vec::new();
+    utf8_cells_overlay(s.as_bytes(), 8, 8, usize::MAX, |dx, dy, cv| pts.push((x + dx as i64, y + dy as i64, cv)));
+    for (px, py, cv) in pts {
+        if px >= 0 && py >= 0 && (px as usize) < w.w && (py as usize) < w.h {
+            let i = py as usize * w.w + px as usize;
+            w.buf[i] = if cv == 255 { color } else { blend(w.buf[i], r8, g8, b8, cv as f32 / 255.0) };
+        }
+    }
     for (k, ch) in s.bytes().enumerate() {
         let gx = x + k as i64 * 8;
         let rows = crate::drivers::font8x8::glyph(ch);
@@ -2538,6 +2806,11 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
     Some(match name {
         // Window.
         b"open_window" => {
+            // each app starts with the kernel's own text_poll meaning until it calls text_set
+            unsafe {
+                (*(&raw mut INPUT)).buf_mode = false;
+                (*(&raw mut INPUT)).buf.clear();
+            }
             open_window(a(0, 800.0), a(1, 600.0));
             UNIT
         },
@@ -2722,8 +2995,9 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"font_load" => num(font_load(&path_arg(args, 0))),
         b"font_width" => {
             let s = args.get(2).map(|&v| to_string(v)).unwrap_or_default();
-            num(font(a(0, -1.0)).map(|f| measure(f, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
+            num(font(a(0, -1.0)).map(|_| measure(a(0, -1.0) as usize, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
         },
+        b"font_fallback" => num(font_fallback(a(0, -1.0), a(1, -1.0), a(2, 1.0))),
 
         // Input: PS/2 (x86) or USB HID (Pi) mouse + keyboard, serial on the Pi.
         b"mouse_x" => num(mouse_state().0),
@@ -2849,8 +3123,35 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"pad_buttons" => num(pad().buttons as f64),
         b"pad_hat" => num(pad().hat as f64),
         b"key_pressed" => boolean(key_pressed(&path_arg(args, 0))),
-        b"text_poll" | b"text_get" => mk_str(&core::mem::take(unsafe { &mut (*(&raw mut INPUT)).text })),
-        b"text_set" => UNIT,
+        b"text_poll" | b"text_get" => {
+            let input = unsafe { &mut *(&raw mut INPUT) };
+            let typed = core::mem::take(&mut input.text);
+            if !input.buf_mode {
+                return Some(mk_str(&typed));
+            }
+            for c in typed.chars() {
+                match c {
+                    '\u{8}' => {
+                        input.buf.pop();
+                    },
+                    '\n' | '\t' => {},
+                    c if !c.is_control() => input.buf.push(c),
+                    _ => {},
+                }
+            }
+            mk_str(&input.buf)
+        },
+        b"text_set" => {
+            let input = unsafe { &mut *(&raw mut INPUT) };
+            input.buf_mode = true;
+            input.buf = args.first().map(|&v| to_string(v)).unwrap_or_default();
+            UNIT
+        },
+        b"text_clear" => {
+            let input = unsafe { &mut *(&raw mut INPUT) };
+            input.buf.clear();
+            UNIT
+        },
 
         // LingOS: the desktop's view of the system.
         b"px_text8" => {
@@ -3051,6 +3352,15 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"os_keyring" => mk_str(&crate::keyring::status()),
+        b"os_ssh" => boolean(crate::drivers::sshd::enabled()),
+        b"os_ssh_set" => {
+            let on = args.first().map(|&v| to_f64(v) != 0.0 && v != crate::lingrt::boolean(false)).unwrap_or(false);
+            crate::drivers::sshd::set_enabled(on);
+            #[cfg(target_arch = "aarch64")]
+            crate::setup::set_saved("ssh", if on { "1" } else { "0" });
+            boolean(on)
+        },
+        b"os_login_error" => mk_str(crate::fs::users::last_verify_error()),
         b"os_user_reset_pending" => boolean(crate::fs::users::reset_pending(&path_arg(args, 0))),
         b"os_user_reset" => {
             let (n, p) = (path_arg(args, 0), path_arg(args, 1));
@@ -3124,15 +3434,6 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"fs_mkdir" => num(crate::vfs::mkdir(&path_arg(args, 0)) as i32 as f64),
         b"fs_delete" => num(crate::vfs::delete(&path_arg(args, 0)) as i32 as f64),
         b"fs_copy" => num(crate::vfs::copy(&path_arg(args, 0), &path_arg(args, 1)) as i32 as f64),
-        b"os_ssh" => boolean(crate::drivers::sshd::enabled()),
-        b"os_ssh_set" => {
-            let on = args.first().map(|&v| to_f64(v) != 0.0 && v != crate::lingrt::boolean(false)).unwrap_or(false);
-            crate::drivers::sshd::set_enabled(on);
-            #[cfg(target_arch = "aarch64")]
-            crate::setup::set_saved("ssh", if on { "1" } else { "0" });
-            boolean(on)
-        },
-        b"os_login_error" => mk_str(crate::fs::users::last_verify_error()),
         b"fs_move" | b"fs_rename" => num(crate::vfs::rename(&path_arg(args, 0), &path_arg(args, 1)) as i32 as f64),
         b"fs_basename" => mk_str(&crate::vfs::basename(&path_arg(args, 0))),
         b"fs_reveal" => num(0.0),

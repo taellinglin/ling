@@ -128,6 +128,32 @@ fn delete_range(lo: usize, hi: usize) {
     }
 }
 
+/// The start of the UTF-8 character before byte `i` (so the cursor never stops inside one).
+fn prev_char(i: usize) -> usize {
+    let b = unsafe { &(&*&raw const BUF)[..] };
+    let mut j = i.saturating_sub(1);
+    while j > 0 && b[j] & 0xC0 == 0x80 {
+        j -= 1;
+    }
+    j
+}
+
+/// The start of the UTF-8 character after the one at byte `i`.
+fn next_char(i: usize) -> usize {
+    let b = unsafe { &(&*&raw const BUF)[..] };
+    let len = unsafe { LEN };
+    let mut j = (i + 1).min(len);
+    while j < len && b[j] & 0xC0 == 0x80 {
+        j += 1;
+    }
+    j
+}
+
+/// UTF-8 typed in (from the input method; the key path only carries ASCII).
+pub fn insert_text(b: &[u8]) {
+    insert_bytes(b);
+}
+
 fn insert_bytes(bytes: &[u8]) {
     unsafe {
         if has_selection() {
@@ -207,7 +233,7 @@ pub fn key(k: u8, shift: bool) {
             kb::CTRL_ZOOM_RESET => zoom_reset(),
             kb::LEFT_ARROW => {
                 if CURSOR > 0 {
-                    CURSOR -= 1;
+                    CURSOR = prev_char(CURSOR);
                 }
                 if !shift {
                     ANCHOR = CURSOR;
@@ -215,7 +241,7 @@ pub fn key(k: u8, shift: bool) {
             },
             kb::RIGHT_ARROW => {
                 if CURSOR < LEN {
-                    CURSOR += 1;
+                    CURSOR = next_char(CURSOR);
                 }
                 if !shift {
                     ANCHOR = CURSOR;
@@ -251,7 +277,7 @@ pub fn key(k: u8, shift: bool) {
                     let (lo, hi) = sel_range();
                     delete_range(lo, hi);
                 } else if CURSOR > 0 {
-                    delete_range(CURSOR - 1, CURSOR);
+                    delete_range(prev_char(CURSOR), CURSOR);
                 }
             },
             b'\n' | b'\r' => insert_bytes(b"\n"),
@@ -440,6 +466,10 @@ fn draw_line(
         font8x8::draw_char_scaled(x + col * gw, ry, c, text, panel, z);
         col += 1;
         i += 1;
+    }
+    // Text in any script: the passes above drew its bytes as blank cells; draw the characters there.
+    if end > start {
+        font8x8::overlay_utf8(x, ry, &b[start..end], gw, 8 * z, text, panel, usize::MAX);
     }
     // Caret.
     if cursor >= start && cursor <= end {

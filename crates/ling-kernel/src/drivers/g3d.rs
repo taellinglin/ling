@@ -2318,7 +2318,7 @@ impl State {
         let fid = n(args, 0, -1.0);
         let ch = args.get(1).map(|&v| to_string(v)).unwrap_or_default().chars().next().unwrap_or(' ');
         let px = pow2((n(args, 2, 256.0) as u32).clamp(16, 1024));
-        let Some(font) = crate::lingapp::font_fd(fid) else { return nums(&[-1.0, 0.0]) };
+        let Some(font) = crate::lingapp::font_fd_for(fid, ch) else { return nums(&[-1.0, 0.0]) };
         // measure at a probe size, then rasterize so the ink spans px / 1.12
         let probe = px as f32 * 0.5;
         let (m0, _) = font.rasterize(ch, probe);

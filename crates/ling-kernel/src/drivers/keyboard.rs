@@ -72,6 +72,8 @@ pub const CTRL_Z: u8 = 0x80 | 26; // undo
 pub const CTRL_ZOOM_IN: u8 = 0xE0; // Ctrl + '='/'+'
 pub const CTRL_ZOOM_OUT: u8 = 0xE1; // Ctrl + '-'
 pub const CTRL_ZOOM_RESET: u8 = 0xE2; // Ctrl + '0'
+/// Ctrl + Space: the next input mode (drivers/ime.rs: accents, Русский, Ελληνικά, 한국어, かな, U+).
+pub const CTRL_SPACE: u8 = 0xE3;
 
 /// Map a scancode pressed while Ctrl is held to its chord byte, or 0 if it
 /// isn't a chord we route (a bare modifier, or a key with no Ctrl meaning).
@@ -87,6 +89,7 @@ fn ctrl_chord(code: u8) -> u8 {
         b'=' | b'+' => CTRL_ZOOM_IN,
         b'-' | b'_' => CTRL_ZOOM_OUT,
         b'0' | b')' => CTRL_ZOOM_RESET,
+        b' ' => CTRL_SPACE,
         _ => 0,
     }
 }

@@ -1198,9 +1198,7 @@ pub fn key(k: u8) {
                 run(core::str::from_utf8(&tmp[..n]).unwrap_or(""));
             },
             0x08 => {
-                if INPUT_LEN > 0 {
-                    INPUT_LEN -= 1;
-                }
+                INPUT_LEN = crate::drivers::ime::utf8_pop(&(&*&raw const INPUT)[..], INPUT_LEN);
             },
             0x20..=0x7E => {
                 if INPUT_LEN < INPUT_MAX {
@@ -1210,6 +1208,17 @@ pub fn key(k: u8) {
             },
             _ => {},
         }
+    }
+}
+
+/// UTF-8 typed into the command line (from the input method; the key path only carries ASCII).
+pub fn insert_text(b: &[u8]) {
+    unsafe {
+        if PW_MODE != 0 || INPUT_LEN + b.len() > INPUT_MAX {
+            return;
+        }
+        (&mut *&raw mut INPUT)[INPUT_LEN..INPUT_LEN + b.len()].copy_from_slice(b);
+        INPUT_LEN += b.len();
     }
 }
 
@@ -1261,6 +1270,8 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         for (ci, &ch) in r.text[..n].iter().enumerate() {
             font8x8::draw_char_scaled(x + ci as u32 * gw, ry, ch, color, panel, z);
         }
+        // output in any script (ls of Unicode names, programs that print UTF-8)
+        font8x8::overlay_utf8(x, ry, &r.text[..n], gw, 8 * z, color, panel, cols);
         ry += gh;
     }
 
@@ -1290,6 +1301,7 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
         for (ci, &ch) in inp[start..].iter().enumerate() {
             font8x8::draw_char_scaled(x + (ci as u32 + 2) * gw, py, ch, txt, panel, z);
         }
+        font8x8::overlay_utf8(x + 2 * gw, py, &inp[start..], gw, 8 * z, txt, panel, cols);
         framebuffer::back_fill_rect(x + (shown as u32 + 2) * gw, py, gw / 4 + 1, gh, accent);
     }
     let _ = input_str;
