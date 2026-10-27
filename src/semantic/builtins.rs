@@ -238,6 +238,7 @@ pub fn is_builtin(name: &str) -> bool {
         "flush_post" => true,
         "post_now" => true,
         "font_advance" => true,
+        "font_fallback" => true,
         "font_glyph_outline" => true,
         "font_load" => true,
         "font_text" => true,

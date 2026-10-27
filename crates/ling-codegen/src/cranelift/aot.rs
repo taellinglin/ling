@@ -791,6 +791,11 @@ impl CraneliftBackend {
         flag_builder.set("is_pic", "true").unwrap();
         flag_builder.set("opt_level", "speed").unwrap();
         flag_builder.set("enable_alias_analysis", "true").unwrap();
+        // Stack probes: a function whose frame is larger than a page (a UI's frame function with hundreds of locals) must touch
+        // its stack a page at a time, or it jumps past the guard page Windows grows the stack with and faults on memory that was
+        // never committed (a release-build segfault on the first call into such a function).
+        flag_builder.set("enable_probestack", "true").unwrap();
+        flag_builder.set("probestack_strategy", "inline").unwrap();
         // LING_AOT_VERIFY=1 turns Cranelift's IR verifier on: invalid IR from the
         // translator then fails the build naming the function, instead of being
         // encoded into instructions that fault at run time on the target.

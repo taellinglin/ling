@@ -1884,6 +1884,9 @@ pub struct Interpreter {
     /// Globals evaluated ONCE at program start (immutable after load).
     /// call_named clones this instead of re-evaluating every global per call.
     global_seed: Env,
+    /// which builtin family (index into `call_named_inner`'s chain, or `ROUTE_MAIN`) answered a name last time: the next call
+    /// goes straight there instead of trying every family's name table first
+    builtin_route: FxHashMap<String, u8>,
     functions: FxHashMap<String, Rc<FnDef>>,
     /// `form` definitions: struct name → ordered field names.
     pub(crate) structs: HashMap<String, Vec<String>>,
@@ -1941,6 +1944,10 @@ pub struct Interpreter {
     /// Loaded vector UI fonts, referenced by handle (index) from `font_load`.
     #[cfg(not(target_arch = "wasm32"))]
     fonts: Vec<ling_graphics::VectorFont>,
+    /// Per font handle: the font (and size factor) that draws the chars it has no glyph for
+    /// (`font_fallback`). Chains are followed a few links deep.
+    #[cfg(not(target_arch = "wasm32"))]
+    font_fallbacks: Vec<Option<(usize, f32)>>,
     /// Loaded raster images (PNG/etc.), referenced by handle (index) from
     /// `image_load` — read pixel-by-pixel via `image_pixel_r/g/b/a`. The
     /// `image` crate is a native-only dependency (see Cargo.toml's
@@ -2099,6 +2106,7 @@ impl Interpreter {
             p2p_state: Default::default(),
             globals: HashMap::new(),
             global_seed: new_env(),
+            builtin_route: FxHashMap::default(),
             functions: FxHashMap::default(),
             structs: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -2135,6 +2143,8 @@ impl Interpreter {
             mic_buffer: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             fonts: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            font_fallbacks: Vec::new(),
             #[cfg(not(target_arch = "wasm32"))]
             images: Vec::new(),
             ui_theme: UiTheme::default(),
@@ -2334,7 +2344,7 @@ impl Interpreter {
             }
             for word in text.split_inclusive(' ') {
                 let wpx = if use_font {
-                    self.fonts[font as usize].measure(word, px)
+                    self.font_measure_fb(font as usize, word, px)
                 } else {
                     ling_ui::holo::text_width(word, px * 0.6, px * 0.24)
                 };
@@ -2967,13 +2977,12 @@ impl Interpreter {
         px: f32,
         text: &str,
     ) -> Vec<Vec<Vec<[f32; 2]>>> {
-        let font = &mut self.fonts[id];
-        let asc = font.ascent();
+        let asc = self.fonts[id].ascent();
         let tol = 0.3 / px;
         let mut pen = 0.0f32;
         let mut glyphs = Vec::new();
         for ch in text.chars() {
-            let go = font.glyph_outline(ch, tol);
+            let go = self.font_glyph_fb(id, ch, tol);
             let mut contours = Vec::with_capacity(go.polylines.len());
             for pl in &go.polylines {
                 let mapped: Vec<[f32; 2]> = pl
@@ -2986,6 +2995,61 @@ impl Interpreter {
             pen += go.advance;
         }
         glyphs
+    }
+
+    /// The font that draws `ch` for handle `id`, and the size factor to draw it at: `id` itself
+    /// when it has the glyph (or nothing has it), else the first font down its `font_fallback`
+    /// chain that does. Blanks and control chars always stay with `id`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn font_for(&mut self, id: usize, ch: char) -> (usize, f32) {
+        if ch.is_whitespace() || ch.is_control() || self.font_fallbacks.get(id).map_or(true, |f| f.is_none()) {
+            return (id, 1.0);
+        }
+        let mut cur = id;
+        let mut scale = 1.0f32;
+        for _ in 0..6 {
+            if self.fonts[cur].has_glyph(ch) {
+                return (cur, scale);
+            }
+            match self.font_fallbacks.get(cur).copied().flatten() {
+                Some((fb, s)) if fb < self.fonts.len() && fb != cur => {
+                    cur = fb;
+                    scale *= s;
+                },
+                _ => break,
+            }
+        }
+        (id, 1.0)
+    }
+
+    /// `ch`'s outline (em units) through the fallback chain, scaled to the primary's em.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn font_glyph_fb(&mut self, id: usize, ch: char, tol_em: f32) -> ling_graphics::GlyphOutline {
+        let (fid, scale) = self.font_for(id, ch);
+        let go = self.fonts[fid].glyph_outline(ch, tol_em / scale.max(0.01));
+        if scale == 1.0 {
+            return go;
+        }
+        ling_graphics::GlyphOutline {
+            polylines: go.polylines.iter().map(|pl| pl.iter().map(|p| [p[0] * scale, p[1] * scale]).collect()).collect(),
+            advance: go.advance * scale,
+        }
+    }
+
+    /// Normalized advance of `ch` through the fallback chain.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn font_advance_fb(&mut self, id: usize, ch: char) -> f32 {
+        let (fid, scale) = self.font_for(id, ch);
+        self.fonts[fid].advance(ch) * scale
+    }
+
+    /// Pixel width of `text` at `px`, every char measured in the font that draws it.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn font_measure_fb(&mut self, id: usize, text: &str, px: f32) -> f32 {
+        if self.font_fallbacks.get(id).map_or(true, |f| f.is_none()) {
+            return self.fonts[id].measure(text, px);
+        }
+        text.chars().map(|c| self.font_advance_fb(id, c)).sum::<f32>() * px
     }
 
     /// Register every item (functions, structs, globals) and evaluate the
@@ -3553,36 +3617,308 @@ impl Interpreter {
             return Ok(v);
         }
 
+        // The builtin families, each with its own name table; a name is tried against them in this order. Every miss is a
+        // walk through a long table, so the family that answered is remembered per name (a builtin in the main table below
+        // skips all of them). A family that answered before but not now falls back to the full walk.
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.daw_builtin(name, &args) {
-            return r;
+        {
+            type Family = fn(&mut Interpreter, &str, &[Value]) -> Option<EvalResult>;
+            const FAMILIES: [Family; 7] = [
+                Interpreter::daw_builtin,
+                Interpreter::threads_builtin,
+                Interpreter::bytes_builtin,
+                Interpreter::lwcrypto_builtin,
+                Interpreter::p2p_builtin,
+                Interpreter::body_builtin,
+                Interpreter::game3d_builtin,
+            ];
+            const ROUTE_MAIN: u8 = FAMILIES.len() as u8;
+            match self.builtin_route.get(name).copied() {
+                Some(ROUTE_MAIN) => {},
+                Some(k) => {
+                    if let Some(r) = FAMILIES[k as usize](self, name, &args) {
+                        return r;
+                    }
+                    self.builtin_route.remove(name);
+                    for f in FAMILIES {
+                        if let Some(r) = f(self, name, &args) {
+                            return r;
+                        }
+                    }
+                },
+                None => {
+                    for (k, f) in FAMILIES.iter().enumerate() {
+                        if let Some(r) = f(self, name, &args) {
+                            self.builtin_route.insert(name.to_string(), k as u8);
+                            return r;
+                        }
+                    }
+                    self.builtin_route.insert(name.to_string(), ROUTE_MAIN);
+                },
+            }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.threads_builtin(name, &args) {
-            return r;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.bytes_builtin(name, &args) {
-            return r;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.lwcrypto_builtin(name, &args) {
-            return r;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.p2p_builtin(name, &args) {
-            return r;
-        }
+        // The builtins a frame calls hundreds of times (slicing and measuring strings, list access): a short table tried
+        // before the main one, whose thousands of names are compared one after another (a late arm cost ~3 us a call).
+        match name {
+            // Parses a string to a number (0 on failure — degrades gracefully,
+            // like the other filesystem/parsing builtins in this file).
+            "to_number" | "转数字" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(s.trim().parse().unwrap_or(0.0)));
+            },
+            // Plain SHA-256 hex — matches the browser's native SubtleCrypto
+            // digest("SHA-256", ...), which is what proof-of-work mining uses
+            // client-side (Web Crypto has no Blake3/SHA-3, so this is the one
+            // hash both sides can compute natively and fast).
+            "sha256_hex" | "SHA256哈希" => {
+                use sha2::Digest;
+                let s = self.arg_str(&args, 0, "");
+                let mut h = sha2::Sha256::new();
+                h.update(s.as_bytes());
+                return Ok(Value::Str(hex_encode(&h.finalize())));
+            },
+            // Parses a hex string (no "0x" prefix) to a number — `to_number`
+            // uses Rust's plain f64 parser, which doesn't understand hex.
+            "hex_to_number" | "十六进制转数字" => {
+                let s = self.arg_str(&args, 0, "");
+                let v = u64::from_str_radix(s.trim(), 16).unwrap_or(0);
+                return Ok(Value::Number(v as f64));
+            },
+            "split" | "str_split" | "แยก" | "جداسازی" | "قسّم" | "פצל" | "تقسیم_کرو" =>
+            {
+                let s = self.arg_str(&args, 0, "");
+                let sep = self.arg_str(&args, 1, "\n");
+                let sep = if sep.is_empty() { "\n".into() } else { sep };
+                let parts: Vec<Value> = s
+                    .split(sep.as_str())
+                    .map(|p| Value::Str(p.to_string()))
+                    .collect();
+                return Ok(Value::List(Rc::new(parts)));
+            },
+            "trim"
+            | "str_trim"
+            | "ตัดช่องว่าง"
+            | "حذف_فاصله"
+            | "اقتطع_الفراغات"
+            | "חתוך_רווחים"
+            | "خالی_جگہ_کاٹو" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.trim().to_string()));
+            },
+            "starts_with"
+            | "str_starts_with"
+            | "เริ่มด้วย"
+            | "شروع_می‌شود_با"
+            | "يبدأ_بـ"
+            | "מתחיל_ב"
+            | "شروع_ہوتا_ہے" => {
+                let s = self.arg_str(&args, 0, "");
+                let prefix = self.arg_str(&args, 1, "");
+                return Ok(Value::Bool(s.starts_with(prefix.as_str())));
+            },
+            "ends_with"
+            | "str_ends_with"
+            | "ลงท้ายด้วย"
+            | "پایان_می‌یابد_با"
+            | "ينتهي_بـ"
+            | "מסתיים_ב"
+            | "ختم_ہوتا_ہے" => {
+                let s = self.arg_str(&args, 0, "");
+                let suffix = self.arg_str(&args, 1, "");
+                return Ok(Value::Bool(s.ends_with(suffix.as_str())));
+            },
+            "str_replace"
+            | "แทนสตริง"
+            | "جایگزینی_رشته"
+            | "استبدل_النص"
+            | "החלף_מחרוזת"
+            | "اسٹرنگ_تبدیل" => {
+                let s = self.arg_str(&args, 0, "");
+                let from = self.arg_str(&args, 1, "");
+                let to = self.arg_str(&args, 2, "");
+                return Ok(Value::Str(s.replace(from.as_str(), to.as_str())));
+            },
+            "str_find"
+            | "หาในสตริง"
+            | "جستجوی_رشته"
+            | "ابحث_في_النص"
+            | "חפש_מחרוזת"
+            | "اسٹرنگ_تلاش" => {
+                let s = self.arg_str(&args, 0, "");
+                let needle = self.arg_str(&args, 1, "");
+                // Return char index (not byte index) for consistency with substr
+                let pos = s
+                    .find(needle.as_str())
+                    .map(|byte_i| s[..byte_i].chars().count() as f64)
+                    .unwrap_or(-1.0);
+                return Ok(Value::Number(pos));
+            },
+            "substr"
+            | "str_slice"
+            | "ส่วนสตริง"
+            | "زیررشته"
+            | "جزء_النص"
+            | "תת_מחרוזת"
+            | "ذیلی_اسٹرنگ" => {
+                let s = self.arg_str(&args, 0, "");
+                let start = self.arg_num(&args, 1, 0.0)? as usize;
+                let len = args
+                    .get(2)
+                    .map(|v| self.to_number(v).unwrap_or(999999.0) as usize)
+                    .unwrap_or_else(|| s.chars().count().saturating_sub(start));
+                let chars: Vec<char> = s.chars().collect();
+                let end = (start + len).min(chars.len());
+                let slice: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
+                return Ok(Value::Str(slice));
+            },
+            "to_str"
+            | "str"
+            | "num_str"
+            | "แปลงสตริง"
+            | "تبدیل_به_رشته"
+            | "حوّل_لنص"
+            | "המר_למחרוזת"
+            | "اسٹرنگ_میں_بدلو" => {
+                let v = args.into_iter().next().unwrap_or(Value::Unit);
+                return Ok(Value::Str(v.to_string()));
+            },
+            "str_repeat"
+            | "ทำซ้ำสตริง"
+            | "تکرار_رشته"
+            | "كرّر_النص"
+            | "חזור_על_מחרוזת"
+            | "اسٹرنگ_دہراؤ" => {
+                let s = self.arg_str(&args, 0, "");
+                let n = self.arg_num(&args, 1, 1.0)? as usize;
+                return Ok(Value::Str(s.repeat(n)));
+            },
+            "str_upper" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.to_uppercase()));
+            },
+            "str_lower" => {
+                let s = self.arg_str(&args, 0, "");
+                return Ok(Value::Str(s.to_lowercase()));
+            },
+            "str_len"
+            | "len"
+            | "ความยาว"
+            | "长度"
+            | "長さ"
+            | "길이"
+            | "طول_رشته"
+            | "طول_النص"
+            | "אורך_מחרוזת"
+            | "اسٹرنگ_لمبائی" => match args.first() {
+                Some(Value::Str(s)) => return Ok(Value::Number(s.chars().count() as f64)),
+                Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
+                _ => return Ok(Value::Number(0.0)),
+            },
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.body_builtin(name, &args) {
-            return r;
-        }
+            // ── FNV-1a hash (deterministic, normalized 0.0–1.0) ──────────────
+            "hash_str" | "แฮช" | "درهم_رشته" | "بصمة_نص" | "גיבוב_מחרוזת" | "اسٹرنگ_ہیش" =>
+            {
+                let s = self.arg_str(&args, 0, "");
+                let mut h: u64 = 14695981039346656037_u64;
+                for b in s.bytes() {
+                    h ^= b as u64;
+                    h = h.wrapping_mul(1099511628211);
+                }
+                return Ok(Value::Number((h & 0xFFFFFF) as f64 / 16777215.0));
+            },
+            "hash_int" | "แฮชจำนวน" | "درهم_عدد" | "بصمة_عدد" | "גיבוב_מספר" | "نمبر_ہیش" =>
+            {
+                let s = self.arg_str(&args, 0, "");
+                let n = self.arg_num(&args, 1, 100.0)? as u64;
+                let mut h: u64 = 14695981039346656037_u64;
+                for b in s.bytes() {
+                    h ^= b as u64;
+                    h = h.wrapping_mul(1099511628211);
+                }
+                return Ok(Value::Number((h % n.max(1)) as f64));
+            },
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(r) = self.game3d_builtin(name, &args) {
-            return r;
+            // ── List utilities ────────────────────────────────────────────────
+            "list_new"
+            | "รายการใหม่"
+            | "新建列表"
+            | "新規リスト"
+            | "새목록"
+            | "فهرست_جدید"
+            | "قائمة_جديدة"
+            | "רשימה_חדשה"
+            | "نئی_فہرست"
+            | "nouvelle_liste"
+            | "neue_liste"
+            | "новый_список" => {
+                return Ok(Value::List(Rc::new(Vec::new())));
+            },
+            "list_push"
+            | "เพิ่มรายการ"
+            | "列表添加"
+            | "リスト追加"
+            | "목록추가"
+            | "افزودن_به_فهرست"
+            | "أضف_للقائمة"
+            | "הוסף_לרשימה"
+            | "فہرست_میں_شامل_کرو"
+            | "ajouter_liste"
+            | "liste_anhängen"
+            | "добавить_в_список" => {
+                let lst = args
+                    .first()
+                    .cloned()
+                    .unwrap_or(Value::List(Rc::new(vec![])));
+                let val = args.get(1).cloned().unwrap_or(Value::Unit);
+                if let Value::List(mut v) = lst {
+                    Rc::make_mut(&mut v).push(val);
+                    return Ok(Value::List(v));
+                }
+                return Ok(Value::List(Rc::new(vec![val])));
+            },
+            "list_get"
+            | "รับรายการ"
+            | "取元素"
+            | "要素取得"
+            | "요소가져오기"
+            | "دریافت_از_فهرست"
+            | "اجلب_من_القائمة"
+            | "קבל_מרשימה"
+            | "فہرست_سے_حاصل_کرو"
+            | "obtenir_liste"
+            | "liste_abrufen"
+            | "получить_из_списка" => {
+                // Borrow the list; clone only the element (was cloning the whole list).
+                let i = self.arg_num(&args, 1, 0.0)? as usize;
+                if let Some(Value::List(v)) = args.first() {
+                    return Ok(v.get(i).cloned().unwrap_or(Value::Str(String::new())));
+                }
+                return Ok(Value::Str(String::new()));
+            },
+            // font_width(handle, px, "string") — pixel width of a string in a loaded font.
+            #[cfg(not(target_arch = "wasm32"))]
+            "font_width"
+            | "ความกว้างฟอนต์"
+            | "字体宽度"
+            | "フォント幅"
+            | "글꼴너비"
+            | "عرض_فونت"
+            | "عرض_الخط"
+            | "רוחב_גופן"
+            | "فونٹ_چوڑائی"
+            | "largeur_police"
+            | "schriftart_breite"
+            | "ширина_шрифта" => {
+                let id = self.arg_num(&args, 0, 0.0)? as i64;
+                let px = self.arg_num(&args, 1, 16.0)? as f32;
+                let s = self.arg_str(&args, 2, "");
+                if id >= 0 && (id as usize) < self.fonts.len() {
+                    return Ok(Value::Number(self.font_measure_fb(id as usize, &s, px) as f64));
+                }
+                return Ok(Value::Number(0.0));
+            },
+            _ => {},
         }
 
         match name {
@@ -3704,6 +4040,22 @@ impl Interpreter {
                     }
                 }
                 return Ok(Value::Unit);
+            },
+            // try(fn [, args...]) -> ok(result) / bad("message"): run a function value and turn a RUNTIME ERROR into a
+            // catchable value instead of killing the isolate. A `return` inside the function is its result, as a normal call.
+            // Used so a long-lived server (the node) survives one bad message. Does not catch a real panic (out of memory,
+            // stack overflow) — only the ordinary runtime errors builtins raise on bad input.
+            "try" | "try_call" => {
+                let f = match args.first() {
+                    Some(v @ Value::Fn(..)) => v.clone(),
+                    _ => return Ok(Value::Err(Box::new(Value::Str("try: first argument must be a function".into())))),
+                };
+                let call_args: Vec<Value> = args.iter().skip(1).cloned().collect();
+                return match self.call_value(f, call_args) {
+                    Ok(v) => Ok(Value::Ok(Box::new(v))),
+                    Err(EvalErr::Runtime(m)) => Ok(Value::Err(Box::new(Value::Str(m)))),
+                    Err(e) => Err(e),
+                };
             },
             // ── Flow::parallel stub ──
             "流水::并行" | "Flow::parallel" => {
@@ -3978,7 +4330,8 @@ impl Interpreter {
                 let x = self.arg_num(&args, 0, 0.0)?;
                 let lo = self.arg_num(&args, 1, 0.0)?;
                 let hi = self.arg_num(&args, 2, 1.0)?;
-                return Ok(Value::Number(x.clamp(lo, hi)));
+                // f64::clamp panics when lo > hi (or either is NaN) and a panic closes the program: take the bounds in order
+                return Ok(Value::Number(if lo <= hi { x.max(lo).min(hi) } else { x.max(hi).min(lo) }));
             },
 
             // ── Constants (also accessible as plain identifiers via lookup) ──
@@ -11578,241 +11931,6 @@ impl Interpreter {
             },
 
             // ── String utilities ──────────────────────────────────────────────
-            // Parses a string to a number (0 on failure — degrades gracefully,
-            // like the other filesystem/parsing builtins in this file).
-            "to_number" | "转数字" => {
-                let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Number(s.trim().parse().unwrap_or(0.0)));
-            },
-            // Plain SHA-256 hex — matches the browser's native SubtleCrypto
-            // digest("SHA-256", ...), which is what proof-of-work mining uses
-            // client-side (Web Crypto has no Blake3/SHA-3, so this is the one
-            // hash both sides can compute natively and fast).
-            "sha256_hex" | "SHA256哈希" => {
-                use sha2::Digest;
-                let s = self.arg_str(&args, 0, "");
-                let mut h = sha2::Sha256::new();
-                h.update(s.as_bytes());
-                return Ok(Value::Str(hex_encode(&h.finalize())));
-            },
-            // Parses a hex string (no "0x" prefix) to a number — `to_number`
-            // uses Rust's plain f64 parser, which doesn't understand hex.
-            "hex_to_number" | "十六进制转数字" => {
-                let s = self.arg_str(&args, 0, "");
-                let v = u64::from_str_radix(s.trim(), 16).unwrap_or(0);
-                return Ok(Value::Number(v as f64));
-            },
-            "split" | "str_split" | "แยก" | "جداسازی" | "قسّم" | "פצל" | "تقسیم_کرو" =>
-            {
-                let s = self.arg_str(&args, 0, "");
-                let sep = self.arg_str(&args, 1, "\n");
-                let sep = if sep.is_empty() { "\n".into() } else { sep };
-                let parts: Vec<Value> = s
-                    .split(sep.as_str())
-                    .map(|p| Value::Str(p.to_string()))
-                    .collect();
-                return Ok(Value::List(Rc::new(parts)));
-            },
-            "trim"
-            | "str_trim"
-            | "ตัดช่องว่าง"
-            | "حذف_فاصله"
-            | "اقتطع_الفراغات"
-            | "חתוך_רווחים"
-            | "خالی_جگہ_کاٹو" => {
-                let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(s.trim().to_string()));
-            },
-            "starts_with"
-            | "str_starts_with"
-            | "เริ่มด้วย"
-            | "شروع_می‌شود_با"
-            | "يبدأ_بـ"
-            | "מתחיל_ב"
-            | "شروع_ہوتا_ہے" => {
-                let s = self.arg_str(&args, 0, "");
-                let prefix = self.arg_str(&args, 1, "");
-                return Ok(Value::Bool(s.starts_with(prefix.as_str())));
-            },
-            "ends_with"
-            | "str_ends_with"
-            | "ลงท้ายด้วย"
-            | "پایان_می‌یابد_با"
-            | "ينتهي_بـ"
-            | "מסתיים_ב"
-            | "ختم_ہوتا_ہے" => {
-                let s = self.arg_str(&args, 0, "");
-                let suffix = self.arg_str(&args, 1, "");
-                return Ok(Value::Bool(s.ends_with(suffix.as_str())));
-            },
-            "str_replace"
-            | "แทนสตริง"
-            | "جایگزینی_رشته"
-            | "استبدل_النص"
-            | "החלף_מחרוזת"
-            | "اسٹرنگ_تبدیل" => {
-                let s = self.arg_str(&args, 0, "");
-                let from = self.arg_str(&args, 1, "");
-                let to = self.arg_str(&args, 2, "");
-                return Ok(Value::Str(s.replace(from.as_str(), to.as_str())));
-            },
-            "str_find"
-            | "หาในสตริง"
-            | "جستجوی_رشته"
-            | "ابحث_في_النص"
-            | "חפש_מחרוזת"
-            | "اسٹرنگ_تلاش" => {
-                let s = self.arg_str(&args, 0, "");
-                let needle = self.arg_str(&args, 1, "");
-                // Return char index (not byte index) for consistency with substr
-                let pos = s
-                    .find(needle.as_str())
-                    .map(|byte_i| s[..byte_i].chars().count() as f64)
-                    .unwrap_or(-1.0);
-                return Ok(Value::Number(pos));
-            },
-            "substr"
-            | "str_slice"
-            | "ส่วนสตริง"
-            | "زیررشته"
-            | "جزء_النص"
-            | "תת_מחרוזת"
-            | "ذیلی_اسٹرنگ" => {
-                let s = self.arg_str(&args, 0, "");
-                let start = self.arg_num(&args, 1, 0.0)? as usize;
-                let len = args
-                    .get(2)
-                    .map(|v| self.to_number(v).unwrap_or(999999.0) as usize)
-                    .unwrap_or_else(|| s.chars().count().saturating_sub(start));
-                let chars: Vec<char> = s.chars().collect();
-                let end = (start + len).min(chars.len());
-                let slice: String = chars.get(start..end).unwrap_or(&[]).iter().collect();
-                return Ok(Value::Str(slice));
-            },
-            "to_str"
-            | "str"
-            | "num_str"
-            | "แปลงสตริง"
-            | "تبدیل_به_رشته"
-            | "حوّل_لنص"
-            | "המר_למחרוזת"
-            | "اسٹرنگ_میں_بدلو" => {
-                let v = args.into_iter().next().unwrap_or(Value::Unit);
-                return Ok(Value::Str(v.to_string()));
-            },
-            "str_repeat"
-            | "ทำซ้ำสตริง"
-            | "تکرار_رشته"
-            | "كرّر_النص"
-            | "חזור_על_מחרוזת"
-            | "اسٹرنگ_دہراؤ" => {
-                let s = self.arg_str(&args, 0, "");
-                let n = self.arg_num(&args, 1, 1.0)? as usize;
-                return Ok(Value::Str(s.repeat(n)));
-            },
-            "str_upper" => {
-                let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(s.to_uppercase()));
-            },
-            "str_lower" => {
-                let s = self.arg_str(&args, 0, "");
-                return Ok(Value::Str(s.to_lowercase()));
-            },
-            "str_len"
-            | "len"
-            | "ความยาว"
-            | "长度"
-            | "長さ"
-            | "길이"
-            | "طول_رشته"
-            | "طول_النص"
-            | "אורך_מחרוזת"
-            | "اسٹرنگ_لمبائی" => match args.first() {
-                Some(Value::Str(s)) => return Ok(Value::Number(s.chars().count() as f64)),
-                Some(Value::List(v)) => return Ok(Value::Number(v.len() as f64)),
-                _ => return Ok(Value::Number(0.0)),
-            },
-
-            // ── FNV-1a hash (deterministic, normalized 0.0–1.0) ──────────────
-            "hash_str" | "แฮช" | "درهم_رشته" | "بصمة_نص" | "גיבוב_מחרוזת" | "اسٹرنگ_ہیش" =>
-            {
-                let s = self.arg_str(&args, 0, "");
-                let mut h: u64 = 14695981039346656037_u64;
-                for b in s.bytes() {
-                    h ^= b as u64;
-                    h = h.wrapping_mul(1099511628211);
-                }
-                return Ok(Value::Number((h & 0xFFFFFF) as f64 / 16777215.0));
-            },
-            "hash_int" | "แฮชจำนวน" | "درهم_عدد" | "بصمة_عدد" | "גיבוב_מספר" | "نمبر_ہیش" =>
-            {
-                let s = self.arg_str(&args, 0, "");
-                let n = self.arg_num(&args, 1, 100.0)? as u64;
-                let mut h: u64 = 14695981039346656037_u64;
-                for b in s.bytes() {
-                    h ^= b as u64;
-                    h = h.wrapping_mul(1099511628211);
-                }
-                return Ok(Value::Number((h % n.max(1)) as f64));
-            },
-
-            // ── List utilities ────────────────────────────────────────────────
-            "list_new"
-            | "รายการใหม่"
-            | "新建列表"
-            | "新規リスト"
-            | "새목록"
-            | "فهرست_جدید"
-            | "قائمة_جديدة"
-            | "רשימה_חדשה"
-            | "نئی_فہرست"
-            | "nouvelle_liste"
-            | "neue_liste"
-            | "новый_список" => {
-                return Ok(Value::List(Rc::new(Vec::new())));
-            },
-            "list_push"
-            | "เพิ่มรายการ"
-            | "列表添加"
-            | "リスト追加"
-            | "목록추가"
-            | "افزودن_به_فهرست"
-            | "أضف_للقائمة"
-            | "הוסף_לרשימה"
-            | "فہرست_میں_شامل_کرو"
-            | "ajouter_liste"
-            | "liste_anhängen"
-            | "добавить_в_список" => {
-                let lst = args
-                    .first()
-                    .cloned()
-                    .unwrap_or(Value::List(Rc::new(vec![])));
-                let val = args.get(1).cloned().unwrap_or(Value::Unit);
-                if let Value::List(mut v) = lst {
-                    Rc::make_mut(&mut v).push(val);
-                    return Ok(Value::List(v));
-                }
-                return Ok(Value::List(Rc::new(vec![val])));
-            },
-            "list_get"
-            | "รับรายการ"
-            | "取元素"
-            | "要素取得"
-            | "요소가져오기"
-            | "دریافت_از_فهرست"
-            | "اجلب_من_القائمة"
-            | "קבל_מרשימה"
-            | "فہرست_سے_حاصل_کرو"
-            | "obtenir_liste"
-            | "liste_abrufen"
-            | "получить_из_списка" => {
-                // Borrow the list; clone only the element (was cloning the whole list).
-                let i = self.arg_num(&args, 1, 0.0)? as usize;
-                if let Some(Value::List(v)) = args.first() {
-                    return Ok(v.get(i).cloned().unwrap_or(Value::Str(String::new())));
-                }
-                return Ok(Value::Str(String::new()));
-            },
             // list_max(numbers, default) / list_min(numbers, default) — `default`
             // is returned for an empty list (there's no numeric identity element
             // to fall back to otherwise).
@@ -14456,12 +14574,11 @@ impl Interpreter {
                 let fill_rows = self.arg_num(&args, 12, 0.0)? as i32;
                 if id >= 0 && (id as usize) < self.fonts.len() && size > 0.0 {
                     // Build world-space polylines: world = C + (pen+ex)*size*U + ey*size*V
-                    let font = &mut self.fonts[id as usize];
-                    let asc = font.ascent();
+                    let asc = self.fonts[id as usize].ascent();
                     let mut pen = 0.0f32;
                     let mut lines: Vec<[f32; 6]> = Vec::new();
                     for ch in s.chars() {
-                        let go = font.glyph_outline(ch, 0.01);
+                        let go = self.font_glyph_fb(id as usize, ch, 0.01);
                         let map = |p: [f32; 2], pen: f32| {
                             let a = pen + p[0];
                             let b = p[1] - asc; // shift so the top of the cap sits near C
@@ -14575,27 +14692,33 @@ impl Interpreter {
             | "текст_шрифт_3d" => {
                 return Ok(Value::Unit);
             },
-            // font_width(handle, px, "string") — pixel width of a string in a loaded font.
+            // font_fallback(primary, fallback [, scale]) — chars `primary` has no glyph for are drawn
+            // and measured with `fallback` (e.g. a wide-coverage Unicode font behind a UI font),
+            // at `scale` times its size (to match the two fonts' cap heights); fallback -1 removes
+            // it. Used by px_text, px_fit, font_width, font_text*, font_advance, font_glyph_outline
+            // and tm_glyph. Returns the primary handle.
             #[cfg(not(target_arch = "wasm32"))]
-            "font_width"
-            | "ความกว้างฟอนต์"
-            | "字体宽度"
-            | "フォント幅"
-            | "글꼴너비"
-            | "عرض_فونت"
-            | "عرض_الخط"
-            | "רוחב_גופן"
-            | "فونٹ_چوڑائی"
-            | "largeur_police"
-            | "schriftart_breite"
-            | "ширина_шрифта" => {
-                let id = self.arg_num(&args, 0, 0.0)? as i64;
-                let px = self.arg_num(&args, 1, 16.0)? as f32;
-                let s = self.arg_str(&args, 2, "");
-                if id >= 0 && (id as usize) < self.fonts.len() {
-                    return Ok(Value::Number(self.fonts[id as usize].measure(&s, px) as f64));
+            "font_fallback" | "字体后备" | "フォント代替" | "글꼴대체" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let fb = self.arg_num(&args, 1, -1.0)? as i64;
+                let scale = self.arg_num(&args, 2, 1.0)? as f32;
+                if id < 0 || id as usize >= self.fonts.len() {
+                    return Ok(Value::Number(-1.0));
                 }
-                return Ok(Value::Number(0.0));
+                let id = id as usize;
+                if self.font_fallbacks.len() < self.fonts.len() {
+                    self.font_fallbacks.resize(self.fonts.len(), None);
+                }
+                self.font_fallbacks[id] = if fb >= 0 && (fb as usize) < self.fonts.len() && fb as usize != id {
+                    Some((fb as usize, if scale > 0.0 { scale } else { 1.0 }))
+                } else {
+                    None
+                };
+                return Ok(Value::Number(id as f64));
+            },
+            #[cfg(target_arch = "wasm32")]
+            "font_fallback" | "字体后备" | "フォント代替" | "글꼴대체" => {
+                return Ok(Value::Number(self.arg_num(&args, 0, -1.0)?));
             },
             #[cfg(target_arch = "wasm32")]
             "font_width"
@@ -14632,7 +14755,7 @@ impl Interpreter {
                 let tol = self.arg_num(&args, 2, 0.01)? as f32;
                 let ch = s.chars().next().unwrap_or(' ');
                 if id >= 0 && (id as usize) < self.fonts.len() {
-                    let go = self.fonts[id as usize].glyph_outline(ch, tol.max(1e-4));
+                    let go = self.font_glyph_fb(id as usize, ch, tol.max(1e-4));
                     let mut contours: Vec<Value> = Vec::with_capacity(go.polylines.len());
                     for pl in &go.polylines {
                         let mut flat: Vec<Value> = Vec::with_capacity(pl.len() * 2);
@@ -14675,7 +14798,7 @@ impl Interpreter {
                 let s = self.arg_str(&args, 1, "");
                 let ch = s.chars().next().unwrap_or(' ');
                 if id >= 0 && (id as usize) < self.fonts.len() {
-                    return Ok(Value::Number(self.fonts[id as usize].advance(ch) as f64));
+                    return Ok(Value::Number(self.font_advance_fb(id as usize, ch) as f64));
                 }
                 return Ok(Value::Number(0.0));
             },

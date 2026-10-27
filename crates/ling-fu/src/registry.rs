@@ -332,11 +332,64 @@ fn upload_bar_style() -> ProgressStyle {
 /// project root is the only way to keep something (an oversized local-only
 /// asset, a keyfile that ended up sitting in the project directory) out of
 /// an uploaded package short of physically moving it first.
-fn build_tarball(dir: &Path) -> Result<(tempfile::NamedTempFile, u64)> {
+/// Patterns from the project's `.gitignore`, in `ling.ignore`'s form: a leading `/` dropped (so an anchored pattern
+/// is matched at any depth: over-excluding is the safe side for a publish), negations skipped.
+fn gitignore_patterns(dir: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(dir.join(".gitignore")) else { return Vec::new() };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('!'))
+        .map(|l| l.trim_start_matches('/').to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// A file that looks like a private key or a credential: never published unless asked for by name.
+fn looks_secret(rel: &str) -> bool {
+    let base = rel.rsplit('/').next().unwrap_or(rel).to_ascii_lowercase();
+    let ext = base.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    matches!(ext, "key" | "pem" | "p12" | "pfx" | "jks" | "keystore")
+        || base.starts_with("id_rsa")
+        || base.starts_with("id_ed25519")
+        || base.starts_with("node_identity")
+        || base == "credentials.toml"
+        || base == ".env"
+        || rel.split('/').any(|seg| seg == ".lingfu" || seg == ".ssh")
+}
+
+fn build_tarball(dir: &Path, allow_secrets: bool) -> Result<(tempfile::NamedTempFile, u64)> {
     use flate2::Compression;
     use flate2::write::GzEncoder;
 
-    let ignore_patterns = crate::ignore::load(dir);
+    // what is never published: `ling.ignore`, and the project's `.gitignore` too (a file kept out of the repo is
+    // almost always kept out for a reason: keys, local state, build output)
+    let mut ignore_patterns = crate::ignore::load(dir);
+    ignore_patterns.extend(gitignore_patterns(dir));
+    // fail closed on anything that looks like a secret and is not ignored
+    if !allow_secrets {
+        let found: Vec<String> = walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy();
+                if matches!(name.as_ref(), ".git" | ".ling-build" | "target" | ".ling-shared-target" | "dist") {
+                    return false;
+                }
+                let Ok(rel) = e.path().strip_prefix(dir) else { return true };
+                let rel = rel.to_string_lossy().replace('\\', "/");
+                rel.is_empty() || !crate::ignore::is_ignored(&ignore_patterns, &rel)
+            })
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.path().strip_prefix(dir).ok().map(|r| r.to_string_lossy().replace('\\', "/")))
+            .filter(|rel| looks_secret(rel))
+            .collect();
+        if !found.is_empty() {
+            bail!(
+                "refusing to publish files that look like keys or credentials:\n  {}\nadd them to ling.ignore, or pass --include-secrets if they really are meant to be public",
+                found.join("\n  ")
+            );
+        }
+    }
     let tmp = tempfile::NamedTempFile::new().context("creating temp file for package artifact")?;
     let gz = GzEncoder::new(tmp, Compression::default());
     let mut tar = tar::Builder::new(gz);
@@ -457,7 +510,8 @@ pub fn publish(args: &[String]) -> Result<()> {
     let extra = manifest_extra(&manifest);
     let readme = read_readme(&root);
 
-    let (mut tarball_file, tarball_size) = build_tarball(&root)?;
+    let allow_secrets = args.iter().any(|a| a == "--include-secrets");
+    let (mut tarball_file, tarball_size) = build_tarball(&root, allow_secrets)?;
     let mut magic = [0u8; 2];
     tarball_file
         .read_exact(&mut magic)
@@ -718,6 +772,30 @@ pub fn install(name: &str) -> Result<InstallResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publish_refuses_keys_unless_ignored_or_asked() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        std::fs::write(p.join("Ling.toml"), "[spirit]\nname = \"x\"\nversion = \"1.0.0\"\n").unwrap();
+        std::fs::create_dir_all(p.join("keys")).unwrap();
+        std::fs::write(p.join("keys/authority.key"), [7u8; 32]).unwrap();
+        std::fs::write(p.join("main.ling"), "bind start = do { println(1) }\n").unwrap();
+        // a stray key: refused, and the error names it
+        let err = build_tarball(p, false).err().expect("refused").to_string();
+        assert!(err.contains("keys/authority.key"), "{err}");
+        // kept out of the repo by .gitignore: no longer packed, so no refusal
+        std::fs::write(p.join(".gitignore"), "/keys\n").unwrap();
+        assert!(build_tarball(p, false).is_ok());
+        // the same through ling.ignore
+        std::fs::remove_file(p.join(".gitignore")).unwrap();
+        std::fs::write(p.join("ling.ignore"), "keys/\n").unwrap();
+        assert!(build_tarball(p, false).is_ok());
+        // or asked for by name
+        std::fs::remove_file(p.join("ling.ignore")).unwrap();
+        assert!(build_tarball(p, true).is_ok());
+        assert!(looks_secret("a/b/node_identity.hex") && looks_secret(".lingfu/credentials.toml") && !looks_secret("ling/seeds.lwseeds"));
+    }
 
     #[test]
     fn quotes_cjk_table_header() {

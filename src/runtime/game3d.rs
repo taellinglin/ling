@@ -1088,7 +1088,7 @@ impl Interpreter {
                 if fid < 0.0 || fid as usize >= self.fonts.len() {
                     return Ok(nums(&[-1.0, 0.0]));
                 }
-                let go = self.fonts[fid as usize].glyph_outline(ch, 0.002);
+                let go = self.font_glyph_fb(fid as usize, ch, 0.002);
                 let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
                 for pl in &go.polylines {
                     for p in pl {

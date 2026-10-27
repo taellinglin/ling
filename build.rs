@@ -28,6 +28,17 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/ling.ico");
     println!("cargo:rerun-if-changed=ling.ico");
     embed_default_icon(&["assets/ling.ico", "ling.ico"]);
+
+    // A program runs on the main thread (windows and their event loops must live there), and Windows gives that thread only
+    // 1 MB of stack (Linux: 8 MB). The JIT's calls into the runtime's builtin dispatch use deep, wide frames in an optimized
+    // build, and a UI's frame function overflowed it; give the main thread the same room isolates get (threads.rs).
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+            Ok("msvc") => println!("cargo:rustc-link-arg-bins=/STACK:33554432"),
+            Ok("gnu") => println!("cargo:rustc-link-arg-bins=-Wl,--stack,33554432"),
+            _ => {},
+        }
+    }
 }
 
 /// Embed the first existing icon in `candidates` (relative to this crate) as the

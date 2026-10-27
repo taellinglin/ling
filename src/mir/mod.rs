@@ -771,8 +771,21 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
                     },
                     parser::ast::Pattern::Constructor(_, _)
                     | parser::ast::Pattern::Variant(_, _) => {
-                        // Constructor / variant patterns are handled by the tree-walker;
-                        // in MIR they fall through to the next arm.
+                        // `ok(v)` / `bad(e)` / `Circle(r)`: every check of the (possibly nested) pattern branches to `next` on a
+                        // miss; the names are bound only once all of them pass
+                        let next = ctx.new_block();
+                        let mut binds: Vec<(String, Local)> = vec![];
+                        lower_pattern_checks(&arm.pattern, scrut_local, ctx, next, &mut binds);
+                        for (name, from) in binds {
+                            let bound = ctx.bind_local(&name);
+                            ctx.emit(StatementKind::Assign(bound, Rvalue::Use(Operand::Copy(from))));
+                        }
+                        let v = lower_expr(&arm.body, ctx);
+                        ctx.emit(StatementKind::Assign(result, Rvalue::Use(v)));
+                        if !ctx.term_is_set() {
+                            ctx.set_term(TerminatorKind::Goto { target: merge });
+                        }
+                        ctx.switch(next);
                     },
                 }
             }
@@ -809,6 +822,71 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
         },
 
         parser::ast::Expr::Await(_) => Operand::Constant(Constant::None),
+    }
+}
+
+/// A call to a runtime helper (resolved by the JIT's builtin dispatcher) into a fresh local.
+fn helper_call(name: &str, args: Vec<Operand>, ctx: &mut LowerCtx) -> Local {
+    let local = ctx.alloc_local(None, false);
+    ctx.emit(StatementKind::Assign(
+        local,
+        Rvalue::Call { func: Operand::Constant(Constant::Function(name.to_string())), args },
+    ));
+    local
+}
+
+/// Continue in a new block when `cond` holds, else jump to `fail`.
+fn branch_unless(cond: Operand, fail: BasicBlockId, ctx: &mut LowerCtx) {
+    let cmp = ctx.alloc_local(None, false);
+    ctx.emit(StatementKind::Assign(
+        cmp,
+        Rvalue::BinaryOp(ling_ast::ast::BinOp::Eq, cond, Operand::Constant(Constant::Bool(true))),
+    ));
+    let cont = ctx.new_block();
+    ctx.set_term(TerminatorKind::SwitchInt { discr: Operand::Copy(cmp), targets: vec![(1, cont)], otherwise: fail });
+    ctx.switch(cont);
+}
+
+/// The checks of a match pattern against `val`: constructor (`ok` / `bad`) and variant patterns ask the runtime
+/// (`__ling_pat_test` / `__ling_pat_part`, the interpreter's own matching rules) whether the value has that shape and for
+/// its parts; literals compare; names are collected into `binds` for the caller to bind after every check passed.
+fn lower_pattern_checks(
+    pat: &parser::ast::Pattern,
+    val: Local,
+    ctx: &mut LowerCtx,
+    fail: BasicBlockId,
+    binds: &mut Vec<(String, Local)>,
+) {
+    use parser::ast::Pattern;
+    let s = |x: &str| Operand::Constant(Constant::Str(x.to_string()));
+    match pat {
+        Pattern::Wildcard => {},
+        Pattern::Ident(name) => binds.push((name.clone(), val)),
+        Pattern::Str(_) | Pattern::Number(_) | Pattern::Bool(_) => {
+            let cmp = ctx.alloc_local(None, false);
+            ctx.emit(StatementKind::Assign(
+                cmp,
+                Rvalue::BinaryOp(ling_ast::ast::BinOp::Eq, Operand::Copy(val), pattern_to_operand(pat)),
+            ));
+            branch_unless(Operand::Copy(cmp), fail, ctx);
+        },
+        Pattern::Constructor(name, inner) => {
+            let arity = if inner.is_some() { 1.0 } else { 0.0 };
+            let t = helper_call("__ling_pat_test", vec![Operand::Copy(val), s("c"), s(name), f64_const(arity)], ctx);
+            branch_unless(Operand::Copy(t), fail, ctx);
+            if let Some(p) = inner {
+                let part = helper_call("__ling_pat_part", vec![Operand::Copy(val), s("c"), s(name), f64_const(0.0)], ctx);
+                lower_pattern_checks(p, part, ctx, fail, binds);
+            }
+        },
+        Pattern::Variant(name, subs) => {
+            let t = helper_call("__ling_pat_test", vec![Operand::Copy(val), s("v"), s(name), f64_const(subs.len() as f64)], ctx);
+            branch_unless(Operand::Copy(t), fail, ctx);
+            for (i, p) in subs.iter().enumerate() {
+                let part = helper_call("__ling_pat_part", vec![Operand::Copy(val), s("v"), s(name), f64_const(i as f64)], ctx);
+                lower_pattern_checks(p, part, ctx, fail, binds);
+            }
+        },
     }
 }
 

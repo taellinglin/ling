@@ -241,6 +241,11 @@ impl JitBackend {
         flag_builder.set("opt_level", "speed").unwrap();
         flag_builder.set("enable_alias_analysis", "true").unwrap();
         flag_builder.set("enable_verifier", "false").unwrap();
+        // Stack probes: a function whose frame is larger than a page (a UI's frame function with hundreds of locals) must touch
+        // its stack a page at a time, or it jumps past the guard page Windows grows the stack with and faults on memory that was
+        // never committed (a release-build segfault on the first call into such a function).
+        flag_builder.set("enable_probestack", "true").unwrap();
+        flag_builder.set("probestack_strategy", "inline").unwrap();
 
         let isa_builder = cranelift_native::builder()
             .unwrap_or_else(|msg| panic!("host architecture not supported: {msg}"));

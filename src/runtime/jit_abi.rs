@@ -51,6 +51,9 @@ const TAG_KIND_STRING: u64 = 0x0003_0000_0000_0000;
 const TAG_KIND_LIST: u64 = 0x0004_0000_0000_0000;
 const TAG_KIND_OK: u64 = 0x0008_0000_0000_0000;
 const TAG_KIND_ERR: u64 = 0x0009_0000_0000_0000;
+/// any other `Value` (a `form` record, a `choose` variant, a closure) carried whole as a boxed `Value`, so it survives a trip
+/// through JIT code into a builtin and back instead of turning into unit
+const TAG_KIND_BOXED: u64 = 0x000A_0000_0000_0000;
 
 #[inline]
 fn is_number(val: u64) -> bool {
@@ -114,6 +117,14 @@ pub fn decode_value(val: u64) -> Value {
                     Value::Err(Box::new(inner.clone()))
                 }
             },
+            TAG_KIND_BOXED => {
+                let ptr = decode_ptr(val);
+                if ptr.is_null() {
+                    Value::Unit
+                } else {
+                    unsafe { &*(ptr as *const Value) }.clone()
+                }
+            },
             _ => Value::Unit,
         }
     }
@@ -149,9 +160,10 @@ pub fn encode_value(val: &Value) -> u64 {
             let ptr = Box::into_raw(Box::new((**inner).clone())) as *const u8;
             TAG_PATTERN | TAG_KIND_ERR | (ptr as u64 & PTR_MASK)
         },
-        Value::Fn(_, _, _) => TAG_UNIT,
-        Value::Struct { name: _, fields: _ } => TAG_UNIT,
-        Value::Variant { .. } => TAG_UNIT,
+        Value::Fn(..) | Value::Struct { .. } | Value::Variant { .. } => {
+            let ptr = Box::into_raw(Box::new(val.clone())) as *const u8;
+            TAG_PATTERN | TAG_KIND_BOXED | (ptr as u64 & PTR_MASK)
+        },
     }
 }
 
@@ -170,7 +182,49 @@ pub unsafe extern "C" fn ling_builtin(
     let args_slice = std::slice::from_raw_parts(args_ptr, args_len);
 
     with_interp(|interp| {
-        let args: Vec<Value> = args_slice.iter().map(|&a| decode_value(a)).collect();
+        // a global read (MIR's `__ling_global("NAME")`, every use of a top-level `bind` in a function): straight from the
+        // globals, not through the whole builtin dispatch
+        if name == "__ling_global" && args_slice.len() == 1 {
+            if let Value::Str(g) = decode_value(args_slice[0]) {
+                return interp.global_seed.get(g.as_str()).map(encode_value).unwrap_or(TAG_UNIT);
+            }
+        }
+        let mut args: Vec<Value> = args_slice.iter().map(|&a| decode_value(a)).collect();
+        // match patterns MIR compiles (`ok(v)`, `bad(e)`, `Circle(r)`): (value, "c" constructor / "v" variant, name, arity / index)
+        if name == "__ling_pat_test" || name == "__ling_pat_part" {
+            use crate::parser::ast::Pattern;
+            let get = |i: usize| args.get(i).cloned().unwrap_or(Value::Unit);
+            let (val, kind, ctor, n) = (get(0), get(1), get(2), get(3));
+            let (Value::Str(kind), Value::Str(ctor)) = (kind, ctor) else { return TAG_UNIT };
+            let n = if let Value::Number(x) = n { x.max(0.0) as usize } else { 0 };
+            if name == "__ling_pat_test" {
+                let pat = if kind == "c" {
+                    Pattern::Constructor(ctor, (n > 0).then(|| Box::new(Pattern::Wildcard)))
+                } else {
+                    Pattern::Variant(ctor, vec![Pattern::Wildcard; n])
+                };
+                return if interp.match_pattern(&pat, &val).is_some() { TAG_TRUE } else { TAG_FALSE };
+            }
+            let part = match (kind.as_str(), &val) {
+                (_, Value::Ok(v)) | (_, Value::Err(v)) => v.as_ref().clone(),
+                ("v", Value::Variant { payload, .. }) => payload.get(n).cloned().unwrap_or(Value::Unit),
+                // `ok(v)` also matches a plain value: the value itself
+                ("c", v) => v.clone(),
+                _ => Value::Unit,
+            };
+            return encode_value(&part);
+        }
+        // MIR lowers `recv.method(args)` (and a field read `recv.field`) to a call of "recv.method" with the receiver first;
+        // unless a function really has that name, it is a method / field call, dispatched as the tree-walker does
+        if let Some((_, method)) = name.rsplit_once('.') {
+            if !args.is_empty() && !interp.functions.contains_key(name) {
+                let recv = args.remove(0);
+                return match interp.call_method(recv, method, args) {
+                    Ok(val) => encode_value(&val),
+                    Err(_) => TAG_UNIT,
+                };
+            }
+        }
         let env = rustc_hash::FxHashMap::default();
         match interp.call_named(name, args, &env) {
             Ok(val) => encode_value(&val),

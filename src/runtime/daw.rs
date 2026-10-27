@@ -187,6 +187,12 @@ impl Interpreter {
                 self.gstore.insert(key, Value::List(Rc::new(vec![])));
                 ok(Value::Unit)
             }
+            // st_del(key) — remove a key from the store, so a long-lived program (the node, per connected peer)
+            // does not grow the store without bound. Returns 1 if the key was present, 0 otherwise.
+            "st_del" => {
+                let had = self.gstore.remove(&key).is_some();
+                ok(Value::Number(had as i32 as f64))
+            }
             _ => None,
         }
     }
@@ -700,15 +706,15 @@ impl Interpreter {
                 if id < 0 || id as usize >= self.fonts.len() {
                     return Some(Ok(Value::Str(text)));
                 }
-                let f = &mut self.fonts[id as usize];
-                if f.measure(&text, px) <= maxw {
+                let fid = id as usize;
+                if self.font_measure_fb(fid, &text, px) <= maxw {
                     return Some(Ok(Value::Str(text)));
                 }
                 let chars: Vec<char> = text.chars().collect();
                 let mut end = chars.len();
                 while end > 0 {
                     let cand: String = chars[..end].iter().collect::<String>() + "..";
-                    if f.measure(&cand, px) <= maxw {
+                    if self.font_measure_fb(fid, &cand, px) <= maxw {
                         return Some(Ok(Value::Str(cand)));
                     }
                     end -= 1;

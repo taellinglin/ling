@@ -428,6 +428,8 @@ impl Interpreter {
             // caller's string buffer is unreachable from here. Wiping it in
             // place needs an env-level hook in mod.rs (see report).
             "wipe" => Ok(Value::Unit),
+            "sys_idle_secs" => Ok(Value::Number(sys::idle_secs())),
+            "sys_on_battery" => Ok(Value::Bool(sys::on_battery())),
             _ => return None,
         };
         Some(r)
@@ -456,6 +458,76 @@ impl Interpreter {
             Ok(()) => ok_val(Value::Unit),
             Err(e) => bad_val(&format!("write failed: {}", e.kind())),
         })
+    }
+}
+
+/// Host idle / power queries for the wallet's background miner (it mines only
+/// while the user is idle and the machine is on mains power).
+mod sys {
+    #[cfg(windows)]
+    mod ffi {
+        #[repr(C)]
+        pub struct LastInputInfo {
+            pub cb_size: u32,
+            pub dw_time: u32,
+        }
+        #[repr(C)]
+        pub struct SystemPowerStatus {
+            pub ac_line_status: u8,
+            pub battery_flag: u8,
+            pub battery_life_percent: u8,
+            pub system_status_flag: u8,
+            pub battery_life_time: u32,
+            pub battery_full_life_time: u32,
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            pub fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            pub fn GetTickCount() -> u32;
+            pub fn GetSystemPowerStatus(status: *mut SystemPowerStatus) -> i32;
+        }
+    }
+
+    /// Seconds since the last system-wide keyboard/mouse input. Windows:
+    /// `GetTickCount() − GetLastInputInfo().dwTime` (wrapping, so the 49.7-day
+    /// tick rollover is harmless). Elsewhere / on failure: 1e9 ("idle").
+    pub fn idle_secs() -> f64 {
+        #[cfg(windows)]
+        {
+            let mut lii =
+                ffi::LastInputInfo { cb_size: std::mem::size_of::<ffi::LastInputInfo>() as u32, dw_time: 0 };
+            // SAFETY: `lii` is a properly sized, initialized LASTINPUTINFO.
+            if unsafe { ffi::GetLastInputInfo(&mut lii) } != 0 {
+                // SAFETY: no arguments, no preconditions.
+                let now = unsafe { ffi::GetTickCount() };
+                return now.wrapping_sub(lii.dw_time) as f64 / 1000.0;
+            }
+        }
+        1e9
+    }
+
+    /// True iff running on battery. Windows: `ACLineStatus == 0` (1 = mains,
+    /// 255 = unknown → false). Elsewhere / on failure: false.
+    pub fn on_battery() -> bool {
+        #[cfg(windows)]
+        {
+            let mut s = ffi::SystemPowerStatus {
+                ac_line_status: 255,
+                battery_flag: 0,
+                battery_life_percent: 0,
+                system_status_flag: 0,
+                battery_life_time: 0,
+                battery_full_life_time: 0,
+            };
+            // SAFETY: `s` is a properly sized SYSTEM_POWER_STATUS.
+            if unsafe { ffi::GetSystemPowerStatus(&mut s) } != 0 {
+                return s.ac_line_status == 0;
+            }
+        }
+        false
     }
 }
 

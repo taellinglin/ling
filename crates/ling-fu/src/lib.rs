@@ -1197,6 +1197,16 @@ fn run_aot_build(
 
 // ─── cmd_run ─────────────────────────────────────────────────────────────────
 
+/// The entry file a manifest declares: `entry` in its `[spirit]` (or `[package]`) table, `None` when it names none.
+fn manifest_entry(manifest: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let doc: toml::Value = toml::from_str(&text).ok()?;
+    ["spirit", "package"]
+        .iter()
+        .find_map(|t| doc.get(t)?.get("entry")?.as_str().map(str::to_string))
+        .filter(|e| !e.trim().is_empty())
+}
+
 fn cmd_run(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
     if let Some(manifest) = find_manifest() {
         let slang = lang_from_manifest(&manifest);
@@ -1204,8 +1214,10 @@ fn cmd_run(args: &[String], lang: &InvocationLanguage) -> anyhow::Result<()> {
         let root = manifest.parent().unwrap_or(std::path::Path::new("."));
         let src_dir = root.join(dirs.src);
 
-        // Try entry file candidates in order
+        // Try entry file candidates in order: the manifest's own `entry` (e.g. `[spirit] entry = "ling/main.ling"`) first
+        let declared = manifest_entry(&manifest).map(|e| root.join(e));
         let entry_candidates = [
+            declared.unwrap_or_default(),
             src_dir.join(dirs.entry),
             root.join(dirs.entry),
             src_dir.join("main.ling"),

@@ -223,6 +223,9 @@ pub struct VectorFont {
     /// béziers is the per-call cost; caching it makes repeated per-frame draws of
     /// the same glyphs (UI text, glyph rings, …) effectively free.
     outline_cache: HashMap<(char, u32), GlyphOutline>,
+    /// Whether the font maps each char to a real glyph (filled lazily by `has_glyph`). Kept apart
+    /// from `glyphs` and the disk cache, which store a missing char as an empty 0.5 em glyph.
+    coverage: HashMap<char, bool>,
 }
 
 impl VectorFont {
@@ -262,6 +265,7 @@ impl VectorFont {
             cache_dir,
             glyphs: HashMap::new(),
             outline_cache: HashMap::new(),
+            coverage: HashMap::new(),
         })
     }
 
@@ -337,6 +341,16 @@ impl VectorFont {
             .collect();
 
         Glyph { contours, advance }
+    }
+
+    /// Does the font have a glyph of its own for `ch`? (Used by the runtime's font fallback.)
+    pub fn has_glyph(&mut self, ch: char) -> bool {
+        if let Some(&b) = self.coverage.get(&ch) {
+            return b;
+        }
+        let b = ttf_parser::Face::parse(&self.bytes, 0).map(|f| f.glyph_index(ch).is_some()).unwrap_or(false);
+        self.coverage.insert(ch, b);
+        b
     }
 
     /// Normalized advance width of `ch`.
