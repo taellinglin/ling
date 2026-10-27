@@ -1083,23 +1083,42 @@ fn user_login(name: &str, password: &str) -> bool {
 /// Sign in while a password reset is pending: the old password still works
 /// (and cancels the reset); anything else becomes the new password.
 fn user_reset(name: &str, password: &str) -> bool {
-    if !crate::fs::users::reset_pending(name) || password.chars().count() < 4 {
+    use crate::fs::users;
+    if password.chars().count() < 4 {
+        users::set_last_error("the new password needs at least 4 characters");
         return false;
+    }
+    if !crate::fs::lingfs::is_mounted() {
+        users::set_last_error("the account storage is not mounted");
+        return false;
+    }
+    if !users::reset_pending(name) {
+        return user_login(name, password);
     }
     let all = users_list();
     if !all.iter().any(|u| u == name) {
-        return false;
+        // a reset for an account that is not on this card: make it with this password
+        if !user_create(name, password) {
+            users::set_last_error("could not create the account (storage write failed)");
+            return false;
+        }
+        return true;
     }
-    if !crate::fs::users::verify(name, password) {
-        if !crate::fs::users::set_password(name, password) {
+    if !users::verify(name, password) {
+        if !users::set_password(name, password) {
+            users::set_last_error("could not save the new password (storage write failed)");
             return false;
         }
         crate::console_write(b"users: new password set for ");
         crate::console_write(name.as_bytes());
         crate::console_write(b" (reset from the boot partition)\n");
     }
-    crate::fs::users::clear_reset(name, &all);
-    user_login(name, password)
+    users::clear_reset(name, &all);
+    if !user_login(name, password) {
+        users::set_last_error("the new password was saved but did not check out -- try signing in with it");
+        return false;
+    }
+    true
 }
 
 fn user_create(name: &str, password: &str) -> bool {
@@ -1108,6 +1127,11 @@ fn user_create(name: &str, password: &str) -> bool {
     }
     if !crate::fs::users::create(name, password, "", "", "", "", "users") {
         return false;
+    }
+    // a pending reset never covers an account that just chose its password
+    if crate::fs::users::reset_pending(name) {
+        let all = users_list();
+        crate::fs::users::clear_reset(name, &all);
     }
     // just created with this password: no second hash needed to sign in
     user_session(name, password)

@@ -112,6 +112,11 @@ pub fn last_verify_error() -> &'static str {
     unsafe { LAST_VERIFY_ERR }
 }
 
+/// Say why a sign-in step failed (shown on the sign-in screen).
+pub fn set_last_error(why: &'static str) {
+    unsafe { LAST_VERIFY_ERR = why };
+}
+
 /// A salt from the hardware random source (RDRAND / the Pi's RNG), the
 /// timer-derived ticks only when there is none.
 pub(crate) fn fresh_salt(out: &mut [u8]) {

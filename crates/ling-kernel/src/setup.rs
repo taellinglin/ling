@@ -532,8 +532,13 @@ pub(crate) fn check_password_reset() {
             Some((_, u)) if !u.trim().is_empty() => u.trim(),
             _ => "*",
         };
-        crate::fs::users::mark_reset(who);
         let _ = crate::fs::lingfs::write_file_any("password_reset_token", v.as_bytes());
+        // a freshly formatted card has no accounts to reset: just remember the token
+        let mut name = [0u8; 64];
+        if crate::fs::lingfs::list_entry("users", 0, &mut name).is_none() {
+            return;
+        }
+        crate::fs::users::mark_reset(who);
         crate::console_write(b"users: password reset requested in config.txt for ");
         crate::console_write(if who == "*" { b"every account" } else { who.as_bytes() });
         crate::console_write(b" -- the sign-in screen asks for a new password\n");
