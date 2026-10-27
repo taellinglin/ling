@@ -100,7 +100,12 @@ pub fn parse_phrase(text: &str, lang: Lang) -> Vec<String> {
     split_phrase(text)
         .into_iter()
         .map(|(tied, syl)| {
-            let ipa: Vec<String> = syl.iter().map(|s| to_ipa(s, lang)).filter(|s| !s.is_empty()).collect();
+            // an English word on its own (no hand hyphens): as the dictionary says it, all its syllables on this note
+            let dict = if syl.len() == 1 && lang == Lang::Auto && detect(&syl[0]) == Lang::Latin { crate::cmudict::lookup(&syl[0]) } else { None };
+            let ipa: Vec<String> = match dict {
+                Some(v) => v,
+                None => syl.iter().map(|s| to_ipa(s, lang)).filter(|s| !s.is_empty()).collect(),
+            };
             let mut s = String::new();
             if tied || ipa.is_empty() {
                 s.push('~');

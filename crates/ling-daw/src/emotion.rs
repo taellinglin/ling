@@ -58,6 +58,13 @@ const LEXICON: &[(&str, f32, f32)] = &[
     ("hurt", -0.6, 0.2), ("die", -0.7, 0.2), ("empty", -0.6, -0.3), ("sorry", -0.4, -0.2), ("quiet", -0.1, -0.4), ("sleep", 0.0, -0.5),
 ];
 
+/// one word's pull on (valence, arousal) when it is a feeling word ("tears", "alive" ...); the singer leans on these
+pub fn word_feel(word: &str) -> Option<(f32, f32)> {
+    let w = word.to_lowercase();
+    let w = w.trim_matches(|c: char| !c.is_alphabetic());
+    LEXICON.iter().find(|(k, _, _)| *k == w || (w.len() > 4 && w.starts_with(k))).map(|(_, v, a)| (*v, *a))
+}
+
 /// the lyrics of a section as (valence, arousal) leanings, -0.4 .. 0.4 each
 pub fn lyric_lean(text: &str) -> (f32, f32) {
     let t = text.to_lowercase();
@@ -277,9 +284,67 @@ pub fn apply_model(p: &mut EmotionPlan, sections: &[Section], reply: &str) {
     p.notes.push("the model shaped the sections".into());
 }
 
+// ── what the feeling decides in the arrangement (movements, builds, breaths) ────────────────────────────────
+
+/// Is `tag` a section where the music lets go (a break, a bridge, an interlude)?
+pub fn is_release_tag(tag: &str) -> bool {
+    kind(tag) == "bridge"
+}
+
+/// How long the silence before a drop / chorus is, in beats, for the feel of the section that builds: a held tension is let to hang
+/// (two beats, half a bar), a lighter one gets a beat, and a calm one only an eighth-note breath.
+pub fn gap_beats(f: &Feel) -> f64 {
+    if f.tension >= 0.7 {
+        2.0
+    } else if f.tension >= 0.45 {
+        1.0
+    } else {
+        0.5
+    }
+}
+
+/// Where a build's roll speeds up, as the shares of the build at which it moves 1/4 > 1/8 > 1/16 > 1/32: an even climb when the
+/// tension is low, a long wait and a hard last stretch when the tension is high.
+pub fn roll_stages(f: &Feel) -> [f64; 3] {
+    let t = f.tension.clamp(0.0, 1.0) as f64;
+    [0.38 + 0.12 * t, 0.66 + 0.1 * t, 0.86 + 0.06 * t]
+}
+
+/// How many of a break's bars breathe (pads alone) before a groove may return: a calm break breathes the whole way, a tense one
+/// only part of it.
+pub fn breath_bars(f: &Feel, bars: u32) -> u32 {
+    let share = (1.0 - 0.5 * f.tension as f64 - 0.3 * f.arousal as f64).clamp(0.4, 1.0);
+    ((bars as f64 * share).round() as u32).clamp(1, bars.max(1))
+}
+
+/// A movement of pads (drums out, sustained chords) instead of a half-time groove: when the feeling is soft and the tension is let go.
+pub fn wants_pads(f: &Feel) -> bool {
+    f.arousal < 0.5 && f.tension < 0.62
+}
+
+/// The key lift of a final movement in semitones: a bright, high-arousal ending goes up a whole step, the rest a half step.
+pub fn lift_semitones(f: &Feel) -> u8 {
+    if f.valence > 0.15 && f.arousal > 0.7 {
+        2
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn the_tension_shapes_the_build_and_the_breath() {
+        let f = |tension: f32, arousal: f32, valence: f32| Feel { valence, arousal, tension, vocal: 0.5, breath: 0.3, space: 0.5 };
+        assert!(gap_beats(&f(0.8, 0.5, 0.0)) > gap_beats(&f(0.2, 0.5, 0.0)));
+        let (a, b) = (roll_stages(&f(0.1, 0.5, 0.0)), roll_stages(&f(0.9, 0.5, 0.0)));
+        assert!(a[0] < a[1] && a[1] < a[2] && b[0] > a[0] && b[2] > a[2]);
+        assert!(breath_bars(&f(0.1, 0.2, 0.0), 8) > breath_bars(&f(0.9, 0.9, 0.0), 8));
+        assert!(wants_pads(&f(0.3, 0.3, 0.0)) && !wants_pads(&f(0.8, 0.8, 0.0)));
+        assert_eq!(lift_semitones(&f(0.3, 0.9, 0.5)), 2);
+        assert_eq!(lift_semitones(&f(0.3, 0.4, -0.5)), 1);
+    }
     fn secs() -> Vec<Section> {
         [("intro", 0.2), ("verse", 0.45), ("pre", 0.6), ("chorus", 0.9), ("verse", 0.5), ("chorus", 0.95), ("bridge", 0.4), ("chorus", 1.0), ("outro", 0.3)]
             .iter()

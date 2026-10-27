@@ -16,6 +16,26 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 const MIN_LEN: f64 = 0.03;
+
+/// `v` within [lo, hi]; when the bounds cross (a neighbour closer than the minimum length) the lower bound wins. f64::clamp would panic,
+/// and a panic closes the whole app.
+fn clamp_ok(v: f64, lo: f64, hi: f64) -> f64 {
+    v.max(lo).min(hi.max(lo))
+}
+
+#[cfg(test)]
+mod clamp_tests {
+    use super::clamp_ok;
+
+    #[test]
+    fn crossing_bounds_do_not_panic() {
+        assert_eq!(clamp_ok(0.5, 0.0, 1.0), 0.5);
+        assert_eq!(clamp_ok(2.0, 0.0, 1.0), 1.0);
+        // min 0.05 > max 0.04: the case that closed the app
+        assert_eq!(clamp_ok(0.045, 0.05, 0.039_999_999_999_954_52), 0.05);
+        assert_eq!(clamp_ok(f64::MAX, 0.0, f64::MAX), f64::MAX);
+    }
+}
 /// renders of one vocal kept on disk and in memory (so undo can step back through them)
 const KEEP_RENDERS: usize = 8;
 
@@ -427,9 +447,9 @@ impl Daw {
                         let next_on = e.blobs.get(i + 1).map(|b| b.dst_on).unwrap_or(f64::MAX);
                         let b = &mut e.blobs[i];
                         if key == "on" {
-                            b.dst_on = v.clamp(prev_end, b.dst_off - MIN_LEN);
+                            b.dst_on = clamp_ok(v, prev_end, b.dst_off - MIN_LEN);
                         } else {
-                            b.dst_off = v.clamp(b.dst_on + MIN_LEN, next_on);
+                            b.dst_off = clamp_ok(v, b.dst_on + MIN_LEN, next_on);
                         }
                     }
                     _ => ok!(false),

@@ -462,6 +462,184 @@ impl Daw {
                 self.status = format!("Voice skin: converting with {model_name} ...");
                 ok!(true)
             }
+            "daw_singer_start" => {
+                // (track, MRVC folder, voice model name, singing model folder, gpu) -> true when started. Ling Singer: the track's notes
+                // and their IPA lyrics become a score that tools/singer/sing.py sings (the singing model -> HuBERT features -> the RVC
+                // voice); the result lands on a new audio track at the first note, as a Voice Skin of a MIDI part does (daw_rvc_poll)
+                let t = a.u(0);
+                if job().lock().unwrap_or_else(|p| p.into_inner()).is_some() {
+                    self.status = "Ling Singer: a voice job is already running".into();
+                    ok!(false)
+                }
+                let abs = |p: PathBuf| if p.is_absolute() { p } else { std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p) };
+                let mrvc = abs(PathBuf::from(a.s(1)));
+                let name = a.s(2);
+                let singer = abs(PathBuf::from(a.s(3)));
+                let model = mrvc.join("weights").join(format!("{name}.pth"));
+                if !model.is_file() || !singer.join("singer.pt").is_file() {
+                    self.status = format!("Ling Singer: not trained yet (needs {} and {})", model.display(), singer.join("singer.pt").display());
+                    ok!(false)
+                }
+                let script = abs(PathBuf::from("tools/singer/sing.py"));
+                if !script.is_file() {
+                    self.status = "Ling Singer: tools/singer/sing.py is missing".into();
+                    ok!(false)
+                }
+                let py = rvc_python(&mrvc).unwrap_or_else(|| PathBuf::from("python"));
+                // the score: every note of the track (absolute beats), relative to the first one
+                let (notes, first, bpm, tname) = {
+                    let en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    let Some(tr) = en.project.tracks.get(t) else { ok!(false) };
+                    let mut v: Vec<(f64, f64, u8, f32, String)> = vec![];
+                    for c in &tr.clips {
+                        if let ClipData::Midi(ns) = &c.data {
+                            for n in ns.iter().filter(|n| n.start < c.len) {
+                                v.push((c.start + n.start, n.len.min(c.len - n.start), n.key, n.vel, n.lyric.clone()));
+                            }
+                        }
+                    }
+                    let first = v.iter().map(|x| x.0).fold(f64::MAX, f64::min);
+                    (v, first, en.project.bpm, tr.name.clone())
+                };
+                if notes.is_empty() {
+                    self.status = "Ling Singer: the track has no notes".into();
+                    ok!(false)
+                }
+                let score = serde_json::json!({
+                    "bpm": bpm,
+                    "notes": notes.iter().map(|(s0, l, k, v, ly)| serde_json::json!({"start": s0 - first, "len": l, "key": k, "vel": v, "lyric": ly})).collect::<Vec<_>>(),
+                });
+                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 100_000_000).unwrap_or(0);
+                let work = abs(self.rvc_dir());
+                std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+                let inp = work.join(format!("singer_{id}.json"));
+                let out = work.join(format!("singer_{id}.wav"));
+                let log = work.join(format!("singer_{id}.log"));
+                std::fs::write(&inp, score.to_string()).map_err(|e| e.to_string())?;
+                let logf = std::fs::File::create(&log).map_err(|e| e.to_string())?;
+                let mut cmd = std::process::Command::new(&py);
+                cmd.arg(&script)
+                    .args(["--score", &inp.to_string_lossy(), "--out", &out.to_string_lossy(), "--mrvc", &mrvc.to_string_lossy(), "--name", &name, "--singer", &singer.to_string_lossy(), "--gpu", &format!("{}", a.n(4).max(0.0) as u32)])
+                    .current_dir(&mrvc)
+                    .env("PYTHONUNBUFFERED", "1")
+                    .env("PYTHONIOENCODING", "utf-8")
+                    // the RVC weights file carries its config next to the tensors
+                    .env("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+                    .stdout(logf.try_clone().map_err(|e| e.to_string())?)
+                    .stderr(logf);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x0800_0000);
+                }
+                let child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.status = format!("Ling Singer: could not start {}: {e}", py.display());
+                        ok!(false)
+                    }
+                };
+                *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run: Run::Proc(child), target: Target::NewTrack { t, start: first, name: tname }, inp, out, log, model: name.clone(), started: std::time::Instant::now() });
+                self.status = format!("Ling Singer: singing {} notes with {name}", notes.len());
+                ok!(true)
+            }
+            "daw_singer_singtts" => {
+                // (track, reference clips "a.wav|b.wav|c.wav", package folder, python, seed, language) -> true when started. SingTTS sings the
+                // track: every clip's notes with the syllables its lyrics were fitted with, as written (lyricfit::fit_text with the clip's
+                // own text and options) - "~" holds the vowel, a word over several notes carries word_end on its last; the package's
+                // sing_onnx.py (onnxruntime, no torch) renders it in the voice of the clips (pooled), onto a new audio track at the first note
+                let t = a.u(0);
+                if job().lock().unwrap_or_else(|p| p.into_inner()).is_some() {
+                    self.status = "SingTTS: a voice job is already running".into();
+                    ok!(false)
+                }
+                let abs = |p: PathBuf| if p.is_absolute() { p } else { std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p) };
+                let refs: Vec<String> = a.s(1).split('|').map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && Path::new(r).is_file()).map(|r| abs(PathBuf::from(r)).to_string_lossy().into_owned()).collect();
+                if refs.is_empty() {
+                    self.status = "SingTTS: choose a voice clip (a few seconds of clean singing or speech)".into();
+                    ok!(false)
+                }
+                let pkg = abs(PathBuf::from(if a.s(2).is_empty() { "models/singtts".to_string() } else { a.s(2) }));
+                let script = pkg.join("sing_onnx.py");
+                if !script.is_file() {
+                    self.status = format!("SingTTS: no sing_onnx.py in {}", pkg.display());
+                    ok!(false)
+                }
+                let py = if a.s(3).is_empty() { PathBuf::from("python") } else { PathBuf::from(a.s(3)) };
+                let lang = if a.s(5).is_empty() { "en".to_string() } else { a.s(5) };
+                const LEAD: f64 = 0.15;
+                // the notes and their written syllables, clip by clip
+                let (notes, first, bpm, tname, missing) = {
+                    let en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    let Some(tr) = en.project.tracks.get(t) else { ok!(false) };
+                    let mut v: Vec<(f64, f64, u8, f32, String)> = vec![];
+                    let mut missing = 0usize;
+                    for c in &tr.clips {
+                        let ClipData::Midi(ns) = &c.data else { continue };
+                        let ns: Vec<&crate::model::Note> = ns.iter().filter(|n| n.start < c.len).collect();
+                        if c.lyric_text.trim().is_empty() {
+                            missing += ns.len();
+                            continue;
+                        }
+                        let opts = crate::lyricfit::Opts::parse(&c.lyric_lang).unwrap_or_default();
+                        let input: Vec<crate::lyricfit::NoteIn> = ns.iter().map(|n| crate::lyricfit::NoteIn { start: n.start, len: n.len, key: n.key }).collect();
+                        let words = crate::lyricfit::fit_text(&input, &c.lyric_text, &opts);
+                        for (n, w) in ns.iter().zip(words) {
+                            if w.is_empty() {
+                                continue;
+                            }
+                            v.push((c.start + n.start, n.len.min(c.len - n.start), n.key, n.vel, w));
+                        }
+                    }
+                    v.sort_by(|x, y| x.0.total_cmp(&y.0));
+                    let first = v.first().map(|x| x.0).unwrap_or(0.0);
+                    (v, first, en.project.bpm, tr.name.clone(), missing)
+                };
+                if notes.is_empty() {
+                    self.status = if missing > 0 { "SingTTS: fit lyrics to the notes first (the clips have no lyric text)".into() } else { "SingTTS: the track has no notes".into() };
+                    ok!(false)
+                }
+                // a written unit: "\n ly-ric" -> starts a word when it had a leading space; "~" holds
+                let starts_word = |w: &str| w.trim_start_matches('\n').starts_with(' ');
+                let mut out_notes = vec![];
+                for (i, (s0, l, k, vel, w)) in notes.iter().enumerate() {
+                    let held = w.trim() == "~";
+                    let text: String = w.trim().replace('-', "");
+                    // the word ends here when the next sung unit starts a new word (or there is none)
+                    let next = notes[i + 1..].iter().find(|x| x.4.trim() != "~");
+                    let word_end = !held && next.map(|x| starts_word(&x.4)).unwrap_or(true);
+                    out_notes.push(serde_json::json!({"start": s0 - first, "len": l, "key": k, "vel": vel, "lyric": if held { "~".to_string() } else { text }, "word_end": word_end}));
+                }
+                let score = serde_json::json!({"bpm": bpm, "lang": lang, "notes": out_notes});
+                let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() % 100_000_000).unwrap_or(0);
+                let work = abs(self.rvc_dir());
+                std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+                let inp = work.join(format!("singtts_{id}.json"));
+                let out = work.join(format!("singtts_{id}.wav"));
+                let log = work.join(format!("singtts_{id}.log"));
+                std::fs::write(&inp, score.to_string()).map_err(|e| e.to_string())?;
+                let logf = std::fs::File::create(&log).map_err(|e| e.to_string())?;
+                let mut cmd = std::process::Command::new(&py);
+                // sing_onnx.py SCORE OUT.wav --ref A [--ref B --ref C] --seed S --lead L: L seconds of room before beat 0 so a first word's
+                // consonants are not cut; the audio track starts that much earlier
+                cmd.arg(&script).arg(&inp).arg(&out).args(refs.iter().flat_map(|r| ["--ref".to_string(), r.clone()])).args(["--seed", &format!("{}", a.n(4).max(0.0) as u64), "--lead", &format!("{LEAD}")]).current_dir(&pkg).env("PYTHONUNBUFFERED", "1").env("PYTHONIOENCODING", "utf-8").stdout(logf.try_clone().map_err(|e| e.to_string())?).stderr(logf);
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x0800_0000);
+                }
+                let child = match cmd.spawn() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        self.status = format!("SingTTS: could not start {}: {e}", py.display());
+                        ok!(false)
+                    }
+                };
+                let lead_beats = LEAD * bpm / 60.0;
+                *job().lock().unwrap_or_else(|p| p.into_inner()) = Some(Job { run: Run::Proc(child), target: Target::NewTrack { t, start: (first - lead_beats).max(0.0), name: tname }, inp, out, log, model: "SingTTS".into(), started: std::time::Instant::now() });
+                self.status = format!("SingTTS: singing {} notes{}", notes.len(), if missing > 0 { format!(" ({missing} notes in clips without lyrics are left out)") } else { String::new() });
+                ok!(true)
+            }
             "daw_rvc_poll" => {
                 // () -> [state (0 nothing, 1 running, 2 just finished and applied, -1 failed), message, seconds, progress 0..100]
                 let mut g = job().lock().unwrap_or_else(|p| p.into_inner());

@@ -105,4 +105,18 @@ mod tests {
         let bad: Vec<(&str, Tuning)> = ["19 EDO Glass", "Slendro Pad", "Bohlen Drone"].iter().map(|n| (*n, check_preset(n))).collect();
         assert!(bad.iter().filter(|(_, t)| !t.in_tune()).count() >= 2, "{bad:?}");
     }
+
+    #[test]
+    fn every_instrument_kind_survives_the_check() {
+        for kind in ["synth", "growl", "voice", "prism", "sampler", "pluck", "chip", "script"] {
+            let Some(mut i) = crate::dsp::make_instrument(kind, 44100.0) else { continue };
+            let st = i.state();
+            i.load_state(&st);
+            let _ = check(i.as_mut(), 44100.0);
+            // a state with nothing in it, as an empty track has
+            let Some(mut j) = crate::dsp::make_instrument(kind, 44100.0) else { continue };
+            j.load_state(&[]);
+            let _ = check(j.as_mut(), 44100.0);
+        }
+    }
 }

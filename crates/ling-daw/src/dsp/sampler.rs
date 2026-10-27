@@ -221,6 +221,8 @@ struct Voice {
     /// released as a cut: a very short fade, whatever the envelope and fade-out say
     cut: bool,
     lp1: [f32; 2],
+    /// a note's own slice of the sample ("@start:end:cents" in its lyric): (first frame, end frame, edge fade in frames)
+    slice: Option<(f64, f64, f64)>,
     lp2: [f32; 2],
 }
 
@@ -263,6 +265,16 @@ fn cut_hz(v: f32) -> f32 {
 }
 
 /// ffmpeg on PATH or in a few usual places (empty when there is none)
+/// "@start:end:cents" -> (start frame, end frame, cents)
+pub fn parse_slice(lyric: &str) -> Option<(u32, u32, f32)> {
+    let b = lyric.strip_prefix('@')?;
+    let mut it = b.split(':');
+    let a = it.next()?.parse::<u32>().ok()?;
+    let e = it.next()?.parse::<u32>().ok()?;
+    let c = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(0.0);
+    (e > a).then_some((a, e, c))
+}
+
 pub fn find_ffmpeg() -> String {
     let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
     if let Some(p) = std::env::var_os("PATH") {
@@ -540,6 +552,12 @@ impl Sampler {
     }
 
     fn start_voice(&mut self, key: u8, vel: f32, pan: f32, hard: bool) {
+        self.start_voice_slice(key, vel, pan, hard, None);
+    }
+
+    /// `slice`: (start frame, end frame, cents) - the note plays that span of every zone it hits, its pitch moved by the cents,
+    /// faded in over 3 ms and out over the last 25 ms (at most a fifth of it) so a chop never ends in a click
+    fn start_voice_slice(&mut self, key: u8, vel: f32, pan: f32, hard: bool, slice: Option<(u32, u32, f32)>) {
         let hit: Vec<usize> = (0..self.cfg.zones.len()).filter(|i| self.loaded.get(*i).map(|l| l.is_some()).unwrap_or(false)).filter(|i| {
             let z = &self.cfg.zones[*i];
             key >= z.lo && key <= z.hi && ((vel * 127.0).round() as u8) >= z.vlo && ((vel * 127.0).round() as u8) <= z.vhi
@@ -556,7 +574,11 @@ impl Sampler {
                     self.voices.remove(k);
                 }
             }
-            let semis = (key as f32 - z.root as f32) * z.track + z.tune / 100.0 + self.cfg.tune;
+            let semis = (key as f32 - z.root as f32) * z.track + z.tune / 100.0 + self.cfg.tune + slice.map(|x| x.2 / 100.0).unwrap_or(0.0);
+            let sl = slice.and_then(|(a, b, _)| {
+                let (a, b) = ((a as usize).max(s), (b as usize).min(e));
+                (b > a + 16).then(|| (a as f64, b as f64, ((b - a) as f64 * 0.2).min(l.rate as f64 * 0.025).max(8.0)))
+            });
             let step = l.rate as f64 / self.sr as f64 * 2f64.powf(semis as f64 / 12.0);
             // random variation: every note draws its own volume, pan and filter
             let (rv, rp, rc, rr) = (self.rng.next(), self.rng.next(), self.rng.next(), self.rng.next());
@@ -569,7 +591,10 @@ impl Sampler {
             self.voices.push(Voice {
                 zone: i,
                 key,
-                pos: if z.reverse { (e - 1) as f64 } else { s as f64 },
+                pos: match sl {
+                    Some((a, b, _)) => if z.reverse { b - 1.0 } else { a },
+                    None => if z.reverse { (e - 1) as f64 } else { s as f64 },
+                },
                 dir: if z.reverse { -1.0 } else { 1.0 },
                 step,
                 level: if atk_s(self.cfg.attack) < 0.002 { 1.0 } else { 0.0 },
@@ -590,6 +615,7 @@ impl Sampler {
                 cut: hard,
                 lp1: [0.0; 2],
                 lp2: [0.0; 2],
+                slice: sl,
             });
         }
     }
@@ -602,6 +628,13 @@ impl Instrument for Sampler {
     fn note_on_ex(&mut self, key: u8, vel: f32, pan: f32, _cutoff: f32, reso: f32) {
         // a note with its "reso" at 0 is a cut (tracker imports): no release tail
         self.start_voice(key, vel, pan, reso < 0.01);
+    }
+    fn note_on_lyric(&mut self, key: u8, vel: f32, pan: f32, _cutoff: f32, reso: f32, lyric: &str, _len_samples: f32) {
+        // "@start:end:cents" plays a slice of the sample (vocal chops); anything else is an ordinary note
+        match parse_slice(lyric) {
+            Some(sl) => self.start_voice_slice(key, vel, pan, reso < 0.01, Some(sl)),
+            None => self.start_voice(key, vel, pan, reso < 0.01),
+        }
     }
     fn note_off(&mut self, key: u8) {
         for v in self.voices.iter_mut().filter(|v| v.key == key && v.held) {
@@ -665,9 +698,12 @@ impl Instrument for Sampler {
                 continue;
             };
             let z = &self.cfg.zones[v.zone];
-            let (st, en) = {
-                let end = if z.end == 0 { l.frames() } else { (z.end as usize).min(l.frames()) };
-                ((z.start as usize).min(end), end)
+            let (st, en) = match v.slice {
+                Some((a, b, _)) => (a as usize, (b as usize).min(l.frames())),
+                None => {
+                    let end = if z.end == 0 { l.frames() } else { (z.end as usize).min(l.frames()) };
+                    ((z.start as usize).min(end), end)
+                }
             };
             let looped = z.loop_mode > 0 && z.loop_end > z.loop_start + 8 && (z.loop_end as usize) <= l.frames();
             let (ls, le) = (z.loop_start as f64, z.loop_end as f64);
@@ -795,7 +831,13 @@ impl Instrument for Sampler {
                         *x = v2;
                     }
                 }
-                let amp = v.level * v.gain;
+                let mut amp = v.level * v.gain;
+                if let Some((a, b, edge)) = v.slice {
+                    // a slice fades in and out at its edges
+                    let fin = ((p - a) / (l.rate as f64 * 0.003)).min(1.0);
+                    let fout = ((b - p) / edge).min(1.0);
+                    amp *= (fin.min(fout)).max(0.0) as f32;
+                }
                 let (tgt, off): (&mut [f32], usize) = if fxz.get(v.zone).copied().unwrap_or(false) { (&mut zb[..], v.zone * frames * 2) } else { (&mut out[..], 0) };
                 tgt[off + f * 2] += sl * amp * v.pan_l;
                 tgt[off + f * 2 + 1] += sr_ * amp * v.pan_r;

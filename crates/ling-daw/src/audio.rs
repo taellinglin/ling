@@ -21,7 +21,8 @@ pub struct AudioConfig {
 
 impl Default for AudioConfig {
     fn default() -> Self {
-        AudioConfig { buffer: 0, latency_ms: 60, rate: 0 }
+        // ARM boards (Raspberry Pi) start with more headroom; either way it grows on its own when the card runs dry
+        AudioConfig { buffer: 0, latency_ms: if cfg!(target_arch = "aarch64") { 100 } else { 60 }, rate: 0 }
     }
 }
 
@@ -29,6 +30,8 @@ impl Default for AudioConfig {
 pub struct AudioStats {
     /// callbacks that ran out of rendered audio
     pub underruns: AtomicU32,
+    /// the render-ahead the render thread runs with now, in device frames (grows after dropouts; 0 = not yet changed)
+    pub ahead_frames: AtomicU32,
     /// render time / real time in 1/1000 (decaying peak)
     pub load_permille: AtomicU32,
     /// buffer size the device really uses (0 = unknown / driver default)
@@ -221,28 +224,55 @@ fn boost_thread() {}
 /// Set up a DSP worker thread like the audio render thread: high priority, flush denormals to zero.
 pub(crate) fn prepare_dsp_thread() {
     boost_thread();
+    flush_denormals();
+}
+
+/// Flush-to-zero (and denormals-are-zero on x86) for the calling thread: a reverb, filter or drum tail decaying into denormal
+/// numbers must not cost 10-100x the CPU. x86_64: MXCSR FTZ | DAZ. aarch64 (Raspberry Pi, Apple silicon): FPCR.FZ - without it
+/// every quiet tail on a Pi spends most of the audio deadline on denormals.
+#[inline]
+pub fn flush_denormals() {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
         _mm_setcsr(_mm_getcsr() | 0x8040);
+    }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        let mut fpcr: u64;
+        std::arch::asm!("mrs {}, fpcr", out(reg) fpcr);
+        if fpcr & (1 << 24) == 0 {
+            std::arch::asm!("msr fpcr, {}", in(reg) fpcr | (1 << 24));
+        }
     }
 }
 
 fn render_thread(e: SharedEngine, ring: Arc<Ring>, stats: Arc<AudioStats>, run: Arc<AtomicBool>, ratio: f32, dev_sr: f32, target: usize) {
     boost_thread();
     // flush-to-zero + denormals-are-zero: quiet reverb / filter tails must not cost 100x CPU
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
-        _mm_setcsr(_mm_getcsr() | 0x8040);
-    }
+    flush_denormals();
     let mut rs = Resampler::new(ratio);
     let block_s = CHUNK as f32 / dev_sr;
     let mut load = 0.0f32;
     let mut primed = false;
+    // adaptive headroom: every new run of dropouts makes the render-ahead half again as long (up to 4x the setting, ~0.5 s
+    // at most), so a slow machine settles at what it needs instead of crackling; it never shrinks while playing
+    let mut ahead = target;
+    let mut seen = 0u32;
+    let mut last_grow = std::time::Instant::now();
     while run.load(Ordering::Relaxed) {
         let fill = ring.fill_frames();
-        if fill + CHUNK <= target.max(CHUNK * 2) && fill + CHUNK < RING_FRAMES {
+        let ur = stats.underruns.load(Ordering::Relaxed);
+        if primed && ur > seen {
+            if last_grow.elapsed().as_millis() > 250 {
+                let cap = (target * 4).min(RING_FRAMES / 2).min((dev_sr as usize) / 2);
+                ahead = (ahead + ahead / 2).min(cap.max(target));
+                last_grow = std::time::Instant::now();
+                stats.ahead_frames.store(ahead as u32, Ordering::Relaxed);
+            }
+            seen = ur;
+        }
+        if fill + CHUNK <= ahead.max(CHUNK * 2) && fill + CHUNK < RING_FRAMES {
             let t0 = std::time::Instant::now();
             for _ in 0..CHUNK {
                 let (l, r) = rs.next(&e);
@@ -256,6 +286,7 @@ fn render_thread(e: SharedEngine, ring: Arc<Ring>, stats: Arc<AudioStats>, run: 
                 // startup callbacks that ran before the first fill do not count as dropouts
                 primed = true;
                 stats.underruns.store(0, Ordering::Relaxed);
+                seen = 0;
             }
             std::thread::sleep(std::time::Duration::from_micros(400));
         }

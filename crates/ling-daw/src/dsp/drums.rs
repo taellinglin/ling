@@ -216,6 +216,22 @@ struct DrumVoice {
     snap_ph: f32,
     ring_ph: f32,
     p: DrumParams,
+    /// per hit, worked out on its first sample: the tails' per-sample decay, the pan gains, the running envelopes (multiplied each
+    /// sample instead of an exp() each), the pitch bend of the moment (with the mode coefficients, every 16 samples)
+    prepped: bool,
+    wire_mul: f32,
+    noise_mul: f32,
+    pan_l: f32,
+    pan_r: f32,
+    bend_now: f32,
+    sub_env: f32,
+    sub_mul: f32,
+    tone_env: [f32; 3],
+    tone_mul: [f32; 3],
+    cow_env: f32,
+    cow_mul: f32,
+    clap_tail: f32,
+    clap_mul: f32,
 }
 
 impl DrumVoice {
@@ -255,10 +271,25 @@ impl DrumVoice {
             snap_ph: 0.0,
             ring_ph: 0.0,
             p: DrumParams::new(0.9),
+            prepped: false,
+            wire_mul: 1.0,
+            noise_mul: 1.0,
+            pan_l: 0.0,
+            pan_r: 0.0,
+            bend_now: 1.0,
+            sub_env: 1.0,
+            sub_mul: 1.0,
+            tone_env: [1.0; 3],
+            tone_mul: [1.0; 3],
+            cow_env: 1.0,
+            cow_mul: 1.0,
+            clap_tail: 1.0,
+            clap_mul: 1.0,
         }
     }
 
     fn trigger(&mut self, vel: f32, sr: f32, p: &DrumParams, var: Var, human: f32, jit: [f32; 3]) {
+        self.prepped = false;
         // vary: every hit a little different in length, brightness and level
         let mut pv = p.clone();
         if p.vary > 0.0 {
@@ -349,8 +380,28 @@ impl DrumVoice {
         self.noise_bp = Svf::new(FilterMode::Band);
     }
 
+    /// what stays the same for the whole hit, worked out once
+    fn prep(&mut self, sr: f32) {
+        let dt = 1.0 / sr;
+        self.wire_mul = (-6.9 * dt / self.wire_t60.max(0.01)).exp();
+        self.noise_mul = (-6.9 * dt / self.noise_t60.max(0.01)).exp();
+        let ang = (self.pan + 1.0) * std::f32::consts::FRAC_PI_4;
+        self.pan_l = ang.cos();
+        self.pan_r = ang.sin();
+        self.sub_env = (-self.t * 6.9 / self.sub_t60).exp();
+        self.sub_mul = (-dt * 6.9 / self.sub_t60).exp();
+        self.tone_env = [(-self.t * 6.9 / 0.11).exp(), (-self.t * 6.9 / 0.07).exp(), (-self.t * 60.0).exp()];
+        self.tone_mul = [(-dt * 6.9 / 0.11).exp(), (-dt * 6.9 / 0.07).exp(), (-dt * 60.0).exp()];
+        self.cow_env = (-self.t * 6.9 / 0.04).exp();
+        self.cow_mul = (-dt * 6.9 / 0.04).exp();
+        self.clap_tail = 1.0;
+        self.clap_mul = (-dt * 6.9 / self.noise_t60.max(0.05)).exp();
+        self.prepped = true;
+    }
+
     fn update_coeffs(&mut self, sr: f32, t: f32) {
         let bend = 1.0 + self.pitch_drop * (-t / self.pitch_tau).exp();
+        self.bend_now = bend;
         for m in self.modes.iter_mut() {
             let w = TAU * (self.base * m.ratio * bend).min(sr * 0.45) / sr;
             m.c = w.cos();
@@ -363,6 +414,9 @@ impl DrumVoice {
     fn sample(&mut self, sr: f32, rng: &mut Rng) -> f32 {
         if !self.active {
             return 0.0;
+        }
+        if !self.prepped {
+            self.prep(sr);
         }
         let dt = 1.0 / sr;
         let p = &self.p;
@@ -392,7 +446,7 @@ impl DrumVoice {
         }
         head *= self.pure_gain;
         let membrane = matches!(self.kind, Kind::Kick | Kind::Tom | Kind::Snare);
-        let bend = if self.pitch_drop > 0.0 { 1.0 + self.pitch_drop * (-self.t / self.pitch_tau).exp() } else { 1.0 };
+        let bend = if self.pitch_drop > 0.0 { self.bend_now } else { 1.0 };
         // ring: the head times a sine at an inharmonic ratio of its pitch (sidebands = clang)
         if self.p.ring > 0.0 && self.kind != Kind::Clap {
             self.ring_ph = (self.ring_ph + self.base * 1.47 * bend * dt).fract();
@@ -402,7 +456,7 @@ impl DrumVoice {
         let mut extra = 0.0;
         if self.p.sub > 0.0 && membrane {
             self.sub_ph = (self.sub_ph + self.base * bend * dt).fract();
-            let env = (-self.t * 6.9 / self.sub_t60).exp() * (self.t / 0.002).min(1.0);
+            let env = self.sub_env * (self.t / 0.002).min(1.0);
             extra += (self.sub_ph * TAU).sin() * env * self.p.sub * 1.1;
         }
         // snap: a sine chirp from far above the pitch down onto it in a few milliseconds
@@ -430,7 +484,7 @@ impl DrumVoice {
                 o
             }
             Kind::Snare => {
-                self.wire_env *= (-6.9 * dt / self.wire_t60.max(0.01)).exp();
+                self.wire_env *= self.wire_mul;
                 let drive = head.abs().min(1.0) * 0.6 + 0.4;
                 let side = var.flavor == Flavor::SideStick;
                 let w = self.wires.tick(rng.next() * drive, (4200.0 + self.hard * 3000.0) * tone_k, 0.35, sr);
@@ -445,9 +499,8 @@ impl DrumVoice {
                 }
                 // analog (drum machine) snare: two tuned oscillators under the noise
                 if p.analog > 0.0 {
-                    let e1 = (-self.t * 6.9 / 0.11).exp();
-                    let e2 = (-self.t * 6.9 / 0.07).exp();
-                    self.tone_ph[0] = (self.tone_ph[0] + self.base * dt * (1.0 + 0.6 * (-self.t * 60.0).exp())).fract();
+                    let (e1, e2) = (self.tone_env[0], self.tone_env[1]);
+                    self.tone_ph[0] = (self.tone_ph[0] + self.base * dt * (1.0 + 0.6 * self.tone_env[2])).fract();
                     self.tone_ph[1] = (self.tone_ph[1] + self.base * 1.83 * dt).fract();
                     let t1 = (self.tone_ph[0] * TAU).sin() * e1 + (self.tone_ph[1] * TAU).sin() * e2 * 0.6;
                     o = o * (1.0 - p.analog * 0.35) + t1 * p.analog * 0.9;
@@ -455,7 +508,7 @@ impl DrumVoice {
                 o
             }
             Kind::ClosedHat | Kind::OpenHat | Kind::Crash | Kind::Ride => {
-                self.noise_env *= (-6.9 * dt / self.noise_t60.max(0.01)).exp();
+                self.noise_env *= self.noise_mul;
                 let n = self.noise_hp.tick(rng.next(), (6000.0 + self.hard * 3000.0) * tone_k, 0.2, sr);
                 let plate = head * 0.9 * body_w.max(0.3) + n * (1.0 + noise_w * 1.4) * var.noise * self.swell_g;
                 let mut o = plate;
@@ -466,7 +519,7 @@ impl DrumVoice {
                     self.sq_ph[1] = (self.sq_ph[1] + 800.0 * tk * dt).fract();
                     let s = (if self.sq_ph[0] < 0.5 { 1.0 } else { -1.0 }) + (if self.sq_ph[1] < 0.5 { 1.0 } else { -1.0 });
                     let f = self.noise_bp.tick(s * 0.5, 1500.0 * tk * tone_k, 0.55, sr);
-                    let fast = (-self.t * 6.9 / 0.04).exp();
+                    let fast = self.cow_env;
                     o = f * (0.35 + 0.65 * fast) * 2.4 + head * 0.15;
                 } else if p.analog > 0.0 {
                     let mut s = 0.0;
@@ -486,12 +539,20 @@ impl DrumVoice {
                 // three staggered bursts then a tail
                 let t = self.t;
                 let burst = |t0: f32| if t >= t0 && t < t0 + 0.012 { 1.0 - (t - t0) / 0.012 } else { 0.0 };
-                let tail = (-((t - 0.03).max(0.0)) * 6.9 / self.noise_t60.max(0.05)).exp() * if t > 0.03 { 0.6 } else { 0.0 };
+                if t > 0.03 {
+                    self.clap_tail *= self.clap_mul;
+                }
+                let tail = self.clap_tail * if t > 0.03 { 0.6 } else { 0.0 };
                 let env = burst(0.0).max(burst(0.011)).max(burst(0.023)) * 0.8 + tail;
                 self.wires.tick(rng.next(), (1100.0 + p.tune * 1800.0) * tone_k, 0.5, sr) * env * 2.0 * self.swell_g
             }
         };
         self.t += dt;
+        self.sub_env *= self.sub_mul;
+        self.cow_env *= self.cow_mul;
+        for k in 0..3 {
+            self.tone_env[k] *= self.tone_mul[k];
+        }
         // a hard gate (gated-reverb snares, tight metal kicks)
         let mut gate_g = 1.0;
         if self.gate_t > 0.0 {
@@ -508,7 +569,7 @@ impl DrumVoice {
             Kind::Ride | Kind::OpenHat => 2.5,
             _ => 1.5,
         };
-        if self.t > limit || (self.t > 0.05 && out.abs() < 1e-5 && self.modes.iter().all(|m| m.x.abs() + m.y.abs() < 1e-5) && self.noise_env < 1e-3 && self.wire_env < 1e-3) {
+        if self.t > limit || (self.t > 0.05 && self.tick % 32 == 0 && out.abs() < 1e-5 && self.modes.iter().all(|m| m.x.abs() + m.y.abs() < 1e-5) && self.noise_env < 1e-3 && self.wire_env < 1e-3) {
             self.active = false;
         }
         let d = self.p.drive;
@@ -811,6 +872,8 @@ impl Instrument for DrumSynth {
     }
     fn render(&mut self, out: &mut [f32]) {
         let sr = self.sr;
+        let bus_on = !self.bus.is_off();
+        let racks: [bool; 8] = std::array::from_fn(|k| self.ins[k].active());
         for fr in out.chunks_exact_mut(2) {
             let (mut l, mut r) = (0.0, 0.0);
             let (mut pl, mut pr) = ([0.0f32; 8], [0.0f32; 8]);
@@ -819,15 +882,13 @@ impl Instrument for DrumSynth {
                     continue;
                 }
                 let s = v.sample(sr, &mut self.rng);
-                let ang = (v.pan + 1.0) * std::f32::consts::FRAC_PI_4;
-                pl[v.piece] += s * ang.cos();
-                pr[v.piece] += s * ang.sin();
+                pl[v.piece] += s * v.pan_l;
+                pr[v.piece] += s * v.pan_r;
             }
             // each piece through its own insert rack, then the kit sum (through the bus when one of its knobs is moved)
-            let bus_on = !self.bus.is_off();
             let mut kick = (0.0, 0.0);
             for k in 0..8 {
-                let (a, b) = if self.ins[k].active() { self.ins[k].process(pl[k], pr[k]) } else { (pl[k], pr[k]) };
+                let (a, b) = if racks[k] { self.ins[k].process(pl[k], pr[k]) } else { (pl[k], pr[k]) };
                 if bus_on && k == 0 {
                     kick = (a, b);
                     continue;

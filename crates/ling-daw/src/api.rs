@@ -128,6 +128,8 @@ mod vedit_api;
 mod rvc_api;
 mod cloud_api;
 mod song_api;
+mod arrange_api;
+mod chops_api;
 
 /// The patch file a role table's (plugin, name) means, for the sound catalogue.
 pub fn song_find_patch(kind: &str, name: &str) -> Option<String> {
@@ -321,6 +323,9 @@ impl Daw {
     }
 
     fn dispatch(&mut self, name: &str, a: &A) -> Result<Val, String> {
+        if name.starts_with("daw_chopx_") {
+            return self.chopx_dispatch(name, a);
+        }
         if name.starts_with("daw_vox_") {
             return self.vox_dispatch(name, a);
         }
@@ -330,10 +335,10 @@ impl Daw {
         if name.starts_with("daw_script_") {
             return self.scriptdsp_dispatch(name, a);
         }
-        if name.starts_with("daw_song_") || name.starts_with("daw_deco_") {
+        if name.starts_with("daw_song_") || name.starts_with("daw_deco_") || name.starts_with("daw_cycle_") || name == "daw_tune_check" {
             return self.song_dispatch(name, a);
         }
-        if name.starts_with("daw_rvc_") {
+        if name.starts_with("daw_rvc_") || name.starts_with("daw_singer_") {
             return self.rvc_dispatch(name, a);
         }
         if name.starts_with("daw_ve_") {
@@ -368,6 +373,9 @@ impl Daw {
         }
         if name.starts_with("daw_artic_") {
             return self.artic_dispatch(name, a);
+        }
+        if name.starts_with("daw_arrx_") {
+            return self.arrx_dispatch(name, a);
         }
         if name.starts_with("daw_fix_") || name.starts_with("daw_arr_") {
             return self.fix_dispatch(name, a);

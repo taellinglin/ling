@@ -186,9 +186,12 @@ pub fn guess_genre(mid: &ImportedMidi) -> &'static str {
 pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static str, &'static str)]> {
     let lead = matches!(role, "supersaw lead" | "synth lead" | "hyper lead" | "laser lead");
     Some(match (genre, role) {
-        ("chiptune", _) if lead => &[("synth", "Electronic: Square Lead"), ("prism", "Chipmunk Arp")],
-        ("chiptune", "arp") => &[("prism", "Chipmunk Arp"), ("synth", "Electronic: Square Lead")],
-        ("chiptune", "rolling bass" | "sub bass" | "pluck bass") => &[("synth", "Electronic: Techno Pluck Bass"), ("prism", "Octave Bass")],
+        // the chips first; the General MIDI square and Prism's chip-like patches if a chip patch is missing
+        ("chiptune", _) if lead => &[("chip", "NES Square Lead"), ("chip", "NES Duty Lead"), ("chip", "SID Saw Lead"), ("chip", "GB Pulse Lead"), ("synth", "Electronic: Square Lead")],
+        ("chiptune", "arp" | "pluck") => &[("chip", "GB Arp Shimmer"), ("chip", "Shimmer Arp"), ("chip", "Hyper Arp"), ("chip", "Sparkle Sweep"), ("prism", "Chipmunk Arp")],
+        ("chiptune", "rolling bass" | "sub bass" | "pluck bass") => &[("chip", "NES Triangle Bass"), ("chip", "GB Wave Bass"), ("chip", "SID Filter Bass"), ("prism", "Octave Bass")],
+        ("chiptune", "warm pad" | "ambient pad" | "strings" | "dark pad") => &[("chip", "SID PWM Pad"), ("chip", "SNES Strings")],
+        ("chiptune", "brass") => &[("chip", "SNES Brass")],
         // an orchestra's percussion is the General MIDI kit of the soundfont, not a house machine
         ("orchestral" | "cinematic", "drums") => &[("auto", "")],
         ("orchestral" | "cinematic" | "folk" | "jazz" | "rock", "strings" | "brass" | "woodwind" | "piano" | "guitar" | "organ" | "keys" | "bell" | "choir") => &[("auto", "")],
@@ -212,11 +215,6 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         ("synthwave", "warm pad" | "strings") => &[("prism", "Phaser Pad"), ("prism", "Dreamer Pad")],
         ("hyperpop", _) if lead => &[("prism", "Hyper Lead"), ("prism", "Sugar Stack")],
         ("witch house", "warm pad" | "dark pad" | "ambient pad" | "strings") => &[("prism", "Witch Drag"), ("prism", "Black Mass")],
-        ("chiptune", "pluck bass" | "rolling bass" | "sub bass") => &[("chip", "NES Triangle Bass"), ("chip", "GB Wave Bass"), ("chip", "SID Filter Bass")],
-        ("chiptune", "arp" | "pluck") => &[("chip", "GB Arp Shimmer"), ("chip", "Shimmer Arp"), ("chip", "Hyper Arp"), ("chip", "Sparkle Sweep")],
-        ("chiptune", "warm pad" | "ambient pad" | "strings" | "dark pad") => &[("chip", "SID PWM Pad"), ("chip", "SNES Strings")],
-        ("chiptune", "brass") => &[("chip", "SNES Brass")],
-        ("chiptune", _) if lead => &[("chip", "NES Square Lead"), ("chip", "NES Duty Lead"), ("chip", "SID Saw Lead"), ("chip", "GB Pulse Lead")],
         _ => return None,
     })
 }
@@ -706,7 +704,7 @@ mod tests {
         let trance = choose_for(&mid, &reply, "trance");
         let chip = choose_for(&mid, &reply, "chiptune");
         assert_eq!(trance[0].plugin, "prism");
-        assert_eq!(chip[0].plugin, "synth", "a chiptune lead is a square on Ling Synth X");
+        assert_eq!(chip[0].plugin, "chip", "a chiptune lead is a square on Ling Chip");
         let orch = choose_for(&mid, &parse_reply(r#"{"parts":[{"part":0,"role":"strings"}]}"#), "orchestral");
         assert_eq!(orch[0].plugin, "auto", "orchestral strings stay on General MIDI");
         // a model that calls a violin a supersaw lead in an orchestral piece is overruled by the instrument itself

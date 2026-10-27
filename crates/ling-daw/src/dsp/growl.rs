@@ -21,10 +21,19 @@
 //!   * `uni`: 3, 5, 7 or 9 stacked voices (the extra ones spread around the stack's notes by `detn`); `sub oct` puts the sub on the
 //!     note instead of an octave below.
 //!
+//! The pro block (appended after the sound-design block, all neutral by default):
+//!   * MULTIBAND DISTORTION (`mb drv`, `mb xo`): after the drive the sound is split in three at `mb xo` and eight times that; the lows stay
+//!     clean (a tight sub), the mids are distorted hard and the highs softly, which is what makes a modern growl big without mud.
+//!   * FORMANT (`formant`): shifts the oscillator's spectral envelope up or down without moving the pitch (windowed, time-compressed cycles).
+//!   * OTT (`ott`): a three-band upward + downward compressor, the "Over The Top" sound of electronic radio.
+//!   * SUB SAT (`sub sat`): harmonics on the sub so it carries on small speakers; STEREO (`s width` M/S width, `mono lo` bass kept in
+//!     mono below the corner), `tilt` (a +-6 dB tilt EQ around 700 Hz) and `air` (high shelf at 8 kHz).
+//!
 //! Signal path: (osc A + osc B + noise) -> filter -> talk -> comb -> freq shift -> fold -> drive -> crush -> 11 kHz low-pass -> amp envelope ->
 //! amp modulation -> pan -> width / delay / reverb sends -> limiter -> output. The sub joins after the
 //! drive so it stays clean.
 use super::fx::{Effect, Reverb};
+use super::prism::{ProCfg, ProState};
 use super::{midi_hz, Instrument, Rng, TAU};
 use std::sync::OnceLock;
 
@@ -96,7 +105,19 @@ const P_PENV: usize = SD_BASE + 8;
 const P_PDEC: usize = SD_BASE + 9;
 const P_UNI: usize = SD_BASE + 10;
 const P_SUBOCT: usize = SD_BASE + 11;
-pub const NPARAM: usize = SD_BASE + SD.len();
+/// the pro block after the sound design: multiband drive and crossover, formant, OTT, sub saturation, stereo width, mono bass, tilt, air
+pub const PRO_BASE: usize = SD_BASE + 12;
+const PRO: [&str; 9] = ["mb drv", "mb xo", "formant", "ott", "s width", "mono lo", "sub sat", "tilt", "air"];
+const P_MBD: usize = PRO_BASE;
+const P_MBXO: usize = PRO_BASE + 1;
+const P_FORMANT: usize = PRO_BASE + 2;
+const P_OTT: usize = PRO_BASE + 3;
+const P_SWIDTH: usize = PRO_BASE + 4;
+const P_MONOLO: usize = PRO_BASE + 5;
+const P_SUBSAT: usize = PRO_BASE + 6;
+const P_TILT: usize = PRO_BASE + 7;
+const P_AIR: usize = PRO_BASE + 8;
+pub const NPARAM: usize = PRO_BASE + PRO.len();
 /// voices per `uni` step, and where the voices past the first three sit (times `detn` x 40 cents)
 const UNI: [usize; 4] = [3, 5, 7, 9];
 const UNI_SPREAD: [f32; 6] = [-0.5, 0.5, -0.8, 0.8, -0.2, 0.2];
@@ -155,6 +176,9 @@ pub fn param_names() -> &'static [&'static str] {
         for n in SD {
             v.push(n);
         }
+        for n in PRO {
+            v.push(n);
+        }
         v
     })
 }
@@ -207,6 +231,11 @@ fn defaults() -> Vec<f32> {
     v[P_FSHIFT] = 0.5;
     v[P_PENV] = 0.5;
     v[P_PDEC] = 0.3;
+    // the pro block: off / flat
+    v[P_MBXO] = 0.4;
+    v[P_FORMANT] = 0.5;
+    v[P_SWIDTH] = 0.5;
+    v[P_TILT] = 0.5;
     v
 }
 
@@ -405,6 +434,53 @@ impl DelayLine {
     }
 }
 
+/// A three-band "Over The Top" compressor: the stereo signal is split at 160 Hz and 2.5 kHz, every band is pulled toward its own target
+/// level from both sides (quiet parts up, loud parts down, linked across the channels), and the bands are summed again.
+struct Ott {
+    x1: [Tpt; 2],
+    x2: [Tpt; 2],
+    env: [f32; 3],
+    tg: [f32; 3],
+    gain: [f32; 3],
+    n: u32,
+}
+impl Ott {
+    const T: [f32; 3] = [0.18, 0.10, 0.04];
+    fn new() -> Self {
+        Ott { x1: [Tpt::default(); 2], x2: [Tpt::default(); 2], env: [0.0; 3], tg: [1.0; 3], gain: [1.0; 3], n: 0 }
+    }
+    /// `c` the exponent (strength), `g1`/`g2` the crossover coefficients, `att`/`rel` the follower coefficients per band
+    #[inline]
+    fn process(&mut self, l: f32, r: f32, c: f32, g1: f32, g2: f32, att: &[f32; 3], rel: &[f32; 3]) -> (f32, f32) {
+        let mut bands = [[0.0f32; 3]; 2];
+        for ch in 0..2 {
+            let x = if ch == 0 { l } else { r };
+            let (lo, _) = self.x1[ch].run(x, g1, 1.414);
+            let rest = x - lo;
+            let (mid, _) = self.x2[ch].run(rest, g2, 1.414);
+            bands[ch] = [lo, mid, rest - mid];
+        }
+        for b in 0..3 {
+            let lvl = bands[0][b].abs().max(bands[1][b].abs());
+            let a = if lvl > self.env[b] { att[b] } else { rel[b] };
+            self.env[b] += (lvl - self.env[b]) * a;
+        }
+        self.n = self.n.wrapping_add(1);
+        if self.n & 7 == 0 {
+            for b in 0..3 {
+                self.tg[b] = (Ott::T[b] / (self.env[b] + 2e-4)).powf(c).clamp(0.2, 4.0);
+            }
+        }
+        let mut o = [0.0f32; 2];
+        for b in 0..3 {
+            self.gain[b] += (self.tg[b] - self.gain[b]) * 0.03;
+            o[0] += bands[0][b] * self.gain[b];
+            o[1] += bands[1][b] * self.gain[b];
+        }
+        (o[0], o[1])
+    }
+}
+
 // ── the instrument ──────────────────────────────────────────────────────────
 pub struct Growl {
     sr: f32,
@@ -460,6 +536,10 @@ pub struct Growl {
     dc_y: f32,
     /// a DC blocker at the voice output (about 3 Hz)
     out_dc: (f32, f32),
+    /// the pro block: the multiband crossovers, the OTT compressor and the output stage
+    f_mb: [Tpt; 2],
+    ott: Ott,
+    pro: ProState,
 }
 
 pub const ARCHETYPES: [&str; 10] = ["wobble", "talk", "screech", "riddim", "lead", "pad", "pluck", "sub", "fm", "vox"];
@@ -792,6 +872,9 @@ impl Growl {
             dc_x: 0.0,
             dc_y: 0.0,
             out_dc: (0.0, 0.0),
+            f_mb: [Tpt::default(); 2],
+            ott: Ott::new(),
+            pro: ProState::default(),
         };
         s.resolve_matrix();
         s
@@ -998,6 +1081,27 @@ impl Instrument for Growl {
         let sub_mul = if self.v[P_SUBOCT] > 0.5 { 1.0 } else { 0.5 };
         let cr_hold = 1 + (crush * crush * 24.0) as u32;
         let cr_bits = 2f32.powf(12.0 - crush * 9.0);
+        // the pro block
+        let mbd = self.v[P_MBD];
+        let mb_on = mbd > 0.002;
+        let mb_f1 = 60.0 * 2f32.powf(self.v[P_MBXO] * 4.0);
+        let (mb_g1, mb_g2) = ((std::f32::consts::PI * mb_f1 / sr).tan(), (std::f32::consts::PI * (mb_f1 * 8.0).min(sr * 0.4) / sr).tan());
+        let (mb_dm, mb_dh) = (1.0 + mbd * 14.0, 1.0 + mbd * 5.0);
+        let fmt = (self.v[P_FORMANT] - 0.5) * 2.0;
+        let fmt_on = fmt.abs() > 0.004;
+        let fmt_r = 2f32.powf(fmt * 1.5);
+        let fmt_mul = if fmt_on { fmt_r.max(1.0) } else { 1.0 };
+        let ott_amt = self.v[P_OTT];
+        let ott_on = ott_amt > 0.002;
+        let ott_c = ott_amt * 0.7;
+        let (ott_g1, ott_g2) = ((std::f32::consts::PI * 160.0 / sr).tan(), (std::f32::consts::PI * 2500.0f32.min(sr * 0.4) / sr).tan());
+        let ott_att = [0.008f32, 0.004, 0.0015].map(|t| 1.0 - (-1.0 / (sr * t)).exp());
+        let ott_rel = [0.12f32, 0.08, 0.05].map(|t| 1.0 - (-1.0 / (sr * t)).exp());
+        let sub_sat = self.v[P_SUBSAT];
+        let sub_sat_d = 1.0 + sub_sat * 5.0;
+        let sub_sat_n = 1.0 / sub_sat_d.tanh();
+        let mono_v = if self.v[P_MONOLO] > 0.02 { self.v[P_MONOLO] } else { 0.0 };
+        let pro = ProCfg::new(sr, self.v[P_SWIDTH], mono_v, self.v[P_AIR], 0.0, self.v[P_TILT]);
         let active = self.amp.stage != Stage::Idle;
         let mut g_main = 0.0f32;
         let mut k_main = 1.0f32;
@@ -1072,7 +1176,7 @@ impl Instrument for Growl {
                         self.ph_a = [0.0; 9];
                     }
                 }
-                let allowed = (0.45 * sr / (f0 * ratio).max(10.0)).floor() as usize;
+                let allowed = (0.45 * sr / (f0 * ratio * fmt_mul).max(10.0)).floor() as usize;
                 let lvl = LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1);
                 let (tx, ty) = (&tb.w[tbl][0][lvl], &tb.w[tbl][1][lvl]);
                 let mut a_sum = 0.0;
@@ -1082,7 +1186,16 @@ impl Instrument for Growl {
                     let fk = f0 * ratio * 2f32.powf(cents / 1200.0) + fm_dev;
                     self.ph_a[k] += fk / sr;
                     self.ph_a[k] -= self.ph_a[k].floor();
-                    a_sum += cx * rd(tx, self.ph_a[k]) + cy * rd(ty, self.ph_a[k]);
+                    if fmt_on {
+                        // formant shift: the cycle is read `fmt_r` times faster and faded in and out, so the pitch stays and the
+                        // spectral envelope moves
+                        let ph = self.ph_a[k];
+                        let w = (0.5 - 0.5 * (TAU * ph).cos()) * 1.6;
+                        let q = ph * fmt_r;
+                        a_sum += w * (cx * rd(tx, q) + cy * rd(ty, q));
+                    } else {
+                        a_sum += cx * rd(tx, self.ph_a[k]) + cy * rd(ty, self.ph_a[k]);
+                    }
                 }
                 let mut x = a_sum * 0.5 * uni_g + b_out * self.v[P_BLVL] * 0.6 * 0.6 + self.rng.next() * self.v[P_NOIS] * 0.5;
 
@@ -1198,13 +1311,25 @@ impl Instrument for Growl {
                     shaped = self.cr_h;
                 }
                 x = shaped;
+                // multiband distortion: lows clean, mids hard, highs soft
+                if mb_on {
+                    let (lo, _) = self.f_mb[0].run(x, mb_g1, 1.414);
+                    let rest = x - lo;
+                    let (mid, _) = self.f_mb[1].run(rest, mb_g2, 1.414);
+                    let hi = rest - mid;
+                    let ms = (mid * mb_dm).tanh() / mb_dm.sqrt();
+                    let hs = (hi * mb_dh).tanh() / mb_dh.sqrt();
+                    x = lo + mid * (1.0 - mbd) + ms * mbd + hi * (1.0 - mbd) + hs * mbd;
+                }
                 // 11 kHz low-pass
                 let (lpo, _) = self.f_lp.run(x, lp11, k07);
                 x = lpo;
                 // sub, after the drive
                 self.ph_sub += f0 * sub_mul / sr;
                 self.ph_sub -= self.ph_sub.floor();
-                x += (TAU * self.ph_sub).sin() * self.v[P_SUB] * 0.8;
+                let sub_w = (TAU * self.ph_sub).sin();
+                let sub_w = if sub_sat > 0.002 { (sub_w * sub_sat_d).tanh() * sub_sat_n } else { sub_w };
+                x += sub_w * self.v[P_SUB] * 0.8;
                 // amp
                 let g = (1.0 + m[7]).clamp(0.0, 2.0);
                 x *= amp_v * g * (0.3 + 0.7 * self.vel);
@@ -1231,6 +1356,16 @@ impl Instrument for Growl {
             self.dly.push(mono * dely * 0.7 + self.dly_lp * 0.42);
             let mut l = l_out + wl * wide * 0.7 + d_out;
             let mut r = r_out + wr * wide * 0.7 + d_out;
+            if ott_on {
+                let (a, b) = self.ott.process(l, r, ott_c, ott_g1, ott_g2, &ott_att, &ott_rel);
+                l = a;
+                r = b;
+            }
+            if pro.on {
+                let (a, b) = self.pro.process(&pro, l, r);
+                l = a;
+                r = b;
+            }
             self.scr[i * 2] = l * verb * 0.9;
             self.scr[i * 2 + 1] = r * verb * 0.9;
             // limiter
@@ -1550,6 +1685,115 @@ mod tests {
         std::fs::write(std::path::Path::new(&dir).join("growl_showcase.txt"), cues).unwrap();
     }
 
+    fn amp_at(x: &[f32], hz: f32, sr: f32) -> f32 {
+        let w = TAU * hz / sr;
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f32).cos();
+            im += v * (w * i as f32).sin();
+        }
+        (re * re + im * im).sqrt() / x.len() as f32 * 2.0
+    }
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32).sqrt()
+    }
+
+    #[test]
+    fn the_pro_block_is_neutral_by_default_and_each_part_does_what_it_says() {
+        let sr = 48000.0;
+        // not written to a patch while neutral
+        let g = Growl::new(sr);
+        for (n, _) in g.state() {
+            assert!(!PRO.contains(&n.as_str()), "{n}");
+        }
+        let play = |set: &[(&str, f32)], key: u8, vel: f32, secs: f32| {
+            let mut g = Growl::new(sr);
+            g.load_preset("growl");
+            g.set_param("verb", 0.0);
+            g.set_param("wide", 0.0);
+            for (k, v) in set {
+                g.set_param(k, *v);
+            }
+            g.note_on(key, vel);
+            render(&mut g, secs)
+        };
+        let tail = |o: &[f32]| o[o.len() / 2..].to_vec();
+        let mono = |o: &[f32]| o.chunks_exact(2).map(|f| f[0] + f[1]).collect::<Vec<f32>>();
+        let hf = |o: &[f32]| {
+            let m = mono(o);
+            (4..14).map(|k| amp_at(&m, 3000.0 + k as f32 * 530.0, sr).powi(2)).sum::<f32>()
+        };
+        // multiband drive raises the highs
+        assert!(hf(&tail(&play(&[("mb drv", 1.0), ("drv", 0.1)], 40, 0.9, 1.0))) > hf(&tail(&play(&[("drv", 0.1)], 40, 0.9, 1.0))) * 1.3, "mb drv");
+        // air: more above 8 kHz
+        let top = |o: &[f32]| {
+            let m = mono(o);
+            (2..8).map(|k| amp_at(&m, 8500.0 + k as f32 * 400.0, sr).powi(2)).sum::<f32>()
+        };
+        assert!(top(&tail(&play(&[("air", 1.0), ("drv", 0.7)], 40, 0.9, 1.0))) > top(&tail(&play(&[("drv", 0.7)], 40, 0.9, 1.0))) * 1.5, "air");
+        // tilt: up = brighter, down = darker
+        assert!(hf(&tail(&play(&[("tilt", 1.0)], 40, 0.9, 1.0))) > hf(&tail(&play(&[("tilt", 0.0)], 40, 0.9, 1.0))) * 2.0, "tilt");
+        // sub saturation makes harmonics of the sub (the 3rd partial of a sine sub at A1 = 55 Hz)
+        let sub3 = |sat: f32| {
+            let o = tail(&play(&[("sub", 1.0), ("cut", 0.0), ("drv", 0.0), ("sub sat", sat), ("glid", 0.0), ("table", 0.0), ("pos", 0.0)], 45, 1.0, 1.0));
+            let m = mono(&o);
+            amp_at(&m, 55.0 * 3.0, sr) / amp_at(&m, 55.0, sr)
+        };
+        assert!(sub3(1.0) > sub3(0.0) * 3.0 + 0.01, "sub sat {} vs {}", sub3(1.0), sub3(0.0));
+        // stereo: width 0 = mono, 1 = wider; mono lo keeps the sides out of the bass
+        let side = |o: &[f32]| rms(&o.chunks_exact(2).map(|f| f[0] - f[1]).collect::<Vec<f32>>());
+        let wide_p = [("wide", 0.9), ("dely", 0.0)];
+        let _ = wide_p;
+        let w1 = |set: &[(&str, f32)]| {
+            let mut g = Growl::new(sr);
+            g.load_preset("growl");
+            g.set_param("verb", 0.0);
+            g.set_param("wide", 0.9);
+            for (k, v) in set {
+                g.set_param(k, *v);
+            }
+            g.note_on(40, 0.9);
+            tail(&render(&mut g, 1.2))
+        };
+        let (base, w0, wmax) = (side(&w1(&[])), side(&w1(&[("s width", 0.0)])), side(&w1(&[("s width", 1.0)])));
+        assert!(w0 < base * 0.01 && wmax > base * 1.5, "width {w0} {base} {wmax}");
+        let sd = |o: &[f32], lo: f32, hi: f32| {
+            let s: Vec<f32> = o.chunks_exact(2).map(|f| f[0] - f[1]).collect();
+            (0..8).map(|k| amp_at(&s, lo + (hi - lo) * k as f32 / 8.0, sr).powi(2)).sum::<f32>().sqrt()
+        };
+        let (off, on) = (w1(&[("wide", 0.9)]), w1(&[("mono lo", 0.9)]));
+        assert!(sd(&on, 70.0, 140.0) < sd(&off, 70.0, 140.0) * 0.3 + 1e-5, "mono lo {} vs {}", sd(&on, 70.0, 140.0), sd(&off, 70.0, 140.0));
+        // formant: the pitch stays, the brightness moves
+        let pitch = |o: &[f32]| {
+            let m = mono(o);
+            let w = &m[m.len() / 2..m.len() / 2 + 4096];
+            let mut best = (20usize, f32::MIN);
+            for lag in 20..800 {
+                let c: f32 = (0..w.len() - lag).map(|i| w[i] * w[i + lag]).sum();
+                if c > best.1 {
+                    best = (lag, c);
+                }
+            }
+            sr / best.0 as f32
+        };
+        let fset = |f: f32| [("formant", f), ("sub", 0.0), ("uni", 0.0), ("detn", 0.0), ("table", 0.0), ("cut", 1.0), ("drv", 0.0), ("glid", 0.0)];
+        let (flo, fneutral, fhi) = (play(&fset(0.5), 52, 0.9, 1.0), play(&fset(0.5), 52, 0.9, 1.0), play(&fset(0.9), 52, 0.9, 1.0));
+        assert!((pitch(&fhi) / pitch(&fneutral) - 1.0).abs() < 0.03, "pitch stays: {} vs {}", pitch(&fhi), pitch(&fneutral));
+        let _ = flo;
+        assert!(hf(&tail(&fhi)) > hf(&tail(&fneutral)) * 1.5, "formant up = brighter");
+        // OTT squeezes the dynamics: a soft and a loud note get closer in level
+        let ratio = |ott: f32| {
+            let q = rms(&tail(&play(&[("ott", ott), ("out", 0.6)], 40, 0.2, 1.5)));
+            let l = rms(&tail(&play(&[("ott", ott), ("out", 0.6)], 40, 1.0, 1.5)));
+            l / q
+        };
+        assert!(ratio(1.0) < ratio(0.0) * 0.8, "ott: {} vs {}", ratio(1.0), ratio(0.0));
+        // all of it at once stays finite and under the limiter
+        let all = play(&[("mb drv", 1.0), ("formant", 0.1), ("ott", 1.0), ("s width", 1.0), ("mono lo", 1.0), ("sub sat", 1.0), ("tilt", 0.8), ("air", 1.0)], 40, 1.0, 1.0);
+        assert!(all.iter().all(|x| x.is_finite()));
+        assert!(peak(&all) <= 1.0, "peak {}", peak(&all));
+    }
+
     #[test]
     fn the_sound_design_block_stays_sane_at_its_extremes_and_does_what_it_says() {
         let sr = 44100.0;
@@ -1600,7 +1844,9 @@ mod tests {
         assert_eq!(param_names()[EXT_BASE], "talk");
         assert_eq!(param_names()[P_TSTEP], "t s0");
         assert_eq!(param_names()[SD_BASE - 1], "t s15");
-        assert_eq!(param_names()[NPARAM - 1], "sub oct");
+        assert_eq!(param_names()[PRO_BASE - 1], "sub oct");
+        assert_eq!(param_names()[PRO_BASE], "mb drv");
+        assert_eq!(param_names()[NPARAM - 1], "air");
     }
 
     #[test]

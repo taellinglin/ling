@@ -77,6 +77,10 @@ pub struct SongPlan {
     pub story: String,
     /// the emotional arc (emotion.rs): "auto" rolls one from the genre and the lyrics, else one of emotion::ARCS
     pub arc: String,
+    /// how the song opens ("auto" rolls one from the arc and the form, else one of [`INTROS`]); see [`intro_style`]
+    pub intro: String,
+    /// how many movements the song has ("auto" lets the arc, the length and the dice decide, else "1" / "2" / "3"); see [`movements`]
+    pub movements: String,
     /// added to every section's energy (-0.3 .. 0.3)
     pub energy: f64,
     /// how busy the parts play, 0.5 = as the style plays (scales the density)
@@ -161,8 +165,8 @@ fn style_progs(style: &str, minor: bool) -> &'static [&'static str] {
         ("andalusian", true) => &["i VII VI V", "i VII VI VII", "VI VII i i"],
         ("borrowed", false) => &["I iv I bVI", "I bIII IV iv", "IV iv I I", "I bVI bVII I"],
         ("borrowed", true) => &["i IV VI V", "i bII VI V", "VI iv V i", "i VI III bII"],
-        (_, false) => &["I V vi IV", "vi IV I V", "I vi IV V", "IV I V vi", "I IV vi V"],
-        (_, true) => &["i VI III VII", "i iv VII III", "i VII VI VII", "i VI iv V", "VI VII i i"],
+        (_, false) => &["I V vi IV", "I IV I V", "vi IV I V", "I iii IV V", "I vi IV V", "IV V iii vi", "I V IV V", "I IV vi V"],
+        (_, true) => &["i VI III VII", "i iv v i", "i VII VI VII", "i iv VII III", "i v VI VII", "VI VII i i", "i VI iv V"],
     }
 }
 
@@ -187,6 +191,10 @@ fn group_seed(plan: &SongPlan, g: char, k: usize) -> u64 {
 pub fn section_key(plan: &SongPlan, si: usize) -> Key {
     let home = plan.key;
     let Some(sec) = plan.sections.get(si) else { return home };
+    // a movement with a key of its own (the final lift, the reflective one) rules the sections in it
+    if let Some(k) = movement_key(plan, si) {
+        return k;
+    }
     let d = &plan.dials;
     let g = harm_group(&sec.tag);
     let k = plan.sections[..si].iter().filter(|s| harm_group(&s.tag) == g).count();
@@ -219,8 +227,12 @@ pub fn section_prog(plan: &SongPlan, si: usize) -> String {
     if g == 'B' && !plan.chorus_prog.is_empty() {
         return plan.chorus_prog.clone();
     }
-    let gst = genre(&plan.genre).style;
-    let style = if d.style == "auto" || d.style.is_empty() { if matches!(gst, "jazz" | "lofi" | "disco" | "deep house") { "circle" } else { "loop" } } else { d.style.as_str() };
+    let style = prog_style(plan);
+    if si == 0 && sec.tag == "intro" && d.variety >= 0.25 {
+        if let Some(p) = intro_prog(plan, key) {
+            return p;
+        }
+    }
     let k = plan.sections[..si].iter().filter(|s| harm_group(&s.tag) == g).count();
     let mut rng = compose::Rng::new(group_seed(plan, g, if d.variety > 0.75 { k } else { 0 }));
     let pool: Vec<&str> = match g {
@@ -259,6 +271,50 @@ pub fn section_prog(plan: &SongPlan, si: usize) -> String {
     out
 }
 
+/// The progression family: the plan's style, or for "auto" a family the emotional arc leans to (a bittersweet song borrows from the
+/// minor, a melancholy one walks down the Andalusian cadence, a triumph rings on the flat seventh), rolled with the seed.
+pub fn prog_style(plan: &SongPlan) -> &'static str {
+    let d = &plan.dials;
+    if d.style != "auto" && !d.style.is_empty() {
+        return PROG_STYLES.iter().copied().find(|s| *s == d.style).unwrap_or("loop");
+    }
+    let gst = genre(&plan.genre).style;
+    if matches!(gst, "jazz" | "lofi" | "disco" | "deep house") {
+        return "circle";
+    }
+    let pool: &[&str] = match plan.arc.as_str() {
+        "release" => &["loop", "circle", "loop"],
+        "slow burn" => &["modal", "loop", "borrowed"],
+        "bittersweet" => &["borrowed", "circle", "loop"],
+        "triumph" => &["modal", "loop", "borrowed"],
+        "melancholy" => &["andalusian", "circle", "borrowed"],
+        "storm" => &["andalusian", "modal", "borrowed"],
+        "lullaby" => &["circle", "loop"],
+        _ => &["loop", "circle", "modal", "borrowed"],
+    };
+    let mut rng = compose::Rng::new(plan.seed.wrapping_mul(0x51F1).wrapping_add(0xC0DE));
+    pool[(rng.next() as usize) % pool.len()]
+}
+
+/// the intro's harmony by its style: a pedal on the tonic (beat, drone), the chorus's chords (theme, cold), a suspense that leans
+/// to the dominant or the verse's own loop (swell, solo); `None` = the verse's
+fn intro_prog(plan: &SongPlan, key: Key) -> Option<String> {
+    let mut rng = compose::Rng::new(group_seed(plan, 'I', 0));
+    let pick = |rng: &mut compose::Rng, v: &[&str]| v[(rng.next() as usize) % v.len()].to_string();
+    match plan.intro.as_str() {
+        "beat" | "drone" => Some(if key.minor { pick(&mut rng, &["i i i i", "i i iv i", "i i VII i", "i VI i VI"]) } else { pick(&mut rng, &["I I I I", "I I IV I", "I bVII I I", "I ii I ii"]) }),
+        "theme" | "cold" => plan.sections.iter().position(|s| is_chorus(&s.tag)).map(|ci| section_prog(plan, ci)),
+        "swell" | "solo" => {
+            if rng.next() % 2 == 0 {
+                Some(if key.minor { pick(&mut rng, &["VI VI VII VII", "iv iv V V", "VI VII VI V", "i iv VI V"]) } else { pick(&mut rng, &["IV IV V V", "vi vi IV V", "IV iv I V", "ii ii IV V"]) })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// the verse progression without the chorus rule (for the comparison above)
 fn section_prog_plain(plan: &SongPlan, si: usize) -> String {
     let d = &plan.dials;
@@ -266,8 +322,7 @@ fn section_prog_plain(plan: &SongPlan, si: usize) -> String {
         return plan.prog.clone();
     }
     let key = section_key(plan, si);
-    let gst = genre(&plan.genre).style;
-    let style = if d.style == "auto" || d.style.is_empty() { if matches!(gst, "jazz" | "lofi" | "disco" | "deep house") { "circle" } else { "loop" } } else { d.style.as_str() };
+    let style = prog_style(plan);
     let mut rng = compose::Rng::new(group_seed(plan, 'A', 0));
     let pool = style_progs(style, key.minor);
     let n = ((pool.len() as f64 * (0.35 + 0.65 * d.temperature)).ceil() as usize).clamp(1, pool.len());
@@ -423,7 +478,7 @@ pub fn plays(role: &str, sec: &Section, form: Form, has_vocal: bool) -> bool {
         }
         Kind::Pad => {
             if r == "riser" {
-                tag == "build" || tag == "intro" && form == Form::Club
+                is_build_tag(tag) || is_chorus(tag) && form == Form::Club || tag == "intro" && form == Form::Club
             } else {
                 // pads leave room in the drops of club music
                 !(form == Form::Club && tag == "drop" && r != "strings")
@@ -814,6 +869,8 @@ pub fn plan_story(prompt: &str, lyrics: &str, model: &[(String, String)], refere
         human,
         story,
         arc: field(model, "arc").map(|a| a.trim().to_lowercase()).filter(|a| crate::emotion::ARCS.contains(&a.as_str())).unwrap_or_else(|| "auto".into()),
+        intro: prompt_intro(prompt).map(str::to_string).or_else(|| field(model, "intro").map(|a| a.trim().to_lowercase()).filter(|a| INTROS.contains(&a.as_str()))).unwrap_or_else(|| "auto".into()),
+        movements: prompt_movements(prompt).map(str::to_string).or_else(|| field(model, "movements").map(|a| a.trim().to_lowercase()).filter(|a| MOVEMENT_CHOICES.contains(&a.as_str()))).unwrap_or_else(|| "auto".into()),
         energy: 0.0,
         drive: 0.5,
         color,
@@ -829,15 +886,164 @@ pub fn plan_story(prompt: &str, lyrics: &str, model: &[(String, String)], refere
     for s in p.sections.iter_mut() {
         s.energy = (mean + (s.energy - mean) * swing).clamp(0.05, 1.0);
     }
+    // the emotional plan, before a note is written (emotion.rs); its arc steers the intro and the progression family below
+    let words = lyrics_for_sections(lyrics, &p.sections);
+    let ep = crate::emotion::plan(&p.sections, &p.arc, &p.genre, &words, p.dials.mood, p.seed);
+    if p.arc == "auto" && crate::emotion::ARCS.contains(&ep.arc.as_str()) {
+        p.arc = ep.arc.clone();
+    }
+    if p.intro == "auto" {
+        p.intro = intro_style(&p).to_string();
+    }
+    apply_intro(&mut p.sections, &p.intro);
+    if let Some(n) = intro_note(&p) {
+        p.notes.push(n);
+    }
     let hs = harmony_summary(&p);
     p.notes.push(hs);
     let a = arrange(&p);
     p.notes.extend(a.notes);
-    // the emotional plan, before a note is written (emotion.rs)
-    let words = lyrics_for_sections(lyrics, &p.sections);
-    let ep = crate::emotion::plan(&p.sections, &p.arc, &p.genre, &words, p.dials.mood, p.seed);
+    p.notes.extend(movement_notes(&p));
+    p.notes.extend(craft_notes(&p));
     p.notes.push(format!("feel: {}", crate::emotion::summary(&ep, &p.sections)));
     p
+}
+
+/// movements the prompt asks for ("two movements", "3 movements", "single movement")
+fn prompt_movements(prompt: &str) -> Option<&'static str> {
+    let l = prompt.to_lowercase();
+    if !l.contains("movement") {
+        return None;
+    }
+    if l.contains("one movement") || l.contains("single movement") || l.contains("1 movement") {
+        Some("1")
+    } else if l.contains("two movements") || l.contains("2 movements") {
+        Some("2")
+    } else if l.contains("three movements") || l.contains("3 movements") || l.contains("movements") {
+        Some("3")
+    } else {
+        None
+    }
+}
+
+// ── the intro: how the song opens ───────────────────────────────────────────
+
+/// swell = pads and chords fade in; solo = one instrument alone (piano, keys, guitar, pluck); beat = the groove first (drums, then
+/// bass) over a held tonic; theme = the hook played by an instrument over a single chord part; cold = a cold open on the chorus;
+/// drone = a pedal on the tonic with the arp shimmering over it
+pub const INTROS: [&str; 7] = ["auto", "swell", "solo", "beat", "theme", "cold", "drone"];
+
+/// an intro the prompt asks for ("cold open", "piano intro", "drum intro" ...)
+fn prompt_intro(prompt: &str) -> Option<&'static str> {
+    let l = prompt.to_lowercase();
+    let has = |w: &[&str]| w.iter().any(|x| l.contains(x));
+    if has(&["cold open", "start with the chorus", "starts with the chorus", "open on the chorus", "straight into"]) {
+        Some("cold")
+    } else if has(&["drum intro", "beat intro", "drums first", "starts with drums", "start with drums", "groove intro"]) {
+        Some("beat")
+    } else if has(&["piano intro", "solo intro", "guitar intro", "keys intro", "starts with piano", "start with piano"]) {
+        Some("solo")
+    } else if has(&["drone intro", "pedal intro", "ambient intro"]) {
+        Some("drone")
+    } else if has(&["theme intro", "hook intro", "melody intro", "starts with the hook", "start with the hook"]) {
+        Some("theme")
+    } else if has(&["pad intro", "swell intro", "fade in"]) {
+        Some("swell")
+    } else {
+        None
+    }
+}
+
+/// The intro an "auto" plan rolls: weighted dice over the styles, the weights from the emotional arc (a lullaby starts on a lone
+/// piano, a storm on the beat or a drone, a triumph on the hook) and the form (club music opens on the groove, a score on a drone),
+/// and only styles the parts can play.
+pub fn intro_style(plan: &SongPlan) -> &'static str {
+    if let Some(i) = INTROS[1..].iter().copied().find(|i| *i == plan.intro) {
+        return i;
+    }
+    if plan.sections.first().map(|s| s.tag != "intro").unwrap_or(true) {
+        return "swell";
+    }
+    let kinds: Vec<Kind> = plan.parts.iter().map(|p| role_kind(&p.role)).collect();
+    let has = |k: Kind| kinds.contains(&k);
+    let melody = plan.parts.iter().any(|p| role_kind(&p.role) == Kind::Melody && p.role != "riser");
+    let form = genre(&plan.genre).form;
+    //                       swell solo beat theme cold drone
+    let mut w: [f64; 6] = match plan.arc.as_str() {
+        "release" => [1.0, 1.0, 2.0, 2.0, 2.0, 0.5],
+        "slow burn" => [2.0, 1.5, 1.5, 0.5, 0.0, 2.5],
+        "bittersweet" => [1.5, 3.0, 0.5, 2.0, 0.5, 1.0],
+        "triumph" => [1.0, 0.5, 2.0, 3.0, 2.0, 0.5],
+        "melancholy" => [1.5, 3.0, 0.5, 1.0, 0.0, 2.0],
+        "storm" => [0.5, 0.5, 3.0, 1.0, 2.0, 2.5],
+        "lullaby" => [2.0, 3.5, 0.0, 1.5, 0.0, 1.5],
+        _ => [1.5, 1.5, 1.5, 1.5, 1.0, 1.0],
+    };
+    match form {
+        Form::Club => {
+            w[2] *= 1.8;
+            w[5] *= 1.4;
+            w[4] *= 0.5;
+        }
+        Form::Score => {
+            w[2] *= 0.3;
+            w[5] *= 1.6;
+            w[4] = 0.0;
+        }
+        Form::Song => {}
+    }
+    if !(has(Kind::Chords) || has(Kind::Arp)) {
+        w[1] = 0.0;
+    }
+    if !has(Kind::Drums) {
+        w[2] = 0.0;
+    }
+    if !melody {
+        w[3] = 0.0;
+    }
+    if !plan.sections.iter().any(|s| is_chorus(&s.tag)) {
+        w[4] = 0.0;
+    }
+    if !(has(Kind::Pad) || has(Kind::Arp)) {
+        w[5] = 0.0;
+    }
+    let total: f64 = w.iter().sum();
+    if total <= 0.0 {
+        return "swell";
+    }
+    let mut rng = compose::Rng::new(plan.seed.wrapping_mul(0x2545_F491).wrapping_add(0x1A7));
+    let mut x = (rng.next() % 1_000_000) as f64 / 1_000_000.0 * total;
+    for (i, wi) in w.iter().enumerate() {
+        if x < *wi {
+            return INTROS[i + 1];
+        }
+        x -= wi;
+    }
+    "swell"
+}
+
+/// a cold open carries the chorus's energy (the rest keep theirs)
+pub fn apply_intro(sections: &mut [Section], intro: &str) {
+    if intro != "cold" || sections.first().map(|s| s.tag != "intro").unwrap_or(true) {
+        return;
+    }
+    if let Some(e) = sections.iter().find(|s| is_chorus(&s.tag)).map(|s| s.energy) {
+        sections[0].energy = sections[0].energy.max(e * 0.9);
+    }
+}
+
+fn intro_note(plan: &SongPlan) -> Option<String> {
+    if plan.sections.first().map(|s| s.tag != "intro").unwrap_or(true) {
+        return None;
+    }
+    Some(match plan.intro.as_str() {
+        "solo" => "intro: one instrument alone, the band waits".into(),
+        "beat" => "intro: the groove first over a held tonic".into(),
+        "theme" => "intro: the hook on an instrument over the chorus chords".into(),
+        "cold" => "intro: a cold open on the chorus".into(),
+        "drone" => "intro: a drone on the tonic with the arp over it".into(),
+        _ => "intro: pads and chords swell in".into(),
+    })
 }
 
 // ── length: a duration, the guide MIDI, or room for the lyrics ───────────────
@@ -1125,7 +1331,7 @@ impl SongPlan {
         let st: Vec<String> = self.sections.iter().map(|s| format!("{} {}", s.tag, s.bars)).collect();
         let parts: Vec<&str> = self.parts.iter().map(|p| p.role.as_str()).collect();
         format!(
-            "genre={}; bpm={}; key={}; prog={}; chorus={}; structure={}; parts={}; voice={}; human={:.2}; story={}; energy={:+.2}; drive={:.2}; color={:.2}; ornament={:.2}; temp={:.2}; variety={:.2}; mood={:.2}; fifths={:+}; progstyle={}; layering={:.2}; design={:.2}; arc={}; seed={}",
+            "genre={}; bpm={}; key={}; prog={}; chorus={}; structure={}; parts={}; voice={}; human={:.2}; story={}; energy={:+.2}; drive={:.2}; color={:.2}; ornament={:.2}; temp={:.2}; variety={:.2}; mood={:.2}; fifths={:+}; progstyle={}; layering={:.2}; design={:.2}; arc={}; intro={}; movements={}; seed={}",
             self.genre,
             self.bpm,
             self.key.name(),
@@ -1148,6 +1354,8 @@ impl SongPlan {
             self.dials.layering,
             self.dials.design,
             self.arc,
+            self.intro,
+            self.movements,
             self.seed
         )
     }
@@ -1170,6 +1378,18 @@ impl SongPlan {
                 "arc" => {
                     let lv = v.trim().to_lowercase();
                     p.arc = if crate::emotion::ARCS.contains(&lv.as_str()) { lv } else { "auto".into() };
+                }
+                "intro" => {
+                    let lv = v.trim().to_lowercase();
+                    p.intro = if INTROS.contains(&lv.as_str()) { lv } else { "auto".into() };
+                    if p.intro == "auto" {
+                        p.intro = intro_style(&p).to_string();
+                    }
+                    apply_intro(&mut p.sections, &p.intro);
+                }
+                "movements" => {
+                    let lv = v.trim().to_lowercase();
+                    p.movements = if MOVEMENT_CHOICES.contains(&lv.as_str()) { lv } else { "auto".into() };
                 }
                 "story" => {
                     let lv = v.trim().to_lowercase();
@@ -1266,13 +1486,494 @@ impl SongPlan {
     }
 }
 
+// ── movements: the song in two or three tempos, pads against drive ─────────────────────────────────────────
+
+pub const MOVEMENT_CHOICES: [&str; 4] = ["auto", "1", "2", "3"];
+
+/// One movement of the song: a run of sections with its own tempo, texture and (maybe) key. The emotion plan decides what kind it is
+/// and how the tempo arrives (see [`movements`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Movement {
+    /// "opening", "main", "reflective" or "lift"
+    pub name: &'static str,
+    /// "pads" (drums out, sustained chords), "halftime" (a slow groove), "drive" (the song's own band), "lift" (the final push)
+    pub texture: &'static str,
+    pub first: usize,
+    pub last: usize,
+    pub bpm: f64,
+    /// how the tempo gets here: "start", "accel" / "rit" (a ramp over the last bars of the movement before), "break" (a beat of
+    /// silence, then the new tempo)
+    pub arrive: &'static str,
+    /// semitones above the home key (the final lift)
+    pub key_lift: i32,
+    /// the key leans to the relative major / minor, or the subdominant (a reflective movement)
+    pub relative: bool,
+    pub why: String,
+}
+
+pub fn is_build_tag(tag: &str) -> bool {
+    matches!(tag, "build" | "buildup" | "rise")
+}
+fn is_pre_tag(tag: &str) -> bool {
+    matches!(tag, "pre" | "prechorus" | "pre-chorus")
+}
+
+/// the emotion plan the arrangement reads (no lyrics, so it only depends on the plan itself)
+fn plan_feels(plan: &SongPlan) -> Vec<crate::emotion::Feel> {
+    crate::emotion::plan(&plan.sections, &plan.arc, &plan.genre, &[], plan.dials.mood, plan.seed).feels
+}
+
+/// start beat of every section
+fn section_starts(plan: &SongPlan) -> Vec<f64> {
+    let mut at = 0.0;
+    plan.sections
+        .iter()
+        .map(|s| {
+            let st = at;
+            at += s.bars as f64 * 4.0;
+            st
+        })
+        .collect()
+}
+
+/// How the song divides into movements. `plan.movements` is "auto" (the arc, the length and the dice decide) or 1 / 2 / 3. An
+/// ambient opening of pads, a driving main movement, a slower reflective one (pads alone when the feeling lets go, a half-time
+/// groove when the tension is held) and a final lift (faster, a key up) are chosen from the emotional arc: triumph and release end
+/// in a lift, the sadder arcs in a reflective movement. A movement can only begin on a section that exists: the sections after the
+/// intro, the first break or bridge, the build before the last chorus or drop.
+pub fn movements(plan: &SongPlan) -> Vec<Movement> {
+    use crate::emotion;
+    let ns = plan.sections.len();
+    let one = |why: &str| {
+        vec![Movement { name: "main", texture: "drive", first: 0, last: ns.saturating_sub(1), bpm: plan.bpm, arrive: "start", key_lift: 0, relative: false, why: why.into() }]
+    };
+    if ns < 3 || plan.movements == "1" {
+        return one("one movement: the song keeps its tempo and key");
+    }
+    let bars = plan.bars();
+    let roll = mix64(plan.seed, 0x30F3) % 100;
+    let want = match plan.movements.as_str() {
+        "2" => 2,
+        "3" => 3,
+        _ => {
+            if ns < 5 || bars < 48 {
+                1
+            } else {
+                match plan.arc.as_str() {
+                    "slow burn" | "triumph" | "storm" | "bittersweet" => if bars >= 72 { 3 } else { 2 },
+                    "lullaby" | "melancholy" => 2,
+                    _ => if bars >= 88 && roll < 45 { 3 } else { 2 },
+                }
+            }
+        }
+    };
+    if want == 1 {
+        return one("one movement: the song is too short to change tempo");
+    }
+    let tag = |i: usize| plan.sections[i].tag.as_str();
+    let b = (2..ns.saturating_sub(1)).find(|i| emotion::is_release_tag(tag(*i)));
+    let l = (0..ns).rev().find(|i| is_chorus(tag(*i))).map(|mut l| {
+        while l > 0 && (is_build_tag(tag(l - 1)) || is_pre_tag(tag(l - 1))) {
+            l -= 1;
+        }
+        l
+    });
+    let l = l.filter(|l| *l >= 2 && b.map(|b| *l > b).unwrap_or(true));
+    let open = if ns >= 4 && tag(0) == "intro" && !matches!(plan.intro.as_str(), "beat" | "cold" | "theme") { Some(1usize) } else { None };
+    let prefer_lift = matches!(plan.arc.as_str(), "triumph" | "release");
+    // the movement after the main one, as (name, first section) entries: a reflective one lasts as long as the release sections do,
+    // then the main tempo returns (or the lift takes over); the lift runs to the end
+    let second = |prefer_lift: bool, with_lift: bool| -> Vec<(&'static str, usize)> {
+        match (prefer_lift, b, l) {
+            (true, _, Some(l)) => vec![("lift", l)],
+            (_, Some(b), _) => {
+                let mut e = b;
+                while e + 1 < ns && emotion::is_release_tag(tag(e + 1)) {
+                    e += 1;
+                }
+                let mut v = vec![("reflective", b)];
+                match l {
+                    Some(l) if with_lift && l > e => {
+                        if l > e + 1 {
+                            v.push(("main", e + 1));
+                        }
+                        v.push(("lift", l));
+                    }
+                    _ if e + 1 < ns => v.push(("main", e + 1)),
+                    _ => {}
+                }
+                v
+            }
+            (_, None, Some(l)) => vec![("lift", l)],
+            _ => vec![],
+        }
+    };
+    let mut layout: Vec<(&'static str, usize)> = vec![];
+    if want == 3 {
+        let x = second(prefer_lift, false);
+        if let (Some(o), false) = (open, x.is_empty()) {
+            layout = vec![("opening", 0), ("main", o)];
+            layout.extend(x);
+        } else if b.is_some() && l.is_some() {
+            layout = vec![("main", 0)];
+            layout.extend(second(false, true));
+        }
+    }
+    if layout.is_empty() {
+        let x = second(prefer_lift, false);
+        if x.is_empty() {
+            return one("one movement: no break or last chorus to change on");
+        }
+        layout = vec![("main", 0)];
+        layout.extend(x);
+    }
+    layout.dedup_by_key(|x| x.1);
+    let feels = plan_feels(plan);
+    let f = |i: usize| feels.get(i).copied().unwrap_or(crate::emotion::Feel { valence: 0.0, arousal: 0.5, tension: 0.4, vocal: 0.5, breath: 0.3, space: 0.5 });
+    let club = genre(&plan.genre).form == Form::Club;
+    let round = |x: f64| x.round().clamp(52.0, 220.0);
+    let mut out: Vec<Movement> = vec![];
+    for (mi, (name, first)) in layout.iter().enumerate() {
+        let last = layout.get(mi + 1).map(|n| n.1 - 1).unwrap_or(ns - 1);
+        let ff = f(*first);
+        let mv = match *name {
+            "opening" => Movement {
+                name: "opening",
+                texture: "pads",
+                first: *first,
+                last,
+                bpm: round(plan.bpm * (0.84 + 0.1 * ff.arousal as f64)),
+                arrive: "start",
+                key_lift: 0,
+                relative: false,
+                why: format!("opening: pads alone (arousal {:.2}), the drums wait for the main movement", ff.arousal),
+            },
+            "reflective" => {
+                let pads = emotion::wants_pads(&ff);
+                let half_dnb = plan.genre == "drum and bass" && !pads;
+                let ratio = if half_dnb { 0.5 } else if pads { 0.72 + 0.12 * ff.arousal as f64 } else { 0.8 + 0.08 * ff.arousal as f64 };
+                Movement {
+                    name: "reflective",
+                    texture: if pads { "pads" } else { "halftime" },
+                    first: *first,
+                    last,
+                    bpm: round(plan.bpm * ratio),
+                    arrive: if club { "break" } else { "rit" },
+                    key_lift: 0,
+                    relative: true,
+                    why: format!(
+                        "reflective from the {}: {} (tension {:.2}, arousal {:.2}) - {}, the key leans to the {}",
+                        tag(*first),
+                        if pads { "pads carry it, the drums rest" } else { "a half-time groove holds the tension" },
+                        ff.tension,
+                        ff.arousal,
+                        if club { "the tempo changes after a beat of silence" } else { "a ritardando into it" },
+                        if plan.key.minor { "subdominant" } else { "relative minor" }
+                    ),
+                }
+            }
+            "lift" => {
+                let fin = f(ns - 1).arousal.max(ff.arousal);
+                let semis = emotion::lift_semitones(&ff);
+                Movement {
+                    name: "lift",
+                    texture: "lift",
+                    first: *first,
+                    last,
+                    bpm: round(plan.bpm * (1.03 + 0.05 * fin as f64)),
+                    arrive: if club { "break" } else { "accel" },
+                    key_lift: semis as i32,
+                    relative: false,
+                    why: format!("final lift from the {}: faster ({}), the key goes up {} semitone{} (valence {:+.2}, arousal {:.2})", tag(*first), if club { "after a beat of silence" } else { "an accelerando into it" }, semis, if semis == 1 { "" } else { "s" }, ff.valence, ff.arousal),
+                }
+            }
+            _ => Movement {
+                name: "main",
+                texture: "drive",
+                first: *first,
+                last,
+                bpm: plan.bpm,
+                arrive: if mi == 0 { "start" } else { "accel" },
+                key_lift: 0,
+                relative: false,
+                why: if mi == 0 { "main movement: the song's tempo, key and full band".into() } else { format!("back to the main tempo and key at the {} ({})", tag(*first), if layout[0].0 == "opening" && mi == 1 { "an accelerando out of the pads" } else { "an accelerando out of the slow movement" }) },
+            },
+        };
+        out.push(mv);
+    }
+    out
+}
+
+/// the movement a section is in (only when the song has more than one)
+pub fn movement_of(plan: &SongPlan, si: usize) -> Option<Movement> {
+    let mv = movements(plan);
+    if mv.len() < 2 {
+        return None;
+    }
+    mv.into_iter().find(|m| si >= m.first && si <= m.last)
+}
+
+/// the key a movement puts a section in (the lift a step up, a reflective movement towards the relative / subdominant)
+fn movement_key(plan: &SongPlan, si: usize) -> Option<Key> {
+    let m = movement_of(plan, si)?;
+    let home = plan.key;
+    if m.key_lift != 0 {
+        return Some(home.transposed(m.key_lift));
+    }
+    if m.relative {
+        return Some(if home.minor { home.transposed(5) } else { Key::new((home.tonic + 9) % 12, true) });
+    }
+    None
+}
+
+/// The tempo map of the song as (beat, bpm): the opening tempo when it is not the song's, and for every movement change either a
+/// ritardando / accelerando (a step a beat over the last one or two bars of the section before) or a plain change on the downbeat (the
+/// silence before it is [`gap_after`]).
+pub fn tempo_changes(plan: &SongPlan) -> Vec<(f64, f64)> {
+    let mv = movements(plan);
+    if mv.len() < 2 {
+        return vec![];
+    }
+    let starts = section_starts(plan);
+    let mut out: Vec<(f64, f64)> = vec![];
+    if (mv[0].bpm - plan.bpm).abs() > 0.5 {
+        out.push((0.0, mv[0].bpm));
+    }
+    for i in 1..mv.len() {
+        let (from, to) = (mv[i - 1].bpm, mv[i].bpm);
+        let at = starts[mv[i].first];
+        if matches!(mv[i].arrive, "accel" | "rit") {
+            let prev_bars = plan.sections[mv[i].first - 1].bars as f64;
+            let ramp = if prev_bars >= 8.0 { 8.0 } else { (prev_bars * 2.0).max(2.0) }.min(prev_bars * 4.0);
+            let steps = ramp as usize;
+            for s in 1..steps {
+                let t = s as f64 / steps as f64;
+                let e = t * t * (3.0 - 2.0 * t);
+                out.push((at - ramp + s as f64, ((from + (to - from) * e) * 10.0).round() / 10.0));
+            }
+        }
+        out.push((at, to));
+    }
+    out
+}
+
+/// the movements in words, with why (for the plan's notes and the build summary)
+pub fn movement_notes(plan: &SongPlan) -> Vec<String> {
+    let mv = movements(plan);
+    if mv.len() < 2 {
+        return vec![];
+    }
+    let starts = section_starts(plan);
+    let bar = |si: usize| (starts[si] / 4.0).round() as u32 + 1;
+    let head: Vec<String> = mv.iter().map(|m| format!("{} ({}, {:.0} bpm, from bar {})", m.name, m.texture, m.bpm, bar(m.first))).collect();
+    let mut names: Vec<&str> = mv.iter().map(|m| m.name).collect();
+    names.dedup();
+    names.sort_unstable();
+    names.dedup();
+    let mut notes = vec![format!("movements={}: {}", names.len(), head.join(" > "))];
+    notes.extend(mv.iter().map(|m| m.why.clone()).filter(|w| !w.starts_with("main movement")));
+    notes
+}
+
+/// Beats of silence at the end of section `si`: the held breath before a drop or a chorus (a build whose next section is a drop; a
+/// tense pre-chorus gets half a beat) and before a tempo change that comes after a break. How long it hangs is the tension.
+pub fn gap_after(plan: &SongPlan, si: usize) -> f64 {
+    let Some(next) = plan.sections.get(si + 1) else { return 0.0 };
+    let sec = &plan.sections[si];
+    let feels = plan_feels(plan);
+    let Some(f) = feels.get(si) else { return 0.0 };
+    let club = genre(&plan.genre).form == Form::Club;
+    let build_like = is_build_tag(&sec.tag) || (club && is_pre_tag(&sec.tag));
+    if is_chorus(&next.tag) && build_like {
+        return crate::emotion::gap_beats(f).min(sec.bars as f64 * 2.0);
+    }
+    if is_chorus(&next.tag) && is_pre_tag(&sec.tag) && f.tension >= 0.7 {
+        return 0.5;
+    }
+    if movements(plan).iter().any(|m| m.first == si + 1 && m.arrive == "break") {
+        return 1.0;
+    }
+    0.0
+}
+
+/// what the build-ups do and why, for the plan's notes (the tension of each build decides how long the silence hangs and when the roll speeds up)
+pub fn craft_notes(plan: &SongPlan) -> Vec<String> {
+    let feels = plan_feels(plan);
+    let mut out = vec![];
+    let mut drops = 0;
+    for si in 0..plan.sections.len() {
+        if !leads_into_drop(plan, si) {
+            continue;
+        }
+        drops += 1;
+        let sec = &plan.sections[si];
+        let gap = gap_after(plan, si);
+        let t = feels.get(si).map(|f| f.tension).unwrap_or(0.5);
+        let cuts = feels.get(si).map(crate::emotion::roll_stages).unwrap_or([0.45, 0.72, 0.9]);
+        out.push(format!(
+            "{} {}: snare roll 1/4 > 1/8 > 1/16 > 1/32 (it speeds up at {:.0}% / {:.0}% / {:.0}%), a riser and the filter opening, then {} of silence before the {} (tension {:.2}: {}); after the hit a crash and a downlifter",
+            sec.tag,
+            drops,
+            cuts[0] * 100.0,
+            cuts[1] * 100.0,
+            cuts[2] * 100.0,
+            if gap >= 2.0 { "half a bar".to_string() } else if gap >= 1.0 { "a beat".to_string() } else { "an eighth".to_string() },
+            plan.sections[si + 1].tag,
+            t,
+            if t >= 0.7 { "held long" } else if t >= 0.45 { "a short stop" } else { "a quick breath" }
+        ));
+    }
+    let nd = plan.sections.iter().filter(|s| is_chorus(&s.tag) && genre(&plan.genre).form == Form::Club).count();
+    if nd >= 2 && plan.dials.variety >= 0.15 {
+        out.push("the second drop switches the bass pattern over the same drums and lead".into());
+    }
+    out
+}
+
+/// Does the section lead into a drop (a build / a club pre-chorus before a chorus or drop)?
+fn leads_into_drop(plan: &SongPlan, si: usize) -> bool {
+    let Some(sec) = plan.sections.get(si) else { return false };
+    let club = genre(&plan.genre).form == Form::Club;
+    (is_build_tag(&sec.tag) || (club && is_pre_tag(&sec.tag))) && plan.sections.get(si + 1).map(|n| is_chorus(&n.tag)).unwrap_or(false)
+}
+
+/// An accelerating snare / clap roll for a build: quarter notes, then eighths, sixteenths and thirty-seconds; the stage changes
+/// are where the feeling puts them ([`crate::emotion::roll_stages`]). It starts two bars in on a long build and stops where the
+/// silence before the drop begins. The velocity climbs the whole way.
+fn build_roll(sec: &Section, feel: &crate::emotion::Feel, gap: f64) -> Vec<N> {
+    let len = sec.bars as f64 * 4.0;
+    let end = len - gap;
+    let t0 = if sec.bars >= 8 { 8.0 } else if sec.bars >= 4 { 4.0 } else { 0.0 };
+    if end - t0 < 2.0 {
+        return vec![];
+    }
+    let cuts = crate::emotion::roll_stages(feel);
+    let mut out = vec![];
+    let (mut t, mut i) = (t0, 0usize);
+    while t < end - 1e-6 {
+        let frac = (t - t0) / (end - t0);
+        let stage = if frac < cuts[0] { 0 } else if frac < cuts[1] { 1 } else if frac < cuts[2] { 2 } else { 3 };
+        let step: f64 = [1.0, 0.5, 0.25, 0.125][stage];
+        let key = if stage >= 2 && i % 2 == 1 { compose::K_CLAP } else { compose::K_SNARE };
+        out.push(N { start: t, len: (step * 0.9).min(end - t), key, vel: (0.32 + 0.66 * frac.powf(1.2)) as f32 });
+        t += step;
+        i += 1;
+    }
+    out
+}
+
+/// The riser track's notes: a rising ladder through the build (one step every two beats, then a beat, a half, a quarter, so it speeds
+/// up like the roll) climbing two octaves of the key, and a falling downlifter in the first bars of the drop after it.
+fn riser_notes(plan: &SongPlan, sec: &Section, si: Option<usize>) -> Vec<N> {
+    let len = sec.bars as f64 * 4.0;
+    let key = si.map(|i| section_key(plan, i)).unwrap_or(plan.key);
+    let base = 48 + key.tonic;
+    let tag = sec.tag.as_str();
+    if is_build_tag(tag) || is_pre_tag(tag) {
+        let feel = si.and_then(|i| plan_feels(plan).get(i).copied());
+        let gap = si.map(|i| gap_after(plan, i)).unwrap_or(0.0);
+        let end = len - gap;
+        let cuts = feel.map(|f| crate::emotion::roll_stages(&f)).unwrap_or([0.45, 0.72, 0.9]);
+        let mut out = vec![];
+        let mut t = 0.0;
+        while t < end - 1e-6 {
+            let frac = t / end;
+            let step: f64 = if frac < cuts[0] { 2.0 } else if frac < cuts[1] { 1.0 } else if frac < cuts[2] { 0.5 } else { 0.25 };
+            out.push(N { start: t, len: (step * 1.05).min(end - t), key: dia(key, base, (frac * 14.0).round() as i32), vel: (0.3 + 0.6 * frac) as f32 });
+            t += step;
+        }
+        return out;
+    }
+    if tag == "drop" || is_chorus(tag) {
+        // the downlifter, only right after a build
+        if si.map(|i| i > 0 && leads_into_drop(plan, i - 1)).unwrap_or(false) {
+            return (0..8).map(|i| N { start: i as f64, len: 1.0, key: dia(key, base + 24, -(i * 2)), vel: 0.7 - 0.07 * i as f32 }).collect();
+        }
+        return vec![];
+    }
+    vec![N { start: 0.0, len, key: base, vel: 0.7 }]
+}
+
+/// A section's notes cut `gap` beats before its end (the held breath): notes starting in it go, notes ringing into it stop
+fn cut_gap(notes: &mut Vec<N>, len: f64, gap: f64) {
+    if gap <= 0.0 {
+        return;
+    }
+    let cut = len - gap;
+    notes.retain(|n| n.start < cut - 1e-6);
+    for n in notes.iter_mut() {
+        if n.start + n.len > cut {
+            n.len = (cut - n.start).max(0.02);
+        }
+    }
+}
+
+/// The craft on top of a part's phrase: the roll in builds (the groove's snares make way for it), the crash and kick on the first
+/// beat after a build or a break, and a pickup into the next section's first chord on the bass and the lead.
+fn craft(plan: &SongPlan, si: usize, kind: Kind, spec: &compose::Spec, singer: bool, notes: &mut Vec<N>) {
+    let sec = &plan.sections[si];
+    let len = sec.bars as f64 * 4.0;
+    let feels = plan_feels(plan);
+    let gap = gap_after(plan, si);
+    let after_build = si > 0 && leads_into_drop(plan, si - 1);
+    match kind {
+        Kind::Drums => {
+            if leads_into_drop(plan, si) {
+                if let Some(f) = feels.get(si) {
+                    let roll = build_roll(sec, f, gap);
+                    if let Some(first) = roll.first() {
+                        let from = first.start;
+                        notes.retain(|n| !(n.start >= from - 1e-6 && matches!(n.key, compose::K_SNARE | compose::K_CLAP | compose::K_RIM)));
+                        notes.extend(roll);
+                    }
+                }
+            }
+            let jump = si > 0 && sec.energy > plan.sections[si - 1].energy + 0.3;
+            if after_build || (jump && is_chorus(&sec.tag)) {
+                notes.retain(|n| !(n.start < 0.05 && matches!(n.key, compose::K_CRASH)));
+                notes.push(N { start: 0.0, len: 2.0, key: compose::K_CRASH, vel: 1.0 });
+                if !notes.iter().any(|n| n.start < 0.05 && n.key == compose::K_KICK) {
+                    notes.push(N { start: 0.0, len: 0.5, key: compose::K_KICK, vel: 1.0 });
+                }
+            }
+            notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
+        }
+        Kind::Bass | Kind::Melody if !singer && gap <= 0.0 && !notes.is_empty() => {
+            // a pickup: a scale step below the next chord's root, an eighth before the barline
+            let Some(next) = plan.sections.get(si + 1) else { return };
+            if next.tag == sec.tag || next.energy + 0.15 < sec.energy {
+                return;
+            }
+            let (nk, chords) = section_chords(plan, si + 1, spec.cpb);
+            let Some(root) = chords.first().map(|c| c.2) else { return };
+            let last = notes.iter().filter(|n| n.start < len - 0.5).max_by(|a, b| a.start.total_cmp(&b.start)).map(|n| n.key).unwrap_or(spec.lo);
+            let target = (0..128i32).filter(|k| (*k % 12) as u8 == root % 12 && (*k as u8) >= spec.lo && (*k as u8) <= spec.hi).min_by_key(|k| (*k - last as i32).abs());
+            let Some(target) = target else { return };
+            let from = len - 0.5;
+            notes.retain(|n| n.start < from - 1e-6);
+            for n in notes.iter_mut() {
+                if n.start + n.len > from {
+                    n.len = (from - n.start).max(0.05);
+                }
+            }
+            notes.push(N { start: from, len: 0.45, key: dia(nk, target as u8, -1), vel: 0.72 });
+        }
+        _ => {}
+    }
+}
+
 // ── writing the notes ───────────────────────────────────────────────────────
 
 /// The notes of one part in one section (clip-relative beats). Sections with the same tag get the same seed, so a chorus comes back as
 /// the same chorus; energy scales the density; the last bar of a section gets a fill on the drums.
 pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8, u8)>) -> Vec<N> {
     let (spec, kind, mut notes) = written(plan, part, sec, singer_range);
+    let si = section_index(plan, sec);
+    let len = sec.bars as f64 * 4.0;
     if plan.parts[part].role == "riser" {
+        if let Some(si) = si {
+            cut_gap(&mut notes, len, gap_after(plan, si));
+        }
         return notes;
     }
     let themed = kind == Kind::Melody && plan.theme.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
@@ -1304,7 +2005,14 @@ pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: 
         lock_to_kick(plan, sec, &spec, &mut notes);
     }
     blend_guide(plan, part, sec, kind, &spec, &mut notes);
+    if let Some(si) = si {
+        craft(plan, si, kind, &spec, singer_range.is_some(), &mut notes);
+    }
     humanize(plan, part, sec, kind, &mut notes);
+    // the held breath before a drop: nothing sounds in the last beat(s) of the build
+    if let Some(si) = si {
+        cut_gap(&mut notes, len, gap_after(plan, si));
+    }
     notes
 }
 
@@ -1315,6 +2023,11 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
     let kind = if role == "voice" { Kind::Melody } else { role_kind(role) };
     let tag_seed = sec.tag.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
     let seed = plan.seed.wrapping_mul(1_000_003).wrapping_add(part as u64 * 7919).wrapping_add(tag_seed);
+    // the second drop switches the bass pattern (a new line over the same drums and lead); a slow movement's drums play half-time
+    let si = section_index(plan, sec);
+    let nth = plan.sections[..si.unwrap_or(0)].iter().filter(|s| s.tag == sec.tag).count();
+    let seed = if kind == Kind::Bass && role != "riser" && g.form == Form::Club && nth >= 1 && is_chorus(&sec.tag) && plan.dials.variety >= 0.15 { seed ^ (nth as u64).wrapping_mul(0xD50F_1A57) } else { seed };
+    let halftime = si.and_then(|i| movement_of(plan, i)).map(|m| m.texture == "halftime").unwrap_or(false);
     let mut spec = compose::spec_from_style(g.style, kind, sec.bars, plan.key, seed);
     // the harmonic plan: the section's own key (a bridge somewhere else on the wheel of fifths) and chords, with its cadence
     if let Some(si) = section_index(plan, sec) {
@@ -1335,8 +2048,8 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
         }
     }
     if kind == Kind::Drums {
-        spec.pattern = g.drums.to_string();
-        spec.fills = if sec.tag == "build" { 1.0 } else { 0.5 };
+        spec.pattern = if halftime { "halftime".to_string() } else { g.drums.to_string() };
+        spec.fills = if is_build_tag(&sec.tag) { 1.0 } else if is_chorus(&sec.tag) && g.form == Form::Club { 0.65 } else { 0.5 };
     }
     if let Some((lo, hi)) = singer_range {
         spec.lo = lo;
@@ -1346,12 +2059,12 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
         spec.motif = 2;
     }
     if role == "riser" {
-        // one long note per section, the automation does the rest
-        return (spec, kind, vec![N { start: 0.0, len: sec.bars as f64 * 4.0, key: plan.key.tonic + 60, vel: 0.7 }]);
+        // a rising ladder in the build (it speeds up with the roll), a falling downlifter after the drop hits, else one long note
+        return (spec, kind, riser_notes(plan, sec, si));
     }
     let mut notes = compose::generate(&spec);
     // drums in a quiet section: no kick or snare in a break, only the hats and the rim
-    if kind == Kind::Drums && sec.energy < 0.45 {
+    if kind == Kind::Drums && sec.energy < 0.45 && !halftime {
         notes.retain(|n| ![compose::K_KICK, compose::K_SNARE, compose::K_CLAP].contains(&n.key));
     }
     for n in notes.iter_mut() {
@@ -1692,13 +2405,58 @@ pub fn arrange(plan: &SongPlan) -> Arrangement {
         let sec = &plan.sections[si];
         let k = plan.sections[..si].iter().filter(|s| s.tag == sec.tag).count();
         let playing: Vec<usize> = (0..np).filter(|p| on[*p][si]).collect();
-        if si == 0 && sec.tag == "intro" && playing.len() > 2 {
-            let mut ps = playing.clone();
-            ps.sort_by_key(|p| rank(kinds[*p]));
-            for p in &ps[2..] {
-                on[*p][si] = false;
+        if si == 0 && sec.tag == "intro" {
+            let first_of = |k: Kind| (0..np).find(|p| kinds[*p] == k && plan.parts[*p].role != "riser");
+            let only = |on: &mut Vec<Vec<bool>>, keep: &[usize]| {
+                for p in 0..np {
+                    on[p][0] = keep.contains(&p) || (keep.len() < 2 && plan.parts[p].role == "riser" && on[p][0]);
+                }
+            };
+            let chords = first_of(Kind::Chords).or(first_of(Kind::Arp)).or(first_of(Kind::Pad));
+            let join = |v: &[usize]| v.iter().map(|p| name(*p)).collect::<Vec<_>>().join(" and ");
+            match plan.intro.as_str() {
+                "solo" if chords.is_some() => {
+                    let c = chords.unwrap_or(0);
+                    only(&mut on, &[c]);
+                    notes.push(format!("the intro is the {} alone", name(c)));
+                }
+                "beat" if first_of(Kind::Drums).is_some() => {
+                    let mut keep = vec![first_of(Kind::Drums).unwrap_or(0)];
+                    if g.form == Form::Club || rng.next() % 2 == 0 {
+                        keep.extend(first_of(Kind::Bass));
+                    }
+                    only(&mut on, &keep);
+                    notes.push(format!("the intro starts on the beat: {}", join(&keep)));
+                }
+                "theme" if first_of(Kind::Melody).is_some() => {
+                    let m = first_of(Kind::Melody).unwrap_or(0);
+                    let mut keep = vec![m];
+                    keep.extend(chords);
+                    only(&mut on, &keep);
+                    notes.push(format!("the {} plays the hook in the intro", name(m)));
+                }
+                "cold" if (0..ns).any(|s| is_chorus(&plan.sections[s].tag)) => {
+                    let c = (0..ns).find(|s| is_chorus(&plan.sections[*s].tag)).unwrap_or(0);
+                    for p in 0..np {
+                        on[p][0] = on[p][c] && plan.parts[p].role != "riser";
+                    }
+                    notes.push("the song opens cold on the chorus band".into());
+                }
+                "drone" if first_of(Kind::Pad).is_some() || first_of(Kind::Arp).is_some() => {
+                    let keep: Vec<usize> = [first_of(Kind::Pad), first_of(Kind::Arp)].into_iter().flatten().collect();
+                    only(&mut on, &keep);
+                    notes.push(format!("the intro is a drone: {}", join(&keep)));
+                }
+                _ if playing.len() > 2 => {
+                    let mut ps = playing.clone();
+                    ps.sort_by_key(|p| rank(kinds[*p]));
+                    for p in &ps[2..] {
+                        on[*p][si] = false;
+                    }
+                    notes.push(format!("the intro starts with the {} and the {}", name(ps[0]), name(ps[1])));
+                }
+                _ => {}
             }
-            notes.push(format!("the intro starts with the {} and the {}", name(ps[0]), name(ps[1])));
         }
         if is_bridge(&sec.tag) && g.form != Form::Club && playing.len() > 1 {
             let cand: Vec<usize> = playing.iter().copied().filter(|p| matches!(kinds[*p], Kind::Drums | Kind::Bass)).collect();
@@ -1782,6 +2540,46 @@ pub fn arrange(plan: &SongPlan) -> Arrangement {
         if !held.is_empty() {
             held.dedup();
             notes.push(format!("layering: {}", held.into_iter().take(4).collect::<Vec<_>>().join(", ")));
+        }
+    }
+    // movements: a pad-led section lays the drums, bass and lead out and lets the pad and chords carry it; a half-time one keeps a slow
+    // groove (drums and bass) under the pads; a build into a drop always has its drums for the roll
+    let mv = movements(plan);
+    if mv.len() > 1 {
+        let pad = (0..np).find(|p| kinds[*p] == Kind::Pad && plan.parts[*p].role != "riser").or_else(|| (0..np).find(|p| kinds[*p] == Kind::Chords));
+        for m in mv.iter().filter(|m| matches!(m.texture, "pads" | "halftime")) {
+            for si in m.first..=m.last {
+                for p in 0..np {
+                    let lead = kinds[p] == Kind::Melody;
+                    let groove = matches!(kinds[p], Kind::Drums | Kind::Bass);
+                    if plan.parts[p].role == "riser" || lead || (groove && m.texture == "pads") {
+                        on[p][si] = false;
+                    } else if groove && m.texture == "halftime" {
+                        on[p][si] = true;
+                    }
+                }
+                if let Some(pd) = pad {
+                    on[pd][si] = true;
+                }
+            }
+            let tags: Vec<&str> = (m.first..=m.last).map(|i| plan.sections[i].tag.as_str()).collect();
+            notes.push(if m.texture == "pads" {
+                format!("{} ({}) is pad-led: drums, bass and lead rest, the pads and chords carry it", m.name, tags.join(", "))
+            } else {
+                format!("{} ({}) is a half-time groove under the pads", m.name, tags.join(", "))
+            });
+        }
+    }
+    if let Some(d) = (0..np).find(|p| kinds[*p] == Kind::Drums) {
+        let mut drummed = false;
+        for si in 0..ns {
+            if leads_into_drop(plan, si) && !on[d][si] {
+                on[d][si] = true;
+                drummed = true;
+            }
+        }
+        if drummed {
+            notes.push("the drums come in for the snare roll of a build".into());
         }
     }
     for si in 0..ns {
@@ -2287,7 +3085,9 @@ mod tests {
 
     #[test]
     fn notes_are_in_key_and_choruses_repeat() {
-        let p = plan("pop song in C major", "", &[], None, 1.0, 3);
+        let mut p = plan("pop song in C major", "", &[], None, 1.0, 3);
+        // the diatonic family (borrowed and modal chords leave the scale on purpose)
+        p.dials.style = "loop".into();
         let ch: Vec<&Section> = p.sections.iter().filter(|s| s.tag == "chorus").collect();
         assert!(ch.len() >= 2);
         for (i, part) in p.parts.iter().enumerate() {
@@ -2378,6 +3178,7 @@ mod tests {
     fn the_motif_develops_across_sections() {
         let mut p = plan("pop song with a synth lead in C major", "", &[], None, 1.0, 4);
         p.human = 0.0;
+        p.movements = "1".into(); // the final lift would move the last chorus up a key by itself
         let li = p.parts.iter().position(|x| x.role == "synth lead").unwrap();
         let at = |tag: &str, k: usize| p.sections.iter().filter(|s| s.tag == tag).nth(k).unwrap();
         let v1 = section_notes(&p, li, at("verse", 0), None);
@@ -2483,6 +3284,7 @@ mod tests {
         let mut p = plan("pop song in C major", "", &[], None, 1.0, 11);
         p.dials.variety = 0.8;
         p.dials.fifths = 1;
+        p.dials.style = "loop".into();
         let idx = |tag: &str| p.sections.iter().position(|s| s.tag == tag).unwrap();
         let (v, c, b) = (idx("verse"), idx("chorus"), idx("bridge"));
         // each kind of section has its own chords, and the bridge sits a fifth up (G major)
@@ -2562,5 +3364,191 @@ mod tests {
         let p = plan("", "", &[], Some(&r), 1.0, 1);
         assert_eq!(p.sections, r.sections, "the song borrows the reference's form");
         assert_eq!(p.bpm, r.bpm);
+    }
+
+    #[test]
+    fn intros_and_progressions_vary_with_the_dice() {
+        let mut intros = std::collections::BTreeSet::new();
+        let mut verses = std::collections::BTreeSet::new();
+        let mut opening = std::collections::BTreeSet::new();
+        for seed in 1..60u64 {
+            let p = plan("a pop song", "", &[], None, 1.0, seed);
+            assert!(INTROS[1..].contains(&p.intro.as_str()), "{}", p.intro);
+            assert!(crate::emotion::ARCS.contains(&p.arc.as_str()), "the arc is rolled before the harmony: {}", p.arc);
+            intros.insert(p.intro.clone());
+            let vi = p.sections.iter().position(|s| s.tag == "verse").unwrap();
+            verses.insert(section_prog(&p, vi));
+            let a = arrange(&p);
+            let first: Vec<String> = (0..p.parts.len()).filter(|i| a.on[*i][0]).map(|i| p.parts[i].role.clone()).collect();
+            opening.insert(first.join("+"));
+        }
+        assert!(intros.len() >= 5, "intros: {intros:?}");
+        assert!(verses.len() >= 6, "verse progressions: {verses:?}");
+        assert!(opening.len() >= 4, "who opens the song: {opening:?}");
+        // the prompt and the plan line choose it outright
+        let p = plan("pop song with a cold open", "", &[], None, 1.0, 3);
+        assert_eq!(p.intro, "cold");
+        let ci = p.sections.iter().position(|s| is_chorus(&s.tag)).unwrap();
+        assert_eq!(section_prog(&p, 0), section_prog(&p, ci), "a cold open plays the chorus's chords");
+        let q = SongPlan::from_line("intro=beat", &p);
+        assert_eq!(q.intro, "beat");
+        let a = arrange(&q);
+        let drums = q.parts.iter().position(|x| x.role == "drums").unwrap();
+        assert!(a.on[drums][0], "a beat intro opens on the drums");
+        assert!(q.to_line().contains("intro=beat"));
+    }
+}
+
+#[cfg(test)]
+mod movement_tests {
+    use super::*;
+
+    fn trance(extra: &str, seed: u64) -> SongPlan {
+        let mut p = plan(&format!("uplifting trance at 138 bpm in A minor, {extra}"), "", &[], None, 1.0, seed);
+        p.human = 0.0;
+        p
+    }
+
+    #[test]
+    fn movements_change_tempo_at_their_boundaries_with_a_transition() {
+        let mut seen_ramp = false;
+        for seed in 1..14 {
+            let p = trance("three movements", seed);
+            let mv = movements(&p);
+            assert!(mv.len() >= 3, "seed {seed}: {mv:?}");
+            let map = tempo_changes(&p);
+            let st = section_starts(&p);
+            for (i, m) in mv.iter().enumerate() {
+                assert!(m.first < st.len() && (i == 0 || m.first > mv[i - 1].first));
+                if i == 0 {
+                    // an opening in its own tempo is in the map from beat 0, the song's own tempo is the project's
+                    assert_eq!(map.iter().any(|(b, _)| *b == 0.0), (m.bpm - p.bpm).abs() > 0.5, "seed {seed}");
+                    continue;
+                }
+                // the new tempo is in the map exactly on the movement's first beat
+                assert!(map.iter().any(|(b, v)| (*b - st[m.first]).abs() < 1e-9 && (*v - m.bpm).abs() < 0.11), "seed {seed}: {} at {}: {map:?}", m.name, st[m.first]);
+                if matches!(m.arrive, "accel" | "rit") {
+                    // a ritardando / accelerando: the steps before the boundary move monotonically from the old tempo to the new
+                    let ramp: Vec<f64> = map.iter().filter(|(b, _)| *b < st[m.first] && *b >= st[m.first] - 8.0).map(|(_, v)| *v).collect();
+                    assert!(ramp.len() >= 2, "seed {seed}: {ramp:?}");
+                    let up = m.bpm > mv[i - 1].bpm;
+                    assert!(ramp.windows(2).all(|w| if up { w[1] >= w[0] } else { w[1] <= w[0] }), "{ramp:?}");
+                    assert!(ramp.iter().all(|v| *v >= m.bpm.min(mv[i - 1].bpm) - 0.11 && *v <= m.bpm.max(mv[i - 1].bpm) + 0.11));
+                    seen_ramp = true;
+                } else {
+                    // a break: a beat of silence closes the section before
+                    assert_eq!(m.arrive, "break");
+                    assert!(gap_after(&p, m.first - 1) >= 1.0, "seed {seed}");
+                }
+            }
+            assert!(movement_notes(&p).iter().any(|n| n.starts_with("movements=")), "the plan says it");
+        }
+        assert!(seen_ramp);
+        // one movement: no tempo changes; the dial survives the plan line
+        let one = trance("one movement", 3);
+        assert!(tempo_changes(&one).is_empty() && movements(&one).len() == 1);
+        let two = SongPlan::from_line("movements=2", &one);
+        assert_eq!(two.movements, "2");
+        assert!(two.to_line().contains("movements=2") && movements(&two).len() >= 2);
+    }
+
+    #[test]
+    fn the_emotional_arc_picks_the_kind_of_movement_and_the_key() {
+        let mut p = trance("", 5);
+        p.movements = "2".into();
+        p.arc = "triumph".into();
+        let mv = movements(&p);
+        assert_eq!(mv.last().map(|m| m.name), Some("lift"), "{mv:?}");
+        let m = mv.last().unwrap();
+        assert!(m.bpm > p.bpm && m.key_lift >= 1);
+        assert_eq!(section_key(&p, m.first).tonic, p.key.transposed(m.key_lift).tonic, "the lift sections are in the higher key");
+        assert_eq!(section_key(&p, 0).tonic, p.key.tonic);
+        p.arc = "melancholy".into();
+        let mv = movements(&p);
+        assert!(mv.iter().any(|m| m.name == "reflective" && m.bpm < p.bpm && m.relative), "{mv:?}");
+    }
+
+    #[test]
+    fn builds_roll_faster_and_hold_a_breath_before_the_drop() {
+        let mut p = trance("", 2);
+        p.movements = "1".into();
+        let di = p.parts.iter().position(|x| x.role == "drums").unwrap();
+        let bi = p.sections.iter().position(|s| s.tag == "build").unwrap();
+        assert!(leads_into_drop(&p, bi));
+        let sec = &p.sections[bi];
+        let len = sec.bars as f64 * 4.0;
+        let gap = gap_after(&p, bi);
+        assert!(gap >= 0.5, "{gap}");
+        let notes = section_notes(&p, di, sec, None);
+        let mut rolls: Vec<f64> = notes.iter().filter(|n| n.key == compose::K_SNARE || n.key == compose::K_CLAP).map(|n| n.start).collect();
+        rolls.dedup();
+        let gaps: Vec<f64> = rolls.windows(2).map(|w| w[1] - w[0]).filter(|g| *g > 1e-6).collect();
+        assert!(gaps.first().copied().unwrap_or(0.0) >= 0.99, "starts on quarters: {gaps:?}");
+        assert!(gaps.last().copied().unwrap_or(1.0) <= 0.126, "ends on thirty-seconds: {gaps:?}");
+        for s in [1.0, 0.5, 0.25, 0.125] {
+            assert!(gaps.iter().any(|g| (g - s).abs() < 1e-6), "a {s} stage: {gaps:?}");
+        }
+        assert!(gaps.windows(2).all(|w| w[1] <= w[0] + 1e-6), "the roll never slows: {gaps:?}");
+        // the held breath: nothing starts in the last beat(s) of the build and nothing rings into them
+        assert!(notes.iter().all(|n| n.start < len - gap + 1e-6 && n.start + n.len <= len - gap + 1e-6), "silence before the drop");
+        let bass = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Bass).unwrap();
+        assert!(section_notes(&p, bass, sec, None).iter().all(|n| n.start + n.len <= len - gap + 1e-6));
+        // the drop's first beat has a crash; the riser steps climb, then a downlifter falls
+        let drop = &p.sections[bi + 1];
+        assert!(section_notes(&p, di, drop, None).iter().any(|n| n.key == compose::K_CRASH && n.start < 0.05));
+        let ri = p.parts.iter().position(|x| x.role == "riser").unwrap();
+        let up = section_notes(&p, ri, sec, None);
+        assert!(up.len() > 8 && up.last().unwrap().key > up[0].key, "a riser that climbs");
+        let down = section_notes(&p, ri, drop, None);
+        assert!(down.len() >= 4 && down.last().unwrap().key < down[0].key, "a downlifter after the hit");
+        assert!(craft_notes(&p).iter().any(|n| n.contains("1/4 > 1/8 > 1/16 > 1/32")));
+    }
+
+    #[test]
+    fn the_second_drop_switches_the_bass_and_pad_movements_rest_the_drums() {
+        let mut p = trance("three movements", 4);
+        p.dials.variety = 0.5;
+        let bass = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Bass).unwrap();
+        let lead = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Melody && x.role != "riser").unwrap();
+        let drops: Vec<usize> = (0..p.sections.len()).filter(|i| p.sections[*i].tag == "drop").collect();
+        assert!(drops.len() >= 2);
+        let keys = |part: usize, si: usize| section_notes(&p, part, &p.sections[si], None).iter().map(|n| (n.key, (n.start * 8.0) as i64)).collect::<Vec<_>>();
+        assert_ne!(keys(bass, drops[0]), keys(bass, drops[1]), "a new bass pattern");
+        // the lead is the same in both drops when the key does not move between them
+        let mut q = p.clone();
+        q.movements = "1".into();
+        let lead_in = |si: usize| section_notes(&q, lead, &q.sections[si], None).iter().map(|n| (n.key, (n.start * 8.0) as i64)).collect::<Vec<_>>();
+        assert_eq!(lead_in(drops[0]), lead_in(drops[1]), "the drops repeat the lead");
+        // pad-led sections: no drums, no bass, no lead; a pad plays
+        let a = arrange(&p);
+        let di = p.parts.iter().position(|x| x.role == "drums").unwrap();
+        let pad = p.parts.iter().position(|x| role_kind(&x.role) == Kind::Pad && x.role != "riser").unwrap();
+        let mv = movements(&p);
+        for m in mv.iter().filter(|m| m.texture == "pads") {
+            for si in m.first..=m.last {
+                assert!(!a.on[di][si] && !a.on[bass][si] && !a.on[lead][si] && a.on[pad][si], "{} section {si} {}", m.name, p.sections[si].tag);
+            }
+        }
+        assert!(a.notes.iter().any(|n| n.contains("pad-led")) || mv.iter().all(|m| m.texture != "pads"), "{:?}", a.notes);
+    }
+
+    #[test]
+    fn a_tense_break_stays_a_half_time_groove() {
+        // find a plan whose reflective movement is a half-time groove and check the drums play it
+        let mut found = false;
+        for seed in 1..60 {
+            let mut p = trance("", seed);
+            p.movements = "2".into();
+            p.arc = "storm".into();
+            let Some(m) = movements(&p).into_iter().find(|m| m.texture == "halftime") else { continue };
+            let a = arrange(&p);
+            let di = p.parts.iter().position(|x| x.role == "drums").unwrap();
+            assert!(a.on[di][m.first]);
+            let notes = section_notes(&p, di, &p.sections[m.first], None);
+            assert!(notes.iter().any(|n| n.key == compose::K_KICK) && notes.iter().any(|n| n.key == compose::K_SNARE), "kick and snare play half-time");
+            found = true;
+            break;
+        }
+        assert!(found, "some tense feeling gives a half-time movement");
     }
 }

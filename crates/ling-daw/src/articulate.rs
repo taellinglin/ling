@@ -835,6 +835,8 @@ pub fn render(spec: &Spec, ctx: &Ctx) -> Vec<(f64, f32)> {
         return render_flat(spec, ctx);
     }
     let (lo, hi) = (spec.lo.clamp(0.0, 1.0), spec.hi.clamp(0.0, 1.0));
+    // a range written upside down (lo above hi) is the same range
+    let (lo, hi) = (lo.min(hi), lo.max(hi));
     let span = hi - lo;
     let mut rate = spec.rate.clamp(0.125, 64.0);
     // a fast cycle over a long range would be thousands of points: slow it down until the lane stays light
@@ -1108,6 +1110,8 @@ fn render_flat(spec: &Spec, ctx: &Ctx) -> Vec<(f64, f32)> {
         return vec![];
     }
     let (lo, hi) = (spec.lo.clamp(0.0, 1.0), spec.hi.clamp(0.0, 1.0));
+    // a range written upside down (lo above hi) is the same range
+    let (lo, hi) = (lo.min(hi), lo.max(hi));
     let span = hi - lo;
     let mut rate = spec.rate.clamp(0.125, 64.0);
     // a fast cycle over a long range would be thousands of points: slow it down until the lane stays light to draw and to play

@@ -15,11 +15,29 @@ pub const TOOLS: &[(&str, &str, &str)] = &[
     ("automate", "write automation lanes on the track's parameters (arg: how, e.g. 'tense build into the drop')", "track"),
     ("decorate", "dress up the selected clip in the key: passing tones, turns, voice leading", "clip"),
     ("variations", "write theme and variations after the selected clip", "clip"),
+    ("feel", "play the whole song with an emotional arc: dynamics, articulation, room for the lead, level and filter rides per section (arg: release | slow burn | bittersweet | triumph | melancholy | storm | lullaby, or words like 'sadder', 'calmer')", "song"),
     ("tempo", "set the tempo (arg: bpm)", "song"),
     ("tunecheck", "check every instrument is in tune", "song"),
     ("mix", "open AI Mix & Master", "song"),
     ("undo", "undo the last change", "song"),
+    ("repeat_section", "repeat / duplicate a section (arg: the words, e.g. 'repeat the second chorus twice', 'duplicate bars 9 to 16'); everything after it, the automation and the tags move down", "song"),
+    ("remove_section", "remove a section and close the gap (arg: e.g. 'remove the intro', 'cut the bridge')", "song"),
+    ("swap_sections", "swap two sections, or move one before / after another (arg: e.g. 'swap the verse and the chorus', 'move the bridge before the last chorus')", "song"),
+    ("resize_section", "extend (the material loops) or shorten a section (arg: e.g. 'extend the intro by 4 bars', 'shorten the verse to 8 bars')", "song"),
+    ("add_build", "insert a build (8 bars by default) before the next drop / chorus: the material before it thinned, a snare roll, rising velocity and filter (arg: e.g. 'add an 8 bar build before the second drop')", "song"),
+    ("add_breakdown", "make a breakdown: drums and bass out, pads carry it (arg: e.g. 'make the bridge a breakdown', 'add a breakdown before the drop')", "song"),
+    ("section_tempo", "set the tempo of one section, or from a bar (arg: e.g. 'set the bridge to 90 bpm', 'from bar 17 go to 150 bpm', 'slow the outro 10%')", "song"),
+    ("drum_feel", "half-time or double-time feel for the drums, in a section or everywhere (arg: e.g. 'half-time drums in the bridge', 'double-time the last chorus')", "song"),
+    ("layer", "layer a harmony variant of the melody on a new track: thirds, sixths, fifths, octave double or a choir pad (arg: e.g. 'layer sixths below', 'add an octave double', 'choir layer')", "track"),
+    ("synth", "change named synth parameters by words on the selected track: longer release, shorter decay, more drive, more cutoff resonance, wider (arg: words). Never pitch parameters unless asked", "track"),
+    ("shape", "draw automation by words on the track over a section: filter sweep up over the build, volume swell, pump (sidechain feel), fade out, open the filter in the drop (arg: words)", "track"),
+    ("part", "take a part out of a section, bring it back, or solo it (arg: e.g. 'drop the bass out of the second verse', 'solo the lead in the bridge')", "song"),
 ];
+
+/// the tools that are `daw_arrx_run` in the engine (the app calls one builtin for all of them)
+pub fn is_arrangement_tool(tool: &str) -> bool {
+    matches!(tool, "repeat_section" | "remove_section" | "swap_sections" | "move_section" | "resize_section" | "add_build" | "add_breakdown" | "section_tempo" | "drum_feel" | "layer" | "synth" | "shape" | "part")
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Step {
@@ -40,34 +58,88 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     if any(&["undo", "revert", "go back", "take that back"]) {
         return vec![step("undo", "")];
     }
+    // ── the arrangement, layers, named synth parameters, automation shapes, parts in sections ──
+    let sec_word = any(&["verse", "verses", "chorus", "choruses", "hook", "drop", "drops", "bridge", "intro", "outro", "breakdown", "section", "sections", "bars", "bar", "refrain", "ending"]);
+    let tag_word = any(&["verse", "verses", "chorus", "choruses", "hook", "drop", "drops", "bridge", "intro", "outro", "breakdown", "refrain", "ending"]);
+    let track_word = any(&["bass", "drums", "drum", "lead", "pad", "pads", "chords", "arp", "melody", "vocals", "vocal", "kick", "keys", "strings", "guitar", "piano"]);
+    let adds = any(&["add", "insert", "make", "put", "write", "give", "create"]);
+    let automating = any(&["automate", "automation"]);
+    let part_out = track_word && sec_word && (any(&["out", "mute", "unmute", "silence", "solo", "only", "remove", "delete", "cut", "mute the"]) || (has("bring") && (has("back") || has("in"))));
+    let feel = any(&["half-time", "half time", "halftime", "double-time", "double time", "doubletime"]);
+    let sect_tempo = (any(&["tempo", "bpm"]) && (tag_word || any(&["from bar", "from beat"]))) || (tag_word && any(&["slow down", "speed up", "slower", "faster"]) && !track_word && !automating);
+    let mut arr = false;
+    if part_out {
+        out.push(step("part", request));
+        arr = true;
+    } else if feel {
+        out.push(step("drum_feel", request));
+        arr = true;
+    } else if (has("build") || any(&["buildup", "build-up", "build up"])) && adds && !automating && !any(&["filter", "volume"]) {
+        out.push(step("add_build", request));
+        arr = true;
+    } else if has("breakdown") && adds && !part_out {
+        out.push(step("add_breakdown", request));
+        arr = true;
+    } else if sec_word && any(&["swap", "switch", "reorder", "exchange"]) {
+        out.push(step("swap_sections", request));
+        arr = true;
+    } else if tag_word && has("move") && any(&["before", "after"]) {
+        out.push(step("move_section", request));
+        arr = true;
+    } else if sec_word && any(&["repeat", "duplicate", "twice", "again"]) && !track_word {
+        out.push(step("repeat_section", request));
+        arr = true;
+    } else if tag_word && any(&["extend", "lengthen", "shorten", "trim"]) || (tag_word && has("make") && has("bars") && !any(&["build", "tempo", "bpm"])) {
+        out.push(step("resize_section", request));
+        arr = true;
+    } else if sec_word && any(&["remove", "delete", "cut", "skip", "get rid of", "lose"]) && !track_word {
+        out.push(step("remove_section", request));
+        arr = true;
+    }
+    let shape = !arr && any(&["filter sweep", "sweep up", "sweep down", "open the filter", "open up the filter", "close the filter", "filter open", "volume swell", "swell", "crescendo", "fade out", "fade in", "fade-out", "fadeout", "pump", "pumping", "sidechain", "side-chain", "riser", "muffle", "filter up", "filter down"]);
+    if shape {
+        out.push(step("shape", request));
+    }
+    let layer = !arr && (any(&["layer", "layered", "layering", "octave double", "double the melody", "double the lead", "octave up", "octave below", "fifths", "power chords", "choir layer", "choir pad", "pad layer", "stack"]) || (has("octave") && any(&["double", "doubling", "add"])));
+    if layer {
+        out.push(step("layer", request));
+    }
+    let named = if arr || shape || layer { vec![] } else { crate::redesign::param_words(request) };
+    if !named.is_empty() {
+        out.push(step("synth", request));
+    }
     // tempo
     let words: Vec<&str> = p.split_whitespace().collect();
-    for (i, w) in words.iter().enumerate() {
-        let num = w.trim_end_matches("bpm");
-        if let Ok(v) = num.parse::<f64>() {
-            let tempo_word = w.ends_with("bpm") || words.get(i + 1).map(|n| n.starts_with("bpm")).unwrap_or(false) || any(&["tempo"]);
-            if tempo_word && (40.0..=240.0).contains(&v) {
-                out.push(step("tempo", &format!("{v}")));
+    if sect_tempo && !arr {
+        out.push(step("section_tempo", request));
+    } else {
+        for (i, w) in words.iter().enumerate() {
+            let num = w.trim_end_matches("bpm");
+            if let Ok(v) = num.parse::<f64>() {
+                let tempo_word = w.ends_with("bpm") || words.get(i + 1).map(|n| n.starts_with("bpm")).unwrap_or(false) || any(&["tempo"]);
+                if tempo_word && (40.0..=240.0).contains(&v) {
+                    out.push(step("tempo", &format!("{v}")));
+                }
             }
         }
+        if out.is_empty() && has("tempo") && any(&["faster", "speed up", "up"]) {
+            out.push(step("tempo", "+8%"));
+        } else if out.is_empty() && has("tempo") && any(&["slower", "slow down", "down"]) {
+            out.push(step("tempo", "-8%"));
+        }
     }
-    if out.is_empty() && has("tempo") && any(&["faster", "speed up", "up"]) {
-        out.push(step("tempo", "+8%"));
-    } else if out.is_empty() && has("tempo") && any(&["slower", "slow down", "down"]) {
-        out.push(step("tempo", "-8%"));
-    }
-    if any(&["harmony", "harmonies", "harmonize", "harmonise", "harmonized", "thirds", "sixths", "backing vocals"]) {
+    if !layer && any(&["harmony", "harmonies", "harmonize", "harmonise", "harmonized", "thirds", "sixths", "backing vocals"]) {
         out.push(step("harmony", request));
     }
     let parts = [("bass", &["bassline", "bass line", "a bass", "add bass", "bass part"][..]), ("chords", &["chords", "chord part", "comping", "stabs"][..]), ("pad", &["a pad", "pads", "add pad", "strings"][..]), ("arp", &["arp", "arpeggio", "arpeggios"][..]), ("melody", &["counter melody", "countermelody", "a melody", "add melody", "lead line"][..]), ("drums", &["drums", "a beat", "drum part", "percussion"][..])];
     let mut wrote_part = false;
     for (part, ws) in parts {
-        if any(ws) && !has("no") {
+        if any(ws) && !has("no") && !(part_out || feel || shape || layer) {
             out.push(step("accompany", &format!("{part} {request}")));
             wrote_part = true;
         }
     }
-    if !wrote_part && any(&["accompaniment", "accompany", "accompanying", "backing"]) {
+    if !wrote_part && !(part_out || feel || shape || layer) && any(&["accompaniment", "accompany", "accompanying", "backing"]) {
         out.push(step("accompany", &format!("chords {request}")));
         out.push(step("accompany", &format!("bass {request}")));
     }
@@ -81,11 +153,11 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
         let style = ["riddim", "brostep", "neuro", "melodic"].iter().find(|s| has(s)).copied().unwrap_or("auto");
         out.push(step("skin", style));
     }
-    if any(&["automate", "automation", "filter sweep", "sweeps", "movement in the"]) {
+    if !shape && any(&["automate", "automation", "filter sweep", "sweeps", "movement in the"]) {
         out.push(step("automate", request));
     }
-    let redo = any(&["redo", "re-do", "new instrument", "different instrument", "change the instrument", "instrumentation", "redesign", "re-design", "another sound", "new sound", "different sound", "new patch", "swap the"]);
-    let genre = prompt_genre(request).map(|g| g.name);
+    let redo = !(arr || shape || layer) && any(&["redo", "re-do", "new instrument", "different instrument", "change the instrument", "instrumentation", "redesign", "re-design", "another sound", "new sound", "different sound", "new patch", "swap the"]);
+    let genre = if arr || shape || layer || !named.is_empty() || sect_tempo { None } else { prompt_genre(request).map(|g| g.name) };
     let (mv, _) = crate::redesign::moves(request);
     if let Some(g) = genre {
         if any(&["make it", "sound like", "sound more", "more", "into", "turn it", "style", "restyle", "vibe", "feel"]) || out.is_empty() {
@@ -95,8 +167,13 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
         }
     } else if redo {
         out.push(step("redesign", request));
-    } else if !mv.is_empty() {
+    } else if !mv.is_empty() && named.is_empty() && !arr && !shape {
         out.push(step("tweak", request));
+    }
+    // the feel: words that name an emotion or an arc (not a sound: "darker" / "brighter" alone tweak a patch)
+    if any(&["sadder", "happier", "melancholy", "melancholic", "triumphant", "triumph", "emotional", "emotion", "mood", "moodier", "calmer", "stormy", "angrier", "bittersweet", "lullaby", "dreamier", "heroic", "epic", "slow burn", "more intense", "less intense", "nostalgic", "uplifting", "heartbreaking"]) {
+        let arg = crate::feel::arc_from_words(request).unwrap_or("auto");
+        out.push(step("feel", arg));
     }
     if any(&["tune check", "in tune", "out of tune", "detuned"]) {
         out.push(step("tunecheck", ""));
@@ -137,7 +214,7 @@ pub fn parse_plan(reply: &str) -> Vec<Step> {
 
 /// The system prompt for a model choosing the steps
 pub fn system() -> String {
-    let mut s = String::from("You edit a music project in LingStationX. Choose the tools that do what the user asks, in order. Reply with JSON only: a list like [{\"tool\": \"harmony\", \"arg\": \"thirds above\"}]. Tools:\n");
+    let mut s = String::from("You edit a music project in LingStationX. Choose the tools that do what the user asks, in order. Reply with JSON only: a list like [{\"tool\": \"harmony\", \"arg\": \"thirds above\"}]. For the section tools the arg is the user's own words. Never touch pitch (vibrato, sweep, glide, detune, bend) unless the user asks for pitch, a bend or a riser. Tools:\n");
     for (t, d, needs) in TOOLS {
         s.push_str(&format!("- {t} (needs a selected {needs}): {d}\n"));
     }
@@ -167,6 +244,9 @@ mod tests {
         assert_eq!(tools(&route("make this track more dubstep", true, true)), vec!["redesign"]);
         assert_eq!(tools(&route("make this patch grittier", false, true)), vec!["tweak"]);
         assert_eq!(tools(&route("redo the instrumentation of this track", false, true)), vec!["redesign"]);
+        assert_eq!(route("make it sadder", false, false), vec![step("feel", "melancholy")]);
+        assert_eq!(route("give the song a triumphant mood", false, false), vec![step("feel", "triumph")]);
+        assert!(!tools(&route("make this patch feel grittier", false, true)).contains(&"feel"));
         let acc = route("give it some accompaniment", true, true);
         assert_eq!(tools(&acc), vec!["accompany", "accompany"]);
         assert!(acc[0].arg.starts_with("chords") && acc[1].arg.starts_with("bass"));
@@ -176,6 +256,49 @@ mod tests {
         assert_eq!(tools(&route("riddim it", false, true)), vec!["skin"]);
         assert_eq!(route("riddim it", false, true)[0].arg, "riddim");
         assert!(route("what a lovely day", false, false).is_empty());
+    }
+
+    #[test]
+    fn arrangement_phrases_reach_their_tools() {
+        let one = |r: &str| -> Vec<String> { route(r, false, true).iter().map(|s| s.tool.clone()).collect() };
+        assert_eq!(one("repeat the second chorus twice"), vec!["repeat_section"]);
+        assert_eq!(one("duplicate the last verse"), vec!["repeat_section"]);
+        assert_eq!(one("remove the intro"), vec!["remove_section"]);
+        assert_eq!(one("cut the bridge"), vec!["remove_section"]);
+        assert_eq!(one("swap the verse and the chorus"), vec!["swap_sections"]);
+        assert_eq!(one("move the bridge before the last chorus"), vec!["move_section"]);
+        assert_eq!(one("extend the intro by 4 bars"), vec!["resize_section"]);
+        assert_eq!(one("shorten the verse to 8 bars"), vec!["resize_section"]);
+        assert_eq!(one("add an 8 bar build before the second drop"), vec!["add_build"]);
+        assert_eq!(one("make a breakdown in the bridge"), vec!["add_breakdown"]);
+        assert_eq!(one("set the bridge to 90 bpm"), vec!["section_tempo"]);
+        assert_eq!(one("from bar 17 go to 150 bpm"), vec!["section_tempo"]);
+        assert_eq!(one("slow down the outro"), vec!["section_tempo"]);
+        assert_eq!(one("half-time drums in the bridge"), vec!["drum_feel"]);
+        assert_eq!(one("double time the last chorus"), vec!["drum_feel"]);
+        assert_eq!(one("drop the bass out of the second verse"), vec!["part"]);
+        assert_eq!(one("take the drums out of the intro"), vec!["part"]);
+        assert_eq!(one("solo the lead in the bridge"), vec!["part"]);
+        assert_eq!(one("layer sixths below the melody"), vec!["layer"]);
+        assert_eq!(one("add an octave double"), vec!["layer"]);
+        assert_eq!(one("add a choir pad layer"), vec!["layer"]);
+        assert_eq!(one("longer release and shorter decay"), vec!["synth"]);
+        assert_eq!(one("more drive and more cutoff resonance"), vec!["synth"]);
+        assert_eq!(one("filter sweep up over the build"), vec!["shape"]);
+        assert_eq!(one("fade out the pad"), vec!["shape"]);
+        assert_eq!(one("add a volume swell into the drop"), vec!["shape"]);
+        assert_eq!(one("sidechain pump on the chords"), vec!["shape"]);
+        assert_eq!(one("open the filter in the drop"), vec!["shape"]);
+        // the old phrases still go where they went
+        assert_eq!(one("add a harmony in thirds"), vec!["harmony"]);
+        assert_eq!(one("add a bassline and an arp"), vec!["accompany", "accompany"]);
+        assert_eq!(one("make this patch grittier"), vec!["tweak"]);
+        assert_eq!(one("automate a build"), vec!["automate"]);
+        assert_eq!(one("set the tempo to 140 bpm"), vec!["tempo"]);
+        for t in ["repeat_section", "remove_section", "swap_sections", "resize_section", "add_build", "add_breakdown", "section_tempo", "drum_feel", "layer", "synth", "shape", "part"] {
+            assert!(TOOLS.iter().any(|x| x.0 == t), "{t} is listed for the model");
+        }
+        assert!(system().contains("Never touch pitch"));
     }
 
     #[test]

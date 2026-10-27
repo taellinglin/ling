@@ -38,13 +38,22 @@ pub mod ensemble;
 pub mod tunecheck;
 pub mod growlskin;
 pub mod sounddesign;
+pub mod space;
 pub mod redesign;
 pub mod agent;
 pub mod presetinfo;
 pub mod emotion;
+pub mod expression;
+pub mod cycle;
+pub mod medley;
+pub mod register;
+pub mod chops;
+pub mod cmudict;
+pub mod feel;
 pub mod guide;
 pub mod soundcat;
 
+pub use audio::flush_denormals;
 pub use engine::{set_parallel_render, set_track_sleep, Engine, SharedEngine, SLEEP_AFTER};
 pub use model::*;
 

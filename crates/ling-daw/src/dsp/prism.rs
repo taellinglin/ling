@@ -108,6 +108,197 @@ core_params! {
     DLFB "dl fb" 0.4;
     RVMIX "rv mix" 0.15;
     RVSIZE "rv size" 0.6;
+    FMODEL "fmodel" 0.0;
+    LADDRV "lad drv" 0.0;
+    VSAT "vsat" 0.0;
+    VCUT "vel cut" 0.5;
+    UBLEND "blend" 0.5;
+    ORST "osc rst" 0.0;
+    L1SYNC "l1 sync" 0.0;
+    L2SYNC "l2 sync" 0.0;
+    CLIP "clip" 0.0;
+    WARM "warm" 0.0;
+    AIR "air" 0.0;
+    WIDTH "width" 0.5;
+    MONOLO "mono lo" 0.0;
+}
+
+/// The "pro" block at the end of the core list: every one of these is neutral at its default, so older patches sound as they did.
+const PRO_FIRST: usize = P::FMODEL as usize;
+const PRO_COUNT: usize = 13;
+/// LFO cycles per beat for the tempo-synced rates (`l1 sync` / `l2 sync`): 2 bars, 1 bar, 1/2, 1/4, dotted 1/8 ... 1/16
+const SYNC_DIV: [f32; 8] = [0.125, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
+
+/// LFO speed in Hz: the free `rate` knob, or (when `sync` is up) a note value of the tempo
+fn lfo_hz(rate: f32, sync: f32, bpm: f32) -> f32 {
+    if sync < 0.03 {
+        0.05 * 2f32.powf(rate * 9.0)
+    } else {
+        let i = (((sync - 0.03) / 0.97 * 8.0) as usize).min(7);
+        bpm / 60.0 * SYNC_DIV[i]
+    }
+}
+
+// ── the output "pro" stage (shared with Growl): warmth, tilt, air, stereo width, mono bass ──────────────────────
+
+/// Settings worked out once per block; a stage whose knob is at its neutral position costs nothing
+#[derive(Clone, Copy)]
+pub(crate) struct ProCfg {
+    pub on: bool,
+    warm: f32,
+    warm_a: f32,
+    warm_k: f32,
+    tilt_on: bool,
+    tilt_k: f32,
+    tilt_gl: f32,
+    tilt_gh: f32,
+    air_on: bool,
+    air_k: f32,
+    air_g: f32,
+    width_on: bool,
+    width: f32,
+    mono_on: bool,
+    mono_k: f32,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ProState {
+    warm_lp: [f32; 2],
+    tilt_lp: [f32; 2],
+    air_lp: [f32; 2],
+    mono_a: f32,
+    mono_b: f32,
+}
+
+#[inline]
+fn onepole_k(fc: f32, sr: f32) -> f32 {
+    1.0 - (-TAU * fc.min(sr * 0.45) / sr).exp()
+}
+
+impl ProCfg {
+    /// `width_v` 0.5 = as it is (0 mono, 1 twice as wide), `mono_v` 0 = off else the bass-mono corner (about 40..400 Hz),
+    /// `air_v` 0 = off else a high shelf at 8 kHz up to +9 dB, `warm_v` 0 = off (tape-style saturation), `tilt_v` 0.5 = flat (+-6 dB tilt around 700 Hz)
+    pub(crate) fn new(sr: f32, width_v: f32, mono_v: f32, air_v: f32, warm_v: f32, tilt_v: f32) -> ProCfg {
+        let t = (tilt_v - 0.5) * 2.0;
+        let tg = 10f32.powf(t * 6.0 / 20.0);
+        let c = ProCfg {
+            on: false,
+            warm: warm_v,
+            warm_a: 1.0 + warm_v * 3.0,
+            warm_k: onepole_k(15000.0 - 9000.0 * warm_v, sr),
+            tilt_on: t.abs() > 0.004,
+            tilt_k: onepole_k(700.0, sr),
+            tilt_gl: 1.0 / tg,
+            tilt_gh: tg,
+            air_on: air_v > 0.01,
+            air_k: onepole_k(8000.0, sr),
+            air_g: air_v * 1.8,
+            width_on: (width_v - 0.5).abs() > 0.002,
+            width: width_v * 2.0,
+            mono_on: mono_v > 0.02,
+            mono_k: onepole_k(40.0 * 10f32.powf(mono_v), sr),
+        };
+        ProCfg { on: c.warm > 0.002 || c.tilt_on || c.air_on || c.width_on || c.mono_on, ..c }
+    }
+}
+
+impl ProState {
+    #[inline]
+    pub(crate) fn process(&mut self, c: &ProCfg, l: f32, r: f32) -> (f32, f32) {
+        let mut x = [l, r];
+        if c.warm > 0.002 {
+            for ch in 0..2 {
+                let y = (x[ch] * c.warm_a).tanh() / c.warm_a;
+                self.warm_lp[ch] += (y - self.warm_lp[ch]) * c.warm_k;
+                x[ch] = self.warm_lp[ch];
+            }
+        }
+        if c.tilt_on {
+            for ch in 0..2 {
+                self.tilt_lp[ch] += (x[ch] - self.tilt_lp[ch]) * c.tilt_k;
+                x[ch] = self.tilt_lp[ch] * c.tilt_gl + (x[ch] - self.tilt_lp[ch]) * c.tilt_gh;
+            }
+        }
+        if c.air_on {
+            for ch in 0..2 {
+                self.air_lp[ch] += (x[ch] - self.air_lp[ch]) * c.air_k;
+                x[ch] += (x[ch] - self.air_lp[ch]) * c.air_g;
+            }
+        }
+        if c.width_on || c.mono_on {
+            let m = (x[0] + x[1]) * 0.5;
+            let mut s = (x[0] - x[1]) * 0.5;
+            if c.width_on {
+                s *= c.width;
+            }
+            if c.mono_on {
+                // the side channel through a 12 dB/oct high-pass: nothing below the corner is wider than the centre
+                self.mono_a += (s - self.mono_a) * c.mono_k;
+                let h1 = s - self.mono_a;
+                self.mono_b += (h1 - self.mono_b) * c.mono_k;
+                s = h1 - self.mono_b;
+            }
+            x = [m + s, m - s];
+        }
+        (x[0], x[1])
+    }
+}
+
+/// a cubic soft clipper and its antiderivative: first-order anti-aliased saturation (the harmonics it makes fold back far less than a
+/// plain clip, for the price of one division) - used by the per-voice saturation
+#[inline]
+fn sc_f(u: f32) -> f32 {
+    if u.abs() <= 1.0 {
+        u - u * u * u * (1.0 / 3.0)
+    } else {
+        u.signum() * (2.0 / 3.0)
+    }
+}
+#[inline]
+fn sc_big_f(u: f32) -> f32 {
+    let a = u.abs();
+    if a <= 1.0 {
+        0.5 * a * a - a * a * a * a * (1.0 / 12.0)
+    } else {
+        a * (2.0 / 3.0) - 0.25
+    }
+}
+#[inline]
+fn adaa_soft(u: f32, u1: &mut f32) -> f32 {
+    let d = u - *u1;
+    let y = if d.abs() < 1e-4 { sc_f(0.5 * (u + *u1)) } else { (sc_big_f(u) - sc_big_f(*u1)) / d };
+    *u1 = u;
+    y
+}
+
+/// A four-pole low-pass in the Moog manner: four trapezoidal one-poles around a feedback path, solved without a delay, with a soft clip in
+/// the loop (so it drives and screams instead of blowing up)
+#[derive(Clone, Copy, Default)]
+struct Ladder {
+    s: [f32; 4],
+}
+impl Ladder {
+    /// `g` = tan(pi fc / sr), `k` feedback 0..3.9, `drive` input gain
+    #[inline]
+    fn run(&mut self, x: f32, g: f32, k: f32, drive: f32) -> f32 {
+        let gg = g / (1.0 + g);
+        let g2 = gg * gg;
+        let g4 = g2 * g2;
+        let b = 1.0 - gg;
+        let sg = gg * g2 * b * self.s[0] + g2 * b * self.s[1] + gg * b * self.s[2] + b * self.s[3];
+        let xin = (x * drive).tanh();
+        let y4 = (g4 * xin + sg) / (1.0 + k * g4);
+        let u = (xin - k * y4).clamp(-3.0, 3.0);
+        let u = u * (27.0 + u * u) / (27.0 + 9.0 * u * u);
+        let mut z = u;
+        for i in 0..4 {
+            let v = (z - self.s[i]) * gg;
+            let y = v + self.s[i];
+            self.s[i] = y + v;
+            z = y;
+        }
+        z * (1.0 + 0.2 * k) / drive.sqrt()
+    }
 }
 
 pub const NMSEG: usize = 8;
@@ -333,6 +524,13 @@ fn rd(tab: &[f32], ph: f32) -> f32 {
 
 /// phase warp: bends the cycle so the same table gets pulse-width / skew colours
 #[inline]
+/// the band-limited table level for a partial at `f` Hz with `warp` (warp adds harmonics): the richest that stays under 0.45 sr
+#[inline]
+fn band_level(f: f32, warp: f32, sr: f32) -> usize {
+    let allowed = (0.45 * sr / (f.max(10.0) * (1.0 + warp * 2.0))).floor() as usize;
+    LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1)
+}
+
 fn warp(ph: f32, w: f32) -> f32 {
     if w < 0.001 {
         return ph;
@@ -477,6 +675,9 @@ struct Voice {
     flt: Env,
     f1: [Svf; 2],
     f1b: [Svf; 2],
+    lad: [Ladder; 2],
+    sat_x: [f32; 2],
+    kl: f32,
     comb: [Delay; 2],
     noise_lp: f32,
     noise_lp2: f32,
@@ -488,6 +689,17 @@ struct Voice {
     gains_b: [(f32, f32); MAXUNI],
     det_a: [f32; MAXUNI],
     det_b: [f32; MAXUNI],
+    /// worked out at control rate (they only change there): each unison voice's detune as a frequency ratio and its band-limited
+    /// table level, and the oscillators' octave / fine / semitone ratios
+    rat_a: [f32; MAXUNI],
+    rat_b: [f32; MAXUNI],
+    lv_a: [usize; MAXUNI],
+    lv_b: [usize; MAXUNI],
+    oct_ra: f32,
+    oct_rb: f32,
+    /// the pitch (semitones) whose frequency was last worked out, and that frequency (a glide or a bend changes it)
+    f_semis: f32,
+    f_hz: f32,
     g: f32,
     k: f32,
     amp_v: f32,
@@ -512,6 +724,9 @@ impl Voice {
             flt: Env::new(),
             f1: [Svf::default(); 2],
             f1b: [Svf::default(); 2],
+            lad: [Ladder::default(); 2],
+            sat_x: [0.0; 2],
+            kl: 0.0,
             comb: [Delay::new((sr / 12.0) as usize + 8), Delay::new((sr / 12.0) as usize + 8)],
             noise_lp: 0.0,
             noise_lp2: 0.0,
@@ -525,6 +740,14 @@ impl Voice {
             g: 0.1,
             k: 1.0,
             amp_v: 0.0,
+            rat_a: [1.0; MAXUNI],
+            rat_b: [1.0; MAXUNI],
+            lv_a: [0; MAXUNI],
+            lv_b: [0; MAXUNI],
+            oct_ra: 1.0,
+            oct_rb: 1.0,
+            f_semis: f32::NAN,
+            f_hz: 0.0,
         }
     }
 }
@@ -562,6 +785,8 @@ pub struct Prism {
     hz: [[PitchShift; 2]; 2],
     ph_state: [[f32; 8]; 2],
     ph_fb: [f32; 2],
+    /// the phaser's all-pass coefficient per channel (updated every 8 samples)
+    ph_a: [f32; 2],
     ph_lfo: f32,
     ch: [Delay; 2],
     ch_lfo: f32,
@@ -571,6 +796,7 @@ pub struct Prism {
     scr: Vec<f32>,
     scr2: Vec<f32>,
     silent: u32,
+    pro: ProState,
 }
 
 #[derive(Clone)]
@@ -666,6 +892,7 @@ impl Prism {
             hz: [mk2(), mk2()],
             ph_state: [[0.0; 8]; 2],
             ph_fb: [0.0; 2],
+            ph_a: [0.0; 2],
             ph_lfo: 0.0,
             ch: [Delay::new((sr * 0.06) as usize), Delay::new((sr * 0.06) as usize)],
             ch_lfo: 0.0,
@@ -675,6 +902,7 @@ impl Prism {
             scr: vec![],
             scr2: vec![],
             silent: 0,
+            pro: ProState::default(),
         };
         s.refresh();
         s
@@ -820,6 +1048,7 @@ impl Instrument for Prism {
         let any_active = self.voices.iter().any(|v| v.active && v.gate);
         let start = if glide && any_active { self.last_note } else { key as f32 };
         let drift_seed = self.rng.next();
+        let rst = self.sel(P::ORST as usize, 3);
         let v = &mut self.voices[i];
         let fresh = !v.active;
         v.active = true;
@@ -841,9 +1070,22 @@ impl Instrument for Prism {
             v.flt.level = 0.0;
             v.f1 = [Svf::default(); 2];
             v.f1b = [Svf::default(); 2];
+            v.lad = [Ladder::default(); 2];
+            v.sat_x = [0.0; 2];
             for d in v.comb.iter_mut() {
                 d.clear();
             }
+        }
+        // oscillator phase: free (a random start per note, as always), reset to zero (every note starts the same way: tight, punchy
+        // basses), or reset to an even spread (the unison voices decorrelated but repeatable)
+        if rst > 0 {
+            for k in 0..MAXUNI {
+                let ph = if rst == 1 { 0.0 } else { k as f32 / MAXUNI as f32 };
+                v.ph_a[k] = ph;
+                v.ph_b[k] = ph;
+            }
+            v.ph_sub = 0.0;
+            v.ph_hum = [0.0; 4];
         }
         self.last_note = key as f32;
     }
@@ -898,10 +1140,22 @@ impl Instrument for Prism {
         let bend_target = (p(P::BEND) - 0.5) * 2.0 * 2.0;
         let whl = p(P::WHL);
         let cells = self.cells.clone();
-        let l1_hz = 0.05 * 2f32.powf(p(P::L1RATE) * 9.0);
-        let l2_hz = 0.05 * 2f32.powf(p(P::L2RATE) * 9.0);
+        let l1_hz = lfo_hz(p(P::L1RATE), p(P::L1SYNC), bpm);
+        let l2_hz = lfo_hz(p(P::L2RATE), p(P::L2SYNC), bpm);
         let (l1_shp, l2_shp) = (self.sel(P::L1SHP as usize, 5), self.sel(P::L2SHP as usize, 5));
         let tuning = self.tuning.clone();
+        // the pro block
+        let ladder = p(P::FMODEL) > 0.5 && ftype <= 1;
+        let lad_drv = 1.0 + p(P::LADDRV) * 5.0;
+        let vsat = p(P::VSAT);
+        let vsat_on = vsat > 0.002;
+        let vsat_g = 1.0 + vsat * 9.0;
+        let vsat_n = 1.0 / vsat_g.sqrt();
+        let vcut = (p(P::VCUT) - 0.5) * 2.0;
+        let (blend_c, blend_s) = (2f32.powf((p(P::UBLEND) - 0.5) * 2.0), 2f32.powf(-(p(P::UBLEND) - 0.5)));
+        let clip_th = if p(P::CLIP) > 0.01 { 1.6 - 1.3 * p(P::CLIP) } else { 0.0 };
+        let mono_v = if p(P::MONOLO) > 0.02 { p(P::MONOLO) } else { 0.0 };
+        let pro = ProCfg::new(sr, p(P::WIDTH), mono_v, p(P::AIR), p(P::WARM), 0.5);
         let hum_lvl = p(P::HUM);
         let sub_lvl = p(P::SUB);
         let sub_tri = p(P::SUBW) > 0.5;
@@ -965,13 +1219,17 @@ impl Instrument for Prism {
                     let spr_b = (p(P::B_SPRD) + m[19]).clamp(0.0, 1.0);
                     let norm_a = 1.0 / (na as f32).sqrt();
                     let norm_b = 1.0 / (nb as f32).sqrt();
+                    // unison blend: the centre voice against the detuned ones (neutral at one half)
+                    let bl = |k: usize, n: usize| if n >= 3 && n % 2 == 1 { if k == n / 2 { blend_c } else { blend_s } } else { 1.0 };
                     for k in 0..na {
+                        let norm_a = norm_a * bl(k, na);
                         let pos = spread_pos(k, na);
                         v.det_a[k] = pos * uni_det_a * uni_det_a * 60.0 + ((k * 7 % 5) as f32 - 2.0) * 0.4 * uni_det_a;
                         let pan = (pos * spr_a * 0.5 + 0.5).clamp(0.0, 1.0);
                         v.gains_a[k] = (((1.0 - pan) * std::f32::consts::FRAC_PI_2).sin() * norm_a, (pan * std::f32::consts::FRAC_PI_2).sin() * norm_a);
                     }
                     for k in 0..nb {
+                        let norm_b = norm_b * bl(k, nb);
                         let pos = spread_pos(k, nb);
                         v.det_b[k] = pos * uni_det_b * uni_det_b * 60.0 + ((k * 5 % 7) as f32 - 3.0) * 0.4 * uni_det_b;
                         let pan = (pos * spr_b * 0.5 + 0.5).clamp(0.0, 1.0);
@@ -981,12 +1239,30 @@ impl Instrument for Prism {
                     let mut cut = p(P::CUT) + m[8] + (v.flt.level - 0.0) * (p(P::FENV) - 0.5) * 2.0;
                     cut += (key_f - 60.0) / 60.0 * (p(P::KEYTR) - 0.5) * 2.0 * 0.5;
                     cut += v.drift * drift_amt * 0.03;
+                    cut += vcut * (vel - 0.5) * 0.6;
                     let cut = cut.clamp(0.0, 1.0);
                     let fc = (20.0 * 2f32.powf(cut * 10.0)).clamp(20.0, sr * 0.45);
                     let res = (p(P::RES) + m[9]).clamp(0.0, 1.0);
                     v.g = (std::f32::consts::PI * fc / sr).tan();
                     v.k = 2.0 - 1.97 * res.sqrt();
+                    v.kl = 3.9 * res.sqrt();
                     v.amp_v = 1.0;
+                    // the oscillators' ratios and every unison voice's detune ratio and table level
+                    let drift_c = v.drift * drift_amt * 3.0;
+                    v.oct_ra = 2f32.powf(oct_a + fine_a / 12.0);
+                    v.oct_rb = 2f32.powf(oct_b + (b_semi + m[16] * 12.0) / 12.0 + fine_b / 12.0);
+                    let f0 = tuning.freq(v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15);
+                    let (wpa, wpb) = ((p(P::A_WARP) + m[2]).clamp(0.0, 1.0), (p(P::B_WARP) + m[5]).clamp(0.0, 1.0));
+                    let amt_c = if mode == 0 { 0.0 } else { (p(P::AMT) + m[7]).clamp(0.0, 1.0) };
+                    let sync_c = if mode == 3 { 1.0 + amt_c * 3.0 } else { 1.0 };
+                    for k in 0..na {
+                        v.rat_a[k] = 2f32.powf((v.det_a[k] + drift_c) / 1200.0);
+                        v.lv_a[k] = band_level(f0 * v.oct_ra * sync_c * v.rat_a[k], wpa, sr);
+                    }
+                    for k in 0..nb {
+                        v.rat_b[k] = 2f32.powf((v.det_b[k] + drift_c) / 1200.0);
+                        v.lv_b[k] = band_level(f0 * v.oct_rb * v.rat_b[k], wpb, sr);
+                    }
                 }
                 let v = &mut self.voices[vi];
                 // ── envelopes, pitch ──
@@ -1000,9 +1276,13 @@ impl Instrument for Prism {
                 v.note += (v.target - v.note) * glide_k;
                 let m = v.m;
                 let semis = v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15;
-                let f_base = tuning.freq(semis);
-                let fa = f_base * 2f32.powf(oct_a + fine_a / 12.0);
-                let fb = f_base * 2f32.powf(oct_b + (b_semi + m[16] * 12.0) / 12.0 + fine_b / 12.0);
+                if semis != v.f_semis {
+                    v.f_semis = semis;
+                    v.f_hz = tuning.freq(semis);
+                }
+                let f_base = v.f_hz;
+                let fa = f_base * v.oct_ra;
+                let fb = f_base * v.oct_rb;
                 // ── oscillators ──
                 let wa = (p(P::A_WAVE) + m[1]).clamp(0.0, 1.0);
                 let wb = (p(P::B_WAVE) + m[4]).clamp(0.0, 1.0);
@@ -1018,13 +1298,9 @@ impl Instrument for Prism {
                 let (ib, frb) = ((pos_b as usize).min(NTABLE - 2), pos_b - (pos_b as usize).min(NTABLE - 2) as f32);
                 // B first: sync and phase modulation read it
                 let mut b_wrapped = false;
-                let lvl_for = |f: f32, warp: f32| -> usize {
-                    let allowed = (0.45 * sr / (f.max(10.0) * (1.0 + warp * 2.0))).floor() as usize;
-                    LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1)
-                };
                 if lb > 0.0 || mode != 0 {
                     for k in 0..nb {
-                        let f = fb * 2f32.powf((v.det_b[k] + v.drift * drift_amt * 3.0) / 1200.0);
+                        let f = fb * v.rat_b[k];
                         let old = v.ph_b[k];
                         v.ph_b[k] += f * dt;
                         if v.ph_b[k] >= 1.0 {
@@ -1034,7 +1310,7 @@ impl Instrument for Prism {
                             }
                         }
                         let _ = old;
-                        let lv = lvl_for(f, warp_b);
+                        let lv = v.lv_b[k];
                         let ph = warp(v.ph_b[k], warp_b);
                         let s = rd(&tb.w[ib][lv], ph) * (1.0 - frb) + rd(&tb.w[ib + 1][lv], ph) * frb;
                         b_l += s * v.gains_b[k].0;
@@ -1044,7 +1320,7 @@ impl Instrument for Prism {
                 let b_mono = (b_l + b_r) * 0.5;
                 let sync_ratio = if mode == 3 { 1.0 + amt * 3.0 } else { 1.0 };
                 for k in 0..na {
-                    let f = fa * sync_ratio * 2f32.powf((v.det_a[k] + v.drift * drift_amt * 3.0) / 1200.0);
+                    let f = fa * sync_ratio * v.rat_a[k];
                     v.ph_a[k] += f * dt;
                     v.ph_a[k] -= v.ph_a[k].floor();
                     if mode == 3 && b_wrapped && amt > 0.01 {
@@ -1054,7 +1330,7 @@ impl Instrument for Prism {
                     if mode == 2 {
                         ph_in = (ph_in + b_mono * amt * 0.5).rem_euclid(1.0);
                     }
-                    let lv = lvl_for(f, warp_a);
+                    let lv = v.lv_a[k];
                     let ph = warp(ph_in, warp_a);
                     let s = rd(&tb.w[ia][lv], ph) * (1.0 - fra) + rd(&tb.w[ia + 1][lv], ph) * fra;
                     a_l += s * v.gains_a[k].0;
@@ -1113,17 +1389,24 @@ impl Instrument for Prism {
                 let mut chan = [x_l, x_r];
                 for c in 0..2 {
                     let x = (chan[c] * drv).tanh() / drv.sqrt().max(1.0);
-                    let (l1, b1, h1) = v.f1[c].run(x, v.g, v.k);
-                    let y = match ftype {
-                        0 => l1,
-                        1 => {
-                            let (l2, _, _) = v.f1b[c].run(l1, v.g, v.k);
-                            l2
+                    let mut y = if ladder {
+                        v.lad[c].run(x, v.g, v.kl, lad_drv)
+                    } else {
+                        let (l1, b1, h1) = v.f1[c].run(x, v.g, v.k);
+                        match ftype {
+                            0 => l1,
+                            1 => {
+                                let (l2, _, _) = v.f1b[c].run(l1, v.g, v.k);
+                                l2
+                            }
+                            2 => b1 * v.k,
+                            3 => h1,
+                            _ => x - v.k * b1,
                         }
-                        2 => b1 * v.k,
-                        3 => h1,
-                        _ => x - v.k * b1,
                     };
+                    if vsat_on {
+                        y = adaa_soft(y * vsat_g, &mut v.sat_x[c]) * vsat_n;
+                    }
                     chan[c] = y;
                 }
                 let cm = (p(P::COMB) + m[11]).clamp(0.0, 1.0);
@@ -1167,6 +1450,11 @@ impl Instrument for Prism {
         let mut energy = 0.0f32;
         for i in 0..frames {
             let mut s = [dry[i * 2], dry[i * 2 + 1]];
+            // glue: a soft clip on the voice sum
+            if clip_th > 0.0 {
+                s[0] = clip_th * (s[0] / clip_th).tanh();
+                s[1] = clip_th * (s[1] / clip_th).tanh();
+            }
             // harmonizer: two pitch-shifted copies
             if hz_mix > 0.001 {
                 for c in 0..2 {
@@ -1178,11 +1466,17 @@ impl Instrument for Prism {
             if ph_mix > 0.001 {
                 self.ph_lfo += ph_rate * dt;
                 self.ph_lfo -= self.ph_lfo.floor();
+                // the all-pass coefficient follows the slow LFO every 8 samples
+                if i % 8 == 0 || self.ph_a[0] == 0.0 {
+                    for c in 0..2 {
+                        let lfo = (TAU * (self.ph_lfo + c as f32 * 0.25)).sin() * 0.5 + 0.5;
+                        let fc = 180.0 * 2f32.powf(lfo * ph_dep * 5.5);
+                        let t = (std::f32::consts::PI * fc.min(sr * 0.45) / sr).tan();
+                        self.ph_a[c] = (t - 1.0) / (t + 1.0);
+                    }
+                }
                 for c in 0..2 {
-                    let lfo = (TAU * (self.ph_lfo + c as f32 * 0.25)).sin() * 0.5 + 0.5;
-                    let fc = 180.0 * 2f32.powf(lfo * ph_dep * 5.5);
-                    let t = (std::f32::consts::PI * fc.min(sr * 0.45) / sr).tan();
-                    let a = (t - 1.0) / (t + 1.0);
+                    let a = self.ph_a[c];
                     let mut x = s[c] + self.ph_fb[c] * ph_fb;
                     for st in 0..ph_stages {
                         let y = -a * x + self.ph_state[c][st];
@@ -1216,6 +1510,10 @@ impl Instrument for Prism {
                 self.dl[1].push(s[1] * 0.7 + self.dl_lp[0] * dl_fb);
                 s[0] += dl_l * dl_mix;
                 s[1] += dl_r * dl_mix;
+            }
+            if pro.on {
+                let (a, b) = self.pro.process(&pro, s[0], s[1]);
+                s = [a, b];
             }
             self.scr[i * 2] = s[0] * rv_mix * 0.8;
             self.scr[i * 2 + 1] = s[1] * rv_mix * 0.8;
@@ -1255,8 +1553,9 @@ impl Instrument for Prism {
         self.refresh();
         let p = |k: P, v: &[f32]| v[k as usize];
         let dt = 1.0 / self.sr;
-        let l1_hz = 0.05 * 2f32.powf(p(P::L1RATE, &self.v) * 9.0);
-        let l2_hz = 0.05 * 2f32.powf(p(P::L2RATE, &self.v) * 9.0);
+        let bpm = 60.0 + p(P::TEMPO, &self.v) * 140.0;
+        let l1_hz = lfo_hz(p(P::L1RATE, &self.v), p(P::L1SYNC, &self.v), bpm);
+        let l2_hz = lfo_hz(p(P::L2RATE, &self.v), p(P::L2SYNC, &self.v), bpm);
         let (l1_shp, l2_shp) = (self.sel(P::L1SHP as usize, 5), self.sel(P::L2SHP as usize, 5));
         let bend_target = (p(P::BEND, &self.v) - 0.5) * 2.0 * 2.0;
         for _ in 0..frames {
@@ -1331,6 +1630,9 @@ impl Instrument for Prism {
         for (i, n) in names().list.iter().enumerate() {
             let v = self.v[i];
             if i >= MAT_BASE && (v - 0.5).abs() < 1e-3 {
+                continue;
+            }
+            if (PRO_FIRST..PRO_FIRST + PRO_COUNT).contains(&i) && (v - CORE[i].1).abs() < 1e-4 {
                 continue;
             }
             if (MSEG_BASE..MAT_BASE).contains(&i) {
@@ -1462,6 +1764,201 @@ mod tests {
             assert!(tail < pa, "{name}: still as loud at the end of the release ({tail} vs {pa})");
             let _ = pb;
         }
+    }
+
+    // ── the pro block ──
+    fn mono_of(o: &[f32]) -> Vec<f32> {
+        o.chunks_exact(2).map(|f| f[0] + f[1]).collect()
+    }
+    fn side_of(o: &[f32]) -> Vec<f32> {
+        o.chunks_exact(2).map(|f| f[0] - f[1]).collect()
+    }
+    /// amplitude of the partial at `hz` (Goertzel)
+    fn amp_at(x: &[f32], hz: f32, sr: f32) -> f32 {
+        let w = TAU * hz / sr;
+        let (mut re, mut im) = (0.0f32, 0.0f32);
+        for (i, v) in x.iter().enumerate() {
+            re += v * (w * i as f32).cos();
+            im += v * (w * i as f32).sin();
+        }
+        (re * re + im * im).sqrt() / x.len() as f32 * 2.0
+    }
+    fn base(p: &mut Prism) {
+        p.set_param("rv mix", 0.0);
+        p.set_param("drift", 0.0);
+        p.set_param("sub", 0.0);
+        p.set_param("amp a", 0.0);
+        p.set_param("ch mix", 0.0);
+    }
+    fn rms(x: &[f32]) -> f32 {
+        (x.iter().map(|v| v * v).sum::<f32>() / x.len().max(1) as f32).sqrt()
+    }
+
+    #[test]
+    fn pro_block_defaults_are_neutral_and_not_written_to_patches() {
+        let p = Prism::new(48000.0);
+        for (n, v) in p.state() {
+            assert!(!["fmodel", "lad drv", "vsat", "vel cut", "blend", "osc rst", "l1 sync", "l2 sync", "clip", "warm", "air", "width", "mono lo"].contains(&n.as_str()), "{n}={v}");
+        }
+        assert_eq!(p.get_param("width"), Some(0.5));
+        assert_eq!(p.get_param("vel cut"), Some(0.5));
+        assert_eq!(lfo_hz(0.5, 0.0, 120.0), 0.05 * 2f32.powf(4.5));
+        assert!((lfo_hz(0.5, 0.5, 120.0) - 2.0 * SYNC_DIV[3]).abs() < 1e-5 || (lfo_hz(0.5, 0.5, 120.0) - 2.0 * SYNC_DIV[4]).abs() < 1e-5);
+        assert!((lfo_hz(0.0, 1.0, 120.0) - 2.0 * 4.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn saturation_adds_harmonics_and_the_ladder_is_a_different_lowpass() {
+        let sr = 48000.0;
+        let f = 130.81;
+        let make = |vsat: f32, ladder: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.0);
+            p.set_param("a uni", 0.0);
+            p.set_param("cut", 1.0);
+            p.set_param("drive", 0.0);
+            p.set_param("vsat", vsat);
+            p.set_param("fmodel", ladder);
+            p.note_on(48, 1.0);
+            let o = mono_of(&render(&mut p, 0.8));
+            o[(sr * 0.4) as usize..(sr * 0.7) as usize].to_vec()
+        };
+        let clean = make(0.0, 0.0);
+        let sat = make(0.8, 0.0);
+        let h = |x: &[f32]| amp_at(x, f * 3.0, sr) / amp_at(x, f, sr);
+        assert!(h(&sat) > h(&clean) * 5.0 + 0.01, "third harmonic: {} vs {}", h(&sat), h(&clean));
+        // the ladder at a low cutoff takes more of the highs out than the 12 dB filter does on a saw
+        let hf = |lad: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.28);
+            p.set_param("a uni", 0.0);
+            p.set_param("cut", 0.45);
+            p.set_param("ftype", 0.0);
+            p.set_param("fenv", 0.5);
+            p.set_param("fmodel", lad);
+            p.note_on(48, 1.0);
+            let o = mono_of(&render(&mut p, 0.8));
+            let w = &o[(sr * 0.4) as usize..(sr * 0.7) as usize];
+            assert!(w.iter().all(|x| x.is_finite()));
+            amp_at(w, f * 8.0, sr) / amp_at(w, f, sr)
+        };
+        assert!(hf(1.0) < hf(0.0) * 0.5, "ladder is steeper: {} vs {}", hf(1.0), hf(0.0));
+    }
+
+    #[test]
+    fn air_width_mono_low_and_clip_do_what_they_say() {
+        let sr = 48000.0;
+        let wide = |set: &[(&str, f32)]| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a uni", 1.0);
+            p.set_param("a sprd", 1.0);
+            p.set_param("a det", 0.5);
+            p.set_param("a wave", 0.4);
+            p.set_param("cut", 1.0);
+            for (k, v) in set {
+                p.set_param(k, *v);
+            }
+            p.note_on(36, 0.9);
+            render(&mut p, 1.0)[(sr * 0.4) as usize * 2..].to_vec()
+        };
+        // air: more above 8 kHz
+        let hi = |x: &[f32]| {
+            let m = mono_of(x);
+            (6..12).map(|k| amp_at(&m, 8000.0 + k as f32 * 700.0, sr).powi(2)).sum::<f32>()
+        };
+        let bright = |air: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.28);
+            p.set_param("cut", 1.0);
+            p.set_param("air", air);
+            p.note_on(60, 0.9);
+            hi(&render(&mut p, 0.8)[(sr * 0.3) as usize * 2..])
+        };
+        assert!(bright(1.0) > bright(0.0) * 2.0, "air {} vs {}", bright(1.0), bright(0.0));
+        // width: 0 is mono, 1 is wider than the default
+        let side = |x: &[f32]| rms(&side_of(x));
+        assert!(side(&wide(&[("width", 0.0)])) < side(&wide(&[])) * 0.01, "width 0 = mono");
+        assert!(side(&wide(&[("width", 1.0)])) > side(&wide(&[])) * 1.5, "width 1 = wider");
+        // mono low: the side channel under the corner (about 2/3 of 400 Hz here, with the note at 65 Hz) all but disappears, the highs stay
+        let off = wide(&[]);
+        let on = wide(&[("mono lo", 0.9)]);
+        let sd = |x: &[f32], lo: f32, hi: f32| {
+            let s = side_of(x);
+            (0..8).map(|k| amp_at(&s, lo + (hi - lo) * k as f32 / 8.0, sr).powi(2)).sum::<f32>().sqrt()
+        };
+        assert!(sd(&on, 55.0, 110.0) < sd(&off, 55.0, 110.0) * 0.15, "mono low {} vs {}", sd(&on, 55.0, 110.0), sd(&off, 55.0, 110.0));
+        assert!(sd(&on, 2000.0, 4000.0) > sd(&off, 2000.0, 4000.0) * 0.8, "highs stay wide");
+        // clip: the peak of a hot chord drops
+        let hot = |c: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("clip", c);
+            p.set_param("out", 1.0);
+            p.set_param("a uni", 1.0);
+            for k in [36u8, 43, 48, 52] {
+                p.note_on(k, 1.0);
+            }
+            peak(&render(&mut p, 0.6))
+        };
+        assert!(hot(1.0) < hot(0.0), "clip lowers the peak: {} vs {}", hot(1.0), hot(0.0));
+        // warm: a hot signal is rounded off, nothing blows up
+        let mut p = Prism::new(sr);
+        base(&mut p);
+        p.set_param("warm", 1.0);
+        p.note_on(48, 1.0);
+        assert!(render(&mut p, 0.3).iter().all(|x| x.is_finite()));
+    }
+
+    #[test]
+    fn phase_reset_blend_and_velocity_cutoff_behave() {
+        let sr = 48000.0;
+        let attack = |rst: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("amp r", 0.0);
+            p.set_param("osc rst", rst);
+            p.set_param("a uni", 0.5);
+            let mut starts = vec![];
+            for _ in 0..2 {
+                p.note_on(48, 0.9);
+                starts.push(render(&mut p, 0.01));
+                p.all_off();
+                render(&mut p, 0.5);
+            }
+            let d: f32 = starts[0].iter().zip(&starts[1]).map(|(a, b)| (a - b).abs()).sum();
+            d
+        };
+        assert!(attack(0.0) > 0.01, "free-running notes start differently: {}", attack(0.0));
+        assert!(attack(0.5) < 1e-4, "reset notes start the same: {}", attack(0.5));
+        assert!(attack(1.0) < 1e-4, "spread notes start the same: {}", attack(1.0));
+        let blend = |b: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a uni", 0.67);
+            p.set_param("blend", b);
+            p.note_on(48, 0.9);
+            let o = render(&mut p, 0.5);
+            rms(&o[o.len() / 2..])
+        };
+        assert!(blend(1.0) != blend(0.5) && blend(0.0) != blend(0.5));
+        let vc = |c: f32, vel: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.4);
+            p.set_param("cut", 0.5);
+            p.set_param("fenv", 0.5);
+            p.set_param("vel cut", c);
+            p.note_on(48, vel);
+            let m = mono_of(&render(&mut p, 0.6));
+            let w = &m[(sr * 0.2) as usize..(sr * 0.5) as usize];
+            w.windows(2).map(|x| (x[1] - x[0]).abs()).sum::<f32>() / w.len() as f32 / rms(w)
+        };
+        assert!(vc(1.0, 1.0) > vc(1.0, 0.2) * 1.2, "harder = brighter");
+        assert!((vc(0.5, 1.0) - vc(0.5, 0.2)).abs() < 0.02, "neutral");
     }
 
     #[test]

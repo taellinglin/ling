@@ -671,6 +671,8 @@ impl Engine {
     // ── rendering ───────────────────────────────────────────────────────────
     /// Fill `out` (interleaved stereo) with the next block of audio.
     pub fn render(&mut self, out: &mut [f32]) {
+        // whichever thread renders (the audio thread, an export, a bounce): denormals flushed to zero
+        crate::audio::flush_denormals();
         out.fill(0.0);
         let mut off = 0;
         while off < out.len() {

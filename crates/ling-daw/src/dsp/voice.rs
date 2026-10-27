@@ -10,9 +10,10 @@
 use super::{midi_hz, Instrument, Rng, TAU};
 use std::sync::OnceLock;
 
-const NAMES: [&str; 28] = [
+const NAMES: [&str; 30] = [
     "vowel", "gender", "bright", "breath", "whisp", "vib rate", "vib depth", "vib delay", "attack", "release", "glide", "cons", "gain", "pan",
     "voices", "choir", "open", "fry", "drift", "scoop", "ring", "trem", "nasal", "arp", "arp mode", "arp rate", "arp gate", "arp oct",
+    "tune", "expr",
 ];
 const P_VOWEL: usize = 0;
 const P_GENDER: usize = 1;
@@ -56,6 +57,13 @@ const P_ARP_RATE: usize = 25;
 const P_ARP_GATE: usize = 26;
 /// 0..1 = one to three octaves
 const P_ARP_OCT: usize = 27;
+/// intonation: 0.5 in tune, 0 / 1 = a whole tone flat / sharp. Automated per note it draws scoops, falls and the
+/// cents a singer colours a word with (expression.rs writes it)
+const P_TUNE: usize = 28;
+/// expression (like MIDI CC 11): the level within a note, for swells and tapers across a held line; 1 = full
+const P_EXPR: usize = 29;
+/// cents either way at the ends of `tune`
+const TUNE_RANGE: f32 = 200.0;
 
 /// beats per arpeggiator step for each `arp rate` position
 const ARP_BEATS: [f64; 6] = [1.0, 0.5, 1.0 / 3.0, 0.25, 1.0 / 6.0, 0.125];
@@ -552,6 +560,9 @@ pub struct Voice {
     cyc: bool,
     cyc_gain: f32,
     scoop_c: f32,
+    /// `tune` (cents) and `expr` (level) smoothed per sample: lanes step every 64 frames and must not zipper
+    tune_s: f32,
+    expr_s: f32,
     ring_res: Res,
     // arpeggiator: the keys held (key, velocity, pan) in the order they went down, the lyric of the latest one, the step clock
     bpm: f64,
@@ -626,6 +637,8 @@ impl Voice {
             cyc: false,
             cyc_gain: 1.0,
             scoop_c: 0.0,
+            tune_s: 0.0,
+            expr_s: 1.0,
             ring_res: Res::default(),
             bpm: 120.0,
             arp_keys: vec![],
@@ -824,7 +837,8 @@ fn defaults() -> [f32; NAMES.len()] {
     // vowel a, mid gender, bright, no breath, no whisper, vibrato 5.5 Hz, depth, delay, attack, release, glide, cons, gain, pan,
     // one voice, no choir, open quotient 0.62, no fry, normal drift, no scoop, no ring, no tremolo, no nasality,
     // arpeggiator off: up, 1/16, gate 0.6, one octave
-    [0.0, 0.5, 0.55, 0.12, 0.0, 0.5, 0.3, 0.4, 0.15, 0.25, 0.15, 0.5, 0.7, 0.5, 0.0, 0.0, 0.5, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.6, 0.0]
+    // in tune, full expression
+    [0.0, 0.5, 0.55, 0.12, 0.0, 0.5, 0.3, 0.4, 0.15, 0.25, 0.15, 0.5, 0.7, 0.5, 0.0, 0.0, 0.5, 0.0, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.6, 0.6, 0.0, 0.5, 1.0]
 }
 
 impl Voice {
@@ -899,6 +913,9 @@ impl Voice {
         let trem = self.v[P_TREM] * 0.45;
         let nasal_base = self.v[P_NASAL] * 0.6;
         let scoop_k = (-dt / 0.09).exp();
+        let tune_c = (self.v[P_TUNE] - 0.5) * 2.0 * TUNE_RANGE;
+        let expr = self.v[P_EXPR];
+        let smooth_k = 1.0 - (-dt / 0.012).exp();
         let pan = (self.pan + 1.0) * std::f32::consts::FRAC_PI_4;
         let (pl, pr) = (pan.cos() * std::f32::consts::SQRT_2, pan.sin() * std::f32::consts::SQRT_2);
         let bw = [70.0f32, 90.0, 140.0, 220.0, 300.0];
@@ -943,7 +960,9 @@ impl Voice {
             let vib = if self.vib_t > vib_delay { (TAU * vib_rate * (self.vib_t - vib_delay)).sin() * vib_depth * ((self.vib_t - vib_delay) * 2.0).min(1.0) } else { 0.0 };
             self.jitter += (self.rng.next() * 6.0 * drift - self.jitter) * 0.002;
             self.scoop_c *= scoop_k;
-            let f0 = midi_hz(self.note + (vib + self.jitter + self.scoop_c) / 100.0);
+            self.tune_s += (tune_c - self.tune_s) * smooth_k;
+            self.expr_s += (expr - self.expr_s) * smooth_k;
+            let f0 = midi_hz(self.note + (vib + self.jitter + self.scoop_c + self.tune_s) / 100.0);
             // ── amplitude envelope ──
             let goal = if self.gate { 1.0 } else { 0.0 };
             let rate = if goal > self.env { dt / att } else { dt / rel };
@@ -1036,7 +1055,7 @@ impl Voice {
             self.dc += (y - self.dc) * (TAU * 25.0 / sr);
             let y = y - self.dc;
             let y = (y * 1.5).tanh() / 1.5;
-            let a = self.env * gain * (0.35 + 0.65 * self.vel) * (1.0 - trem * (0.5 - 0.5 * (TAU * vib_rate * self.vib_t).sin()));
+            let a = self.env * gain * self.expr_s * (0.35 + 0.65 * self.vel) * (1.0 - trem * (0.5 - 0.5 * (TAU * vib_rate * self.vib_t).sin()));
             let s = y * a;
             out[i * 2] += s * pl;
             out[i * 2 + 1] += s * pr;
@@ -1329,6 +1348,35 @@ mod tests {
             f += 40.0;
         }
         e
+    }
+
+    #[test]
+    fn tune_bends_the_pitch_and_expr_the_level() {
+        let sr = 24000.0;
+        let median_f0 = |tune: f32| -> f32 {
+            let mut v = Voice::new(sr);
+            v.set_param("vib depth", 0.0);
+            v.set_param("drift", 0.0);
+            v.set_param("tune", tune);
+            let m = mono(&sing(&mut v, 57, "a", 0.8));
+            let p = crate::vocal::track_pitch(&m, sr);
+            let mut f: Vec<f32> = p.f0.iter().copied().filter(|x| *x > 0.0).collect();
+            f.sort_by(|a, b| a.total_cmp(b));
+            f[f.len() / 2]
+        };
+        let in_tune = median_f0(0.5);
+        let flat = median_f0(0.0);
+        // a whole tone flat at the bottom of the range
+        let cents = 1200.0 * (flat / in_tune).log2();
+        assert!((cents + 200.0).abs() < 25.0, "{in_tune} Hz vs {flat} Hz: {cents} cents");
+        assert!((in_tune - 220.0).abs() < 8.0, "{in_tune}");
+        let energy = |expr: f32| {
+            let mut v = Voice::new(sr);
+            v.set_param("expr", expr);
+            mono(&sing(&mut v, 57, "a", 0.5)).iter().map(|x| x * x).sum::<f32>()
+        };
+        let (loud, soft) = (energy(1.0), energy(0.25));
+        assert!(soft < loud * 0.2 && soft > 0.0, "{soft} vs {loud}");
     }
 
     #[test]

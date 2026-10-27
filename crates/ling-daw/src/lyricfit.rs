@@ -363,6 +363,34 @@ fn phonetic_edges(s: &str) -> String {
     s
 }
 
+/// A word's letters cut into `n` written syllables (when the dictionary's count differs from the spelling rules): the cuts go at
+/// consonant-to-vowel boundaries nearest to even positions, so every piece is a readable chunk of the word ("ev-ery" -> "ev-er-y").
+fn split_letters(word: &str, n: usize) -> Vec<String> {
+    let c: Vec<char> = word.chars().collect();
+    if n <= 1 || c.len() < n {
+        let mut v = vec![word.to_string()];
+        v.resize(n.max(1), String::new());
+        return v;
+    }
+    let vowel = |ch: char| "aeiouyAEIOUY".contains(ch);
+    // where a syllable may start: a consonant before a vowel, or a vowel after a consonant
+    let cands: Vec<usize> = (1..c.len()).filter(|i| vowel(c[*i]) && !vowel(c[*i - 1])).map(|i| if i >= 2 && !vowel(c[i - 1]) { i - 1 } else { i }).collect();
+    let mut cuts: Vec<usize> = vec![];
+    for k in 1..n {
+        let want = k * c.len() / n;
+        let lo = cuts.last().copied().unwrap_or(0) + 1;
+        let best = cands.iter().copied().filter(|x| *x >= lo && *x < c.len()).min_by_key(|x| (*x as i64 - want as i64).abs()).unwrap_or(want.max(lo).min(c.len() - 1));
+        cuts.push(best.max(lo).min(c.len() - (n - k)));
+    }
+    let mut out = vec![];
+    let mut s = 0;
+    for x in cuts.into_iter().chain(std::iter::once(c.len())) {
+        out.push(c[s..x].iter().collect());
+        s = x;
+    }
+    out
+}
+
 /// a lyric word is a sustain marker
 fn is_sustain_token(t: &str) -> bool {
     matches!(t, "~" | "_" | "-" | "--" | "—" | "–")
@@ -455,6 +483,23 @@ pub fn syllabify_line(line: &str, lang: Lang) -> Vec<Syl> {
                 }
             }
             _ => {
+                // a real English word: as the dictionary says it (cmudict.rs), split into its sung syllables; a word hyphenated by
+                // hand, or Latin read letter by letter (solfege, romaji), keeps the spelling rules below
+                let plain: String = tok.chars().filter(|c| c.is_alphabetic() || *c == '\'' || *c == '’').collect();
+                if lang != Lang::Latin && !tok.contains('-') {
+                    if let Some(ipas) = crate::cmudict::lookup(&plain) {
+                        let letters: String = plain.chars().filter(|c| c.is_alphabetic()).collect();
+                        // the spelling of each syllable when the rules split the word the same way, else the word on the first
+                        let mut orth = syllabify_en(&letters);
+                        if orth.len() != ipas.len() {
+                            orth = split_letters(&letters, ipas.len());
+                        }
+                        for (ipa, o) in ipas.into_iter().zip(orth) {
+                            out.push(Syl { orth: o, ipa });
+                        }
+                        continue;
+                    }
+                }
                 let word: String = tok.chars().filter(|c| c.is_alphabetic() || *c == '-').collect();
                 let parts: Vec<String> = if word.contains('-') { word.split('-').filter(|p| !p.is_empty()).map(|p| p.to_string()).collect() } else { syllabify_en(&word) };
                 for p in parts {
@@ -1053,6 +1098,16 @@ mod tests {
         let few = notes(&[(0.0, 4.0, 60), (4.0, 4.0, 62)]);
         let s2 = shape(&few, "one two three four five six", &o);
         assert_eq!(s2.len(), 6);
+    }
+
+    #[test]
+    fn a_word_is_cut_into_as_many_written_pieces_as_it_has_syllables() {
+        for (w, n) in [("every", 3), ("orange", 2), ("fire", 2), ("a", 1), ("rhythm", 2), ("beautiful", 3)] {
+            let v = split_letters(w, n);
+            assert_eq!(v.len(), n, "{w}");
+            assert_eq!(v.concat(), w);
+            assert!(v.iter().all(|p| !p.is_empty()), "{w}: {v:?}");
+        }
     }
 
     #[test]

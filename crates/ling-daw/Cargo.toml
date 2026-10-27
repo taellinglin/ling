@@ -11,6 +11,9 @@ ling-music = { workspace = true }
 cpal = "0.15"
 ling-mic = { workspace = true }
 hound = "3.5"
+# Make Medley: the cipher order (HMAC-SHA-256 keystream)
+sha2 = "0.10"
+hmac = "0.12"
 # the Sheet tab draws the score pages (SVG) to a bitmap in-process
 resvg = "0.44"
 serde = { version = "1.0", features = ["derive"] }

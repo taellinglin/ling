@@ -49,16 +49,25 @@ pub struct Svf {
     lp: f32,
     bp: f32,
     pub mode: FilterMode,
+    /// the coefficient for the last cutoff / rate (a sine: recomputed only when they change)
+    c_hz: f32,
+    c_sr: f32,
+    c_f: f32,
 }
 impl Svf {
     pub fn new(mode: FilterMode) -> Self {
-        Svf { lp: 0.0, bp: 0.0, mode }
+        Svf { lp: 0.0, bp: 0.0, mode, c_hz: -1.0, c_sr: 0.0, c_f: 0.0 }
     }
     #[inline]
     pub fn tick(&mut self, x: f32, cutoff_hz: f32, reso: f32, sr: f32) -> f32 {
         // 4 sub-steps per sample => coefficient computed at 4*sr; clamp keeps
         // the Chamberlin form stable at high cutoff / low damping.
-        let f = (2.0 * (std::f32::consts::PI * cutoff_hz.clamp(20.0, sr * 0.45) / (4.0 * sr)).sin()).min(0.6);
+        if cutoff_hz != self.c_hz || sr != self.c_sr {
+            self.c_hz = cutoff_hz;
+            self.c_sr = sr;
+            self.c_f = (2.0 * (std::f32::consts::PI * cutoff_hz.clamp(20.0, sr * 0.45) / (4.0 * sr)).sin()).min(0.6);
+        }
+        let f = self.c_f;
         let q = 1.0 - reso.clamp(0.0, 0.95);
         let mut out = 0.0;
         for _ in 0..4 {

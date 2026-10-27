@@ -5,6 +5,7 @@
 use crate::model::Note;
 use midly::{MetaMessage, MidiMessage, Smf, Timing, TrackEventKind};
 
+#[derive(Default, Clone)]
 pub struct ImportedTrack {
     pub name: String,
     /// the FL Studio plugin the channel used ("Sytrus", "3x Osc" ...); empty for MIDI files
@@ -36,6 +37,7 @@ pub struct ImportedTrack {
     pub extra_auto: Vec<(String, Vec<(f64, f32)>)>,
 }
 
+#[derive(Default, Clone)]
 pub struct ImportedMidi {
     pub tracks: Vec<ImportedTrack>,
     /// first tempo in the file
