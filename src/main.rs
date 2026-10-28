@@ -2498,8 +2498,14 @@ ling = {{ path = "{root_str}", package = "ling-lang"{feats} }}
 winresource = "0.1"
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+# Keep these in sync with ling's own [profile.release] (see this crate's Cargo.toml):
+# fat LTO -- or codegen-units = 1, which forces effectively the same single-unit
+# shape -- miscompiles the Cranelift JIT this exe embeds (JIT-compiling functions
+# with 14-16 parameters segfaults during codegen). Dropping LTO removes the
+# miscompilation trigger; it is the safe fix, not a workaround. opt-level = 3 and
+# strip keep the packed exe fast and small.
+lto = false
+codegen-units = 16
 opt-level = 3
 strip = true
 "#
