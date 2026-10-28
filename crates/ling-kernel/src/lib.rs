@@ -67,6 +67,12 @@ pub mod setup;
 // semantics, module globals, the `st_*` store, maths, and the `ling_builtin`
 // by-name dispatcher — what lets a full app like LingStationX link in-kernel.
 pub mod lingrt;
+/// Records (`form`) and `ok`/`bad` results for compiled Ling.
+pub mod lingrec;
+/// Green threads (coroutines) for Ling isolates and Rust workers.
+pub mod coro;
+/// Boot services, sign-in apps started in the background, the idle lock.
+pub mod startup;
 // App builtins for compiled programs (window, px_* drawing, fonts, input, files)
 // and the read-only files `ling build` bakes into the image ([includes]).
 pub mod lingapp;

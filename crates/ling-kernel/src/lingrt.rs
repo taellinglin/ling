@@ -504,6 +504,7 @@ unsafe fn scan_stacks(work: &mut Vec<*mut ListBuf>) {
         scan_range(lo, hi, work);
     }
     crate::proc::sched::for_each_suspended_stack(|lo, hi| scan_range(lo, hi, work));
+    crate::coro::for_each_parked_stack(|lo, hi| scan_range(lo, hi, work));
 }
 
 /// Free every unmarked object and clear the marks; (objects, bytes) freed.
@@ -547,7 +548,7 @@ unsafe fn free_object(h: *mut GcHdr) -> usize {
 /// Collect now. Only at a safepoint: `present()`, or an app having returned.
 pub fn gc_collect() {
     unsafe {
-        if GC_BLOCK > 0 || GC_BUSY || GC_HEAD == 0 {
+        if GC_BLOCK > 0 || GC_BUSY || GC_HEAD == 0 || crate::coro::in_coro() {
             return;
         }
         GC_BUSY = true;
@@ -576,6 +577,15 @@ pub fn gc_collect() {
             }
             for e in p.s.values() {
                 mark_value(e.val, &mut work);
+            }
+        }
+        {
+            let w = &mut work;
+            let mut mark = |v: u64| mark_value(v, w);
+            crate::lingrec::roots(&mut mark);
+            crate::coro::roots(&mut mark);
+            for f in (*(&raw const ROOT_FNS)).iter().flatten() {
+                f(&mut mark);
             }
         }
         drain(&mut work);
@@ -759,6 +769,56 @@ fn saved_scopes() -> &'static mut Vec<Scope> {
     unsafe { &mut *(&raw mut SAVED) }
 }
 
+/// A program's Ling scope (globals, `st_*` store, arguments) held aside by a
+/// coroutine (`coro.rs`) while another one runs.
+#[derive(Default)]
+pub struct LingScope {
+    g: BTreeMap<Vec<u8>, u64>,
+    s: BTreeMap<Vec<u8>, StEntry>,
+    a: Vec<String>,
+}
+
+/// Take the live scope out (the live one is empty afterwards).
+pub fn scope_take() -> LingScope {
+    LingScope { g: core::mem::take(globals()), s: core::mem::take(store()), a: core::mem::take(args_vec()) }
+}
+
+/// Make `sc` the live scope (the live one must have been taken).
+pub fn scope_put(sc: LingScope) {
+    *globals() = sc.g;
+    *store() = sc.s;
+    *args_vec() = sc.a;
+}
+
+pub fn scope_drop(sc: LingScope) {
+    drop(sc);
+}
+
+/// Every value a held-aside scope keeps alive (for the collector).
+pub fn scope_values(sc: &LingScope, mark: &mut dyn FnMut(u64)) {
+    for &v in sc.g.values() {
+        mark(v);
+    }
+    for e in sc.s.values() {
+        mark(e.val);
+    }
+}
+
+/// More GC roots: Rust-side holders of Ling values (channel queues, the
+/// shared store, record forms) report them through these.
+pub type RootFn = fn(&mut dyn FnMut(u64));
+static mut ROOT_FNS: [Option<RootFn>; 16] = [None; 16];
+
+pub fn add_roots(f: RootFn) {
+    let r = unsafe { &mut *(&raw mut ROOT_FNS) };
+    if r.iter().any(|x| *x == Some(f)) {
+        return;
+    }
+    if let Some(slot) = r.iter_mut().find(|x| x.is_none()) {
+        *slot = Some(f);
+    }
+}
+
 /// A suspended app's globals, store, command line and nesting depth, parked
 /// while its host (the desktop) runs again; collector roots like the rest.
 struct Parked {
@@ -870,6 +930,7 @@ fn st_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
             None => arg(1).unwrap_or(num(0.0)),
         },
         b"st_has" => num(store().contains_key(&key()) as i32 as f64),
+        b"st_del" => num(store().remove(&key()).is_some() as i32 as f64),
         b"st_add" => {
             let k = key();
             let cur = match store().get(&k) {
@@ -1243,6 +1304,7 @@ pub unsafe extern "C" fn ling_builtin(
             2 => crate::lingapp::dispatch(name, args),
             3 => crate::lingdaw::dispatch(name, args),
             4 => crate::netapi::dispatch(name, args),
+            5 => crate::lingrec::dispatch(name, args),
             _ => core_builtin(name, args),
         };
         if let Some(v) = hit {
@@ -1267,6 +1329,10 @@ pub unsafe extern "C" fn ling_builtin(
     }
     if let Some(v) = crate::netapi::dispatch(name, args) {
         DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 4);
+        return v;
+    }
+    if let Some(v) = crate::lingrec::dispatch(name, args) {
+        DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 5);
         return v;
     }
     for f in (*(&raw const EXT)).iter().flatten() {

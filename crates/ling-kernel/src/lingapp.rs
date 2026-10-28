@@ -60,6 +60,10 @@ static mut FONTS: Vec<Font> = Vec::new();
 static mut FONT_FB: Vec<Option<(usize, f32)>> = Vec::new();
 
 fn win() -> Option<&'static mut Window> {
+    // a service or isolate (coro.rs) has no window: the screen is the app's
+    if crate::coro::in_coro() {
+        return None;
+    }
     unsafe { (*(&raw mut WIN)).as_mut() }
 }
 
@@ -1031,6 +1035,8 @@ fn app_came_back(host: Host) {
         crate::console_write(c.name.as_bytes());
         if c.done {
             crate::console_write(b" returned\n");
+            // its isolates and workers end with it
+            crate::coro::kill_owner(&c.name);
             crate::mm::frame::free_frames(c.stack, APP_STACK_ORDER);
         } else {
             crate::console_write(b" suspended\n");
@@ -1088,6 +1094,14 @@ pub fn gc_stacks() -> (u64, Vec<(u64, u64)>) {
             (a.top, others)
         },
         None => (host_top, others),
+    }
+}
+
+/// The app that has the screen ("desktop" when none does).
+pub fn active_app_name() -> String {
+    match active_app() {
+        Some(a) => a.name.clone(),
+        None => String::from("desktop"),
     }
 }
 
@@ -2030,10 +2044,18 @@ fn perf_overlay(w: &mut Window) {
 }
 
 fn present() {
+    // a headless service's frame loop: just give everyone else a turn
+    if crate::coro::in_coro() {
+        crate::coro::yield_now();
+        return;
+    }
+    crate::startup::boot_once();
     crate::lingrt::mark_present();
     crate::lingrt::gc_maybe();
     crate::drivers::g3d::end_frame();
     crate::wifi::tick();
+    // the program's isolates and workers (coro.rs) get a turn every frame
+    crate::coro::yield_now();
     // the background tasks (SSH server, chat listener) get the CPU once a frame
     #[cfg(target_arch = "aarch64")]
     crate::proc::sched::yield_now();
@@ -2150,8 +2172,20 @@ fn present() {
         }
     }
     input.quit = false;
+    // Any input counts as activity for the idle lock.
+    let moved = unsafe { MOUSE_DELTA != (0.0, 0.0) };
+    if moved || !input.pressed.is_empty() || !input.text.is_empty() || input.held != input.prev_held || mouse_state().2 != 0 {
+        crate::startup::touch();
+    }
     // Alt+Tab inside a launched app: back to the desktop, the app kept alive.
     if active_app().is_some() && key_down("alt") && key_pressed("tab") {
+        app_suspend();
+    } else if active_app().is_some() && crate::startup::take_bg_start() {
+        // started for the background (a sign-in app): park after its first frame
+        app_suspend();
+    } else if active_app().is_some() && crate::startup::lock_due() {
+        // idle: the app keeps its state (and its isolates run on); the desktop locks
+        crate::startup::request_lock();
         app_suspend();
     }
 }
@@ -2896,8 +2930,14 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"frame_count" => num(unsafe { FRAMES } as f64),
         b"sleep" | b"sleep_ms" => {
             let end = crate::arch::timer::now_ms() + a(0, 0.0).max(0.0) as u64;
+            if crate::coro::in_coro() {
+                // an isolate: the others (and the app) run meanwhile
+                crate::coro::sleep_ms(end.saturating_sub(crate::arch::timer::now_ms()));
+                return Some(UNIT);
+            }
             while crate::arch::timer::now_ms() < end {
                 crate::proc::sched::yield_now();
+                crate::coro::yield_now();
                 #[cfg(target_arch = "aarch64")]
                 crate::arch::timer::delay_us(200);
             }
@@ -3216,6 +3256,34 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
         b"os_app_resume" => boolean(app_resume(&path_arg(args, 0))),
+        // start an app straight into the background (it parks after its first frame)
+        b"os_app_start_bg" => {
+            let n = path_arg(args, 0);
+            if apps_running().iter().any(|a| *a == n) {
+                return Some(boolean(true));
+            }
+            crate::startup::set_bg_start(true);
+            let ok = app_run(&n);
+            crate::startup::set_bg_start(false);
+            boolean(ok)
+        },
+        // boot services (startup.rs)
+        b"os_services" => list_from(crate::startup::available().iter().map(|s| mk_str(s)).collect()),
+        b"os_service_enabled" => boolean(crate::startup::enabled(&path_arg(args, 0))),
+        b"os_service_running" => boolean(crate::startup::running(&path_arg(args, 0))),
+        b"os_service_set" => {
+            let on = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);
+            boolean(crate::startup::set(&path_arg(args, 0), on))
+        },
+        // the idle lock: seconds since input, the timeout, "an app was parked for it"
+        b"os_idle_secs" => num(crate::startup::idle_secs()),
+        b"os_lock_after" => {
+            if let Some(&v) = args.first() {
+                crate::startup::set_lock_after(to_f64(v).max(0.0) as u64);
+            }
+            num(crate::startup::lock_after() as f64)
+        },
+        b"os_lock_requested" => boolean(crate::startup::take_lock_request()),
         b"os_apps_running" => list_from(apps_running().iter().map(|s| mk_str(s)).collect()),
         b"os_option" => {
             let v = args.get(1).map(|&v| crate::lingrt::truthy(v)).unwrap_or(false);

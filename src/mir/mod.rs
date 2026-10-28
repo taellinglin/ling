@@ -159,6 +159,19 @@ fn lower_program_with(prog: &parser::ast::Program, init_globals: bool) -> MirPro
     // With no entry, every top-level bind is treated as the script body.
     let mut main_stmts: Vec<parser::ast::Stmt> = Vec::new();
     if init_globals && entry.is_some() {
+        // Standalone images have no interpreter to know the program's `form`s:
+        // tell the runtime each one's field names first, so a constructor call
+        // (`Meta(a, b)`) builds a record and `r.field` reads it.
+        for item in &prog.items {
+            if let parser::ast::Item::Struct(name, fields) = item {
+                let mut args = vec![parser::ast::Expr::Str(name.clone())];
+                args.extend(fields.iter().map(|f| parser::ast::Expr::Str(f.clone())));
+                main_stmts.push(parser::ast::Stmt::Expr(parser::ast::Expr::Call(
+                    Box::new(parser::ast::Expr::Ident("__ling_form_def".to_string())),
+                    args,
+                )));
+            }
+        }
         // Standalone images: evaluate each global in source order and record it,
         // so `__ling_global` reads (from any function) find a value. A global's
         // initialiser that names an earlier global reads it back the same way.
