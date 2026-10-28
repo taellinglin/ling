@@ -431,11 +431,8 @@ fn collect_platforms(args: &[String]) -> Vec<String> {
     if platforms.iter().any(|p| p == "all") {
         return vec!["win".into(), "lin".into(), "mac".into(), "web".into()];
     }
-    if platforms.is_empty() {
-        // Default: current native platform + web
-        platforms.push(native_platform().into());
-        platforms.push("web".into());
-    }
+    // Empty is returned as-is: run_build fills in the manifest's `targets`, or the host
+    // platform plus web when the manifest names none.
     platforms
 }
 
@@ -533,6 +530,19 @@ struct LingProject {
     /// `includes_os = [...]`: the resources embedded by the LingOS targets instead of
     /// `includes` (a kernel image should not carry a desktop build's music folder).
     includes_os: Option<Vec<String>>,
+    /// `pack = true`: embed the entry and every `includes` resource inside the exe, so the
+    /// build is one self-contained file with no loose, editable `.ling` beside it (they are
+    /// unpacked to a temp cache at launch). Same as passing `--pack` on the build command.
+    pack: bool,
+    /// `targets = ["win", "lingos", ...]`: the platforms a bare `ling build` (no `--platform`)
+    /// produces. Empty falls back to the host platform plus web.
+    targets: Vec<String>,
+    /// `ling-features = ["web", ...]`: Cargo features of the `ling` crate to turn on in the
+    /// built native exe (win / lin / mac). Needed when the program uses builtins a feature
+    /// gates — e.g. `web` compiles in the sqlite builtins (`db_open`/`db_exec`/`db_query`),
+    /// without which those calls fail at runtime with "unknown function 'db_open'". Merged
+    /// with the LING_APP_FEATURES env var. Ignored by LingOS/kernel targets.
+    ling_features: Vec<String>,
 }
 
 fn discover_project(target: &str) -> LingProject {
@@ -561,6 +571,9 @@ fn discover_project(target: &str) -> LingProject {
             entry_os: None,
             portable: None,
             includes_os: None,
+            pack: false,
+            targets: Vec::new(),
+            ling_features: Vec::new(),
         }
     } else if path.is_dir() {
         // ling-fu project: 灵符.toml or ลิงฟู.toml
@@ -606,6 +619,9 @@ fn discover_project(target: &str) -> LingProject {
             entry_os: None,
             portable: None,
             includes_os: None,
+            pack: false,
+            targets: Vec::new(),
+            ling_features: Vec::new(),
         }
     } else {
         eprintln!("error: '{}' is not a .ling file or directory", target);
@@ -690,6 +706,9 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         entry_os: None,
         portable: None,
         includes_os: None,
+        pack: false,
+        targets: parse_targets(&text),
+        ling_features: parse_ling_features(&text),
     }
 }
 
@@ -719,6 +738,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let mut bundle_app: Option<(String, PathBuf)> = None;
     let mut entry_os: Option<PathBuf> = None;
     let mut portable: Option<String> = None;
+    let mut pack = false;
     let mut in_app = false;
 
     for line in text.lines() {
@@ -770,6 +790,9 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         if let Some(v) = toml_kv(line, "portable") {
             portable = Some(v.trim_matches('/').to_string());
         }
+        if let Some(v) = toml_kv(line, "pack") {
+            pack = v == "true";
+        }
     }
 
     let entry = base.join(&entry_name);
@@ -797,6 +820,9 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         entry_os,
         portable,
         includes_os: parse_includes_os(&text),
+        pack,
+        targets: parse_targets(&text),
+        ling_features: parse_ling_features(&text),
     }
 }
 
@@ -896,8 +922,21 @@ fn run_build(
         std::process::exit(1);
     });
 
+    // An explicit --platform wins. Otherwise build the manifest's `targets`, falling back to
+    // the host platform plus web when it declares none.
+    let resolved: Vec<String> = if !platforms.is_empty() {
+        platforms.to_vec()
+    } else if !project.targets.is_empty() {
+        project.targets.clone()
+    } else {
+        vec![native_platform().into(), "web".into()]
+    };
+    if platforms.is_empty() && !project.targets.is_empty() {
+        println!("  targets (from manifest): {}", resolved.join(", "));
+    }
+
     let icon = icon_override.as_deref();
-    for platform in platforms {
+    for platform in &resolved {
         match platform.as_str() {
             "web" => build_web(&project, out),
             "win" | "windows" => {
@@ -1244,8 +1283,11 @@ fn build_native(
         std::process::exit(1);
     });
 
-    // Kernel & LingOS app builds always use AOT (compiling the .ling to a .o and linking it)
-    let use_aot = aot || is_kernel || is_lingos;
+    // Kernel & LingOS app builds always use AOT (compiling the .ling to a .o and linking it).
+    // A `portable` desktop app reads its .ling at runtime and runs on the JIT, which is the
+    // opposite of AOT, so an explicit `portable` in the manifest wins over a --aot flag (lingfu
+    // passes --aot by default): we honour the manifest's intent rather than build a broken mix.
+    let use_aot = (aot || is_kernel || is_lingos) && project.portable.is_none();
 
     // Copy sibling .ling modules the entry might `use` — relative to the
     // ENTRY's own directory (matching `use` resolution in runtime/mod.rs's
@@ -1273,7 +1315,8 @@ fn build_native(
             resources.push((format!("apps/{}/{rel}", app.name), abs));
         }
     }
-    let do_pack = pack && !resources.is_empty();
+    // Pack when the build command passed --pack, or the manifest declared `pack = true`.
+    let do_pack = (pack || project.pack) && !resources.is_empty();
 
     if is_lingos {
         // ── LingOS userland path: AOT compile + ling-user runtime ───────────
@@ -1647,7 +1690,7 @@ fn build_native(
         std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_native_cargo_toml(&project.name, &project.version, &ling_root),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root, &project.ling_features),
         )
         .expect("write Cargo.toml");
     } else {
@@ -1665,7 +1708,7 @@ fn build_native(
         std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_native_cargo_toml(&project.name, &project.version, &ling_root),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root, &project.ling_features),
         )
         .expect("write Cargo.toml");
     }
@@ -2394,6 +2437,33 @@ strip = true
     )
 }
 
+/// Build the `, features = [...]` clause for the `ling` dependency of a native
+/// build. Features come from the manifest's `ling-features` and the
+/// LING_APP_FEATURES env var ("web,llm"), unioned (manifest first, de-duplicated,
+/// order preserved). Returns an empty string when there are none.
+fn cargo_feature_clause(manifest_features: &[String]) -> String {
+    let mut feats: Vec<String> = Vec::new();
+    let mut add = |f: &str| {
+        let f = f.trim();
+        if !f.is_empty() && !feats.iter().any(|e| e == f) {
+            feats.push(f.to_string());
+        }
+    };
+    for f in manifest_features {
+        add(f);
+    }
+    if let Ok(env) = std::env::var("LING_APP_FEATURES") {
+        for f in env.split(',') {
+            add(f);
+        }
+    }
+    if feats.is_empty() {
+        return String::new();
+    }
+    let list = feats.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", ");
+    format!(", features = [{list}]")
+}
+
 /// Generate Cargo.toml for the standard (embedded-interpreter) and `--aot`
 /// native build paths — win/lin/mac, as opposed to `gen_kernel_cargo_toml`'s
 /// no_std kernel targets. Both generated `src/main.rs` variants (`gen_main_rs`,
@@ -2406,15 +2476,9 @@ strip = true
 /// as `ling`, but the dependency's own TOML key doesn't have to agree with
 /// that without this, so this makes it explicit rather than relying on the
 /// default matching by coincidence.
-fn gen_native_cargo_toml(name: &str, version: &str, ling_root: &Path) -> String {
+fn gen_native_cargo_toml(name: &str, version: &str, ling_root: &Path, manifest_features: &[String]) -> String {
     let root_str = ling_root.display().to_string().replace('\\', "/");
-    // LING_APP_FEATURES="llm,web" turns on features of the ling crate inside the built app (default: none)
-    let feats = std::env::var("LING_APP_FEATURES")
-        .ok()
-        .map(|f| f.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()).map(|x| format!("\"{x}\"")).collect::<Vec<_>>().join(", "))
-        .filter(|f| !f.is_empty())
-        .map(|f| format!(", features = [{f}]"))
-        .unwrap_or_default();
+    let feats = cargo_feature_clause(manifest_features);
     format!(
         r#"[workspace]
 [package]
@@ -2940,6 +3004,56 @@ fn parse_includes(text: &str) -> Vec<String> {
         }
         if in_section {
             collect_quoted(line, &mut out);
+        }
+    }
+    out
+}
+
+/// Parse `targets = ["win", "lingos", "lingos-rpi", ...]`: the platforms `ling build` builds
+/// when the command line gives no `--platform`. Empty when the manifest names none, and the
+/// caller then falls back to the host platform plus web.
+fn parse_targets(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_app = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_app = line.starts_with("[app.");
+            continue;
+        }
+        if in_app || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line
+            .strip_prefix("targets")
+            .and_then(|r| r.trim_start().strip_prefix('='))
+        {
+            collect_quoted(rest, &mut out);
+        }
+    }
+    out.iter().map(|s| s.to_lowercase()).collect()
+}
+
+/// Parse `ling-features = ["web", ...]` from a manifest's top level: the `ling`
+/// crate features to enable in the built native exe. Feature names are
+/// case-sensitive, so (unlike `parse_targets`) they are kept verbatim.
+fn parse_ling_features(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_app = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_app = line.starts_with("[app.");
+            continue;
+        }
+        if in_app || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line
+            .strip_prefix("ling-features")
+            .and_then(|r| r.trim_start().strip_prefix('='))
+        {
+            collect_quoted(rest, &mut out);
         }
     }
     out
