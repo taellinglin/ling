@@ -2723,7 +2723,8 @@ fn resolve_icon(cli: Option<&Path>, project: &LingProject, ling_root: &Path) -> 
 }
 
 fn gen_main_rs(entry_file: &str, packed: bool, portable: Option<&str>) -> String {
-    // LING_APP_INTERP=<dir>: a portable launcher. The app runs on the interpreter from `<dir>/<entry>` next to the exe (the folder is
+    // LING_APP_INTERP=<dir>: a portable launcher. The app runs on the Cranelift JIT (run_jit, which falls back to the tree-walker for
+    // programs it cannot compile) from `<dir>/<entry>` next to the exe (the folder is
     // assembled by the caller), with the exe's folder as the working directory so assets, settings and projects live beside it.
     // Startup errors go to lingstation.log because the windows build has no console.
     // The manifest's `portable = "<dir>"` does the same as the environment variable.
@@ -2758,7 +2759,7 @@ fn main() {{
         Err(e) => fail(format!("cannot read {{entry}}: {{e}} (keep the exe next to its ling, assets and instruments folders)")),
     }};
     std::env::set_var("RUST_BACKTRACE", "1");
-    if let Err(e) = ling::run_named(&source, Some(std::path::PathBuf::from("{dir}")), Some(entry)) {{
+    if let Err(e) = ling::run_jit(&source, Some(std::path::PathBuf::from("{dir}")), Some(entry)) {{
         fail(e);
     }}
 }}
