@@ -25,7 +25,8 @@ use crate::sqlmini::{Db, SqlVal};
 /// Write the log out at most this often (ms).
 const FLUSH_MS: u64 = 5_000;
 /// Journals before a snapshot replaces them.
-const JOURNALS_PER_SNAPSHOT: u32 = 48;
+/// (lingfs folders hold ~40 entries; journals beyond that fail to write)
+const JOURNALS_PER_SNAPSHOT: u32 = 8;
 
 struct Slot {
     db: Db,

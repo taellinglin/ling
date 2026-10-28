@@ -37,6 +37,8 @@ mod frame;
 mod handshake;
 mod net;
 mod peerdb;
+/// `p2ptest`: a handshake over an in-memory pipe (stack use, crypto on this CPU).
+pub mod selftest;
 mod seeds;
 mod socks5;
 pub mod sys;

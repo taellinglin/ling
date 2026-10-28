@@ -342,6 +342,22 @@ fn service_irqs() {
     }
 }
 
+/// `v` as 0x-less hex into `buf` (no allocation: the heap may be what broke).
+fn hex_into(buf: &mut [u8; 18], v: u64) -> &[u8] {
+    let digits = b"0123456789abcdef";
+    let mut n = 0;
+    let mut started = false;
+    for i in (0..16).rev() {
+        let d = ((v >> (i * 4)) & 0xF) as usize;
+        if d != 0 || started || i == 0 {
+            started = true;
+            buf[n] = digits[d];
+            n += 1;
+        }
+    }
+    &buf[..n]
+}
+
 fn fault_halt(name: &str, frame: &TrapFrame, esr: u64, far: u64) -> ! {
     // Silence the HDMI audio ring and take the screen back so the report is
     // visible, instead of the last buffer looping behind a frozen window.
@@ -356,6 +372,28 @@ fn fault_halt(name: &str, frame: &TrapFrame, esr: u64, far: u64) -> ! {
     print_hex64("  spsr_el1=", frame.spsr);
     print_hex64("  sp_el0=", frame.sp_el0);
     print_hex64("  x30(lr)=", frame.gpr[30]);
+    print_hex64("  x29(fp)=", frame.gpr[29]);
+    crate::console_write(b"  thread: ");
+    crate::console_write(crate::coro::current_name());
+    crate::console_write(b"\n");
+    // the call chain (frame records: [fp] = caller's fp, [fp + 8] = return address)
+    crate::console_write(b"  backtrace:");
+    let mut fp = frame.gpr[29];
+    let mut n = 0;
+    while n < 14 && fp != 0 && fp & 7 == 0 && (0x8_0000..0x10_0000_0000).contains(&fp) {
+        let ret = unsafe { core::ptr::read_volatile((fp + 8) as *const u64) };
+        let next = unsafe { core::ptr::read_volatile(fp as *const u64) };
+        let mut b = [0u8; 18];
+        let s = hex_into(&mut b, ret);
+        crate::console_write(b" ");
+        crate::console_write(s);
+        if next <= fp {
+            break;
+        }
+        fp = next;
+        n += 1;
+    }
+    crate::console_write(b"\n");
     crate::console_write(b"!!! kernel halted\n");
     loop {
         unsafe { super::cpu::wfi() };

@@ -280,12 +280,19 @@ pub fn verify(username: &str, password: &str) -> bool {
         return false;
     };
     let record = &buf[..len];
-    let Some(salt_hex) = field(record, "salt") else { return false };
-    let Some(hash_hex) = field(record, "hash") else { return false };
+    const DAMAGED: &str = "this account's record is damaged -- reset its password from the boot partition (lingos_reset_password in config.txt)";
+    let (Some(salt_hex), Some(hash_hex)) = (field(record, "salt"), field(record, "hash")) else {
+        unsafe { LAST_VERIFY_ERR = DAMAGED };
+        return false;
+    };
     let mut salt = [0u8; 16];
-    let Some(salt_len) = hex_decode(salt_hex, &mut salt) else { return false };
+    let Some(salt_len) = hex_decode(salt_hex, &mut salt) else {
+        unsafe { LAST_VERIFY_ERR = DAMAGED };
+        return false;
+    };
     let mut stored = [0u8; 32];
     if hex_decode(hash_hex, &mut stored) != Some(32) {
+        unsafe { LAST_VERIFY_ERR = DAMAGED };
         return false;
     }
     let computed = match field(record, "kdf") {

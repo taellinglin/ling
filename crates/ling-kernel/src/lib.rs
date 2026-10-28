@@ -982,6 +982,8 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         run_setup_wizard();
     } else if s == b"usb" {
         arch::rp1::usb_probe();
+    } else if s == b"p2ptest" {
+        console_write(crate::lwp::selftest::run().as_bytes());
     } else if s == b"gc" || s.starts_with(b"gc ") {
         if let Some(mib) = s.strip_prefix(b"gc ").and_then(|r| core::str::from_utf8(r).ok()).and_then(|r| r.trim().parse::<usize>().ok()) {
             crate::lingrt::gc_set_trigger(mib << 20);

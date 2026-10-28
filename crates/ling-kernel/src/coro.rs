@@ -22,8 +22,13 @@ use alloc::vec::Vec;
 
 use crate::lingrt::LingScope;
 
-/// 2 MiB: post-quantum crypto (ML-DSA, ML-KEM) is a heavy stack user.
-pub const STACK_ORDER: usize = 9;
+/// 4 MiB: post-quantum crypto (ML-DSA, ML-KEM, the LW-1 ring signatures) is
+/// a heavy stack user, more so on aarch64. The lowest 64 KiB are a guard
+/// zone filled with a pattern; a switch that finds it disturbed names the
+/// coroutine that overflowed and stops it before it corrupts anything else.
+pub const STACK_ORDER: usize = 10;
+const GUARD: usize = 64 * 1024;
+const PAINT: u64 = 0x5354_4b5f_4755_4152; // STK_GUAR
 
 struct Coro {
     id: u64,
@@ -106,6 +111,11 @@ pub fn spawn_owned(name: &str, isolate: bool, owner: &str, f: Box<dyn FnOnce()>)
         return 0;
     };
     let top = (stack + (4096u64 << STACK_ORDER)) & !0xF;
+    unsafe {
+        // the whole stack: the guard zone, and a high-water mark for stack_used_self
+        let g = core::slice::from_raw_parts_mut(stack as *mut u64, (4096usize << STACK_ORDER) / 8);
+        g.fill(PAINT);
+    }
     let id = unsafe {
         let id = NEXT_ID;
         NEXT_ID += 1;
@@ -186,8 +196,41 @@ fn idle_pause() {
     core::hint::spin_loop();
 }
 
+/// Has this coroutine's stack run into its guard zone?
+fn overflowed(c: &Coro) -> bool {
+    // the top of the guard zone is hit first
+    let g = unsafe { core::slice::from_raw_parts(c.stack as *const u64, GUARD / 8) };
+    g[g.len() - 64..].iter().any(|&w| w != PAINT)
+}
+
+/// How much of its stack the running coroutine has used so far (bytes).
+pub fn stack_used_self() -> usize {
+    let Some(i) = (unsafe { CUR }) else { return 0 };
+    let c = &coros()[i];
+    let words = unsafe { core::slice::from_raw_parts(c.stack as *const u64, ((c.top - c.stack) / 8) as usize) };
+    let untouched = words.iter().take_while(|&&w| w == PAINT).count() * 8;
+    (c.top - c.stack) as usize - untouched
+}
+
+/// The running coroutine's name ("main" for the program itself), for crash
+/// reports.
+pub fn current_name() -> &'static [u8] {
+    match unsafe { CUR } {
+        Some(i) => unsafe { &*(coros()[i].name.as_bytes() as *const [u8]) },
+        None => b"main",
+    }
+}
+
 /// Switch from `from` to `to` (None = main), swapping Ling scopes.
 fn switch(from: Option<usize>, to: Option<usize>) {
+    if let Some(i) = from {
+        if overflowed(&coros()[i]) {
+            crate::console_write(b"\n!!! coroutine '");
+            crate::console_write(coros()[i].name.as_bytes());
+            crate::console_write(b"' overran its 4 MiB stack -- stopped\n");
+            coros()[i].done = true;
+        }
+    }
     unsafe {
         // park the running scope with its owner, bring in the target's
         let live = crate::lingrt::scope_take();
