@@ -27,10 +27,10 @@
 //!   dice/torus/helix cascade layer for `lingtp://`, meant to wrap the AEAD
 //!   frame layer for defense-in-depth (not a replacement for
 //!   ML-DSA-87/ML-KEM-768/XChaCha20)
-//! - [`lw`] — ling-wallet LW-1 primitives (std only): domain-separated
+//! - [`lw`] — ling-wallet LW-1 primitives (std and no_std + alloc): domain-separated
 //!   SHAKE256, X25519+ML-KEM-1024, ML-DSA-87 identities, Argon2id, AEAD and
 //!   the experimental LRS-87 lattice linkable ring signature
-//! - [`hypertorus`] — HyperTorus memory-hard proof-of-work (std only)
+//! - [`hypertorus`] — HyperTorus memory-hard proof-of-work (std and no_std + alloc)
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -54,10 +54,9 @@ pub mod zkp;
 
 // ling-wallet (LW-1) primitives: hashing, X25519+ML-KEM-1024 KEM, ML-DSA-87
 // identities, AEAD, Argon2id, LRS-87 lattice ring signatures, and the
-// HyperTorus proof-of-work. std-only (OnceLock-cached matrices, 16 MiB pad).
-#[cfg(feature = "std")]
+// HyperTorus proof-of-work. std and no_std + alloc (matrices cached in a small
+// lock-free once-cell, the 16 MiB pad is a heap Vec).
 pub mod hypertorus;
-#[cfg(feature = "std")]
 pub mod lw;
 
 pub use asymmetric::{Ed25519Keypair, X25519Secret};

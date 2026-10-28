@@ -128,7 +128,13 @@ fn lower_program(prog: &parser::ast::Program) -> MirProgram {
     lower_program_with(prog, false)
 }
 
+thread_local! {
+    /// Lowering for a standalone image (LingOS): no host interpreter behind it.
+    static STANDALONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn lower_program_with(prog: &parser::ast::Program, init_globals: bool) -> MirProgram {
+    STANDALONE.with(|s| s.set(init_globals));
     let entry = crate::entry::entry_name(&prog.items);
 
     // Module globals: every top-level bind that is not the entry. Functions read
@@ -538,6 +544,19 @@ fn lower_expr(expr: &parser::ast::Expr, ctx: &mut LowerCtx) -> Operand {
             Operand::Copy(local)
         },
         parser::ast::Expr::Call(callee, args) => {
+            // `try(f, args..)` naming a function, in a standalone image: compiled
+            // code there has no exceptions to catch, so it is `ok(f(args..))`.
+            if STANDALONE.with(|s| s.get()) {
+                if let parser::ast::Expr::Ident(t) = callee.as_ref() {
+                    if let (true, Some(parser::ast::Expr::Ident(f))) = (t == "try", args.first()) {
+                        if !ctx.locals.contains_key(f) {
+                            let inner = parser::ast::Expr::Call(Box::new(parser::ast::Expr::Ident(f.clone())), args[1..].to_vec());
+                            let wrapped = parser::ast::Expr::Call(Box::new(parser::ast::Expr::Ident("ok".to_string())), vec![inner]);
+                            return lower_expr(&wrapped, ctx);
+                        }
+                    }
+                }
+            }
             // Detect inline closure call with captures
             if let parser::ast::Expr::Closure(params, body) = callee.as_ref() {
                 let free_vars = collect_free_vars(body, params);

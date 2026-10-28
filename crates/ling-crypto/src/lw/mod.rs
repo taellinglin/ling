@@ -12,8 +12,8 @@
 //! - [`lrs`]: LRS-87 linkable ring signature [experimental]
 //!
 //! The HyperTorus proof-of-work lives next door in [`crate::hypertorus`].
-//! Randomness comes from [`crate::rng`]. Only built with the `std` feature
-//! (the matrices are cached in `std::sync::OnceLock`).
+//! Randomness comes from [`crate::rng`]. Builds with `std` or `no_std + alloc`
+//! (the matrices are cached in `lattice`'s lock-free once-cell).
 
 pub mod aead;
 pub mod hash;
@@ -49,6 +49,7 @@ impl core::fmt::Display for CryptoError {
     }
 }
 
+#[cfg(feature = "std")]
 impl std::error::Error for CryptoError {}
 
 pub type Result<T> = core::result::Result<T, CryptoError>;

@@ -4,6 +4,8 @@
 //! for one purpose (address bundle, seed list, P2P handshake, receipt) can
 //! never be replayed as another.
 
+use alloc::{format, string::String, vec::Vec};
+
 use crate::pq_sig::MlDsa87Keypair;
 use zeroize::Zeroizing;
 

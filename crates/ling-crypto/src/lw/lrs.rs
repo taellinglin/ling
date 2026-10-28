@@ -11,6 +11,8 @@
 //! - Signing randomness is hedged: the stream seed is
 //!   `H("LW1/lrs/sign-seed", s_o, μ, R, I, 32 B OS randomness)`.
 
+use alloc::{vec, vec::Vec};
+
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 use zeroize::{Zeroize, Zeroizing};

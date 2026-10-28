@@ -401,6 +401,8 @@ const ACT_LAUNCH_PKG: u8 = 203;
 /// Run the image's bundled compiled `.ling` app (`bundle_app` in Ling.toml —
 /// LingStationX, LingOS Edition) full-screen; Ctrl+Q returns to the desktop.
 const ACT_RUN_APP: u8 = 204;
+/// Ling Wallet (wallet, full node, miner), when the image bundles it.
+const ACT_RUN_WALLET: u8 = 205;
 
 // Installed lingfu packages that are runnable on LingOS (have a `main.ling`,
 // at the top or under `src/` as the registry's packages do) appear in the
@@ -437,7 +439,7 @@ struct MenuRow {
     app: &'static str,
     kind: u8,
 }
-const MENU: [MenuRow; 21] = [
+const MENU: [MenuRow; 23] = [
     MenuRow { header: "Internet", app: "", kind: 255 },
     MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
     MenuRow { header: "", app: "horizon (box-model browser)", kind: KIND_HORIZON },
@@ -451,6 +453,8 @@ const MENU: [MenuRow; 21] = [
     MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
     MenuRow { header: "", app: "LingStation (music studio)", kind: KIND_DAW },
     MenuRow { header: "", app: "LingStationX (LingOS Edition)", kind: ACT_RUN_APP },
+    MenuRow { header: "Office", app: "", kind: 255 },
+    MenuRow { header: "", app: "Ling Wallet", kind: ACT_RUN_WALLET },
     MenuRow { header: "System", app: "", kind: 255 },
     MenuRow { header: "", app: "Packages", kind: KIND_PKG },
     MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
@@ -488,6 +492,10 @@ fn menu_activate(kind: u8) {
         ACT_RUN_APP => {
             unsafe { MENU_OPEN = false };
             crate::run_first_app();
+        },
+        ACT_RUN_WALLET => {
+            unsafe { MENU_OPEN = false };
+            crate::lingapp::launch("wallet");
         },
         k => open(k),
     }
@@ -690,6 +698,9 @@ fn menu_walk(mut f: impl FnMut(usize, &[u8], bool, u32)) {
     for m in MENU.iter() {
         if m.kind == ACT_RUN_APP && crate::first_app().is_none() {
             continue; // this image bundles no compiled app
+        }
+        if (m.kind == ACT_RUN_WALLET || m.header == "Office") && crate::app_named(b"wallet").is_none() {
+            continue;
         }
         if m.header == "Power" {
             let pc = unsafe { PKG_COUNT };

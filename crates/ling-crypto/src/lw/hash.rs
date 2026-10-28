@@ -4,6 +4,8 @@
 //! Length-prefixing every field makes the encoding injective, so two
 //! different (domain, parts) inputs can never collide by concatenation.
 
+use alloc::{vec, vec::Vec};
+
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 

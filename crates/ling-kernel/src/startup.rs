@@ -61,6 +61,9 @@ fn write_list(list: &[String]) -> bool {
 pub fn available() -> Vec<String> {
     let mut v = alloc::vec![String::from("ssh")];
     for n in crate::app_names() {
+        if n.starts_with("iso_") {
+            continue; // an app's isolate, started by the app
+        }
         v.push(String::from(n));
     }
     v

@@ -112,6 +112,16 @@ ling-messenger = { path = "../../../ling-messenger", version = "0.1.0" }
 # raw second IDE disk (see live/make-model-disk.py in LingOS), so the kernel image itself stays small.
 ling-llm = { path = "../ling-llm", version = "2030.0.2" }
 
+# Ling Wallet builtins (walletrt.rs): the LW-1 primitives + HyperTorus PoW,
+# no_std + alloc (entropy comes from the hardware RNG via
+# rng::set_entropy_source). bip39 = the wallet's 24-word recovery phrase,
+# base64 = base64url_* with the host's exact engine config, blake2 = the
+# chunked-memory Argon2id (Argon2's own hash; already in the tree via argon2).
+ling-crypto = { path = "../ling-crypto", default-features = false, features = ["alloc"] }
+bip39 = { version = "2", default-features = false, features = ["alloc"] }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+blake2 = { version = "0.10", default-features = false }
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

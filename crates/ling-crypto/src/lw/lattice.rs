@@ -11,7 +11,10 @@
 //! - All arithmetic on potentially secret data is branch-free (`%` by a
 //!   constant compiles to multiply/shift; conditional subtractions use masks).
 
-use std::sync::OnceLock;
+use alloc::{vec, vec::Vec};
+use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake128;
@@ -96,13 +99,63 @@ fn powmod(mut b: u64, mut e: u64) -> u64 {
     r
 }
 
+/// A minimal `no_std` once-cell (stands in for `std::sync::OnceLock`, which
+/// needs `std`): the first caller computes the value, later callers get the
+/// same `&'static`. A concurrent caller (host threads) spins until the
+/// winner has published it. The values cached here are pure functions of
+/// constants, so which caller wins never changes any output.
+struct OnceCell<T> {
+    state: AtomicU8, // 0 = empty, 1 = being initialised, 2 = ready
+    value: UnsafeCell<MaybeUninit<T>>,
+}
+
+// SAFETY: the value is written exactly once, by the single caller that won
+// the 0 -> 1 transition, and only read after `state` is observed as 2
+// (Release/Acquire), so shared access is never concurrent with the write.
+unsafe impl<T: Send + Sync> Sync for OnceCell<T> {}
+
+impl<T> OnceCell<T> {
+    const EMPTY: u8 = 0;
+    const BUSY: u8 = 1;
+    const READY: u8 = 2;
+
+    const fn new() -> Self {
+        OnceCell { state: AtomicU8::new(Self::EMPTY), value: UnsafeCell::new(MaybeUninit::uninit()) }
+    }
+
+    fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
+        if self.state.load(Ordering::Acquire) != Self::READY {
+            if self
+                .state
+                .compare_exchange(Self::EMPTY, Self::BUSY, Ordering::Acquire, Ordering::Acquire)
+                .is_ok()
+            {
+                let v = f();
+                // SAFETY: we own the BUSY state; nobody reads until READY.
+                unsafe { (*self.value.get()).write(v) };
+                self.state.store(Self::READY, Ordering::Release);
+            } else {
+                while self.state.load(Ordering::Acquire) != Self::READY {
+                    #[cfg(feature = "std")]
+                    std::thread::yield_now();
+                    #[cfg(not(feature = "std"))]
+                    core::hint::spin_loop();
+                }
+            }
+        }
+        // SAFETY: state is READY, so the value was initialised and is never
+        // written again.
+        unsafe { (*self.value.get()).assume_init_ref() }
+    }
+}
+
 fn brv8(k: usize) -> usize {
     (k as u8).reverse_bits() as usize
 }
 
 /// `zetas[k] = ζ^{brv8(k)} mod q`, computed once from ζ.
 fn zetas() -> &'static [u32; N] {
-    static Z: OnceLock<[u32; N]> = OnceLock::new();
+    static Z: OnceCell<[u32; N]> = OnceCell::new();
     Z.get_or_init(|| {
         let mut z = [0u32; N];
         for (k, zk) in z.iter_mut().enumerate() {
@@ -400,13 +453,13 @@ impl Matrix {
 
 /// `A ∈ R_q^{k×l}` from seed `"LW1/lrs/A"`, NTT domain, cached.
 pub(crate) fn matrix_a() -> &'static Matrix {
-    static A: OnceLock<Matrix> = OnceLock::new();
+    static A: OnceCell<Matrix> = OnceCell::new();
     A.get_or_init(|| Matrix::expand(b"LW1/lrs/A", K))
 }
 
 /// `B ∈ R_q^{m×l}` from seed `"LW1/lrs/B"`, NTT domain, cached.
 pub(crate) fn matrix_b() -> &'static Matrix {
-    static B: OnceLock<Matrix> = OnceLock::new();
+    static B: OnceCell<Matrix> = OnceCell::new();
     B.get_or_init(|| Matrix::expand(b"LW1/lrs/B", M))
 }
 

@@ -73,7 +73,19 @@ pub fn ensure_init() {
     if !crate::is_initialized() {
         crate::init();
     }
+    unsafe {
+        if !EXT_READY {
+            EXT_READY = true;
+            // isolates + channels (iso.rs)
+            register(crate::iso::dispatch);
+            register(crate::dbrt::dispatch);
+            register(crate::walletrt::dispatch);
+            register(crate::p2prt::dispatch);
+        }
+    }
 }
+
+static mut EXT_READY: bool = false;
 
 /// The interpreter's `to_number`: numbers as-is, bools 0/1, strings parsed
 /// (trimmed; 0 if not a number), anything else 0.
@@ -746,6 +758,7 @@ pub fn run_isolated_with<F: FnOnce() -> u64>(body: F) -> u64 {
     let saved_g = core::mem::take(globals());
     let saved_s = core::mem::take(store());
     let saved_a = core::mem::take(args_vec());
+    *args_vec() = unsafe { core::mem::take(&mut *(&raw mut NEXT_ARGS)) };
     // Put aside where the collector still sees them: the host's values must
     // survive the collections that happen while the app runs.
     saved_scopes().push((saved_g, saved_s));
@@ -877,6 +890,14 @@ fn args_vec() -> &'static mut Vec<String> {
 /// Set the command line for the program `run_isolated_with` is about to run.
 pub fn set_args(args: &[String]) {
     *args_vec() = args.to_vec();
+}
+
+/// Arguments for the next program `run_isolated` starts (a launched app's
+/// `Programs/<App>/args` file).
+static mut NEXT_ARGS: Vec<String> = Vec::new();
+
+pub fn set_next_args(args: Vec<String>) {
+    unsafe { *(&raw mut NEXT_ARGS) = args };
 }
 
 /// How many launched apps are running (0 = only the image's own program, e.g.
@@ -1064,6 +1085,9 @@ fn core_builtin(name: &[u8], args: &[u64]) -> Option<u64> {
         b"cos" => num(libm::cos(n(0, 0.0))),
         b"exp" => num(libm::exp(n(0, 0.0))),
         b"log10" => num(libm::log10(n(0, 1.0))),
+        b"ln" | b"log" => num(libm::log(n(0, 1.0))),
+        b"log2" => num(libm::log2(n(0, 1.0))),
+        b"hypot" => num(libm::hypot(n(0, 0.0), n(1, 0.0))),
         b"pow" => num(libm::pow(n(0, 0.0), n(1, 0.0))),
         b"min" => num(n(0, 0.0).min(n(1, 0.0))),
         b"max" => num(n(0, 0.0).max(n(1, 0.0))),
@@ -1154,6 +1178,9 @@ static mut EXT: [Option<ExtDispatch>; 8] = [None; 8];
 pub fn register(f: ExtDispatch) {
     unsafe {
         let ext = &mut *(&raw mut EXT);
+        if ext.iter().any(|s| *s == Some(f)) {
+            return;
+        }
         if let Some(slot) = ext.iter_mut().find(|s| s.is_none()) {
             *slot = Some(f);
         }
@@ -1305,6 +1332,10 @@ pub unsafe extern "C" fn ling_builtin(
             3 => crate::lingdaw::dispatch(name, args),
             4 => crate::netapi::dispatch(name, args),
             5 => crate::lingrec::dispatch(name, args),
+            16..=23 => match (*(&raw const EXT))[(stage - 16) as usize] {
+                Some(f) => f(name, args),
+                None => None,
+            },
             _ => core_builtin(name, args),
         };
         if let Some(v) = hit {
@@ -1335,9 +1366,12 @@ pub unsafe extern "C" fn ling_builtin(
         DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 5);
         return v;
     }
-    for f in (*(&raw const EXT)).iter().flatten() {
-        if let Some(v) = f(name, args) {
-            return v;
+    for (i, f) in (*(&raw const EXT)).iter().enumerate() {
+        if let Some(f) = f {
+            if let Some(v) = f(name, args) {
+                DISPATCH_CACHE[slot] = (name_ptr as usize, hash, 16 + i as u8);
+                return v;
+            }
         }
     }
     report_missing(name);

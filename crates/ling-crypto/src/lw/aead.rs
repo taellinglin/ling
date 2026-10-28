@@ -1,6 +1,8 @@
 //! XChaCha20-Poly1305 with associated data. Output of [`seal`] is `ct ‖ tag16`
 //! (the caller owns the nonce; nonces must never repeat under one key).
 
+use alloc::vec::Vec;
+
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 

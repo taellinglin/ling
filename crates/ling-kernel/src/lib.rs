@@ -71,8 +71,20 @@ pub mod lingrt;
 pub mod lingrec;
 /// Green threads (coroutines) for Ling isolates and Rust workers.
 pub mod coro;
+/// LWP-1, Ling Wallet's peer-to-peer transport (handshake, frames, peers).
+pub mod lwp;
+/// The `p2p_*` builtins over `lwp`.
+pub mod p2prt;
+/// Ling Wallet builtins (hex/bytes/U256, the lw_* LW-1 crypto, HyperTorus PoW).
+pub mod walletrt;
 /// Boot services, sign-in apps started in the background, the idle lock.
 pub mod startup;
+/// Isolates and channels (`thread_spawn`, `chan_*`) on coroutines.
+pub mod iso;
+/// The SQL engine behind `db_*` (SQLite's semantics for the statements apps use).
+pub mod sqlmini;
+/// `db_open` / `db_exec` / `db_query` over sqlmini, durable through journals + snapshots.
+pub mod dbrt;
 // App builtins for compiled programs (window, px_* drawing, fonts, input, files)
 // and the read-only files `ling build` bakes into the image ([includes]).
 pub mod lingapp;
@@ -582,7 +594,7 @@ fn run_setup_wizard() {
 /// Built-in apps: compiled `.ling` programs linked into this kernel image
 /// (`kernel_app` in the project's Ling.toml), launched from the console by name.
 pub(crate) type AppEntry = unsafe extern "C" fn() -> u64;
-static mut APPS: [Option<(&'static str, AppEntry)>; 8] = [None; 8];
+static mut APPS: [Option<(&'static str, AppEntry)>; 24] = [None; 24];
 
 /// Register a built-in app (listed by `apps`, started by typing its name).
 pub fn register_app(name: &'static str, entry: AppEntry) {
@@ -2148,6 +2160,10 @@ pub unsafe extern "C" fn ling_kernel_fb_back_blend_rrect(
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_step(mx: u64, my: u64, buttons: u64) -> u64 {
+    // boot services, and the isolates of apps in the background (a wallet's
+    // node), get a turn every desktop frame
+    crate::startup::boot_once();
+    crate::coro::yield_now();
     wm::step(mx as i64, my as i64, buttons as u8);
     0
 }

@@ -9,6 +9,8 @@
 //! reflection. Everything is integer-only, wrapping and explicitly
 //! little-endian, so results are identical on every platform.
 
+use alloc::{vec, vec::Vec};
+
 use crate::lw::hash::{h256, xof};
 
 pub const SCRATCH_WORDS: usize = 1 << 21; // 16 MiB of u64

@@ -174,15 +174,9 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         if is_record(recv) {
             return Some(field(recv, fname).unwrap_or(UNIT));
         }
-        if let Some((good, payload)) = result_of(recv) {
-            // the interpreter's Result fields
-            return Some(match fname {
-                "is_ok" => crate::lingrt::boolean(good),
-                "is_bad" | "is_err" => crate::lingrt::boolean(!good),
-                "value" | "unwrap" if good => payload,
-                "error" if !good => payload,
-                _ => UNIT,
-            });
+        if let Some((_, payload)) = result_of(recv) {
+            // the interpreter: any field or method of ok(v) / bad(v) is v
+            return Some(payload);
         }
         if fname == "len" {
             return Some(num(if is_str(recv) { str_of(recv).chars().count() } else { list_items(recv).len() } as f64));

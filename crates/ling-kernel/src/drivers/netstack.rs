@@ -1113,6 +1113,114 @@ pub fn tcp_established_h(handle: usize) -> bool {
     handle < MAX_SOCKS && unsafe { SOCKS[handle].state == SockState::Established }
 }
 
+// -- Non-blocking handle helpers (cooperative callers that wait by yielding
+// their coroutine, e.g. the LWP-1 peer-to-peer transport in `lwp/`) ----------
+
+/// Start an active open and return at once (poll `tcp_established_h` /
+/// `tcp_closed_h`; `tcp_free_h` to give up).
+pub fn tcp_connect_begin_h(ip: [u8; 4], port: u16) -> Option<usize> {
+    let _net = NetGuard::new();
+    let h = sock_alloc()?;
+    unsafe {
+        let s = &mut SOCKS[h];
+        s.state = SockState::SynSent;
+        s.remote_ip = ip;
+        s.remote_port = port;
+        s.local_port = new_local_port();
+        s.snd_nxt = new_isn();
+        s.snd_una = s.snd_nxt;
+        s.rcv_nxt = 0;
+    }
+    if !sock_send(h, TCP_SYN, &[]) {
+        sock_free(h);
+        return None;
+    }
+    unsafe {
+        txq_push(h, SOCKS[h].snd_nxt, TCP_SYN, &[]);
+        SOCKS[h].snd_nxt = SOCKS[h].snd_nxt.wrapping_add(1);
+    }
+    Some(h)
+}
+
+/// Debug: a socket's state, ports and sequence numbers.
+pub fn tcp_debug_h(handle: usize) -> alloc::string::String {
+    if handle >= MAX_SOCKS {
+        return alloc::string::String::from("bad handle");
+    }
+    let s = unsafe { &SOCKS[handle] };
+    let st = match s.state {
+        SockState::Free => "free",
+        SockState::Listen => "listen",
+        SockState::SynSent => "syn-sent",
+        SockState::SynRcvd => "syn-rcvd",
+        SockState::Established => "established",
+        SockState::Closed => "closed",
+    };
+    alloc::format!("{st} lport={} rport={} gw_mac={}", s.local_port, s.remote_port, unsafe { GW_MAC_KNOWN })
+}
+
+/// The connection is over (reset or closed by the peer, or the handle free).
+pub fn tcp_closed_h(handle: usize) -> bool {
+    handle >= MAX_SOCKS || unsafe { matches!(SOCKS[handle].state, SockState::Closed | SockState::Free) }
+}
+
+/// The remote end (ip, port) of a connection.
+pub fn tcp_remote_h(handle: usize) -> Option<([u8; 4], u16)> {
+    if handle >= MAX_SOCKS || unsafe { SOCKS[handle].state == SockState::Free } {
+        return None;
+    }
+    unsafe { Some((SOCKS[handle].remote_ip, SOCKS[handle].remote_port)) }
+}
+
+/// Would `tcp_write_h(handle, <len bytes>)` go out now, without waiting for
+/// the peer's window or the retransmission queue?
+pub fn tcp_writable_h(handle: usize, len: usize) -> bool {
+    if handle >= MAX_SOCKS || len > MSS {
+        return false;
+    }
+    unsafe {
+        let s = &SOCKS[handle];
+        let in_flight = s.snd_nxt.wrapping_sub(s.snd_una);
+        s.state == SockState::Established
+            && txq_count(handle) < TXQ_N
+            && (in_flight + len as u32 <= s.snd_wnd.max(MSS as u32) || in_flight == 0)
+    }
+}
+
+/// Segments sent on `handle` and not yet acknowledged.
+pub fn tcp_unacked_h(handle: usize) -> usize {
+    if handle >= MAX_SOCKS {
+        return 0;
+    }
+    txq_count(handle)
+}
+
+/// Send our FIN without waiting (pair with `tcp_free_h` once acknowledged).
+pub fn tcp_fin_h(handle: usize) -> bool {
+    let _net = NetGuard::new();
+    if handle >= MAX_SOCKS || unsafe { SOCKS[handle].state } != SockState::Established {
+        return false;
+    }
+    let seq = unsafe { SOCKS[handle].snd_nxt };
+    let ok = sock_send(handle, TCP_FIN | TCP_ACK, &[]);
+    if ok {
+        txq_push(handle, seq, TCP_FIN | TCP_ACK, &[]);
+        unsafe { SOCKS[handle].snd_nxt = seq.wrapping_add(1) };
+    }
+    ok
+}
+
+/// Free the socket now (no waiting; the peer sees a reset on its next segment).
+pub fn tcp_free_h(handle: usize) {
+    let _net = NetGuard::new();
+    sock_free(handle);
+}
+
+/// Is a socket listening on `port`?
+pub fn tcp_listening(port: u16) -> bool {
+    unsafe { (0..MAX_SOCKS).any(|i| SOCKS[i].state == SockState::Listen && SOCKS[i].local_port == port) }
+}
+
 /// Active open on a dedicated socket (its own handle, distinct from the reserved
 /// legacy client socket) so a caller like Messenger can dial a peer while TLS
 /// and sshd use their own sockets. Returns the connected handle, or None.

@@ -429,7 +429,52 @@ fn fnv64(b: &[u8]) -> u64 {
     h
 }
 
+/// Font handles are per program: each app counts its fonts from 0 in the
+/// order it loads them (apps written for the desktop runtime rely on that --
+/// Ling Wallet keeps its fonts in slots 0..3), mapped onto the shared,
+/// deduplicated font table.
+static mut FONT_MAPS: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+
+fn font_map() -> &'static mut Vec<usize> {
+    let maps = unsafe { &mut *(&raw mut FONT_MAPS) };
+    maps.entry(active_app_name()).or_default()
+}
+
+/// A program's font handle -> the shared table's index (-1: none).
+fn gfont(h: f64) -> f64 {
+    if h < 0.0 {
+        return -1.0;
+    }
+    font_map().get(h as usize).map(|&g| g as f64).unwrap_or(-1.0)
+}
+
+/// `args` with the font handles at `at` mapped to the shared table.
+fn map_font_args(args: &[u64], at: &[usize]) -> Vec<u64> {
+    let mut v = args.to_vec();
+    for &i in at {
+        if let Some(x) = v.get_mut(i) {
+            *x = num(gfont(to_f64(*x)));
+        }
+    }
+    v
+}
+
+/// Load a font for the running program; its handle in that program.
 fn font_load(path: &str) -> f64 {
+    let g = font_load_global(path);
+    if g < 0.0 {
+        return -1.0;
+    }
+    let m = font_map();
+    let g = g as usize;
+    if let Some(i) = m.iter().position(|&x| x == g) {
+        return i as f64;
+    }
+    m.push(g);
+    (m.len() - 1) as f64
+}
+
+fn font_load_global(path: &str) -> f64 {
     let paths = unsafe { &mut *(&raw mut FONT_PATHS) };
     // keyed by the resolved path: "assets/font.ttf" is a different file in each app
     let key = crate::vfs::resolve(path);
@@ -479,7 +524,7 @@ pub(crate) fn ui_font() -> Option<usize> {
             cands.push(String::from("system/fonts/DaemonSans.ttf"));
             cands.push(String::from("fonts/DaemonSans.ttf"));
             for p in &cands {
-                let id = font_load(p);
+                let id = font_load_global(p);
                 if id >= 0.0 {
                     UI_FONT = id as i64;
                     break;
@@ -805,6 +850,16 @@ fn open_window(req_w: f64, req_h: f64) {
 /// Run a built-in app (linked into this image) full-screen from a running
 /// program — the desktop's launcher. The caller's window, globals and state are
 /// put aside and restored when the app closes.
+/// Bring up a built-in app: back into it if it is parked (Alt+Tab, the idle
+/// lock), else start it. Returns when it parks or quits. (The x86 desktop's
+/// Applications menu.)
+pub fn launch(name: &str) -> bool {
+    if apps_running().iter().any(|a| a == name) {
+        return app_resume(name);
+    }
+    app_run(name)
+}
+
 fn app_run(name: &str) -> bool {
     // `ling:<path>`: a `.ling` script (Files double-click), run by the
     // in-kernel compiler + interpreter like `ling run <path>`.
@@ -844,6 +899,14 @@ fn app_run(name: &str) -> bool {
     crate::vfs::set_root(&programs);
     crate::vfs::set_projects_root(&projects);
     crate::vfs::set_image_root(&alloc::format!("apps/{name}"));
+    // Programs/<App>/args: the app's command line (e.g. Ling Wallet's `--peer host:port`)
+    let args: Vec<String> = crate::vfs::read(&alloc::format!("{programs}/args"))
+        .map(|b| String::from_utf8_lossy(&b).split_whitespace().map(String::from).collect())
+        .unwrap_or_default();
+    if !args.is_empty() {
+        crate::console_write(alloc::format!("app: {name} args: {}\n", args.join(" ")).as_bytes());
+    }
+    crate::lingrt::set_next_args(args);
     crate::console_write(b"app: starting ");
     crate::console_write(name.as_bytes());
     crate::console_write(b"\n");
@@ -1365,6 +1428,7 @@ pub fn app_folder(name: &str) -> String {
         "lingdev" => "LingDev",
         "lingmodeler" => "LingModeler",
         "horizon" => "Horizon",
+        "wallet" => "LingWallet",
         n => n,
     })
 }
@@ -3026,18 +3090,19 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             UNIT
         },
         b"px_text" => {
-            px_text(args);
+            px_text(&map_font_args(args, &[0]));
             UNIT
         },
-        b"px_fit" => px_fit(args),
+        b"px_fit" => px_fit(&map_font_args(args, &[0])),
 
         // Fonts.
         b"font_load" => num(font_load(&path_arg(args, 0))),
         b"font_width" => {
             let s = args.get(2).map(|&v| to_string(v)).unwrap_or_default();
-            num(font(a(0, -1.0)).map(|_| measure(a(0, -1.0) as usize, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
+            let g = gfont(a(0, -1.0));
+            num(font(g).map(|_| measure(g as usize, &s, a(1, 16.0) as f32) as f64).unwrap_or(0.0))
         },
-        b"font_fallback" => num(font_fallback(a(0, -1.0), a(1, -1.0), a(2, 1.0))),
+        b"font_fallback" => num(font_fallback(gfont(a(0, -1.0)), gfont(a(1, -1.0)), a(2, 1.0))),
 
         // Input: PS/2 (x86) or USB HID (Pi) mouse + keyboard, serial on the Pi.
         b"mouse_x" => num(mouse_state().0),
@@ -3213,7 +3278,8 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         b"image_draw" | b"image_replace" | b"image_free" => UNIT,
         b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
         b"os_user" => mk_str(&os_user()),
-        b"os_apps" => list_from(crate::app_names().into_iter().map(mk_str).collect()),
+        // the iso_* programs are isolates of an app (iso.rs), not apps of their own
+        b"os_apps" => list_from(crate::app_names().into_iter().filter(|n| !n.starts_with("iso_")).map(mk_str).collect()),
         // The lingfu package manager: one flat row per catalog entry --
         // name, meta, description, installed, app, mentions LingOS, fits
         // this machine -- then installs by name (its last message back).

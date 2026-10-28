@@ -1,5 +1,7 @@
 //! X25519 ‖ ML-KEM-1024 hybrid KEM (DESIGN §4). Secure if either half holds.
 
+use alloc::vec::Vec;
+
 use ml_kem::array::Array;
 use ml_kem::{Decapsulate, DecapsulationKey, EncapsulationKey, KeyExport, MlKem1024};
 use x25519_dalek::{PublicKey as XPublic, StaticSecret};
