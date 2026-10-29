@@ -296,12 +296,12 @@ fn run(line: &str) {
             push(Cls::Normal, b"  date  theme dark|light  copy <t>  paste");
             push(Cls::Normal, b"  dns <host>   curl <url>   bring <url>");
             push(Cls::Normal, b"  play <file.wav>   stop");
-            push(Cls::Normal, b"  lingfu sync|search <q>|install <name>");
+            push(Cls::Normal, b"  lingfu sync [--all]|upgrade|search <q>|install <name>|--all");
             push(Cls::Normal, b"  ling run <file.ling>|eval <src>   run demo|donut|<app.elf>");
             push(Cls::Normal, b"  cd <dir>   sudo <cmd>   su [user]   ling-life");
             push(Cls::Normal, b"  ssh [user@]host   services [enable|disable ssh]   cryptotest");
             push(Cls::Normal, b"  https <url>   imgview demo|demosvg|<url>");
-            push(Cls::Normal, b"  ask <question>   llm [status|load|stop]   (Qwen3, on this machine)");
+            push(Cls::Normal, b"  ask <question>   llm [status|load [path]|stop]   (Qwen3, on this machine)");
             push(Cls::Dim, b"  up/down: command history");
         },
         "clear" => unsafe {
@@ -318,7 +318,7 @@ fn run(line: &str) {
             } else if !llm::ask(arg) {
                 push(Cls::Dim, b"llm is still busy with the last question (llm stop)");
             } else if llm::phase() == llm::Phase::Idle || llm::phase() == llm::Phase::Failed {
-                push(Cls::Dim, b"asking: the first question loads the model from the model disk...");
+                push(Cls::Dim, b"asking: the model loads first (from the model disk or a .gguf on a FAT volume)...");
             } else {
                 push(Cls::Dim, b"asking...");
             }
@@ -328,19 +328,17 @@ fn run(line: &str) {
                 let s = llm::status();
                 push(Cls::Normal, s.as_bytes());
             },
-            "load" => {
-                if llm::start() {
-                    llm::request_load();
-                    push(Cls::Dim, b"loading the model from the model disk...");
-                } else {
-                    push(Cls::Err, b"llm: no free task slot");
+            // `llm load [path]`: the default model, `disk` (x86's raw model disk) or a .gguf (media/disk1/models/x.gguf, ...)
+            a if a == "load" || a.starts_with("load ") => {
+                if llm::request_load(a[4..].trim()) {
+                    push(Cls::Dim, b"loading the model (llm status shows how far)...");
                 }
             },
             "stop" => {
                 llm::cancel();
                 push(Cls::Dim, b"stopping");
             },
-            _ => push(Cls::Err, b"usage: llm [status|load|stop]"),
+            _ => push(Cls::Err, b"usage: llm [status|load [path.gguf|disk]|stop]"),
         },
         "play" => {
             if arg.is_empty() {
@@ -651,22 +649,50 @@ fn run_lingfu(arg: &str) {
     match sub {
         "" | "help" => {
             push(Cls::Accent, b"lingfu -- LingOS package client");
-            push(Cls::Normal, b"  lingfu sync              refresh the catalog from the repo");
+            push(Cls::Normal, b"  lingfu sync              refresh the catalog + upgrade installed");
+            push(Cls::Normal, b"  lingfu sync --all        ... and install every package that fits");
             push(Cls::Normal, b"  lingfu search <query>    find packages");
             push(Cls::Normal, b"  lingfu install <name>    download + install a package");
-            push(Cls::Normal, b"  lingfu update            re-sync the catalog");
+            push(Cls::Normal, b"  lingfu install --all     install every catalog package that fits");
+            push(Cls::Normal, b"  lingfu upgrade           update installed packages to the latest");
+            push(Cls::Normal, b"  lingfu verify <name>     check a download's checksum, write nothing");
             push(Cls::Dim, b"  new/build/run/test need the ling compiler (host-only for now)");
         },
         "new" | "init" | "build" | "run" | "test" | "check" | "clean" | "doc" | "fmt"
         | "bench" | "tree" | "publish" | "add" | "manifest" | "wizard" => {
             push(Cls::Err, b"lingfu: that verb needs the ling compiler/toolchain,");
             push(Cls::Err, b"which doesn't run inside LingOS yet (no userspace/loader).");
-            push(Cls::Dim, b"Package verbs that DO work here: sync, search, install, update.");
+            push(Cls::Dim, b"Package verbs that DO work here: sync, search, install, upgrade.");
         },
-        "sync" | "update" => {
+        "sync" if rest == "--all" => {
+            push(Cls::Dim, b"syncing + installing every package that fits (this takes a while)...");
+            lingfu::begin_capture();
+            lingfu::sync_and_upgrade();
+            lingfu::install_all();
+            dump_capture();
+        },
+        "sync" => {
             push(Cls::Dim, b"contacting repo...");
             lingfu::begin_capture();
-            lingfu::sync();
+            lingfu::sync_and_upgrade();
+            dump_capture();
+        },
+        "update" | "upgrade" => {
+            push(Cls::Dim, b"checking installed packages...");
+            lingfu::begin_capture();
+            lingfu::upgrade_all();
+            dump_capture();
+        },
+        "verify" if !rest.is_empty() => {
+            push(Cls::Dim, b"downloading + checking (nothing is written)...");
+            lingfu::begin_capture();
+            lingfu::verify(rest);
+            dump_capture();
+        },
+        "install" if rest == "--all" => {
+            push(Cls::Dim, b"installing every package that fits (this takes a while)...");
+            lingfu::begin_capture();
+            lingfu::install_all();
             dump_capture();
         },
         "search" | "list" => {

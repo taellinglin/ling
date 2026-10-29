@@ -194,7 +194,8 @@ pub fn reason(v: Voice, oct: i32) -> &'static str {
         (Voice::Bass, 1) => "was muddy",
         (Voice::Bass, -1) => "too high for a bass",
         (_, -1) => "was shrill",
-        (_, 1) => "was boomy",
+        (Voice::Pad | Voice::Chords, 1) => "was boomy",
+        (_, 1) => "sat too low",
         _ => "",
     }
 }

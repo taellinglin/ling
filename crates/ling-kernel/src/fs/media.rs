@@ -302,3 +302,85 @@ pub fn probe_x86() {
         let _ = mount(Device::AtaSlave, "disk1");
     }
 }
+
+/// `(total, free)` bytes of the volume holding `path` (`media/<name>/...`).
+/// One pass over the FAT, so call it once per job, not per file.
+pub fn space(path: &str) -> Option<(u64, u64)> {
+    with(path, |v, io, _| v.space(io))
+}
+
+/// A file being streamed onto a volume (see `fat::StreamFile`).
+pub struct MediaFile {
+    path: String,
+    f: Option<crate::fs::fat::StreamFile>,
+}
+
+/// Start streaming a new file at `path` (its folder must exist).
+pub fn file_create(path: &str) -> Option<MediaFile> {
+    let f = with(path, |v, _, _| v.stream_begin())?;
+    Some(MediaFile { path: String::from(path.trim_matches('/')), f: Some(f) })
+}
+
+/// Append to a streamed file; false when the disk is full or it passes 4 GiB.
+pub fn file_write(m: &mut MediaFile, data: &[u8]) -> bool {
+    let Some(f) = m.f.as_mut() else { return false };
+    with(&m.path, |v, io, _| v.stream_write(io, f, data).is_ok()).unwrap_or(false)
+}
+
+/// Finish a streamed file (its directory entry appears now).
+pub fn file_finish(mut m: MediaFile) -> bool {
+    let Some(f) = m.f.take() else { return false };
+    let path = m.path.clone();
+    with(&path, |v, io, rest| v.stream_finish(io, f, rest).is_ok()).unwrap_or(false)
+}
+
+/// Abandon a streamed file, freeing what it had written.
+pub fn file_abort(mut m: MediaFile) {
+    if let Some(f) = m.f.take() {
+        let path = m.path.clone();
+        with(&path, |v, io, _| v.stream_abort(io, f));
+    }
+}
+
+/// Delete `path` and everything under it.
+pub fn delete_tree(path: &str) -> bool {
+    if is_dir(path) {
+        for (name, _, _) in list(path) {
+            delete_tree(&format!("{}/{}", path.trim_end_matches('/'), name));
+        }
+    }
+    delete(path)
+}
+
+/// A file on a volume opened for random-access reads (a language model's
+/// weights, read in pieces): see `fat::RangeFile`.
+pub struct MediaRange {
+    name: String,
+    dev: Device,
+    f: crate::fs::fat::RangeFile,
+}
+
+/// Open `media/<name>/...` for [`range_read`]; None when it is not a file.
+pub fn open_range(path: &str) -> Option<MediaRange> {
+    let (i, rest) = split(path)?;
+    let m = &mut mounts()[i];
+    let mut io = DevIo(m.dev);
+    let f = m.vol.open_range(&mut io, &rest).ok()?;
+    Some(MediaRange { name: m.name.clone(), dev: m.dev, f })
+}
+
+impl MediaRange {
+    pub fn size(&self) -> u64 {
+        self.f.size
+    }
+
+    /// The bytes at `offset..offset + buf.len()`; fails once the volume is
+    /// gone (a USB stick pulled).
+    pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> bool {
+        if !mounts().iter().any(|m| m.name == self.name && m.dev == self.dev) {
+            return false;
+        }
+        let mut io = DevIo(self.dev);
+        self.f.read_at(&mut io, offset, buf).is_ok()
+    }
+}

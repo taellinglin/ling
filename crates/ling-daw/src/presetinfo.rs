@@ -259,7 +259,7 @@ pub fn trim_db(kind: &str, preset: &str) -> f32 {
 /// the instrument's level knob and how it maps to gain: (name, exponent of the gain law)
 pub fn level_param(kind: &str) -> Option<(&'static str, f32)> {
     match kind {
-        "growl" | "prism" | "chip" => Some((if kind == "chip" { "level" } else { "out" }, 2.0)),
+        "growl" | "prism" | "chip" | "cinema" => Some((if matches!(kind, "chip" | "cinema") { "level" } else { "out" }, 2.0)),
         "pluck" => Some(("level", 1.0)),
         _ => None,
     }
@@ -316,7 +316,30 @@ mod tests {
         assert_eq!(usage_hint("Uplift Pad", "pads"), "pad");
     }
 
-    /// not a test: measures every built-in preset of Growl, Prism, Pluck and Chip and writes src/preset_info.tsv (run from
+    /// not a test: the median loudness of each instrument's presets (`-- --ignored --nocapture loudness_medians`), to set a new
+    /// instrument's output level next to the others
+    #[test]
+    #[ignore]
+    fn loudness_medians() {
+        let sr = 44100.0;
+        for kind in ["growl", "prism", "pluck", "chip", "cinema"] {
+            let probe = crate::dsp::make_instrument(kind, sr).unwrap();
+            let names: Vec<String> = probe.presets().iter().take(48).map(|s| s.to_string()).collect();
+            let mut l: Vec<f32> = names
+                .iter()
+                .map(|n| {
+                    let mut inst = crate::dsp::make_instrument(kind, sr).unwrap();
+                    inst.load_preset(n);
+                    analyze(inst.as_mut(), sr).rms_db
+                })
+                .filter(|x| *x > -100.0)
+                .collect();
+            l.sort_by(f32::total_cmp);
+            println!("{kind}: median {:.1} dB over {} presets (min {:.1}, max {:.1})", l[l.len() / 2], l.len(), l[0], l[l.len() - 1]);
+        }
+    }
+
+    /// not a test: measures every built-in preset of Growl, Prism, Pluck, Chip and Cinema and writes src/preset_info.tsv (run from
     /// LingStationX: `PRESET_INFO=<ling-daw src dir>`)
     #[test]
     #[ignore]
@@ -327,7 +350,19 @@ mod tests {
         }
         let sr = 44100.0;
         let mut lines: Vec<String> = vec![];
-        for kind in ["growl", "prism", "pluck", "chip"] {
+        // PRESET_KINDS=cinema (comma-separated) measures only those kinds and keeps the other rows of the table as they are
+        let only: Vec<String> = std::env::var("PRESET_KINDS").map(|k| k.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default();
+        if !only.is_empty() {
+            for l in include_str!("preset_info.tsv").lines() {
+                if !only.iter().any(|k| l.starts_with(&format!("{k}	"))) {
+                    lines.push(l.to_string());
+                }
+            }
+        }
+        for kind in ["growl", "prism", "pluck", "chip", "cinema"] {
+            if !only.is_empty() && !only.iter().any(|k| k == kind) {
+                continue;
+            }
             let probe = crate::dsp::make_instrument(kind, sr).unwrap();
             let names: Vec<String> = probe.presets().iter().map(|s| s.to_string()).collect();
             let given: HashMap<String, String> = probe.preset_categories().into_iter().collect();

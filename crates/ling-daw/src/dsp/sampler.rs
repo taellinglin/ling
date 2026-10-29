@@ -224,6 +224,12 @@ struct Voice {
     /// a note's own slice of the sample ("@start:end:cents" in its lyric): (first frame, end frame, edge fade in frames)
     slice: Option<(f64, f64, f64)>,
     lp2: [f32; 2],
+    /// per-note expression: pitch gesture (semitones: re-pitches the playing sample or slice), pressure 0..1 (level),
+    /// timbre 0..1 (the filter, when it is on); `fresh` = the first value is taken at once
+    pb: crate::dsp::Smooth,
+    pr: crate::dsp::Smooth,
+    tm: crate::dsp::Smooth,
+    fresh: bool,
 }
 
 pub struct Sampler {
@@ -616,6 +622,10 @@ impl Sampler {
                 lp1: [0.0; 2],
                 lp2: [0.0; 2],
                 slice: sl,
+                pb: crate::dsp::Smooth::at(0.0),
+                pr: crate::dsp::Smooth::at(0.0),
+                tm: crate::dsp::Smooth::at(0.5),
+                fresh: true,
             });
         }
     }
@@ -659,6 +669,21 @@ impl Instrument for Sampler {
     }
     fn all_off(&mut self) {
         self.voices.clear();
+    }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.held && v.key == key) {
+            v.pb.set(semis, v.fresh);
+        }
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.held && v.key == key) {
+            v.pr.set(x, v.fresh);
+        }
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.held && v.key == key) {
+            v.tm.set(x, v.fresh);
+        }
     }
     fn render(&mut self, out: &mut [f32]) {
         let frames = out.len() / 2;
@@ -707,6 +732,11 @@ impl Instrument for Sampler {
             };
             let looped = z.loop_mode > 0 && z.loop_end > z.loop_start + 8 && (z.loop_end as usize) <= l.frames();
             let (ls, le) = (z.loop_start as f64, z.loop_end as f64);
+            v.pb.begin(frames);
+            v.pr.begin(frames);
+            v.tm.begin(frames);
+            v.fresh = false;
+            let expr = !(v.pb.idle(0.0) && v.pr.idle(0.0) && v.tm.idle(0.5));
             for f in 0..frames {
                 // the envelope
                 // the pan and pitch envelopes
@@ -714,6 +744,13 @@ impl Instrument for Sampler {
                 if swing {
                     fc = cut_hz(v.cut_v);
                     kq = 1.0 / (0.6 + v.res_v * 7.0);
+                }
+                let (mut g_pitch, mut g_amp, mut g_cut) = (1.0f64, 1.0f32, 1.0f32);
+                if expr {
+                    g_pitch = 2f64.powf(v.pb.tick() as f64 / 12.0);
+                    g_amp = 1.0 + v.pr.tick() * 0.5;
+                    // timbre moves the cutoff up to two octaves either way
+                    g_cut = 2f32.powf((v.tm.tick() - 0.5) * 4.0);
                 }
                 if filt_on {
                     // Impulse Tracker: the envelope scales the base cutoff; its frequency is 110 * 2^(0.25 + cutoff / 24)
@@ -819,7 +856,8 @@ impl Instrument for Sampler {
                 let mut sr_ = a0r + (a1r - a0r) * fr;
                 if filt {
                     // a two-pole state-variable low-pass (trapezoidal, stable at every cutoff)
-                    let gg = (std::f32::consts::PI * fc.min(self.sr * 0.45) / self.sr).tan();
+                    let fcx = if g_cut != 1.0 { (fc * g_cut).max(20.0) } else { fc };
+                    let gg = (std::f32::consts::PI * fcx.min(self.sr * 0.45) / self.sr).tan();
                     let a1 = 1.0 / (1.0 + gg * (gg + kq));
                     let (a2, a3) = (gg * a1, gg * gg * a1);
                     for (ch, x) in [(0usize, &mut sl), (1usize, &mut sr_)] {
@@ -832,6 +870,9 @@ impl Instrument for Sampler {
                     }
                 }
                 let mut amp = v.level * v.gain;
+                if g_amp != 1.0 {
+                    amp *= g_amp;
+                }
                 if let Some((a, b, edge)) = v.slice {
                     // a slice fades in and out at its edges
                     let fin = ((p - a) / (l.rate as f64 * 0.003)).min(1.0);
@@ -841,7 +882,11 @@ impl Instrument for Sampler {
                 let (tgt, off): (&mut [f32], usize) = if fxz.get(v.zone).copied().unwrap_or(false) { (&mut zb[..], v.zone * frames * 2) } else { (&mut out[..], 0) };
                 tgt[off + f * 2] += sl * amp * v.pan_l;
                 tgt[off + f * 2 + 1] += sr_ * amp * v.pan_r;
-                v.pos += v.step * bend_mul * env_pitch * v.dir;
+                if g_pitch != 1.0 {
+                    v.pos += v.step * bend_mul * env_pitch * g_pitch * v.dir;
+                } else {
+                    v.pos += v.step * bend_mul * env_pitch * v.dir;
+                }
             }
         }
         dead.sort_unstable();

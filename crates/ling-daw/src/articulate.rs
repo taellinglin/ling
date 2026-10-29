@@ -121,7 +121,8 @@ fn is_pitch_route(n: &str) -> bool {
 /// automated by the generators (a pitch, a detune or a route into pitch drawn as a wobble makes the whole track seasick).
 pub fn eligible(name: &str) -> bool {
     let n = name.to_lowercase();
-    if role_of(&n) == Role::Pitch {
+    // pitch, detune and every matrix route into them (Growl's "m velp", "m l1p" ... as well as Prism's): never articulated
+    if role_of(&n) == Role::Pitch || crate::redesign::pitch_altering(&n) {
         return false;
     }
     if n == "vol" || n == "gain" || n == "level" || n == "master" || n == "voices" || n == "tempo" || n == "bpm" || n == "mute" || n == "uni" || n == "penv" || n == "pdec" {

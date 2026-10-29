@@ -274,7 +274,7 @@ pub struct InstTweak {
 
 /// Effects whose job is to change the pitch (or detune): never in an automatic chain, except on a riser
 pub fn pitch_altering(effect: &str) -> bool {
-    matches!(effect, "Freq Shifter" | "Chorus" | "Flanger" | "Vocoder" | "Ringstorm")
+    matches!(effect, "Freq Shifter" | "Chorus" | "Flanger" | "Vocoder" | "Ringstorm" | "Digitize" | "Tape Stop" | "Shimmer Verb" | "Granular Cloud")
 }
 
 /// The limits an instrument's own reverb / delay / chorus / release get in this space, and the pitch-altering parameters (vibrato, pitch
@@ -308,6 +308,8 @@ pub fn inst_tweaks(sp: &Space, r: SRole, inst: &str, riser: bool) -> Vec<InstTwe
                 mx("amp r", rs.max_release);
             }
         }
+        // Ling Cinema's hall: an effect may ring longer than a played part, but a dry genre still keeps it in check
+        "cinema" => mx("space", (rs.inner_reverb * 1.5).max(0.2)),
         "chip" => {
             mx("echo", rs.inner_delay);
             mx("echo fb", rs.feedback);

@@ -824,6 +824,8 @@ impl Vocal {
         }
         let sig = |l: &Line| -> String { (self.pieces[l.first].word..=self.pieces[l.end - 1].word).map(|w| self.word_text[w].as_str()).collect::<Vec<_>>().join(" ") };
         let sigs: Vec<String> = self.lines.iter().map(sig).collect();
+        // with no words known, a line sung again (the same pitches, about as long) is the hook's sign (medley/acapella.rs)
+        let reps: Vec<usize> = if known { vec![] } else { crate::medley::acapella::line_repeats(self) };
         let mut best = (f64::MIN, 0usize);
         for (li, l) in self.lines.iter().enumerate() {
             let (w0, w1) = (self.pieces[l.first].word, self.pieces[l.end - 1].word);
@@ -833,7 +835,7 @@ impl Vocal {
                 let rep = sigs.iter().filter(|s| **s == sigs[li]).count() as f64;
                 sum / nw.sqrt() * (1.0 + 0.5 * (rep - 1.0)) * if (2.0..=8.0).contains(&nw) { 1.0 } else { 0.6 }
             } else {
-                self.pieces[l.first..l.end].iter().map(|p| p.stress as f64 * p.len).sum::<f64>()
+                self.pieces[l.first..l.end].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * (1.0 + 0.5 * reps.get(li).copied().unwrap_or(0).min(4) as f64)
             };
             if score > best.0 {
                 best = (score, li);
@@ -1390,7 +1392,7 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
         out.hp.push((c.beats, 0.0));
     } else if c.next_hot && o.reverse && c.beats >= 2.0 {
         // a reverse swell of the hook word, ending on the downbeat of the drop
-        if let Some((pi, rc)) = v.rev.iter().max_by_key(|(_, rc)| rc.end - rc.start) {
+        if let Some((_, rc)) = v.rev.iter().max_by_key(|(_, rc)| rc.end - rc.start) {
             let dur = (rc.end - rc.start) as f64 / v.rate.max(1) as f64 * v.bpm / 60.0;
             let swell = dur.min(2.0).min(c.beats);
             let skip = ((dur - swell) * 60.0 / v.bpm * v.rate as f64) as u32;
@@ -1903,6 +1905,7 @@ mod edm_tests {
         errs.sort_by(f32::total_cmp);
         assert!(errs.len() >= 20, "{}", errs.len());
         let worst = *errs.last().unwrap();
+        println!("drop: {} rendered chop notes, error median {:.1} cents, worst {worst:.1}; tuning {:?}", errs.len(), errs[errs.len() / 2], out.tune);
         assert!(worst < 15.0, "rendered chops within 15 cents of their notes: median {} worst {worst}", errs[errs.len() / 2]);
         // without tuning every chop plays as sung
         let off = Edm { tune: Tune::off(), ..o.clone() };
@@ -1958,6 +1961,7 @@ mod edm_tests {
             }
         }
         errs.sort_by(f32::total_cmp);
+        println!("medley: {} rendered chop notes, error median {:.1} cents, worst {:.1}", errs.len(), errs[errs.len() / 2], errs.last().unwrap());
         assert!(errs.len() >= 20 && *errs.last().unwrap() < 15.0, "{errs:?}");
     }
 

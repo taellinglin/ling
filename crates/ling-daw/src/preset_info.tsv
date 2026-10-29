@@ -597,3 +597,44 @@ chip	Sparkle Sweep	a random arpeggio over a maj7 chord with an upward sweep on e
 chip	Echo Pluck	a short triangle pluck with a tempo echo - soft rain (pluck / keys, dark, plucky)	4.8
 chip	Chip Bell	a pulse with ring modulation and a fast decay - a little bell (pluck / keys, warm, plucky)	0.0
 chip	Lo-Fi Square	a square crushed to 4 bits at a low rate - gritty handheld lead (pluck / keys, warm, sustained)	-6.0
+cinema	White Noise Riser	white noise sweeping up from the lows to the air, swelling into the drop - the classic EDM build (fx / percussion, dark, sustained, slow attack, moving, wide)	2.0
+cinema	Pitch Riser	detuned saws climbing two octaves with a little noise on top and a flutter that speeds up (fx / percussion, dark, sustained, slow attack, moving, wide)	2.0
+cinema	Shepard Riser	an endless Shepard tone: it rises and rises and never arrives - tension without a top (fx / percussion, dark, sustained, slow attack, moving, deep sub)	2.0
+cinema	Tension Riser	a dark, slow noise and saw rise for film tension, the flutter tightening as it climbs (fx / percussion, dark, sustained, slow attack, moving, wide)	2.0
+cinema	Hyper Riser	a bright, fast-fluttering saw rise for hard drops, three octaves in the length (fx / percussion, warm, sustained, slow attack, moving, wide)	2.0
+cinema	Reverse Cymbal	a cymbal played backwards: metal and noise swelling to a sudden stop on the downbeat (fx / percussion, airy / very bright, sustained, slow attack, moving, wide)	2.0
+cinema	Reverse Swell	a reversed pad: the note swelling up out of nothing into the next section (fx / percussion, dark, sustained, slow attack, moving)	2.0
+cinema	Noise Downlifter	white noise falling from the air to the lows and fading out after the drop hits (fx / percussion, airy / very bright, plucky, moving, wide)	0.0
+cinema	Pitch Fall	detuned saws dropping two octaves and dying away (lead, bright, decaying, moving, wide, deep sub)	2.0
+cinema	Shepard Fall	an endless falling Shepard tone - the floor keeps going (bass, warm, sustained, moving, deep sub)	-1.4
+cinema	Air Drop	a short breath of falling air after a hit (fx / percussion, bright, plucky, moving, wide)	2.0
+cinema	Trailer Hit	the trailer slam: a sub boom with a knock, a noise crack, a metal ring and a long dark tail into the hall (fx / percussion, dark, decaying, moving, deep sub)	-5.3
+cinema	Sub Boom	a deep sub boom with a soft knock and almost no top - the downbeat of a drop (bass, dark, decaying, moving, deep sub)	-3.8
+cinema	Metal Slam	a hit of inharmonic metal with a sharp crack, ringing out (fx / percussion, dark, plucky, moving, deep sub)	0.0
+cinema	Reverse Swell Impact	a reversed swell for one beat, then the hit: place the note a beat before the downbeat (fx / percussion, airy / very bright, sustained, slow attack, moving, deep sub)	-3.7
+cinema	Thunder Hit	a low boom and a long rumbling noise tail - distant thunder (fx / percussion, dark, sustained, moving, deep sub)	-6.0
+cinema	Sub Drop	a sine falling two octaves from the note with a click - the 808 sub drop (bass, dark, sustained, moving, mono, deep sub)	-6.0
+cinema	Deep Sub Drop	a long, slow sub falling three octaves, a little driven (bass, dark, sustained, moving, mono, deep sub)	-6.0
+cinema	Fast Whoosh	a quick swish of air passing from left to right (fx / percussion, airy / very bright, plucky, moving)	0.0
+cinema	Slow Swoosh	a long, airy swoosh that swells and passes (fx / percussion, bright, sustained, slow attack, moving)	-1.9
+cinema	Doppler Pass	something flying past: a tone and air panning across, the pitch dropping as it goes by (pluck / keys, airy / very bright, plucky, slow attack, moving)	0.0
+cinema	Air Swipe	a short, bright swipe for transitions and cuts (fx / percussion, airy / very bright, plucky, moving)	0.0
+cinema	Deep Braam	the cinematic brass: a stack of detuned saws an octave and two below, the filter swelling open - play low notes (pad, dark, sustained, moving, wide)	-3.5
+cinema	Bright Braam	a brighter, more open brass stack for the big reveal (fx / percussion, warm, sustained, moving, wide)	-3.4
+cinema	Distorted Braam	a driven, buzzing brass stack - the robot horn (pad, dark, sustained, moving, wide)	-5.3
+cinema	Dark Horn Stack	a slow, dark swell of horns that never quite opens (pad, dark, sustained, slow attack, moving, wide, deep sub)	-1.1
+cinema	Data Burst	a burst of random computer beeps, buzzes and noise, crushed - the data stream (fx / percussion, warm, plucky, moving)	0.0
+cinema	Glitch Stream	a long, dense stream of glitches for as long as the length (fx / percussion, warm, sustained, moving)	0.0
+cinema	Bit Spray	short, sparse, very crushed bits (fx / percussion, warm, plucky, moving)	1.4
+cinema	Tape Stop	a chord winding down to nothing as the tape stops (fx / percussion, dark, plucky, moving, wide)	2.0
+cinema	Power Down	a slow power-down: the machine dies (pad, warm, sustained, moving, wide)	0.0
+cinema	Ambient Drift	a slowly evolving drone of drifting, detuned layers, soft wind and a shimmer of high grains - hold the note (pad, warm, sustained, slow attack, moving, wide)	2.0
+cinema	Dark Space	a low, dark void: a deep drone, distant wind and no shimmer (pad, dark, sustained, slow attack, moving, wide)	2.0
+cinema	Wind Field	mostly wind: gusts of noise through a wandering band-pass over a faint drone (fx / percussion, bright, sustained, slow attack, moving, wide)	2.0
+cinema	Glass Shimmer	a bright cloud of glassy grains over a quiet pad (pad, warm, sustained, slow attack, moving, wide)	0.0
+cinema	Deep Drone	a heavy, slowly beating drone for tension under a scene (pad, dark, sustained, slow attack, moving, wide)	2.0
+cinema	Laser Zap	a single laser shot: a fast pitch fall from far above the note (fx / percussion, dark, plucky, moving, mono)	0.0
+cinema	Blaster Burst	a burst of rapid laser shots (fx / percussion, dark, plucky, moving, mono)	-6.0
+cinema	Tractor Beam	a humming Shepard rise with a fast flutter - something is pulling (bass, dark, sustained, slow attack, moving, deep sub)	0.0
+cinema	Warp Out	a falling zap into a fading tone - the ship jumps away (fx / percussion, dark, plucky, moving, wide, deep sub)	2.0
+cinema	Alien Signal	a slow, sparse glitch of tones from far away (lead, airy / very bright, decaying, moving)	0.0

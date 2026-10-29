@@ -114,6 +114,35 @@ pub fn request_allows_pitch(request: &str) -> bool {
     ["pitch", "pitches", "bend", "bends", "bending", "vibrato", "riser", "risers", "glide", "glides", "gliding", "portamento", "scoop", "slide", "dive", "detune", "detuned"].iter().any(|w| p.contains(&format!(" {w} ")))
 }
 
+/// Per-note pitch gestures are written on purpose only: the gesture a request names, or None. "scoop(s)" / "bend into" ->
+/// scoop, "slide(s)" / "glide(s)" / "portamento" / "808 glide" -> slide, "fall(s)" / "fall off" -> fall, "dive(s)" /
+/// "dive bomb" -> dive, "pitch riser" / "rise in pitch" / "riser on the notes" -> riser, "bend(s)" alone -> scoop. A riser alone
+/// is the automation riser (`auto_words`), not a gesture. Random tweaks and generic sound words never name one.
+pub fn gesture_request(request: &str) -> Option<&'static str> {
+    let p = format!(" {} ", request.to_lowercase().replace([',', '.', '!', '?', ';', ':', '-'], " "));
+    let has = |w: &str| p.contains(&format!(" {w} "));
+    let any = |ws: &[&str]| ws.iter().any(|w| has(w));
+    if any(&["scoop", "scoops", "scooped", "scooping"]) || (any(&["bend", "bends"]) && any(&["into", "up into", "in"])) {
+        return Some("scoop");
+    }
+    if any(&["dive", "dives", "diving", "divebomb", "dive bomb", "nosedive"]) {
+        return Some("dive");
+    }
+    if any(&["slide", "slides", "sliding", "glide", "glides", "gliding", "portamento"]) {
+        return Some("slide");
+    }
+    if any(&["fall", "falls", "fall off", "falloff", "falls off", "drop off"]) && any(&["pitch", "note", "notes", "end", "ends", "off"]) {
+        return Some("fall");
+    }
+    if (any(&["riser", "risers", "rise", "rising"]) && any(&["pitch", "note", "notes"])) || p.contains(" pitch riser") {
+        return Some("riser");
+    }
+    if any(&["bend", "bends", "bending"]) {
+        return Some("scoop");
+    }
+    None
+}
+
 /// may a request move this parameter?
 pub fn param_allowed(name: &str, request: &str) -> bool {
     !pitch_altering(name) || request_allows_pitch(request)
@@ -339,6 +368,19 @@ mod tests {
         // a genre is a bundle of moves
         assert!(moves("more dubstep").0.iter().any(|m| m.0 == Role::Drive && m.1 > 0.0));
         assert!(moves("hello").0.is_empty());
+    }
+
+    #[test]
+    fn gestures_only_when_a_request_names_one() {
+        assert_eq!(gesture_request("scoop into the chords"), Some("scoop"));
+        assert_eq!(gesture_request("add 808 glides to the bass"), Some("slide"));
+        assert_eq!(gesture_request("make the screech dive at the end"), Some("dive"));
+        assert_eq!(gesture_request("let the lead notes fall off at the end of phrases"), Some("fall"));
+        assert_eq!(gesture_request("a pitch riser on the last note"), Some("riser"));
+        assert_eq!(gesture_request("bend the notes"), Some("scoop"));
+        for r in ["make it grittier", "darker and wider", "add a riser", "more dubstep", "longer release", "make it fall in love", "rise up"] {
+            assert_eq!(gesture_request(r), None, "{r}");
+        }
     }
 
     #[test]

@@ -35,6 +35,13 @@ pub struct NoteDoc {
     pub reso: f32,
     #[serde(default)]
     pub lyric: String,
+    /// per-note expression curves (model.rs `Note`): absent in older projects and skipped when empty
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bend: Vec<(f32, f32)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub press: Vec<(f32, f32)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timbre: Vec<(f32, f32)>,
 }
 fn half() -> f32 {
     0.5
@@ -183,7 +190,7 @@ fn clip_doc(c: &Clip) -> ClipDoc {
             name: c.name.clone(),
             start: c.start,
             len: c.len,
-            midi_notes: n.iter().map(|n| NoteDoc { start: n.start, len: n.len, key: n.key, vel: n.vel, pan: n.pan, cutoff: n.cutoff, reso: n.reso, lyric: n.lyric.clone() }).collect(),
+            midi_notes: n.iter().map(|n| NoteDoc { start: n.start, len: n.len, key: n.key, vel: n.vel, pan: n.pan, cutoff: n.cutoff, reso: n.reso, lyric: n.lyric.clone(), bend: n.bend.clone(), press: n.press.clone(), timbre: n.timbre.clone() }).collect(),
             audio_path: String::new(),
             offset_s: 0.0,
             gain: 1.0,
@@ -257,7 +264,7 @@ pub fn to_doc(e: &Engine) -> ProjectDoc {
                 clips: t.clips.iter().map(clip_doc).collect(),
                 session: t.session.iter().map(clip_doc).collect(),
                 auto: t.auto.iter().map(auto_doc).collect(),
-                config: if t.inst_kind == "sampler" || t.inst_kind == "script" || t.inst_kind == "chip" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
+                config: if t.inst_kind == "sampler" || t.inst_kind == "script" || t.inst_kind == "chip" || t.inst_kind == "growl" || t.inst_kind == "prism" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
             })
             .collect(),
     }
@@ -334,7 +341,7 @@ pub fn preload(d: &ProjectDoc, base: Option<&std::path::Path>, cache: &mut HashM
 
 fn clip_from_doc(cd: &ClipDoc, base: Option<&std::path::Path>, cache: &mut HashMap<String, Arc<Sample>>) -> Option<Clip> {
     let data = if cd.audio_path.is_empty() {
-        ClipData::Midi(cd.midi_notes.iter().map(|n| Note { start: n.start, len: n.len, key: n.key, vel: n.vel, pan: n.pan, cutoff: n.cutoff, reso: n.reso, lyric: n.lyric.clone() }).collect())
+        ClipData::Midi(cd.midi_notes.iter().map(|n| Note { start: n.start, len: n.len, key: n.key, vel: n.vel, pan: n.pan, cutoff: n.cutoff, reso: n.reso, lyric: n.lyric.clone(), bend: crate::gesture::tidy(&n.bend), press: crate::gesture::tidy(&n.press), timbre: crate::gesture::tidy(&n.timbre) }).collect())
     } else {
         let smp = resolve_sample(&cd.audio_path, base, cache);
         ClipData::Audio { sample: smp?, offset_s: cd.offset_s, gain: cd.gain, pitch: cd.pitch, warp: cd.warp }
@@ -401,7 +408,7 @@ pub fn apply_doc(e: &mut Engine, d: &ProjectDoc, base: Option<&std::path::Path>,
             if let Some(i) = i.as_mut() {
                 i.load_state(&state);
                 // Ling Chip: its own sample, stored relative to the project (samples/...)
-                if kind == "chip" && !td.config.is_empty() {
+                if matches!(kind.as_str(), "chip" | "growl" | "prism") && !td.config.is_empty() {
                     i.command("load", &[], &resolve_file(&td.config, base));
                 }
             }
@@ -596,7 +603,7 @@ fn pack_one(file: &str, dir: &std::path::Path) -> Option<String> {
 /// The audio files a Sampler plays are copied into `<project>/samples/` and the zones refer to them relatively; so is a Ling Chip's
 /// own sample.
 fn pack_samples(doc: &mut ProjectDoc, dir: &std::path::Path) {
-    for t in doc.tracks.iter_mut().filter(|t| t.instrument == "chip" && !t.config.is_empty()) {
+    for t in doc.tracks.iter_mut().filter(|t| matches!(t.instrument.as_str(), "chip" | "growl" | "prism") && !t.config.is_empty()) {
         if let Some(r) = pack_one(&t.config, dir) {
             t.config = r;
         }

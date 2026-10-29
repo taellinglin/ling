@@ -831,3 +831,193 @@ pub fn path_kind(path: &str) -> Option<bool> {
     }
     None
 }
+
+// -- Streaming writers + capacity (lingfu's streaming package installer) ------
+// A package download can be far bigger than any single heap allocation, so
+// the installer stores each file block by block as it is decompressed
+// (`ContentWriter`, producing exactly the plain-blob / LBIG / LBG2 layout
+// `store_content_hash` writes) and links the finished files into one tree it
+// commits once (`put_dir` + `link_root_dir`) -- atomic: an aborted or
+// checksum-failed install never becomes visible. lingfs is append-only (no
+// object is ever freed), so callers check `free_objects` BEFORE writing.
+
+/// Object slots still unused on this volume (each holds one 4 KiB block).
+pub fn free_objects() -> usize {
+    MAX_OBJECTS.saturating_sub(unsafe { objects::OBJECTS.object_count } as usize)
+}
+
+/// Commits still available on this volume (every file write/commit uses one).
+pub fn commits_left() -> usize {
+    MAX_COMMITS.saturating_sub(commit_count() as usize)
+}
+
+/// Upper bound on the object slots a `len`-byte file takes (data blocks plus
+/// its manifests), for capacity checks before writing.
+pub fn objects_for(len: usize) -> usize {
+    if len <= BLOCK_SIZE {
+        return 2; // a plain blob (or a one-block manifest-wrapped one)
+    }
+    let blocks = len.div_ceil(BLOCK_SIZE);
+    let leaves = blocks.div_ceil(HASHES_PER_MANIFEST);
+    blocks + leaves + if leaves > 1 { 1 } else { 0 }
+}
+
+/// The largest file lingfs can hold (the two-level manifest ceiling).
+pub const MAX_FILE_BYTES: usize = HASHES_PER_MANIFEST * BLOCK_SIZE * HASHES_PER_MANIFEST;
+
+fn put_object_guarded(data: &[u8]) -> Result<Hash, ()> {
+    let _g = FsGuard::new();
+    put_object(data)
+}
+
+/// Store one file's content incrementally (no whole-file buffer). Feed it with
+/// `write`, then `finish` returns the content hash to link into a tree.
+pub struct ContentWriter {
+    block: alloc::vec::Vec<u8>,
+    leaf: alloc::vec::Vec<Hash>,
+    leaf_bytes: usize,
+    leaves: alloc::vec::Vec<Hash>,
+    total: usize,
+}
+
+impl Default for ContentWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ContentWriter {
+    pub fn new() -> Self {
+        ContentWriter {
+            block: alloc::vec::Vec::with_capacity(BLOCK_SIZE),
+            leaf: alloc::vec::Vec::new(),
+            leaf_bytes: 0,
+            leaves: alloc::vec::Vec::new(),
+            total: 0,
+        }
+    }
+
+    fn push_data(&mut self, data: &[u8]) -> Result<(), ()> {
+        let h = put_object_guarded(data)?;
+        self.leaf.push(h);
+        self.leaf_bytes += data.len();
+        if self.leaf.len() == HASHES_PER_MANIFEST {
+            self.close_leaf()?;
+        }
+        Ok(())
+    }
+
+    fn close_leaf(&mut self) -> Result<(), ()> {
+        if self.leaf.is_empty() {
+            return Ok(());
+        }
+        if self.leaves.len() >= HASHES_PER_MANIFEST {
+            return Err(()); // over the ~64MiB two-level cap
+        }
+        let mut manifest = [0u8; BLOCK_SIZE];
+        manifest[..4].copy_from_slice(BIG_MAGIC);
+        manifest[4..8].copy_from_slice(&(self.leaf_bytes as u32).to_le_bytes());
+        for (i, h) in self.leaf.iter().enumerate() {
+            manifest[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32].copy_from_slice(h);
+        }
+        let n = self.leaf.len();
+        let h = put_object_guarded(&manifest[..BIG_HEADER + n * 32])?;
+        self.leaves.push(h);
+        self.leaf.clear();
+        self.leaf_bytes = 0;
+        Ok(())
+    }
+
+    /// A full block is ready in `self.block` and more data follows (flushing
+    /// lazily keeps a file of at most one block unstored until `finish`, where
+    /// it may become a plain blob).
+    fn flush_block(&mut self) -> Result<(), ()> {
+        let b = core::mem::replace(&mut self.block, alloc::vec::Vec::with_capacity(BLOCK_SIZE));
+        self.push_data(&b)
+    }
+
+    pub fn write(&mut self, mut data: &[u8]) -> Result<(), ()> {
+        while !data.is_empty() {
+            if self.block.len() == BLOCK_SIZE {
+                self.flush_block()?;
+            }
+            let take = (BLOCK_SIZE - self.block.len()).min(data.len());
+            self.block.extend_from_slice(&data[..take]);
+            self.total += take;
+            data = &data[take..];
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<Hash, ()> {
+        if self.total > MAX_FILE_BYTES {
+            return Err(());
+        }
+        if self.total <= BLOCK_SIZE {
+            // Small file: a plain blob unless it begins with a manifest magic
+            // (then wrapped in a manifest, exactly like `store_content_hash`).
+            let whole = core::mem::take(&mut self.block);
+            let magic = whole.get(..4) == Some(&BIG_MAGIC[..]) || whole.get(..4) == Some(&BIG2_MAGIC[..]);
+            if !magic {
+                return put_object_guarded(&whole);
+            }
+            self.push_data(&whole)?;
+        } else if !self.block.is_empty() {
+            let b = core::mem::take(&mut self.block);
+            self.push_data(&b)?;
+        }
+        if self.leaves.is_empty() {
+            // One leaf covers the whole file: it IS the root manifest.
+            let mut manifest = [0u8; BLOCK_SIZE];
+            manifest[..4].copy_from_slice(BIG_MAGIC);
+            manifest[4..8].copy_from_slice(&(self.leaf_bytes as u32).to_le_bytes());
+            for (i, h) in self.leaf.iter().enumerate() {
+                manifest[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32].copy_from_slice(h);
+            }
+            return put_object_guarded(&manifest[..BIG_HEADER + self.leaf.len() * 32]);
+        }
+        self.close_leaf()?;
+        if self.leaves.len() == 1 {
+            // Exactly 127 blocks: the single leaf is the root manifest.
+            return Ok(self.leaves[0]);
+        }
+        let mut m2 = [0u8; BLOCK_SIZE];
+        m2[..4].copy_from_slice(BIG2_MAGIC);
+        m2[4..8].copy_from_slice(&(self.total as u32).to_le_bytes());
+        for (i, h) in self.leaves.iter().enumerate() {
+            m2[BIG_HEADER + i * 32..BIG_HEADER + (i + 1) * 32].copy_from_slice(h);
+        }
+        put_object_guarded(&m2[..BIG_HEADER + self.leaves.len() * 32])
+    }
+}
+
+/// Put one directory tree object from `(name, hash, is_dir)` entries (at most
+/// `MAX_TREE_ENTRIES`). Returns the tree hash, for a parent tree or the root.
+pub fn put_dir(entries: &[(&str, Hash, bool)]) -> Result<Hash, ()> {
+    if entries.len() > MAX_TREE_ENTRIES {
+        return Err(());
+    }
+    let _g = FsGuard::new();
+    let mut refs = [("", ZERO_HASH, Kind::Blob, EMPTY_META); MAX_TREE_ENTRIES];
+    for (i, (n, h, d)) in entries.iter().enumerate() {
+        let mode = if *d { MODE_DIR_DEFAULT } else { MODE_FILE_DEFAULT };
+        refs[i] = (*n, *h, if *d { Kind::Tree } else { Kind::Blob }, make_meta(mode, next_seq()));
+    }
+    put_tree(&refs[..entries.len()])
+}
+
+/// Link a finished tree into the root as folder `name` (replacing any folder
+/// of that name) in ONE commit.
+pub fn link_root_dir(name: &str, tree: Hash) -> Result<(), ()> {
+    upsert_root_entry(name, tree, Kind::Tree, make_meta(MODE_DIR_DEFAULT, next_seq()))
+}
+
+/// Entries in the root folder (each package takes one; at most `MAX_TREE_ENTRIES`).
+pub fn root_entry_count() -> usize {
+    let r = root();
+    if r == ZERO_HASH {
+        return 0;
+    }
+    let mut entries: TreeEntries = [EMPTY_TREE_ENTRY; MAX_TREE_ENTRIES];
+    get_tree(&r, &mut entries).ok().flatten().unwrap_or(0)
+}

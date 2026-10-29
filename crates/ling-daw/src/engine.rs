@@ -95,7 +95,7 @@ pub struct Engine {
 /// Schedule the notes of one clip whose absolute time falls inside [w0, w1).
 /// `base` is the beat of note-time zero; `limit` the usable clip length.
 #[allow(clippy::too_many_arguments)]
-fn sched_notes(inst: &mut Option<Box<dyn Instrument>>, held: &mut Vec<(u8, u64)>, notes: &[Note], base: f64, limit: f64, w0: f64, w1: f64, t0: f64, bps: f64, start_clock: u64) {
+fn sched_notes(inst: &mut Option<Box<dyn Instrument>>, held: &mut Vec<(u8, u64)>, expr: &mut Vec<ExprPlay>, sess: bool, notes: &[Note], base: f64, limit: f64, w0: f64, w1: f64, t0: f64, bps: f64, start_clock: u64) {
     for n in notes {
         if n.start >= limit {
             continue;
@@ -108,6 +108,49 @@ fn sched_notes(inst: &mut Option<Box<dyn Instrument>>, held: &mut Vec<(u8, u64)>
             let end_beat = ns + n.len.min(limit - n.start);
             let end_clock = start_clock + ((end_beat - t0) / bps).max(0.0) as u64;
             held.push((n.key, end_clock));
+            if n.has_expr() {
+                // a note cut by the clip end keeps its curves in place: positions stay fractions of the whole note
+                expr.push(ExprPlay { key: n.key, start: ns, len: n.len.max(1e-6), sess, end_clock, bend: n.bend.clone(), press: n.press.clone(), timbre: n.timbre.clone() });
+            }
+        }
+    }
+}
+
+/// Per-note expression for one block: every sounding note with curves gets its value at the end of the block (`a1` on the
+/// arrangement clock, `s1` on the launcher's); a note whose note-off fell in this block hands its voice back at rest.
+fn feed_expr(inst: &mut Option<Box<dyn Instrument>>, expr: &mut Vec<ExprPlay>, a1: f64, s1: f64, end_clock: u64) {
+    let Some(i) = inst.as_mut() else {
+        expr.clear();
+        return;
+    };
+    // the ended ones first, so a new note on the same key (started in this block) gets its own value after them
+    expr.retain(|x| {
+        if x.end_clock <= end_clock {
+            if !x.bend.is_empty() {
+                i.note_pitch(x.key, 0.0);
+            }
+            if !x.press.is_empty() {
+                i.note_pressure(x.key, 0.0);
+            }
+            if !x.timbre.is_empty() {
+                i.note_timbre(x.key, 0.5);
+            }
+            false
+        } else {
+            true
+        }
+    });
+    for x in expr.iter() {
+        let now = if x.sess { s1 } else { a1 };
+        let f = ((now - x.start) / x.len).clamp(0.0, 1.0) as f32;
+        if !x.bend.is_empty() {
+            i.note_pitch(x.key, crate::gesture::at(&x.bend, f));
+        }
+        if !x.press.is_empty() {
+            i.note_pressure(x.key, crate::gesture::at(&x.press, f).clamp(0.0, 1.0));
+        }
+        if !x.timbre.is_empty() {
+            i.note_timbre(x.key, crate::gesture::at(&x.timbre, f).clamp(0.0, 1.0));
         }
     }
 }
@@ -237,6 +280,7 @@ impl Engine {
                 i.all_off();
             }
             t.held.clear();
+            t.expr.clear();
         }
     }
 
@@ -731,6 +775,7 @@ impl Engine {
                                     i.all_off();
                                 }
                                 self.project.tracks[t].held.clear();
+                                self.project.tracks[t].expr.clear();
                             }
                         }
                         self.sess_queue[t] = None;
@@ -757,6 +802,8 @@ impl Engine {
         }
         let levels = std::mem::take(&mut self.levels);
         let duck = duck_events(&self.project.tracks, &routes, p0, p1, bps, frames, arr_on);
+        // key-following effects (Colour Bass, Comb key tracking) hear the notes they follow
+        crate::fxctx::feed_keys(&mut self.project.tracks, p0, arr_on);
         let ctx = SliceCtx { p0, p1, s0, s1, bps, bps_a, spb, bpm: self.project.bpm, frames, out_len: out.len(), start_clock, arr_on, sess_on, n, routes: &routes, audible: &audible, duck: &duck };
         for level in &levels {
             let mut in_level = vec![false; n];
@@ -1036,10 +1083,10 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
                                     if off >= clen {
                                         break;
                                     }
-                                    sched_notes(&mut track.inst, &mut track.held, notes, cstart + off, ll.min(clen - off), p0, p1, p0, bps, start_clock);
+                                    sched_notes(&mut track.inst, &mut track.held, &mut track.expr, false, notes, cstart + off, ll.min(clen - off), p0, p1, p0, bps, start_clock);
                                 }
                             } else {
-                                sched_notes(&mut track.inst, &mut track.held, notes, cstart, clen, p0, p1, p0, bps, start_clock)
+                                sched_notes(&mut track.inst, &mut track.held, &mut track.expr, false, notes, cstart, clen, p0, p1, p0, bps, start_clock)
                             }
                         }
                         ClipData::Audio { sample, offset_s, gain, pitch, warp } => {
@@ -1061,7 +1108,7 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
                                     let k1 = (((l1 + 1e-6) / len).floor() as i64).max(0);
                                     for k in k0..=k1 {
                                         let base = pl.start + k as f64 * len;
-                                        sched_notes(&mut track.inst, &mut track.held, notes, base, len, s0.max(pl.start), s1, s0, bps, start_clock);
+                                        sched_notes(&mut track.inst, &mut track.held, &mut track.expr, true, notes, base, len, s0.max(pl.start), s1, s0, bps, start_clock);
                                     }
                                 }
                                 ClipData::Audio { sample, offset_s, gain, pitch, warp } => {
@@ -1096,6 +1143,9 @@ fn render_track(track: &mut Track, ti: usize, c: &SliceCtx, play_state: Option<P
                 } else {
                     k += 1;
                 }
+            }
+            if !track.expr.is_empty() {
+                feed_expr(&mut track.inst, &mut track.expr, p1, s1, end_clock);
             }
             if let Some(i) = track.inst.as_mut() {
                 i.set_tempo(bpm);

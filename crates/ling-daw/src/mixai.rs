@@ -28,6 +28,8 @@ pub struct Stat {
     /// L/R correlation -1..1
     pub corr: f32,
     pub clipped: usize,
+    /// true peak (dBTP, 4x oversampled); measured for the master only, 0 elsewhere
+    pub tp_db: f32,
 }
 
 fn db(x: f32) -> f32 {
@@ -40,20 +42,21 @@ fn pdb(x: f32) -> f32 {
 // ── K-weighting (ITU-R BS.1770) ────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
-struct Bq {
+pub(crate) struct Bq {
     b: [f32; 3],
     a: [f32; 2],
     z: [f32; 2],
 }
 impl Bq {
-    fn run(&mut self, x: f32) -> f32 {
+    #[inline]
+    pub(crate) fn run(&mut self, x: f32) -> f32 {
         let y = self.b[0] * x + self.z[0];
         self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
         self.z[1] = self.b[2] * x - self.a[1] * y;
         y
     }
 }
-fn k_filters(sr: f32) -> [Bq; 2] {
+pub(crate) fn k_filters(sr: f32) -> [Bq; 2] {
     // stage 1: the head-related high shelf
     let (f0, g, q) = (1681.9745f32, 3.99984f32, 0.707175f32);
     let a = 10f32.powf(g / 40.0);

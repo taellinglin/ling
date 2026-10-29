@@ -21,6 +21,12 @@ mod stt;
 mod terrain_bg;
 #[cfg(all(not(target_arch = "wasm32"), feature = "vision"))]
 mod vision;
+#[cfg(not(target_arch = "wasm32"))]
+mod video;
+#[cfg(not(target_arch = "wasm32"))]
+mod webimg;
+#[cfg(not(target_arch = "wasm32"))]
+mod jsre;
 
 /// Initialize the AOT/JIT runtime. Must be called before any AOT-compiled code.
 /// Creates a new interpreter instance for runtime function dispatch.
@@ -3623,8 +3629,9 @@ impl Interpreter {
         #[cfg(not(target_arch = "wasm32"))]
         {
             type Family = fn(&mut Interpreter, &str, &[Value]) -> Option<EvalResult>;
-            const FAMILIES: [Family; 7] = [
+            const FAMILIES: [Family; 8] = [
                 Interpreter::daw_builtin,
+                Interpreter::video_builtin,
                 Interpreter::threads_builtin,
                 Interpreter::bytes_builtin,
                 Interpreter::lwcrypto_builtin,
@@ -3941,9 +3948,14 @@ impl Interpreter {
                     .map(|v| v.to_string())
                     .collect::<Vec<_>>()
                     .join("");
-                println!("{s}");
+                // Never panic when stdout is absent (a windows_subsystem="windows"
+                // GUI build has no console, and isolates run on this interpreter):
+                // `write!` drops the error, `println!` would unwrap it and kill the
+                // thread — which silently takes down the node/wallet isolates.
                 use std::io::Write;
-                std::io::stdout().flush().ok();
+                let mut out = std::io::stdout();
+                let _ = writeln!(out, "{s}");
+                let _ = out.flush();
                 return Ok(Value::Unit);
             },
             // print_color(colorIdx, text...) — ANSI-coloured console line.
@@ -3977,7 +3989,8 @@ impl Interpreter {
                     .collect::<Vec<_>>()
                     .join("");
                 let code = 90 + col.clamp(0, 7);
-                println!("\x1b[1;{code}m{s}\x1b[0m");
+                use std::io::Write;
+                let _ = writeln!(std::io::stdout(), "\x1b[1;{code}m{s}\x1b[0m");
                 return Ok(Value::Unit);
             },
             // ── Format ──
@@ -6168,6 +6181,56 @@ impl Interpreter {
                 return Ok(Value::Number(self.gfx.borrow().height as f64));
             },
 
+            // display_info() -> [width, height, refresh hz, dpi, bits per pixel] of the primary
+            //   monitor, in physical pixels (the process is made DPI-aware first, so Windows display
+            //   scaling doesn't shrink the numbers)
+            "display_info" => {
+                let (w, h, hz, dpi, bpp) = display_info();
+                return Ok(Value::List(Rc::new(vec![
+                    Value::Number(w as f64),
+                    Value::Number(h as f64),
+                    Value::Number(hz as f64),
+                    Value::Number(dpi as f64),
+                    Value::Number(bpp as f64),
+                ])));
+            },
+            // open_fullscreen_scaled(title, scale) - borderless fullscreen over the whole primary
+            //   monitor, rendering at 1 / scale of its resolution (scale 1, 2 or 4) and scaled up
+            //   by that whole number; frames paced to the monitor's refresh
+            #[cfg(not(target_arch = "wasm32"))]
+            "open_fullscreen_scaled" => {
+                let title = args.first().map(|v| v.to_string()).unwrap_or_else(|| "Ling".into());
+                let sc = match self.arg_num(&args, 1, 1.0)? as i32 { 4 => 4usize, 2 => 2, _ => 1 };
+                let (dw, dh, _, _, _) = display_info();
+                let (w, h) = ((dw as usize / sc).max(64), (dh as usize / sc).max(64));
+                let scale = match sc { 4 => minifb::Scale::X4, 2 => minifb::Scale::X2, _ => minifb::Scale::X1 };
+                let mut gfx = self.gfx.borrow_mut();
+                let mut win = minifb::Window::new(
+                    &title,
+                    w,
+                    h,
+                    minifb::WindowOptions { borderless: true, title: false, resize: false, topmost: true, scale, ..Default::default() },
+                )
+                .map_err(|e| EvalErr::from(format!("cannot open fullscreen: {e}")))?;
+                apply_frame_pacing(&mut win, gfx.vsync);
+                #[cfg(windows)]
+                let hwnd = win.get_window_handle() as isize;
+                gfx.buffer = vec![0u32; w * h];
+                gfx.width = w;
+                gfx.height = h;
+                gfx.window = Some(win);
+                gfx.topmost_window = true;
+                #[cfg(windows)]
+                {
+                    gfx.hwnd = hwnd;
+                }
+                gfx.sync_projection();
+                #[cfg(windows)]
+                make_borderless_fullscreen(hwnd, dw, dh);
+                #[cfg(windows)]
+                force_window_focus(hwnd);
+                return Ok(Value::Unit);
+            },
             // ── monitor detection: physical display, not the framebuffer ──────
             // monitor_width() → primary-monitor pixel width
             "monitor_width"
@@ -7024,6 +7087,29 @@ impl Interpreter {
                 gfx.camera.sry = sry;
                 gfx.camera.crx = crx;
                 gfx.camera.srx = srx;
+                return Ok(Value::Unit);
+            },
+
+            // set_camera_hyper(R, saddle, px, mid_y, pz): hyperbolic space round a pivot (R 0 = off); the
+            //   saddle mirrors above the mid-plane y
+            "set_camera_hyper" => {
+                let r = self.arg_num(&args, 0, 0.0)? as f32;
+                let sd = self.arg_num(&args, 1, 0.0)? as f32;
+                let (hx, hy, hz) = (self.arg_num(&args, 2, 0.0)? as f32, self.arg_num(&args, 3, 0.0)? as f32, self.arg_num(&args, 4, 0.0)? as f32);
+                let mut g = self.gfx.borrow_mut();
+                g.camera.hyp_r = r.max(0.0);
+                g.camera.hyp_s = sd;
+                g.camera.hx = hx;
+                g.camera.hy = hy;
+                g.camera.hz = hz;
+                return Ok(Value::Unit);
+            },
+            // ── set_camera_roll(angle) — roll the view about its forward axis (radians) ──
+            "set_camera_roll" | "camera_roll" => {
+                let a = self.arg_num(&args, 0, 0.0)? as f32;
+                let mut gfx = self.gfx.borrow_mut();
+                gfx.camera.crz = a.cos();
+                gfx.camera.srz = a.sin();
                 return Ok(Value::Unit);
             },
 
@@ -10284,6 +10370,18 @@ impl Interpreter {
             // HTTP status of the last http_get call (0 if it never got a
             // response at all — DNS/connect/TLS failure, distinct from a
             // real 4xx/5xx).
+            // http_get_all([url, ...]) — fetch several addresses at once (a page's stylesheets)
+            // and wait for all of them: a list of bodies in the same order ("" for a failure or
+            // an HTTP error).
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "http_get_all" => {
+                let urls: Vec<String> = match args.first() {
+                    Some(Value::List(l)) => l.iter().map(|v| v.to_string()).collect(),
+                    _ => Vec::new(),
+                };
+                let bodies = web::get_all_blocking(&urls);
+                return Ok(Value::List(std::rc::Rc::new(bodies.into_iter().map(Value::Str).collect())));
+            },
             #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
             "http_get_status" => {
                 return Ok(Value::Number(self.last_http_status as f64));
@@ -14155,6 +14253,110 @@ impl Interpreter {
             // for pixel sampling (image_width/image_height/image_pixel_r/g/b/a) —
             // used by the coin-stamp mosaic tool to read a source photo's
             // colour/darkness. Returns a handle, or -1 on failure.
+            // image_fetch(url) — start fetching + decoding a picture off this thread (http/https,
+            // data: URIs, paths; PNG JPEG GIF WebP BMP ICO SVG); returns a job id at once.
+            // image_job(job) — -2 while it runs, -1 when it failed, else the image handle.
+            // image_svg(markup, w, h) — rasterise SVG text now (0 = its own size); handle or -1.
+            // image_resized(id, w, h) — a smoothly resampled copy (a new handle).
+            // image_free(id) — drop a picture's pixels (the handle stays, empty).
+            // image_fetch_cancel() — forget fetches that have not started.
+            // re_compile(pattern, flags) / re_exec(id, text, start) / re_error() / re_names(id):
+            // JavaScript-style regular expressions for a page-script sandbox (see jsre.rs).
+            #[cfg(not(target_arch = "wasm32"))]
+            "re_compile" => {
+                let p = self.arg_str(&args, 0, "");
+                let f = self.arg_str(&args, 1, "");
+                return Ok(Value::Number(jsre::compile(&p, &f)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "re_exec" => {
+                let id = self.arg_num(&args, 0, -1.0)?;
+                let t = self.arg_str(&args, 1, "");
+                let at = self.arg_num(&args, 2, 0.0)?.max(0.0) as usize;
+                if id < 0.0 {
+                    return Ok(Value::List(std::rc::Rc::new(Vec::new())));
+                }
+                let out = jsre::exec(id as usize, &t, at).unwrap_or_default();
+                return Ok(Value::List(std::rc::Rc::new(out)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "re_error" => {
+                return Ok(Value::Str(jsre::error()));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "re_names" => {
+                let id = self.arg_num(&args, 0, -1.0)?;
+                let names = if id < 0.0 { Vec::new() } else { jsre::names(id as usize) };
+                return Ok(Value::List(std::rc::Rc::new(names.into_iter().map(Value::Str).collect())));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_fetch" => {
+                let url = self.arg_str(&args, 0, "");
+                return Ok(Value::Number(webimg::fetch(&url) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_job" => {
+                let id = self.arg_num(&args, 0, -1.0)?;
+                if id < 0.0 {
+                    return Ok(Value::Number(-1.0));
+                }
+                return Ok(Value::Number(webimg::poll(id as usize, &mut self.images)));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_fetch_cancel" => {
+                webimg::cancel_waiting();
+                return Ok(Value::Unit);
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_svg" => {
+                let src = self.arg_str(&args, 0, "");
+                let w = self.arg_num(&args, 1, 0.0)?.max(0.0) as u32;
+                let h = self.arg_num(&args, 2, 0.0)?.max(0.0) as u32;
+                return Ok(Value::Number(match webimg::svg(src.as_bytes(), w, h) {
+                    Ok(img) => {
+                        self.images.push(img);
+                        (self.images.len() - 1) as f64
+                    },
+                    Err(_) => -1.0,
+                }));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_resized" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let w = self.arg_num(&args, 1, 0.0)?.max(1.0) as u32;
+                let h = self.arg_num(&args, 2, 0.0)?.max(1.0) as u32;
+                if id < 0 || id as usize >= self.images.len() || self.images[id as usize].width() == 0 {
+                    return Ok(Value::Number(-1.0));
+                }
+                let img = webimg::resized(&self.images[id as usize], w, h);
+                self.images.push(img);
+                return Ok(Value::Number((self.images.len() - 1) as f64));
+            },
+            // image_tint(id, 0xRRGGBB) — a copy in one colour, shaped by the picture's alpha (CSS
+            // mask-image: an icon shown in the box's colour). A new handle, or -1.
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_tint" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                let c = self.arg_num(&args, 1, 0.0)?.max(0.0) as u32;
+                if id < 0 || id as usize >= self.images.len() || self.images[id as usize].width() == 0 {
+                    return Ok(Value::Number(-1.0));
+                }
+                let (r, g, b) = ((c >> 16) as u8 & 0xff, (c >> 8) as u8 & 0xff, c as u8);
+                let mut img = self.images[id as usize].clone();
+                for p in img.pixels_mut() {
+                    *p = image::Rgba([r, g, b, p[3]]);
+                }
+                self.images.push(img);
+                return Ok(Value::Number((self.images.len() - 1) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "image_free" => {
+                let id = self.arg_num(&args, 0, -1.0)? as i64;
+                if id >= 0 && (id as usize) < self.images.len() {
+                    self.images[id as usize] = image::RgbaImage::new(0, 0);
+                }
+                return Ok(Value::Unit);
+            },
             #[cfg(not(target_arch = "wasm32"))]
             "image_load" => {
                 let path = self.arg_str(&args, 0, "").replace('\\', "/");
@@ -14371,9 +14573,11 @@ impl Interpreter {
                                 }
                                 let idx = ty as usize * gfx.width + tx as usize;
                                 if a >= 255 {
+                                    // tagged UNLIT: a picture is shown as it is, not toon-quantised by present()
                                     gfx.buffer[idx] = ((p[0] as u32) << 16)
                                         | ((p[1] as u32) << 8)
-                                        | (p[2] as u32);
+                                        | (p[2] as u32)
+                                        | crate::gfx::UNLIT;
                                 } else {
                                     let bg = gfx.buffer[idx];
                                     let br = (bg >> 16) & 0xff;
@@ -14382,7 +14586,7 @@ impl Interpreter {
                                     let r = (p[0] as u32 * a + br * (255 - a)) / 255;
                                     let g = (p[1] as u32 * a + bg_g * (255 - a)) / 255;
                                     let b = (p[2] as u32 * a + bb * (255 - a)) / 255;
-                                    gfx.buffer[idx] = (r << 16) | (g << 8) | b;
+                                    gfx.buffer[idx] = (r << 16) | (g << 8) | b | crate::gfx::UNLIT;
                                 }
                             }
                         }
@@ -19054,6 +19258,32 @@ fn apply_frame_pacing(win: &mut minifb::Window, vsync: bool) {
         None if vsync => win.set_target_fps(monitor_info().2.max(30) as usize),
         None => win.set_target_fps(100_000),
     }
+}
+
+/// The primary monitor as `(width, height, hz, dpi, bits per pixel)`, physical pixels.
+#[cfg(all(not(target_arch = "wasm32"), windows))]
+fn display_info() -> (i32, i32, i32, i32, i32) {
+    unsafe {
+        extern "system" {
+            fn SetProcessDPIAware() -> i32;
+            fn GetDC(hwnd: isize) -> isize;
+            fn ReleaseDC(hwnd: isize, hdc: isize) -> i32;
+            fn GetDeviceCaps(hdc: isize, index: i32) -> i32;
+        }
+        SetProcessDPIAware();
+        let (w, h, hz) = monitor_info();
+        let hdc = GetDC(0);
+        let (dpi, bpp) = if hdc != 0 { (GetDeviceCaps(hdc, 88), GetDeviceCaps(hdc, 12)) } else { (96, 32) };
+        if hdc != 0 {
+            ReleaseDC(0, hdc);
+        }
+        (w, h, hz, if dpi > 0 { dpi } else { 96 }, if bpp > 0 { bpp } else { 32 })
+    }
+}
+#[cfg(not(all(not(target_arch = "wasm32"), windows)))]
+fn display_info() -> (i32, i32, i32, i32, i32) {
+    let (w, h, hz) = monitor_info();
+    (w, h, hz, 96, 32)
 }
 
 /// Primary-monitor resolution and refresh rate as `(width, height, hz)`.

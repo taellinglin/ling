@@ -423,16 +423,21 @@ pub unsafe extern "C" fn ling_not(a: u64) -> u64 {
 pub unsafe extern "C" fn ling_print_val(val: u64) -> u64 {
     use std::io::Write;
     let v = decode_value(val);
-    print!("{}", v);
-    std::io::stdout().flush().ok();
+    // Never panic when stdout is absent (e.g. a windows_subsystem="windows"
+    // GUI build has no console): writing through `write!` ignores the error,
+    // whereas the `print!`/`println!` macros unwrap it and abort the thread.
+    let mut out = std::io::stdout();
+    let _ = write!(out, "{}", v);
+    let _ = out.flush();
     TAG_UNIT
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_print_newline() -> u64 {
     use std::io::Write;
-    println!();
-    std::io::stdout().flush().ok();
+    let mut out = std::io::stdout();
+    let _ = writeln!(out);
+    let _ = out.flush();
     TAG_UNIT
 }
 
@@ -446,10 +451,11 @@ pub unsafe extern "C" fn ling_time_now() -> u64 {
 
 #[no_mangle]
 pub unsafe extern "C" fn ling_print(cstr: *const u8) {
+    use std::io::Write;
     if !cstr.is_null() {
         let s = unsafe { std::ffi::CStr::from_ptr(cstr as *const std::ffi::c_char) };
         if let Ok(s) = s.to_str() {
-            print!("{}", s);
+            let _ = write!(std::io::stdout(), "{}", s);
         }
     }
 }

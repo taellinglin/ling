@@ -17,10 +17,37 @@ pub struct Note {
     pub reso: f32,   // 0..1, 0.5 = neutral
     /// lyric for sung instruments: `~` when tied (legato) + IPA syllables joined by `-`; empty = none
     pub lyric: String,
+    /// per-note pitch gesture (scoop, fall, slide, dive, riser): (position 0..1 of the note, semitones) breakpoints, see
+    /// gesture.rs; empty = the note plays its key
+    pub bend: Curve,
+    /// per-note pressure (polyphonic aftertouch) 0..1 over the note, same breakpoints; empty = none (0)
+    pub press: Curve,
+    /// per-note timbre (MPE slide / Y) 0..1 over the note, 0.5 = neutral; empty = none
+    pub timbre: Curve,
 }
+/// A per-note expression curve: (position 0..1 of the note's length, value) breakpoints in position order, linear between them,
+/// held before the first and after the last. Empty = none.
+pub type Curve = Vec<(f32, f32)>;
 impl Note {
     pub fn new(start: f64, len: f64, key: u8, vel: f32) -> Note {
-        Note { start, len, key, vel, pan: 0.0, cutoff: 0.5, reso: 0.5, lyric: String::new() }
+        Note { start, len, key, vel, pan: 0.0, cutoff: 0.5, reso: 0.5, lyric: String::new(), bend: vec![], press: vec![], timbre: vec![] }
+    }
+    /// Does the note carry a per-note expression curve (pitch gesture, pressure or timbre)?
+    pub fn has_expr(&self) -> bool {
+        !self.bend.is_empty() || !self.press.is_empty() || !self.timbre.is_empty()
+    }
+    /// Keep only the part of the note from `a` to `b` beats after its start (a cut, a split, a trimmed tail): the start moves by
+    /// `a`, the length becomes `b - a`, and the expression curves keep what sounded in that part, in place.
+    pub fn cut(&mut self, a: f64, b: f64) {
+        let (a, b) = (a.max(0.0), b.min(self.len).max(a.max(0.0)));
+        if self.has_expr() && self.len > 0.0 && (a > 1e-9 || b < self.len - 1e-9) {
+            let (fa, fb) = ((a / self.len) as f32, (b / self.len) as f32);
+            for c in [&mut self.bend, &mut self.press, &mut self.timbre] {
+                *c = crate::gesture::trim(c, fa, fb);
+            }
+        }
+        self.start += a;
+        self.len = b - a;
     }
 }
 
@@ -274,6 +301,21 @@ pub struct Track {
     pub session: Vec<Clip>,
     /// Notes currently sounding: (key, absolute end sample). Used for note-offs.
     pub(crate) held: Vec<(u8, u64)>,
+    /// Sounding notes with per-note expression curves (pitch gesture, pressure, timbre), fed to the instrument every block.
+    pub(crate) expr: Vec<ExprPlay>,
+}
+/// A sounding note with expression curves: its key, where it sits on the clock that scheduled it (`sess`: the launcher clock,
+/// else the arrangement's), in beats, the sample its note-off is due, and the curves.
+#[derive(Clone, Debug)]
+pub(crate) struct ExprPlay {
+    pub key: u8,
+    pub start: f64,
+    pub len: f64,
+    pub sess: bool,
+    pub end_clock: u64,
+    pub bend: Curve,
+    pub press: Curve,
+    pub timbre: Curve,
 }
 impl Track {
     pub fn new(name: &str, kind: TrackKind, color: u32, inst: Option<Box<dyn Instrument>>) -> Track {
@@ -294,6 +336,7 @@ impl Track {
             auto: vec![],
             session: vec![],
             held: Vec::with_capacity(64),
+            expr: vec![],
         }
     }
 }

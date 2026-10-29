@@ -86,7 +86,7 @@ pub fn genre_design(genre: &str) -> f64 {
     match genre {
         "dubstep" | "drum and bass" | "hardstyle" => 0.85,
         "breakbeat" => 0.7,
-        "trance" | "house" | "techno" | "garage" | "hyperpop" | "trap" | "synthwave" | "witch house" => 0.6,
+        "trance" | "house" | "techno" | "acid techno" | "future bass" | "garage" | "hyperpop" | "trap" | "synthwave" | "witch house" => 0.6,
         "deep house" | "disco" | "dub" | "reggaeton" | "afrobeat" | "hip hop" | "pop" | "chiptune" => 0.4,
         "lofi" | "ambient" | "cinematic" => 0.25,
         _ => 0.0,
@@ -324,6 +324,9 @@ pub struct Expr {
     pub slide_max: u8,
     /// the note a slide leaves must be at least this long (beats)
     pub slide_min: f64,
+    /// the slides are written as per-note pitch gestures (the note bends into the next one, the notes stay detached: an 808 glide,
+    /// a lead's slide) instead of legato overlaps the instrument glides on (kept for mono legato lines: 303, growl, reese)
+    pub slide_gesture: bool,
     pub vibrato: Option<Vibrato>,
     /// the static unison detune range (min, max) the patch is put into; None = untouched
     pub detune: Option<(f32, f32)>,
@@ -331,6 +334,8 @@ pub struct Expr {
     pub drift: f32,
     /// a riser may bend and sweep: nothing is neutralised
     pub riser: bool,
+    /// the part carries a designed pitch gesture (the Growl Technique skin of a bass): its lanes stay
+    pub keep_pitch_lanes: bool,
     pub why: Vec<String>,
 }
 
@@ -386,7 +391,8 @@ pub fn expression(genre: &str, role: &str, kind: Kind, bpm: f64) -> Expr {
                 x.slides = 0.15;
                 x.slide_max = 12;
                 x.slide_min = 0.5;
-                x.why.push("808 slides".into());
+                x.slide_gesture = true;
+                x.why.push("808 glides (per-note pitch gestures)".into());
             }
             x.detune = Some((0.0, if r.contains("sub") { 0.1 } else if r.contains("growl") || r.contains("wobble") || r.contains("reese") { 1.0 } else { 0.2 }));
         }
@@ -396,11 +402,15 @@ pub fn expression(genre: &str, role: &str, kind: Kind, bpm: f64) -> Expr {
                 x.glide_secs = (0.08 * beat) as f32;
                 x.slides = 0.15;
                 x.slide_max = 5;
-                x.why.push("legato slides on the held lead notes".into());
+                x.slide_gesture = true;
+                x.why.push("slides on the held lead notes (per-note pitch gestures)".into());
             }
             let amt = vibrato_amount(genre);
-            if amt > 0.0 && (is_lead(&r) || r == "vocal lead") && !r.contains("laser") {
-                let base = if matches!(r.as_str(), "woodwind" | "brass") { 0.25 } else if genre == "chiptune" { 0.35 } else { 0.22 };
+            // every melodic voice that holds notes sings them with a vibrato: leads, winds, brass, a solo string (an orchestra's
+            // instruments by name); a laser zap does not
+            if amt > 0.0 && !r.contains("laser") {
+                let synth_lead = is_lead(&r) && !matches!(r.as_str(), "woodwind" | "brass");
+                let base = if !synth_lead { 0.25 } else if genre == "chiptune" { 0.35 } else { 0.22 };
                 let rate = match genre {
                     "lofi" | "ballad" | "folk" | "jazz" => 5.2,
                     "cinematic" | "orchestral" => 5.5,
@@ -615,6 +625,15 @@ pub fn apply_expression(tr: &mut crate::model::Track, x: &Expr) -> String {
         inst.set_param(n, *v);
     }
     let mut said: Vec<String> = x.why.clone();
+    // pitch is never automated by accident (an articulation pattern on a matrix cell into pitch, a detune wobble): only the planned
+    // vibrato lane, a momentary bend, a riser's sweep and a designed skin stay
+    if !x.riser && !x.keep_pitch_lanes {
+        let before = tr.auto.len();
+        tr.auto.retain(|l| l.param == "bend" || !crate::redesign::pitch_altering(&l.param));
+        if tr.auto.len() < before {
+            said.push(format!("{} pitch lane(s) removed", before - tr.auto.len()));
+        }
+    }
     if let (Some((p, rest, peak)), Some(v)) = (lane, x.vibrato.as_ref()) {
         let mut notes: Vec<(f64, f64)> = vec![];
         for c in &tr.clips {
@@ -792,5 +811,210 @@ mod tests {
         let (b, a) = (tail_ratio("breakbeat"), tail_ratio("ambient"));
         eprintln!("tail energy / note energy: breakbeat {b:.5}, ambient {a:.5}");
         assert!(a > 3.0 * b, "ambient tail {a} vs breakbeat {b}");
+    }
+}
+
+#[cfg(test)]
+mod expression_tests {
+    use super::*;
+
+    const GENRES: [&str; 12] = ["trance", "acid techno", "future bass", "dubstep", "lofi", "ballad", "breakbeat", "ambient", "techno", "synthwave", "chiptune", "trap"];
+    const ROLES: [&str; 20] = ["drums", "sub bass", "rolling bass", "acid bass", "growl bass", "wobble bass", "supersaw lead", "synth lead", "laser lead", "woodwind", "brass", "warm pad", "dark pad", "strings", "stab chord", "keys", "piano", "pluck", "arp", "bell"];
+
+    fn params(kind: &str) -> Vec<(String, f32)> {
+        crate::dsp::make_instrument(kind, 44100.0).unwrap().params().into_iter().map(|(n, v)| (n.to_string(), v)).collect()
+    }
+
+    #[test]
+    fn glide_only_on_mono_lines_that_slide_and_scaled_to_the_tempo() {
+        for g in GENRES {
+            for r in ROLES {
+                let k = crate::songgen::role_kind(r);
+                let x = expression(g, r, k, 128.0);
+                if matches!(k, Kind::Chords | Kind::Pad | Kind::Arp | Kind::Drums) {
+                    assert!(x.glide_secs == 0.0 && x.slides == 0.0 && !x.mono, "{g} {r}: no glide on chords, pads, plucks, arps, drums");
+                }
+                if x.glide_secs > 0.0 {
+                    assert!(x.mono && x.slides > 0.0 && x.slides <= 0.35, "{g} {r}: only some notes slide");
+                    assert!(x.glide_secs <= 0.12, "{g} {r}: a short glide, {}", x.glide_secs);
+                }
+            }
+        }
+        // the acid line slides (up to an octave), a reese bass slides between held notes, the trance lead legato; a house piano never
+        let acid = expression("acid techno", "acid bass", Kind::Bass, 135.0);
+        assert!(acid.glide_secs > 0.03 && acid.slide_max == 12 && acid.slide_min == 0.0);
+        assert!(expression("dubstep", "growl bass", Kind::Bass, 140.0).glide_secs > 0.0);
+        assert!(expression("trance", "supersaw lead", Kind::Melody, 138.0).glide_secs > 0.0);
+        assert_eq!(expression("trance", "rolling bass", Kind::Bass, 138.0).glide_secs, 0.0, "a rolling sixteenth bass does not slide");
+        // faster songs glide faster
+        let (slow, fast) = (expression("dubstep", "growl bass", Kind::Bass, 100.0), expression("dubstep", "growl bass", Kind::Bass, 170.0));
+        assert!(fast.glide_secs < slow.glide_secs);
+        // on the instruments: chords / pads / arps get their glide set to 0, a sliding bass gets a glide in its own units
+        let mut p = params("prism");
+        p.iter_mut().find(|x| x.0 == "glide").unwrap().1 = 0.4;
+        let (set, _) = expr_settings("prism", &expression("trance", "warm pad", Kind::Pad, 138.0), &p);
+        assert!(set.iter().any(|(n, v)| n == "glide" && *v == 0.0), "{set:?}");
+        let (set, _) = expr_settings("growl", &expression("dubstep", "growl bass", Kind::Bass, 140.0), &params("growl"));
+        let gv = set.iter().find(|(n, _)| n == "glid").map(|x| x.1).unwrap_or(0.15);
+        assert!((0.005 + gv * gv * 0.35 - (0.12 * 60.0 / 140.0) as f32).abs() < 0.005, "growl glide {gv}");
+        let (set, _) = expr_settings("synth", &expression("acid techno", "acid bass", Kind::Bass, 135.0), &params("synth"));
+        assert!(set.iter().any(|(n, v)| n == "glide" && *v > 0.1), "the acid synth slides: {set:?}");
+    }
+
+    #[test]
+    fn vibrato_only_on_long_notes_of_expressive_leads_and_strings() {
+        for g in GENRES {
+            for r in ROLES {
+                let k = crate::songgen::role_kind(r);
+                let x = expression(g, r, k, 100.0);
+                if let Some(v) = &x.vibrato {
+                    assert!(matches!(k, Kind::Melody) || r == "strings", "{g} {r}: vibrato only on leads, winds, brass and strings");
+                    assert!((5.0..=6.5).contains(&v.rate_hz) && v.depth > 0.0 && v.depth <= 0.4, "{g} {r}: {v:?}");
+                    assert!(v.onset >= 0.25 && v.min_beats >= 1.0, "{g} {r}: delayed and only on held notes");
+                    assert!(!r.contains("laser"));
+                }
+                if matches!(k, Kind::Bass | Kind::Arp | Kind::Chords | Kind::Drums) {
+                    assert!(x.vibrato.is_none(), "{g} {r}");
+                }
+            }
+        }
+        for g in ["techno", "acid techno", "dubstep", "breakbeat", "trap"] {
+            assert!(expression(g, "synth lead", Kind::Melody, 130.0).vibrato.is_none(), "{g}: machine music has no vibrato");
+        }
+        assert!(expression("trance", "strings", Kind::Pad, 138.0).vibrato.is_none(), "no vibrato on pads in club music");
+        let d = |g: &str| expression(g, "woodwind", Kind::Melody, 90.0).vibrato.map(|v| v.depth).unwrap_or(0.0);
+        assert!(d("ballad") > d("trance") && d("lofi") > d("future bass") && d("trance") > 0.0);
+        // the lane: rest everywhere, rising only from a third into each long note
+        let v = expression("ballad", "woodwind", Kind::Melody, 72.0).vibrato.unwrap();
+        let notes = [(0.0, 0.5), (1.0, 3.0), (4.0, 0.5), (4.5, 0.75), (6.0, 4.0)];
+        let lane = vibrato_lane(&notes, &v, 0.0, 0.3);
+        assert!(lane.windows(2).all(|w| w[1].0 > w[0].0), "{lane:?}");
+        let model = crate::model::AutoLane { param: "x".into(), points: lane.clone() };
+        let at = |b: f64| model.value_at(b).unwrap();
+        for b in [0.2, 0.9, 1.5, 1.9, 4.2, 4.9, 5.2, 6.5, 7.2] {
+            assert!(at(b) < 1e-6, "no vibrato at beat {b} ({})", at(b));
+        }
+        assert!(at(3.5) > 0.29 && at(9.0) > 0.29, "the long notes vibrate");
+        // where the instrument has no free modulator for it, there is no vibrato (nothing else is changed for it)
+        let mut sp = params("synth");
+        sp.iter_mut().find(|x| x.0 == "lfo cut").unwrap().1 = 0.4;
+        let (set, lane) = expr_settings("synth", &expression("ballad", "woodwind", Kind::Melody, 72.0), &sp);
+        assert!(lane.is_none() && !set.iter().any(|(n, _)| n == "lfo rate"), "{set:?}");
+        let (set, lane) = expr_settings("synth", &expression("ballad", "woodwind", Kind::Melody, 72.0), &params("synth"));
+        let (p, rest, peak) = lane.expect("the synth's lfo becomes the vibrato");
+        assert!(p == "lfo pitch" && rest == 0.0 && peak > 0.1 && peak < 0.5);
+        let rate = set.iter().find(|(n, _)| n == "lfo rate").unwrap().1;
+        assert!((0.1 + rate * 12.0 - 5.2).abs() < 0.01);
+        // Prism: a free LFO, sine, drawn on its pitch route
+        let (set, lane) = expr_settings("prism", &expression("pop", "synth lead", Kind::Melody, 110.0), &params("prism"));
+        let (p, rest, peak) = lane.unwrap();
+        assert!(p == "x l1pit" && rest == 0.5 && peak > 0.5 && peak < 0.51, "{p} {peak}");
+        let r = set.iter().find(|(n, _)| n == "l1 rate").unwrap().1;
+        assert!((0.05 * 2f32.powf(r * 9.0) - 5.8).abs() < 0.05);
+        // Chip: its own vibrato drawn per note, the delay knob off (the lane is the delay)
+        let (set, lane) = expr_settings("chip", &expression("chiptune", "synth lead", Kind::Melody, 150.0), &params("chip"));
+        assert_eq!(lane.unwrap().0, "vib");
+        assert!(set.iter().any(|(n, v)| n == "vib delay" && *v == 0.0));
+    }
+
+    #[test]
+    fn arps_are_tempo_locked_and_follow_the_energy() {
+        for g in ["trance", "synthwave", "chiptune", "techno", "acid techno", "future bass", "pop", "house"] {
+            let mut orders = vec![];
+            for e in [0.2, 0.5, 0.8, 1.0] {
+                let a = arp_plan(g, e).expect(g);
+                // a whole number of steps per beat: 1/8, 1/8 triplets, 1/16, 1/16 triplets
+                let per_beat = 1.0 / a.step;
+                assert!((per_beat - per_beat.round()).abs() < 1e-9 && [2.0, 3.0, 4.0, 6.0].contains(&per_beat.round()), "{g} {e}: {}", a.step);
+                orders.push((a.step, a.order, a.octaves));
+            }
+            assert!(orders.first() != orders.last(), "{g}: the pattern changes with the energy");
+            // more energy never slows it down
+            assert!(orders.windows(2).all(|w| w[1].0 <= w[0].0 + 1e-9), "{g}: {orders:?}");
+        }
+        assert!(arp_plan("ballad", 1.0).is_none() && arp_plan("dubstep", 1.0).is_none());
+        // the instruments' own arpeggiators are switched off (the arp is in the notes)
+        let mut cp = params("chip");
+        cp.iter_mut().find(|x| x.0 == "arp").unwrap().1 = 0.6;
+        let (set, _) = expr_settings("chip", &expression("chiptune", "arp", Kind::Arp, 150.0), &cp);
+        assert!(set.iter().any(|(n, v)| n == "arp" && *v == 0.0));
+    }
+
+    #[test]
+    fn tuning_is_static_and_in_key() {
+        let mut p = params("prism");
+        let set_p = |p: &mut Vec<(String, f32)>, n: &str, v: f32| p.iter_mut().find(|x| x.0 == n).unwrap().1 = v;
+        set_p(&mut p, "x l1pit", 0.6);
+        set_p(&mut p, "x l2det", 0.3);
+        set_p(&mut p, "x l1cut", 0.7);
+        set_p(&mut p, "x m1pit", 0.8);
+        set_p(&mut p, "a fine", 0.6);
+        set_p(&mut p, "b semi", 0.5 + 3.0 / 48.0);
+        set_p(&mut p, "a det", 0.05);
+        set_p(&mut p, "drift", 0.3);
+        let (set, _) = expr_settings("prism", &expression("trance", "supersaw lead", Kind::Melody, 138.0), &p);
+        let got = |n: &str| set.iter().find(|x| x.0 == n).map(|x| x.1);
+        assert_eq!(got("x l1pit"), Some(0.5), "no LFO into pitch");
+        assert_eq!(got("x l2det"), Some(0.5), "no LFO into detune");
+        assert_eq!(got("x l1cut"), None, "a filter LFO stays");
+        assert_eq!(got("x m1pit"), None, "an envelope into pitch (the attack of the sound) stays");
+        assert_eq!(got("a fine"), Some(0.5), "no fine offset");
+        let semi = (got("b semi").unwrap() - 0.5) * 48.0;
+        assert!([0.0f32, 5.0, 7.0].iter().any(|s| (semi - s).abs() < 1e-3), "a stacked oscillator on a consonant interval: {semi}");
+        assert!(got("a det").unwrap() >= 0.2, "a supersaw has its unison spread");
+        assert_eq!(got("drift"), Some(0.0), "no drift in trance");
+        let (set, _) = expr_settings("prism", &expression("synthwave", "warm pad", Kind::Pad, 104.0), &p);
+        assert_eq!(set.iter().find(|x| x.0 == "drift").map(|x| x.1), Some(0.2), "a little drift in a vintage genre");
+        // a sub bass is not spread; nothing a part sets is a lane (static), and every name is a real parameter of the plugin
+        let (set, _) = expr_settings("prism", &expression("trap", "sub bass", Kind::Bass, 140.0), &params("prism"));
+        assert!(set.iter().find(|x| x.0 == "a det").map(|x| x.1).unwrap_or(1.0) <= 0.1);
+        for kind in ["synth", "growl", "prism", "pluck", "chip", "sampler", "voice", "drums"] {
+            let ps = params(kind);
+            for g in GENRES {
+                for r in ROLES {
+                    let (set, lane) = expr_settings(kind, &expression(g, r, crate::songgen::role_kind(r), 120.0), &ps);
+                    for (n, v) in &set {
+                        assert!(ps.iter().any(|p| &p.0 == n) && (0.0..=1.0).contains(v), "{kind} {g} {r}: {n}={v}");
+                    }
+                    if let Some((n, _, _)) = lane {
+                        assert!(ps.iter().any(|p| p.0 == n), "{kind}: lane {n}");
+                    }
+                }
+            }
+        }
+        // a riser is left alone (it may sweep and bend)
+        let (set, _) = expr_settings("prism", &expression("trance", "riser", Kind::Pad, 138.0), &p);
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn the_synth_glides_on_legato_notes_only() {
+        let sr = 44100.0;
+        let mut s = crate::dsp::make_instrument("synth", sr).unwrap();
+        for (n, v) in [("wave", 0.0), ("cutoff", 1.0), ("filt env", 0.0), ("detune", 0.0), ("glide", 0.3), ("release", 0.1)] {
+            s.set_param(n, v);
+        }
+        let freq = |x: &[f32]| {
+            let m: Vec<f32> = x.chunks_exact(2).map(|f| f[0]).collect();
+            let z = m.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
+            z as f32 * sr / m.len() as f32
+        };
+        let mut buf = vec![0f32; 2 * (sr as usize / 4)];
+        s.note_on(48, 0.8);
+        s.render(&mut buf);
+        let f0 = freq(&buf[buf.len() / 2..]);
+        // the next note starts while the first is held: one voice slides up
+        s.note_on(60, 0.8);
+        let mut early = vec![0f32; 2 * 1323];
+        s.render(&mut early);
+        s.note_off(48);
+        let mut late = vec![0f32; 2 * (sr as usize / 2)];
+        s.render(&mut late);
+        let (fe, fl) = (freq(&early), freq(&late[late.len() / 2..]));
+        assert!((f0 - 130.8).abs() < 6.0, "{f0}");
+        assert!(fe > f0 + 10.0 && fe < 230.0, "gliding: {fe}");
+        assert!((fl - 261.6).abs() < 8.0, "arrived: {fl}");
+        // the old note's release did not cut the slid voice
+        assert!(late[late.len() - 400..].iter().any(|x| x.abs() > 0.01));
     }
 }

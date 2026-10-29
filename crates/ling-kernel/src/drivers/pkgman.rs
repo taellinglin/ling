@@ -1,6 +1,7 @@
 //! Package Manager -- a windowed front end over the real `lingfu` client
 //! (drivers::lingfu). It lists the synced catalog, moves a selection with the
-//! arrow keys, and installs the highlighted package on Enter (`S` re-syncs).
+//! arrow keys, and installs the highlighted package on Enter (`S` re-syncs,
+//! `U` updates every installed package, `A` installs every package that fits).
 //! The network work -- catalog sync, download, `.lpkg` unpack -- is the exact
 //! real-HTTP path the Terminal's `lingfu` command uses; this file is only the
 //! GUI over it. Toolchain verbs (new/build/run) need the `ling` compiler and
@@ -48,6 +49,12 @@ static mut TAB_ALL: bool = false;
 /// An install requested by Enter, run by `service()` after the next repaint.
 static mut PENDING_INSTALL: [u8; 64] = [0; 64];
 static mut PENDING_INSTALL_LEN: usize = 0;
+/// A bulk job requested by a key, run by `service()` after the next repaint:
+/// BULK_UPGRADE (`U`, update every installed package) or BULK_ALL (`A`,
+/// install every catalog package that fits).
+static mut PENDING_BULK: u8 = 0;
+const BULK_UPGRADE: u8 = 1;
+const BULK_ALL: u8 = 2;
 
 /// Catalog line indices shown under the current tab.
 fn visible() -> alloc::vec::Vec<usize> {
@@ -97,6 +104,18 @@ pub fn open() {
 /// off the CPU long enough to drop PS/2 bytes, so the packet framing needs
 /// realigning or the cursor jumps erratically.
 pub fn service() {
+    let bulk = unsafe { PENDING_BULK };
+    if bulk != 0 {
+        unsafe { PENDING_BULK = 0 };
+        lingfu::begin_capture();
+        let (ok, failed) = if bulk == BULK_ALL { lingfu::install_all() } else { lingfu::upgrade_all() };
+        lingfu::end_capture();
+        let what = if bulk == BULK_ALL { "installed" } else { "updated" };
+        let msg = alloc::format!("{ok} {what}, {failed} failed -- `lingfu` in the Terminal shows details");
+        set_status(msg.as_bytes());
+        crate::drivers::mouse::resync();
+        return;
+    }
     let pl = unsafe { PENDING_INSTALL_LEN };
     if pl > 0 {
         let mut nb = [0u8; 64];
@@ -153,7 +172,7 @@ extern "C" fn icon_task() {
             if lingfu::open_official() {
                 while let Some(idx) = next_pending_icon() {
                     // An install or sync is waiting for the network: let go.
-                    if unsafe { PENDING_INSTALL_LEN > 0 || PENDING } {
+                    if unsafe { PENDING_INSTALL_LEN > 0 || PENDING || PENDING_BULK != 0 } {
                         break;
                     }
                     fetch_icon(idx);
@@ -315,7 +334,7 @@ pub fn draw(x: u32, y: u32, w: u32, h: u32) {
 
     let tab_all = unsafe { TAB_ALL };
     font8x8::draw_str(x, y, if tab_all { b"lingfu -- all packages (LingOS x86-64)" } else { b"lingfu -- LingOS apps for x86-64" }, accent, panel);
-    font8x8::draw_str(x, y + 14, b"up/down select   Enter install/run   Tab apps|all   S resync", dim, panel);
+    font8x8::draw_str(x, y + 14, b"up/down select  Enter install/run  Tab apps|all  S resync  U update all  A install all", dim, panel);
 
     let vis = visible();
     let count = vis.len();
@@ -462,6 +481,14 @@ pub fn key(k: u8) {
             // Request a fresh sync; service() runs it next frame (see open()).
             unsafe { SYNCED = false };
             open();
+        },
+        b'u' | b'U' => {
+            set_status(b"updating installed packages from fu.ling-lang.org ...");
+            unsafe { PENDING_BULK = BULK_UPGRADE };
+        },
+        b'a' | b'A' => {
+            set_status(b"installing every package that fits (this takes a while) ...");
+            unsafe { PENDING_BULK = BULK_ALL };
         },
         _ => {},
     }

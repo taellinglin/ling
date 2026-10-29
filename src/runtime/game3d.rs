@@ -71,6 +71,8 @@ pub(super) struct G3dState {
     max_parts: usize,
     ripples: Vec<Ripple>,
     ripple_on: bool,
+    trail: Vec<u32>,
+    lens: Vec<u32>,
 }
 
 /// A floor shockwave started by `tm_ripple`.
@@ -95,6 +97,8 @@ impl Default for G3dState {
             glow: None,
             ripples: Vec::new(),
             ripple_on: false,
+            trail: Vec::new(),
+            lens: Vec::new(),
             rng: 0x9E37_79B9_7F4A_7C15,
             max_parts: 6000,
         }
@@ -683,7 +687,11 @@ impl Coll {
 
 impl Interpreter {
     pub(super) fn game3d_builtin(&mut self, name: &str, args: &[Value]) -> Option<EvalResult> {
-        if !(name.starts_with("tm_") || name.starts_with("coll_") || name.starts_with("pfx_")) {
+        if !(name.starts_with("tm_")
+            || name.starts_with("coll_")
+            || name.starts_with("pfx_")
+            || matches!(name, "str_to_hex" | "hex_to_str" | "net_local_ip" | "rand_seed" | "clipboard_set" | "clipboard_get" | "random_hex"))
+        {
             return None;
         }
         Some(self.game3d_call(name, args))
@@ -723,6 +731,247 @@ impl Interpreter {
                     }
                 }
                 Ok(Value::List(Rc::new(out)))
+            },
+            // tm_wave_grid(tex, x0, z0, span, n, t, waves, ybase, sign, tint, alpha, blend, u0, v0, ru, rv)
+            //   An n x n textured grid over [x0, x0 + span] x [z0, z0 + span] whose vertices ride
+            //   y = ybase + sign * sum(a sin(kx x + kz z + w t + p)) for waves = [kx, kz, w, a, p, ...]:
+            //   a sea surface with real wave geometry (fogged like tm_quad, unlit). The texture runs
+            //   from (u0, v0) over (ru, rv) across the grid and wraps.
+            "tm_wave_grid" => {
+                let id = num(args, 0, -1.0);
+                let tex = if id < 0.0 { Some(self.g3d.glow_tex()) } else { self.g3d.texs.get(id as usize).cloned() };
+                let Some(tex) = tex else { return Ok(Value::Unit) };
+                let (x0, z0, span) = (f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 64.0));
+                let n = (num(args, 4, 32.0) as usize).clamp(1, 128);
+                let t = f(args, 5, 0.0);
+                let waves: Vec<f32> = match args.get(6) {
+                    Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n as f32 } else { 0.0 }).collect(),
+                    _ => Vec::new(),
+                };
+                let (ybase, sign) = (f(args, 7, 0.0), f(args, 8, -1.0));
+                let tint = rgb(num(args, 9, 16777215.0));
+                let alpha = f(args, 10, 1.0);
+                let blend = num(args, 11, 0.0) as u8;
+                let (u0, v0, ru, rv) = (f(args, 12, 0.0), f(args, 13, 0.0), f(args, 14, 1.0), f(args, 15, 1.0));
+                let h = |x: f32, z: f32| -> f32 {
+                    let mut s = 0.0;
+                    for w in waves.chunks_exact(5) {
+                        s += w[3] * (w[0] * x + w[1] * z + w[2] * t + w[4]).sin();
+                    }
+                    ybase + sign * s
+                };
+                let cell = span / n as f32;
+                let mut grid = vec![[0.0f32; 3]; (n + 1) * (n + 1)];
+                let mut uvs = vec![[0.0f32; 2]; (n + 1) * (n + 1)];
+                for j in 0..=n {
+                    for i in 0..=n {
+                        let (x, z) = (x0 + i as f32 * cell, z0 + j as f32 * cell);
+                        grid[j * (n + 1) + i] = [x, h(x, z), z];
+                        uvs[j * (n + 1) + i] = [u0 + ru * i as f32 / n as f32, v0 + rv * j as f32 / n as f32];
+                    }
+                }
+                let mut gfx = self.gfx.borrow_mut();
+                let fog = TexShade { amb: 1.0, lights: Vec::new(), fog_start: gfx.fog_start, fog_end: gfx.fog_end, fog_color: gfx.fog_color, lit: false, ripples: Vec::new() };
+                let shade = if fog.fog_end > 0.0 { Some(&fog) } else { None };
+                let (pm, pa) = (gfx.blend, gfx.alpha);
+                gfx.depth_queue.set_state(blend, alpha);
+                for j in 0..n {
+                    for i in 0..n {
+                        let a = j * (n + 1) + i;
+                        let (b, c, d) = (a + 1, a + n + 2, a + n + 1);
+                        Self::g3d_push_poly(&mut gfx, [grid[a], grid[b], grid[c]], [uvs[a], uvs[b], uvs[c]], &tex, tint, [0.0; 4], false, 0, shade);
+                        Self::g3d_push_poly(&mut gfx, [grid[a], grid[c], grid[d]], [uvs[a], uvs[c], uvs[d]], &tex, tint, [0.0; 4], false, 0, shade);
+                    }
+                }
+                gfx.depth_queue.set_state(pm, pa);
+                Ok(Value::Unit)
+            },
+            // tm_field_tex(id, size, x0, z0, span, t, wells, contrast=1.35, gamma=0.85, bands=9) -> id
+            //   A thermal map of a gravity field's cross section, written into texture `id` (a new
+            //   one when id < 0): texel (i, j) is the world point (x0 + span (i + .5) / size,
+            //   z0 + span (j + .5) / size). The potential is a slow level field plus every well in
+            //   `wells` = [x, z, mass, radius, ...] (mass r^2 / (d^2 + r^2); negative mass is a
+            //   hill). Mapped through a ROYGBIV thermal ramp (contrast, gamma) with bright
+            //   equipotential contour lines every 1 / bands.
+            "tm_field_tex" => {
+                let id = num(args, 0, -1.0);
+                let n = pow2((num(args, 1, 128.0) as u32).clamp(8, 512));
+                let (x0, z0, span, t) = (f(args, 2, 0.0), f(args, 3, 0.0), f(args, 4, 64.0), f(args, 5, 0.0));
+                let wells: Vec<f32> = match args.get(6) {
+                    Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n as f32 } else { 0.0 }).collect(),
+                    _ => Vec::new(),
+                };
+                let (contrast, gamma, bands) = (f(args, 7, 1.35), f(args, 8, 0.85).max(0.05), f(args, 9, 9.0).max(1.0));
+                // lights = [x, z, radius, colour, ...]: vivid glows painted over the map; base_alpha =
+                // how opaque the bare map is (the glows and contour lines add to it)
+                let lights: Vec<f32> = match args.get(10) {
+                    Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n as f32 } else { 0.0 }).collect(),
+                    _ => Vec::new(),
+                };
+                let base_alpha = f(args, 11, 1.0).clamp(0.0, 1.0);
+                const RAMP: [[f32; 3]; 9] = [
+                    [0.0, 0.0, 0.05], [0.28, 0.0, 0.5], [0.0, 0.2, 1.0], [0.0, 0.9, 1.0], [0.1, 1.0, 0.3],
+                    [1.0, 1.0, 0.0], [1.0, 0.5, 0.0], [1.0, 0.0, 0.12], [1.0, 1.0, 1.0],
+                ];
+                let mut px = vec![0u32; (n * n) as usize];
+                let k = span / n as f32;
+                for j in 0..n {
+                    let z = z0 + (j as f32 + 0.5) * k;
+                    for i in 0..n {
+                        let x = x0 + (i as f32 + 0.5) * k;
+                        let mut phi = 0.5
+                            + 0.22 * (x * 0.018 + z * 0.021 + t * 0.07).sin() * (z * 0.017 - x * 0.006 + t * 0.05).cos()
+                            + 0.1 * ((x + z) * 0.043 + t * 0.11).sin()
+                            + 0.05 * (x * 0.11 - t * 0.3).sin() * (z * 0.09 + t * 0.23).sin();
+                        for w in wells.chunks_exact(4) {
+                            let (dx, dz, r2) = (x - w[0], z - w[1], (w[3] * w[3]).max(0.01));
+                            phi += w[2] * r2 / (dx * dx + dz * dz + r2);
+                        }
+                        let d = (((phi - 0.5) * contrast + 0.5).clamp(0.0, 1.0)).powf(gamma);
+                        let d = d * d * (3.0 - 2.0 * d);
+                        let u = d * 7.999;
+                        let (a, b, fr) = (RAMP[u as usize], RAMP[u as usize + 1], u.fract());
+                        let mut c = [a[0] + (b[0] - a[0]) * fr, a[1] + (b[1] - a[1]) * fr, a[2] + (b[2] - a[2]) * fr];
+                        // the cross-section slices: thin bright lines on the equipotentials
+                        let q = (phi * bands).rem_euclid(1.0);
+                        let line = (1.0 - (q.min(1.0 - q) / 0.09)).clamp(0.0, 1.0);
+                        let line = line * line;
+                        for ch in c.iter_mut() {
+                            *ch = (*ch * 0.78 * (1.0 - 0.5 * line) + 0.95 * line).clamp(0.0, 1.0);
+                        }
+                        let mut al = base_alpha + (1.0 - base_alpha) * line * 0.45;
+                        for l in lights.chunks_exact(4) {
+                            let (dx, dz, r) = (x - l[0], z - l[1], l[2].max(0.1));
+                            let d2 = (dx * dx + dz * dz) / (r * r);
+                            if d2 < 1.0 {
+                                let g = (1.0 - d2) * (1.0 - d2);
+                                let lc = l[3] as u32;
+                                let lr = [((lc >> 16) & 255) as f32 / 255.0, ((lc >> 8) & 255) as f32 / 255.0, (lc & 255) as f32 / 255.0];
+                                for (ch, v) in c.iter_mut().zip(lr) {
+                                    *ch = (*ch * (1.0 - 0.75 * g) + v * 1.3 * g).clamp(0.0, 1.0);
+                                }
+                                al += g;
+                            }
+                        }
+                        let al = al.clamp(0.0, 1.0);
+                        px[(j * n + i) as usize] = ((al * 255.0) as u32) << 24 | ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
+                    }
+                }
+                let tex = Arc::new(TexData { w: n, h: n, px });
+                if id >= 0.0 && (id as usize) < self.g3d.texs.len() {
+                    self.g3d.texs[id as usize] = tex;
+                    Ok(Value::Number(id))
+                } else {
+                    self.g3d.texs.push(tex);
+                    Ok(Value::Number((self.g3d.texs.len() - 1) as f64))
+                }
+            },
+            // tm_screen_lens(k): a hyperbolic lens over the frame (the Poincare disk's look): the
+            //   middle swells, the edges crowd in, the corners stay put. Output radius r (0 at the
+            //   centre, 1 at a corner) shows the frame at atanh(r tanh k) / k. 0 = off.
+            "tm_screen_lens" => {
+                let k = f(args, 0, 0.0).clamp(0.0, 3.0);
+                if k < 0.01 {
+                    return Ok(Value::Unit);
+                }
+                let mut gfx = self.gfx.borrow_mut();
+                let (w, h) = (gfx.width, gfx.height);
+                if gfx.buffer.len() < w * h || w < 4 || h < 4 {
+                    return Ok(Value::Unit);
+                }
+                let src = &mut self.g3d.lens;
+                src.clear();
+                src.extend_from_slice(&gfx.buffer[..w * h]);
+                let (cx, cy) = (w as f32 * 0.5, h as f32 * 0.5);
+                let rmax = (cx * cx + cy * cy).sqrt();
+                let tk = k.tanh();
+                let src: &Vec<u32> = src;
+                use rayon::prelude::*;
+                gfx.buffer[..w * h].par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+                    let dy = y as f32 + 0.5 - cy;
+                    for (x, px) in row.iter_mut().enumerate() {
+                        let dx = x as f32 + 0.5 - cx;
+                        let r = (dx * dx + dy * dy).sqrt() / rmax;
+                        if r < 1e-4 {
+                            *px = src[y * w + x];
+                            continue;
+                        }
+                        let rs = ((r * tk).clamp(0.0, 0.999_999)).atanh() / k;
+                        let s = rs / r;
+                        let sx = (cx + dx * s) as i32;
+                        let sy = (cy + dy * s) as i32;
+                        *px = if sx >= 0 && sy >= 0 && (sx as usize) < w && (sy as usize) < h { src[sy as usize * w + sx as usize] } else { 0 };
+                    }
+                });
+                Ok(Value::Unit)
+            },
+            // tm_screen_trail(k): blend the framebuffer with the last trailed frame (k 0..0.95), a
+            //   smeared, syrupy persistence; call after the 3-D flush, before the UI.
+            "tm_screen_trail" => {
+                let k = f(args, 0, 0.5).clamp(0.0, 0.95);
+                let mut gfx = self.gfx.borrow_mut();
+                let n = gfx.width * gfx.height;
+                if gfx.buffer.len() < n {
+                    return Ok(Value::Unit);
+                }
+                let tr = &mut self.g3d.trail;
+                if tr.len() != n || k <= 0.0 {
+                    tr.clear();
+                    tr.extend_from_slice(&gfx.buffer[..n]);
+                    return Ok(Value::Unit);
+                }
+                let kb = (k * 256.0) as u32;
+                let ka = 256 - kb;
+                for (c, p) in gfx.buffer[..n].iter_mut().zip(tr.iter_mut()) {
+                    let (a, b) = (*c, *p);
+                    let rb = (((a & 0xFF00FF) * ka + (b & 0xFF00FF) * kb) >> 8) & 0xFF00FF;
+                    let g = (((a & 0x00FF00) * ka + (b & 0x00FF00) * kb) >> 8) & 0x00FF00;
+                    let o = (a & 0xFF00_0000) | rb | g;
+                    *c = o;
+                    *p = o;
+                }
+                Ok(Value::Unit)
+            },
+            // str_to_hex(s) / hex_to_str(h): text <-> hex (the p2p_* payloads are hex)
+            "str_to_hex" => Ok(Value::Str(text(args, 0).bytes().map(|b| format!("{b:02x}")).collect())),
+            "hex_to_str" => {
+                let h = text(args, 0);
+                let b: Vec<u8> = (0..h.len() / 2).filter_map(|i| u8::from_str_radix(h.get(i * 2..i * 2 + 2)?, 16).ok()).collect();
+                Ok(Value::Str(String::from_utf8_lossy(&b).into_owned()))
+            },
+            // net_local_ip() -> this machine's LAN address ("" offline): the route a datagram would take
+            "net_local_ip" => {
+                let ip = std::net::UdpSocket::bind("0.0.0.0:0")
+                    .and_then(|s| s.connect("8.8.8.8:80").map(|_| s))
+                    .and_then(|s| s.local_addr())
+                    .map(|a| a.ip().to_string())
+                    .unwrap_or_default();
+                Ok(Value::Str(ip))
+            },
+            // random_hex(bytes): bytes of OS randomness as hex (keys and seeds; rand() is not for secrets)
+            "random_hex" => {
+                use rand::RngCore;
+                let n = (num(args, 0, 32.0) as usize).clamp(1, 256);
+                let mut b = vec![0u8; n];
+                rand::rngs::OsRng.fill_bytes(&mut b);
+                Ok(Value::Str(b.iter().map(|x| format!("{x:02x}")).collect()))
+            },
+            // rand_seed(n): reseed rand(), so two machines can build the same world
+            "rand_seed" => {
+                self.rand_state = (num(args, 0, 1.0) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+                Ok(Value::Unit)
+            },
+            // clipboard_set(s) / clipboard_get(): the system clipboard (through the OS's own tools)
+            "clipboard_set" => {
+                let s = text(args, 0);
+                Ok(Value::Bool(clipboard_set(&s)))
+            },
+            "clipboard_get" => Ok(Value::Str(clipboard_get())),
+            // tm_lens_guard(d): skip solids, quads and 3-D triangles with a corner within d of the
+            //   eye (0 = off); the sea grid is exempt (its cells under the camera reach behind it)
+            "tm_lens_guard" => {
+                self.gfx.borrow_mut().lens_guard = f(args, 0, 0.0).max(0.0);
+                Ok(Value::Unit)
             },
             // tm_sys_os() -> "windows" | "linux" | "macos" | ...; tm_sys_arch() -> "x86_64" | "aarch64" | ...
             "tm_sys_os" => Ok(Value::Str(std::env::consts::OS.into())),
@@ -945,7 +1194,22 @@ impl Interpreter {
                 let tex = if id < 0.0 { Some(self.g3d.glow_tex()) } else { self.g3d.texs.get(id as usize).cloned() };
                 if let Some(tex) = tex {
                     let p = [f(args, 1, 0.0), f(args, 2, 0.0), f(args, 3, 0.0)];
-                    self.g3d_billboard(&tex, p, f(args, 4, 1.0), f(args, 5, 0.0), rgb(num(args, 6, 16777215.0)), f(args, 7, 1.0), num(args, 8, 0.0) as u8);
+                    let size = f(args, 4, 1.0);
+                    let mut alpha = f(args, 7, 1.0);
+                    // under the lens guard a glow fades out as the eye comes within its own size and
+                    // is skipped on top of the lens (its flat core would wash over the whole view)
+                    {
+                        let g = self.gfx.borrow();
+                        if g.lens_guard > 0.0 {
+                            let eye = g.camera.depth(p[0], p[1], p[2]) + g.camera.zdist;
+                            let k = ((eye - g.lens_guard - size * 0.35) / (size * 0.9 + 0.5)).clamp(0.0, 1.0);
+                            if k <= 0.02 {
+                                return Ok(Value::Unit);
+                            }
+                            alpha *= k;
+                        }
+                    }
+                    self.g3d_billboard(&tex, p, size, f(args, 5, 0.0), rgb(num(args, 6, 16777215.0)), alpha, num(args, 8, 0.0) as u8);
                 }
                 Ok(Value::Unit)
             },
@@ -1036,7 +1300,8 @@ impl Interpreter {
                     let da = gfx.camera.depth(a[0], a[1], a[2]);
                     let db = gfx.camera.depth(b[0], b[1], b[2]);
                     let dd = gfx.camera.depth(d[0], d[1], d[2]);
-                    if da <= near || db <= near || dd <= near {
+                    let lg = near + gfx.lens_guard;
+                    if da <= lg || db <= lg || dd <= lg {
                         continue;
                     }
                     let (ax, ay, az) = gfx.camera.project(a[0], a[1], a[2]);
@@ -1131,7 +1396,7 @@ impl Interpreter {
                 self.g3d.texs.push(Arc::new(TexData { w: px, h: px, px: data }));
                 Ok(nums(&[(self.g3d.texs.len() - 1) as f32, span]))
             },
-            // tm_quad(tex, x, y, z, ux, uy, uz, vx, vy, vz, tint, alpha, blend, bias=0) - a textured quad in
+            // tm_quad(tex, x, y, z, ux, uy, uz, vx, vy, vz, tint, alpha, blend, bias=0, u0=0, v0=0, ru=1, rv=1) - a textured quad in
             //   any orientation: centre (x, y, z), half-extent vectors u and v (texture u runs along
             //   u, v along v). tex -1 = the glow dot, -2 = a soft round shadow (tint 0 = black).
             //   Depth-tested and fogged like the meshes; for decals such as a blob shadow laid on
@@ -1155,7 +1420,19 @@ impl Interpreter {
                     let blend = num(args, 12, 0.0) as u8;
                     let at = |a: f32, b: f32| [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b, c[2] + u[2] * a + v[2] * b];
                     let q = [at(-1.0, -1.0), at(1.0, -1.0), at(1.0, 1.0), at(-1.0, 1.0)];
-                    let t = [[0.0, 0.0], [0.999, 0.0], [0.999, 0.999], [0.0, 0.999]];
+                    {
+                        let g = self.gfx.borrow();
+                        if g.lens_guard > 0.0 {
+                            let lg = -g.camera.zdist + 0.05 + g.lens_guard;
+                            if q.iter().any(|p| g.camera.depth(p[0], p[1], p[2]) < lg) {
+                                return Ok(Value::Unit);
+                            }
+                        }
+                    }
+                    // optional uv rect (u0, v0, repeat u, repeat v): the texture fetch wraps
+                    let (u0, v0) = (f(args, 14, 0.0), f(args, 15, 0.0));
+                    let (us, vs) = (f(args, 16, 0.999), f(args, 17, 0.999));
+                    let t = [[u0, v0], [u0 + us, v0], [u0 + us, v0 + vs], [u0, v0 + vs]];
                     let mut gfx = self.gfx.borrow_mut();
                     let fog = TexShade { amb: 1.0, lights: Vec::new(), fog_start: gfx.fog_start, fog_end: gfx.fog_end, fog_color: gfx.fog_color, lit: false, ripples: Vec::new() };
                     let shade = if fog.fog_end > 0.0 { Some(&fog) } else { None };
@@ -1807,4 +2084,63 @@ fn solid_tex() -> Arc<TexData> {
         static SOLID: Arc<TexData> = Arc::new(TexData { w: 1, h: 1, px: vec![0xFFFF_FFFF] });
     }
     SOLID.with(|s| s.clone())
+}
+
+
+/// Copies text to the system clipboard with the platform's own tool (clip / pbcopy / wl-copy, xclip).
+fn clipboard_set(s: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let tries: &[(&str, &[&str])] = if cfg!(windows) {
+        &[("powershell", &["-NoProfile", "-Command", "$input | Set-Clipboard"])]
+    } else if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"]), ("xsel", &["-b", "-i"])]
+    };
+    for (cmd, a) in tries {
+        let mut c = Command::new(cmd);
+        c.args(*a).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        if let Ok(mut ch) = c.spawn() {
+            if let Some(mut i) = ch.stdin.take() {
+                let _ = i.write_all(s.as_bytes());
+            }
+            if ch.wait().map(|st| st.success()).unwrap_or(false) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Reads the system clipboard as text ("" when there is none).
+fn clipboard_get() -> String {
+    use std::process::Command;
+    let tries: &[(&str, &[&str])] = if cfg!(windows) {
+        &[("powershell", &["-NoProfile", "-Command", "Get-Clipboard -Raw"])]
+    } else if cfg!(target_os = "macos") {
+        &[("pbpaste", &[])]
+    } else {
+        &[("wl-paste", &["-n"]), ("xclip", &["-selection", "clipboard", "-o"]), ("xsel", &["-b", "-o"])]
+    };
+    for (cmd, a) in tries {
+        let mut c = Command::new(cmd);
+        c.args(*a);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        if let Ok(o) = c.output() {
+            if o.status.success() {
+                return String::from_utf8_lossy(&o.stdout).trim().to_string();
+            }
+        }
+    }
+    String::new()
 }

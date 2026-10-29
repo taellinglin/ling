@@ -4,6 +4,7 @@ use crate::engine::Engine;
 use crate::mixai::{self, Change, Role, Stat, Style, TrackInfo};
 use crate::model::*;
 use crate::project;
+use crate::loudness::{self, LoudModel};
 use crate::space::{self, SRole, Space};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -11,8 +12,11 @@ use std::sync::{Arc, Mutex};
 
 pub struct MixResult {
     pub tracks: Vec<(usize, Stat)>,
+    /// the master as it plays now (through its Limiter, master volume and the safety limiter)
     pub master: Stat,
     pub secs: f64,
+    /// the master before its Limiter, for the loudness target (see loudness.rs)
+    pub model: Option<LoudModel>,
 }
 
 pub struct MixJob {
@@ -29,6 +33,8 @@ pub struct MixState {
     roles: HashMap<usize, Role>,
     style: Option<Style>,
     plan: Vec<Change>,
+    /// the master loudness the user chose (LUFS, ceiling dBTP, label); None = the genre's
+    loud_user: Option<(f32, f32, String)>,
 }
 
 fn role_of(st: &MixState, en: &Engine, i: usize) -> Role {
@@ -191,7 +197,107 @@ fn apply_space(en: &mut Engine, ti: usize, v: &[f32], sr: f32) {
     }
 }
 
+/// How much louder (dB) the planned level moves make the mix: the gain changes on each track's power, as mixai::plan estimates it.
+fn level_shift(list: &[TrackInfo], plan: &[Change]) -> f32 {
+    let (mut before, mut after) = (0f32, 0f32);
+    for (i, t) in list.iter().enumerate() {
+        if t.stat.active_rms_db < -80.0 || t.stat.active < 0.02 {
+            continue;
+        }
+        let p = 10f32.powf(t.stat.rms_db / 10.0);
+        before += p;
+        let g = plan.iter().find(|c| c.track == i as i32 && c.what == "gain").map(|c| c.values[0] / t.volume.max(1e-4)).unwrap_or(1.0);
+        after += p * g * g;
+    }
+    if before > 0.0 && after > 0.0 {
+        10.0 * (after / before).log10()
+    } else {
+        0.0
+    }
+}
+
+/// The master move for a loudness target: the drive into the true-peak Limiter (or a master volume cut for a quieter target) that the
+/// loudness model says reaches `target`, after the planned level moves. None when the master is already there.
+#[allow(clippy::too_many_arguments)]
+fn master_change(en: &Engine, list: &[TrackInfo], plan: &[Change], model: &LoudModel, master: &Stat, target: f32, ceiling: f32, why: &str) -> Option<Change> {
+    let cur = en.project.master_effects.iter().rev().find(|s| s.name == "Limiter");
+    let params: Vec<(&str, f32)> = cur.map(|s| s.params.clone()).unwrap_or_else(|| crate::dsp::fx::defaults("Limiter").to_vec());
+    // loud targets get the fast release
+    let rp = loudness::release_for(target);
+    let mut timing = params.clone();
+    match timing.iter_mut().find(|p| p.0 == "release") {
+        Some(p) => p.1 = rp,
+        None => timing.push(("release", rp)),
+    }
+    let (rel, look) = loudness::limiter_timing(&timing);
+    let moved = level_shift(list, plan);
+    let (gstar, est) = model.solve(target, ceiling, rel, look);
+    let g = gstar - moved;
+    let (mv, drive) = if g >= 0.0 { (1.0f32, g.min(24.0)) } else { (10f32.powf(g / 20.0), 0.0) };
+    let cur_drive = params.iter().find(|p| p.0 == "gain").map(|p| p.1 * 24.0).unwrap_or(0.0);
+    let cur_ceil = params.iter().find(|p| p.0 == "ceiling").map(|p| p.1 * 6.0 - 6.0).unwrap_or(-1.0);
+    let cur_rel = params.iter().find(|p| p.0 == "release").map(|p| p.1).unwrap_or(0.5);
+    let same = cur.is_some() && (cur_drive - drive).abs() < 0.3 && (cur_ceil - ceiling).abs() < 0.05 && (cur_rel - rp).abs() < 0.01 && (en.project.master_volume - mv).abs() < 0.02;
+    if same {
+        return None;
+    }
+    let reach = if (est - target).abs() > 0.6 { format!(" (it can reach about {est:.1} LUFS)") } else { String::new() };
+    let how = if g >= 0.0 { format!("{drive:+.1} dB into the true-peak Limiter") } else { format!("the master down {:.1} dB after the Limiter", -g) };
+    Some(Change {
+        track: -1,
+        what: "master".into(),
+        values: vec![mv, drive, ceiling, rp],
+        reason: format!("the master is at {:.1} LUFS, {:.1} dBTP; for {:.1} LUFS ({}): {}, ceiling {:.1} dBTP{}", master.lufs, master.tp_db, target, why, how, ceiling, reach),
+    })
+}
+
+/// put (or update) the Limiter at the end of the master chain: drive dB, ceiling dBTP, release (its 0..1 parameter)
+fn set_master_limiter(en: &mut Engine, drive: f32, ceiling: f32, release: f32, sr: f32) {
+    let fx = &mut en.project.master_effects;
+    if !fx.iter().any(|s| s.name == "Limiter") {
+        if let Some(s) = EffectSlot::new("Limiter", sr) {
+            fx.push(s);
+        }
+    }
+    if let Some(s) = fx.iter_mut().rev().find(|s| s.name == "Limiter") {
+        s.bypass = false;
+        set_fx(s, "gain", (drive / 24.0).clamp(0.0, 1.0));
+        set_fx(s, "ceiling", ((ceiling + 6.0) / 6.0).clamp(0.0, 1.0));
+        set_fx(s, "release", release);
+    }
+}
+
+/// riser / sweep tracks with builds to narrow and no width lane yet
+fn riser_changes(en: &Engine) -> Vec<Change> {
+    let spans = crate::fxctx::build_spans(&en.project.meta.iter().find(|(k, _)| k == "sections").map(|(_, v)| v.clone()).unwrap_or_default());
+    if spans.is_empty() {
+        return vec![];
+    }
+    let mut out = vec![];
+    for (i, t) in en.project.tracks.iter().enumerate() {
+        if !crate::fxctx::is_riser(&t.name) || t.clips.is_empty() {
+            continue;
+        }
+        let has = t.effects.iter().position(|e| e.name == "Imager").map(|k| t.auto.iter().any(|l| l.param.starts_with(&format!("fx{k}.")))).unwrap_or(false);
+        if has {
+            continue;
+        }
+        out.push(Change { track: i as i32, what: "width".into(), values: vec![], reason: format!("{}: narrowed to mono through {} build(s), opened to 150% on the drop (an Imager width lane)", t.name, spans.len()) });
+    }
+    out
+}
+
 impl Daw {
+    /// the master loudness target: the user's choice, else the genre's -> (LUFS, ceiling dBTP, why)
+    fn loud_target(&self, en: &Engine) -> (f32, f32, String) {
+        if let Some((l, c, why)) = &self.mix.loud_user {
+            return (*l, *c, why.clone());
+        }
+        let (sp, from_meta) = project_space(en);
+        let l = loudness::genre_target(sp.genre);
+        (l, -1.0, format!("a {} master{}", sp.genre, if from_meta { "" } else { ", genre guessed from the music" }))
+    }
+
     fn mix_infos(&self, en: &Engine) -> Vec<(usize, TrackInfo)> {
         let Some(res) = self.mix.res.as_ref() else { return vec![] };
         res.tracks
@@ -285,14 +391,33 @@ impl Daw {
                             *job.result.lock().unwrap_or_else(|p| p.into_inner()) = Some(Err("cancelled".into()));
                             return;
                         }
-                        // the whole mix through the master chain
+                        // the whole mix through the master chain, but before its Limiter (the loudness model needs the unlimited
+                        // master), 18 dB down so nothing clips on the way out, brought back up exactly; then the end of the chain
+                        // (Limiter, master volume, safety limiter) is applied to measure the master as it plays now
                         let mut e = make(&mut cache);
+                        let lim: Option<Vec<(&'static str, f32)>> = e.project.master_effects.iter().rev().find(|s| s.name == "Limiter" && !s.bypass).map(|s| s.params.clone());
+                        for s in e.project.master_effects.iter_mut().filter(|s| s.name == "Limiter") {
+                            s.bypass = true;
+                        }
+                        let (mv, el) = (e.project.master_volume, e.project.limiter);
+                        e.project.master_volume = 0.125;
+                        e.project.limiter = false;
                         let dummy = AtomicU32::new(0);
-                        let master = e.bounce_range_progress(0.0, end, 1.0, &dummy, &job.cancel, 0, 1000).map(|b| mixai::analyze(&b, sr)).unwrap_or_default();
+                        let (master, model) = match e.bounce_range_progress(0.0, end, 1.0, &dummy, &job.cancel, 0, 1000) {
+                            Some(mut b) => {
+                                b.iter_mut().for_each(|x| *x *= 8.0);
+                                let model = LoudModel::build(&b, sr);
+                                loudness::apply_tail(&mut b, sr, lim.as_deref(), mv, el);
+                                let mut st = mixai::analyze(&b, sr);
+                                st.tp_db = crate::dsp::edmfx::true_peak_db(&b);
+                                (st, Some(model))
+                            }
+                            None => (Stat::default(), None),
+                        };
                         let mut tracks = out.into_inner().unwrap_or_default();
                         tracks.sort_by_key(|t| t.0);
                         job.progress.store(1000, Ordering::Relaxed);
-                        *job.result.lock().unwrap_or_else(|p| p.into_inner()) = Some(Ok(MixResult { tracks, master, secs: end * 60.0 / bpm }));
+                        *job.result.lock().unwrap_or_else(|p| p.into_inner()) = Some(Ok(MixResult { tracks, master, secs: end * 60.0 / bpm, model }));
                     })
                     .map_err(|e| e.to_string())?;
                 ok!(true)
@@ -333,12 +458,54 @@ impl Daw {
                 ok!(Val::List(v))
             }
             "daw_mix_master" => {
-                // -> [lufs, peak dB, rms dB, crest, centroid, width dB, correlation, seconds analysed, clipped samples, sub..air x6]
+                // -> [lufs, peak dB, rms dB, crest, centroid, width dB, correlation, seconds analysed, clipped samples, sub..air x6, true peak dBTP]
                 let Some(r) = self.mix.res.as_ref() else { return ok!(Val::List(vec![])) };
                 let s = &r.master;
                 let mut v: Vec<Val> = [s.lufs, s.peak_db, s.rms_db, s.crest_db, s.centroid_hz, s.width_db, s.corr, r.secs as f32, s.clipped as f32].iter().map(|x| Val::Num(*x as f64)).collect();
                 v.extend(s.bands.iter().map(|x| Val::Num(*x as f64)));
+                v.push(Val::Num(s.tp_db as f64));
                 ok!(Val::List(v))
+            }
+            "daw_mix_loud_presets" => {
+                // -> [name, LUFS (0 = the genre's), ceiling dBTP, note]* ; index 0 is "Auto (genre)"
+                let mut v = vec![];
+                for p in loudness::PRESETS.iter() {
+                    v.extend([Val::Str(p.name.into()), Val::Num(if p.lufs.is_finite() { p.lufs as f64 } else { 0.0 }), Val::Num(p.ceiling as f64), Val::Str(p.note.into())]);
+                }
+                ok!(Val::List(v))
+            }
+            "daw_mix_loud_set" => {
+                // (preset index; 0 = the genre's) -> the target LUFS now in force
+                let i = a.u(0);
+                self.mix.loud_user = loudness::PRESETS.get(i).filter(|p| p.lufs.is_finite()).map(|p| (p.lufs, p.ceiling, p.name.to_string()));
+                let en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                ok!(self.loud_target(&en).0)
+            }
+            "daw_mix_loud_info" => {
+                // -> [target LUFS, ceiling dBTP, why (text), chosen by the user 0/1, the genre's own target]
+                let en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                let (l, c, why) = self.loud_target(&en);
+                let g = loudness::genre_target(project_space(&en).0.genre);
+                ok!(Val::List(vec![Val::Num(l as f64), Val::Num(c as f64), Val::Str(why), Val::Num(if self.mix.loud_user.is_some() { 1.0 } else { 0.0 }), Val::Num(g as f64)]))
+            }
+            "daw_mix_riser_width" => {
+                // (track, or -1 = every riser / sweep track) -> tracks given the narrow-then-wide width lane over the builds ("sections" meta)
+                let sr = self.out.sr;
+                let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                let spans = crate::fxctx::build_spans(&en.project.meta.iter().find(|(k, _)| k == "sections").map(|(_, v)| v.clone()).unwrap_or_default());
+                let want = a.n(0);
+                let mut n = 0;
+                for (i, t) in en.project.tracks.iter_mut().enumerate() {
+                    let pick = if want >= 0.0 { i == want as usize } else { crate::fxctx::is_riser(&t.name) };
+                    if pick && crate::fxctx::riser_narrowing(t, &spans, sr).is_some() {
+                        n += 1;
+                    }
+                }
+                drop(en);
+                if n > 0 {
+                    self.touch();
+                }
+                ok!(n)
             }
             "daw_mix_set_role" => {
                 // (track, role name)
@@ -351,8 +518,10 @@ impl Daw {
                 }
             }
             "daw_mix_style" => {
-                // (loudness LUFS, brightness -1..1, punch 0..1, width 0..1)
-                self.mix.style = Some(Style { loudness: a.n(0).clamp(-24.0, -6.0) as f32, brightness: a.n(1).clamp(-1.0, 1.0) as f32, punch: a.n(2).clamp(0.0, 1.0) as f32, width: a.n(3).clamp(0.0, 1.0) as f32 });
+                // (loudness LUFS - 0 = the genre's, brightness -1..1, punch 0..1, width 0..1)
+                let l = a.n(0);
+                self.mix.loud_user = if l < -1.0 { Some(((l.clamp(-30.0, -4.0)) as f32, -1.0, format!("{:.1} LUFS, set by you", l.clamp(-30.0, -4.0)))) } else { None };
+                self.mix.style = Some(Style { loudness: f32::NAN, brightness: a.n(1).clamp(-1.0, 1.0) as f32, punch: a.n(2).clamp(0.0, 1.0) as f32, width: a.n(3).clamp(0.0, 1.0) as f32 });
                 ok!(true)
             }
             "daw_mix_plan" => {
@@ -363,8 +532,19 @@ impl Daw {
                 let list: Vec<TrackInfo> = infos.into_iter().map(|(_, t)| t).collect();
                 // plan() indexes tracks by position in the list: map back to project indices
                 let idx: Vec<usize> = res.tracks.iter().map(|t| t.0).filter(|i| *i < en.project.tracks.len()).collect();
-                let style = self.mix.style.clone().unwrap_or_default();
+                let mut style = self.mix.style.clone().unwrap_or_default();
+                let (target, ceiling, why) = self.loud_target(&en);
+                style.loudness = target;
                 let mut plan = mixai::plan(&list, &res.master, en.project.master_volume, &style);
+                // the master: through the true-peak Limiter to the target (in place of a plain master volume move)
+                if let Some(model) = res.model.as_ref() {
+                    if res.master.lufs > -69.0 {
+                        plan.retain(|c| c.what != "master");
+                        if let Some(c) = master_change(&en, &list, &plan, model, &res.master, target, ceiling, &why) {
+                            plan.push(c);
+                        }
+                    }
+                }
                 for c in plan.iter_mut() {
                     if c.track >= 0 {
                         c.track = idx[c.track as usize] as i32;
@@ -389,6 +569,11 @@ impl Daw {
                     }
                 }
                 plan.extend(space_changes(&en, &sp, &infos2));
+                // risers: narrowed through the builds, opened on the drops
+                for c in riser_changes(&en) {
+                    v.extend([Val::Num(c.track as f64), Val::Str(c.what.clone()), Val::Str(c.reason.clone()), Val::Num(0.0), Val::Num(0.0), Val::Num(0.0)]);
+                    plan.push(c);
+                }
                 drop(en);
                 self.mix.plan = plan;
                 ok!(Val::List(v))
@@ -428,7 +613,19 @@ impl Daw {
                         if c.what == "master" {
                             en.project.master_volume = c.values[0].clamp(0.0, 2.0);
                             en.project.limiter = true;
+                            if c.values.len() >= 4 {
+                                set_master_limiter(&mut en, c.values[1], c.values[2], c.values[3], sr);
+                            }
                             n += 1;
+                        }
+                        continue;
+                    }
+                    if c.what == "width" {
+                        let spans = crate::fxctx::build_spans(&en.project.meta.iter().find(|(k, _)| k == "sections").map(|(_, v)| v.clone()).unwrap_or_default());
+                        if let Some(t) = en.project.tracks.get_mut(c.track as usize) {
+                            if crate::fxctx::riser_narrowing(t, &spans, sr).is_some() {
+                                n += 1;
+                            }
                         }
                         continue;
                     }
@@ -513,7 +710,8 @@ impl Daw {
                 if v["style"].is_object() {
                     let st = &v["style"];
                     self.mix.style = Some(Style {
-                        loudness: st["loudness"].as_f64().unwrap_or(-14.0).clamp(-24.0, -6.0) as f32,
+                        // the loudness comes from the genre or the user's choice (loud_target), not from the language model
+                        loudness: f32::NAN,
                         brightness: st["brightness"].as_f64().unwrap_or(0.0).clamp(-1.0, 1.0) as f32,
                         punch: st["punch"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0) as f32,
                         width: st["width"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0) as f32,
@@ -611,5 +809,64 @@ mod space_tests {
         assert_eq!(project_space(&e).0.genre, "lofi");
         e.project.meta.push(("ai.genre".into(), "drum and bass".into()));
         assert_eq!(project_space(&e).0.genre, "drum and bass");
+    }
+}
+
+#[cfg(test)]
+mod loudness_tests {
+    use super::*;
+
+    /// 12 s of a club-like mix at 128 bpm (kick, bass, off-beat noise hats, a stab), quiet for the first 3 s
+    fn mix(sr: f32) -> Vec<f32> {
+        let n = (sr * 12.0) as usize;
+        let spb = (sr * 60.0 / 128.0) as usize;
+        let mut seed = 99u32;
+        let mut out = vec![0.0f32; n * 2];
+        for i in 0..n {
+            let t = i as f32 / sr;
+            let kt = (i % spb) as f32 / sr;
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let nz = seed as f32 / u32::MAX as f32 * 2.0 - 1.0;
+            let hat = nz * (-(((i + spb / 2) % spb) as f32 / sr) * 50.0).exp() * 0.2;
+            let kick = (std::f32::consts::TAU * (48.0 + 110.0 * (-kt * 28.0).exp()) * kt).sin() * (-kt * 8.0).exp() * 0.8;
+            let bass = (std::f32::consts::TAU * 49.0 * t).sin() * 0.3 * (1.0 - (-kt * 15.0).exp());
+            let stab = [196.0f32, 233.1, 293.7].iter().map(|f| (std::f32::consts::TAU * f * t).sin()).sum::<f32>() * 0.07;
+            let lvl = if t < 3.0 { 0.3 } else { 1.0 };
+            out[i * 2] = (kick + bass + stab + hat) * lvl;
+            out[i * 2 + 1] = (kick + bass + stab - hat) * lvl;
+        }
+        out
+    }
+
+    #[test]
+    fn the_master_move_reaches_the_genre_loudness_through_the_limiter() {
+        let sr = 48000.0;
+        let buf = mix(sr);
+        let model = LoudModel::build(&buf, sr);
+        let mut e = Engine::new(sr);
+        e.project.meta.push(("ai.genre".into(), "dubstep".into()));
+        assert_eq!(loudness::genre_target(project_space(&e).0.genre), -5.5);
+        let master = mixai::analyze(&buf, sr);
+        for target in [-14.0f32, -8.0, -7.0] {
+            let c = master_change(&e, &[], &[], &model, &master, target, -1.0, "test").expect("a master move");
+            assert_eq!(c.values.len(), 4);
+            let mut e2 = Engine::new(sr);
+            e2.project.master_volume = c.values[0];
+            set_master_limiter(&mut e2, c.values[1], c.values[2], c.values[3], sr);
+            assert_eq!(e2.project.master_effects.last().unwrap().name, "Limiter");
+            let mut b = buf.clone();
+            for ch in b.chunks_mut(512) {
+                e2.project.master_effects[0].process(ch);
+            }
+            b.iter_mut().for_each(|x| *x *= e2.project.master_volume);
+            let got = mixai::lufs(&b, sr);
+            assert!((got - target).abs() < 0.5, "target {target}: {got} LUFS ({})", c.reason);
+            assert!(crate::dsp::edmfx::true_peak_db(&b) <= -0.99);
+            // applied once, the same target asks for nothing more
+            let again = master_change(&e2, &[], &[], &model, &master, target, -1.0, "test");
+            assert!(again.is_none(), "{:?}", again.map(|c| c.reason));
+        }
     }
 }

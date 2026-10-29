@@ -1,5 +1,5 @@
 //! OS audio mixer + pentatonic synthesizer -- the audio layer between the
-//! AC'97 DMA ring (`ac97.rs`) and everything that makes sound.
+//! output DMA ring (`ac97.rs` or `hda.rs`) and everything that makes sound.
 //!
 //! Model, per the design request: Windows-audio-shaped, deliberately NOT a
 //! JACK-style routing graph. Every app (window kind / shell / player) owns
@@ -24,7 +24,15 @@
 //! files exist, a real song fits -- resampling to 48 kHz and mixing it in
 //! alongside the synth voices. That's what the desktop Media player uses.
 
-use crate::drivers::ac97;
+use crate::drivers::{ac97, hda};
+
+/// Which output controller `init` brought up: ICH AC'97 or Intel HD Audio
+/// (VirtualBox's default for new VMs). Both take the same pull-model
+/// `pump(render)`, 48 kHz 16-bit stereo, FRAMES_PER_BUFFER frames a call.
+const BACKEND_NONE: u8 = 0;
+const BACKEND_AC97: u8 = 1;
+const BACKEND_HDA: u8 = 2;
+static mut BACKEND: u8 = BACKEND_NONE;
 
 pub const SAMPLE_RATE: u32 = 48_000;
 
@@ -157,6 +165,15 @@ pub fn output_level_r() -> u32 {
 
 // Honest device facts (the AC'97 driver is fixed 48kHz/16-bit stereo, PCM-out
 // only -- see its module doc), surfaced read-only in the Audio settings tab.
+/// The output controller in use, for Settings > Audio.
+pub fn device_name() -> &'static str {
+    match unsafe { BACKEND } {
+        BACKEND_NONE => "none",
+        b if b == BACKEND_AC97 => "AC'97",
+        _ => "Intel HD Audio",
+    }
+}
+
 pub fn sample_rate() -> u32 {
     SAMPLE_RATE
 }
@@ -164,10 +181,17 @@ pub fn bit_depth() -> u32 {
     16
 }
 pub fn buffer_frames() -> u32 {
-    ac97::FRAMES_PER_BUFFER as u32
+    match unsafe { BACKEND } {
+        BACKEND_HDA => hda::FRAMES_PER_BUFFER as u32,
+        _ => ac97::FRAMES_PER_BUFFER as u32,
+    }
 }
+/// Buffers kept queued ahead of the one playing (the latency budget).
 pub fn ring_buffers() -> u32 {
-    ac97::NUM_BUFFERS as u32
+    match unsafe { BACKEND } {
+        BACKEND_HDA => hda::QUEUE_DEPTH as u32,
+        _ => ac97::QUEUE_DEPTH as u32,
+    }
 }
 pub fn has_capture() -> bool {
     false
@@ -715,16 +739,31 @@ fn render(buf: &mut [i16]) {
     }
 }
 
-/// Initialize the hardware; true if an AC'97 device exists.
+/// Initialize the hardware; true if an AC'97 or HD Audio device exists.
 pub fn init() -> bool {
-    ac97::init()
+    unsafe {
+        if BACKEND != BACKEND_NONE {
+            return true;
+        }
+        if ac97::init() {
+            BACKEND = BACKEND_AC97;
+        } else if hda::init() {
+            BACKEND = BACKEND_HDA;
+        }
+        BACKEND != BACKEND_NONE
+    }
 }
 
 /// Keep the DMA ring fed -- call once per WM frame / shell-loop iteration.
 /// Cheap no-op when the ring is already full or no device exists.
 pub fn pump() {
-    if !ac97::present() {
-        return;
+    match unsafe { BACKEND } {
+        BACKEND_AC97 => {
+            ac97::pump(&mut render);
+        }
+        BACKEND_HDA => {
+            hda::pump(&mut render);
+        }
+        _ => {}
     }
-    ac97::pump(&mut render);
 }

@@ -128,8 +128,13 @@ mod vedit_api;
 mod rvc_api;
 mod cloud_api;
 mod song_api;
+mod songan_api;
+mod medley_api;
 mod arrange_api;
 mod chops_api;
+mod recipe_api;
+mod wt_api;
+mod noteexpr_api;
 
 /// The patch file a role table's (plugin, name) means, for the sound catalogue.
 pub fn song_find_patch(kind: &str, name: &str) -> Option<String> {
@@ -334,6 +339,18 @@ impl Daw {
         }
         if name.starts_with("daw_script_") {
             return self.scriptdsp_dispatch(name, a);
+        }
+        if name.starts_with("daw_nx_") {
+            return self.nx_dispatch(name, a);
+        }
+        if name.starts_with("daw_wt_") {
+            return self.wt_dispatch(name, a);
+        }
+        if name.starts_with("daw_recipe_") {
+            return self.recipe_dispatch(name, a);
+        }
+        if name.starts_with("daw_song_an_") {
+            return self.songan_dispatch(name, a);
         }
         if name.starts_with("daw_song_") || name.starts_with("daw_deco_") || name.starts_with("daw_cycle_") || name == "daw_tune_check" {
             return self.song_dispatch(name, a);
@@ -1851,7 +1868,9 @@ impl Daw {
                             notes.retain(|n| n.start + n.len > 1e-9);
                             for n in notes.iter_mut() {
                                 if n.start < 0.0 {
-                                    n.len += n.start;
+                                    // the part before the new start goes (its expression curves keep what is left, in place)
+                                    let (s0, l0) = (n.start, n.len);
+                                    n.cut(-s0, l0);
                                     n.start = 0.0;
                                 }
                             }
@@ -1944,13 +1963,17 @@ impl Daw {
                     (ClipData::Midi(ln), ClipData::Midi(rn)) => {
                         ln.retain(|n| n.start < cut);
                         for n in ln.iter_mut() {
-                            n.len = n.len.min(cut - n.start);
+                            if n.start + n.len > cut {
+                                n.cut(0.0, cut - n.start);
+                            }
                         }
                         rn.retain(|n| n.start + n.len > cut);
                         for n in rn.iter_mut() {
                             let s = n.start - cut;
                             if s < 0.0 {
-                                n.len += s;
+                                // a note across the cut: the right half keeps the rest of its pitch gesture / curves
+                                let l0 = n.len;
+                                n.cut(-s, l0);
                                 n.start = 0.0;
                             } else {
                                 n.start = s;
@@ -2613,7 +2636,8 @@ impl Daw {
                         rng ^= rng << 13;
                         rng ^= rng >> 17;
                         rng ^= rng << 5;
-                        if matches!(*pn, "mix" | "level" | "width") {
+                        // never the levels, nor the Limiter's drive / ceiling or the Stutter's always-on trigger
+                        if matches!(*pn, "mix" | "level" | "width" | "gain" | "ceiling" | "trigger") {
                             continue;
                         }
                         let r = (rng & 0xffff) as f32 / 65535.0;

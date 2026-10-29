@@ -100,7 +100,7 @@ pub fn build(p: &Patch, sr: f32) -> Option<Box<dyn Instrument>> {
 pub fn dump(kind: &str, name: &str, state: &[(String, f32)], fx: &[FxSpec]) -> String {
     let mut s = String::new();
     s.push_str(&format!("# {} patch — edit freely; load from the Instrument tab\n", match kind { "drums" => "Ling Membrane", "growl" => "Ling Growl", "voice" => "Ling Voice",
-        "prism" => "Ling Prism", _ => "Ling Synth X" }));
+        "prism" => "Ling Prism", "cinema" => "Ling Cinema", _ => "Ling Synth X" }));
     s.push_str(&format!("name = \"{name}\"\ntype = {kind}\n"));
     let mut line = String::new();
     for (k, v) in state {

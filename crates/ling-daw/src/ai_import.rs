@@ -199,6 +199,9 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         ("lofi", "sub bass" | "rolling bass") => &[("prism", "Warm Sub")],
         ("lofi", "warm pad" | "ambient pad") => &[("prism", "Tape Dream"), ("prism", "Soft Pad")],
         ("ambient", "warm pad" | "dark pad" | "ambient pad") => &[("prism", "Ether Pad"), ("prism", "Tranquility Pad"), ("prism", "Atlantis Pad")],
+        // Ling Cinema's soundscapes are the atmosphere of ambient and film music
+        ("ambient" | "cinematic", "texture") => &[("cinema", "Wind Field"), ("cinema", "Dark Space"), ("prism", "Radio Ghost")],
+        ("cinematic", "riser") => &[("cinema", "Tension Riser"), ("cinema", "Shepard Riser")],
         ("ambient", _) if lead => &[("prism", "Glass Lead With Bell"), ("prism", "Spacer Lead")],
         ("trance", _) if lead => &[("prism", "Supersaw Lead"), ("prism", "Simple Trance Lead")],
         ("trance", "warm pad" | "ambient pad" | "strings") => &[("prism", "Classic Trance Pad"), ("prism", "Uplift Pad")],
@@ -654,6 +657,7 @@ mod tests {
         let prism = names("Prism", "Prism ");
         let growl = names("Growl", "Growl ");
         let chip = names("Chip", "Chip ");
+        let cinema = names("Cinema", "Cinema ");
         let voice = names("Voice", "Voice ");
         let egm: Vec<String> = names("Electronic GM", "").into_iter().map(|n| format!("Electronic: {}", n.split_once(' ').map(|x| x.1).unwrap_or(&n))).collect();
         let kits = names(".", "");
@@ -663,6 +667,7 @@ mod tests {
                     "prism" => prism.iter().any(|p| p == patch),
                     "growl" => growl.iter().any(|p| p == patch),
                     "chip" => chip.iter().any(|p| p == patch),
+                    "cinema" => cinema.iter().any(|p| p == patch),
                     "voice" => voice.iter().any(|p| p == patch),
                     _ => egm.iter().any(|p| p == patch),
                 };
@@ -682,7 +687,7 @@ mod tests {
                             "prism" => prism.iter().any(|p| p == patch),
                             "growl" => growl.iter().any(|p| p == patch),
                             "chip" => chip.iter().any(|p| p == patch),
-                    "chip" => chip.iter().any(|p| p == patch),
+                            "cinema" => cinema.iter().any(|p| p == patch),
                             "voice" => voice.iter().any(|p| p == patch),
                             _ => egm.iter().any(|p| p == patch),
                         };

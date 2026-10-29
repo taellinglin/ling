@@ -429,7 +429,11 @@ pub const GENRES: &[Genre] = &[
     Genre { name: "reggaeton", style: "pop", bpm: 95.0, kit: "Kit Dembow", drums: "trap", form: Form::Song, roles: &["drums", "sub bass", "pluck", "warm pad", "synth lead"], lufs: -8.5, words: &["reggaeton", "dembow", "latin", "urbano"] },
     Genre { name: "afrobeat", style: "disco", bpm: 108.0, kit: "Kit Afro Percussion", drums: "breakbeat", form: Form::Song, roles: &["drums", "pluck bass", "guitar", "keys", "brass"], lufs: -10.0, words: &["afrobeat", "afrobeats", "amapiano", "highlife"] },
     Genre { name: "chiptune", style: "pop", bpm: 140.0, kit: "Kit Electro 808", drums: "breakbeat", form: Form::Song, roles: &["drums", "pluck bass", "synth lead", "arp"], lufs: -10.0, words: &["chiptune", "8-bit", "8bit", "game", "nes"] },
-    Genre { name: "folk", style: "pop", bpm: 96.0, kit: "Kit Brushes", drums: "halftime", form: Form::Song, roles: &["guitar", "piano", "strings", "woodwind", "drums"], lufs: -13.0, words: &["folk", "acoustic", "country", "ballad", "singer-songwriter"] },
+    Genre { name: "folk", style: "pop", bpm: 96.0, kit: "Kit Brushes", drums: "halftime", form: Form::Song, roles: &["guitar", "piano", "strings", "woodwind", "drums"], lufs: -13.0, words: &["folk", "acoustic", "country", "singer-songwriter"] },
+    Genre { name: "acid techno", style: "techno", bpm: 135.0, kit: "Kit Techno Hard", drums: "techno", form: Form::Club, roles: &["drums", "acid bass", "stab chord", "texture", "arp", "riser"], lufs: -8.5, words: &["acid techno", "acid", "acid house", "303"] },
+    Genre { name: "future bass", style: "pop", bpm: 150.0, kit: "Kit Electro 808", drums: "trap", form: Form::Club, roles: &["drums", "sub bass", "supersaw lead", "warm pad", "pluck", "riser"], lufs: -8.0, words: &["future bass", "kawaii", "melodic bass", "kawaii future bass"] },
+    Genre { name: "breakbeat", style: "dnb", bpm: 132.0, kit: "Kit UK Garage", drums: "breakbeat", form: Form::Club, roles: &["drums", "rolling bass", "stab chord", "synth lead", "warm pad", "riser"], lufs: -9.0, words: &["breakbeat", "breaks", "big beat", "nu skool breaks"] },
+    Genre { name: "ballad", style: "pop", bpm: 72.0, kit: "Kit Brushes", drums: "halftime", form: Form::Song, roles: &["piano", "strings", "warm pad", "sub bass", "drums", "woodwind"], lufs: -13.0, words: &["ballad", "power ballad", "love song", "slow song"] },
 ];
 
 pub fn genre(name: &str) -> &'static Genre {
@@ -886,6 +890,11 @@ pub fn plan_story(prompt: &str, lyrics: &str, model: &[(String, String)], refere
     for s in p.sections.iter_mut() {
         s.energy = (mean + (s.energy - mean) * swing).clamp(0.05, 1.0);
     }
+    // no jarring jumps: only a chorus / drop may leap up, only a break / bridge / outro may fall far (flow.rs-style continuity)
+    let smoothed = smooth_energy(&mut p.sections);
+    if smoothed > 0 {
+        p.notes.push(format!("energy curve: {smoothed} section(s) eased so the song never jumps without a reason"));
+    }
     // the emotional plan, before a note is written (emotion.rs); its arc steers the intro and the progression family below
     let words = lyrics_for_sections(lyrics, &p.sections);
     let ep = crate::emotion::plan(&p.sections, &p.arc, &p.genre, &words, p.dials.mood, p.seed);
@@ -905,6 +914,7 @@ pub fn plan_story(prompt: &str, lyrics: &str, model: &[(String, String)], refere
     p.notes.extend(a.notes);
     p.notes.extend(movement_notes(&p));
     p.notes.extend(craft_notes(&p));
+    p.notes.extend(flow_notes(&p));
     p.notes.push(format!("feel: {}", crate::emotion::summary(&ep, &p.sections)));
     p
 }
@@ -1840,7 +1850,7 @@ fn leads_into_drop(plan: &SongPlan, si: usize) -> bool {
 /// An accelerating snare / clap roll for a build: quarter notes, then eighths, sixteenths and thirty-seconds; the stage changes
 /// are where the feeling puts them ([`crate::emotion::roll_stages`]). It starts two bars in on a long build and stops where the
 /// silence before the drop begins. The velocity climbs the whole way.
-fn build_roll(sec: &Section, feel: &crate::emotion::Feel, gap: f64) -> Vec<N> {
+pub fn build_roll(sec: &Section, feel: &crate::emotion::Feel, gap: f64) -> Vec<N> {
     let len = sec.bars as f64 * 4.0;
     let end = len - gap;
     let t0 = if sec.bars >= 8 { 8.0 } else if sec.bars >= 4 { 4.0 } else { 0.0 };
@@ -1908,14 +1918,555 @@ fn cut_gap(notes: &mut Vec<N>, len: f64, gap: f64) {
     }
 }
 
+// ── flow: how the sections connect ──────────────────────────────────────────
+//
+// A producer joins sections: the drums fill into every new section and crash on its downbeat, the lead runs into the next phrase
+// (a pickup that walks to its first note), the bass approaches chord changes by step, the chords move as little as they can (common
+// tones held), a noise sweep / reverse swell rises into a drop, the energy never jumps without a reason (a drop or a breakdown, with
+// its setup) and the last bar resolves on the tonic. The emotion plan sets how big each gesture is.
+
+/// The energy curve without jarring jumps: a section may rise more than 0.35 above the one before only when it is a chorus / drop /
+/// climax or a build, and fall more than 0.45 only into a break, bridge, outro or intro. Returns how many sections were eased.
+pub fn smooth_energy(sections: &mut [Section]) -> usize {
+    let mut n = 0;
+    for i in 1..sections.len() {
+        let prev = sections[i - 1].energy;
+        let tag = sections[i].tag.clone();
+        let e = sections[i].energy;
+        let up_ok = is_chorus(&tag) || is_build_tag(&tag);
+        let down_ok = is_bridge(&tag) || matches!(tag.as_str(), "outro" | "intro" | "breakdown");
+        let ne = if e - prev > 0.35 && !up_ok {
+            prev + 0.35
+        } else if prev - e > 0.45 && !down_ok {
+            prev - 0.45
+        } else {
+            e
+        };
+        if (ne - e).abs() > 1e-9 {
+            sections[i].energy = ne.clamp(0.05, 1.0);
+            n += 1;
+        }
+    }
+    n
+}
+
+/// A drum fill over the last `beats` of a section: eighths, sixteenths in the last two beats, snare then the toms high to low,
+/// louder towards the barline; a calm feeling plays it on the snare and the rim only. The groove's backbeat, open hats and the
+/// kicks after the fill's first beat make way.
+pub fn transition_fill(len: f64, beats: f64, arousal: f32, notes: &mut Vec<N>) {
+    if beats < 0.5 || len < 2.0 {
+        return;
+    }
+    let from = (len - beats).max(0.0);
+    let toms = [50u8, 48, 47, 45, 43, 41];
+    notes.retain(|n| {
+        let late = n.start >= from - 1e-6;
+        !(late && (matches!(n.key, compose::K_SNARE | compose::K_CLAP | compose::K_RIM | compose::K_HAT_OPEN | compose::K_CRASH) || toms.contains(&n.key)))
+            && !(n.start > from + 0.99 && n.key == compose::K_KICK)
+            && !(n.start >= len - 1.0 - 1e-6 && n.key == compose::K_HAT)
+    });
+    let mut t = from;
+    let mut i = 0usize;
+    while t < len - 1e-6 {
+        let frac = (t - from) / beats;
+        let step = if len - t <= 2.0 + 1e-6 { 0.25 } else { 0.5 };
+        let key = if arousal < 0.4 {
+            if i % 2 == 0 { compose::K_SNARE } else { compose::K_RIM }
+        } else if frac < 0.35 {
+            compose::K_SNARE
+        } else {
+            toms[(((frac - 0.35) / 0.65) * toms.len() as f64) as usize % toms.len()]
+        };
+        notes.push(N { start: t, len: step * 0.8, key, vel: ((0.55 + 0.4 * frac) as f32 * (0.8 + 0.25 * arousal)).clamp(0.2, 1.0) });
+        t += step;
+        i += 1;
+    }
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
+}
+
+/// Bass approach notes: at some chord changes (more of them when the feeling pushes) the bass note in the beat before the change
+/// becomes a scale step next to the new root, from the side the line comes from; with nothing there, an eighth is added.
+fn bass_approach(plan: &SongPlan, si: usize, spec: &compose::Spec, arousal: f32, notes: &mut Vec<N>) {
+    if spec.pattern == "walking" || notes.is_empty() {
+        return;
+    }
+    let (key, chords) = section_chords(plan, si, spec.cpb);
+    let len = plan.sections[si].bars as f64 * 4.0;
+    let share = 0.3 + 0.4 * arousal as f64;
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start));
+    for (ci, w) in chords.windows(2).enumerate() {
+        let (t, root) = (w[1].0, w[1].2);
+        if w[0].2 == root || t >= len - 0.01 {
+            continue;
+        }
+        if unit(mix64(plan.seed ^ 0xA9_9A, tag_hash(&plan.sections[si].tag) << 20 | ci as u64)) * 0.5 + 0.5 >= share {
+            continue;
+        }
+        let near = |k: u8| (0..128i32).filter(|x| (*x % 12) as u8 == root % 12 && *x >= spec.lo as i32 - 2 && *x <= spec.hi as i32 + 2).min_by_key(|x| (*x - k as i32).abs());
+        // the last note in the beat before the change (not a bar's downbeat: that is the chord's own root)
+        let cand = notes.iter().rposition(|n| n.start >= t - 1.0 - 1e-6 && n.start < t - 0.2 && n.start + n.len <= t + 0.06 && (n.start % 4.0).abs() > 1e-6);
+        if let Some(i) = cand {
+            let from = notes[i].key;
+            let Some(target) = near(from) else { continue };
+            let k = if target >= from as i32 { dia(key, target as u8, -1) } else { dia(key, target as u8, 1) };
+            notes[i].key = k;
+        } else if !notes.iter().any(|n| n.start >= t - 0.5 - 1e-6 && n.start < t) && arousal >= 0.45 {
+            let Some(prev) = notes.iter().filter(|n| n.start < t - 0.5).last().map(|n| n.key) else { continue };
+            let Some(target) = near(prev) else { continue };
+            let k = if target >= prev as i32 { dia(key, target as u8, -1) } else { dia(key, target as u8, 1) };
+            for n in notes.iter_mut() {
+                if n.start < t - 0.5 && n.start + n.len > t - 0.5 {
+                    n.len = (t - 0.5 - n.start).max(0.05);
+                }
+            }
+            notes.push(N { start: t - 0.5, len: 0.45, key: k, vel: 0.7 });
+            notes.sort_by(|a, b| a.start.total_cmp(&b.start));
+        }
+    }
+}
+
+/// a section tag as a number (repeated sections make the same choices)
+fn tag_hash(tag: &str) -> u64 {
+    tag.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64)) & 0xFF_FFFF
+}
+
+/// Where the lead plays on into a section without a pickup (the same section again, or a quieter one), its last note lands on the
+/// tone of its own chord nearest the next phrase's first note: the contour carries over the boundary instead of jumping.
+fn land_near_next(plan: &SongPlan, si: usize, part: usize, spec: &compose::Spec, before: f64, notes: &mut [N]) {
+    if !arrange(plan).on.get(part).and_then(|v| v.get(si + 1)).copied().unwrap_or(false) {
+        return;
+    }
+    let Some(first) = shaped(plan, part, &plan.sections[si + 1], None).2.into_iter().min_by(|a, b| a.start.total_cmp(&b.start).then(b.key.cmp(&a.key))).map(|n| n.key as i32) else { return };
+    let Some(i) = (0..notes.len()).filter(|i| notes[*i].start < before - 1e-6).max_by(|a, b| notes[*a].start.total_cmp(&notes[*b].start)) else { return };
+    let (_, chords) = section_chords(plan, si, spec.cpb);
+    let at = notes[i].start;
+    let Some(ch) = chords.iter().find(|c| at >= c.0 - 1e-6 && at < c.0 + c.1 - 1e-6) else { return };
+    let tones: Vec<u8> = theory::QUAL.get(ch.3).map(|q| q.1.iter().map(|x| (ch.2 + x) % 12).collect()).unwrap_or_default();
+    let top = spec.hi.saturating_add(5).min(120);
+    let best = (spec.lo..=top).filter(|k| tones.contains(&(k % 12))).min_by_key(|k| (*k as i32 - first).abs());
+    if let Some(k) = best {
+        if (k as i32 - first).abs() < (notes[i].key as i32 - first).abs() {
+            notes[i].key = k;
+        }
+    }
+}
+
+/// notes that start together (2 or more) as groups of indices, in time order
+fn chord_groups(notes: &[N]) -> Vec<Vec<usize>> {
+    let mut idx: Vec<usize> = (0..notes.len()).collect();
+    idx.sort_by(|a, b| notes[*a].start.total_cmp(&notes[*b].start).then(notes[*a].key.cmp(&notes[*b].key)));
+    let mut out = vec![];
+    let mut i = 0;
+    while i < idx.len() {
+        let mut j = i + 1;
+        while j < idx.len() && (notes[idx[j]].start - notes[idx[i]].start).abs() < 0.03 {
+            j += 1;
+        }
+        if j - i >= 2 {
+            out.push(idx[i..j].to_vec());
+        }
+        i = j;
+    }
+    out
+}
+
+/// a chord's pitch classes placed as close as they can be to the previous voicing (and not far from `centre`), inside lo..=hi
+fn revoice(keys: &[u8], prev: &[u8], lo: u8, hi: u8, centre: f64) -> Vec<u8> {
+    let mut out: Vec<u8> = vec![];
+    let mut ks = keys.to_vec();
+    ks.sort_unstable();
+    for k in ks {
+        let pc = k % 12;
+        let cost = |c: u8| prev.iter().map(|p| (*p as f64 - c as f64).abs()).fold(f64::MAX, f64::min) + 0.12 * (c as f64 - centre).abs();
+        let best = (lo..=hi).filter(|c| c % 12 == pc && !out.contains(c)).min_by(|a, b| cost(*a).total_cmp(&cost(*b)));
+        out.push(best.unwrap_or(k));
+    }
+    out.sort_unstable();
+    out
+}
+
+/// Voice leading for chords and pads: every chord placed with the least motion from the one before - across the section boundary
+/// too (the previous section's last chord when the part played there) - and a pad holds the tones two chords share.
+fn lead_voices(plan: &SongPlan, part: usize, si: usize, spec: &compose::Spec, kind: Kind, notes: &mut Vec<N>) {
+    let groups = chord_groups(notes);
+    if groups.is_empty() {
+        return;
+    }
+    let mut prev: Vec<u8> = vec![];
+    if si > 0 && arrange(plan).on.get(part).and_then(|v| v.get(si - 1)).copied().unwrap_or(false) {
+        prev = voiced_last_chord(plan, part, si - 1);
+    }
+    let (lo, hi) = (spec.lo, spec.hi.saturating_add(4).min(120));
+    let home = (spec.lo as f64 + spec.hi as f64) * 0.5;
+    for g in groups {
+        let mut sorted = g.clone();
+        sorted.sort_by_key(|i| notes[*i].key);
+        let keys: Vec<u8> = sorted.iter().map(|i| notes[*i].key).collect();
+        if prev.is_empty() {
+            prev = keys;
+            continue;
+        }
+        let pc = prev.iter().map(|p| *p as f64).sum::<f64>() / prev.len() as f64;
+        let nv = revoice(&keys, &prev, lo, hi, 0.7 * pc + 0.3 * home);
+        if nv.len() == sorted.len() {
+            for (j, i) in sorted.iter().enumerate() {
+                notes[*i].key = nv[j];
+            }
+            prev = nv;
+        } else {
+            prev = keys;
+        }
+    }
+    if kind == Kind::Pad {
+        hold_common_tones(notes);
+    }
+}
+
+/// the chord a part ends section `si` on, as the voice leading placed it (the chain runs back to where the part came in)
+fn voiced_last_chord(plan: &SongPlan, part: usize, si: usize) -> Vec<u8> {
+    let (spec, kind, mut notes) = shaped(plan, part, &plan.sections[si], None);
+    lead_voices(plan, part, si, &spec, kind, &mut notes);
+    let t = notes.iter().map(|n| n.start).fold(f64::MIN, f64::max) + 0.01;
+    notes.iter().filter(|n| n.start <= t && n.start + n.len > t).map(|n| n.key).collect()
+}
+
+/// A pad's common tones are held: a note that two chords in a row share is one long note over both.
+fn hold_common_tones(notes: &mut Vec<N>) {
+    let groups = chord_groups(notes);
+    let mut holder: Vec<usize> = (0..notes.len()).collect();
+    let mut gone = vec![false; notes.len()];
+    for w in groups.windows(2) {
+        let s2 = notes[w[1][0]].start;
+        for &j in &w[1] {
+            let Some(&i) = w[0].iter().find(|&&i| notes[i].key == notes[j].key) else { continue };
+            let h = holder[i];
+            if gone[h] || (notes[h].start + notes[h].len - s2).abs() > 0.2 {
+                continue;
+            }
+            notes[h].len = notes[j].start + notes[j].len - notes[h].start;
+            notes[h].vel = notes[h].vel.max(notes[j].vel);
+            gone[j] = true;
+            holder[j] = h;
+        }
+    }
+    let mut k = 0;
+    notes.retain(|_| {
+        let keep = !gone[k];
+        k += 1;
+        keep
+    });
+}
+
+/// The ending resolves: the last bar of the song is the tonic - the bass on its root, the chords / pads / arps on the tonic triad
+/// (voiced from the chord before it, an arp breaks it once), the lead on the tonic nearest its last note; the drums hit a crash and
+/// a kick on the downbeat and stop.
+fn final_cadence(plan: &SongPlan, si: usize, kind: Kind, spec: &compose::Spec, notes: &mut Vec<N>) {
+    let len = plan.sections[si].bars as f64 * 4.0;
+    if len < 4.0 || notes.is_empty() {
+        return;
+    }
+    let lb = len - 4.0;
+    let key = section_key(plan, si);
+    let tonic = key.tonic % 12;
+    let triad = [tonic, (tonic + if key.minor { 3 } else { 4 }) % 12, (tonic + 7) % 12];
+    let before: Vec<N> = notes.iter().filter(|n| n.start < lb - 1e-6).cloned().collect();
+    let last = before.iter().max_by(|a, b| a.start.total_cmp(&b.start)).map(|n| n.key);
+    let trim = |notes: &mut Vec<N>| {
+        notes.retain(|n| n.start < lb - 1e-6);
+        for n in notes.iter_mut() {
+            if n.start + n.len > lb {
+                n.len = (lb - n.start).max(0.05);
+            }
+        }
+    };
+    let nearest = |pc: u8, to: u8, lo: u8, hi: u8| (lo..=hi).filter(|k| k % 12 == pc).min_by_key(|k| (*k as i32 - to as i32).abs());
+    match kind {
+        Kind::Drums => {
+            trim(notes);
+            notes.push(N { start: lb, len: 4.0, key: compose::K_CRASH, vel: 0.9 });
+            notes.push(N { start: lb, len: 1.0, key: compose::K_KICK, vel: 0.95 });
+        }
+        Kind::Bass => {
+            let to = last.unwrap_or(spec.lo + 5);
+            trim(notes);
+            if let Some(k) = nearest(tonic, to, spec.lo, spec.hi.max(spec.lo + 12)) {
+                notes.push(N { start: lb, len: 3.8, key: k, vel: 0.85 });
+            }
+        }
+        Kind::Melody => {
+            let to = last.unwrap_or((spec.lo + spec.hi) / 2);
+            trim(notes);
+            if let Some(k) = nearest(tonic, to, spec.lo, spec.hi.saturating_add(5).min(120)) {
+                notes.push(N { start: lb, len: 3.6, key: k, vel: 0.74 });
+            }
+        }
+        Kind::Chords | Kind::Pad | Kind::Arp => {
+            let groups = chord_groups(&before);
+            let prev: Vec<u8> = groups.last().map(|g| g.iter().map(|i| before[*i].key).collect()).unwrap_or_else(|| last.into_iter().collect());
+            trim(notes);
+            let centre = if prev.is_empty() { (spec.lo as f64 + spec.hi as f64) * 0.5 } else { prev.iter().map(|p| *p as f64).sum::<f64>() / prev.len() as f64 };
+            let seed: Vec<u8> = triad.iter().map(|pc| nearest(*pc, centre as u8, spec.lo, spec.hi.saturating_add(4).min(120)).unwrap_or(60)).collect();
+            let v = revoice(&seed, if prev.is_empty() { &seed } else { &prev }, spec.lo, spec.hi.saturating_add(4).min(120), centre);
+            for (i, k) in v.iter().enumerate() {
+                let at = if kind == Kind::Arp { i as f64 * 0.25 } else { 0.0 };
+                notes.push(N { start: lb + at, len: 3.8 - at, key: *k, vel: 0.7 });
+            }
+        }
+    }
+}
+
+/// Slides on a mono line that wants them (sounddesign::expression): some note pairs a step to an octave apart, the first long enough,
+/// with a short gap between them, are written legato (the first note overlaps the next, so the instrument glides there); every other
+/// pair of a mono line is detached, so nothing glides by accident. Chords, pads, arps and drums are never touched.
+fn apply_slides(plan: &SongPlan, part: usize, si: usize, kind: Kind, singer: bool, notes: &mut [N]) {
+    if singer || !matches!(kind, Kind::Bass | Kind::Melody) || notes.len() < 2 {
+        return;
+    }
+    let x = crate::sounddesign::expression(&plan.genre, &plan.parts[part].role, kind, plan.bpm);
+    if !x.mono {
+        return;
+    }
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
+    for i in 0..notes.len() - 1 {
+        let (a, b) = (notes[i], notes[i + 1]);
+        if b.start - a.start < 0.2 {
+            continue;
+        }
+        // a per-note slide (an 808 glide, a lead's slide) leaves the notes detached: `note_gestures` bends them
+        let pick = !x.slide_gesture && slide_picked(plan, part, si, &x, notes, i);
+        if pick {
+            notes[i].len = b.start - a.start + 0.06;
+        } else if a.start + a.len > b.start - 0.01 {
+            notes[i].len = (b.start - a.start - 0.02).max(0.05);
+        }
+    }
+}
+
+/// Is the pair (i, i + 1) of a sorted mono line one of the slides the expression rules ask for? (the same choice for the legato
+/// overlap and the per-note gesture)
+fn slide_picked(plan: &SongPlan, part: usize, si: usize, x: &crate::sounddesign::Expr, notes: &[N], i: usize) -> bool {
+    let (a, b) = (notes[i], notes[i + 1]);
+    if b.start - a.start < 0.2 {
+        return false;
+    }
+    let arousal = plan_feels(plan).get(si).map(|f| f.arousal as f64).unwrap_or(0.5);
+    let share = x.slides * (0.75 + 0.5 * arousal);
+    let gap = b.start - (a.start + a.len);
+    let iv = (b.key as i32 - a.key as i32).unsigned_abs();
+    let eligible = x.glide_secs > 0.0 && gap <= 0.35 && a.len >= x.slide_min && iv >= 1 && iv <= x.slide_max as u32;
+    eligible && unit(mix64(plan.seed ^ 0x511D_E5, (part as u64) << 40 | tag_hash(&plan.sections[si].tag) << 16 | i as u64)) * 0.5 + 0.5 < share
+}
+
+/// The per-note pitch gestures the expression rules write into a part's section (`section_notes` order) - the generator's only
+/// way past the pitch guard, each one on purpose:
+/// * 808 glides (sub in trap / hip hop / future bass) and EDM lead slides: the chosen pairs bend into the next note (`slide`);
+/// * future bass: a scoop into every chord entry of the chords / pads in a drop or chorus;
+/// * the riser part: its last note before the drop rises an octave (`riser`);
+/// * dubstep: the laser / screech lead dives an octave on the last note of a section that ends in a fill (not into the gap of a
+///   drop: the build has the riser there).
+/// Returns (note index, curve). Acid / growl / reese slides stay legato overlaps (`apply_slides`).
+pub fn note_gestures(plan: &SongPlan, part: usize, sec: &Section, notes: &[N]) -> Vec<(usize, crate::model::Curve)> {
+    let Some(si) = section_index(plan, sec) else { return vec![] };
+    let role = plan.parts[part].role.as_str();
+    let kind = role_kind(role);
+    let len = sec.bars as f64 * 4.0;
+    let mut out: Vec<(usize, crate::model::Curve)> = vec![];
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by(|a, b| notes[*a].start.total_cmp(&notes[*b].start).then(notes[*a].key.cmp(&notes[*b].key)));
+    let sorted: Vec<N> = order.iter().map(|i| notes[*i]).collect();
+    let to_model = |v: &[N]| -> Vec<crate::model::Note> { v.iter().map(|n| crate::model::Note::new(n.start, n.len, n.key, n.vel)).collect() };
+    let x = crate::sounddesign::expression(&plan.genre, role, kind, plan.bpm);
+    if x.slide_gesture && x.mono && sorted.len() >= 2 {
+        for i in 0..sorted.len() - 1 {
+            if slide_picked(plan, part, si, &x, &sorted, i) {
+                let iv = sorted[i + 1].key as f32 - sorted[i].key as f32;
+                if let Some(c) = crate::gesture::shape("slide", iv, sorted[i].len) {
+                    out.push((order[i], c));
+                }
+            }
+        }
+    }
+    let tag = sec.tag.as_str();
+    let kind_name = match kind {
+        Kind::Chords | Kind::Pad if plan.genre == "future bass" && (tag == "drop" || is_chorus(tag)) && role != "riser" => Some("scoop"),
+        _ if role == "riser" && (is_build_tag(tag) || leads_into_drop(plan, si)) => Some("riser"),
+        Kind::Melody if plan.genre == "dubstep" && (role.contains("laser") || role.contains("screech")) && si + 1 < plan.sections.len() && !leads_into_drop(plan, si) => Some("dive"),
+        _ => None,
+    };
+    if let Some(k) = kind_name {
+        let (from, depth) = match k {
+            // the fill is the last bar
+            "dive" => ((len - 4.0).max(0.0), 12.0),
+            "riser" => ((len - gap_after(plan, si) - 4.0).max(0.0), 12.0),
+            _ => (0.0, 3.0),
+        };
+        let to = if k == "riser" { len - gap_after(plan, si) } else { len };
+        let mut m2 = to_model(&sorted);
+        if k == "dive" {
+            // only the very last note of the section dives
+            let last = (0..m2.len()).filter(|i| m2[*i].start >= from).max_by(|a, b| m2[*a].start.total_cmp(&m2[*b].start));
+            if let Some(li) = last {
+                crate::gesture::apply_shape(&mut m2, li, "dive", depth);
+            }
+        } else {
+            crate::gesture::write_kind(&mut m2, k, from, to, depth);
+        }
+        for (j, n) in m2.into_iter().enumerate() {
+            if !n.bend.is_empty() && !out.iter().any(|o| o.0 == order[j]) {
+                out.push((order[j], n.bend));
+            }
+        }
+    }
+    out
+}
+
+/// genres that use a noise sweep / reverse swell (electronic production); acoustic ones keep their own crescendos
+fn electronic(genre: &str) -> bool {
+    !matches!(genre, "folk" | "ballad" | "jazz" | "rock" | "orchestral" | "cinematic" | "ambient" | "lofi")
+}
+
+/// The noise sweeps (white-noise riser / reverse cymbal) of the song as (start beat, length): one rising into every drop after a
+/// build (as long as the tension says: one to four bars) and a short reverse swell (two beats, four when tense) into a chorus the
+/// energy jumps to. Each ends where the silence before the drop begins (on the downbeat when there is none).
+pub fn sweeps(plan: &SongPlan) -> Vec<(f64, f64)> {
+    if !electronic(&plan.genre) {
+        return vec![];
+    }
+    let starts = section_starts(plan);
+    let feels = plan_feels(plan);
+    let mut out = vec![];
+    for si in 0..plan.sections.len().saturating_sub(1) {
+        let (sec, next) = (&plan.sections[si], &plan.sections[si + 1]);
+        let into_drop = leads_into_drop(plan, si);
+        let jump = is_chorus(&next.tag) && next.energy >= sec.energy + 0.25;
+        if !(into_drop || jump) {
+            continue;
+        }
+        let gap = gap_after(plan, si);
+        let span = sec.bars as f64 * 4.0 - gap;
+        let t = feels.get(si).map(|f| f.tension as f64).unwrap_or(0.5);
+        let beats = if into_drop { 4.0 * (1.0 + (t * 3.0).round()) } else if t >= 0.6 { 4.0 } else { 2.0 };
+        let beats = beats.min(span);
+        if beats >= 1.0 {
+            out.push((starts[si] + span - beats, beats));
+        }
+    }
+    out
+}
+
+/// A sound effect on the timeline for Ling Cinema (cinema.rs): which kind ("impact", "downlifter", "ambience", "braam"), when, how
+/// long, on which key and how hard.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cue {
+    pub what: &'static str,
+    pub start: f64,
+    pub len: f64,
+    pub key: u8,
+    pub vel: f32,
+}
+
+/// The transition effects and atmospheres of the song, played by Ling Cinema: an impact on the downbeat of every drop or chorus the
+/// noise sweeps rise into ([`sweeps`]), a downlifter where a drop falls back to a quiet section, and an ambience held through the
+/// intro and the breakdowns; film music gets a braam on its loudest section instead of the club moves. Acoustic genres get none.
+pub fn cinema_cues(plan: &SongPlan) -> Vec<Cue> {
+    let film = matches!(plan.genre.as_str(), "cinematic");
+    let ambient = matches!(plan.genre.as_str(), "ambient");
+    if !(electronic(&plan.genre) || film || ambient) || matches!(plan.genre.as_str(), "chiptune") {
+        return vec![];
+    }
+    let starts = section_starts(plan);
+    let mut out = vec![];
+    let n = plan.sections.len();
+    let tonic = plan.key.tonic % 12;
+    for si in 0..n {
+        let sec = &plan.sections[si];
+        let len = sec.bars as f64 * 4.0;
+        let key = section_key(plan, si).tonic % 12;
+        let next = plan.sections.get(si + 1);
+        // the impact: the downbeat a sweep rises into
+        if !ambient && si + 1 < n {
+            let nx = &plan.sections[si + 1];
+            let into_drop = leads_into_drop(plan, si);
+            let jump = is_chorus(&nx.tag) && nx.energy >= sec.energy + 0.25;
+            if into_drop || jump || (film && nx.energy >= sec.energy + 0.3) {
+                out.push(Cue { what: "impact", start: starts[si + 1], len: 4.0, key: 24 + section_key(plan, si + 1).tonic % 12, vel: if into_drop { 0.95 } else { 0.75 } });
+            }
+        }
+        // the downlifter: a drop (or a loud chorus) falling back into something quiet
+        if !ambient && !film && (sec.tag == "drop" || is_chorus(&sec.tag)) && sec.energy >= 0.8 {
+            if let Some(nx) = next {
+                if nx.energy <= sec.energy - 0.3 {
+                    out.push(Cue { what: "downlifter", start: starts[si + 1], len: 4.0f64.min(nx.bars as f64 * 4.0), key: 60 + key, vel: 0.8 });
+                }
+            }
+        }
+        // the ambience: held through the intro and the breakdowns
+        if sec.tag == "intro" || sec.tag == "break" || sec.tag == "breakdown" || (ambient && sec.energy < 0.5) {
+            let gap = if si + 1 < n { gap_after(plan, si) } else { 0.0 };
+            if len - gap >= 4.0 {
+                out.push(Cue { what: "ambience", start: starts[si], len: len - gap, key: 36 + key, vel: 0.7 });
+            }
+        }
+    }
+    // film music: one braam on the loudest section's downbeat
+    if film {
+        if let Some(si) = (0..n).filter(|i| *i > 0).max_by(|a, b| plan.sections[*a].energy.total_cmp(&plan.sections[*b].energy)) {
+            out.push(Cue { what: "braam", start: starts[si], len: 8.0f64.min(plan.sections[si].bars as f64 * 4.0), key: 36 + tonic, vel: 0.85 });
+        }
+    }
+    out.sort_by(|a, b| a.start.total_cmp(&b.start));
+    out
+}
+
+/// The Ling Cinema preset that plays a cue
+pub fn cue_preset(what: &str, genre: &str) -> &'static str {
+    match what {
+        "impact" => if matches!(genre, "dubstep" | "drum and bass" | "hardstyle" | "trap" | "cinematic") { "Trailer Hit" } else { "Sub Boom" },
+        "downlifter" => "Noise Downlifter",
+        "braam" => "Deep Braam",
+        _ => if matches!(genre, "ambient" | "cinematic" | "techno" | "witch house") { "Dark Space" } else { "Ambient Drift" },
+    }
+}
+
+/// what the flow does, for the plan's notes
+pub fn flow_notes(plan: &SongPlan) -> Vec<String> {
+    let mut out = vec!["flow: a drum fill into every new section (a beat, two or a bar as the feeling pushes) and a crash on its downbeat; the lead runs into the next phrase, the bass approaches chord changes by step; chords voice-led across sections, pads hold their common tones".to_string()];
+    let sw = sweeps(plan);
+    if !sw.is_empty() {
+        out.push(format!("{} noise sweep(s) rise into the drops / choruses", sw.len()));
+    }
+    let last = plan.sections.len().saturating_sub(1);
+    out.push(format!("the ending resolves: the last bar is a {} chord", section_key(plan, last).name()));
+    let x: Vec<String> = plan
+        .parts
+        .iter()
+        .filter_map(|p| {
+            let e = crate::sounddesign::expression(&plan.genre, &p.role, role_kind(&p.role), plan.bpm);
+            if e.why.is_empty() || p.role == "voice" || p.role == "choir" {
+                None
+            } else {
+                Some(format!("{}: {}", p.role, e.why.join(", ")))
+            }
+        })
+        .collect();
+    if !x.is_empty() {
+        out.push(format!("expression: {}", x.join("; ")));
+    }
+    out
+}
+
 /// The craft on top of a part's phrase: the roll in builds (the groove's snares make way for it), the crash and kick on the first
 /// beat after a build or a break, and a pickup into the next section's first chord on the bass and the lead.
-fn craft(plan: &SongPlan, si: usize, kind: Kind, spec: &compose::Spec, singer: bool, notes: &mut Vec<N>) {
+fn craft(plan: &SongPlan, si: usize, part: usize, kind: Kind, spec: &compose::Spec, singer: bool, notes: &mut Vec<N>) {
     let sec = &plan.sections[si];
     let len = sec.bars as f64 * 4.0;
     let feels = plan_feels(plan);
     let gap = gap_after(plan, si);
     let after_build = si > 0 && leads_into_drop(plan, si - 1);
+    let arousal = feels.get(si).map(|f| f.arousal).unwrap_or(0.5);
+    if kind == Kind::Bass {
+        bass_approach(plan, si, spec, arousal, notes);
+    }
     match kind {
         Kind::Drums => {
             if leads_into_drop(plan, si) {
@@ -1928,36 +2479,71 @@ fn craft(plan: &SongPlan, si: usize, kind: Kind, spec: &compose::Spec, singer: b
                     }
                 }
             }
+            // a fill into every new section (a build has its roll instead), as long as the feeling: a beat, two, a whole bar
+            if !leads_into_drop(plan, si) && gap <= 0.0 {
+                if let Some(next) = plan.sections.get(si + 1) {
+                    if next.tag != sec.tag || (next.energy - sec.energy).abs() >= 0.2 {
+                        let into_quiet = next.energy < sec.energy - 0.25;
+                        let beats: f64 = if into_quiet || arousal < 0.4 { 1.0 } else if arousal < 0.7 { 2.0 } else { 4.0 };
+                        transition_fill(len, beats.min(len * 0.5), arousal, notes);
+                    }
+                }
+            }
+            // the crash marks the downbeat of every new section (with the kick when the section has one)
             let jump = si > 0 && sec.energy > plan.sections[si - 1].energy + 0.3;
-            if after_build || (jump && is_chorus(&sec.tag)) {
+            let new_section = si > 0 && plan.sections[si - 1].tag != sec.tag;
+            if after_build || (jump && is_chorus(&sec.tag)) || new_section {
+                let hard = after_build || jump;
                 notes.retain(|n| !(n.start < 0.05 && matches!(n.key, compose::K_CRASH)));
-                notes.push(N { start: 0.0, len: 2.0, key: compose::K_CRASH, vel: 1.0 });
-                if !notes.iter().any(|n| n.start < 0.05 && n.key == compose::K_KICK) {
+                notes.push(N { start: 0.0, len: 2.0, key: compose::K_CRASH, vel: if hard { 1.0 } else { 0.72 + 0.25 * arousal } });
+                let kicks = notes.iter().any(|n| n.key == compose::K_KICK);
+                if (hard || kicks) && !notes.iter().any(|n| n.start < 0.05 && n.key == compose::K_KICK) {
                     notes.push(N { start: 0.0, len: 0.5, key: compose::K_KICK, vel: 1.0 });
                 }
             }
             notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
         }
         Kind::Bass | Kind::Melody if !singer && gap <= 0.0 && !notes.is_empty() => {
-            // a pickup: a scale step below the next chord's root, an eighth before the barline
+            // a pickup (anacrusis) into the next section: the bass a scale step below the next chord's root, an eighth before the
+            // barline; the lead a run of one to three sixteenths (the tension decides) that walks into the next phrase's first note
             let Some(next) = plan.sections.get(si + 1) else { return };
             if next.tag == sec.tag || next.energy + 0.15 < sec.energy {
+                if kind == Kind::Melody {
+                    land_near_next(plan, si, part, spec, len, notes);
+                }
                 return;
             }
             let (nk, chords) = section_chords(plan, si + 1, spec.cpb);
             let Some(root) = chords.first().map(|c| c.2) else { return };
             let last = notes.iter().filter(|n| n.start < len - 0.5).max_by(|a, b| a.start.total_cmp(&b.start)).map(|n| n.key).unwrap_or(spec.lo);
-            let target = (0..128i32).filter(|k| (*k % 12) as u8 == root % 12 && (*k as u8) >= spec.lo && (*k as u8) <= spec.hi).min_by_key(|k| (*k - last as i32).abs());
+            let plays_next = arrange(plan).on.get(part).and_then(|v| v.get(si + 1)).copied().unwrap_or(false);
+            let phrase = if kind == Kind::Melody && plays_next {
+                shaped(plan, part, &plan.sections[si + 1], None).2.into_iter().min_by(|a, b| a.start.total_cmp(&b.start).then(b.key.cmp(&a.key))).map(|n| n.key)
+            } else {
+                None
+            };
+            let target = phrase.map(|k| k as i32).or_else(|| (0..128i32).filter(|k| (*k % 12) as u8 == root % 12 && (*k as u8) >= spec.lo && (*k as u8) <= spec.hi).min_by_key(|k| (*k - last as i32).abs()));
             let Some(target) = target else { return };
-            let from = len - 0.5;
+            let tension = feels.get(si).map(|f| f.tension).unwrap_or(0.5);
+            let run = if kind == Kind::Melody && phrase.is_some() { 1 + (tension >= 0.45) as usize + (tension >= 0.7 && is_chorus(&next.tag)) as usize } else { 1 };
+            let step = if run > 1 { 0.25 } else { 0.5 };
+            let from = len - step * run as f64;
             notes.retain(|n| n.start < from - 1e-6);
             for n in notes.iter_mut() {
                 if n.start + n.len > from {
                     n.len = (from - n.start).max(0.05);
                 }
             }
-            notes.push(N { start: from, len: 0.45, key: dia(nk, target as u8, -1), vel: 0.72 });
+            // from below when the line climbs into the next phrase, from above when it comes down
+            let dir = if kind == Kind::Melody && phrase.is_some() && (target as i32) < last as i32 { 1 } else { -1 };
+            for i in 0..run {
+                let k = dia(nk, target as u8, dir * (run - i) as i32);
+                notes.push(N { start: from + i as f64 * step, len: step * 0.9, key: k, vel: 0.66 + 0.06 * i as f32 });
+            }
         }
+        // across the breath before a drop the lead still hands its contour on: its last note before the silence lands near the
+        // next phrase's first
+        Kind::Melody if !singer && gap > 0.0 && !notes.is_empty() && si + 1 < plan.sections.len() => land_near_next(plan, si, part, spec, len - gap, notes),
         _ => {}
     }
 }
@@ -1967,7 +2553,7 @@ fn craft(plan: &SongPlan, si: usize, kind: Kind, spec: &compose::Spec, singer: b
 /// The notes of one part in one section (clip-relative beats). Sections with the same tag get the same seed, so a chorus comes back as
 /// the same chorus; energy scales the density; the last bar of a section gets a fill on the drums.
 pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8, u8)>) -> Vec<N> {
-    let (spec, kind, mut notes) = written(plan, part, sec, singer_range);
+    let (spec, kind, mut notes) = shaped(plan, part, sec, singer_range);
     let si = section_index(plan, sec);
     let len = sec.bars as f64 * 4.0;
     if plan.parts[part].role == "riser" {
@@ -1975,6 +2561,36 @@ pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: 
             cut_gap(&mut notes, len, gap_after(plan, si));
         }
         return notes;
+    }
+    if kind == Kind::Bass {
+        lock_to_kick(plan, sec, &spec, &mut notes);
+    }
+    blend_guide(plan, part, sec, kind, &spec, &mut notes);
+    if let Some(si) = si {
+        // chords and pads move as little as they can, across the section boundary too; a pad holds its common tones
+        if matches!(kind, Kind::Chords | Kind::Pad) {
+            lead_voices(plan, part, si, &spec, kind, &mut notes);
+        }
+        craft(plan, si, part, kind, &spec, singer_range.is_some(), &mut notes);
+        if si + 1 == plan.sections.len() {
+            final_cadence(plan, si, kind, &spec, &mut notes);
+        }
+    }
+    humanize(plan, part, sec, kind, &mut notes);
+    if let Some(si) = si {
+        apply_slides(plan, part, si, kind, singer_range.is_some(), &mut notes);
+        // the held breath before a drop: nothing sounds in the last beat(s) of the build
+        cut_gap(&mut notes, len, gap_after(plan, si));
+    }
+    notes
+}
+
+/// The phrase as the song shapes it before the band plays it: the composer's notes, the theme or the motif developed, the
+/// decorator's ornament / colour. (No bass lock, voice leading, pickups or feel yet: the next section's pickup reads this.)
+fn shaped(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8, u8)>) -> (compose::Spec, Kind, Vec<N>) {
+    let (spec, kind, mut notes) = written(plan, part, sec, singer_range);
+    if plan.parts[part].role == "riser" {
+        return (spec, kind, notes);
     }
     let themed = kind == Kind::Melody && plan.theme.as_ref().map(|t| !t.is_empty()).unwrap_or(false);
     if themed {
@@ -2001,19 +2617,7 @@ pub fn section_notes(plan: &SongPlan, part: usize, sec: &Section, singer_range: 
             }
         }
     }
-    if kind == Kind::Bass {
-        lock_to_kick(plan, sec, &spec, &mut notes);
-    }
-    blend_guide(plan, part, sec, kind, &spec, &mut notes);
-    if let Some(si) = si {
-        craft(plan, si, kind, &spec, singer_range.is_some(), &mut notes);
-    }
-    humanize(plan, part, sec, kind, &mut notes);
-    // the held breath before a drop: nothing sounds in the last beat(s) of the build
-    if let Some(si) = si {
-        cut_gap(&mut notes, len, gap_after(plan, si));
-    }
-    notes
+    (spec, kind, notes)
 }
 
 /// the phrase the composer writes for a part in a section, before the song shapes it
@@ -2061,6 +2665,28 @@ fn written(plan: &SongPlan, part: usize, sec: &Section, singer_range: Option<(u8
     if role == "riser" {
         // a rising ladder in the build (it speeds up with the roll), a falling downlifter after the drop hits, else one long note
         return (spec, kind, riser_notes(plan, sec, si));
+    }
+    if kind == Kind::Arp {
+        // the genre's arpeggio: a tempo-locked step (1/16, 1/16 or 1/8 triplets, 1/8) and a pattern that follows the energy
+        if let Some(ap) = crate::sounddesign::arp_plan(&plan.genre, energy) {
+            spec.rate = ap.step;
+            spec.order = ap.order.to_string();
+            spec.octaves = ap.octaves;
+            if (ap.step * 4.0 - (ap.step * 4.0).round()).abs() > 1e-6 {
+                // a 16-step rhythm mask means nothing on a triplet grid
+                spec.rhythm.clear();
+            }
+        }
+        // never two arps in the same octave: a second one that plays here sits an octave (two) higher
+        if let Some(si) = si {
+            let arr = arrange(plan);
+            let below = (0..part).filter(|&q| role_kind(&plan.parts[q].role) == Kind::Arp && arr.on.get(q).and_then(|v| v.get(si)).copied().unwrap_or(false)).count();
+            if below > 0 {
+                let up = (12 * below.min(2)) as u8;
+                spec.lo = spec.lo.saturating_add(up).min(96);
+                spec.hi = spec.hi.saturating_add(up).min(108);
+            }
+        }
     }
     let mut notes = compose::generate(&spec);
     // drums in a quiet section: no kick or snare in a break, only the hats and the rim
@@ -2262,6 +2888,20 @@ fn develop(plan: &SongPlan, part: usize, sec: &Section, spec: &compose::Spec, si
         replace_bar(notes, 0, motif.iter().map(|n| N { key: invert(key, n.key, pivot), ..*n }).collect(), len);
         fit.push((0.0, 4.0));
     }
+    // motivic development across the phrase: the home section states its motif twice (bars 1 and 3), the chorus sequences it a
+    // step up (a lifting feeling) or down (a falling one) in its third bar
+    let arousal = plan_feels(plan).get(si).map(|f| f.arousal).unwrap_or(0.5);
+    if sec.bars >= 4 && home.map(|h| h.tag == tag).unwrap_or(false) {
+        let first: Vec<N> = notes.iter().filter(|n| n.start < 4.0).cloned().collect();
+        if !first.is_empty() {
+            replace_bar(notes, 2, first.iter().map(|n| N { start: n.start + 8.0, ..*n }).collect(), len);
+            fit.push((8.0, 12.0));
+        }
+    } else if sec.bars >= 4 && !motif.is_empty() && is_chorus(tag) {
+        let step = if arousal >= 0.5 { 3 } else { 1 };
+        replace_bar(notes, 2, motif.iter().map(|n| N { start: n.start + 8.0, key: dia(key, n.key, step), ..*n }).collect(), len);
+        fit.push((8.0, 12.0));
+    }
     let hi = notes.iter().map(|n| n.key).max().unwrap_or(0);
     let lifted = count > 1 && k > 0 && k + 1 == count && hi as u32 + 12 <= top as u32;
     if lifted {
@@ -2276,6 +2916,33 @@ fn develop(plan: &SongPlan, part: usize, sec: &Section, spec: &compose::Spec, si
     }
     if lifted || !fit.is_empty() {
         fit_to_chords(spec, notes, top.max(hi.saturating_add(if lifted { 12 } else { 0 })), &fit);
+    }
+    answer_bars(spec, sec.bars, notes);
+}
+
+/// Call and response: the second and fourth bar of every four answer the first and third - their last note lands on a tone of the
+/// chord under it and is held until the next phrase begins (a breath of an eighth at most before it).
+fn answer_bars(spec: &compose::Spec, bars: u32, notes: &mut [N]) {
+    if bars < 2 || notes.is_empty() {
+        return;
+    }
+    let len = bars as f64 * 4.0;
+    let mut rng = compose::Rng::new(spec.seed);
+    let spans = compose::plan(spec, &mut rng);
+    notes.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.key.cmp(&b.key)));
+    for b in (1..bars).step_by(2) {
+        let (a0, a1) = (b as f64 * 4.0, (b as f64 * 4.0 + 4.0).min(len));
+        let Some(i) = notes.iter().rposition(|n| n.start >= a0 - 1e-6 && n.start < a1 - 1e-6) else { continue };
+        let n = notes[i];
+        if let Some(sp) = spans.iter().find(|s| n.start >= s.start - 1e-6 && n.start < s.start + s.len - 1e-6) {
+            if !sp.chord.has(n.key % 12) {
+                if let Some(k) = (1..=4i32).flat_map(|d| [-d, d]).map(|d| n.key as i32 + d).find(|k| (0..128).contains(k) && sp.chord.has((*k % 12) as u8) && spec.key.accepts((*k % 12) as u8)) {
+                    notes[i].key = k as u8;
+                }
+            }
+        }
+        let next = notes.get(i + 1).map(|x| x.start).unwrap_or(len).min(len);
+        notes[i].len = notes[i].len.max((next - n.start - 0.125).min(a1 + 0.5 - n.start)).max(0.05);
     }
 }
 
@@ -2866,7 +3533,8 @@ pub(crate) fn best_triad(hist: &[f64; 12], key: Key) -> usize {
     let scale = key.scale();
     let mut best = (0usize, f64::MIN);
     for d in 0..7 {
-        let pcs = [scale[d], scale[(d + 2) % 7], scale[(d + 4) % 7]].map(|x| (x + key.tonic) % 12);
+        // Key::scale() is already absolute pitch classes
+        let pcs = [scale[d], scale[(d + 2) % 7], scale[(d + 4) % 7]];
         let inside: f64 = hist[pcs[0] as usize] * 1.3 + hist[pcs[1] as usize] + hist[pcs[2] as usize];
         let outside: f64 = (0..12).filter(|p| !pcs.contains(&(*p as u8))).map(|p| hist[p]).sum::<f64>() * 0.35;
         // the tonic and the fifth chord win ties (a little prior, as in real songs)
@@ -3190,7 +3858,9 @@ mod tests {
         // the chorus quotes the verse's motif; the last chorus is lifted
         let c1 = section_notes(&p, li, at("chorus", 0), None);
         let c3 = section_notes(&p, li, at("chorus", 2), None);
-        let mean = |n: &[N]| n.iter().map(|x| x.key as f64).sum::<f64>() / n.len().max(1) as f64;
+        // (the last bar hands over to whatever follows - a verse, the outro - so it is left out of the comparison)
+        let body = at("chorus", 0).bars as f64 * 4.0 - 4.0;
+        let mean = |n: &[N]| n.iter().filter(|x| x.start < body).map(|x| x.key as f64).sum::<f64>() / n.iter().filter(|x| x.start < body).count().max(1) as f64;
         assert!(mean(&c3) >= mean(&c1), "{} {}", mean(&c3), mean(&c1));
         assert!(v1.iter().chain(&c1).all(|n| p.key.in_scale(n.key % 12)));
     }
@@ -3550,5 +4220,273 @@ mod movement_tests {
             break;
         }
         assert!(found, "some tense feeling gives a half-time movement");
+    }
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    const SONGS: [(&str, &str); 8] = [
+        ("trance", "uplifting trance at 138 bpm"),
+        ("acid techno", "acid techno at 135 bpm"),
+        ("future bass", "future bass at 150 bpm"),
+        ("dubstep", "riddim dubstep at 140 bpm"),
+        ("lofi", "lofi chill study beat"),
+        ("ballad", "a piano ballad"),
+        ("breakbeat", "breakbeat at 132 bpm"),
+        ("ambient", "ambient drone"),
+    ];
+
+    fn song(prompt: &str, seed: u64) -> SongPlan {
+        let mut p = plan(prompt, "", &[], None, 1.0, seed);
+        p.human = 0.0;
+        p
+    }
+
+    /// every part's notes per section (None where it rests)
+    fn all_notes(p: &SongPlan) -> Vec<Vec<Option<Vec<N>>>> {
+        let arr = arrange(p);
+        (0..p.parts.len()).map(|pi| p.sections.iter().enumerate().map(|(si, s)| if arr.on[pi][si] { Some(section_notes(p, pi, s, None)) } else { None }).collect()).collect()
+    }
+
+    fn sounding(ns: &[(f64, f64, u8)], t: f64) -> Vec<u8> {
+        ns.iter().filter(|n| n.0 <= t && n.0 + n.1 > t).map(|n| n.2).collect()
+    }
+
+    #[test]
+    fn the_energy_curve_has_no_jarring_jumps() {
+        let s = |tag: &str, e: f64| Section { tag: tag.into(), bars: 8, energy: e };
+        let mut v = vec![s("intro", 0.2), s("verse", 0.9), s("chorus", 1.0), s("verse", 0.3), s("drop", 1.0), s("break", 0.2), s("outro", 0.1)];
+        let n = smooth_energy(&mut v);
+        assert_eq!(n, 2, "{v:?}");
+        assert!((v[1].energy - 0.55).abs() < 1e-9, "a verse may not leap out of the intro");
+        assert!((v[3].energy - 0.55).abs() < 1e-9, "nor fall off a cliff after the chorus");
+        assert_eq!(v[4].energy, 1.0, "a drop may leap");
+        assert_eq!(v[5].energy, 0.2, "a break may fall");
+        for (_, prompt) in SONGS {
+            for seed in [1, 5, 9] {
+                let p = song(prompt, seed);
+                for w in p.sections.windows(2) {
+                    let d = w[1].energy - w[0].energy;
+                    let up_ok = is_chorus(&w[1].tag) || is_build_tag(&w[1].tag);
+                    let down_ok = is_bridge(&w[1].tag) || matches!(w[1].tag.as_str(), "outro" | "intro" | "breakdown");
+                    assert!(d <= 0.35 + 1e-6 || up_ok, "{prompt}: {} -> {} jumps {d}", w[0].tag, w[1].tag);
+                    assert!(-d <= 0.45 + 1e-6 || down_ok, "{prompt}: {} -> {} falls {d}", w[0].tag, w[1].tag);
+                }
+                // a deliberate leap into a drop / chorus has its setup: a build (roll, riser, sweep) or a fill and a crash
+                assert!(flow_notes(&p).iter().any(|n| n.contains("fill")));
+            }
+        }
+    }
+
+    #[test]
+    fn songs_flow_across_their_sections_in_every_genre() {
+        let mut approaches_total = 0;
+        for (genre, prompt) in SONGS {
+            let p = song(prompt, 3);
+            assert_eq!(p.genre, genre, "{prompt}");
+            let notes = all_notes(&p);
+            let starts = section_starts(&p);
+            let ns = p.sections.len();
+            let last = ns - 1;
+            let key = section_key(&p, last);
+            let triad = [key.tonic % 12, (key.tonic + if key.minor { 3 } else { 4 }) % 12, (key.tonic + 7) % 12];
+            for (pi, part) in p.parts.iter().enumerate() {
+                let kind = role_kind(&part.role);
+                let x = crate::sounddesign::expression(&p.genre, &part.role, kind, p.bpm);
+                for si in 0..ns {
+                    let Some(n) = &notes[pi][si] else { continue };
+                    let sec = &p.sections[si];
+                    let len = sec.bars as f64 * 4.0;
+                    let gap = gap_after(&p, si);
+                    match kind {
+                        Kind::Drums => {
+                            // a fill into every new section (builds have their roll), a crash on the downbeat of the next one
+                            if let Some(next) = p.sections.get(si + 1) {
+                                if (next.tag != sec.tag || (next.energy - sec.energy).abs() >= 0.2) && !leads_into_drop(&p, si) && gap <= 0.0 && si + 1 != last {
+                                    let hits = n.iter().filter(|x| x.start >= len - 1.0 - 1e-6 && (matches!(x.key, compose::K_SNARE | compose::K_RIM) || (41..=50).contains(&x.key))).count();
+                                    assert!(hits >= 2, "{genre}: no fill at the end of {} {si}: {hits}", sec.tag);
+                                }
+                                if next.tag != sec.tag {
+                                    if let Some(nn) = &notes[pi][si + 1] {
+                                        assert!(nn.iter().any(|x| x.start < 0.05 && x.key == compose::K_CRASH), "{genre}: no crash on the downbeat of {}", next.tag);
+                                    }
+                                }
+                            }
+                        }
+                        Kind::Arp if part.role != "riser" => {
+                            if let Some(ap) = crate::sounddesign::arp_plan(&p.genre, (sec.energy + p.energy).clamp(0.05, 1.0)) {
+                                for x in n.iter().filter(|x| !(si == last && x.start >= len - 4.0 - 1e-6) && !(x.start >= len - 1.0 && si + 1 < ns)) {
+                                    let k = x.start / ap.step;
+                                    assert!((k - k.round()).abs() < 1e-6, "{genre} {}: an arp note off its {} grid at {}", part.role, ap.step, x.start);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    if matches!(kind, Kind::Bass | Kind::Melody) && x.mono {
+                        // a mono line: only the chosen pairs overlap (they glide), within the slide's interval
+                        let mut v = n.clone();
+                        v.sort_by(|a, b| a.start.total_cmp(&b.start));
+                        for w in v.windows(2) {
+                            if w[1].start - w[0].start < 0.2 {
+                                continue;
+                            }
+                            if w[0].start + w[0].len > w[1].start + 1e-6 {
+                                let iv = (w[1].key as i32 - w[0].key as i32).unsigned_abs();
+                                assert!(x.glide_secs > 0.0 && iv >= 1 && iv <= x.slide_max as u32, "{genre} {}: an unplanned overlap {w:?}", part.role);
+                            }
+                        }
+                    }
+                }
+                // the lead walks into the next phrase: its last note is a step or two from the next section's first
+                if kind == Kind::Melody && part.role != "voice" {
+                    let mut leaps = vec![];
+                    for si in 0..ns - 1 {
+                        let (Some(a), Some(b)) = (&notes[pi][si], &notes[pi][si + 1]) else { continue };
+                        let (sec, next) = (&p.sections[si], &p.sections[si + 1]);
+                        let (Some(la), Some(fb)) = (a.iter().max_by(|x, y| x.start.total_cmp(&y.start)), b.iter().min_by(|x, y| x.start.total_cmp(&y.start).then(y.key.cmp(&x.key)))) else { continue };
+                        let leap = (la.key as i32 - fb.key as i32).abs();
+                        leaps.push(leap);
+                        if next.tag != sec.tag && next.energy + 0.15 >= sec.energy && gap_after(&p, si) <= 0.0 && !(si + 1 == last && next.bars <= 1) {
+                            assert!(leap <= 4, "{genre} {}: {} -> {} leaps {leap}", part.role, sec.tag, next.tag);
+                        }
+                    }
+                    if !leaps.is_empty() {
+                        let mean = leaps.iter().sum::<i32>() as f64 / leaps.len() as f64;
+                        assert!(mean <= 7.0, "{genre} {}: the contour breaks at the boundaries {leaps:?}", part.role);
+                    }
+                }
+                // chords and pads: little motion from chord to chord, across the section boundaries too; pads hold common tones
+                if matches!(kind, Kind::Chords | Kind::Pad) && part.role != "riser" {
+                    let abs: Vec<(f64, f64, u8)> = (0..ns).filter_map(|si| notes[pi][si].as_ref().map(|n| n.iter().map(|x| (starts[si] + x.start, x.len, x.key)).collect::<Vec<_>>())).flatten().collect();
+                    let mut onsets: Vec<f64> = abs.iter().map(|n| n.0).collect();
+                    onsets.sort_by(f64::total_cmp);
+                    onsets.dedup_by(|a, b| (*a - *b).abs() < 0.03);
+                    let (mut moved, mut voices, mut held) = (0.0, 0usize, 0usize);
+                    for t in onsets.iter().skip(1) {
+                        let before = sounding(&abs, t - 0.2);
+                        let new: Vec<u8> = abs.iter().filter(|n| (n.0 - t).abs() < 0.03).map(|n| n.2).collect();
+                        if before.len() < 2 || new.len() < 2 {
+                            continue;
+                        }
+                        for k in &new {
+                            moved += before.iter().map(|b| (*b as f64 - *k as f64).abs()).fold(f64::MAX, f64::min);
+                            voices += 1;
+                        }
+                        held += sounding(&abs, t + 0.06).len().saturating_sub(new.len());
+                    }
+                    if voices > 0 {
+                        let mean = moved / voices as f64;
+                        assert!(mean <= 2.5, "{genre} {}: voices move {mean:.2} semitones a chord", part.role);
+                    }
+                    if kind == Kind::Pad && voices > 0 && part.role != "texture" {
+                        assert!(held > 0, "{genre} {}: a pad holds its common tones", part.role);
+                    }
+                }
+                // the ending resolves on the tonic
+                if let Some(n) = &notes[pi][last] {
+                    if kind != Kind::Drums && part.role != "riser" && !n.is_empty() {
+                        let t_last = n.iter().map(|x| x.start).fold(0.0, f64::max);
+                        let fin: Vec<u8> = n.iter().filter(|x| x.start >= t_last - 0.8).map(|x| x.key % 12).collect();
+                        assert!(fin.iter().all(|pc| triad.contains(pc)), "{genre} {}: the last chord {fin:?} is not the tonic {}", part.role, key.name());
+                        if matches!(kind, Kind::Bass | Kind::Melody) {
+                            assert_eq!(fin.last().copied(), Some(key.tonic % 12), "{genre} {}: ends on the tonic", part.role);
+                        }
+                    }
+                }
+                // the bass approaches some chord changes by step
+                if kind == Kind::Bass {
+                    for si in 0..ns {
+                        let Some(n) = &notes[pi][si] else { continue };
+                        let spec_cpb = written(&p, pi, &p.sections[si], None).0.cpb;
+                        let (_, chords) = section_chords(&p, si, spec_cpb);
+                        for w in chords.windows(2) {
+                            if w[0].2 == w[1].2 {
+                                continue;
+                            }
+                            let t = w[1].0;
+                            if let Some(b) = n.iter().filter(|x| x.start >= t - 1.0 && x.start < t - 0.05).max_by(|a, b| a.start.total_cmp(&b.start)) {
+                                let d = (0..11i32).map(|o| ((b.key as i32 - (w[1].2 as i32 + 12 * o)).abs())).min().unwrap_or(99);
+                                if (1..=2).contains(&d) {
+                                    approaches_total += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // a noise sweep into the drops of electronic music, ending where the drop (or the breath before it) begins
+            let sw = sweeps(&p);
+            if matches!(genre, "ballad" | "ambient" | "lofi") {
+                assert!(sw.is_empty(), "{genre}: no white-noise riser in acoustic music");
+            } else if p.sections.windows(2).any(|w| is_build_tag(&w[0].tag) && is_chorus(&w[1].tag)) {
+                assert!(!sw.is_empty(), "{genre}: a sweep into the drop");
+                for (st, l) in &sw {
+                    let end = st + l;
+                    let si = starts.iter().rposition(|s| *s <= *st + 1e-6).unwrap();
+                    let sec_end = starts[si] + p.sections[si].bars as f64 * 4.0;
+                    assert!((end - (sec_end - gap_after(&p, si))).abs() < 1e-6, "{genre}: the sweep ends at {end}, the section at {sec_end}");
+                }
+            }
+            // Ling Cinema: an impact on every downbeat a sweep rises into, none at all in acoustic music
+            let cues = cinema_cues(&p);
+            if matches!(genre, "ballad" | "lofi" | "folk" | "jazz" | "rock" | "orchestral") {
+                assert!(cues.is_empty(), "{genre}: no cinema effects in acoustic music");
+            }
+            for (st, l) in &sw {
+                let si = starts.iter().rposition(|s| *s <= *st + 1e-6).unwrap();
+                if leads_into_drop(&p, si) {
+                    assert!(cues.iter().any(|c| c.what == "impact" && (c.start - starts[si + 1]).abs() < 1e-6), "{genre}: an impact after the sweep at {st} (+{l})");
+                }
+            }
+            for c in &cues {
+                assert!(c.len > 0.0 && c.start >= 0.0 && c.key < 128, "{genre}: {c:?}");
+            }
+            assert!(p.notes.iter().any(|n| n.starts_with("flow:")) && p.notes.iter().any(|n| n.contains("resolves")), "{:?}", p.notes);
+        }
+        assert!(approaches_total >= 4, "bass approach notes: {approaches_total}");
+    }
+
+    #[test]
+    fn two_arps_never_share_an_octave_and_the_acid_line_slides() {
+        let mut both = 0;
+        for seed in 1..=12 {
+            let p = song("uplifting trance at 138 bpm", seed);
+            let arr = arrange(&p);
+            let arps: Vec<usize> = (0..p.parts.len()).filter(|i| role_kind(&p.parts[*i].role) == Kind::Arp).collect();
+            assert!(arps.len() >= 2, "trance has a pluck and an arp: {:?}", p.parts);
+            for (si, s) in p.sections.iter().enumerate() {
+                let on: Vec<usize> = arps.iter().copied().filter(|i| arr.on[*i][si]).collect();
+                if on.len() < 2 {
+                    continue;
+                }
+                let med = |i: usize| {
+                    let mut k: Vec<u8> = section_notes(&p, i, s, None).iter().map(|n| n.key).collect();
+                    k.sort_unstable();
+                    k.get(k.len() / 2).copied().unwrap_or(0) as i32
+                };
+                let (a, b) = (med(on[0]), med(on[1]));
+                assert!((a - b).abs() >= 9, "{}: two arps at {a} and {b}", s.tag);
+                both += 1;
+            }
+        }
+        assert!(both >= 1, "the pluck and the arp play together somewhere");
+        // the 303 line: some notes tied into the next (they glide), never more than an octave; the bass never arpeggiates
+        let p = song("acid techno at 135 bpm", 2);
+        let bi = p.parts.iter().position(|x| x.role == "acid bass").expect("an acid bass");
+        let arr = arrange(&p);
+        let mut ties = 0;
+        for (si, s) in p.sections.iter().enumerate() {
+            if !arr.on[bi][si] {
+                continue;
+            }
+            let mut n = section_notes(&p, bi, s, None);
+            n.sort_by(|a, b| a.start.total_cmp(&b.start));
+            ties += n.windows(2).filter(|w| w[1].start - w[0].start >= 0.2 && w[0].start + w[0].len > w[1].start + 1e-6).count();
+        }
+        assert!(ties >= 2, "the acid line slides: {ties}");
+        assert!(p.parts.iter().all(|x| !(role_kind(&x.role) == Kind::Bass && crate::sounddesign::arp_plan(&p.genre, 1.0).is_some() && x.role.contains("arp"))));
     }
 }

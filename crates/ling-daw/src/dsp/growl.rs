@@ -40,7 +40,11 @@ use std::sync::OnceLock;
 pub const NLANE: usize = 4;
 pub const NPTS: usize = 16;
 pub const NSRC: usize = 7;
-pub const NDST: usize = 13;
+pub const NDST: usize = 16;
+/// the matrix destinations past the first 13: FM index, reverb send, delay send
+const D_FMI: usize = 13;
+const D_VERB: usize = 14;
+const D_DELY: usize = 15;
 
 const CORE: [&str; 33] = [
     "table", "pos", "detn", "stack", "b wave", "b rat", "b fm", "b lvl", "sub", "nois", "ftype", "cut", "res", "vow", "drv", "shaper", "amp a", "amp d", "amp s", "amp r", "env a",
@@ -117,7 +121,58 @@ const P_MONOLO: usize = PRO_BASE + 5;
 const P_SUBSAT: usize = PRO_BASE + 6;
 const P_TILT: usize = PRO_BASE + 7;
 const P_AIR: usize = PRO_BASE + 8;
-pub const NPARAM: usize = PRO_BASE + PRO.len();
+/// the synthesis block after the pro block: polyphony, the FM block, the user wavetable switch, note-value lane lengths
+pub const X_BASE: usize = PRO_BASE + PRO.len();
+const XP: [&str; 17] = ["poly", "fm", "fm alg", "fm r1", "fm r2", "fm r3", "fm r4", "fm 2", "fm 3", "fm 4", "fm idx", "fm fb", "user", "l1 div", "l2 div", "l3 div", "l4 div"];
+const P_POLY: usize = X_BASE;
+const P_FM: usize = X_BASE + 1;
+const P_FMALG: usize = X_BASE + 2;
+/// operator ratios r1..r4 (op 1 is the carrier)
+const P_FMR: usize = X_BASE + 3;
+/// output levels of operators 2..4
+const P_FML: usize = X_BASE + 7;
+const P_FMIDX: usize = X_BASE + 10;
+const P_FMFB: usize = X_BASE + 11;
+const P_USER: usize = X_BASE + 12;
+/// l1 div .. l4 div: 0 = the lane's `len`, else a note value from `NOTE_DIVS` (index + 1) / 16
+const P_LDIV: usize = X_BASE + 13;
+pub const NPARAM: usize = X_BASE + XP.len();
+/// voices for `poly` (1 = mono, as Growl always was)
+pub const POLY: [usize; 6] = [1, 2, 3, 4, 6, 8];
+const MAXV: usize = 8;
+/// FM operator ratios for `fm r1`..`fm r4` (index / 15)
+pub const FM_RATIOS: [f32; 16] = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 16.0];
+/// FM algorithms: 4>3>2>1, 4>3 and 2 into 1, 2+3+4 into 1, two pairs (2>1, 4>3); operator 4 has the feedback
+pub const FM_ALGS: [&str; 4] = ["stack", "split", "fan", "pair"];
+/// Note values for tempo-synced cycles (Growl lanes `l* div`, Prism LFOs `l1 div` / `l2 div`): (name, length of one cycle in beats).
+/// T = triplet (2/3 of the note), . = dotted (3/2 of it).
+pub const NOTE_DIVS: [(&str, f32); 16] = [
+    ("1/32", 0.125),
+    ("1/16T", 1.0 / 6.0),
+    ("1/16", 0.25),
+    ("1/16.", 0.375),
+    ("1/8T", 1.0 / 3.0),
+    ("1/8", 0.5),
+    ("1/8.", 0.75),
+    ("1/4T", 2.0 / 3.0),
+    ("1/4", 1.0),
+    ("1/4.", 1.5),
+    ("1/2T", 4.0 / 3.0),
+    ("1/2", 2.0),
+    ("1/2.", 3.0),
+    ("1bar", 4.0),
+    ("2bar", 8.0),
+    ("4bar", 16.0),
+];
+/// the beats of one cycle for a `div` parameter value, None = off (0)
+pub fn note_div(v: f32) -> Option<f32> {
+    let i = (v * 16.0).round() as usize;
+    if i == 0 {
+        None
+    } else {
+        Some(NOTE_DIVS[i.min(16) - 1].1)
+    }
+}
 /// voices per `uni` step, and where the voices past the first three sit (times `detn` x 40 cents)
 const UNI: [usize; 4] = [3, 5, 7, 9];
 const UNI_SPREAD: [f32; 6] = [-0.5, 0.5, -0.8, 0.8, -0.2, 0.2];
@@ -125,7 +180,7 @@ const UNI_SPREAD: [f32; 6] = [-0.5, 0.5, -0.8, 0.8, -0.2, 0.2];
 const T_RATES: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
 
 pub const SRC_NAMES: [&str; NSRC] = ["l1", "l2", "l3", "l4", "env", "vel", "whl"];
-pub const DST_NAMES: &str = "pwfcqvdanrkos";
+pub const DST_NAMES: &str = "pwfcqvdanrkosiey";
 pub const LANE_LEN: [f32; 6] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
 const B_RATIOS: [f32; 8] = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0];
 const STACKS: [[f32; 3]; 5] = [[0.0, 0.0, 0.0], [0.0, 700.0, 1200.0], [0.0, 1200.0, -1200.0], [0.0, 300.0, 700.0], [0.0, 400.0, 700.0]];
@@ -146,6 +201,10 @@ const MOD_AMT: [[f32; 4]; NDST] = [
     [100.0, 300.0, 1200.0, 2400.0],
     [0.1, 0.25, 0.5, 1.0],
     [10.0, 50.0, 200.0, 800.0],
+    // i: FM index, e: reverb send, y: delay send
+    [0.1, 0.25, 0.5, 1.0],
+    [0.1, 0.25, 0.5, 1.0],
+    [0.1, 0.25, 0.5, 1.0],
 ];
 const VOWELS: [[f32; 3]; 5] = [[300.0, 870.0, 2240.0], [570.0, 840.0, 2410.0], [730.0, 1090.0, 2440.0], [530.0, 1840.0, 2480.0], [270.0, 2290.0, 3010.0]];
 const VOW_GAIN: [f32; 3] = [1.6, 1.1, 0.7];
@@ -177,6 +236,9 @@ pub fn param_names() -> &'static [&'static str] {
             v.push(n);
         }
         for n in PRO {
+            v.push(n);
+        }
+        for n in XP {
             v.push(n);
         }
         v
@@ -236,6 +298,13 @@ fn defaults() -> Vec<f32> {
     v[P_FORMANT] = 0.5;
     v[P_SWIDTH] = 0.5;
     v[P_TILT] = 0.5;
+    // the FM block: off; carrier and op 2 at the note, op 3 an octave up, op 4 (feedback) at the note
+    v[P_FMR] = 1.0 / 15.0;
+    v[P_FMR + 1] = 1.0 / 15.0;
+    v[P_FMR + 2] = 3.0 / 15.0;
+    v[P_FMR + 3] = 1.0 / 15.0;
+    v[P_FML] = 0.6;
+    v[P_FMIDX] = 0.5;
     v
 }
 
@@ -482,14 +551,12 @@ impl Ott {
 }
 
 // ── the instrument ──────────────────────────────────────────────────────────
-pub struct Growl {
-    sr: f32,
-    v: Vec<f32>,
-    /// modulation amounts per source -> destination (resolved from the matrix)
-    mat: [[f32; NDST]; NSRC],
-    mat_dirty: bool,
-    held: Vec<(u8, f32)>,
+/// One voice: everything that follows a note, from the oscillators to the pan. Mono mode plays voice 0 only (as Growl always did);
+/// `poly` > 1 hands each new note its own voice.
+struct GVoice {
+    key: u8,
     gate: bool,
+    age: u64,
     note: f32,
     target: f32,
     vel: f32,
@@ -498,26 +565,11 @@ pub struct Growl {
     ph_sub: f32,
     amp: Env,
     menv: Env,
-    lane_t: [f64; NLANE],
-    lane_val: [f32; NLANE],
     rng: Rng,
     f_main: Tpt,
     f_form: [Tpt; 3],
     f_lp: Tpt,
-    wide_l: DelayLine,
-    wide_r: DelayLine,
-    wide_ph: f32,
-    dly: DelayLine,
-    dly_lp: f32,
-    verb: Reverb,
-    scr: Vec<f32>,
-    scr2: Vec<f32>,
-    lim: f32,
-    silent: u32,
-    last_mod: [f32; NDST],
-    /// the talk sequencer: step clock, the smoothed vowel position and its three formant filters
-    talk_t: f64,
-    talk_pos: f32,
+    /// the talk formant filters
     f_talk: [Tpt; 3],
     /// hard sync master phase
     ph_sync: f32,
@@ -536,10 +588,213 @@ pub struct Growl {
     dc_y: f32,
     /// a DC blocker at the voice output (about 3 Hz)
     out_dc: (f32, f32),
-    /// the pro block: the multiband crossovers, the OTT compressor and the output stage
+    /// the multiband crossovers
     f_mb: [Tpt; 2],
+    /// filter coefficients between their four-sample updates
+    g_main: f32,
+    k_main: f32,
+    form_g: [f32; 3],
+    form_k: f32,
+    t_g: [f32; 3],
+    /// the FM block: operator phases, the feedback memory, the last full-rate output (the 2x decimator)
+    fm_ph: [f32; 4],
+    fm_fb: [f32; 2],
+    fm_last: f32,
+    /// per-note pitch (semitones from the key): now, where it is heading this block, the step per sample; `pb_fresh` = the first
+    /// value after the note started is taken at once (a scoop starts below)
+    pb: f32,
+    pb_tgt: f32,
+    pb_step: f32,
+    pb_fresh: bool,
+    /// per-note pressure (0 = none) and timbre (0.5 = neutral), ramped across the block; `x_fresh` = the first values jump
+    prs: super::Smooth,
+    tmb: super::Smooth,
+    prs_fresh: bool,
+    tmb_fresh: bool,
+    /// poly: how much of the sub this voice plays (only the lowest note keeps it), smoothed
+    sub_g: f32,
+}
+
+impl GVoice {
+    fn new(sr: f32, k: usize) -> GVoice {
+        GVoice {
+            key: 0,
+            gate: false,
+            age: 0,
+            note: 48.0,
+            target: 48.0,
+            vel: 0.8,
+            ph_a: [0.0, 0.31, 0.67, 0.13, 0.52, 0.88, 0.24, 0.71, 0.45],
+            ph_b: 0.0,
+            ph_sub: 0.0,
+            amp: Env::new(),
+            menv: Env::new(),
+            rng: Rng::new(0x9e3779b9u32.wrapping_add((k as u32).wrapping_mul(0x85eb_ca6b))),
+            f_main: Tpt::default(),
+            f_form: [Tpt::default(); 3],
+            f_lp: Tpt::default(),
+            f_talk: [Tpt::default(); 3],
+            ph_sync: 0.0,
+            os_y: 0.0,
+            os_sh: 0.0,
+            comb_line: DelayLine::new((sr * 0.06) as usize),
+            comb_lp: 0.0,
+            hil: Default::default(),
+            fs_ph: 0.0,
+            p_t: 10.0,
+            cr_h: 0.0,
+            cr_n: 0,
+            dc_x: 0.0,
+            dc_y: 0.0,
+            out_dc: (0.0, 0.0),
+            f_mb: [Tpt::default(); 2],
+            g_main: 0.0,
+            k_main: 1.0,
+            form_g: [0.0; 3],
+            form_k: 1.0,
+            t_g: [0.0; 3],
+            fm_ph: [0.0; 4],
+            fm_fb: [0.0; 2],
+            fm_last: 0.0,
+            pb: 0.0,
+            pb_tgt: 0.0,
+            pb_step: 0.0,
+            pb_fresh: true,
+            prs: super::Smooth::at(0.0),
+            tmb: super::Smooth::at(0.5),
+            prs_fresh: true,
+            tmb_fresh: true,
+            sub_g: 1.0,
+        }
+    }
+    /// a new note on this voice: the pitch gesture starts fresh
+    fn new_key(&mut self, key: u8) {
+        self.key = key;
+        self.pb = 0.0;
+        self.pb_tgt = 0.0;
+        self.pb_step = 0.0;
+        self.pb_fresh = true;
+        self.prs.reset(0.0);
+        self.tmb.reset(0.5);
+        self.prs_fresh = true;
+        self.tmb_fresh = true;
+    }
+}
+
+/// the FM block's settings for one block
+#[derive(Clone, Copy)]
+struct FmCfg {
+    alg: usize,
+    /// operator frequency ratios (op 1 is the carrier)
+    r: [f32; 4],
+    /// output levels of operators 2..4 (index 0 = op 2)
+    l: [f32; 3],
+    /// feedback of operator 4, in cycles
+    fb: f32,
+}
+
+/// sin(2 pi ph) from the table; the phase may be anywhere (a modulated phase goes below zero)
+#[inline]
+fn fm_sin(ph: f32) -> f32 {
+    rd(&sine_table()[..], ph - ph.floor())
+}
+
+fn sine_table() -> &'static [f32] {
+    static S: OnceLock<Vec<f32>> = OnceLock::new();
+    S.get_or_init(|| (0..TN).map(|i| (TAU * i as f32 / TN as f32).sin()).collect())
+}
+
+impl GVoice {
+    /// one FM sample at the operators' current phases; `idx` = the modulation index (cycles of phase per unit of output)
+    #[inline]
+    fn fm_eval(&mut self, c: &FmCfg, idx: f32) -> f32 {
+        let fbv = (self.fm_fb[0] + self.fm_fb[1]) * 0.5 * c.fb;
+        let o4 = fm_sin(self.fm_ph[3] + fbv);
+        self.fm_fb = [self.fm_fb[1], o4];
+        let (m2, m3, m4) = (c.l[0] * idx, c.l[1] * idx, c.l[2] * idx);
+        match c.alg {
+            // 4 -> 3 -> 2 -> 1
+            0 => {
+                let o3 = fm_sin(self.fm_ph[2] + m4 * o4);
+                let o2 = fm_sin(self.fm_ph[1] + m3 * o3);
+                fm_sin(self.fm_ph[0] + m2 * o2)
+            }
+            // 4 -> 3, then 3 and 2 -> 1
+            1 => {
+                let o3 = fm_sin(self.fm_ph[2] + m4 * o4);
+                let o2 = fm_sin(self.fm_ph[1]);
+                fm_sin(self.fm_ph[0] + m2 * o2 + m3 * o3)
+            }
+            // 2, 3 and 4 -> 1
+            2 => {
+                let o2 = fm_sin(self.fm_ph[1]);
+                let o3 = fm_sin(self.fm_ph[2]);
+                fm_sin(self.fm_ph[0] + m2 * o2 + m3 * o3 + m4 * o4)
+            }
+            // two pairs: 2 -> 1 and 4 -> 3, both carriers heard (op 3 at its level)
+            _ => {
+                let o3 = fm_sin(self.fm_ph[2] + m4 * o4);
+                let o1 = fm_sin(self.fm_ph[0] + m2 * fm_sin(self.fm_ph[1]));
+                (o1 + c.l[1] * o3) / (1.0 + c.l[1])
+            }
+        }
+    }
+    /// advance the operators by `inc` cycles of the note
+    #[inline]
+    fn fm_step(&mut self, c: &FmCfg, inc: f32) {
+        for k in 0..4 {
+            self.fm_ph[k] += inc * c.r[k];
+            self.fm_ph[k] -= self.fm_ph[k].floor();
+        }
+    }
+    /// one output sample at twice the rate (a half step, a full step, and a 1-2-1 average back down: the sidebands of a high index
+    /// alias far less)
+    #[inline]
+    fn fm_sample(&mut self, c: &FmCfg, f0: f32, sr: f32, idx: f32) -> f32 {
+        let half = 0.5 * f0 / sr;
+        self.fm_step(c, half);
+        let mid = self.fm_eval(c, idx);
+        self.fm_step(c, half);
+        let cur = self.fm_eval(c, idx);
+        let y = 0.25 * self.fm_last + 0.5 * mid + 0.25 * cur;
+        self.fm_last = cur;
+        y
+    }
+}
+
+pub struct Growl {
+    sr: f32,
+    v: Vec<f32>,
+    /// modulation amounts per source -> destination (resolved from the matrix)
+    mat: [[f32; NDST]; NSRC],
+    mat_dirty: bool,
+    held: Vec<(u8, f32)>,
+    /// the voices (mono: voice 0 only)
+    vo: Vec<GVoice>,
+    /// the voice whose modulation drives the shared parts (lane 1 rate, the sends): the newest note's
+    lead: usize,
+    clock: u64,
+    lane_t: [f64; NLANE],
+    lane_val: [f32; NLANE],
+    wide_l: DelayLine,
+    wide_r: DelayLine,
+    wide_ph: f32,
+    dly: DelayLine,
+    dly_lp: f32,
+    verb: Reverb,
+    scr: Vec<f32>,
+    scr2: Vec<f32>,
+    lim: f32,
+    silent: u32,
+    last_mod: [f32; NDST],
+    /// the talk sequencer: step clock and the smoothed vowel position (shared by the voices)
+    talk_t: f64,
+    talk_pos: f32,
+    /// the OTT compressor and the output stage
     ott: Ott,
     pro: ProState,
+    /// a user wavetable (resampled audio or a wavetable file), played when `user` is on
+    wt: Option<std::sync::Arc<super::wavetable::WaveTable>>,
 }
 
 pub const ARCHETYPES: [&str; 10] = ["wobble", "talk", "screech", "riddim", "lead", "pad", "pluck", "sub", "fm", "vox"];
@@ -830,21 +1085,11 @@ impl Growl {
             mat: [[0.0; NDST]; NSRC],
             mat_dirty: true,
             held: vec![],
-            gate: false,
-            note: 48.0,
-            target: 48.0,
-            vel: 0.8,
-            ph_a: [0.0, 0.31, 0.67, 0.13, 0.52, 0.88, 0.24, 0.71, 0.45],
-            ph_b: 0.0,
-            ph_sub: 0.0,
-            amp: Env::new(),
-            menv: Env::new(),
+            vo: (0..MAXV).map(|k| GVoice::new(sr, k)).collect(),
+            lead: 0,
+            clock: 0,
             lane_t: [0.0; NLANE],
             lane_val: [0.0; NLANE],
-            rng: Rng::new(0x9e3779b9),
-            f_main: Tpt::default(),
-            f_form: [Tpt::default(); 3],
-            f_lp: Tpt::default(),
             wide_l: DelayLine::new((sr * 0.05) as usize),
             wide_r: DelayLine::new((sr * 0.05) as usize),
             wide_ph: 0.0,
@@ -858,26 +1103,39 @@ impl Growl {
             last_mod: [0.0; NDST],
             talk_t: 0.0,
             talk_pos: 0.0,
-            f_talk: [Tpt::default(); 3],
-            ph_sync: 0.0,
-            os_y: 0.0,
-            os_sh: 0.0,
-            comb_line: DelayLine::new((sr * 0.06) as usize),
-            comb_lp: 0.0,
-            hil: Default::default(),
-            fs_ph: 0.0,
-            p_t: 10.0,
-            cr_h: 0.0,
-            cr_n: 0,
-            dc_x: 0.0,
-            dc_y: 0.0,
-            out_dc: (0.0, 0.0),
-            f_mb: [Tpt::default(); 2],
             ott: Ott::new(),
             pro: ProState::default(),
+            wt: None,
         };
         s.resolve_matrix();
         s
+    }
+
+    /// voices in use: 1 = mono (legato, glide), more = each note its own voice
+    fn npoly(&self) -> usize {
+        POLY[self.sel(P_POLY, POLY.len())]
+    }
+
+    /// the voice for a new note in poly mode: the same key again, a silent voice, the quietest releasing one, else the oldest
+    fn alloc_voice(&self, key: u8, n: usize) -> usize {
+        if let Some(i) = (0..n).find(|&i| self.vo[i].gate && self.vo[i].key == key) {
+            return i;
+        }
+        if let Some(i) = (0..n).find(|&i| self.vo[i].amp.stage == Stage::Idle && !self.vo[i].gate) {
+            return i;
+        }
+        if let Some(i) = (0..n).filter(|&i| !self.vo[i].gate).min_by(|&a, &b| self.vo[a].amp.level.total_cmp(&self.vo[b].amp.level)) {
+            return i;
+        }
+        (0..n).min_by_key(|&i| self.vo[i].age).unwrap_or(0)
+    }
+
+    /// Load a wavetable file into the user slot ("" or a bad file: an error, the slot keeps what it had).
+    pub fn load_table(&mut self, path: &str) -> Result<usize, String> {
+        let w = super::wavetable::WaveTable::load(path)?;
+        let n = w.nframes();
+        self.wt = Some(w);
+        Ok(n)
     }
 
     fn resolve_matrix(&mut self) {
@@ -897,7 +1155,10 @@ impl Growl {
 
     fn lane_value(&self, l: usize) -> f32 {
         let b = LANE_BASE + l * LANE_STRIDE;
-        let len = LANE_LEN[((self.v[b] * 5.0).round() as usize).min(5)] as f64;
+        let len = match note_div(self.v[P_LDIV + l]) {
+            Some(d) => d as f64,
+            None => LANE_LEN[((self.v[b] * 5.0).round() as usize).min(5)] as f64,
+        };
         let interp = ((self.v[b + 1] * 2.0).round() as usize).min(2);
         let looping = self.v[b + 2] > 0.5;
         let pts = &self.v[b + 4..b + 4 + NPTS];
@@ -988,36 +1249,121 @@ impl Instrument for Growl {
     fn note_on(&mut self, key: u8, vel: f32) {
         self.held.retain(|h| h.0 != key);
         self.held.push((key, vel));
-        self.target = key as f32;
-        self.vel = vel.clamp(0.0, 1.0);
-        if !self.gate {
-            // after silence: jump to the pitch and restart the envelopes / lanes
-            self.note = self.target;
-            self.amp.on();
-            self.menv.on();
+        let n = self.npoly();
+        if n <= 1 {
+            // mono: one voice, legato with glide between overlapping notes
+            let gate = self.vo[0].gate;
+            {
+                let v = &mut self.vo[0];
+                v.target = key as f32;
+                v.vel = vel.clamp(0.0, 1.0);
+                v.new_key(key);
+            }
+            if !gate {
+                // after silence: jump to the pitch and restart the envelopes / lanes
+                self.trigger();
+                self.talk_t = 0.0;
+                let v = &mut self.vo[0];
+                v.note = v.target;
+                v.amp.on();
+                v.menv.on();
+                v.ph_sync = 0.0;
+                v.p_t = 0.0;
+                v.gate = true;
+            }
+            self.lead = 0;
+            return;
+        }
+        let any_gate = self.vo.iter().any(|v| v.gate);
+        let i = self.alloc_voice(key, n);
+        self.clock += 1;
+        if !any_gate {
             self.trigger();
             self.talk_t = 0.0;
-            self.ph_sync = 0.0;
-            self.p_t = 0.0;
-            self.gate = true;
         }
+        let v = &mut self.vo[i];
+        v.age = self.clock;
+        v.new_key(key);
+        v.target = key as f32;
+        v.note = key as f32;
+        v.vel = vel.clamp(0.0, 1.0);
+        v.amp.on();
+        v.menv.on();
+        v.ph_sync = 0.0;
+        v.p_t = 0.0;
+        v.gate = true;
+        self.lead = i;
     }
     fn note_off(&mut self, key: u8) {
         self.held.retain(|h| h.0 != key);
-        if let Some(&(k, v)) = self.held.last() {
-            self.target = k as f32;
-            self.vel = v;
-        } else if self.v[P_HOLD] < 0.5 {
-            self.gate = false;
-            self.amp.off();
-            self.menv.off();
+        if self.npoly() <= 1 {
+            if let Some(&(k, vl)) = self.held.last() {
+                let v = &mut self.vo[0];
+                v.target = k as f32;
+                v.vel = vl;
+                if v.key != k {
+                    // back to an older held note: its own pitch, the gesture eases out
+                    v.key = k;
+                    v.pb_tgt = 0.0;
+                    v.pb_fresh = false;
+                }
+            } else if self.v[P_HOLD] < 0.5 {
+                let v = &mut self.vo[0];
+                v.gate = false;
+                v.amp.off();
+                v.menv.off();
+            }
+            return;
+        }
+        if self.v[P_HOLD] >= 0.5 {
+            return;
+        }
+        for v in self.vo.iter_mut().filter(|v| v.gate && v.key == key) {
+            v.gate = false;
+            v.amp.off();
+            v.menv.off();
+        }
+    }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        if !semis.is_finite() {
+            return;
+        }
+        let s = semis.clamp(-48.0, 48.0);
+        // only held voices: a releasing note keeps its last bend (the tail of a dive does not snap back)
+        for v in self.vo.iter_mut().filter(|v| v.key == key && v.gate) {
+            if v.pb_fresh {
+                v.pb = s;
+                v.pb_step = 0.0;
+            }
+            v.pb_tgt = s;
+            v.pb_fresh = false;
+        }
+    }
+    fn note_pressure(&mut self, key: u8, p: f32) {
+        if !p.is_finite() {
+            return;
+        }
+        for v in self.vo.iter_mut().filter(|v| v.key == key && v.gate) {
+            v.prs.set(p.clamp(0.0, 1.0), v.prs_fresh);
+            v.prs_fresh = false;
+        }
+    }
+    fn note_timbre(&mut self, key: u8, t: f32) {
+        if !t.is_finite() {
+            return;
+        }
+        for v in self.vo.iter_mut().filter(|v| v.key == key && v.gate) {
+            v.tmb.set(t.clamp(0.0, 1.0), v.tmb_fresh);
+            v.tmb_fresh = false;
         }
     }
     fn all_off(&mut self) {
         self.held.clear();
-        self.gate = false;
-        self.amp.off();
-        self.menv.off();
+        for v in self.vo.iter_mut() {
+            v.gate = false;
+            v.amp.off();
+            v.menv.off();
+        }
     }
 
     fn render(&mut self, out: &mut [f32]) {
@@ -1028,8 +1374,13 @@ impl Instrument for Growl {
         if frames == 0 {
             return;
         }
+        // which voices sound this block (a note cannot start inside a block)
+        let mut act = [false; MAXV];
+        for k in 0..MAXV {
+            act[k] = self.vo[k].amp.stage != Stage::Idle;
+        }
         // a quiet voice with dead effect tails costs nothing
-        if self.amp.stage == Stage::Idle && self.silent as f32 > self.sr * 6.0 {
+        if !act.iter().any(|a| *a) && self.silent as f32 > self.sr * 6.0 {
             return;
         }
         let sr = self.sr;
@@ -1063,7 +1414,6 @@ impl Instrument for Growl {
         let t_k = 1.0 - (-dt / (0.002 + self.v[P_TGLID] * self.v[P_TGLID] * 0.15)).exp();
         let t_shift = 2f32.powf((self.v[P_TSH] - 0.5) * 2.0);
         let t_q = 1.0 / (4.0 + self.v[P_TRES] * 14.0);
-        let mut t_g = [0.0f32; 3];
         let sync_p = self.v[P_SYNC];
         let comb = self.v[P_COMB];
         let c_tune = (self.v[P_CTUNE] - 0.5) * 48.0;
@@ -1102,11 +1452,42 @@ impl Instrument for Growl {
         let sub_sat_n = 1.0 / sub_sat_d.tanh();
         let mono_v = if self.v[P_MONOLO] > 0.02 { self.v[P_MONOLO] } else { 0.0 };
         let pro = ProCfg::new(sr, self.v[P_SWIDTH], mono_v, self.v[P_AIR], 0.0, self.v[P_TILT]);
-        let active = self.amp.stage != Stage::Idle;
-        let mut g_main = 0.0f32;
-        let mut k_main = 1.0f32;
-        let mut form_g = [0.0f32; 3];
-        let mut form_k = 1.0f32;
+        // the synthesis block: voices, FM, the user wavetable, sends under modulation
+        let npoly = self.npoly();
+        let poly = npoly > 1;
+        // a full chord stays near the level of one mono note
+        let poly_g = if npoly > 2 { (2.0 / npoly as f32).sqrt() } else { 1.0 };
+        let fm_mix = self.v[P_FM];
+        let fm_on = fm_mix > 0.002;
+        let wt_skip = fm_mix > 0.998;
+        let fm_cfg = FmCfg {
+            alg: self.sel(P_FMALG, FM_ALGS.len()),
+            r: [0, 1, 2, 3].map(|k| FM_RATIOS[self.sel(P_FMR + k, FM_RATIOS.len())]),
+            l: [0, 1, 2].map(|k| self.v[P_FML + k]),
+            fb: self.v[P_FMFB] * 0.45,
+        };
+        let has_dst = |d: usize| (0..NSRC).any(|s| mats[s][d] != 0.0);
+        let fm_mod = has_dst(D_FMI);
+        let verb_mod = has_dst(D_VERB);
+        let dely_mod = has_dst(D_DELY);
+        let ut = if self.v[P_USER] > 0.5 { self.wt.clone() } else { None };
+        // poly: the sub only under the lowest sounding note (smoothed, so it moves without a click)
+        let mut sub_tgt = [1.0f32; MAXV];
+        if poly {
+            let low = (0..MAXV).filter(|&k| act[k] && self.vo[k].gate).min_by(|&a, &b| self.vo[a].target.total_cmp(&self.vo[b].target));
+            let low = low.or_else(|| (0..MAXV).filter(|&k| act[k]).min_by(|&a, &b| self.vo[a].target.total_cmp(&self.vo[b].target)));
+            for k in 0..MAXV {
+                sub_tgt[k] = if Some(k) == low { 1.0 } else { 0.0 };
+            }
+        }
+        let sub_k = 1.0 - (-dt / 0.012f32).exp();
+        // per-note pitch: a straight line from where it is to the value the engine asked for, across this block
+        for v in self.vo.iter_mut() {
+            v.pb_step = (v.pb_tgt - v.pb) / frames as f32;
+            v.prs.begin(frames);
+            v.tmb.begin(frames);
+        }
+        let lead = self.lead.min(MAXV - 1);
         let mut energy = 0.0f32;
         self.scr.resize(out.len(), 0.0);
         self.scr2.resize(out.len(), 0.0);
@@ -1125,32 +1506,65 @@ impl Instrument for Growl {
                 let target = self.v[P_TSTEP + step];
                 self.talk_pos += (target - self.talk_pos) * t_k;
             }
-            let env_v = self.menv.tick(ea, ed, es, er, dt);
-            let amp_v = self.amp.tick(aa, ad, as_, ar, dt);
-            self.note += (self.target - self.note) * glide_k;
+            let lane_val = self.lane_val;
+            let talk_pos = self.talk_pos;
+            let (mut l_out, mut r_out) = (0.0f32, 0.0f32);
+            for vk in 0..MAXV {
+                if vk != lead && !act[vk] {
+                    continue;
+                }
+                let v = &mut self.vo[vk];
+                let env_v = v.menv.tick(ea, ed, es, er, dt);
+                let amp_v = v.amp.tick(aa, ad, as_, ar, dt);
+                v.note += (v.target - v.note) * glide_k;
 
-            let src = [self.lane_val[0], self.lane_val[1], self.lane_val[2], self.lane_val[3], env_v, self.vel, whl];
-            let mut m = [0.0f32; NDST];
-            for s in 0..NSRC {
-                if src[s] != 0.0 {
-                    for d in 0..NDST {
-                        m[d] += src[s] * mats[s][d];
+                let src = [lane_val[0], lane_val[1], lane_val[2], lane_val[3], env_v, v.vel, whl];
+                let mut m = [0.0f32; NDST];
+                for s in 0..NSRC {
+                    if src[s] != 0.0 {
+                        for d in 0..NDST {
+                            m[d] += src[s] * mats[s][d];
+                        }
                     }
                 }
-            }
-            self.last_mod = m;
-
-            let (mut l_out, mut r_out) = (0.0f32, 0.0f32);
-            if active || amp_v > 0.0 {
-                let pe = if penv != 0.0 && self.p_t < ptau * 8.0 { penv * (-self.p_t / ptau).exp() } else { 0.0 };
-                self.p_t += dt;
-                let semis = self.note + (bend_c + m[0]) / 100.0 + pe;
+                if vk == lead {
+                    self.last_mod = m;
+                }
+                // per-note expression: pressure opens the filter, pushes the drive and the level; timbre moves the wavetable
+                // position and the cutoff (+-1 octave)
+                let prs = v.prs.tick();
+                let tmb = v.tmb.tick();
+                if prs != 0.0 {
+                    m[3] += prs * 1800.0;
+                    m[6] += prs * 6.0;
+                    m[7] += prs * 0.3;
+                }
+                if tmb != 0.5 {
+                    m[1] += (tmb - 0.5) * 0.8;
+                    m[3] += (tmb - 0.5) * 2400.0;
+                }
+                let pb_on = v.pb != 0.0 || v.pb_step != 0.0;
+                if pb_on {
+                    v.pb += v.pb_step;
+                }
+                if poly {
+                    v.sub_g += (sub_tgt[vk] - v.sub_g) * sub_k;
+                }
+                if !(act[vk] || amp_v > 0.0) {
+                    continue;
+                }
+                let pe = if penv != 0.0 && v.p_t < ptau * 8.0 { penv * (-v.p_t / ptau).exp() } else { 0.0 };
+                v.p_t += dt;
+                let mut semis = v.note + (bend_c + m[0]) / 100.0 + pe;
+                if pb_on {
+                    semis += v.pb;
+                }
                 let f0 = midi_hz(semis);
                 // osc B first: it drives the FM
                 let fb = f0 * brat;
-                self.ph_b += fb / sr;
-                self.ph_b -= self.ph_b.floor();
-                let pb = self.ph_b;
+                v.ph_b += fb / sr;
+                v.ph_b -= v.ph_b.floor();
+                let pb = v.ph_b;
                 let dtb = (fb / sr).abs();
                 let b_out = match bwave {
                     0 => (TAU * pb).sin(),
@@ -1168,36 +1582,57 @@ impl Instrument for Growl {
                 let th = pos * std::f32::consts::FRAC_PI_2;
                 let (cx, cy) = (th.cos(), th.sin());
                 // hard sync: the stack runs `ratio` times faster and is reset by a master at the note's pitch
-                let ratio = if sync_p > 0.005 { (1.0 + (sync_p + self.lane_val[2] * self.v[P_SMOD]) * 7.0).clamp(1.0, 9.0) } else { 1.0 };
+                let ratio = if sync_p > 0.005 { (1.0 + (sync_p + lane_val[2] * self.v[P_SMOD]) * 7.0).clamp(1.0, 9.0) } else { 1.0 };
                 if ratio > 1.0001 {
-                    self.ph_sync += f0 / sr;
-                    if self.ph_sync >= 1.0 {
-                        self.ph_sync -= self.ph_sync.floor();
-                        self.ph_a = [0.0; 9];
+                    v.ph_sync += f0 / sr;
+                    if v.ph_sync >= 1.0 {
+                        v.ph_sync -= v.ph_sync.floor();
+                        v.ph_a = [0.0; 9];
                     }
                 }
-                let allowed = (0.45 * sr / (f0 * ratio * fmt_mul).max(10.0)).floor() as usize;
-                let lvl = LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1);
-                let (tx, ty) = (&tb.w[tbl][0][lvl], &tb.w[tbl][1][lvl]);
                 let mut a_sum = 0.0;
-                for k in 0..nuni {
-                    let spread = if k < 3 { DETN_SPREAD[k] } else { UNI_SPREAD[k - 3] };
-                    let cents = stack[k % 3] + spread * self.v[P_DETN] * 40.0;
-                    let fk = f0 * ratio * 2f32.powf(cents / 1200.0) + fm_dev;
-                    self.ph_a[k] += fk / sr;
-                    self.ph_a[k] -= self.ph_a[k].floor();
-                    if fmt_on {
-                        // formant shift: the cycle is read `fmt_r` times faster and faded in and out, so the pitch stays and the
-                        // spectral envelope moves
-                        let ph = self.ph_a[k];
-                        let w = (0.5 - 0.5 * (TAU * ph).cos()) * 1.6;
-                        let q = ph * fmt_r;
-                        a_sum += w * (cx * rd(tx, q) + cy * rd(ty, q));
-                    } else {
-                        a_sum += cx * rd(tx, self.ph_a[k]) + cy * rd(ty, self.ph_a[k]);
+                if !wt_skip {
+                    let allowed = (0.45 * sr / (f0 * ratio * fmt_mul).max(10.0)).floor() as usize;
+                    let lvl = LEVELS.iter().position(|&h| h <= allowed).unwrap_or(LEVELS.len() - 1);
+                    let (tx, ty) = (&tb.w[tbl][0][lvl], &tb.w[tbl][1][lvl]);
+                    // the user table: two frames around the position, crossfaded
+                    let uw = ut.as_deref().map(|w| {
+                        let (a, b, fr) = w.frames_at(pos);
+                        let ul = super::wavetable::WaveTable::level(f0 * ratio * fmt_mul, sr);
+                        (w.cycle(a, ul), w.cycle(b, ul), fr)
+                    });
+                    for k in 0..nuni {
+                        let spread = if k < 3 { DETN_SPREAD[k] } else { UNI_SPREAD[k - 3] };
+                        let cents = stack[k % 3] + spread * self.v[P_DETN] * 40.0;
+                        let fk = f0 * ratio * 2f32.powf(cents / 1200.0) + fm_dev;
+                        v.ph_a[k] += fk / sr;
+                        v.ph_a[k] -= v.ph_a[k].floor();
+                        let (q, w) = if fmt_on {
+                            // formant shift: the cycle is read `fmt_r` times faster and faded in and out, so the pitch stays and the
+                            // spectral envelope moves
+                            let ph = v.ph_a[k];
+                            ((ph * fmt_r), (0.5 - 0.5 * (TAU * ph).cos()) * 1.6)
+                        } else {
+                            (v.ph_a[k], 1.0)
+                        };
+                        if let Some((c0, c1, fr)) = uw {
+                            let s0 = rd(c0, q);
+                            a_sum += w * (s0 + (rd(c1, q) - s0) * fr);
+                        } else if fmt_on {
+                            a_sum += w * (cx * rd(tx, q) + cy * rd(ty, q));
+                        } else {
+                            a_sum += cx * rd(tx, q) + cy * rd(ty, q);
+                        }
                     }
                 }
-                let mut x = a_sum * 0.5 * uni_g + b_out * self.v[P_BLVL] * 0.6 * 0.6 + self.rng.next() * self.v[P_NOIS] * 0.5;
+                let (osc, b_part, nz) = (a_sum * 0.5 * uni_g, b_out * self.v[P_BLVL] * 0.6 * 0.6, v.rng.next() * self.v[P_NOIS] * 0.5);
+                let mut x = osc + b_part + nz;
+                // the FM block: four sine operators at the note, blended with (or instead of) the wavetable stack; osc B stays as it is
+                if fm_on {
+                    let ix = if fm_mod { (self.v[P_FMIDX] + m[D_FMI]).clamp(0.0, 1.0) } else { self.v[P_FMIDX] };
+                    let y = v.fm_sample(&fm_cfg, f0, sr, ix * ix * 2.5);
+                    x = (osc + nz) * (1.0 - fm_mix) + y * 0.6 * fm_mix + b_part;
+                }
 
                 // filter (coefficients every 4 samples)
                 let cut_c = m[3];
@@ -1210,46 +1645,46 @@ impl Instrument for Growl {
                         let shift = 2f32.powf(((self.v[P_CUT] - 0.5) * 2400.0 + cut_c) / 1200.0);
                         for j in 0..3 {
                             let fc = ((VOWELS[i0][j] + (VOWELS[i0 + 1][j] - VOWELS[i0][j]) * fr) * shift).clamp(40.0, sr * 0.45);
-                            form_g[j] = (std::f32::consts::PI * fc / sr).tan();
+                            v.form_g[j] = (std::f32::consts::PI * fc / sr).tan();
                         }
-                        form_k = 1.0 / (5.0 + self.v[P_RES] * 12.0);
+                        v.form_k = 1.0 / (5.0 + self.v[P_RES] * 12.0);
                     } else {
                         let fc = (30.0 * 2f32.powf(self.v[P_CUT] * 9.2 + cut_c / 1200.0)).clamp(20.0, sr * 0.45);
                         let q = (0.5 + self.v[P_RES] * self.v[P_RES] * 18.0 + m[4]).max(0.3);
-                        g_main = (std::f32::consts::PI * fc / sr).tan();
-                        k_main = 1.0 / q;
+                        v.g_main = (std::f32::consts::PI * fc / sr).tan();
+                        v.k_main = 1.0 / q;
                     }
                 }
                 let mut filtered = if ftype == 4 {
                     let mut s = 0.0;
                     for j in 0..3 {
-                        let (_, bp) = self.f_form[j].run(x, form_g[j], form_k);
-                        s += bp * form_k * VOW_GAIN[j];
+                        let (_, bp) = v.f_form[j].run(x, v.form_g[j], v.form_k);
+                        s += bp * v.form_k * VOW_GAIN[j];
                     }
                     s
                 } else {
-                    let (lp, bp) = self.f_main.run(x, g_main, k_main);
+                    let (lp, bp) = v.f_main.run(x, v.g_main, v.k_main);
                     match ftype {
                         0 => lp,
-                        1 => bp * k_main,
-                        2 => x - k_main * bp - lp,
-                        _ => x - k_main * bp,
+                        1 => bp * v.k_main,
+                        2 => x - v.k_main * bp - lp,
+                        _ => x - v.k_main * bp,
                     }
                 };
                 // talk: the sequenced vowel through three formant filters, blended over the filtered sound
                 if talk > 0.002 {
                     if i & 3 == 0 {
-                        let fpos = self.talk_pos.clamp(0.0, 1.0) * 4.0;
+                        let fpos = talk_pos.clamp(0.0, 1.0) * 4.0;
                         let i0 = (fpos as usize).min(3);
                         let fr = fpos - i0 as f32;
                         for j in 0..3 {
                             let fc = ((VOWELS[i0][j] + (VOWELS[i0 + 1][j] - VOWELS[i0][j]) * fr) * t_shift).clamp(40.0, sr * 0.45);
-                            t_g[j] = (std::f32::consts::PI * fc / sr).tan();
+                            v.t_g[j] = (std::f32::consts::PI * fc / sr).tan();
                         }
                     }
                     let mut vs = 0.0;
                     for j in 0..3 {
-                        let (_, bp) = self.f_talk[j].run(filtered, t_g[j], t_q);
+                        let (_, bp) = v.f_talk[j].run(filtered, v.t_g[j], t_q);
                         vs += bp * t_q * VOW_GAIN[j];
                     }
                     filtered = filtered * (1.0 - talk) + vs * talk * 1.8;
@@ -1257,20 +1692,20 @@ impl Instrument for Growl {
                 // comb: tuned to the note (plus `c tune` and matrix k), damped feedback, level kept even across the feedback
                 if comb > 0.001 {
                     let fc = (f0 * 2f32.powf((c_tune + m[10] / 100.0) / 12.0)).clamp(20.0, sr * 0.4);
-                    let y = self.comb_line.read(sr / fc);
-                    self.comb_lp += (y - self.comb_lp) * c_damp;
-                    if !self.comb_lp.is_finite() {
-                        self.comb_lp = 0.0;
+                    let y = v.comb_line.read(sr / fc);
+                    v.comb_lp += (y - v.comb_lp) * c_damp;
+                    if !v.comb_lp.is_finite() {
+                        v.comb_lp = 0.0;
                     }
-                    self.comb_line.push((filtered + self.comb_lp * c_fb).clamp(-8.0, 8.0));
+                    v.comb_line.push((filtered + v.comb_lp * c_fb).clamp(-8.0, 8.0));
                     filtered = filtered * (1.0 - comb) + y * c_norm * 1.4 * comb;
                 }
                 // frequency shift: every partial up or down by the same Hz
                 let fs = fshift + m[12];
                 if fs.abs() > 0.5 {
-                    let (re, im) = self.hil.run(filtered);
-                    self.fs_ph = (self.fs_ph + fs as f64 / sr as f64).rem_euclid(1.0);
-                    let a = (std::f64::consts::TAU * self.fs_ph) as f32;
+                    let (re, im) = v.hil.run(filtered);
+                    v.fs_ph = (v.fs_ph + fs as f64 / sr as f64).rem_euclid(1.0);
+                    let a = (std::f64::consts::TAU * v.fs_ph) as f32;
                     filtered = re * a.cos() + im * a.sin();
                 }
                 // drive (the folder and the asymmetry live in the shaper below)
@@ -1290,59 +1725,69 @@ impl Instrument for Growl {
                     v * 0.4
                 };
                 let u = filtered;
-                let (cur, mid) = (sh(u), sh(0.5 * (self.os_y + u)));
-                let mut shaped = 0.25 * self.os_sh + 0.5 * mid + 0.25 * cur;
-                self.os_y = u;
-                self.os_sh = cur;
+                let (cur, mid) = (sh(u), sh(0.5 * (v.os_y + u)));
+                let mut shaped = 0.25 * v.os_sh + 0.5 * mid + 0.25 * cur;
+                v.os_y = u;
+                v.os_sh = cur;
                 // the offset's DC out again
                 if asym > 0.0 {
-                    let d = shaped - self.dc_x + 0.995 * self.dc_y;
-                    self.dc_x = shaped;
-                    self.dc_y = d;
+                    let d = shaped - v.dc_x + 0.995 * v.dc_y;
+                    v.dc_x = shaped;
+                    v.dc_y = d;
                     shaped = d;
                 }
                 // crush: fewer bits, a held sample
                 if crush > 0.001 {
-                    self.cr_n += 1;
-                    if self.cr_n >= cr_hold {
-                        self.cr_n = 0;
-                        self.cr_h = (shaped / 0.4 * cr_bits).round() / cr_bits * 0.4;
+                    v.cr_n += 1;
+                    if v.cr_n >= cr_hold {
+                        v.cr_n = 0;
+                        v.cr_h = (shaped / 0.4 * cr_bits).round() / cr_bits * 0.4;
                     }
-                    shaped = self.cr_h;
+                    shaped = v.cr_h;
                 }
                 x = shaped;
                 // multiband distortion: lows clean, mids hard, highs soft
                 if mb_on {
-                    let (lo, _) = self.f_mb[0].run(x, mb_g1, 1.414);
+                    let (lo, _) = v.f_mb[0].run(x, mb_g1, 1.414);
                     let rest = x - lo;
-                    let (mid, _) = self.f_mb[1].run(rest, mb_g2, 1.414);
+                    let (mid, _) = v.f_mb[1].run(rest, mb_g2, 1.414);
                     let hi = rest - mid;
                     let ms = (mid * mb_dm).tanh() / mb_dm.sqrt();
                     let hs = (hi * mb_dh).tanh() / mb_dh.sqrt();
                     x = lo + mid * (1.0 - mbd) + ms * mbd + hi * (1.0 - mbd) + hs * mbd;
                 }
                 // 11 kHz low-pass
-                let (lpo, _) = self.f_lp.run(x, lp11, k07);
+                let (lpo, _) = v.f_lp.run(x, lp11, k07);
                 x = lpo;
                 // sub, after the drive
-                self.ph_sub += f0 * sub_mul / sr;
-                self.ph_sub -= self.ph_sub.floor();
-                let sub_w = (TAU * self.ph_sub).sin();
+                v.ph_sub += f0 * sub_mul / sr;
+                v.ph_sub -= v.ph_sub.floor();
+                let sub_w = (TAU * v.ph_sub).sin();
                 let sub_w = if sub_sat > 0.002 { (sub_w * sub_sat_d).tanh() * sub_sat_n } else { sub_w };
-                x += sub_w * self.v[P_SUB] * 0.8;
+                if poly {
+                    x += sub_w * self.v[P_SUB] * 0.8 * v.sub_g;
+                } else {
+                    x += sub_w * self.v[P_SUB] * 0.8;
+                }
                 // amp
                 let g = (1.0 + m[7]).clamp(0.0, 2.0);
-                x *= amp_v * g * (0.3 + 0.7 * self.vel);
-                let d = x - self.out_dc.0 + 0.9995 * self.out_dc.1;
-                self.out_dc = (x, d);
+                x *= amp_v * g * (0.3 + 0.7 * v.vel);
+                if poly {
+                    x *= poly_g;
+                }
+                let d = x - v.out_dc.0 + 0.9995 * v.out_dc.1;
+                v.out_dc = (x, d);
                 x = d;
                 // pan
                 let pan = m[8].clamp(-1.0, 1.0);
                 let a = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-                l_out = x * a.cos() * std::f32::consts::SQRT_2;
-                r_out = x * a.sin() * std::f32::consts::SQRT_2;
+                l_out += x * a.cos() * std::f32::consts::SQRT_2;
+                r_out += x * a.sin() * std::f32::consts::SQRT_2;
             }
-            // sends
+            // sends (lanes can move the reverb and delay sends: matrix e and y)
+            let lm = self.last_mod;
+            let verb_s = if verb_mod { (verb + lm[D_VERB]).clamp(0.0, 1.0) } else { verb };
+            let dely_s = if dely_mod { (dely + lm[D_DELY]).clamp(0.0, 1.0) } else { dely };
             let mono = (l_out + r_out) * 0.5;
             self.wide_l.push(mono);
             self.wide_r.push(mono);
@@ -1353,7 +1798,7 @@ impl Instrument for Growl {
             let wr = self.wide_r.read(wide_base[1] + md2);
             let d_out = self.dly.read(dly_len);
             self.dly_lp += (d_out - self.dly_lp) * 0.32;
-            self.dly.push(mono * dely * 0.7 + self.dly_lp * 0.42);
+            self.dly.push(mono * dely_s * 0.7 + self.dly_lp * 0.42);
             let mut l = l_out + wl * wide * 0.7 + d_out;
             let mut r = r_out + wr * wide * 0.7 + d_out;
             if ott_on {
@@ -1366,8 +1811,8 @@ impl Instrument for Growl {
                 l = a;
                 r = b;
             }
-            self.scr[i * 2] = l * verb * 0.9;
-            self.scr[i * 2 + 1] = r * verb * 0.9;
+            self.scr[i * 2] = l * verb_s * 0.9;
+            self.scr[i * 2 + 1] = r * verb_s * 0.9;
             // limiter
             let pk = l.abs().max(r.abs());
             let tgt = if pk > 0.95 { 0.95 / pk } else { 1.0 };
@@ -1382,8 +1827,12 @@ impl Instrument for Growl {
             self.scr2[i * 2 + 1] = r;
             energy += l.abs() + r.abs();
         }
+        for v in self.vo.iter_mut() {
+            v.pb = v.pb_tgt;
+            v.pb_step = 0.0;
+        }
         // reverb send: wet only
-        if verb > 0.001 {
+        if verb > 0.001 || verb_mod {
             let dry = self.scr.clone();
             self.verb.process(&mut self.scr);
             for k in 0..out.len() {
@@ -1396,7 +1845,7 @@ impl Instrument for Growl {
                 out[k] += self.scr2[k];
             }
         }
-        if energy < 1e-5 && self.amp.stage == Stage::Idle {
+        if energy < 1e-5 && self.vo.iter().all(|v| v.amp.stage == Stage::Idle) {
             self.silent = self.silent.saturating_add(frames as u32);
         } else {
             self.silent = 0;
@@ -1406,7 +1855,7 @@ impl Instrument for Growl {
     fn idle(&mut self, frames: usize) {
         // exactly what render() does to the free-running clocks when no note sounds, sample by sample (no audio): the lanes, the
         // talk sequencer, the width modulation; nothing at all once the Growl would have stopped rendering by itself
-        if self.amp.stage == Stage::Idle && self.silent as f32 > self.sr * 6.0 {
+        if self.vo.iter().all(|v| v.amp.stage == Stage::Idle) && self.silent as f32 > self.sr * 6.0 {
             return;
         }
         let bpm = 60.0 + self.v[P_TEMPO] * 140.0;
@@ -1452,11 +1901,48 @@ impl Instrument for Growl {
             if (MAT_BASE..EXT_BASE).contains(&i) {
                 self.mat_dirty = true;
             }
-            if i == P_HOLD && v < 0.5 && self.held.is_empty() && self.gate {
-                self.gate = false;
-                self.amp.off();
-                self.menv.off();
+            if i == P_HOLD && v < 0.5 {
+                // unlatching releases the voices no key holds any more
+                let held: Vec<u8> = self.held.iter().map(|h| h.0).collect();
+                for vo in self.vo.iter_mut().filter(|vo| vo.gate && !held.contains(&vo.key)) {
+                    vo.gate = false;
+                    vo.amp.off();
+                    vo.menv.off();
+                }
             }
+        }
+    }
+
+    fn command(&mut self, cmd: &str, _args: &[f64], text: &str) -> Vec<f64> {
+        match cmd {
+            // a wavetable file into the user slot (and switch it on)
+            // "load" restores a saved table (the project keeps the switch); "wt_load" also switches it on
+            "load" | "wt_load" => match self.load_table(text) {
+                Ok(n) => {
+                    if cmd == "wt_load" {
+                        self.v[P_USER] = 1.0;
+                    }
+                    vec![1.0, n as f64]
+                }
+                Err(e) => {
+                    eprintln!("growl: {e}");
+                    vec![0.0]
+                }
+            },
+            "unload" | "wt_unload" => {
+                self.wt = None;
+                self.v[P_USER] = 0.0;
+                vec![1.0]
+            }
+            _ => vec![],
+        }
+    }
+    fn info(&self, what: &str) -> String {
+        match what {
+            // the user wavetable's file (saved with the project, loaded back through command "load")
+            "config" | "file" | "wavetable" => self.wt.as_ref().map(|w| w.path.clone()).unwrap_or_default(),
+            "frames" => self.wt.as_ref().map(|w| w.nframes().to_string()).unwrap_or_default(),
+            _ => String::new(),
         }
     }
 
@@ -1469,6 +1955,7 @@ impl Instrument for Growl {
     fn plot(&self, what: &str, n: usize) -> Vec<f32> {
         let n = n.clamp(2, 1024);
         match what {
+            "wave" if self.v[P_USER] > 0.5 && self.wt.is_some() => self.wt.as_ref().map(|w| w.plot(self.v[P_POS], n)).unwrap_or_default(),
             "wave" => {
                 let tb = tables();
                 let t = self.sel(P_TABLE, 4);
@@ -1574,7 +2061,9 @@ impl Instrument for Growl {
         }
         self.mat_dirty = true;
         self.dly.clear();
-        self.comb_line.clear();
+        for v in self.vo.iter_mut() {
+            v.comb_line.clear();
+        }
         self.lane_t = [0.0; NLANE];
     }
 }
@@ -1840,13 +2329,15 @@ mod tests {
         assert_eq!(param_names().len(), NPARAM);
         assert_eq!(param_names()[MAT_BASE], "m l1p");
         assert_eq!(param_names()[LANE_BASE + 4], "l1 p0");
-        assert_eq!(param_names()[EXT_BASE - 1], "m whls");
+        assert_eq!(param_names()[EXT_BASE - 1], "m whly");
         assert_eq!(param_names()[EXT_BASE], "talk");
         assert_eq!(param_names()[P_TSTEP], "t s0");
         assert_eq!(param_names()[SD_BASE - 1], "t s15");
         assert_eq!(param_names()[PRO_BASE - 1], "sub oct");
         assert_eq!(param_names()[PRO_BASE], "mb drv");
-        assert_eq!(param_names()[NPARAM - 1], "air");
+        assert_eq!(param_names()[X_BASE - 1], "air");
+        assert_eq!(param_names()[X_BASE], "poly");
+        assert_eq!(param_names()[NPARAM - 1], "l4 div");
     }
 
     #[test]
@@ -1901,12 +2392,12 @@ mod tests {
         g.note_on(36, 0.8);
         render(&mut g, 0.3);
         g.note_on(48, 0.8); // overlaps: legato
-        assert_eq!(g.amp.stage, Stage::Sus);
+        assert_eq!(g.vo[0].amp.stage, Stage::Sus);
         g.note_off(48);
-        assert!(g.gate, "returns to the held note");
-        assert_eq!(g.target, 36.0);
+        assert!(g.vo[0].gate, "returns to the held note");
+        assert_eq!(g.vo[0].target, 36.0);
         g.note_off(36);
-        assert!(!g.gate);
+        assert!(!g.vo[0].gate);
     }
 
     #[test]
@@ -2099,5 +2590,327 @@ mod tests {
         std::fs::write(format!("{src}/growl_presets.txt"), text).unwrap();
         std::fs::write(format!("{src}/growl_generated_names.txt"), names.join("
 ")).unwrap();
+    }
+
+    // ── the synthesis block: per-note pitch, note-value lanes, FM, poly, the user wavetable ──
+    /// a plain, bright, single-voice sound whose pitch is easy to measure
+    fn plain(g: &mut Growl) {
+        for (k, v) in [("table", 0.0), ("pos", 0.0), ("detn", 0.0), ("sub", 0.0), ("drv", 0.0), ("cut", 1.0), ("res", 0.0), ("verb", 0.0), ("wide", 0.0), ("glid", 0.0), ("uni", 0.0)] {
+            g.set_param(k, v);
+        }
+    }
+    /// a pure sine at the note (the FM carrier alone): its pitch is unambiguous
+    fn sine(g: &mut Growl) {
+        plain(g);
+        g.set_param("fm", 1.0);
+        g.set_param("fm idx", 0.0);
+    }
+    /// the strongest frequency in 30..2000 Hz of a stretch (fine Goertzel scan around the autocorrelation guess)
+    fn pitch_of(x: &[f32], sr: f32) -> f32 {
+        let m: Vec<f32> = x.chunks_exact(2).map(|f| f[0] + f[1]).collect();
+        let w = &m[..m.len().min(8192)];
+        let mut best = (20usize, f32::MIN);
+        for lag in (sr / 1500.0) as usize..(sr / 35.0) as usize {
+            let c: f32 = (0..w.len() - lag).map(|i| w[i] * w[i + lag]).sum::<f32>() / (w.len() - lag) as f32;
+            if c > best.1 * 1.02 {
+                best = (lag, c);
+            }
+        }
+        let guess = sr / best.0 as f32;
+        // refine: the strongest partial within a semitone of the guess
+        (-50..=50).map(|c| guess * 2f32.powf(c as f32 / 1200.0)).max_by(|a, b| amp_at(&m, *a, sr).total_cmp(&amp_at(&m, *b, sr))).unwrap()
+    }
+    fn cents(a: f32, b: f32) -> f32 {
+        1200.0 * (a / b).log2()
+    }
+
+    #[test]
+    fn note_pitch_moves_the_sounding_note_by_the_asked_semitones() {
+        let sr = 48000.0;
+        let mut g = Growl::new(sr);
+        sine(&mut g);
+        g.note_on(45, 0.9); // A2 = 110 Hz
+        let blk = 256;
+        let run = |g: &mut Growl, secs: f32, semis: Option<(u8, f32)>| {
+            let mut o = vec![];
+            for _ in 0..(sr * secs) as usize / blk {
+                if let Some((k, s)) = semis {
+                    g.note_pitch(k, s);
+                }
+                let mut b = vec![0.0f32; blk * 2];
+                g.render(&mut b);
+                o.extend(b);
+            }
+            o
+        };
+        let a = run(&mut g, 0.4, None);
+        assert!(cents(pitch_of(&a[a.len() / 2..], sr), 110.0).abs() < 8.0);
+        let b = run(&mut g, 0.5, Some((45, 7.0)));
+        let f = pitch_of(&b[b.len() / 2..], sr);
+        assert!(cents(f, 110.0 * 2f32.powf(7.0 / 12.0)).abs() < 8.0, "+7 semitones: {f}");
+        // a gesture for another key does nothing
+        let c = run(&mut g, 0.3, Some((50, -12.0)));
+        assert!(cents(pitch_of(&c[c.len() / 2..], sr), 164.81).abs() < 8.0);
+        // smooth: no sample-to-sample jump while it slides (the steps of a 1-octave dive over 0.3 s stay small)
+        let mut o = vec![];
+        for k in 0..60 {
+            g.note_pitch(45, 7.0 - 12.0 * k as f32 / 60.0);
+            let mut b = vec![0.0f32; blk * 2];
+            g.render(&mut b);
+            o.extend(b);
+        }
+        assert!(o.iter().all(|x| x.is_finite()));
+        let jump = o.chunks_exact(2).map(|f| f[0]).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(jump < 0.5, "jump {jump}");
+        // legato: a new key takes over with its own (fresh) gesture; the first value is taken at once (a scoop starts below)
+        g.note_on(50, 0.9);
+        let d = run(&mut g, 0.4, Some((50, -2.0)));
+        assert!(cents(pitch_of(&d[d.len() / 2..], sr), 146.83 * 2f32.powf(-2.0 / 12.0)).abs() < 8.0, "legato key with its gesture");
+        // poly: one note of a chord bends, the other stays
+        let mut p = Growl::new(sr);
+        sine(&mut p);
+        p.set_param("poly", 0.4);
+        p.note_on(45, 0.9);
+        p.note_on(52, 0.9);
+        let e = run(&mut p, 0.5, Some((52, 1.0)));
+        let m: Vec<f32> = e[e.len() / 2..].chunks_exact(2).map(|f| f[0] + f[1]).collect();
+        let a_bent = amp_at(&m, 164.81 * 2f32.powf(1.0 / 12.0), sr);
+        let a_old = amp_at(&m, 164.81, sr);
+        assert!(a_bent > a_old * 3.0, "the bent note moved: {a_bent} vs {a_old}");
+        assert!(amp_at(&m, 110.0, sr) > a_old * 3.0, "the other note stays");
+    }
+
+    #[test]
+    fn note_value_lanes_hit_triplet_and_dotted_times() {
+        assert_eq!(note_div(0.0), None);
+        assert_eq!(NOTE_DIVS.len(), 16);
+        let idx = |name: &str| (NOTE_DIVS.iter().position(|d| d.0 == name).unwrap() + 1) as f32 / 16.0;
+        assert!((note_div(idx("1/8T")).unwrap() - 1.0 / 3.0).abs() < 1e-6);
+        assert!((note_div(idx("1/16T")).unwrap() - 1.0 / 6.0).abs() < 1e-6);
+        assert_eq!(note_div(idx("1/8.")), Some(0.75));
+        assert_eq!(note_div(idx("1/16.")), Some(0.375));
+        // a gate lane (8 on, 8 off, steps) on the amplitude at 120 bpm: the gate opens every lane cycle
+        let sr = 48000.0;
+        for (name, beats) in [("1/8T", 1.0 / 3.0), ("1/16T", 1.0 / 6.0), ("1/8.", 0.75), ("1/4T", 2.0 / 3.0)] {
+            let mut g = Growl::new(sr);
+            plain(&mut g);
+            g.set_param("tempo", (120.0 - 60.0) / 140.0);
+            g.set_param("l1 int", 0.0);
+            g.set_param("l1 div", idx(name));
+            for k in 0..16 {
+                g.set_param(&format!("l1 p{k}"), if k < 8 { 0.0 } else { 1.0 });
+            }
+            g.set_param("m l1a", 0.0); // -4: the lane closes the amp
+            g.note_on(57, 0.9);
+            let o = render(&mut g, 2.0);
+            // 1 ms level steps, then the rising edges of the gate
+            let lv: Vec<f32> = o.chunks(96).map(|c| c.iter().map(|x| x.abs()).fold(0.0f32, f32::max)).collect();
+            let th = lv.iter().fold(0.0f32, |m, x| m.max(*x)) * 0.5;
+            let edges: Vec<usize> = (1..lv.len()).filter(|&i| lv[i] >= th && lv[i - 1] < th).collect();
+            assert!(edges.len() >= 3, "{name}: {edges:?}");
+            let per: Vec<f32> = edges.windows(2).map(|w| (w[1] - w[0]) as f32 / 1000.0).collect();
+            let want = beats * 0.5; // seconds at 120 bpm
+            for p in &per[1..] {
+                assert!((p - want).abs() < 0.003, "{name}: period {p} s, want {want}");
+            }
+            // the gate is open in the first half of every cycle: the note starts open, the next opening is one cycle later
+            assert!(edges[0] < 5 && ((edges[1] - edges[0]) as f32 / 1000.0 - want).abs() < 0.004, "{name}: edges {edges:?}");
+        }
+    }
+
+    #[test]
+    fn the_fm_block_makes_the_expected_sidebands() {
+        let sr = 48000.0;
+        // two operators: carrier at f, a modulator at 1.5 f, index 1 radian: the sidebands are Bessel J0(1), J1(1), J2(1)
+        let mut v = GVoice::new(sr, 0);
+        let cfg = FmCfg { alg: 2, r: [1.0, 1.5, 1.0, 1.0], l: [1.0, 0.0, 0.0], fb: 0.0 };
+        let f = 200.0;
+        let x: Vec<f32> = (0..48000).map(|_| v.fm_sample(&cfg, f, sr, 1.0 / TAU)).collect();
+        let a = |hz: f32| amp_at(&x, hz, sr);
+        let (j0, j1, j2) = (0.7652f32, 0.4401f32, 0.1149f32);
+        assert!((a(200.0) - j0).abs() < 0.02, "J0 {}", a(200.0));
+        assert!((a(500.0) - j1).abs() < 0.02 && (a(100.0) - j1).abs() < 0.02, "J1 {} {}", a(500.0), a(100.0));
+        assert!((a(800.0) - j2).abs() < 0.015 && (a(400.0) - j2).abs() < 0.015, "J2 {} {}", a(800.0), a(400.0));
+        assert!(a(300.0) < 0.005 && a(600.0) < 0.005, "nothing between the sidebands: {} {}", a(300.0), a(600.0));
+        // feedback on op 4 alone (alg fan, op 4 into the carrier) turns its sine into a saw-like stack: more harmonics
+        let mut v2 = GVoice::new(sr, 0);
+        let fbc = FmCfg { alg: 2, r: [1.0, 1.0, 1.0, 1.0], l: [0.0, 0.0, 1.0], fb: 0.4 };
+        let y: Vec<f32> = (0..48000).map(|_| v2.fm_sample(&fbc, f, sr, 0.15)).collect();
+        let nofb = FmCfg { fb: 0.0, ..fbc };
+        let mut v3 = GVoice::new(sr, 0);
+        let z: Vec<f32> = (0..48000).map(|_| v3.fm_sample(&nofb, f, sr, 0.15)).collect();
+        let hi = |s: &[f32]| (3..8).map(|h| amp_at(s, f * h as f32, sr)).sum::<f32>();
+        assert!(hi(&y) > hi(&z) * 1.5, "feedback brightens: {} vs {}", hi(&y), hi(&z));
+        // in the instrument: fm 1 with op 2 at 1.5 puts a partial at half the note (the stack never has one there)
+        let play = |fm: f32| {
+            let mut g = Growl::new(sr);
+            plain(&mut g);
+            g.set_param("fm", fm);
+            g.set_param("fm alg", 2.0 / 3.0);
+            g.set_param("fm r2", 2.0 / 15.0);
+            g.set_param("fm 2", 1.0);
+            g.set_param("fm idx", 0.5);
+            g.note_on(57, 0.9);
+            let o = render(&mut g, 0.6);
+            let m: Vec<f32> = o[o.len() / 2..].chunks_exact(2).map(|f| f[0] + f[1]).collect();
+            (amp_at(&m, 110.0, sr), amp_at(&m, 220.0, sr), o)
+        };
+        let (h0, f0a, _) = play(0.0);
+        let (h1, f1a, o1) = play(1.0);
+        assert!(h1 > 0.005 && h1 > h0 * 100.0, "half-note sideband {h1} vs {h0}");
+        assert!(f1a > 0.01 && f0a > 0.01);
+        assert!(o1.iter().all(|x| x.is_finite()) && peak(&o1) < 1.0);
+        // the index follows a lane through matrix i
+        let mut g = Growl::new(sr);
+        plain(&mut g);
+        g.set_param("fm", 1.0);
+        g.set_param("fm idx", 0.0);
+        g.set_param("m l1i", 1.0);
+        for k in 0..16 {
+            g.set_param(&format!("l1 p{k}"), 1.0);
+        }
+        g.note_on(57, 0.9);
+        let o = render(&mut g, 0.5);
+        let m: Vec<f32> = o[o.len() / 2..].chunks_exact(2).map(|f| f[0] + f[1]).collect();
+        assert!(amp_at(&m, 440.0, sr) > 0.01, "the lane opens the index");
+    }
+
+    #[test]
+    fn poly_plays_chords_in_tune_and_the_default_stays_mono() {
+        let sr = 48000.0;
+        let g = Growl::new(sr);
+        assert_eq!(g.npoly(), 1, "mono by default");
+        assert!(!g.state().iter().any(|(n, _)| XP.contains(&n.as_str())), "the new block is not written while at its defaults");
+        let chord = [45u8, 49, 52]; // A2 C#3 E3
+        let play = |poly: f32| {
+            let mut g = Growl::new(sr);
+            sine(&mut g);
+            g.set_param("fm idx", 0.3);
+            g.set_param("poly", poly);
+            for k in chord {
+                g.note_on(k, 0.9);
+            }
+            render(&mut g, 1.0)
+        };
+        let fr = |k: u8| 440.0 * 2f32.powf((k as f32 - 69.0) / 12.0);
+        let mono = play(0.0);
+        let poly = play(0.4);
+        let m = |o: &[f32]| o[o.len() / 2..].chunks_exact(2).map(|f| f[0] + f[1]).collect::<Vec<f32>>();
+        let (mm, pm) = (m(&mono), m(&poly));
+        // mono: only the last note sounds (A2 and C#3 are not harmonics of E3)
+        assert!(amp_at(&mm, fr(45), sr) < amp_at(&mm, fr(52), sr) * 0.1, "mono plays one note");
+        assert!(amp_at(&mm, fr(49), sr) < amp_at(&mm, fr(52), sr) * 0.1);
+        // poly: every note, each at its own pitch (the strongest partial within +-40 cents sits within 4 cents of the key)
+        for k in chord {
+            let want = fr(k);
+            let best = (-40i32..=40).map(|c| (c, amp_at(&pm, want * 2f32.powf(c as f32 / 1200.0), sr))).max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+            assert!(best.0.abs() <= 4, "key {k}: {} cents", best.0);
+            assert!(best.1 > amp_at(&pm, want * 2f32.powf(0.5 / 12.0), sr) * 3.0, "key {k} stands out");
+        }
+        assert!(poly.iter().all(|x| x.is_finite()) && peak(&poly) < 1.0);
+        // the tune check passes in poly mode too (as it does in mono: a preset without pitch modulation)
+        let mut g = Growl::new(sr);
+        g.load_preset("supersaw");
+        g.set_param("poly", 1.0);
+        let t = crate::tunecheck::check(&mut g, sr);
+        assert!(t.in_tune(), "{t:?}");
+        // more notes than voices: the oldest is stolen, nothing breaks
+        let mut g = Growl::new(sr);
+        g.set_param("poly", 0.2); // 2 voices
+        for k in [40u8, 44, 47, 52] {
+            g.note_on(k, 0.9);
+        }
+        assert_eq!(g.vo.iter().filter(|v| v.gate).count(), 2);
+        let o = render(&mut g, 0.3);
+        assert!(o.iter().all(|x| x.is_finite()));
+        // release: every voice ends
+        for k in [40u8, 44, 47, 52] {
+            g.note_off(k);
+        }
+        render(&mut g, 2.0);
+        assert!(g.vo.iter().all(|v| v.amp.stage == Stage::Idle));
+    }
+
+    #[test]
+    fn a_user_wavetable_plays_its_frames() {
+        let sr = 48000.0;
+        // frame 0 a sine, frame 1 a bright pulse-ish cycle
+        let n = super::super::wavetable::N;
+        let sine: Vec<f32> = (0..n).map(|i| (TAU * i as f32 / n as f32).sin()).collect();
+        let bright: Vec<f32> = (0..n).map(|i| (1..20).map(|h| ((TAU * (h * i) as f32 / n as f32).sin()) / h as f32).sum()).collect();
+        let w = std::sync::Arc::new(super::super::wavetable::WaveTable::from_frames(&[sine, bright], "").unwrap());
+        let play = |pos: f32| {
+            let mut g = Growl::new(sr);
+            plain(&mut g);
+            g.wt = Some(w.clone());
+            g.set_param("user", 1.0);
+            g.set_param("pos", pos);
+            g.note_on(45, 0.9);
+            let o = render(&mut g, 0.5);
+            o[o.len() / 2..].to_vec()
+        };
+        let (a, b) = (play(0.0), play(1.0));
+        assert!(cents(pitch_of(&a, sr), 110.0).abs() < 8.0);
+        let h = |o: &[f32]| {
+            let m: Vec<f32> = o.chunks_exact(2).map(|f| f[0] + f[1]).collect();
+            (2..6).map(|k| amp_at(&m, 110.0 * k as f32, sr)).sum::<f32>() / amp_at(&m, 110.0, sr)
+        };
+        assert!(h(&a) < 0.15, "frame 0 is a sine: {}", h(&a));
+        assert!(h(&b) > h(&a) * 5.0 + 0.05, "frame 1 is bright: {} vs {}", h(&b), h(&a));
+        let mut g = Growl::new(sr);
+        g.wt = Some(w);
+        g.set_param("user", 1.0);
+        assert_eq!(g.plot("wave", 32).len(), 32);
+    }
+
+    #[test]
+    fn pressure_and_timbre_shape_held_notes_and_a_release_keeps_its_bend() {
+        let sr = 48000.0;
+        let play = |prs: f32, tmb: f32| {
+            let mut g = Growl::new(sr);
+            plain(&mut g);
+            g.set_param("cut", 0.45);
+            g.note_on(45, 0.8);
+            let mut o = vec![];
+            for _ in 0..150 {
+                g.note_pressure(45, prs);
+                g.note_timbre(45, tmb);
+                let mut b = vec![0.0f32; 512];
+                g.render(&mut b);
+                o.extend(b);
+            }
+            o[o.len() / 2..].to_vec()
+        };
+        let bright = |o: &[f32]| {
+            let m: Vec<f32> = o.chunks_exact(2).map(|f| f[0] + f[1]).collect();
+            (6..16).map(|k| amp_at(&m, 110.0 * k as f32, sr)).sum::<f32>()
+        };
+        let (n, p, t_up, t_dn) = (play(0.0, 0.5), play(1.0, 0.5), play(0.0, 1.0), play(0.0, 0.0));
+        assert!(rms(&p) > rms(&n) * 1.1 && bright(&p) > bright(&n) * 1.5, "pressure: louder and brighter");
+        assert!(bright(&t_up) > bright(&n) * 1.3 && bright(&t_dn) < bright(&n) * 0.8, "timbre moves the brightness");
+        // neutral values change nothing
+        let mut a = Growl::new(sr);
+        let mut b = Growl::new(sr);
+        a.note_on(45, 0.8);
+        b.note_on(45, 0.8);
+        b.note_pressure(45, 0.0);
+        b.note_timbre(45, 0.5);
+        assert_eq!(render(&mut a, 0.2), render(&mut b, 0.2));
+        // a released note keeps its bend: the engine's reset after the note-off does not reach it
+        let mut g = Growl::new(sr);
+        sine(&mut g);
+        g.set_param("amp r", 0.6);
+        g.note_on(57, 0.9);
+        for _ in 0..40 {
+            g.note_pitch(57, -12.0);
+            let mut b = vec![0.0f32; 512];
+            g.render(&mut b);
+        }
+        g.note_off(57);
+        g.note_pitch(57, 0.0);
+        g.note_pressure(57, 0.0);
+        g.note_timbre(57, 0.5);
+        let o = render(&mut g, 0.15);
+        assert!(cents(pitch_of(&o, sr), 110.0).abs() < 15.0, "the tail stays an octave down: {}", pitch_of(&o, sr));
     }
 }

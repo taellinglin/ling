@@ -23,6 +23,8 @@ use crate::model::Note;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+pub mod acapella;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Part {
     Lead,
@@ -933,9 +935,15 @@ fn fit_score(notes: &[Note], shift: i32, key: crate::theory::Key, against: &[Not
 /// with the hook), a small cost per semitone so it moves as little as it can; the key-based shift `base` wins ties. A phrase whose
 /// detected key was wrong (a modal tune, a borrowed chord) or that sits better a step away goes where it actually fits.
 pub fn fit_shift(notes: &[Note], base: i32, key: (u8, bool), against: &[Note]) -> i32 {
+    fit_shift_within(notes, base, key, against, -6, 5)
+}
+
+/// [`fit_shift`] over the shifts `lo ..= hi` only (a recording moves only a few semitones before its formants give it away)
+pub fn fit_shift_within(notes: &[Note], base: i32, key: (u8, bool), against: &[Note], lo: i32, hi: i32) -> i32 {
     let k = crate::theory::Key::new(key.0, key.1);
+    let base = base.clamp(lo, hi);
     let mut best = (f64::MIN, base);
-    for s in -6..=5 {
+    for s in lo..=hi {
         let sc = fit_score(notes, s, k, against) - 0.012 * s.abs() as f64 + if s == base { 0.02 } else { 0.0 };
         if sc > best.0 + 1e-9 {
             best = (sc, s);
@@ -1386,6 +1394,153 @@ mod tests {
         let at = |pts: &[(f64, f32)], b: f64| crate::model::AutoLane { param: String::new(), points: pts.to_vec() }.value_at(b).unwrap();
         assert!(at(&hp, 60.0) < 0.01 && at(&hp, 66.0) > 0.1 && at(&hp, 95.0) > at(&hp, 81.0) && at(&hp, 96.5) < 0.05);
         assert!(at(&lp, 161.0) < 0.05 && at(&lp, 190.0) > 0.9 && at(&lp, 200.0) > 0.99);
+    }
+
+    /// 16 bars: a lead line from `lead` (step `ls` beats), a bass from `bass` (step `bs`), held chords around `pad`; rests every 4 bars
+    fn file_reg(tonic: u8, lead: u8, ls: f64, bass: u8, bs: f64, pad: u8) -> ImportedMidi {
+        let scale: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+        let (mut l, mut b, mut c) = (vec![], vec![], vec![]);
+        for bar in 0..16 {
+            if bar % 4 == 3 {
+                continue;
+            }
+            let b0 = bar as f64 * 4.0;
+            let mut t = 0.0;
+            let mut i = 0;
+            while t < 4.0 - 1e-6 {
+                l.push(Note::new(b0 + t, ls * 0.9, lead + tonic + scale[(bar * 3 + i) % 7], 0.8));
+                t += ls;
+                i += 1;
+            }
+            let mut t = 0.0;
+            let mut i = 0;
+            while t < 4.0 - 1e-6 {
+                b.push(Note::new(b0 + t, bs * 0.9, bass + tonic + [0u8, 0, 7, 5][i % 4], 0.8));
+                t += bs;
+                i += 1;
+            }
+            for d in [0u8, 4, 7] {
+                c.push(Note::new(b0, 3.8, pad + tonic + d, 0.6));
+            }
+        }
+        let mk = |notes: Vec<Note>, ch: u8, nm: &str| crate::midi_import::ImportedTrack { name: nm.into(), channel: ch, notes, program: Some(80), ..Default::default() };
+        ImportedMidi { tracks: vec![mk(l, 0, "lead"), mk(b, 1, "bass"), mk(c, 2, "chords")], bpm: Some(120.0), tempos: vec![], length_beats: 64.0, ..Default::default() }
+    }
+
+    #[test]
+    fn mashup_registers_lift_a_muddy_bass_tame_a_shrill_lead_and_spread_the_layers() {
+        // a busy bass around C1 (24), a lead way up around C8, chords around middle C
+        let mut ph = chop(&file_reg(0, 96, 0.5, 24, 0.25, 60), "a", 2.0);
+        ph.extend(chop(&file_reg(7, 96, 0.5, 24, 0.25, 60), "b", 2.0));
+        ph.extend(chop(&file_reg(5, 60, 1.0, 36, 1.0, 60), "c", 2.0));
+        let spine: Vec<usize> = (0..12).map(|i| i % ph.len()).collect();
+        let sm = Smarts { genre: "dubstep".into(), ..Smarts::default() };
+        let m = mashup_with(&ph, &spine, "slow burn", 0.0, 0.9, 1.0, 5, (0, false), &sm);
+        let log = summarize(&m.log);
+        eprintln!("registers: {log}");
+        assert!(log.contains("bass up") && log.contains("(was muddy)"), "{log}");
+        assert!(log.contains("lead down") && log.contains("(was shrill)"), "{log}");
+        let mut basses = 0;
+        for s in &m.slots {
+            let mut cen: Vec<(f64, bool, Cat)> = vec![];
+            for l in s.layers.iter().filter(|l| l.cat != Cat::Drums) {
+                let ns = layer_notes(&ph, l, s.beats);
+                if ns.is_empty() {
+                    continue;
+                }
+                let r = crate::register::analyze(&ns, s.beats).unwrap();
+                // the shape is kept: every note the source's moved by the key shift and whole octaves
+                let q = &ph[l.phrase];
+                let src = tile(&q.parts[l.part].2, q.beats, s.beats);
+                for (a, b) in ns.iter().zip(&src) {
+                    assert_eq!(a.key as i32 - b.key as i32, l.shift + 12 * l.octave);
+                }
+                if l.cat == Cat::Bass {
+                    basses += 1;
+                    assert!(r.median >= 31.0, "no farting bass: {r:?} {:?}", l.role);
+                    assert!(r.median <= 55.0);
+                }
+                if matches!(l.cat, Cat::Lead | Cat::Arp) {
+                    assert!(r.median <= 96.0, "no shrill lead: {r:?}");
+                }
+                cen.push((r.centre, l.behind, l.cat));
+            }
+            // no two parts in front share the octave of their centre
+            for i in 0..cen.len() {
+                for j in 0..i {
+                    if cen[i].1 || cen[j].1 {
+                        continue;
+                    }
+                    assert_ne!((cen[i].0 / 12.0).floor(), (cen[j].0 / 12.0).floor(), "{:?} and {:?} share an octave in a slot: {cen:?}", cen[i].2, cen[j].2);
+                }
+            }
+        }
+        assert!(basses > 0);
+        // registers off: nothing is moved for its register (the bass only kept on the keyboard)
+        let off = Smarts { registers: Registers::Off, ..sm.clone() };
+        let m2 = mashup_with(&ph, &spine, "slow burn", 0.0, 0.9, 1.0, 5, (0, false), &off);
+        assert!(m2.log.iter().all(|l| !l.contains("octave")), "{:?}", m2.log);
+        // the guard alone moves the bass and the lead but does not spread the rest
+        let gd = Smarts { registers: Registers::Guard, ..sm.clone() };
+        let m3 = mashup_with(&ph, &spine, "slow burn", 0.0, 0.9, 1.0, 5, (0, false), &gd);
+        assert!(m3.log.iter().any(|l| l.contains("was muddy")) && m3.log.iter().all(|l| !l.contains("own octave")), "{:?}", m3.log);
+        // a whole-phrase medley gets the guard too, and keeps its phrase lengths
+        let w = mashup_with(&ph, &spine, "slow burn", 0.0, 0.0, 0.0, 5, (0, false), &sm);
+        assert!(w.slots.iter().flat_map(|s| s.layers.iter()).any(|l| l.cat == Cat::Bass && l.octave > 0));
+        assert!(w.slots.iter().all(|s| s.beats == ph[s.spine].beats));
+    }
+
+    #[test]
+    fn a_fine_bass_and_a_good_lead_stay_where_they_are() {
+        // a slow bass on A1 (33), a lead around C5, chords around G3: the guard leaves them alone
+        let mut ph = chop(&file_reg(0, 72, 1.0, 33, 2.0, 55), "a", 2.0);
+        ph.extend(chop(&file_reg(0, 72, 1.0, 33, 2.0, 55), "b", 2.0));
+        let spine: Vec<usize> = (0..6).map(|i| i % ph.len()).collect();
+        let sm = Smarts { registers: Registers::Guard, ..Smarts::default() };
+        let m = mashup_with(&ph, &spine, "release", 0.0, 0.5, 0.0, 2, (0, false), &sm);
+        assert!(m.slots.iter().flat_map(|s| s.layers.iter()).all(|l| l.octave == 0), "{:?}", m.log);
+    }
+
+    #[test]
+    fn mashup_smarts_align_phrases_break_down_before_the_last_drop_and_reduce_clashes() {
+        assert_eq!(aligned_beats(12.0), 16.0);
+        assert_eq!(aligned_beats(20.0), 16.0);
+        assert_eq!(aligned_beats(8.0), 8.0);
+        assert_eq!(aligned_beats(24.0), 32.0);
+        assert_eq!(camelot_steps((0, false), (7, false)), 1);
+        assert_eq!(camelot_steps((0, false), (9, true)), 1);
+        assert_eq!(camelot_steps((0, false), (0, false)), 0);
+        assert_eq!(camelot_steps((0, false), (6, false)), 6);
+        // the slot before the last drop breaks down to a pad and the hook, and a roll builds out of it
+        let mut ph = chop(&file_with(0, false, "a"), "a", 2.0);
+        ph.extend(chop(&file_with(2, false, "b"), "b", 2.0));
+        ph.extend(chop(&file_with(9, true, "c"), "c", 2.0));
+        let spine: Vec<usize> = (0..14).map(|i| i % ph.len()).collect();
+        let m = mashup(&ph, &spine, "triumph", 0.0, 0.9, 0.6, 4, (0, false));
+        let b = m.breakdown.unwrap_or_else(|| panic!("a triumph builds to a last drop: {:?}", m.slots.iter().map(|s| s.energy).collect::<Vec<_>>()));
+        let s = &m.slots[b];
+        assert!(s.energy < 0.4 && s.layers.iter().all(|l| !matches!(l.cat, Cat::Drums | Cat::Bass) || l.spine), "{:?}", s.layers);
+        assert_eq!(s.roll_after, Roll::Shrink);
+        assert!(m.slots[b + 1].energy >= 0.75);
+        // chord-aware fitting: the harsh overlap of the layers is no worse than without it
+        let harsh = |m: &Mashup| -> f64 {
+            let mut v = vec![];
+            for s in &m.slots {
+                let all: Vec<Vec<Note>> = s.layers.iter().filter(|l| l.cat != Cat::Drums).map(|l| layer_notes(&ph, l, s.beats)).collect();
+                for i in 0..all.len() {
+                    let others: Vec<Note> = all.iter().enumerate().filter(|(j, _)| *j != i).flat_map(|(_, x)| x.iter().cloned()).collect();
+                    v.push(crate::register::clash(&all[i], &others));
+                }
+            }
+            v.iter().sum::<f64>() / v.len().max(1) as f64
+        };
+        let on = mashup(&ph, &spine, "storm", 0.0, 0.9, 0.0, 9, (0, false));
+        let off = mashup_with(&ph, &spine, "storm", 0.0, 0.9, 0.0, 9, (0, false), &Smarts { clash: false, ..Smarts::default() });
+        assert!(harsh(&on) <= harsh(&off) + 1e-9, "{} vs {}", harsh(&on), harsh(&off));
+        // the riser climbs in the key and stops before the drop
+        let r = riser_notes((9, true), 32.0);
+        let k = crate::theory::Key::new(9, true);
+        assert!(r.iter().all(|n| k.in_scale(n.key % 12)) && r.last().unwrap().key > r[0].key + 12 && r.iter().all(|n| n.start + n.len <= 31.5 + 1e-9));
     }
 
     #[test]

@@ -572,6 +572,12 @@ pub struct Voice {
     arp_cur: Option<u8>,
     arp_left: u64,
     arp_gate_left: u64,
+    /// per-note expression: pitch gesture (semitones), pressure 0..1 (level), timbre 0..1 (0.5 neutral: brightness), smoothed
+    /// over each block; `fresh` = the first value is taken at once
+    pb: crate::dsp::Smooth,
+    pr: crate::dsp::Smooth,
+    tm: crate::dsp::Smooth,
+    fresh: bool,
 }
 
 impl Voice {
@@ -647,6 +653,10 @@ impl Voice {
             arp_cur: None,
             arp_left: 0,
             arp_gate_left: 0,
+            pb: crate::dsp::Smooth::at(0.0),
+            pr: crate::dsp::Smooth::at(0.0),
+            tm: crate::dsp::Smooth::at(0.5),
+            fresh: false,
         }
     }
 
@@ -851,6 +861,14 @@ impl Voice {
         self.pan = pan.clamp(-1.0, 1.0);
         // a tied note carries on from a voice that is sounding or still dying away (its release has not finished): no jump, the pitch slurs
         let tied = lyric.starts_with('~') && (self.gate || self.env > 0.02);
+        // a slur starts where the voice is heard (its pitch gesture included); the new note brings its own gesture
+        if self.pb.cur != 0.0 {
+            self.note += self.pb.cur;
+        }
+        self.pb.reset(0.0);
+        self.pr.reset(0.0);
+        self.tm.reset(0.5);
+        self.fresh = true;
         if !self.gate && !tied {
             // fresh start: the pitch jumps
             self.note = self.target;
@@ -863,8 +881,13 @@ impl Voice {
     fn m_off(&mut self, key: u8) {
         self.held.retain(|k| *k != key);
         if let Some(&k) = self.held.last() {
-            // another note is still down (legato overlap): carry on with it
+            // another note is still down (legato overlap): carry on with it (its own gesture, if any, comes with the next block)
             self.target = k as f32;
+            if self.pb.cur != 0.0 {
+                self.note += self.pb.cur;
+            }
+            self.pb.reset(0.0);
+            self.fresh = true;
             return;
         }
         // live play: sing the coda while the voice releases
@@ -919,6 +942,13 @@ impl Voice {
         let pan = (self.pan + 1.0) * std::f32::consts::FRAC_PI_4;
         let (pl, pr) = (pan.cos() * std::f32::consts::SQRT_2, pan.sin() * std::f32::consts::SQRT_2);
         let bw = [70.0f32, 90.0, 140.0, 220.0, 300.0];
+        self.pb.begin(frames);
+        self.pr.begin(frames);
+        self.tm.begin(frames);
+        self.fresh = false;
+        let expr_on = !(self.pb.idle(0.0) && self.pr.idle(0.0) && self.tm.idle(0.5));
+        let mut tilt_k = tilt_k;
+        let mut press = 0.0f32;
         for i in 0..frames {
             // ── score ──
             if self.seg_i < self.score.len() {
@@ -962,7 +992,16 @@ impl Voice {
             self.scoop_c *= scoop_k;
             self.tune_s += (tune_c - self.tune_s) * smooth_k;
             self.expr_s += (expr - self.expr_s) * smooth_k;
-            let f0 = midi_hz(self.note + (vib + self.jitter + self.scoop_c + self.tune_s) / 100.0);
+            let f0 = if expr_on {
+                // the note's pitch gesture, pressure (level) and timbre (brightness)
+                let g = self.pb.tick();
+                press = self.pr.tick();
+                let tm = self.tm.tick();
+                tilt_k = 1.0 - (-TAU * (1200.0 + (bright + (tm - 0.5)).clamp(0.0, 1.0) * 7000.0) / sr).exp();
+                midi_hz(self.note + g + (vib + self.jitter + self.scoop_c + self.tune_s) / 100.0)
+            } else {
+                midi_hz(self.note + (vib + self.jitter + self.scoop_c + self.tune_s) / 100.0)
+            };
             // ── amplitude envelope ──
             let goal = if self.gate { 1.0 } else { 0.0 };
             let rate = if goal > self.env { dt / att } else { dt / rel };
@@ -1056,7 +1095,7 @@ impl Voice {
             let y = y - self.dc;
             let y = (y * 1.5).tanh() / 1.5;
             let a = self.env * gain * self.expr_s * (0.35 + 0.65 * self.vel) * (1.0 - trem * (0.5 - 0.5 * (TAU * vib_rate * self.vib_t).sin()));
-            let s = y * a;
+            let s = if press != 0.0 { y * a * (1.0 + press * 0.5) } else { y * a };
             out[i * 2] += s * pl;
             out[i * 2 + 1] += s * pr;
         }
@@ -1126,6 +1165,17 @@ impl Voice {
             }
         }
     }
+    /// The voices (this one and the pool) singing `key` right now.
+    fn each_singing(&mut self, key: u8, mut f: impl FnMut(&mut Voice)) {
+        if self.gate && self.held.last() == Some(&key) {
+            f(self);
+        }
+        for c in self.pool.iter_mut() {
+            if c.gate && c.held.last() == Some(&key) {
+                f(c);
+            }
+        }
+    }
     fn poly_all_off(&mut self) {
         self.m_all_off();
         for c in self.pool.iter_mut() {
@@ -1185,6 +1235,15 @@ impl Instrument for Voice {
         if bpm.is_finite() && bpm > 1.0 {
             self.bpm = bpm;
         }
+    }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        self.each_singing(key, |v| v.pb.set(semis, v.fresh));
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        self.each_singing(key, |v| v.pr.set(x, v.fresh));
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        self.each_singing(key, |v| v.tm.set(x, v.fresh));
     }
     fn render(&mut self, out: &mut [f32]) {
         self.sync_pool();

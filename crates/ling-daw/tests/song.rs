@@ -334,3 +334,146 @@ fn a_song_with_movements_has_a_tempo_map_pad_interludes_and_edm_builds() {
     let end = notes.iter().map(|x| x.0 + x.1).fold(0.0, f64::max);
     assert!(end < len - 0.4, "a gap before the drop: notes end at {end} of {len}");
 }
+
+/// Glide, vibrato, arpeggios and tuning as each part's role wants them, and the flow between sections, in eight genres
+#[test]
+fn songs_use_glide_vibrato_and_arps_idiomatically_and_flow() {
+    let lsx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../LingStationX");
+    if std::env::set_current_dir(lsx).is_err() {
+        return;
+    }
+    let songs = [
+        ("acid techno at 135 bpm", 3.0),
+        ("uplifting trance at 138 bpm", 5.0),
+        ("future bass at 150 bpm", 2.0),
+        ("riddim dubstep at 140 bpm", 6.0),
+        ("lofi chill study beat", 2.0),
+        ("a piano ballad with a flute", 4.0),
+        ("breakbeat at 132 bpm", 3.0),
+        ("ambient drone", 2.0),
+    ];
+    let vib_lanes = ["lfo pitch", "vib", "x l1pit", "x l2pit"];
+    for (desc, seed) in songs {
+        let mut d = Daw::new();
+        let p = list(&call(&mut d, "daw_song_plan", &[s(desc), s(""), s(""), s(""), n(1.0), n(seed)]));
+        let line = st(&p[0]);
+        let r = list(&call(&mut d, "daw_song_build", &[s(&line), s(desc), s(""), s(""), n(seed)]));
+        let summary = st(&r[4]);
+        println!("{desc}: {summary}");
+        let eng = d.engine();
+        let en = eng.lock().unwrap();
+        let mut sweep = false;
+        let mut vibrato_on: Vec<String> = vec![];
+        for tr in &en.project.tracks {
+            let name = tr.name.to_lowercase();
+            let ps: Vec<(String, f32)> = tr.inst.as_ref().map(|i| i.params().into_iter().map(|(n, v)| (n.to_string(), v)).collect()).unwrap_or_default();
+            let get = |k: &str| ps.iter().find(|p| p.0 == k).map(|p| p.1);
+            if name == "noise sweep" {
+                sweep = true;
+                // Ling Cinema's white-noise riser (engine 0, all noise)
+                assert!(get("noise") == Some(1.0) && (get("a lvl") == Some(0.0) || (tr.inst_kind == "cinema" && get("engine") == Some(0.0))), "{desc}: the sweep is noise");
+                continue;
+            }
+            // no glide on chords, pads, plucks, arps, keys
+            if ["pad", "pluck", "arp", "stab", "piano", "keys", "strings", "bell"].iter().any(|w| name.contains(w)) {
+                for g in ["glide", "glid"] {
+                    if let Some(v) = get(g) {
+                        assert!(v < 1e-6, "{desc} {name}: {g}={v}");
+                    }
+                }
+            }
+            // the only automated pitch is the per-note vibrato lane of a lead, a wind or the strings (a riser may bend)
+            for l in &tr.auto {
+                // (the Growl Technique skin of a riddim / brostep bass bends its own drops: the sound design's, kept as it was)
+                let skin_bend = tr.inst_kind == "growl" && name.contains("bass") && summary.contains("skin in the drops");
+                if ling_daw::redesign::pitch_altering(&l.param) && !name.contains("riser") && !name.starts_with("vocal") && !skin_bend {
+                    assert!(vib_lanes.contains(&l.param.as_str()), "{desc} {name}: a pitch lane {}", l.param);
+                    assert!(!["bass", "pad", "pluck", "arp", "chord", "stab", "keys", "piano", "bell", "drum", "guitar", "texture", "organ"].iter().any(|w| name.contains(w)), "{desc} {name}: vibrato on a {name}");
+                    vibrato_on.push(name.clone());
+                }
+                assert!(!l.param.contains("det") || skin_bend, "{desc} {name}: detune stays static");
+            }
+            // no LFO into pitch or detune on a pitched part
+            if !name.contains("riser") && tr.inst_kind == "prism" {
+                for (k, v) in &ps {
+                    if (k.starts_with("x l1") || k.starts_with("x l2")) && (k.ends_with("pit") || k.ends_with("det")) && !tr.auto.iter().any(|l| &l.param == k) {
+                        assert!((v - 0.5).abs() < 1e-3, "{desc} {name}: {k}={v}");
+                    }
+                }
+            }
+            if name.contains("acid bass") {
+                assert!(get("glide").unwrap_or(0.0) > 0.1, "{desc}: the 303 slides ({:?})", get("glide"));
+            }
+        }
+        if desc.contains("ballad") || desc.contains("lofi") || desc.contains("ambient") {
+            assert!(!sweep, "{desc}: no white-noise riser");
+        }
+        if desc.contains("trance") || desc.contains("acid") || desc.contains("dubstep") {
+            assert!(sweep && summary.contains("noise sweep"), "{desc}: a sweep into the drops ({summary})");
+        }
+        if desc.contains("acid") {
+            assert!(summary.contains("303 slides"), "{summary}");
+        }
+        if desc.contains("techno") || desc.contains("dubstep") || desc.contains("breakbeat") {
+            assert!(vibrato_on.is_empty(), "{desc}: machine music has no vibrato: {vibrato_on:?}");
+        }
+        if desc.contains("ballad") {
+            assert!(!vibrato_on.is_empty(), "{desc}: the flute sings a vibrato on its long notes ({summary})");
+        }
+    }
+}
+
+/// not a test: builds one song per genre and renders it to renders/flow_demo/<genre>.wav (FLOW_DEMO=1; FLOW_DEMO_DIR overrides the
+/// folder), with peak and loudness per file in summary.txt - measured, never played
+#[test]
+#[ignore]
+fn render_flow_demos() {
+    if std::env::var("FLOW_DEMO").is_err() {
+        return;
+    }
+    let lsx = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../LingStationX");
+    if std::env::set_current_dir(lsx).is_err() {
+        return;
+    }
+    let dir = std::env::var("FLOW_DEMO_DIR").unwrap_or_else(|_| "renders/flow_demo".into());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut summary = String::new();
+    for (name, desc, seed) in [
+        ("trance", "uplifting trance at 138 bpm", 5.0),
+        ("acid_techno", "acid techno at 135 bpm", 3.0),
+        ("future_bass", "future bass at 150 bpm", 2.0),
+        ("dubstep", "riddim dubstep at 140 bpm", 6.0),
+        ("lofi", "lofi chill study beat", 2.0),
+        ("ballad", "a piano ballad with a flute", 4.0),
+        ("breakbeat", "breakbeat at 132 bpm", 3.0),
+        ("ambient", "ambient drone", 2.0),
+    ] {
+        let mut d = Daw::new();
+        let p = list(&call(&mut d, "daw_song_plan", &[s(desc), s(""), s(""), s(""), n(1.0), n(seed)]));
+        let r = list(&call(&mut d, "daw_song_build", &[s(&st(&p[0])), s(desc), s(""), s(""), n(seed)]));
+        let out = format!("{dir}/{name}.wav");
+        let end = num(&call(&mut d, "daw_end_beat", &[]));
+        call(&mut d, "daw_render_start", &[s(&out), n(0.0), n(end), n(2.0), n(16.0), s("wav"), n(0.5)]);
+        let mut done = false;
+        for _ in 0..2400 {
+            if num(&call(&mut d, "daw_render_state", &[])) >= 2.0 {
+                done = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        assert!(done, "{name}: the render did not finish");
+        // measure: peak and RMS of the 16-bit file
+        let bytes = std::fs::read(&out).unwrap();
+        let at = bytes.windows(4).position(|w| w == b"data").map(|i| i + 8).unwrap_or(44).min(bytes.len());
+        let rate = if bytes.len() > 28 { u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]) as f32 } else { 48000.0 };
+        let data = &bytes[at..];
+        let smp: Vec<f32> = data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect();
+        let peak = smp.iter().fold(0.0f32, |m, x| m.max(x.abs()));
+        let rms = (smp.iter().map(|x| x * x).sum::<f32>() / smp.len().max(1) as f32).sqrt();
+        let line = format!("{name}: {:.1} s, peak {:.3} ({:.1} dBFS), rms {:.1} dBFS\n  {}\n", smp.len() as f32 / 2.0 / rate, peak, 20.0 * peak.max(1e-9).log10(), 20.0 * rms.max(1e-9).log10(), st(&r[4]));
+        print!("{line}");
+        summary.push_str(&line);
+    }
+    std::fs::write(format!("{dir}/summary.txt"), summary).unwrap();
+}

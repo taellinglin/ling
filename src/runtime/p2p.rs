@@ -369,7 +369,7 @@ impl Interpreter {
         match name {
             "p2p_start" | "p2p_poll" | "p2p_send" | "p2p_broadcast" | "p2p_relay" | "p2p_mark_fluffed" | "p2p_peers"
             | "p2p_misbehaving" | "p2p_seeds_sign" | "p2p_seeds_verify" | "p2p_shutdown" | "p2p_local_addr"
-            | "p2p_netgroup" => Some(self.require_cap("p2p").and_then(|_| self.p2p_call(name, args))),
+            | "p2p_netgroup" | "p2p_fingerprint" => Some(self.require_cap("p2p").and_then(|_| self.p2p_call(name, args))),
             _ => None,
         }
     }
@@ -507,6 +507,11 @@ impl Interpreter {
             },
             "p2p_local_addr" => match self.p2p_net(arg(0))?.and_then(|n| n.local_addr()) {
                 Some(a) => Value::Str(a.to_string()),
+                None => Value::Str(String::new()),
+            },
+            // p2p_fingerprint(identity_seed_hex) -> the fingerprint peers will see for that identity
+            "p2p_fingerprint" => match as_str(arg(0)).and_then(unhex_n::<32>) {
+                Some(seed) => Value::Str(IdentityKey::from_seed(&seed).public().fingerprint()),
                 None => Value::Str(String::new()),
             },
             "p2p_netgroup" => {

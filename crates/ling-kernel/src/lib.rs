@@ -1038,6 +1038,26 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
             None => (arg, ""),
         };
         match sub {
+            "install" | "sync" if name == "--all" => {
+                if !fs::lingfs::is_mounted() {
+                    console_write(b"lingfu: storage first -- `sd format` puts lingfs on the card\n");
+                } else {
+                    if sub == "sync" {
+                        crate::drivers::lingfu::sync_and_upgrade();
+                    }
+                    crate::drivers::lingfu::install_all();
+                }
+            },
+            "upgrade" | "update" => {
+                if !fs::lingfs::is_mounted() {
+                    console_write(b"lingfu: storage first -- `sd format` puts lingfs on the card\n");
+                } else {
+                    crate::drivers::lingfu::upgrade_all();
+                }
+            },
+            "verify" if !name.is_empty() => {
+                crate::drivers::lingfu::verify(name);
+            },
             "install" if !name.is_empty() => {
                 if !fs::lingfs::is_mounted() {
                     console_write(b"lingfu: storage first -- `sd format` puts lingfs on the card\n");
@@ -1048,12 +1068,12 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
                 }
             },
             "sync" => {
-                crate::drivers::lingfu::sync();
+                crate::drivers::lingfu::sync_and_upgrade();
             },
             "list" | "search" => {
                 crate::drivers::lingfu::list(name);
             },
-            _ => console_write(b"lingfu install <name> | lingfu list [query] | lingfu sync\n"),
+            _ => console_write(b"lingfu install <name>|--all | lingfu list [query] | lingfu sync [--all] (catalog + upgrade installed) | lingfu upgrade\n"),
         }
     } else if let Some(rest) = s.strip_prefix(b"cp ").or_else(|| s.strip_prefix(b"mv ")) {
         let is_cp = s.starts_with(b"cp ");
@@ -1122,6 +1142,9 @@ pub(crate) fn rpi_shell_exec(line: &[u8]) {
         arch::hdmi_audio::test();
     } else if s == b"hdmiaudio 0" || s == b"hdmiaudio 1" {
         arch::hdmi_audio::test_port((s[s.len() - 1] - b'0') as usize);
+    } else if s == b"llm" || s.starts_with(b"llm ") || s == b"ask" || s.starts_with(b"ask ") {
+        // the language model (drivers::llm): a .gguf on the SD card / a USB stick
+        crate::drivers::llm::console_command(core::str::from_utf8(s).unwrap_or(""));
     } else if s == b"ling" || s.starts_with(b"ling ") {
         ling_command(core::str::from_utf8(&s[4.min(s.len())..]).unwrap_or("").trim());
     } else if s == b"uptime" {
@@ -2166,6 +2189,12 @@ pub unsafe extern "C" fn ling_kernel_wm_step(mx: u64, my: u64, buttons: u64) -> 
     // node), get a turn every desktop frame
     crate::startup::boot_once();
     crate::coro::yield_now();
+    // pointer movement or a button counts as activity for the idle lock
+    static mut LAST_PTR: (u64, u64, u64) = (0, 0, 0);
+    if LAST_PTR != (mx, my, buttons) {
+        LAST_PTR = (mx, my, buttons);
+        crate::startup::touch();
+    }
     wm::step(mx as i64, my as i64, buttons as u8);
     0
 }
@@ -2175,6 +2204,7 @@ pub unsafe extern "C" fn ling_kernel_wm_step(mx: u64, my: u64, buttons: u64) -> 
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_key(k: u64) -> u64 {
+    crate::startup::touch();
     wm::key(k as u8);
     0
 }
@@ -2357,6 +2387,42 @@ pub unsafe extern "C" fn ling_kernel_wm_draw_menu() -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_wm_logout_requested() -> u64 {
     wm::logout_requested() as u64
+}
+
+/// Idle lock: 1 when the desktop should show the sign-in screen now.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_lock_due() -> u64 {
+    wm::lock_due() as u64
+}
+
+/// The lock screen: is this the signed-in user's password? (1 = yes)
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_unlock(password: u64) -> u64 {
+    let user = lingfs::current_user();
+    let ok = users::verify(user, arg_str(password));
+    if ok {
+        crate::startup::touch();
+    }
+    ok as u64
+}
+
+/// The signed-in user's name.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_user_current() -> u64 {
+    let u = lingfs::current_user();
+    strings::ling_str_new(u.as_ptr(), u.len())
+}
+
+/// After a sign-in (or unlock): sign-in apps / the app the lock parked.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn ling_kernel_wm_after_sign_in() -> u64 {
+    crate::startup::touch();
+    wm::after_sign_in();
+    0
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -2688,7 +2754,8 @@ pub unsafe extern "C" fn ling_kernel_wm_draw_tray(net_up: u64) -> u64 {
 #[cfg(target_arch = "x86_64")]
 #[no_mangle]
 pub unsafe extern "C" fn ling_kernel_lingfu_sync() -> u64 {
-    lingfu::sync() as u64
+    // `lingfu sync` in lsh: refresh the catalog, then upgrade what's installed.
+    lingfu::sync_and_upgrade() as u64
 }
 
 /// Print catalog entries containing `query` (empty string = all).

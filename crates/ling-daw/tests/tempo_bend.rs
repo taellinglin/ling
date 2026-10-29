@@ -35,8 +35,26 @@ fn tempo_changes_and_pitch_bend_are_imported() {
     assert!((m.tempos[0].1 - 120.0).abs() < 1e-6 && (m.tempos[1].0 - 4.0).abs() < 1e-9 && (m.tempos[1].1 - 60.0).abs() < 1e-6);
     let t = &m.tracks[0];
     assert_eq!(t.bend_range, 12.0);
-    assert_eq!(t.bend_auto.len(), 3, "{:?}", t.bend_auto);
-    assert!(t.bend_auto.iter().any(|p| p.1 > 0.99) && t.bend_auto.iter().any(|p| p.1 < 0.01));
+    // a monophonic part whose wheel moves only while its note sounds: the wheel becomes the note's own pitch gesture (no lane)
+    assert!(t.bend_auto.is_empty(), "{:?}", t.bend_auto);
+    let b = &t.notes[0].bend;
+    assert!(b.iter().any(|p| p.1 > 11.9) && b.iter().any(|p| p.1 < -11.9), "{b:?}");
+    // the same wheel under two overlapping notes stays the track's bend lane
+    let mut smf = Smf::new(Header::new(Format::Parallel, Timing::Metrical(u15::new(480))));
+    smf.tracks.push(vec![
+        ev(0, midi(MidiMessage::NoteOn { key: u7::new(60), vel: u7::new(100) })),
+        ev(0, midi(MidiMessage::NoteOn { key: u7::new(64), vel: u7::new(100) })),
+        ev(240, midi(MidiMessage::PitchBend { bend: midly::PitchBend::from_int(8191) })),
+        ev(240, midi(MidiMessage::PitchBend { bend: midly::PitchBend::from_int(0) })),
+        ev(240, midi(MidiMessage::NoteOff { key: u7::new(60), vel: u7::new(0) })),
+        ev(0, midi(MidiMessage::NoteOff { key: u7::new(64), vel: u7::new(0) })),
+        ev(0, TrackEventKind::Meta(MetaMessage::EndOfTrack)),
+    ]);
+    let mut bytes = Vec::new();
+    smf.write(&mut bytes).unwrap();
+    let m = parse(&bytes).unwrap();
+    assert_eq!(m.tracks[0].bend_auto.len(), 2, "{:?}", m.tracks[0].bend_auto);
+    assert!(m.tracks[0].notes.iter().all(|n| n.bend.is_empty()));
 }
 
 #[test]

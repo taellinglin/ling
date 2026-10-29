@@ -888,3 +888,299 @@ fn parse_content_length(headers: &[u8]) -> Option<usize> {
     }
     None
 }
+
+// -- Streaming GET: bodies of any size, record by record --------------------
+// `https_get` lands the whole response in one buffer, which caps a download at
+// whatever the caller can allocate (the kernel heap's largest block is 64 MiB).
+// The package installer needs 100+ MB, so this variant hands each decrypted
+// piece of the BODY to a sink as it arrives: HTTP headers are parsed and
+// stripped (status, Content-Length, Content-Range, chunked transfer-encoding),
+// and nothing larger than one TLS record is ever buffered.
+
+/// What a streamed response said about itself.
+#[derive(Clone, Copy, Default)]
+pub struct StreamInfo {
+    /// HTTP status code (0 if no status line arrived).
+    pub status: u16,
+    /// `Content-Length`, when the server sent one.
+    pub content_length: Option<u64>,
+    /// The total size after the `/` of a `Content-Range` (a range request's
+    /// full resource size).
+    pub range_total: Option<u64>,
+    /// Body bytes delivered to the sink.
+    pub body_bytes: u64,
+    /// The body ended where the framing said it would (Content-Length reached,
+    /// last chunk seen, or -- with neither -- the peer closed cleanly).
+    pub complete: bool,
+    /// Why reading stopped ("done", "peer closed", "stalled", "decrypt
+    /// failed", ...), for a caller deciding whether to resume.
+    pub end: &'static str,
+}
+
+fn header_value<'a>(headers: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    for line in headers.split(|&b| b == b'\n') {
+        if line.len() > key.len() && line[..key.len()].eq_ignore_ascii_case(key) && line[key.len()] == b':' {
+            let mut v = &line[key.len() + 1..];
+            while let [b' ' | b'\t', rest @ ..] = v {
+                v = rest;
+            }
+            while let [rest @ .., b'\r' | b' ' | b'\t'] = v {
+                v = rest;
+            }
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn parse_u64(v: &[u8]) -> Option<u64> {
+    let mut n: u64 = 0;
+    let mut any = false;
+    for &b in v {
+        if !b.is_ascii_digit() {
+            break;
+        }
+        n = n.checked_mul(10)?.checked_add((b - b'0') as u64)?;
+        any = true;
+    }
+    any.then_some(n)
+}
+
+/// Chunked transfer-encoding decoder state.
+enum Chunk {
+    /// Reading the hex size line (value so far, saw a `;` extension).
+    Size(u64, bool),
+    /// In chunk data with this many bytes left.
+    Data(u64),
+    /// Expecting the CRLF after chunk data.
+    DataEnd,
+    /// After the 0-size chunk: trailers until an empty line.
+    Trailer(bool),
+    Done,
+}
+
+struct BodyState<'s> {
+    hdr: alloc::vec::Vec<u8>,
+    in_body: bool,
+    chunked: Option<Chunk>,
+    info: StreamInfo,
+    aborted: bool,
+    head: &'s mut dyn FnMut(&StreamInfo) -> bool,
+    sink: &'s mut dyn FnMut(&[u8]) -> bool,
+}
+
+impl BodyState<'_> {
+    fn deliver(&mut self, data: &[u8]) {
+        if data.is_empty() || self.aborted {
+            return;
+        }
+        let mut d = data;
+        if let Some(cl) = self.info.content_length {
+            if self.chunked.is_none() {
+                let left = cl.saturating_sub(self.info.body_bytes);
+                d = &d[..(d.len() as u64).min(left) as usize];
+            }
+        }
+        self.info.body_bytes += d.len() as u64;
+        if !d.is_empty() && !(self.sink)(d) {
+            self.aborted = true;
+        }
+    }
+
+    fn feed_chunked(&mut self, mut data: &[u8]) {
+        while !data.is_empty() && !self.aborted {
+            let st = self.chunked.take().unwrap_or(Chunk::Done);
+            match st {
+                Chunk::Size(v, ext) => {
+                    let b = data[0];
+                    data = &data[1..];
+                    self.chunked = Some(match b {
+                        b'\n' if v == 0 => Chunk::Trailer(true),
+                        b'\n' => Chunk::Data(v),
+                        b'\r' => Chunk::Size(v, ext),
+                        _ if ext => Chunk::Size(v, true),
+                        b';' | b' ' | b'\t' => Chunk::Size(v, true),
+                        _ => {
+                            let dv = (b as char).to_digit(16).unwrap_or(0) as u64;
+                            Chunk::Size(v.saturating_mul(16).saturating_add(dv), false)
+                        },
+                    });
+                },
+                Chunk::Data(left) => {
+                    let take = (data.len() as u64).min(left) as usize;
+                    let (now, rest) = data.split_at(take);
+                    data = rest;
+                    self.deliver(now);
+                    let left = left - take as u64;
+                    self.chunked = Some(if left == 0 { Chunk::DataEnd } else { Chunk::Data(left) });
+                },
+                Chunk::DataEnd => {
+                    let b = data[0];
+                    data = &data[1..];
+                    self.chunked = Some(if b == b'\n' { Chunk::Size(0, false) } else { Chunk::DataEnd });
+                },
+                Chunk::Trailer(line_start) => {
+                    let b = data[0];
+                    data = &data[1..];
+                    self.chunked = Some(match b {
+                        b'\n' if line_start => Chunk::Done,
+                        b'\n' => Chunk::Trailer(true),
+                        b'\r' => Chunk::Trailer(line_start),
+                        _ => Chunk::Trailer(false),
+                    });
+                },
+                Chunk::Done => {
+                    self.chunked = Some(Chunk::Done);
+                    return;
+                },
+            }
+        }
+    }
+
+    /// Feed decrypted application data (headers first, then body).
+    fn feed(&mut self, data: &[u8]) {
+        if self.in_body {
+            if self.chunked.is_some() {
+                self.feed_chunked(data);
+            } else {
+                self.deliver(data);
+            }
+            return;
+        }
+        self.hdr.extend_from_slice(data);
+        let he = http_body_offset(&self.hdr);
+        if he == 0 {
+            if self.hdr.len() > 32 * 1024 {
+                self.aborted = true; // no header terminator in 32 KiB: not HTTP
+            }
+            return;
+        }
+        let headers = &self.hdr[..he];
+        // "HTTP/1.1 200 OK"
+        let sp = headers.iter().position(|&b| b == b' ').unwrap_or(0);
+        self.info.status = parse_u64(&headers[sp + 1..]).unwrap_or(0) as u16;
+        self.info.content_length = header_value(headers, b"content-length").and_then(parse_u64);
+        self.info.range_total = header_value(headers, b"content-range")
+            .and_then(|v| v.iter().position(|&b| b == b'/').map(|i| &v[i + 1..]))
+            .and_then(parse_u64);
+        let chunked = header_value(headers, b"transfer-encoding").is_some_and(|v| v.windows(7).any(|w| w.eq_ignore_ascii_case(b"chunked")));
+        if chunked {
+            self.chunked = Some(Chunk::Size(0, false));
+            self.info.content_length = None;
+        }
+        self.in_body = true;
+        if !(self.head)(&self.info) {
+            self.aborted = true;
+            return;
+        }
+        let rest = self.hdr.split_off(he);
+        self.hdr = alloc::vec::Vec::new();
+        self.feed(&rest);
+    }
+
+    fn finished(&self) -> bool {
+        if !self.in_body {
+            return false;
+        }
+        match &self.chunked {
+            Some(Chunk::Done) => true,
+            Some(_) => false,
+            None => self.info.content_length.is_some_and(|cl| self.info.body_bytes >= cl),
+        }
+    }
+}
+
+/// Streaming HTTPS GET of `path` on `host:port` (one TLS session, `Connection:
+/// close`). `extra_headers` is inserted verbatim into the request (each line
+/// ending in `\r\n`, e.g. `"Range: bytes=-4\r\n"`; empty for none). Once the
+/// response headers are in, `head(&info)` is called (status, lengths); return
+/// false to stop. Then every body piece goes to `sink` (de-chunked, headers
+/// stripped); return false from it to abort. Returns the final `StreamInfo`
+/// (`complete` = the body arrived in full); `Err` only when no connection or
+/// response could be made at all.
+pub fn https_get_stream(
+    host: &str,
+    port: u16,
+    path: &str,
+    extra_headers: &str,
+    head: &mut dyn FnMut(&StreamInfo) -> bool,
+    sink: &mut dyn FnMut(&[u8]) -> bool,
+    log: &mut dyn FnMut(&[u8]),
+) -> Result<StreamInfo, &'static str> {
+    let _net = netstack::NetGuard::new();
+    let (mut c_app, mut s_app, mut pos, mut rxlen) = tls_handshake(host, port, log)?;
+    let tx = unsafe { &mut *&raw mut TXBUF };
+    let rx = unsafe { &mut *&raw mut RX };
+    let req = alloc::format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: LingOS\r\n{extra_headers}\r\n");
+    for piece in req.as_bytes().chunks(3800) {
+        let m = encrypt_record(&mut c_app, 0x17, piece, tx);
+        if !netstack::tcp_write(&tx[..m]) {
+            return Err("write GET failed");
+        }
+    }
+    let mut st = BodyState { hdr: alloc::vec::Vec::new(), in_body: false, chunked: None, info: StreamInfo::default(), aborted: false, head, sink };
+    let mut tmp = alloc::vec![0u8; 18 * 1024];
+    let mut closed_cleanly = false;
+    let mut end: &'static str = "done";
+    loop {
+        if st.aborted {
+            end = "aborted";
+            break;
+        }
+        if st.finished() {
+            break;
+        }
+        // Make sure one whole record (5-byte header + body) is buffered.
+        let need = if pos + 5 <= rxlen { 5 + (((rx[pos + 3] as usize) << 8) | rx[pos + 4] as usize) } else { 5 };
+        if pos + need > rxlen {
+            if pos > 0 {
+                rx.copy_within(pos..rxlen, 0);
+                rxlen -= pos;
+                pos = 0;
+            }
+            if rxlen >= rx.len() {
+                end = "oversized record";
+                break; // a record larger than the receive buffer: protocol error
+            }
+            let n = netstack::tcp_read_some(&mut rx[rxlen..], 10_000_000);
+            if n == 0 {
+                end = if netstack::tcp_is_established() { "stalled 10 s" } else { "peer closed" };
+                break;
+            }
+            rxlen += n;
+            continue;
+        }
+        let rlen = need - 5;
+        if rx[pos] == 0x14 {
+            pos += need;
+            continue; // ChangeCipherSpec
+        }
+        let mut hdr = [0u8; 5];
+        hdr.copy_from_slice(&rx[pos..pos + 5]);
+        if rlen > tmp.len() {
+            end = "oversized record";
+            break;
+        }
+        tmp[..rlen].copy_from_slice(&rx[pos + 5..pos + need]);
+        pos += need;
+        let Some((ctype, plen)) = decrypt_record(&mut s_app, &hdr, &mut tmp[..rlen]) else {
+            end = "decrypt failed";
+            break;
+        };
+        if ctype == 0x17 {
+            st.feed(&tmp[..plen]);
+        } else if ctype == 0x15 {
+            closed_cleanly = true;
+            end = "peer closed (TLS alert)";
+            break; // alert (close_notify)
+        }
+    }
+    let mut info = st.info;
+    info.end = end;
+    info.complete = !st.aborted
+        && (st.finished() || (st.in_body && st.chunked.is_none() && info.content_length.is_none() && closed_cleanly));
+    if info.status == 0 && !st.aborted {
+        return Err("no HTTP response");
+    }
+    Ok(info)
+}

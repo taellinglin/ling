@@ -51,7 +51,13 @@ pub mod chops;
 pub mod cmudict;
 pub mod feel;
 pub mod guide;
+pub mod songanalysis;
+pub mod transcribe;
 pub mod soundcat;
+pub mod fxctx;
+pub mod loudness;
+pub mod recipes;
+pub mod gesture;
 
 pub use audio::flush_denormals;
 pub use engine::{set_parallel_render, set_track_sleep, Engine, SharedEngine, SLEEP_AFTER};

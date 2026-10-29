@@ -152,7 +152,11 @@ llm-cuda = ["ling-ai/llm-cuda", "ling-daw/llm"]
 # (Not ling-web: it declares its own `[workspace]`, so the root crate can't
 # path-depend on it — "multiple workspace roots" — reuse just the one type it
 # would have given us, tower_http::services::ServeDir, directly instead.)
-web = ["dep:ling-http", "dep:tower-http", "dep:reqwest", "dep:zip", "dep:hmac", "dep:sha1", "dep:tar"]
+web = ["dep:ling-http", "dep:tower-http", "dep:reqwest", "dep:zip", "dep:hmac", "dep:sha1", "dep:tar", "video"]
+# <video> playback builtins (video_open/video_frame/...): MP4 demux (mp4), H.264 decode
+# (openh264, Cisco source compiled in by its `source` feature — no DLL at runtime),
+# AAC decode (symphonia) and audio out (cpal). Pulled in by `web` (http fetches).
+video = ["dep:openh264", "dep:mp4", "dep:symphonia", "dep:cpal"]
 
 [dependencies]
 glam = "0.33"
@@ -189,7 +193,8 @@ ling-net = { path = "crates/ling-net", version = "2030.0.9", default-features = 
 ling-ui = { path = "crates/ling-ui", version = "2030.0.9" }
 gilrs = "0.11"   # native gamepad + rumble (XInput/DInput/evdev)
 ling-input = { workspace = true, features = ["gilrs"] }   # gamepad/joystick/VR/touch builtins
-image = { version = "0.25", default-features = false, features = ["png"] }   # PNG screenshots
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }   # PNG screenshots; image_fetch decodes web pictures
+fancy-regex = "0.17"   # re_* builtins: JavaScript-style regular expressions (lookaround, backreferences) for page-script sandboxes
 resvg = "0.44"   # tm_tex_load: SVG / SVGZ textures for the game3d textured-mesh builtins
 ling-http = { workspace = true, optional = true, features = ["dev-certs"] }   # http_route/http_serve builtins (feature = "web"); dev-certs backs http_serve_dev_tls
 tower-http = { version = "0.6", features = ["fs"], optional = true }   # ServeDir backs http_static (feature = "web")
@@ -198,6 +203,10 @@ zip = { version = "2", default-features = false, features = ["deflate"], optiona
 tar = { version = "0.4", optional = true }   # tar_gz_list/tar_gz_read builtins — browse a package's uploaded tarball (feature = "web")
 hmac = { version = "0.12", optional = true }   # TOTP (2FA) builtins (feature = "web")
 sha1 = { version = "0.10", optional = true }   # TOTP HMAC-SHA1 (feature = "web")
+openh264 = { version = "0.9", optional = true }   # video_* builtins: H.264 decode (feature = "video")
+mp4 = { version = "0.14", optional = true }   # video_* builtins: MP4 demux (feature = "video")
+symphonia = { version = "0.5", default-features = false, features = ["isomp4", "aac"], optional = true }   # video_* builtins: AAC audio track (feature = "video")
+cpal = { workspace = true, optional = true }   # video_* builtins: audio output (feature = "video")
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }   # qr_svg builtin — scannable otpauth:// codes for 2FA setup
 bip39 = "2"   # lw_mnemonic_from / lw_mnemonic_to builtins (ling-wallet: 24-word BIP-39 English encoding of the master seed)
 # Optional native GPU rasteriser backend (feature = "gpu").

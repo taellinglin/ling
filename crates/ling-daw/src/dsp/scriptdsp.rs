@@ -969,6 +969,9 @@ struct Voice {
     active: bool,
     quiet: f32,
     age: u64,
+    /// the note's pitch gesture in semitones (moves `freq` and `note` of the script), smoothed over each block
+    pb: crate::dsp::Smooth,
+    fresh: bool,
 }
 
 pub struct ScriptSynth {
@@ -1005,7 +1008,7 @@ impl ScriptSynth {
             Ok(p) => {
                 let old: HashMap<String, f32> = self.prog.as_ref().map(|o| o.params.iter().zip(&self.knobs).map(|(s, v)| (s.name.clone(), *v)).collect()).unwrap_or_default();
                 self.knobs = p.params.iter().map(|s| old.get(&s.name).copied().unwrap_or(value_to_norm(s, s.def))).collect();
-                self.voices = (0..VOICES).map(|_| Voice { run: Run::new(&p, self.sr), key: 0, vel: 0.0, gate: false, t: 0.0, since_off: 0.0, active: false, quiet: 0.0, age: 0 }).collect();
+                self.voices = (0..VOICES).map(|_| Voice { run: Run::new(&p, self.sr), key: 0, vel: 0.0, gate: false, t: 0.0, since_off: 0.0, active: false, quiet: 0.0, age: 0, pb: crate::dsp::Smooth::at(0.0), fresh: false }).collect();
                 self.prog = Some(p);
                 self.src = src.to_string();
                 self.error.clear();
@@ -1039,6 +1042,8 @@ impl Instrument for ScriptSynth {
         v.active = true;
         v.quiet = 0.0;
         v.age = self.clock;
+        v.pb.reset(0.0);
+        v.fresh = true;
     }
     fn note_off(&mut self, key: u8) {
         for v in self.voices.iter_mut().filter(|v| v.active && v.gate && v.key == key) {
@@ -1051,6 +1056,11 @@ impl Instrument for ScriptSynth {
             v.gate = false;
         }
     }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.active && v.gate && v.key == key) {
+            v.pb.set(semis, v.fresh);
+        }
+    }
     fn render(&mut self, out: &mut [f32]) {
         let Some(p) = self.prog.as_ref() else { return };
         let sr = self.sr;
@@ -1060,9 +1070,18 @@ impl Instrument for ScriptSynth {
                 v.run.vars[p.first_param + i] = norm_to_value(spec, self.knobs.get(i).copied().unwrap_or(0.0));
             }
             let freq = 440.0 * 2f32.powf((v.key as f32 - 69.0) / 12.0);
+            v.pb.begin(out.len() / 2);
+            v.fresh = false;
+            let bent = !v.pb.idle(0.0);
             for fr in out.chunks_exact_mut(2) {
-                v.run.vars[p.s_freq] = freq;
-                v.run.vars[p.s_note] = v.key as f32;
+                if bent {
+                    let g = v.pb.tick();
+                    v.run.vars[p.s_freq] = freq * (g / 12.0).exp2();
+                    v.run.vars[p.s_note] = v.key as f32 + g;
+                } else {
+                    v.run.vars[p.s_freq] = freq;
+                    v.run.vars[p.s_note] = v.key as f32;
+                }
                 v.run.vars[p.s_vel] = v.vel;
                 v.run.vars[p.s_gate] = if v.gate { 1.0 } else { 0.0 };
                 v.run.vars[p.s_t] = v.t;

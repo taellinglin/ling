@@ -121,13 +121,29 @@ core_params! {
     AIR "air" 0.0;
     WIDTH "width" 0.5;
     MONOLO "mono lo" 0.0;
+    AXUNI "a xuni" 0.0;
+    BXUNI "b xuni" 0.0;
+    L1DIV "l1 div" 0.0;
+    L2DIV "l2 div" 0.0;
+    AUSER "a user" 0.0;
+    BUSER "b user" 0.0;
 }
 
 /// The "pro" block at the end of the core list: every one of these is neutral at its default, so older patches sound as they did.
 const PRO_FIRST: usize = P::FMODEL as usize;
 const PRO_COUNT: usize = 13;
-/// LFO cycles per beat for the tempo-synced rates (`l1 sync` / `l2 sync`): 2 bars, 1 bar, 1/2, 1/4, dotted 1/8 ... 1/16
+/// LFO cycles per beat for the older tempo-synced rates (`l1 sync` / `l2 sync`): 2 bars, 1 bar, 1/2, 1/4, 1/4 triplet (1.5 cycles a
+/// beat), 1/8, 1/8 triplet (3 a beat), 1/16. `l1 div` / `l2 div` (the full list with 1/16T and the dotted values, `growl::NOTE_DIVS`)
+/// win over them when set.
 const SYNC_DIV: [f32; 8] = [0.125, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0];
+
+/// LFO speed in Hz: a note value (`div`, from `growl::NOTE_DIVS`), else the older `sync` table, else the free `rate` knob
+fn lfo_hz_div(rate: f32, sync: f32, div: f32, bpm: f32) -> f32 {
+    match super::growl::note_div(div) {
+        Some(beats) => bpm / 60.0 / beats,
+        None => lfo_hz(rate, sync, bpm),
+    }
+}
 
 /// LFO speed in Hz: the free `rate` knob, or (when `sync` is up) a note value of the tempo
 fn lfo_hz(rate: f32, sync: f32, bpm: f32) -> f32 {
@@ -306,13 +322,15 @@ pub const MSEG_PTS: usize = 16;
 /// per MSEG: len, time, loop, int, then 16 x (time) and 16 y (level)
 pub const MSEG_STRIDE: usize = 4 + 2 * MSEG_PTS;
 pub const NSRC: usize = NMSEG + 5;
-pub const NDST: usize = 20;
+pub const NDST: usize = 24;
+/// the global destinations at the end of the matrix: LFO 1 / LFO 2 rate, reverb and delay wet (the newest voice drives them)
+const D_L1R: usize = 20;
 const NCORE: usize = P::COUNT as usize;
 pub const MSEG_BASE: usize = NCORE;
 pub const MAT_BASE: usize = MSEG_BASE + NMSEG * MSEG_STRIDE;
 pub const NPARAM: usize = MAT_BASE + NSRC * NDST;
 pub const SRC_NAMES: [&str; NSRC] = ["m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "l1", "l2", "vel", "key", "whl"];
-pub const DST_NAMES: [&str; NDST] = ["pit", "awv", "awp", "alv", "bwv", "bwp", "blv", "amt", "cut", "res", "drv", "cmb", "sub", "nos", "pan", "det", "bpt", "amp", "hum", "spr"];
+pub const DST_NAMES: [&str; NDST] = ["pit", "awv", "awp", "alv", "bwv", "bwp", "blv", "amt", "cut", "res", "drv", "cmb", "sub", "nos", "pan", "det", "bpt", "amp", "hum", "spr", "l1r", "l2r", "rvw", "dlw"];
 
 struct Names {
     list: Vec<&'static str>,
@@ -654,7 +672,13 @@ impl Delay {
 // ── voice ────────────────────────────────────────────────────────────────────
 
 const MAXVOICES: usize = 16;
-const MAXUNI: usize = 7;
+/// unison voices per oscillator: `a uni` gives 1..7 (as it always did), `a xuni` adds up to 9 more
+const MAXUNI: usize = 16;
+/// the unison count the phase layouts were made for (kept so older patches start their notes the same way)
+const OLD_UNI: usize = 7;
+/// with more than 7 unison voices the oscillators of all sounding notes share this budget: fewer notes may sound at once, so a
+/// 16-voice supersaw chord costs about what a 7-voice one always did (the stolen voice is the quietest releasing one)
+const OSC_BUDGET: usize = 128;
 const CTRL: usize = 8;
 
 #[derive(Clone)]
@@ -703,6 +727,17 @@ struct Voice {
     g: f32,
     k: f32,
     amp_v: f32,
+    /// per-note pitch (semitones from the key): now, the target of this block, the step per sample, and whether the first value
+    /// after the note started is still to come (it is taken at once)
+    pb: f32,
+    pb_tgt: f32,
+    pb_step: f32,
+    pb_fresh: bool,
+    /// per-note pressure (0 = none) and timbre (0.5 = neutral), ramped across the block; the first values jump
+    prs: super::Smooth,
+    tmb: super::Smooth,
+    prs_fresh: bool,
+    tmb_fresh: bool,
 }
 
 impl Voice {
@@ -748,12 +783,25 @@ impl Voice {
             oct_rb: 1.0,
             f_semis: f32::NAN,
             f_hz: 0.0,
+            pb: 0.0,
+            pb_tgt: 0.0,
+            pb_step: 0.0,
+            pb_fresh: true,
+            prs: super::Smooth::at(0.0),
+            tmb: super::Smooth::at(0.5),
+            prs_fresh: true,
+            tmb_fresh: true,
         }
     }
 }
 
 fn uni_count(v: f32) -> usize {
     ((v * 6.0).round() as usize).min(6) + 1
+}
+
+/// all unison voices: `uni` (1..7) plus `xuni` (0..9 more), at most 16
+fn uni_total(uni: f32, xuni: f32) -> usize {
+    (uni_count(uni) + ((xuni * 9.0).round() as usize).min(9)).min(MAXUNI)
 }
 
 /// symmetric positions -1..1 for `n` layers
@@ -797,6 +845,12 @@ pub struct Prism {
     scr2: Vec<f32>,
     silent: u32,
     pro: ProState,
+    /// the global modulation (LFO 1 / 2 rate, reverb wet, delay wet), smoothed, and its value per sample of this block
+    gmod: [f32; 4],
+    gmod_s: [f32; 4],
+    gbuf: Vec<[f32; 2]>,
+    /// a user wavetable (resampled audio or a wavetable file) for `a user` / `b user`
+    wt: Option<std::sync::Arc<super::wavetable::WaveTable>>,
 }
 
 #[derive(Clone)]
@@ -903,9 +957,32 @@ impl Prism {
             scr2: vec![],
             silent: 0,
             pro: ProState::default(),
+            gmod: [0.0; 4],
+            gmod_s: [0.0; 4],
+            gbuf: vec![],
+            wt: None,
         };
         s.refresh();
         s
+    }
+
+    /// Load a wavetable file into the user slot.
+    pub fn load_table(&mut self, path: &str) -> Result<usize, String> {
+        let w = super::wavetable::WaveTable::load(path)?;
+        let n = w.nframes();
+        self.wt = Some(w);
+        Ok(n)
+    }
+
+    /// how many notes may sound at once: all 16, unless a unison past 7 voices asks for the oscillator budget
+    fn voice_cap(&self) -> usize {
+        let (na, nb) = (uni_total(self.v[P::A_UNI as usize], self.v[P::AXUNI as usize]), uni_total(self.v[P::B_UNI as usize], self.v[P::BXUNI as usize]));
+        if na <= OLD_UNI && nb <= OLD_UNI {
+            return MAXVOICES;
+        }
+        let b_on = self.v[P::B_LVL as usize] > 0.0 || self.sel(P::MODE as usize, 6) != 0;
+        let oscs = na + if b_on { nb } else { 0 };
+        (OSC_BUDGET / oscs.max(1)).clamp(4, MAXVOICES)
     }
 
     fn sel(&self, k: usize, n: usize) -> usize {
@@ -996,12 +1073,15 @@ impl Prism {
     }
 
     fn alloc_voice(&mut self) -> usize {
-        if let Some(i) = self.voices.iter().position(|v| !v.active) {
-            return i;
+        let cap = self.voice_cap();
+        if cap >= MAXVOICES || self.voices.iter().filter(|v| v.active).count() < cap {
+            if let Some(i) = self.voices.iter().position(|v| !v.active) {
+                return i;
+            }
         }
         // steal: a releasing voice first (the quietest), else the oldest
-        let rel = self.voices.iter().enumerate().filter(|(_, v)| !v.gate).min_by(|a, b| a.1.amp.level.partial_cmp(&b.1.amp.level).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i);
-        rel.unwrap_or_else(|| self.voices.iter().enumerate().min_by_key(|(_, v)| v.age).map(|(i, _)| i).unwrap_or(0))
+        let rel = self.voices.iter().enumerate().filter(|(_, v)| v.active && !v.gate).min_by(|a, b| a.1.amp.level.partial_cmp(&b.1.amp.level).unwrap_or(std::cmp::Ordering::Equal)).map(|(i, _)| i);
+        rel.unwrap_or_else(|| self.voices.iter().enumerate().filter(|(_, v)| v.active).min_by_key(|(_, v)| v.age).map(|(i, _)| i).unwrap_or(0))
     }
 
     pub fn preset_state(name: &str) -> Option<Vec<(String, f32)>> {
@@ -1061,6 +1141,14 @@ impl Instrument for Prism {
         v.t = 0.0;
         v.amp.on();
         v.flt.on();
+        v.pb = 0.0;
+        v.pb_tgt = 0.0;
+        v.pb_step = 0.0;
+        v.pb_fresh = true;
+        v.prs.reset(0.0);
+        v.tmb.reset(0.5);
+        v.prs_fresh = true;
+        v.tmb_fresh = true;
         if fresh {
             for k in 0..MAXUNI {
                 v.ph_a[k] = (k as f32 * 0.381 + drift_seed.abs()).fract();
@@ -1080,7 +1168,14 @@ impl Instrument for Prism {
         // basses), or reset to an even spread (the unison voices decorrelated but repeatable)
         if rst > 0 {
             for k in 0..MAXUNI {
-                let ph = if rst == 1 { 0.0 } else { k as f32 / MAXUNI as f32 };
+                let ph = if rst == 1 {
+                    0.0
+                } else if k < OLD_UNI {
+                    k as f32 / OLD_UNI as f32
+                } else {
+                    // the extra voices between the first seven
+                    ((k - OLD_UNI) as f32 / 9.0 + 0.5 / OLD_UNI as f32).fract()
+                };
                 v.ph_a[k] = ph;
                 v.ph_b[k] = ph;
             }
@@ -1095,6 +1190,39 @@ impl Instrument for Prism {
             v.gate = false;
             v.amp.off();
             v.flt.off();
+        }
+    }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        if !semis.is_finite() {
+            return;
+        }
+        let s = semis.clamp(-48.0, 48.0);
+        // only held voices: a releasing note keeps its last bend (the tail of a dive does not snap back)
+        for v in self.voices.iter_mut().filter(|v| v.active && v.gate && v.key == key) {
+            if v.pb_fresh {
+                v.pb = s;
+                v.pb_step = 0.0;
+            }
+            v.pb_tgt = s;
+            v.pb_fresh = false;
+        }
+    }
+    fn note_pressure(&mut self, key: u8, p: f32) {
+        if !p.is_finite() {
+            return;
+        }
+        for v in self.voices.iter_mut().filter(|v| v.active && v.gate && v.key == key) {
+            v.prs.set(p.clamp(0.0, 1.0), v.prs_fresh);
+            v.prs_fresh = false;
+        }
+    }
+    fn note_timbre(&mut self, key: u8, t: f32) {
+        if !t.is_finite() {
+            return;
+        }
+        for v in self.voices.iter_mut().filter(|v| v.active && v.gate && v.key == key) {
+            v.tmb.set(t.clamp(0.0, 1.0), v.tmb_fresh);
+            v.tmb_fresh = false;
         }
     }
     fn all_off(&mut self) {
@@ -1126,7 +1254,7 @@ impl Instrument for Prism {
         let fine_a = (p(P::A_FINE) - 0.5) * 2.0;
         let b_semi = (p(P::B_SEMI) - 0.5) * 48.0;
         let fine_b = (p(P::B_FINE) - 0.5) * 2.0;
-        let (na, nb) = (uni_count(p(P::A_UNI)), uni_count(p(P::B_UNI)));
+        let (na, nb) = (uni_total(p(P::A_UNI), p(P::AXUNI)), uni_total(p(P::B_UNI), p(P::BXUNI)));
         let mode = self.sel(P::MODE as usize, 6);
         let ftype = self.sel(P::FTYPE as usize, 5);
         let glide_k = {
@@ -1140,10 +1268,26 @@ impl Instrument for Prism {
         let bend_target = (p(P::BEND) - 0.5) * 2.0 * 2.0;
         let whl = p(P::WHL);
         let cells = self.cells.clone();
-        let l1_hz = lfo_hz(p(P::L1RATE), p(P::L1SYNC), bpm);
-        let l2_hz = lfo_hz(p(P::L2RATE), p(P::L2SYNC), bpm);
+        let l1_hz = lfo_hz_div(p(P::L1RATE), p(P::L1SYNC), p(P::L1DIV), bpm);
+        let l2_hz = lfo_hz_div(p(P::L2RATE), p(P::L2SYNC), p(P::L2DIV), bpm);
         let (l1_shp, l2_shp) = (self.sel(P::L1SHP as usize, 5), self.sel(P::L2SHP as usize, 5));
         let tuning = self.tuning.clone();
+        // the global destinations: which are in use, and the voice that drives them (the newest sounding one)
+        let gdst = [0usize, 1, 2, 3].map(|g| cells.iter().any(|c| c.1 == D_L1R + g));
+        let g_any = gdst.iter().any(|x| *x);
+        let lead_v = self.voices.iter().enumerate().filter(|(_, v)| v.active).max_by_key(|(_, v)| v.age).map(|(i, _)| i);
+        if g_any {
+            self.gbuf.clear();
+            self.gbuf.resize(frames, [0.0; 2]);
+        }
+        // the user wavetable, per oscillator
+        let uta = if p(P::AUSER) > 0.5 { self.wt.clone() } else { None };
+        let utb = if p(P::BUSER) > 0.5 { self.wt.clone() } else { None };
+        for v in self.voices.iter_mut() {
+            v.pb_step = (v.pb_tgt - v.pb) / frames as f32;
+            v.prs.begin(frames);
+            v.tmb.begin(frames);
+        }
         // the pro block
         let ladder = p(P::FMODEL) > 0.5 && ftype <= 1;
         let lad_drv = 1.0 + p(P::LADDRV) * 5.0;
@@ -1169,17 +1313,39 @@ impl Instrument for Prism {
 
         for i in 0..frames {
             // global LFOs and glide of the bend wheel
+            if g_any {
+                // the global modulation glides to its target (no steps in an LFO's speed or a send)
+                for g in 0..4 {
+                    self.gmod_s[g] += (self.gmod[g] - self.gmod_s[g]) * 0.01;
+                }
+                self.gbuf[i] = [self.gmod_s[2], self.gmod_s[3]];
+            }
             for l in 0..2 {
-                let hz = if l == 0 { l1_hz } else { l2_hz };
+                let mut hz = if l == 0 { l1_hz } else { l2_hz };
+                if gdst[l] {
+                    // +-4 octaves at full depth
+                    hz *= 2f32.powf(self.gmod_s[l] * 4.0);
+                }
                 self.lfo_ph[l] += hz * dt;
                 if self.lfo_ph[l] >= 1.0 {
-                    self.lfo_ph[l] -= 1.0;
+                    self.lfo_ph[l] -= if self.lfo_ph[l] < 2.0 { 1.0 } else { self.lfo_ph[l].floor() };
                     self.lfo_hold[l] = self.rng.next();
                 }
                 self.lfo_val[l] = Prism::lfo_shape(if l == 0 { l1_shp } else { l2_shp }, self.lfo_ph[l], self.lfo_hold[l]);
             }
             self.bend_s += (bend_target - self.bend_s) * 0.002;
             let control = ctrl_count % CTRL == 0;
+            if control && g_any && lead_v.map(|l| !self.voices[l].active).unwrap_or(true) {
+                // no voice: only the global sources (the LFOs and the wheel) move the global destinations
+                let src = [self.lfo_val[0], self.lfo_val[1], whl];
+                let mut g4 = [0.0f32; 4];
+                for &(s, d, a) in &cells {
+                    if d >= D_L1R && matches!(s, 8 | 9 | 12) {
+                        g4[d - D_L1R] += src[if s == 12 { 2 } else { s - 8 }] * a;
+                    }
+                }
+                self.gmod = g4;
+            }
             ctrl_count += 1;
             let (mut sum_l, mut sum_r) = (0.0f32, 0.0f32);
             for vi in 0..self.voices.len() {
@@ -1206,6 +1372,9 @@ impl Instrument for Prism {
                     let mut m = [0.0f32; NDST];
                     for &(s, d, a) in &cells {
                         m[d] += src[s] * a;
+                    }
+                    if g_any && Some(vi) == lead_v {
+                        self.gmod = [m[D_L1R], m[D_L1R + 1], m[D_L1R + 2], m[D_L1R + 3]];
                     }
                     let v = &mut self.voices[vi];
                     v.m = m;
@@ -1237,6 +1406,10 @@ impl Instrument for Prism {
                     }
                     // filter coefficients
                     let mut cut = p(P::CUT) + m[8] + (v.flt.level - 0.0) * (p(P::FENV) - 0.5) * 2.0;
+                    // per-note expression: pressure and timbre open / close the filter
+                    if v.prs.cur != 0.0 || v.tmb.cur != 0.5 {
+                        cut += v.prs.cur * 0.2 + (v.tmb.cur - 0.5) * 0.5;
+                    }
                     cut += (key_f - 60.0) / 60.0 * (p(P::KEYTR) - 0.5) * 2.0 * 0.5;
                     cut += v.drift * drift_amt * 0.03;
                     cut += vcut * (vel - 0.5) * 0.6;
@@ -1251,17 +1424,17 @@ impl Instrument for Prism {
                     let drift_c = v.drift * drift_amt * 3.0;
                     v.oct_ra = 2f32.powf(oct_a + fine_a / 12.0);
                     v.oct_rb = 2f32.powf(oct_b + (b_semi + m[16] * 12.0) / 12.0 + fine_b / 12.0);
-                    let f0 = tuning.freq(v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15);
+                    let f0 = tuning.freq(v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15 + v.pb);
                     let (wpa, wpb) = ((p(P::A_WARP) + m[2]).clamp(0.0, 1.0), (p(P::B_WARP) + m[5]).clamp(0.0, 1.0));
                     let amt_c = if mode == 0 { 0.0 } else { (p(P::AMT) + m[7]).clamp(0.0, 1.0) };
                     let sync_c = if mode == 3 { 1.0 + amt_c * 3.0 } else { 1.0 };
                     for k in 0..na {
                         v.rat_a[k] = 2f32.powf((v.det_a[k] + drift_c) / 1200.0);
-                        v.lv_a[k] = band_level(f0 * v.oct_ra * sync_c * v.rat_a[k], wpa, sr);
+                        v.lv_a[k] = if uta.is_some() { super::wavetable::WaveTable::level(f0 * v.oct_ra * sync_c * v.rat_a[k] * (1.0 + wpa * 2.0), sr) } else { band_level(f0 * v.oct_ra * sync_c * v.rat_a[k], wpa, sr) };
                     }
                     for k in 0..nb {
                         v.rat_b[k] = 2f32.powf((v.det_b[k] + drift_c) / 1200.0);
-                        v.lv_b[k] = band_level(f0 * v.oct_rb * v.rat_b[k], wpb, sr);
+                        v.lv_b[k] = if utb.is_some() { super::wavetable::WaveTable::level(f0 * v.oct_rb * v.rat_b[k] * (1.0 + wpb * 2.0), sr) } else { band_level(f0 * v.oct_rb * v.rat_b[k], wpb, sr) };
                     }
                 }
                 let v = &mut self.voices[vi];
@@ -1274,8 +1447,21 @@ impl Instrument for Prism {
                 }
                 v.t += dt;
                 v.note += (v.target - v.note) * glide_k;
-                let m = v.m;
-                let semis = v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15;
+                let mut m = v.m;
+                // pressure: louder; timbre: osc A's wave position (+-0.3); the filter follows at control rate (above)
+                let prs = v.prs.tick();
+                let tmb = v.tmb.tick();
+                if prs != 0.0 {
+                    m[17] += prs * 0.35;
+                }
+                if tmb != 0.5 {
+                    m[1] += (tmb - 0.5) * 0.6;
+                }
+                let mut semis = v.note + self.bend_s + m[0] * 24.0 + v.drift * drift_amt * 0.15;
+                if v.pb != 0.0 || v.pb_step != 0.0 {
+                    v.pb += v.pb_step;
+                    semis += v.pb;
+                }
                 if semis != v.f_semis {
                     v.f_semis = semis;
                     v.f_hz = tuning.freq(semis);
@@ -1312,7 +1498,10 @@ impl Instrument for Prism {
                         let _ = old;
                         let lv = v.lv_b[k];
                         let ph = warp(v.ph_b[k], warp_b);
-                        let s = rd(&tb.w[ib][lv], ph) * (1.0 - frb) + rd(&tb.w[ib + 1][lv], ph) * frb;
+                        let s = match utb.as_deref() {
+                            Some(w) => w.read(wb, lv, ph),
+                            None => rd(&tb.w[ib][lv], ph) * (1.0 - frb) + rd(&tb.w[ib + 1][lv], ph) * frb,
+                        };
                         b_l += s * v.gains_b[k].0;
                         b_r += s * v.gains_b[k].1;
                     }
@@ -1332,7 +1521,10 @@ impl Instrument for Prism {
                     }
                     let lv = v.lv_a[k];
                     let ph = warp(ph_in, warp_a);
-                    let s = rd(&tb.w[ia][lv], ph) * (1.0 - fra) + rd(&tb.w[ia + 1][lv], ph) * fra;
+                    let s = match uta.as_deref() {
+                        Some(w) => w.read(wa, lv, ph),
+                        None => rd(&tb.w[ia][lv], ph) * (1.0 - fra) + rd(&tb.w[ia + 1][lv], ph) * fra,
+                    };
                     a_l += s * v.gains_a[k].0;
                     a_r += s * v.gains_a[k].1;
                 }
@@ -1433,6 +1625,10 @@ impl Instrument for Prism {
             dry[i * 2] = sum_l;
             dry[i * 2 + 1] = sum_r;
         }
+        for v in self.voices.iter_mut() {
+            v.pb = v.pb_tgt;
+            v.pb_step = 0.0;
+        }
 
         // ── effects ───────────────────────────────────────────────────────────
         let hz_mix = p(P::HZMIX);
@@ -1440,7 +1636,7 @@ impl Instrument for Prism {
         let (ph_mix, ph_rate, ph_dep, ph_fb) = (p(P::PHMIX), 0.05 * 2f32.powf(p(P::PHRATE) * 7.0), p(P::PHDEP), p(P::PHFB) * 0.85);
         let ph_stages = [2usize, 4, 6, 8][self.sel(P::PHST as usize, 4)];
         let (ch_mix, ch_rate) = (p(P::CHMIX), 0.1 + p(P::CHRATE) * 3.0);
-        let (dl_mix, dl_fb) = (p(P::DLMIX), p(P::DLFB) * 0.9);
+        let (dl_mix0, dl_fb) = (p(P::DLMIX), p(P::DLFB) * 0.9);
         let div = [0.25f32, 0.375, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0][self.sel(P::DLTIME as usize, 8)];
         let dl_len = (div * beat * sr).min(self.dl[0].buf.len() as f32 - 4.0);
         let outg = p(P::OUT) * p(P::OUT) * 2.2;
@@ -1501,8 +1697,9 @@ impl Instrument for Prism {
                     s[c] = s[c] * (1.0 - ch_mix * 0.4) + w / 3.0 * ch_mix;
                 }
             }
-            // ping-pong delay
-            if dl_mix > 0.001 {
+            // ping-pong delay (matrix dlw moves its wet)
+            let dl_mix = if gdst[3] { (dl_mix0 + self.gbuf[i][1]).clamp(0.0, 1.0) } else { dl_mix0 };
+            if dl_mix0 > 0.001 || gdst[3] {
                 let (dl_l, dl_r) = (self.dl[0].read(dl_len), self.dl[1].read(dl_len));
                 self.dl_lp[0] += (dl_l - self.dl_lp[0]) * 0.35;
                 self.dl_lp[1] += (dl_r - self.dl_lp[1]) * 0.35;
@@ -1515,12 +1712,13 @@ impl Instrument for Prism {
                 let (a, b) = self.pro.process(&pro, s[0], s[1]);
                 s = [a, b];
             }
-            self.scr[i * 2] = s[0] * rv_mix * 0.8;
-            self.scr[i * 2 + 1] = s[1] * rv_mix * 0.8;
+            let rv = if gdst[2] { (rv_mix + self.gbuf[i][0]).clamp(0.0, 1.0) } else { rv_mix };
+            self.scr[i * 2] = s[0] * rv * 0.8;
+            self.scr[i * 2 + 1] = s[1] * rv * 0.8;
             self.scr2[i * 2] = s[0] * outg;
             self.scr2[i * 2 + 1] = s[1] * outg;
         }
-        if rv_mix > 0.001 {
+        if rv_mix > 0.001 || gdst[2] {
             let dry_send = self.scr.clone();
             self.verb.process(&mut self.scr);
             for k in 0..out.len() {
@@ -1554,8 +1752,8 @@ impl Instrument for Prism {
         let p = |k: P, v: &[f32]| v[k as usize];
         let dt = 1.0 / self.sr;
         let bpm = 60.0 + p(P::TEMPO, &self.v) * 140.0;
-        let l1_hz = lfo_hz(p(P::L1RATE, &self.v), p(P::L1SYNC, &self.v), bpm);
-        let l2_hz = lfo_hz(p(P::L2RATE, &self.v), p(P::L2SYNC, &self.v), bpm);
+        let l1_hz = lfo_hz_div(p(P::L1RATE, &self.v), p(P::L1SYNC, &self.v), p(P::L1DIV, &self.v), bpm) * if self.gmod_s[0] != 0.0 { 2f32.powf(self.gmod_s[0] * 4.0) } else { 1.0 };
+        let l2_hz = lfo_hz_div(p(P::L2RATE, &self.v), p(P::L2SYNC, &self.v), p(P::L2DIV, &self.v), bpm) * if self.gmod_s[1] != 0.0 { 2f32.powf(self.gmod_s[1] * 4.0) } else { 1.0 };
         let (l1_shp, l2_shp) = (self.sel(P::L1SHP as usize, 5), self.sel(P::L2SHP as usize, 5));
         let bend_target = (p(P::BEND, &self.v) - 0.5) * 2.0 * 2.0;
         for _ in 0..frames {
@@ -1563,7 +1761,7 @@ impl Instrument for Prism {
                 let hz = if l == 0 { l1_hz } else { l2_hz };
                 self.lfo_ph[l] += hz * dt;
                 if self.lfo_ph[l] >= 1.0 {
-                    self.lfo_ph[l] -= 1.0;
+                    self.lfo_ph[l] -= if self.lfo_ph[l] < 2.0 { 1.0 } else { self.lfo_ph[l].floor() };
                     self.lfo_hold[l] = self.rng.next();
                 }
             }
@@ -1596,6 +1794,39 @@ impl Instrument for Prism {
 
     fn get_param(&self, name: &str) -> Option<f32> {
         names().index.get(name).map(|&i| self.v[i])
+    }
+
+    fn command(&mut self, cmd: &str, _args: &[f64], text: &str) -> Vec<f64> {
+        match cmd {
+            // a wavetable file into the user slot; oscillator A plays it
+            // "load" restores a saved table (the project keeps the switch); "wt_load" also switches it on
+            "load" | "wt_load" => match self.load_table(text) {
+                Ok(n) => {
+                    if cmd == "wt_load" {
+                        self.v[P::AUSER as usize] = 1.0;
+                    }
+                    vec![1.0, n as f64]
+                }
+                Err(e) => {
+                    eprintln!("prism: {e}");
+                    vec![0.0]
+                }
+            },
+            "unload" | "wt_unload" => {
+                self.wt = None;
+                self.v[P::AUSER as usize] = 0.0;
+                self.v[P::BUSER as usize] = 0.0;
+                vec![1.0]
+            }
+            _ => vec![],
+        }
+    }
+    fn info(&self, what: &str) -> String {
+        match what {
+            "config" | "file" | "wavetable" => self.wt.as_ref().map(|w| w.path.clone()).unwrap_or_default(),
+            "frames" => self.wt.as_ref().map(|w| w.nframes().to_string()).unwrap_or_default(),
+            _ => String::new(),
+        }
     }
 
     fn name(&self) -> &'static str {
@@ -1632,7 +1863,7 @@ impl Instrument for Prism {
             if i >= MAT_BASE && (v - 0.5).abs() < 1e-3 {
                 continue;
             }
-            if (PRO_FIRST..PRO_FIRST + PRO_COUNT).contains(&i) && (v - CORE[i].1).abs() < 1e-4 {
+            if (PRO_FIRST..NCORE).contains(&i) && (v - CORE[i].1).abs() < 1e-4 {
                 continue;
             }
             if (MSEG_BASE..MAT_BASE).contains(&i) {
@@ -1664,6 +1895,11 @@ impl Instrument for Prism {
         let n = n.clamp(2, 1024);
         let tb = tables();
         match what {
+            "wave" | "wave_b" if self.wt.is_some() && self.v[if what == "wave" { P::AUSER } else { P::BUSER } as usize] > 0.5 => {
+                let (w, wp) = if what == "wave" { (self.v[P::A_WAVE as usize], self.v[P::A_WARP as usize]) } else { (self.v[P::B_WAVE as usize], self.v[P::B_WARP as usize]) };
+                let t = self.wt.as_ref().unwrap();
+                (0..n).map(|k| t.read(w, 0, warp(k as f32 / n as f32, wp))).collect()
+            }
             "wave" | "wave_b" => {
                 let (w, wp) = if what == "wave" { (self.v[P::A_WAVE as usize], self.v[P::A_WARP as usize]) } else { (self.v[P::B_WAVE as usize], self.v[P::B_WARP as usize]) };
                 let pos = w * (NTABLE - 1) as f32;
@@ -1738,7 +1974,7 @@ mod tests {
         assert_eq!(param_names()[0], "a wave");
         assert_eq!(param_names()[MSEG_BASE], "m1 len");
         assert_eq!(param_names()[MAT_BASE], "x m1pit");
-        assert_eq!(param_names()[NPARAM - 1], "x whlspr");
+        assert_eq!(param_names()[NPARAM - 1], "x whldlw");
         assert!(param_names().iter().collect::<std::collections::HashSet<_>>().len() == NPARAM, "names are unique");
     }
 
@@ -2081,5 +2317,289 @@ mod tests {
             assert_eq!(a, b);
             assert!((x - y).abs() < 0.002, "{a}: {x} vs {y}");
         }
+    }
+
+    // ── per-note pitch, big unison, note-value LFOs, the global destinations, the user wavetable ──
+    fn clean(p: &mut Prism) {
+        base(p);
+        p.set_param("a wave", 0.0);
+        p.set_param("a uni", 0.0);
+        p.set_param("cut", 1.0);
+        p.set_param("drive", 0.0);
+    }
+
+    #[test]
+    fn note_pitch_moves_only_its_note_and_slides_smoothly() {
+        let sr = 48000.0;
+        let mut p = Prism::new(sr);
+        clean(&mut p);
+        p.note_on(57, 0.9); // A3 220 Hz
+        p.note_on(64, 0.9); // E4 329.6 Hz
+        let blk = 256;
+        let mut o = vec![];
+        for _ in 0..(sr * 0.8) as usize / blk {
+            p.note_pitch(57, -12.0);
+            let mut b = vec![0.0f32; blk * 2];
+            p.render(&mut b);
+            o.extend(b);
+        }
+        let m = mono_of(&o[o.len() / 2..]);
+        assert!(amp_at(&m, 110.0, sr) > amp_at(&m, 220.0, sr) * 5.0, "A3 an octave down: {} vs {}", amp_at(&m, 110.0, sr), amp_at(&m, 220.0, sr));
+        assert!(amp_at(&m, 329.63, sr) > 0.02, "E4 stays");
+        // the first value is taken at once: a scoop starts below the note
+        let mut q = Prism::new(sr);
+        clean(&mut q);
+        q.note_on(69, 0.9);
+        q.note_pitch(69, -2.0);
+        let mut b = vec![0.0f32; 4096 * 2];
+        q.render(&mut b);
+        let f = f0_of(&b, sr);
+        assert!((1200.0 * (f / (440.0 * 2f32.powf(-2.0 / 12.0))).log2()).abs() < 15.0, "scoop start {f}");
+        // a slide: one block per value, no jumps
+        let mut o = vec![];
+        for k in 0..100 {
+            q.note_pitch(69, -2.0 + 14.0 * k as f32 / 100.0);
+            let mut b = vec![0.0f32; blk * 2];
+            q.render(&mut b);
+            o.extend(b);
+        }
+        let jump = o.chunks_exact(2).map(|f| f[0]).collect::<Vec<_>>().windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(jump < 0.3, "jump {jump}");
+        let mut o = vec![];
+        for _ in 0..24 {
+            q.note_pitch(69, 11.86);
+            let mut b = vec![0.0f32; blk * 2];
+            q.render(&mut b);
+            o.extend(b);
+        }
+        let f = f0_of(&o[o.len() - 8192..], sr);
+        assert!((1200.0 * (f / (440.0 * 2f32.powf(11.86 / 12.0))).log2()).abs() < 20.0, "slide end {f}");
+    }
+    /// pitch of a short stretch: the first strong autocorrelation peak, refined by the strongest partial within 60 cents of it
+    fn f0_of(x: &[f32], sr: f32) -> f32 {
+        let m = mono_of(x);
+        let (lo, hi) = ((sr / 2000.0) as usize, (sr / 60.0) as usize);
+        let c: Vec<f32> = (0..hi + 2).map(|lag| if lag < lo { 0.0 } else { (0..m.len() - lag).map(|i| m[i] * m[i + lag]).sum::<f32>() / (m.len() - lag) as f32 }).collect();
+        let top = c.iter().fold(0.0f32, |a, b| a.max(*b));
+        let lag = (lo + 1..=hi).find(|&l| c[l] >= c[l - 1] && c[l] >= c[l + 1] && c[l] > 0.8 * top).unwrap_or(lo);
+        let guess = sr / lag as f32;
+        (-60..=60).map(|k| guess * 2f32.powf(k as f32 / 1200.0)).max_by(|a, b| amp_at(&m, *a, sr).total_cmp(&amp_at(&m, *b, sr))).unwrap()
+    }
+
+    #[test]
+    fn unison_past_seven_voices_is_wider_and_costed_by_the_budget() {
+        let sr = 48000.0;
+        assert_eq!(uni_total(1.0, 0.0), 7);
+        assert_eq!(uni_total(1.0, 1.0), 16);
+        assert_eq!(uni_total(0.5, 1.0 / 9.0), 5);
+        let p = Prism::new(sr);
+        assert_eq!(p.voice_cap(), MAXVOICES, "the default keeps all 16 notes");
+        let wide = |x: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.28);
+            p.set_param("a uni", 1.0);
+            p.set_param("a det", 0.5);
+            p.set_param("a sprd", 1.0);
+            p.set_param("a xuni", x);
+            p.note_on(48, 0.9);
+            let o = render(&mut p, 0.8);
+            assert!(o.iter().all(|v| v.is_finite()) && peak(&o) <= 1.0);
+            o[o.len() / 2..].to_vec()
+        };
+        let (seven, sixteen) = (wide(0.0), wide(1.0));
+        // more voices: a different, still stereo sound at about the same level
+        assert!(seven.iter().zip(&sixteen).map(|(a, b)| (a - b).abs()).sum::<f32>() > 1.0);
+        assert!(rms(&side_of(&sixteen)) > rms(&mono_of(&sixteen)) * 0.1);
+        assert!((rms(&sixteen) / rms(&seven)).ln().abs() < 0.7, "level {} vs {}", rms(&sixteen), rms(&seven));
+        // the budget: 16 + 16 voices with osc B on share 128 oscillators -> 4 notes; A alone at 16 -> 8 notes
+        let mut p = Prism::new(sr);
+        p.set_param("a uni", 1.0);
+        p.set_param("a xuni", 1.0);
+        p.set_param("b lvl", 0.0);
+        assert_eq!(p.voice_cap(), 8);
+        for k in 40..52u8 {
+            p.note_on(k, 0.8);
+        }
+        assert!(p.voices.iter().filter(|v| v.active).count() <= 8);
+        p.set_param("b lvl", 0.5);
+        p.set_param("b uni", 1.0);
+        p.set_param("b xuni", 1.0);
+        assert_eq!(p.voice_cap(), 4);
+        let o = render(&mut p, 0.3);
+        assert!(o.iter().all(|v| v.is_finite()));
+        // spread phase reset stays repeatable with 16 voices
+        let attack = || {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("osc rst", 1.0);
+            p.set_param("a uni", 1.0);
+            p.set_param("a xuni", 1.0);
+            p.note_on(48, 0.9);
+            render(&mut p, 0.01)
+        };
+        assert_eq!(attack(), attack());
+    }
+
+    #[test]
+    fn note_value_lfos_include_triplets_and_dotted_values() {
+        let div = |name: &str| (super::super::growl::NOTE_DIVS.iter().position(|d| d.0 == name).unwrap() + 1) as f32 / 16.0;
+        // 120 bpm: 2 beats a second
+        assert!((lfo_hz_div(0.4, 0.0, div("1/16T"), 120.0) - 12.0).abs() < 1e-4);
+        assert!((lfo_hz_div(0.4, 0.0, div("1/8T"), 120.0) - 6.0).abs() < 1e-4);
+        assert!((lfo_hz_div(0.4, 0.0, div("1/8."), 120.0) - 2.0 / 0.75).abs() < 1e-4);
+        assert!((lfo_hz_div(0.4, 0.0, div("1/16."), 120.0) - 2.0 / 0.375).abs() < 1e-4);
+        assert!((lfo_hz_div(0.4, 0.0, div("1bar"), 120.0) - 0.5).abs() < 1e-5);
+        // off: the older sync table and the free rate as before (1.5 cycles a beat is the 1/4 triplet)
+        assert_eq!(lfo_hz_div(0.4, 0.0, 0.0, 120.0), lfo_hz(0.4, 0.0, 120.0));
+        assert_eq!(lfo_hz_div(0.4, 0.6, 0.0, 120.0), lfo_hz(0.4, 0.6, 120.0));
+        assert!((2.0 * SYNC_DIV[4] - 1.0 / (2.0 / 3.0 * 0.5)).abs() < 1e-6, "1.5 cycles a beat = a 1/4 triplet");
+        // in a voice: an LFO on the amp at 1/8T (6 Hz at 120 bpm) shows up in the level
+        let sr = 48000.0;
+        let mut p = Prism::new(sr);
+        clean(&mut p);
+        p.set_param("tempo", (120.0 - 60.0) / 140.0);
+        p.set_param("l1 div", div("1/8T"));
+        p.set_param("x l1amp", 1.0);
+        p.note_on(60, 0.9);
+        let o = render(&mut p, 2.0);
+        let m = mono_of(&o[(sr * 0.5) as usize * 2..]);
+        let lv: Vec<f32> = m.chunks(48).map(|c| c.iter().map(|x| x.abs()).fold(0.0f32, f32::max)).collect();
+        let mean = lv.iter().sum::<f32>() / lv.len() as f32;
+        let e: Vec<f32> = lv.iter().map(|x| x - mean).collect();
+        let a6 = amp_at(&e, 6.0, 1000.0);
+        let a4 = amp_at(&e, 4.0, 1000.0);
+        assert!(a6 > a4 * 4.0, "6 Hz {a6} vs 4 Hz {a4}");
+    }
+
+    #[test]
+    fn global_destinations_move_lfo_speed_and_the_sends() {
+        let sr = 48000.0;
+        assert_eq!(DST_NAMES[D_L1R], "l1r");
+        // the wheel at full into l1r: LFO 1 runs 16 times faster (4 octaves)
+        let lfo_cycles = |whl: f32| {
+            let mut p = Prism::new(sr);
+            clean(&mut p);
+            p.set_param("l1 rate", 0.0); // 0.05 Hz
+            p.set_param("whl", whl);
+            p.set_param("x whll1r", 1.0);
+            p.note_on(60, 0.9);
+            let mut wraps = 0;
+            let mut last = p.lfo_ph[0];
+            for _ in 0..(sr * 4.0) as usize / 256 {
+                let mut b = vec![0.0f32; 512];
+                p.render(&mut b);
+                if p.lfo_ph[0] < last {
+                    wraps += 1;
+                }
+                last = p.lfo_ph[0];
+            }
+            wraps
+        };
+        assert_eq!(lfo_cycles(0.0), 0);
+        assert!((2..=4).contains(&lfo_cycles(1.0)), "{}", lfo_cycles(1.0));
+        // velocity into the reverb wet: a loud note leaves a longer tail than the same note with rv mix 0 and no route
+        let tail = |route: bool| {
+            let mut p = Prism::new(sr);
+            clean(&mut p);
+            p.set_param("rv mix", 0.0);
+            if route {
+                p.set_param("x velrvw", 1.0);
+            }
+            p.set_param("amp r", 0.0);
+            p.note_on(60, 1.0);
+            render(&mut p, 0.4);
+            p.all_off();
+            let o = render(&mut p, 0.6);
+            rms(&o[(sr * 0.3) as usize * 2..])
+        };
+        assert!(tail(true) > tail(false) * 5.0 + 1e-4, "{} vs {}", tail(true), tail(false));
+        // and the wheel into the delay wet
+        let echo = |route: bool| {
+            let mut p = Prism::new(sr);
+            clean(&mut p);
+            p.set_param("dl mix", 0.0);
+            p.set_param("whl", 1.0);
+            if route {
+                p.set_param("x whldlw", 1.0);
+            }
+            p.set_param("amp r", 0.0);
+            p.note_on(60, 1.0);
+            render(&mut p, 0.1);
+            p.all_off();
+            let o = render(&mut p, 1.2);
+            rms(&o[(sr * 0.2) as usize * 2..])
+        };
+        assert!(echo(true) > echo(false) * 5.0 + 1e-4, "{} vs {}", echo(true), echo(false));
+    }
+
+    #[test]
+    fn a_user_wavetable_plays_on_either_oscillator() {
+        let sr = 48000.0;
+        let n = super::super::wavetable::N;
+        let sine: Vec<f32> = (0..n).map(|i| (TAU * i as f32 / n as f32).sin()).collect();
+        let square: Vec<f32> = (0..n).map(|i| (1..30).step_by(2).map(|h| ((TAU * (h * i) as f32 / n as f32).sin()) / h as f32).sum()).collect();
+        let w = std::sync::Arc::new(super::super::wavetable::WaveTable::from_frames(&[sine, square], "").unwrap());
+        let play = |wave: f32| {
+            let mut p = Prism::new(sr);
+            clean(&mut p);
+            p.wt = Some(w.clone());
+            p.set_param("a user", 1.0);
+            p.set_param("a wave", wave);
+            p.note_on(57, 0.9);
+            mono_of(&render(&mut p, 0.6)[(sr * 0.3) as usize * 2..])
+        };
+        let (a, b) = (play(0.0), play(1.0));
+        let odd = |m: &[f32]| amp_at(m, 660.0, sr) / amp_at(m, 220.0, sr);
+        assert!(odd(&a) < 0.05, "a sine: {}", odd(&a));
+        assert!(odd(&b) > 0.2 && amp_at(&b, 440.0, sr) < amp_at(&b, 660.0, sr) * 0.3, "a square: odd harmonics {}", odd(&b));
+        let mut p = Prism::new(sr);
+        p.wt = Some(w);
+        p.set_param("b user", 1.0);
+        assert_eq!(p.plot("wave_b", 16).len(), 16);
+        // state: not written while off
+        let q = Prism::new(sr);
+        assert!(!q.state().iter().any(|(n, _)| ["a xuni", "b xuni", "l1 div", "l2 div", "a user", "b user"].contains(&n.as_str())));
+    }
+
+    #[test]
+    fn pressure_and_timbre_shape_held_notes_and_a_release_keeps_its_bend() {
+        let sr = 48000.0;
+        let play = |prs: f32, tmb: f32| {
+            let mut p = Prism::new(sr);
+            base(&mut p);
+            p.set_param("a wave", 0.28);
+            p.set_param("cut", 0.4);
+            p.set_param("fenv", 0.5);
+            p.note_on(48, 0.8);
+            let mut o = vec![];
+            for _ in 0..150 {
+                p.note_pressure(48, prs);
+                p.note_timbre(48, tmb);
+                let mut b = vec![0.0f32; 512];
+                p.render(&mut b);
+                o.extend(b);
+            }
+            mono_of(&o[o.len() / 2..])
+        };
+        let bright = |m: &[f32]| (6..16).map(|k| amp_at(m, 130.81 * k as f32, sr)).sum::<f32>();
+        let (n, p, t_up) = (play(0.0, 0.5), play(1.0, 0.5), play(0.0, 1.0));
+        assert!(rms(&p) > rms(&n) * 1.1 && bright(&p) > bright(&n) * 1.3, "pressure: louder and brighter");
+        assert!(bright(&t_up) > bright(&n) * 1.3, "timbre opens the filter");
+        // a released note keeps its bend
+        let mut q = Prism::new(sr);
+        clean(&mut q);
+        q.set_param("amp r", 0.6);
+        q.note_on(69, 0.9);
+        for _ in 0..30 {
+            q.note_pitch(69, -12.0);
+            let mut b = vec![0.0f32; 512];
+            q.render(&mut b);
+        }
+        q.note_off(69);
+        q.note_pitch(69, 0.0);
+        let o = render(&mut q, 0.12);
+        let f = f0_of(&o, sr);
+        assert!((1200.0 * (f / 220.0).log2()).abs() < 20.0, "the tail stays an octave down: {f}");
     }
 }

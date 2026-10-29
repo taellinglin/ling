@@ -427,6 +427,10 @@ pub fn pair_ok(role: &str, plugin: &str, name: &str) -> bool {
     if plugin == "chip" {
         return !crate::presetinfo::info("chip", name).contains("microtonal");
     }
+    // Ling Cinema plays sound effects and atmospheres (pitched from the key where a pitch makes sense): only for the effect roles
+    if plugin == "cinema" {
+        return matches!(role, "riser" | "texture" | "fx");
+    }
     match crate::api::song_find_patch(plugin, name) {
         Some(path) => ok_for(role, &path),
         None => true,
@@ -450,13 +454,14 @@ pub fn describe(name: &str, path: &str) -> String {
 // ── the plugins ─────────────────────────────────────────────────────────────────
 
 /// What each plugin is, what it does well and what to keep it away from: the language model reads this before it picks instruments.
-pub const PLUGINS: [(&str, &str); 10] = [
+pub const PLUGINS: [(&str, &str); 11] = [
     ("prism", "Ling Prism: polyphonic analog-style synth (two morphing wavetable oscillators with unison, ring/FM/sync, sub, filter, envelopes, built-in chorus/delay/reverb). Hundreds of patches: supersaw and hoover leads, trance/ambient/string pads, sub and rolling basses, plucks, arps, keys, bells. The workhorse for electronic music. Some patches use other tunings (EDO, slendro, just) and are not safe in ordinary songs."),
     ("growl", "Ling Growl: monophonic bass/lead for dubstep, drum and bass and electro: wobble, reese, neuro, hard-sync screech, talking vowel bass. One note at a time: bass lines and lead lines only, never chords or pads."),
     ("synth", "Ling Synth X: polyphonic subtractive + additive + FM + string synth that behaves like a General MIDI set: e-pianos, house pianos, organs, brass, string ensembles, plucked guitars and basses, simple square/sine/breath leads. Good where a recognisable keyboard or acoustic-like sound is wanted."),
     ("pluck", "Ling Pluck: physical-modelling plucked and struck strings (guitar, harp, koto, sitar-style buzz, bass) with a wooden body and sympathetic strings. Polyphonic. Natural, decaying attacks: folk, acoustic, world and soft parts."),
     ("voice", "Ling Voice: formant singer (aria, mei, kai, ren, choir) that sings lyrics from IPA; robotic but intelligible. For vocal lines and choir pads, one voice per part."),
     ("chip", "Ling Chip: the sound chips of the NES, Commodore 64 (SID), Game Boy and SNES: pulse / triangle / saw / noise channels with arpeggios, step sequences, pitch sweeps and the SNES sample channel. For chiptune and game music, retro leads and basses, shimmering arpeggios and 8-bit sound effects."),
+    ("cinema", "Ling Cinema: generated sound effects, one per note: risers (noise sweeps, pitch rises, Shepard tones), downlifters, trailer impacts and sub booms, whooshes, sub drops, braams, reverse cymbals, lasers, glitch bursts, tape stops and evolving ambient soundscapes. For transitions (a riser into a drop, an impact on its downbeat, a downlifter after it), film / game sound and atmosphere in intros and breakdowns; not for melodies or chords."),
     ("drums", "Ling Membrane: physically modelled drum kits (kick, snare, hats, clap, toms, percussion) for each genre; unpitched."),
     ("sf2", "SoundFont / General MIDI player: sampled acoustic instruments (piano, strings, brass, woodwinds, guitars, choir, orchestral percussion). Best for orchestral, folk, jazz and film music where real instruments are expected."),
     ("sampler", "Sampler: plays audio files across the keyboard (drum hits, one-shots, tracker samples); needs audio files, not for generated synth parts."),

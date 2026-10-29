@@ -27,6 +27,10 @@ fn load_guide(path: &str) -> Option<std::sync::Arc<crate::guide::Guide>> {
     if path.trim().is_empty() {
         return None;
     }
+    // "acapella:<path>": the acapella's own guide (songan_api.rs)
+    if path.starts_with("acapella:") {
+        return super::songan_api::guide_for(path);
+    }
     if let Some(g) = guides().lock().unwrap_or_else(|p| p.into_inner()).get(path) {
         return Some(g.clone());
     }
@@ -43,6 +47,7 @@ fn patch_files(kind: &str) -> Vec<(String, String)> {
         "prism" => &[("instruments/Prism", "")],
         "growl" => &[("instruments/Growl", "")],
         "chip" => &[("instruments/Chip", "")],
+        "cinema" => &[("instruments/Cinema", "")],
         "voice" => &[("instruments/Voice", "")],
         "drums" => &[("instruments", "")],
         _ => &[("instruments/Electronic GM", "Electronic: "), ("instruments/GM", "GM: "), ("instruments", "")],
@@ -61,7 +66,7 @@ fn patch_files(kind: &str) -> Vec<(String, String)> {
             // the name inside the file, else the file name without its number / kind prefix
             let stem = p.file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
             let stem = stem.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
-            let stem = ["Growl ", "Voice ", "Prism ", "Chip "].iter().fold(stem.to_string(), |s, pre| s.strip_prefix(pre).map(|x| x.to_string()).unwrap_or(s));
+            let stem = ["Growl ", "Voice ", "Prism ", "Chip ", "Cinema "].iter().fold(stem.to_string(), |s, pre| s.strip_prefix(pre).map(|x| x.to_string()).unwrap_or(s));
             let inner = text.lines().find_map(|l| l.trim().strip_prefix("name").and_then(|r| r.split_once('"')).and_then(|(_, r)| r.split_once('"')).map(|(n, _)| n.to_string()));
             out.push((format!("{prefix}{}", stem), p.to_string_lossy().into_owned()));
             if let Some(n) = inner {
@@ -101,7 +106,7 @@ fn gm_file(program: u8) -> Option<String> {
     std::fs::read_dir("instruments/GM").ok().and_then(|rd| rd.flatten().map(|e| e.path()).find(|p| p.file_name().map(|f| f.to_string_lossy().starts_with(&pre)).unwrap_or(false))).map(|p| p.to_string_lossy().into_owned())
 }
 
-fn instrument_for(g: &songgen::Genre, role: &str, part: usize) -> (String, Option<String>) {
+pub(super) fn instrument_for(g: &songgen::Genre, role: &str, part: usize) -> (String, Option<String>) {
     if let Some(inst) = crate::ensemble::instrument(role) {
         if inst.kind == Kind::Drums {
             return ("drums".into(), find_patch("drums", "Kit Afro Percussion").or_else(|| find_patch("drums", g.kit)));
@@ -118,6 +123,10 @@ fn instrument_for(g: &songgen::Genre, role: &str, part: usize) -> (String, Optio
     let ai_genre = match g.name {
         "hip hop" | "garage" | "trap" | "reggaeton" => "pop",
         "afrobeat" | "dub" => "disco",
+        "acid techno" => "techno",
+        "future bass" => "trance",
+        "breakbeat" => "drum and bass",
+        "ballad" => "folk",
         other => other,
     };
     // only patches that play in tune and do not clash with the chords (see soundcat.rs)
@@ -182,7 +191,7 @@ fn instrument_in_tune(g: &songgen::Genre, role: &str, part: usize, roll: usize, 
 }
 
 /// Put a part's planned chain on its track: effects it already has are reused (only re-set and automated), the rest added
-fn apply_design(tr: &mut Track, pd: &crate::sounddesign::PartDesign, sr: f32) {
+pub(super) fn apply_design(tr: &mut Track, pd: &crate::sounddesign::PartDesign, sr: f32) {
     for f in &pd.chain {
         let idx = match tr.effects.iter().position(|e| e.name == f.name) {
             Some(i) => i,
@@ -208,7 +217,7 @@ fn apply_design(tr: &mut Track, pd: &crate::sounddesign::PartDesign, sr: f32) {
 }
 
 /// the project's sections ("sections" meta from the arranger tags), or the whole song as one
-fn project_sections(en: &crate::engine::Engine) -> Vec<crate::sounddesign::Sec> {
+pub(super) fn project_sections(en: &crate::engine::Engine) -> Vec<crate::sounddesign::Sec> {
     let mut v: Vec<crate::sounddesign::Sec> = vec![];
     if let Some((_, text)) = en.project.meta.iter().find(|(k, _)| k == "sections") {
         for item in text.split(';') {
@@ -252,7 +261,7 @@ fn track_tonic(en: &crate::engine::Engine, t: usize) -> u8 {
 }
 
 /// interleaved stereo as a 16-bit WAV
-fn write_wav16(path: &Path, stereo: &[f32], rate: u32) -> Result<(), String> {
+pub(super) fn write_wav16(path: &Path, stereo: &[f32], rate: u32) -> Result<(), String> {
     let spec = hound::WavSpec { channels: 2, sample_rate: rate, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     let mut w = hound::WavWriter::create(path, spec).map_err(|e| e.to_string())?;
     for x in stereo {
@@ -262,7 +271,7 @@ fn write_wav16(path: &Path, stereo: &[f32], rate: u32) -> Result<(), String> {
 }
 
 /// every MIDI / tracker file in a folder, chopped into phrases (sorted by file name, then position: the order decoding relies on)
-fn medley_phrases(dir: &str, bars: f64) -> (Vec<crate::medley::Phrase>, usize) {
+pub(super) fn medley_phrases(dir: &str, bars: f64) -> (Vec<crate::medley::Phrase>, usize) {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| ["mid", "midi", "mod", "xm", "s3m", "it"].contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false)).collect())
         .unwrap_or_default();
@@ -283,7 +292,7 @@ fn medley_phrases(dir: &str, bars: f64) -> (Vec<crate::medley::Phrase>, usize) {
     (out, used)
 }
 
-fn title(role: &str) -> String {
+pub(super) fn title(role: &str) -> String {
     role.split(' ').map(|w| {
         let mut c = w.chars();
         c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
@@ -311,7 +320,7 @@ impl Daw {
         (!v.is_empty()).then(|| std::sync::Arc::new(v))
     }
 
-    fn call_num(&mut self, name: &str, args: &[Val]) -> f64 {
+    pub(super) fn call_num(&mut self, name: &str, args: &[Val]) -> f64 {
         match self.dispatch(name, &A(args)) {
             Ok(Val::Num(x)) => x,
             _ => -1.0,
@@ -341,7 +350,7 @@ impl Daw {
                                 ok!(Val::List(vec![]))
                             }
                         };
-                        let r = songgen::analyze_reference(&s.stereo, s.rate);
+                        let r = super::songan_api::analyze_reference(&path, &s.stereo, s.rate);
                         refs().lock().unwrap_or_else(|p| p.into_inner()).insert(path.clone(), r.clone());
                         r
                     }
@@ -530,405 +539,9 @@ impl Daw {
                 b.sort_by(f64::total_cmp);
                 ok!(Val::List(vec![Val::Num(files as f64), Val::Num(ph.len() as f64), Val::Str(crate::theory::Key { tonic: t, minor: m }.name()), Val::Num(b[b.len() / 2].round())]))
             }
-            "daw_song_medley_build" => {
-                // (folder, phrase bars 0 = auto, phrases, mode "smart"|"random"|"cipher", passphrase, message, seed, bpm 0 = the files',
-                // options "layering=0..1;rolls=0..1;arc=<feel>;genre=<sounds>;chops=off|chops|breakcore;chopn=<count>;choplen=<seconds>;chopvar=0..1;chopick=random|best;vocal=<file>;story=<text, last>") -> a sentence. The story / feel becomes
-                // an energy and mood curve and a path on the wheel of fifths (medley.rs mashup); each slot is the spine phrase's hook
-                // (named "<file> #<n> · <id>": what the cipher reads) with parts of other phrases layered on it, loop rolls between the
-                // slots with a filter contour on every track, and every clip on its category's next patch (a track per patch).
-                let (ph, files) = medley_phrases(&a.s(0), a.n(1));
-                if ph.len() < 2 {
-                    ok!("Not enough phrases: the folder needs MIDI files with notes".to_string());
-                }
-                let mode = match a.s(3).as_str() {
-                    "random" => crate::medley::Mode::Random,
-                    "cipher" => crate::medley::Mode::Cipher,
-                    _ => crate::medley::Mode::Smart,
-                };
-                let pass = a.s(4);
-                let message = a.s(5);
-                let seed = a.n(6).abs() as u64;
-                let opts = a.s(8);
-                let (head, story) = match opts.find("story=") {
-                    Some(i) => (opts[..i].to_string(), opts[i + 6..].trim().to_string()),
-                    None => (opts.clone(), String::new()),
-                };
-                let opt = |k: &str| head.split(';').filter_map(|kv| kv.split_once('=')).find(|(kk, _)| kk.trim() == k).map(|(_, v)| v.trim().to_string());
-                let num = |k: &str| opt(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).clamp(0.0, 1.0);
-                let (layering, rolls) = (num("layering"), num("rolls"));
-                let g = songgen::genre(&opt("genre").filter(|x| !x.is_empty()).unwrap_or_else(|| "pop".into()));
-                let arc = crate::medley::resolve_arc(&opt("arc").unwrap_or_default(), &story, seed);
-                let lean = if story.is_empty() { 0.0 } else { crate::emotion::lyric_lean(&story).0 as f64 * 0.5 };
-                let key = crate::medley::common_key(&ph);
-                let count = (a.n(2).max(2.0) as usize).min(512);
-                let order: Vec<usize> = if mode == crate::medley::Mode::Cipher && !message.is_empty() {
-                    crate::medley::encode(&message, ph.len(), &pass)
-                } else {
-                    let curve: Vec<f64> = crate::medley::movement(&arc, count, lean).iter().map(|x| x.0).collect();
-                    crate::medley::order_to(&ph, count, mode, seed, &pass, key, Some(&curve))
-                };
-                let mut bpms: Vec<f64> = ph.iter().map(|p| p.bpm).collect();
-                bpms.sort_by(f64::total_cmp);
-                let bpm = if a.n(7) > 20.0 { a.n(7) } else { bpms[bpms.len() / 2] };
-                // the arrangement smarts: registers (a muddy bass up, a shrill lead down, every layer an octave of its own), phrase
-                // alignment, a breakdown before the last drop, chord-aware fitting, call and response (medley.rs mashup_with)
-                let flag = |k: &str| opt(k).map(|v| !matches!(v.as_str(), "0" | "off" | "false" | "no")).unwrap_or(true);
-                let smarts = crate::medley::Smarts {
-                    registers: crate::medley::Registers::parse(&opt("registers").unwrap_or_default()),
-                    genre: g.name.to_string(),
-                    align: flag("align"),
-                    breakdown: flag("breakdown"),
-                    answer: flag("answer"),
-                    clash: flag("clash"),
-                };
-                let mut mash = crate::medley::mashup_with(&ph, &order, &arc, lean, layering, rolls, seed, key, &smarts);
-                // vocal chops (and, in the breakcore style, programmed breaks in place of the files' drums)
-                let style = crate::chops::Style::parse(&opt("chops").unwrap_or_default());
-                if style == crate::chops::Style::Breakcore {
-                    for s in mash.slots.iter_mut() {
-                        s.layers.retain(|l| l.spine || l.cat != crate::medley::Cat::Drums);
-                    }
-                }
-                // an instrument for every clip: its category's role for the slot's energy and mood, the next patch each time
-                const KITS: [&str; 7] = ["Kit House 909", "Kit Electro 808", "Kit UK Garage", "Kit Trap", "Kit New Wave", "Kit Hyperpop", "Kit Boom Bap"];
-                let mut wanted: Vec<(crate::medley::Cat, String, Option<String>)> = vec![];
-                let mut wanted_role: Vec<&'static str> = vec![];
-                let mut assign: Vec<Vec<usize>> = vec![];
-                for s in &mash.slots {
-                    let mut row = vec![];
-                    for l in &s.layers {
-                        let k = l.pick;
-                        let (kind, patch) = if l.cat == crate::medley::Cat::Drums {
-                            let kits: Vec<&str> = std::iter::once(g.kit).chain(KITS.iter().copied().filter(|x| *x != g.kit)).collect();
-                            ("drums".to_string(), find_patch("drums", kits[k % kits.len()]))
-                        } else {
-                            instrument_for(g, l.role, k / 3)
-                        };
-                        let idx = match wanted.iter().position(|w| w.0 == l.cat && w.1 == kind && w.2 == patch) {
-                            Some(i) => i,
-                            None if wanted.len() < 24 => {
-                                wanted.push((l.cat, kind, patch));
-                                wanted_role.push(l.role);
-                                wanted.len() - 1
-                            }
-                            // enough tracks: the category's first
-                            None => match wanted.iter().position(|w| w.0 == l.cat) {
-                                Some(i) => i,
-                                None => {
-                                    wanted.push((l.cat, kind, patch));
-                                    wanted_role.push(l.role);
-                                    wanted.len() - 1
-                                }
-                            },
-                        };
-                        row.push(idx);
-                    }
-                    assign.push(row);
-                }
-                let mut tracks: Vec<Option<usize>> = vec![];
-                for (cat, kind, patch) in &wanted {
-                    let t = self.call_num("daw_track_add", &[Val::Str(kind.clone()), Val::Str(patch.clone().unwrap_or_default())]);
-                    let stem = patch.as_deref().and_then(|p| Path::new(p).file_stem()).map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_else(|| kind.clone());
-                    if t >= 0.0 {
-                        let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(format!("{} · {}", cat.name(), stem))]));
-                        tracks.push(Some(t as usize));
-                    } else {
-                        tracks.push(None);
-                    }
-                }
-                // the vocal: the chosen file, else a vocal audio file in the folder, else syllables sung by Ling Voice (saved next to
-                // the project); cut into chops, tuned on a Sampler (chops.rs)
-                let mut chop_cfg: Option<(String, Vec<crate::chops::Chop>)> = None;
-                let mut chop_src = String::new();
-                if style != crate::chops::Style::Off {
-                    let is_audio = |p: &Path| p.extension().map(|e| ["wav", "mp3", "ogg", "flac", "aiff", "m4a"].contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false);
-                    let mut src = opt("vocal").filter(|v| !v.is_empty() && Path::new(v).is_file());
-                    if src.is_none() {
-                        src = std::fs::read_dir(a.s(0)).ok().and_then(|rd| rd.flatten().map(|e| e.path()).filter(|p| is_audio(p)).min()).map(|p| p.to_string_lossy().into_owned());
-                    }
-                    let got: Option<(String, Vec<f32>, u32)> = match src {
-                        Some(f) => crate::dsp::sampler::load_audio(&f).ok().map(|(d, r)| (f, d, r)),
-                        None => {
-                            let sr = self.out.sr;
-                            let d = crate::chops::sung_syllables(sr, seed);
-                            let dir = if self.path.is_empty() { PathBuf::from("cache/chops") } else { Path::new(&self.path).parent().map(|p| p.join("samples")).unwrap_or_else(|| PathBuf::from("cache/chops")) };
-                            let _ = std::fs::create_dir_all(&dir);
-                            let f = dir.join(format!("ling_voice_chops_{}.wav", seed % 3));
-                            write_wav16(&f, &d, sr as u32).ok().map(|_| (f.to_string_lossy().replace('\\', "/"), d, sr as u32))
-                        }
-                    };
-                    if let Some((file, stereo, rate)) = got {
-                        let fnum = |k: &str, d: f64| opt(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
-                        let co = crate::chops::Opts {
-                            count: fnum("chopn", 8.0).clamp(1.0, 64.0) as usize,
-                            length: fnum("choplen", 0.25).clamp(0.05, 1.5),
-                            vary: fnum("chopvar", 0.5).clamp(0.0, 1.0),
-                            random: opt("chopick").map(|v| v != "best").unwrap_or(true),
-                        };
-                        let ch = crate::chops::pick_chops(&stereo, rate, &co, seed);
-                        if !ch.is_empty() {
-                            let cfg = crate::chops::config(&file);
-                            chop_src = Path::new(&file).file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
-                            chop_cfg = Some((serde_json::to_string(&cfg).unwrap_or_default(), ch));
-                        }
-                    }
-                }
-                // each slot's chops (main, layer) and breaks, composed against its layers
-                let mut chop_notes: Vec<(Vec<Note>, Vec<Note>, Vec<Note>)> = vec![];
-                for (si, s) in mash.slots.iter().enumerate() {
-                    let br = if style == crate::chops::Style::Breakcore { crate::chops::breaks(s.beats, s.energy, bpm, seed.wrapping_add(si as u64)) } else { vec![] };
-                    let (mut drums, mut harmony, mut lead) = (br.clone(), vec![], vec![]);
-                    for l in &s.layers {
-                        let ns = crate::medley::layer_notes(&ph, l, s.beats);
-                        match l.cat {
-                            crate::medley::Cat::Drums => drums.extend(ns),
-                            crate::medley::Cat::Bass | crate::medley::Cat::Pad | crate::medley::Cat::Stab => harmony.extend(ns),
-                            _ => lead.extend(ns),
-                        }
-                    }
-                    let (m, y) = match &chop_cfg {
-                        Some((_, ch)) => crate::chops::compose(&crate::chops::Ctx { beats: s.beats, key: s.key, energy: s.energy, drums: &drums, harmony: &harmony, lead: &lead, style, seed: seed.wrapping_mul(31).wrapping_add(si as u64), chops: ch }),
-                        None => (vec![], vec![]),
-                    };
-                    chop_notes.push((m, y, br));
-                }
-                // their tracks: the chops, their layer, the breaks
-                let mut extra: [Option<usize>; 3] = [None, None, None];
-                if chop_cfg.is_some() {
-                    for (i, nm) in [format!("Chops · {chop_src}"), format!("Chops layer · {chop_src}")].into_iter().enumerate() {
-                        let t = self.call_num("daw_track_add", &[Val::Str("sampler".into()), Val::Str(String::new())]);
-                        if t >= 0.0 {
-                            let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(nm)]));
-                            extra[i] = Some(t as usize);
-                        }
-                    }
-                }
-                if chop_notes.iter().any(|c| !c.2.is_empty()) {
-                    let kit = if g.kit.contains("Drum and Bass") { "Kit Drum and Bass" } else { "Kit Industrial" };
-                    let t = self.call_num("daw_track_add", &[Val::Str("drums".into()), Val::Str(find_patch("drums", kit).unwrap_or_default())]);
-                    if t >= 0.0 {
-                        let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(format!("Breaks · {kit}"))]));
-                        extra[2] = Some(t as usize);
-                    }
-                }
-                // a riser into every drop a loop roll builds to
-                let riser_into: Vec<usize> = (0..mash.slots.len()).filter(|i| mash.slots[*i].roll_after == crate::medley::Roll::Shrink && mash.slots.get(i + 1).map(|x| x.energy >= 0.7).unwrap_or(false)).collect();
-                let mut riser_t: Option<usize> = None;
-                if !riser_into.is_empty() && flag("risers") {
-                    let (kind, patch) = instrument_for(g, "riser", 0);
-                    let t = self.call_num("daw_track_add", &[Val::Str(kind), Val::Str(patch.unwrap_or_default())]);
-                    if t >= 0.0 {
-                        let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str("Riser".into())]));
-                        riser_t = Some(t as usize);
-                    }
-                }
-                let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
-                if let Some((json, _)) = &chop_cfg {
-                    for t in extra[..2].iter().flatten() {
-                        if let Ok(smp) = crate::dsp::sampler::Sampler::from_config(self.out.sr, json, None) {
-                            if let Some(tr) = en.project.tracks.get_mut(*t) {
-                                tr.inst = Some(Box::new(smp));
-                                tr.inst_kind = "sampler".into();
-                            }
-                        }
-                    }
-                }
-                let empty = en.project.tracks.iter().all(|t| t.clips.is_empty());
-                let start0 = (en.project.end_beat() / 4.0).ceil() * 4.0;
-                if empty {
-                    en.project.bpm = bpm.clamp(40.0, 240.0);
-                }
-                let mut at = start0;
-                let mut secs: Vec<(f64, f64, &str)> = vec![];
-                let mut spans: Vec<(f64, crate::medley::Roll)> = vec![];
-                let ns = mash.slots.len();
-                for (si, s) in mash.slots.iter().enumerate() {
-                    for (li, l) in s.layers.iter().enumerate() {
-                        let Some(t) = tracks[assign[si][li]] else { continue };
-                        let p = &ph[l.phrase];
-                        let name = if l.spine { format!("{} #{} · {}", p.file, p.index + 1, crate::medley::short_id(p.id)) } else { format!("{} #{} {}", p.file, p.index + 1, l.cat.name()) };
-                        let mut c = Clip::midi(at, s.beats, &name);
-                        if let ClipData::Midi(v) = &mut c.data {
-                            v.extend(crate::medley::layer_notes(&ph, l, s.beats));
-                        }
-                        if let Some(tr) = en.project.tracks.get_mut(t) {
-                            tr.clips.push(c);
-                        }
-                    }
-                    for (k, label) in [(0usize, "chops"), (1, "chops layer"), (2, "breaks")] {
-                        let notes = match k {
-                            0 => &chop_notes[si].0,
-                            1 => &chop_notes[si].1,
-                            _ => &chop_notes[si].2,
-                        };
-                        if let (Some(t), false) = (extra[k], notes.is_empty()) {
-                            let mut c = Clip::midi(at, s.beats, label);
-                            if let ClipData::Midi(v) = &mut c.data {
-                                v.extend(notes.iter().cloned());
-                            }
-                            if let Some(tr) = en.project.tracks.get_mut(t) {
-                                tr.clips.push(c);
-                            }
-                        }
-                    }
-                    secs.push((at, at + s.beats, crate::medley::slot_tag(si, ns, s.energy)));
-                    at += s.beats;
-                    // a loop roll: this slot's layers shrinking into a lift, or the next slot's growing back out of a drop
-                    let src = match s.roll_after {
-                        crate::medley::Roll::Shrink => Some(si),
-                        crate::medley::Roll::Grow => Some(si + 1).filter(|x| *x < ns),
-                        crate::medley::Roll::None => None,
-                    };
-                    if let Some(ri) = src {
-                        let rs = &mash.slots[ri];
-                        for (li, l) in rs.layers.iter().enumerate() {
-                            let Some(t) = tracks[assign[ri][li]] else { continue };
-                            let p = &ph[l.phrase];
-                            let mut c = Clip::midi(at, crate::medley::ROLL_BEATS, &format!("{} #{} roll", p.file, p.index + 1));
-                            if let ClipData::Midi(v) = &mut c.data {
-                                v.extend(crate::medley::roll_notes(&crate::medley::layer_notes(&ph, l, rs.beats), rs.beats, s.roll_after));
-                            }
-                            if let Some(tr) = en.project.tracks.get_mut(t) {
-                                tr.clips.push(c);
-                            }
-                        }
-                        for (k, label) in [(0usize, "chops roll"), (1, "chops layer roll"), (2, "breaks roll")] {
-                            let notes = match k {
-                                0 => &chop_notes[ri].0,
-                                1 => &chop_notes[ri].1,
-                                _ => &chop_notes[ri].2,
-                            };
-                            if let (Some(t), false) = (extra[k], notes.is_empty()) {
-                                let mut c = Clip::midi(at, crate::medley::ROLL_BEATS, label);
-                                if let ClipData::Midi(v) = &mut c.data {
-                                    v.extend(crate::medley::roll_notes(notes, rs.beats, s.roll_after));
-                                }
-                                if let Some(tr) = en.project.tracks.get_mut(t) {
-                                    tr.clips.push(c);
-                                }
-                            }
-                        }
-                        if let (Some(t), true) = (riser_t, riser_into.contains(&si)) {
-                            let mut c = Clip::midi(at, crate::medley::ROLL_BEATS, "riser");
-                            if let ClipData::Midi(v) = &mut c.data {
-                                v.extend(crate::medley::riser_notes(mash.slots[si + 1].key, crate::medley::ROLL_BEATS));
-                            }
-                            if let Some(tr) = en.project.tracks.get_mut(t) {
-                                tr.clips.push(c);
-                            }
-                        }
-                        spans.push((at, s.roll_after));
-                        secs.push((at, at + crate::medley::ROLL_BEATS, if s.roll_after == crate::medley::Roll::Shrink { "build" } else { "break" }));
-                        at += crate::medley::ROLL_BEATS;
-                    }
-                }
-                // per-role sound design and space (sounddesign.rs, space.rs): the genre's chain on every medley track over the medley's
-                // sections (builds narrow and push, drops open, breaks pull back); a breakcore mashup is designed as breakbeat, which
-                // keeps it dry (a tight room at most, none on the kick and the bass)
-                let design_amt = opt("design").and_then(|v| v.parse::<f64>().ok()).unwrap_or_else(|| crate::sounddesign::genre_design(g.name).max(0.3)).clamp(0.0, 1.0);
-                let mut design_note = String::new();
-                if design_amt > 0.0 {
-                    let dg = if style == crate::chops::Style::Breakcore { "breakbeat" } else { g.name };
-                    let dsecs: Vec<crate::sounddesign::Sec> = secs.iter().map(|(a0, b0, t0)| crate::sounddesign::Sec { tag: t0.to_string(), start: *a0, end: *b0 }).collect();
-                    let sr = self.out.sr;
-                    let mut jobs: Vec<(usize, &str)> = tracks.iter().zip(&wanted_role).filter_map(|(t, r)| t.map(|t| (t, *r))).collect();
-                    if let Some(t) = extra[2] {
-                        jobs.push((t, "drums"));
-                    }
-                    if let Some(t) = riser_t {
-                        jobs.push((t, "riser"));
-                    }
-                    for (t, role) in jobs {
-                        let Some(tr) = en.project.tracks.get_mut(t) else { continue };
-                        let has: Vec<String> = tr.effects.iter().map(|e| e.name.clone()).collect();
-                        let inst = tr.inst_kind.clone();
-                        let pd = crate::sounddesign::design_at(dg, &story.to_lowercase(), role, songgen::role_kind(role), &inst, design_amt, key.0, &dsecs, &has, bpm);
-                        apply_design(tr, &pd, sr);
-                        crate::sounddesign::apply_inst(tr, &pd);
-                    }
-                    design_note = format!("; sound design: {dg} ({} space)", crate::space::profile(dg).tier());
-                }
-                // the feel: the story / arc's emotional plan over the medley's sections, every medley track played with it
-                let feel_amt = opt("feel").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.7).clamp(0.0, 1.0) as f32;
-                let mut feel_note = String::new();
-                if feel_amt > 0.0 {
-                    let fsecs: Vec<crate::feel::Sec> = secs.iter().map(|(a0, b0, t0)| crate::feel::Sec { start: *a0, end: *b0, tag: t0.to_string() }).collect();
-                    let which: Vec<usize> = tracks.iter().chain(extra.iter()).flatten().copied().collect();
-                    let words: Vec<String> = vec![story.clone(); fsecs.len()];
-                    let plan = crate::feel::plan_for(&en.project.tracks, &fsecs, &crate::feel::emotion_arc(&mash.arc), g.name, &words, key.1, seed);
-                    let _ = crate::feel::perform(&mut en.project.tracks, &which, &fsecs, &plan, feel_amt);
-                    let sections: Vec<songgen::Section> = fsecs.iter().map(|s| songgen::Section { tag: s.tag.clone(), bars: ((s.end - s.start) / 4.0).round().max(1.0) as u32, energy: 0.5 }).collect();
-                    feel_note = format!("; feel: {} ({})", plan.arc, crate::emotion::summary(&plan, &sections));
-                }
-                // the rolls' filter contour on every medley track
-                if !spans.is_empty() {
-                    let (hp, lp) = crate::medley::roll_contour(&spans);
-                    let sr = self.out.sr;
-                    for t in tracks.iter().chain(extra.iter()).flatten() {
-                        let Some(tr) = en.project.tracks.get_mut(*t) else { continue };
-                        let Some(mut fx) = EffectSlot::new("Vox Filter", sr) else { continue };
-                        for (k, v) in [("hp", 0.0f32), ("lp", 1.0), ("res", 0.3), ("dyn", 0.0), ("mix", 1.0)] {
-                            if let Some(pi) = fx.params.iter().position(|p| p.0 == k) {
-                                fx.set(pi, v);
-                            }
-                        }
-                        let idx = tr.effects.len();
-                        let hpi = fx.params.iter().position(|p| p.0 == "hp");
-                        let lpi = fx.params.iter().position(|p| p.0 == "lp");
-                        tr.effects.push(fx);
-                        if let Some(pi) = hpi {
-                            tr.auto.push(AutoLane { param: format!("fx{idx}.{pi}"), points: hp.clone() });
-                        }
-                        if let Some(pi) = lpi {
-                            tr.auto.push(AutoLane { param: format!("fx{idx}.{pi}"), points: lp.clone() });
-                        }
-                    }
-                }
-                if empty {
-                    let text = secs.iter().map(|(a, b, t)| format!("{a}:{b}:{t}")).collect::<Vec<_>>().join(";");
-                    match en.project.meta.iter_mut().find(|(k, _)| k == "sections") {
-                        Some(slot) => slot.1 = text,
-                        None => en.project.meta.push(("sections".into(), text)),
-                    }
-                }
-                drop(en);
-                self.touch();
-                let mut path: Vec<String> = vec![];
-                for s in &mash.slots {
-                    let k = crate::theory::Key { tonic: s.key.0, minor: s.key.1 }.name();
-                    if path.last() != Some(&k) {
-                        path.push(k);
-                    }
-                }
-                let layers: usize = mash.slots.iter().map(|s| s.layers.len()).sum();
-                let foreign = mash.slots.iter().flat_map(|s| s.layers.iter().map(move |l| (l.phrase, s.spine))).filter(|(a, b)| ph[*a].file != ph[*b].file).count();
-                ok!(format!(
-                    "{}: {} phrases from {} files ({} in all) at {:.0} bpm, {} bars; story: {}; keys: {}; {} clips ({} layered from other files) on {} instruments; {} loop rolls{}{}{}{}; order: {}{}",
-                    if layering > 0.05 { "Mashup" } else { "Medley" },
-                    order.len(),
-                    files,
-                    ph.len(),
-                    bpm,
-                    ((at - start0) / 4.0).round(),
-                    mash.arc,
-                    path.join(" > "),
-                    layers,
-                    foreign,
-                    tracks.iter().flatten().count(),
-                    spans.len(),
-                    match (&chop_cfg, extra[2].is_some()) {
-                        (Some((_, ch)), br) => format!("; vocal chops: {} chops at the transients of {chop_src} ({} pitched){}", ch.len(), ch.iter().filter(|c| c.midi.is_some()).count(), if br { ", with breaks" } else { "" }),
-                        (None, true) => "; breaks".to_string(),
-                        (None, false) if style != crate::chops::Style::Off => "; no vocal chops (no usable vocal found)".to_string(),
-                        _ => String::new(),
-                    },
-                    feel_note,
-                    if mash.log.is_empty() { String::new() } else { format!("; arrangement: {}", crate::medley::summarize(&mash.log)) },
-                    design_note,
-                    a.s(3),
-                    if mode == crate::medley::Mode::Cipher && !message.is_empty() { format!(", the order spells a {}-character message (decode with the same folder and passphrase)", message.chars().count()) } else { String::new() }
-                ))
-            }
+            // Make Medley / mashup (api/medley_api.rs)
+            "daw_song_medley_build" => self.medley_build(a),
+            "daw_song_medley_mix" => self.medley_mix(a),
             "daw_song_feel" => {
                 // (arc or words ("" / "auto" = read from the music), amount 0..1, seed, first track, track count (<= 0 = all), words) ->
                 // a sentence. The tracks are played with an emotional plan (feel.rs): sections from the ruler's tags (or found from the
@@ -1172,7 +785,8 @@ impl Daw {
                 let r = if a.s(3).is_empty() { None } else { refs().lock().unwrap_or_else(|p| p.into_inner()).get(&a.s(3)).cloned() };
                 let guide = load_guide(&a.s(5));
                 // optional 8th: the length rule the plan was made with (so an unedited structure keeps its sections)
-                // optional 9th: the story; 10th: a theme clip "track:clip" the lead plays in variations
+                // optional 9th: the story; 10th: a theme clip "track:clip" the lead plays in variations; 13th: sound recipes 1 = on (the
+                // parts a recipe fits are made and played the recipe's way, recipes.rs), missing / 0 = off
                 let base = songgen::plan_story(&desc, &lyrics, &[], r.as_ref(), 1.0, a.n(4).max(1.0) as u64, guide.as_ref(), a.n(6), &songgen::Fit::parse(&a.s(7)), &a.s(8));
                 let mut plan = SongPlan::from_line(&a.s(0), &base);
                 plan.theme = self.theme_of(&a.s(9));
@@ -1251,6 +865,18 @@ impl Daw {
                         }
                         let _ = self.dispatch("daw_clip_set_notes", &A(&[Val::Num(t as f64), Val::Num(c), Val::List(flat)]));
                         let _ = self.dispatch("daw_clip_set_name", &A(&[Val::Num(t as f64), Val::Num(c), Val::Str(sec.tag.clone())]));
+                        // the expression rules' per-note pitch gestures (808 glides, chord scoops, risers, screech dives)
+                        let gest = songgen::note_gestures(&plan, pi, sec, &notes);
+                        if !gest.is_empty() {
+                            let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                            if let Some(ClipData::Midi(ns)) = en.project.tracks.get_mut(t).and_then(|tr| tr.clips.get_mut(c as usize)).map(|cl| &mut cl.data) {
+                                for (i, bend) in gest {
+                                    if let Some(n) = ns.get_mut(i) {
+                                        n.bend = bend;
+                                    }
+                                }
+                            }
+                        }
                     }
                     // a bass preset that already sounds an octave down gets its part an octave up (not two octaves under the song)
                     if songgen::role_kind(role) == Kind::Bass {
@@ -1465,6 +1091,9 @@ impl Daw {
                                 tr.auto.retain(|l| l.param != "vol");
                                 tr.auto.push(AutoLane { param: "vol".into(), points: pts });
                             }
+                            // the riser narrows to mono through each build and opens wide on the drop (fxctx.rs, the plan's builds)
+                            let builds: Vec<(f64, f64)> = plan.sections.iter().zip(&starts).filter(|(sec, _)| songgen::is_build_tag(&sec.tag)).map(|(sec, st)| (*st, st + sec.bars as f64 * 4.0)).collect();
+                            crate::fxctx::riser_narrowing(tr, &builds, self.out.sr);
                         }
                         // sidechain-style pump on pads and chords in club drops (the track fader, 1/4 notes)
                         if g.form == Form::Club && matches!(k, Kind::Pad | Kind::Chords) && role != "riser" {
@@ -1491,8 +1120,115 @@ impl Daw {
                     }
                     let _ = total;
                 }
+                // the noise sweeps: a white-noise riser / reverse swell into every drop (songgen::sweeps), played by Ling Cinema's
+                // noise riser (cinema.rs): one held note per sweep, the riser's length is the note's, so it peaks on the downbeat (or at the
+                // breath before it); the volume lane swells it a little more on top
+                let sweeps = songgen::sweeps(&plan);
+                if !sweeps.is_empty() {
+                    let t = self.call_num("daw_track_add", &[Val::Str("cinema".into()), Val::Str(String::new())]);
+                    if t >= 0.0 {
+                        made += 1;
+                        let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str("Noise Sweep".into())]));
+                        for (st, len) in &sweeps {
+                            let c = self.call_num("daw_clip_add_midi", &[Val::Num(t), Val::Num(*st), Val::Num(*len)]);
+                            if c < 0.0 {
+                                continue;
+                            }
+                            let flat = vec![Val::Num(0.0), Val::Num(*len), Val::Num(72.0), Val::Num(0.9), Val::Num(0.0), Val::Num(0.5), Val::Num(0.5)];
+                            let _ = self.dispatch("daw_clip_set_notes", &A(&[Val::Num(t), Val::Num(c), Val::List(flat)]));
+                            let _ = self.dispatch("daw_clip_set_name", &A(&[Val::Num(t), Val::Num(c), Val::Str("sweep".into())]));
+                        }
+                        let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                        if let Some(tr) = en.project.tracks.get_mut(t as usize) {
+                            if let Some(inst) = tr.inst.as_mut() {
+                                inst.load_preset("White Noise Riser");
+                                crate::presetinfo::apply_trim(inst.as_mut(), "cinema", "White Noise Riser");
+                                inst.set_param("release", 0.05);
+                            }
+                            let v = (tr.volume / 1.5).clamp(0.0, 1.0);
+                            let mut vol: Vec<(f64, f32)> = vec![(0.0, 0.0)];
+                            for (st, len) in &sweeps {
+                                let end = st + len;
+                                vol.extend([(*st, v * 0.6), (st + len * 0.6, v * 0.8), (end - 0.02, v), (end, 0.0)]);
+                            }
+                            tr.auto.retain(|l| l.param != "vol");
+                            tr.auto.push(AutoLane { param: "vol".into(), points: vol });
+                        }
+                    }
+                }
+                // the rest of the transition effects and the atmospheres, one Ling Cinema track each (songgen::cinema_cues): impacts
+                // on the downbeats the sweeps rise into, downlifters where a drop falls back, ambience through the intro and the
+                // breakdowns, a braam in film music
+                let cues = songgen::cinema_cues(&plan);
+                for (what, name) in [("impact", "Impact"), ("downlifter", "Downlifter"), ("ambience", "Ambience"), ("braam", "Braam")] {
+                    let mine: Vec<&songgen::Cue> = cues.iter().filter(|c| c.what == what).collect();
+                    if mine.is_empty() {
+                        continue;
+                    }
+                    let t = self.call_num("daw_track_add", &[Val::Str("cinema".into()), Val::Str(String::new())]);
+                    if t < 0.0 {
+                        continue;
+                    }
+                    made += 1;
+                    let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(name.into())]));
+                    for cue in &mine {
+                        let c = self.call_num("daw_clip_add_midi", &[Val::Num(t), Val::Num(cue.start), Val::Num(cue.len)]);
+                        if c < 0.0 {
+                            continue;
+                        }
+                        let flat = vec![Val::Num(0.0), Val::Num(cue.len), Val::Num(cue.key as f64), Val::Num(cue.vel as f64), Val::Num(0.0), Val::Num(0.5), Val::Num(0.5)];
+                        let _ = self.dispatch("daw_clip_set_notes", &A(&[Val::Num(t), Val::Num(c), Val::List(flat)]));
+                        let _ = self.dispatch("daw_clip_set_name", &A(&[Val::Num(t), Val::Num(c), Val::Str(what.into())]));
+                    }
+                    let preset = songgen::cue_preset(what, &plan.genre);
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(tr) = en.project.tracks.get_mut(t as usize) {
+                        if let Some(inst) = tr.inst.as_mut() {
+                            inst.load_preset(preset);
+                            crate::presetinfo::apply_trim(inst.as_mut(), "cinema", preset);
+                        }
+                        // the atmosphere sits under the music, the hits a little under the drums
+                        tr.volume *= if what == "ambience" { 0.55 } else { 0.8 };
+                    }
+                }
+                // sound recipes (recipes.rs; 13th argument 1 = on): a part whose role and genre a recipe fits gets that recipe - its
+                // instrument, effect chain, mix, duck route, automation and its way of playing (the notes rewritten over the song's
+                // chords, a riddim's switching set on sibling tracks); the generic design, articulation and expression below skip it
+                let mut recipe_of: Vec<(usize, String)> = vec![];
+                let mut recipe_note: Vec<String> = vec![];
+                if a.0.len() > 12 && a.n(12) > 0.5 {
+                    let lib = crate::recipes::library();
+                    let ldesc = desc.to_lowercase();
+                    let mut taken: Vec<String> = vec![];
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    for (t, role) in &tracks {
+                        if songgen::role_kind(role) == Kind::Drums || role == "voice" {
+                            continue;
+                        }
+                        let Some(r) = crate::recipes::pick(&lib, role, &plan.genre, &ldesc, plan.energy, plan.seed.wrapping_add(*t as u64 * 7919), &taken) else { continue };
+                        taken.push(r.id.clone());
+                        if let Some(sw) = &r.composition.switching {
+                            taken.extend(sw.set.iter().cloned());
+                        }
+                        let clips: Vec<usize> = (0..en.project.tracks.get(*t).map(|x| x.clips.len()).unwrap_or(0)).collect();
+                        let _ = super::recipe_api::apply_recipe(&mut en, *t, r, &clips, &plan.genre, role, plan.seed.wrapping_add(*t as u64));
+                        // the recipe's Ducker does the pumping
+                        if r.mix.sidechain.is_some() {
+                            if let Some(tr) = en.project.tracks.get_mut(*t) {
+                                tr.auto.retain(|l| l.param != "vol");
+                            }
+                        }
+                        recipe_of.push((*t, r.id.clone()));
+                        recipe_note.push(format!("{}: {}", title(role), r.name));
+                    }
+                    for m in crate::recipes::master_moves(&lib, &plan.genre) {
+                        let _ = super::recipe_api::apply_recipe(&mut en, 0, m, &[], &plan.genre, "", plan.seed);
+                        recipe_note.push(format!("master: {}", m.name));
+                    }
+                }
                 // sound design: every part's effect chain, its movement through the form, the Growl skin in the drops (sounddesign.rs)
                 let mut designed: Vec<String> = vec![];
+                let mut skinned: Vec<usize> = vec![];
                 if plan.dials.design > 0.04 {
                     use crate::sounddesign::{self as sd, Phase, Sec};
                     let secs: Vec<Sec> = plan.sections.iter().zip(&starts).map(|(s, st)| Sec { tag: s.tag.clone(), start: *st, end: st + s.bars as f64 * 4.0 }).collect();
@@ -1500,6 +1236,9 @@ impl Daw {
                     let ldesc = desc.to_lowercase();
                     let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
                     for (t, role) in &tracks {
+                        if recipe_of.iter().any(|x| x.0 == *t) {
+                            continue;
+                        }
                         let skin = {
                             let Some(tr) = en.project.tracks.get_mut(*t) else { continue };
                             let has: Vec<String> = tr.effects.iter().map(|e| e.name.clone()).collect();
@@ -1513,6 +1252,7 @@ impl Daw {
                             pd.skin
                         };
                         if let Some(style) = skin {
+                            skinned.push(*t);
                             for (k, s) in secs.iter().enumerate().filter(|(_, s)| sd::phase(&s.tag) == Phase::Drop) {
                                 let _ = super::artic_api::skin_track(&mut en, *t, s.start, s.end, style, (0.5 + 0.4 * plan.dials.design) as f32, 0.4, plan.seed.wrapping_add(k as u64 * 977 + *t as u64));
                             }
@@ -1522,7 +1262,7 @@ impl Daw {
                 // articulation (the local chooser, read from the description) on the bass and the lead
                 for (t, role) in &tracks {
                     let k = songgen::role_kind(role);
-                    if !matches!(k, Kind::Bass | Kind::Melody) {
+                    if !matches!(k, Kind::Bass | Kind::Melody) || recipe_of.iter().any(|x| x.0 == *t) {
                         continue;
                     }
                     let prompt = if role.contains("wobble") || role.contains("growl") { format!("{desc} wobble on the drops") } else { desc.clone() };
@@ -1539,6 +1279,26 @@ impl Daw {
                         if let Some(tr) = en.project.tracks.get_mut(*t) {
                             tr.auto.retain(|l| l.param != "pan");
                             tr.pan = 0.0;
+                        }
+                    }
+                }
+                // expression: glide only on the mono lines that slide, delayed vibrato drawn on the long notes of expressive leads and
+                // strings, the instruments' own arpeggiators off (the arp is in the notes), static in-key tuning (sounddesign::expression)
+                let mut expressed: Vec<String> = vec![];
+                {
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    for (t, role) in &tracks {
+                        // a recipe's part already has its expression (the recipe's pitch block under the same rules)
+                        if recipe_of.iter().any(|x| x.0 == *t) {
+                            continue;
+                        }
+                        let mut x = crate::sounddesign::expression(&plan.genre, role, songgen::role_kind(role), plan.bpm);
+                        x.keep_pitch_lanes = skinned.contains(t);
+                        if let Some(tr) = en.project.tracks.get_mut(*t) {
+                            let said = crate::sounddesign::apply_expression(tr, &x);
+                            if !said.is_empty() {
+                                expressed.push(format!("{}: {said}", title(role)));
+                            }
                         }
                     }
                 }
@@ -1561,7 +1321,10 @@ impl Daw {
                     } else {
                         String::new()
                     }
-                } + &format!(". Feel: {}", crate::emotion::summary(&emo, &plan.sections)) + &if designed.is_empty() { String::new() } else { format!(". Sound design: {}", designed.join("; ")) };
+                } + &format!(". Feel: {}", crate::emotion::summary(&emo, &plan.sections)) + &if designed.is_empty() { String::new() } else { format!(". Sound design: {}", designed.join("; ")) }
+                    + &if sweeps.is_empty() { String::new() } else { format!(". {} noise sweep(s) into the drops", sweeps.len()) }
+                    + &if expressed.is_empty() { String::new() } else { format!(". Expression: {}", expressed.join("; ")) }
+                    + &if recipe_note.is_empty() { String::new() } else { format!(". Sound recipes: {}", recipe_note.join("; ")) };
                 self.status = format!("AI song: {summary}");
                 ok!(Val::List(vec![Val::Num(made as f64), Val::Num(voice_t), Val::Num(g.lufs), Val::Num(bright), Val::Str(summary)]))
             }

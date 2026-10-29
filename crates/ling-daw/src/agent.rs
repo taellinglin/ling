@@ -32,11 +32,13 @@ pub const TOOLS: &[(&str, &str, &str)] = &[
     ("synth", "change named synth parameters by words on the selected track: longer release, shorter decay, more drive, more cutoff resonance, wider (arg: words). Never pitch parameters unless asked", "track"),
     ("shape", "draw automation by words on the track over a section: filter sweep up over the build, volume swell, pump (sidechain feel), fade out, open the filter in the drop (arg: words)", "track"),
     ("part", "take a part out of a section, bring it back, or solo it (arg: e.g. 'drop the bass out of the second verse', 'solo the lead in the bridge')", "song"),
+    ("gesture", "write per-note pitch gestures on a track's notes, in a section or everywhere: scoops into the chords, slides between notes / 808 glides, falls at phrase ends, dives, a pitch riser on the last note (arg: the user's words, e.g. 'scoop into the chords in the drop', 'add 808 glides to the bass'). Only when the user names a scoop, slide, glide, fall, dive, bend or pitch riser", "track"),
+    ("recipe", "put a sound recipe on a track: an EDM production sound with its instrument, effect chain, mix and how it is played (arg: the user's words, e.g. 'make the bass a riddim growl', 'use a reese', 'give the lead a supersaw recipe and write the part', 'list recipes')", "track"),
 ];
 
 /// the tools that are `daw_arrx_run` in the engine (the app calls one builtin for all of them)
 pub fn is_arrangement_tool(tool: &str) -> bool {
-    matches!(tool, "repeat_section" | "remove_section" | "swap_sections" | "move_section" | "resize_section" | "add_build" | "add_breakdown" | "section_tempo" | "drum_feel" | "layer" | "synth" | "shape" | "part")
+    matches!(tool, "repeat_section" | "remove_section" | "swap_sections" | "move_section" | "resize_section" | "add_build" | "add_breakdown" | "section_tempo" | "drum_feel" | "layer" | "synth" | "shape" | "part" | "gesture")
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -49,6 +51,19 @@ fn step(tool: &str, arg: &str) -> Step {
     Step { tool: tool.into(), arg: arg.trim().into() }
 }
 
+/// Does a request ask for a sound recipe? It names recipes, or it asks to make / use / give a part a sound a recipe is named for
+/// ("a riddim growl", "a reese", "a supersaw"). `p` is the request lowercased with spaces around.
+fn recipe_request(p: &str) -> bool {
+    if p.contains(" recipe ") || p.contains(" recipes ") {
+        return true;
+    }
+    let asks = [" use a ", " use an ", " use the ", " make the ", " give the ", " turn the ", " put a ", " switch the ", " swap the "].iter().any(|w| p.contains(w));
+    let part = [" bass ", " lead ", " pad ", " chords ", " chord ", " arp ", " pluck ", " sub ", " riser ", " it "].iter().any(|w| p.contains(w));
+    // the sound words of the recipes (not genre words: "make it more dubstep" restyles the song)
+    let sound = ["riddim growl", " growl ", " reese ", " wobble ", " supersaw ", " screech ", " 808 ", " sine sub ", " colour bass ", " color bass ", " noise sweep ", " pluck arp ", " chord stab ", " stabs "].iter().any(|w| p.contains(w));
+    asks && sound && (part || p.contains(" use "))
+}
+
 /// Read a request into steps (in the order they should run). `has_clip` / `has_track`: what is selected.
 pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     let p = format!(" {} ", request.to_lowercase().replace([',', '.', '!', '?', ';', ':'], " "));
@@ -57,6 +72,10 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     let mut out: Vec<Step> = vec![];
     if any(&["undo", "revert", "go back", "take that back"]) {
         return vec![step("undo", "")];
+    }
+    // ── sound recipes: "list recipes", "make the bass a riddim growl", "use a reese", "give the lead a supersaw recipe" ──
+    if recipe_request(&p) {
+        return vec![step("recipe", request)];
     }
     // ── the arrangement, layers, named synth parameters, automation shapes, parts in sections ──
     let sec_word = any(&["verse", "verses", "chorus", "choruses", "hook", "drop", "drops", "bridge", "intro", "outro", "breakdown", "section", "sections", "bars", "bar", "refrain", "ending"]);
@@ -96,7 +115,12 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
         out.push(step("remove_section", request));
         arr = true;
     }
-    let shape = !arr && any(&["filter sweep", "sweep up", "sweep down", "open the filter", "open up the filter", "close the filter", "filter open", "volume swell", "swell", "crescendo", "fade out", "fade in", "fade-out", "fadeout", "pump", "pumping", "sidechain", "side-chain", "riser", "muffle", "filter up", "filter down"]);
+    // a per-note pitch gesture named on purpose (scoop, slide / glide, fall, dive, pitch riser): the pitch guard's one way in
+    let gest = !arr && crate::redesign::gesture_request(request).is_some() && !any(&["glide time", "portamento time", "more glide", "less glide", "longer glide", "shorter glide"]);
+    if gest {
+        out.push(step("gesture", request));
+    }
+    let shape = !arr && !gest && any(&["filter sweep", "sweep up", "sweep down", "open the filter", "open up the filter", "close the filter", "filter open", "volume swell", "swell", "crescendo", "fade out", "fade in", "fade-out", "fadeout", "pump", "pumping", "sidechain", "side-chain", "riser", "muffle", "filter up", "filter down"]);
     if shape {
         out.push(step("shape", request));
     }
@@ -104,7 +128,7 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     if layer {
         out.push(step("layer", request));
     }
-    let named = if arr || shape || layer { vec![] } else { crate::redesign::param_words(request) };
+    let named = if arr || shape || layer || gest { vec![] } else { crate::redesign::param_words(request) };
     if !named.is_empty() {
         out.push(step("synth", request));
     }
@@ -134,12 +158,12 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     let parts = [("bass", &["bassline", "bass line", "a bass", "add bass", "bass part"][..]), ("chords", &["chords", "chord part", "comping", "stabs"][..]), ("pad", &["a pad", "pads", "add pad", "strings"][..]), ("arp", &["arp", "arpeggio", "arpeggios"][..]), ("melody", &["counter melody", "countermelody", "a melody", "add melody", "lead line"][..]), ("drums", &["drums", "a beat", "drum part", "percussion"][..])];
     let mut wrote_part = false;
     for (part, ws) in parts {
-        if any(ws) && !has("no") && !(part_out || feel || shape || layer) {
+        if any(ws) && !has("no") && !(part_out || feel || shape || layer || gest) {
             out.push(step("accompany", &format!("{part} {request}")));
             wrote_part = true;
         }
     }
-    if !wrote_part && !(part_out || feel || shape || layer) && any(&["accompaniment", "accompany", "accompanying", "backing"]) {
+    if !wrote_part && !(part_out || feel || shape || layer || gest) && any(&["accompaniment", "accompany", "accompanying", "backing"]) {
         out.push(step("accompany", &format!("chords {request}")));
         out.push(step("accompany", &format!("bass {request}")));
     }
@@ -156,8 +180,8 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
     if !shape && any(&["automate", "automation", "filter sweep", "sweeps", "movement in the"]) {
         out.push(step("automate", request));
     }
-    let redo = !(arr || shape || layer) && any(&["redo", "re-do", "new instrument", "different instrument", "change the instrument", "instrumentation", "redesign", "re-design", "another sound", "new sound", "different sound", "new patch", "swap the"]);
-    let genre = if arr || shape || layer || !named.is_empty() || sect_tempo { None } else { prompt_genre(request).map(|g| g.name) };
+    let redo = !(arr || shape || layer || gest) && any(&["redo", "re-do", "new instrument", "different instrument", "change the instrument", "instrumentation", "redesign", "re-design", "another sound", "new sound", "different sound", "new patch", "swap the"]);
+    let genre = if arr || shape || layer || gest || !named.is_empty() || sect_tempo { None } else { prompt_genre(request).map(|g| g.name) };
     let (mv, _) = crate::redesign::moves(request);
     if let Some(g) = genre {
         if any(&["make it", "sound like", "sound more", "more", "into", "turn it", "style", "restyle", "vibe", "feel"]) || out.is_empty() {
@@ -167,7 +191,7 @@ pub fn route(request: &str, has_clip: bool, has_track: bool) -> Vec<Step> {
         }
     } else if redo {
         out.push(step("redesign", request));
-    } else if !mv.is_empty() && named.is_empty() && !arr && !shape {
+    } else if !mv.is_empty() && named.is_empty() && !arr && !shape && !gest {
         out.push(step("tweak", request));
     }
     // the feel: words that name an emotion or an arc (not a sound: "darker" / "brighter" alone tweak a patch)
@@ -256,6 +280,28 @@ mod tests {
         assert_eq!(tools(&route("riddim it", false, true)), vec!["skin"]);
         assert_eq!(route("riddim it", false, true)[0].arg, "riddim");
         assert!(route("what a lovely day", false, false).is_empty());
+        // sound recipes
+        for r in ["make the bass a riddim growl", "use a reese", "give the lead a supersaw recipe", "list recipes", "use a wobble on the bass", "show me the sound recipes"] {
+            assert_eq!(tools(&route(r, false, true)), vec!["recipe"], "{r}");
+        }
+        assert_eq!(route("use a reese", false, true)[0].arg, "use a reese");
+        // genre words still restyle, "riddim it" still skins
+        assert_eq!(tools(&route("make it sound more dubstep", false, false)), vec!["restyle"]);
+        assert_eq!(tools(&route("riddim it", false, true)), vec!["skin"]);
+        assert!(TOOLS.iter().any(|t| t.0 == "recipe") && system().contains("recipe"));
+    }
+
+    #[test]
+    fn named_pitch_gestures_reach_the_gesture_tool_only() {
+        for r in ["scoop into the chords in the drop", "add 808 glides to the bass", "make the screech dive at the end of the fill", "let the lead notes fall off at the end of phrases", "slide between the bass notes", "put a pitch riser on the last note"] {
+            assert_eq!(tools(&route(r, true, true)), vec!["gesture"], "{r}");
+        }
+        // a riser alone is still the automation riser; sound words never write gestures
+        assert!(!tools(&route("add a riser before the drop", true, true)).contains(&"gesture"));
+        for r in ["make this patch grittier", "make it sound more dubstep", "longer release"] {
+            assert!(!tools(&route(r, true, true)).contains(&"gesture"), "{r}");
+        }
+        assert!(is_arrangement_tool("gesture") && TOOLS.iter().any(|t| t.0 == "gesture"));
     }
 
     #[test]

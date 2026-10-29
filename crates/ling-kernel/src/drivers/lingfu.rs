@@ -10,26 +10,28 @@
 //! Catalog format, deliberately trivial (one line per package):
 //! `name version filename.lpkg description words...`
 //!
-//! Real limits, disclosed: a registry install downloads the source `.tgz`
-//! into a heap buffer capped at `MAX_PKG_TGZ` (8 MiB) and unpacks each file
-//! through lingfs's multi-block writer (`write_in_dir_any`, ~64 MiB/file), so
-//! multi-megabyte packages (e.g. ling-lang) install for real -- a package
-//! whose download exceeds the cap (e.g. the 2.6 GB soul-symphony blob) is
-//! rejected cleanly rather than truncated. No signatures yet (packages/README
-//! step 5); the catalog says so.
+//! Registry installs STREAM (see `install_registry`): TLS records -> BLAKE3
+//! (checked against the registry's checksum) -> gzip inflate -> tar -> disk,
+//! so a download's size is bounded by the disk, not by RAM. Packages go to the
+//! package volume when one is mounted (`vfs::package_volume`: the Pi's SD-card
+//! data partition `media/card`, else x86's second disk `media/disk1`, both
+//! FAT32 -- files up to 4 GiB, space checked up front), else into lingfs,
+//! which is small (MAX_OBJECTS 4 KiB blocks = 16 MiB per volume, append-only,
+//! 32 entries per folder, ~64 MiB per file). Windows/macOS/Linux native
+//! binaries inside a package are not installed. No signatures yet
+//! (packages/README step 5).
 
 use crate::drivers::netstack;
 use crate::fs::{lingfs, packages};
 use alloc::vec::Vec;
 
-const CATALOG_MAX: usize = 16 * 1024;
-/// Largest registry `.tgz` the in-kernel installer will download+unpack. The
-/// download lands in a heap buffer this size (freed after install); a body that
-/// fills it is treated as over-cap and rejected (the TLS reader stops at buffer
-/// capacity, so a truncated stream would otherwise reach gunzip as garbage --
-/// exactly the old "could not decompress" failure). 8 MiB comfortably covers
-/// ling-lang (~2.9 MiB) with headroom while still rejecting pathological blobs.
-const MAX_PKG_TGZ: usize = 8 * 1024 * 1024;
+/// The normalized catalog (and the raw JSON it is parsed from). The registry's
+/// /api/packages was ~7 KiB for 47 packages with full descriptions; 64 KiB
+/// leaves room for a few hundred.
+const CATALOG_MAX: usize = 64 * 1024;
+/// Description bytes kept per catalog entry: whole descriptions, so the
+/// "LingOS app" markers (`for_lingos`) are seen even late in a long one.
+const DESC_MAX: usize = 600;
 static mut CATALOG: [u8; CATALOG_MAX] = [0; CATALOG_MAX];
 static mut CATALOG_LEN: usize = 0;
 /// Scratch for the raw HTTP response body before it's normalized into the
@@ -90,7 +92,7 @@ fn parse_addr(s: &[u8]) -> Option<([u8; 4], u16)> {
 /// its own window instead of the text console. When capturing, `print`
 /// appends into `CAP` (bounded); otherwise it goes to the console as before,
 /// keeping the text-mode `lsh` path unchanged.
-static mut CAP: [u8; 8 * 1024] = [0; 8 * 1024];
+static mut CAP: [u8; 32 * 1024] = [0; 32 * 1024];
 static mut CAP_LEN: usize = 0;
 static mut CAPTURING: bool = false;
 
@@ -127,6 +129,11 @@ fn print(s: &[u8]) {
             let n = s.len().min(room);
             cap[CAP_LEN..CAP_LEN + n].copy_from_slice(&s[..n]);
             CAP_LEN += n;
+            // Long installs from a GUI window: keep a serial trace too.
+            #[cfg(target_arch = "x86_64")]
+            crate::drivers::serial::write(s);
+            #[cfg(target_arch = "aarch64")]
+            crate::drivers::uart::write(s);
             return;
         }
     }
@@ -238,51 +245,52 @@ fn json_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
     None
 }
 
-/// Decompress a gzip stream (skips the header, raw-inflates the body).
-fn gunzip(gz: &[u8]) -> Option<Vec<u8>> {
-    if gz.len() < 18 || gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
-        return None;
+/// Length of a gzip member header at the start of `gz`: `Ok(Some(n))` once it
+/// is complete, `Ok(None)` if more bytes are needed, `Err` if it isn't gzip.
+fn gz_header_len(gz: &[u8]) -> Result<Option<usize>, ()> {
+    if gz.len() < 10 {
+        if gz.first().is_some_and(|&b| b != 0x1f) || gz.get(1).is_some_and(|&b| b != 0x8b) {
+            return Err(());
+        }
+        return Ok(None);
+    }
+    if gz[0] != 0x1f || gz[1] != 0x8b || gz[2] != 8 {
+        return Err(());
     }
     let flg = gz[3];
     let mut off = 10usize;
     if flg & 4 != 0 {
         // FEXTRA
         if off + 2 > gz.len() {
-            return None;
+            return Ok(None);
         }
         let xlen = gz[off] as usize | ((gz[off + 1] as usize) << 8);
         off += 2 + xlen;
     }
-    if flg & 8 != 0 {
-        // FNAME (zero-terminated)
-        while off < gz.len() && gz[off] != 0 {
-            off += 1;
+    for bit in [8u8, 16] {
+        // FNAME, FCOMMENT (zero-terminated)
+        if flg & bit != 0 {
+            match gz.get(off..).and_then(|r| r.iter().position(|&b| b == 0)) {
+                Some(z) => off += z + 1,
+                None => return Ok(None),
+            }
         }
-        off += 1;
-    }
-    if flg & 16 != 0 {
-        // FCOMMENT
-        while off < gz.len() && gz[off] != 0 {
-            off += 1;
-        }
-        off += 1;
     }
     if flg & 2 != 0 {
         off += 2; // FHCRC
     }
-    if off >= gz.len() {
-        return None;
+    if off > gz.len() {
+        return Ok(None);
     }
-    // Raw inflate stops at the end of the deflate stream, ignoring the trailer.
-    miniz_oxide::inflate::decompress_to_vec(&gz[off..]).ok()
+    Ok(Some(off))
 }
 
 /// Parse an octal field (tar header numbers), stopping at NUL/space.
-fn tar_oct(b: &[u8]) -> usize {
-    let mut v = 0usize;
-    for &c in b {
+fn tar_oct(b: &[u8]) -> u64 {
+    let mut v = 0u64;
+    for &c in b.iter().skip_while(|&&c| c == b' ') {
         if (b'0'..=b'7').contains(&c) {
-            v = v * 8 + (c - b'0') as usize;
+            v = v * 8 + (c - b'0') as u64;
         } else {
             break;
         }
@@ -290,158 +298,972 @@ fn tar_oct(b: &[u8]) -> usize {
     v
 }
 
-/// Unpack a POSIX tar image, writing each regular file (by basename) into
-/// `pkg_dir` in lingfs. Returns the number of files installed.
-fn untar_install(tar: &[u8], pkg_dir: &str) -> usize {
-    let mut off = 0usize;
-    let mut count = 0usize;
-    while off + 512 <= tar.len() {
-        let hdr = &tar[off..off + 512];
-        if hdr.iter().all(|&b| b == 0) {
-            break; // end-of-archive marker
-        }
-        let name_end = hdr[..100].iter().position(|&b| b == 0).unwrap_or(100);
-        let fullname = &hdr[..name_end];
-        let size = tar_oct(&hdr[124..136]);
-        let typ = hdr[156];
-        off += 512;
-        let data_end = off + size;
-        if data_end > tar.len() {
-            break;
-        }
-        // Regular file ('0' or NUL typeflag). Skip dirs/links/metadata.
-        if (typ == b'0' || typ == 0) && size > 0 {
-            let base = fullname.rsplit(|&b| b == b'/').next().unwrap_or(fullname);
-            if !base.is_empty() && base != b"." {
-                if let Ok(bn) = core::str::from_utf8(base) {
-                    // `_any` (manifest-backed) writer: a package's source files
-                    // routinely exceed one 4KiB block, and the plain
-                    // `write_in_dir` caps at a single block -- so larger files
-                    // were silently dropped (part of why ling-lang "installed"
-                    // but was unusable). This lifts each file to lingfs's
-                    // ~64MiB multi-block ceiling.
-                    if lingfs::write_in_dir_any(pkg_dir, bn, &tar[off..data_end]).is_ok() {
-                        count += 1;
-                    }
-                }
-            }
-        }
-        off = data_end;
-        off += (512 - (size % 512)) % 512; // pad to 512
-    }
-    count
+// ── Streaming registry install ───────────────────────────────────────────────
+// TLS records -> BLAKE3 (the registry's `checksum` is BLAKE3 of the .tgz) ->
+// streaming gzip inflate -> streaming tar parser -> each file stored block by
+// block in lingfs (`ContentWriter`) -> one directory tree committed at the end.
+// Nothing larger than a TLS record / 64 KiB inflate window is ever buffered,
+// so a package of any size streams through; what bounds an install is the
+// lingfs volume itself (append-only, `MAX_OBJECTS` 4 KiB blocks), which is
+// checked BEFORE anything is written. The tree is linked into the root only
+// after the download completed and the checksum matched, so a failed install
+// never replaces (or half-replaces) what was there.
+
+/// lingfs blocks always left free for the user's own files after an install.
+const RESERVE_OBJECTS: usize = 128;
+/// Native binaries for other OSes, skipped at install: LingOS can't run them,
+/// and they are most of the bytes in packages like LingSys (Windows builds).
+const FOREIGN_EXT: &[&str] = &[
+    ".exe", ".dll", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".appimage", ".apk", ".so", ".dylib", ".pdb", ".lib", ".exp", ".ilk",
+];
+
+fn mb(n: u64) -> alloc::string::String {
+    alloc::format!("{}.{} MB", n / 1_000_000, (n % 1_000_000) / 100_000)
 }
 
-/// Install a package from the official registry: resolve its latest version via
-/// `/api/package?name=`, download `/dl/<name>-<version>.tgz`, gunzip + untar it,
-/// and land the source files in lingfs under `pkg-<name>/`. Returns true on a
-/// completed install. (Source packages -- running them still needs the `ling`
-/// toolchain; this makes `lingfu install` fetch + unpack real registry packages.)
-pub fn install_from_registry(name: &str) -> bool {
-    // 1. Resolve the latest version.
-    print(b"lingfu: resolving ");
-    print(name.as_bytes());
-    print(b" ...\n");
-    let mut apipath = [0u8; 160];
-    let mut p = 0usize;
-    for &b in b"/api/package?name=" {
-        apipath[p] = b;
-        p += 1;
-    }
-    for &b in name.as_bytes() {
-        if p < apipath.len() {
-            apipath[p] = b;
-            p += 1;
+fn printf(s: alloc::string::String) {
+    print(s.as_bytes());
+}
+
+#[derive(Default)]
+struct DirNode {
+    files: alloc::collections::BTreeMap<alloc::string::String, lingfs::Hash>,
+    subdirs: alloc::collections::BTreeSet<alloc::string::String>,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum EntryKind {
+    Skip,
+    File,
+    LongName,
+    Pax,
+}
+
+struct Unpack {
+    /// Survey pass: parse + account only, write nothing.
+    install: bool,
+    gz_hdr: Vec<u8>,
+    gz_done: bool,
+    inflater: alloc::boxed::Box<miniz_oxide::inflate::stream::InflateState>,
+    inflate_end: bool,
+    out: Vec<u8>,
+    th: [u8; 512],
+    th_fill: usize,
+    left: u64,
+    pad: u64,
+    kind: EntryKind,
+    meta: Vec<u8>,
+    long_name: Option<alloc::string::String>,
+    path: alloc::string::String,
+    writer: Option<lingfs::ContentWriter>,
+    dirs: alloc::collections::BTreeMap<alloc::string::String, DirNode>,
+    error: Option<alloc::string::String>,
+    // accounting
+    files: usize,
+    kept_bytes: u64,
+    kept_objs: usize,
+    foreign: usize,
+    foreign_bytes: u64,
+    dropped: usize,
+    budget_objs: usize,
+    /// Installing onto a FAT volume: the staging folder files stream into
+    /// (`media/<vol>/.pkg-<name>.new`), the open file, folders already made,
+    /// and the bytes still free on the volume.
+    media: Option<alloc::string::String>,
+    mfile: Option<crate::fs::media::MediaFile>,
+    made: alloc::collections::BTreeSet<alloc::string::String>,
+    media_free: u64,
+}
+
+impl Unpack {
+    fn new(install: bool, budget_objs: usize) -> Self {
+        Unpack {
+            install,
+            gz_hdr: Vec::new(),
+            gz_done: false,
+            inflater: miniz_oxide::inflate::stream::InflateState::new_boxed(miniz_oxide::DataFormat::Raw),
+            inflate_end: false,
+            out: alloc::vec![0u8; 64 * 1024],
+            th: [0; 512],
+            th_fill: 0,
+            left: 0,
+            pad: 0,
+            kind: EntryKind::Skip,
+            meta: Vec::new(),
+            long_name: None,
+            path: alloc::string::String::new(),
+            writer: None,
+            dirs: alloc::collections::BTreeMap::new(),
+            error: None,
+            files: 0,
+            kept_bytes: 0,
+            kept_objs: 0,
+            foreign: 0,
+            foreign_bytes: 0,
+            dropped: 0,
+            budget_objs,
+            media: None,
+            mfile: None,
+            made: alloc::collections::BTreeSet::new(),
+            media_free: 0,
         }
     }
+
+    /// Stream files into `staging` on a FAT volume with `free` bytes left.
+    fn to_media(mut self, staging: alloc::string::String, free: u64) -> Self {
+        self.media = Some(staging);
+        self.media_free = free;
+        self
+    }
+
+    fn fail(&mut self, why: alloc::string::String) {
+        if self.error.is_none() {
+            self.error = Some(why);
+        }
+    }
+
+    /// Feed raw .tgz bytes.
+    fn feed(&mut self, mut data: &[u8]) {
+        if self.error.is_some() || self.inflate_end {
+            return;
+        }
+        if !self.gz_done {
+            let before = self.gz_hdr.len();
+            self.gz_hdr.extend_from_slice(data);
+            match gz_header_len(&self.gz_hdr) {
+                Err(()) => return self.fail("the download is not a gzip archive".into()),
+                Ok(None) => {
+                    if self.gz_hdr.len() > 64 * 1024 {
+                        self.fail("gzip header too long".into());
+                    }
+                    return;
+                },
+                Ok(Some(hl)) => {
+                    self.gz_done = true;
+                    let skip = hl - before; // header bytes within `data`
+                    self.gz_hdr = Vec::new();
+                    data = &data[skip..];
+                },
+            }
+        }
+        use miniz_oxide::inflate::stream::inflate;
+        use miniz_oxide::{MZError, MZFlush, MZStatus};
+        let mut out = core::mem::take(&mut self.out);
+        while self.error.is_none() && !self.inflate_end {
+            let r = inflate(&mut self.inflater, data, &mut out, MZFlush::None);
+            data = &data[r.bytes_consumed..];
+            if r.bytes_written > 0 {
+                self.tar_feed(&out[..r.bytes_written]);
+            }
+            match r.status {
+                Ok(MZStatus::StreamEnd) => self.inflate_end = true,
+                Ok(_) | Err(MZError::Buf) => {},
+                Err(_) => self.fail("the package's gzip data is corrupt".into()),
+            }
+            if (data.is_empty() && r.bytes_written < out.len()) || (r.bytes_consumed == 0 && r.bytes_written == 0) {
+                break;
+            }
+        }
+        self.out = out;
+    }
+
+    fn tar_feed(&mut self, mut data: &[u8]) {
+        while !data.is_empty() && self.error.is_none() {
+            if self.left > 0 {
+                let take = (data.len() as u64).min(self.left) as usize;
+                let (now, rest) = data.split_at(take);
+                data = rest;
+                self.left -= take as u64;
+                match self.kind {
+                    EntryKind::File => {
+                        if let Some(w) = self.writer.as_mut() {
+                            if w.write(now).is_err() {
+                                let p = self.path.clone();
+                                self.fail(alloc::format!("lingfs write failed on {p} (disk full?)"));
+                            }
+                        }
+                        if let Some(f) = self.mfile.as_mut() {
+                            if !crate::fs::media::file_write(f, now) {
+                                let p = self.path.clone();
+                                self.fail(alloc::format!("write failed on {p} -- the disk is full"));
+                            }
+                        }
+                    },
+                    EntryKind::LongName | EntryKind::Pax => {
+                        if self.meta.len() < 64 * 1024 {
+                            self.meta.extend_from_slice(now);
+                        }
+                    },
+                    EntryKind::Skip => {},
+                }
+                if self.left == 0 {
+                    self.end_entry();
+                }
+                continue;
+            }
+            if self.pad > 0 {
+                let take = (data.len() as u64).min(self.pad) as usize;
+                data = &data[take..];
+                self.pad -= take as u64;
+                continue;
+            }
+            let take = (512 - self.th_fill).min(data.len());
+            self.th[self.th_fill..self.th_fill + take].copy_from_slice(&data[..take]);
+            self.th_fill += take;
+            data = &data[take..];
+            if self.th_fill == 512 {
+                self.th_fill = 0;
+                self.header();
+            }
+        }
+    }
+
+    fn header(&mut self) {
+        let h = self.th;
+        if h.iter().all(|&b| b == 0) {
+            return; // end-of-archive blocks (and the zero padding after them)
+        }
+        let cstr = |b: &[u8]| {
+            let e = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+            alloc::string::String::from_utf8_lossy(&b[..e]).into_owned()
+        };
+        let mut name = cstr(&h[..100]);
+        if &h[257..262] == b"ustar" {
+            let prefix = cstr(&h[345..500]);
+            if !prefix.is_empty() {
+                name = alloc::format!("{prefix}/{name}");
+            }
+        }
+        if let Some(l) = self.long_name.take() {
+            name = l;
+        }
+        let size = tar_oct(&h[124..136]);
+        self.left = size;
+        self.pad = (512 - size % 512) % 512;
+        self.kind = EntryKind::Skip;
+        match h[156] {
+            b'L' => {
+                self.kind = EntryKind::LongName;
+                self.meta.clear();
+            },
+            b'x' => {
+                self.kind = EntryKind::Pax;
+                self.meta.clear();
+            },
+            b'0' | 0 | b'7' => self.begin_file(name, size),
+            _ => {}, // dirs are implied by their files; links/devices skipped
+        }
+        if self.left == 0 {
+            self.end_entry();
+        }
+    }
+
+    /// Normalize an archive path: no leading `./` or `/`, no `..`, no empties.
+    fn clean_path(name: &str) -> Option<alloc::string::String> {
+        let mut parts: Vec<&str> = Vec::new();
+        for seg in name.split('/') {
+            match seg {
+                "" | "." => {},
+                ".." => return None,
+                s => parts.push(s),
+            }
+        }
+        if parts.is_empty() {
+            return None;
+        }
+        Some(parts.join("/"))
+    }
+
+    fn begin_file(&mut self, name: alloc::string::String, size: u64) {
+        let Some(path) = Self::clean_path(&name) else { return };
+        let lower = path.to_ascii_lowercase();
+        if FOREIGN_EXT.iter().any(|e| lower.ends_with(e)) {
+            self.foreign += 1;
+            self.foreign_bytes += size;
+            return;
+        }
+        if let Some(base) = self.media.clone() {
+            return self.begin_media_file(base, path, size);
+        }
+        let objs = lingfs::objects_for(size as usize);
+        let fits_fs = size as usize <= lingfs::MAX_FILE_BYTES
+            && path.split('/').all(|s| s.len() <= lingfs::TREE_ENTRY_NAME_LEN)
+            && path.split('/').count() < 15;
+        if !fits_fs {
+            self.dropped += 1;
+            printf(alloc::format!("lingfu:   skipped {path} (name or size past lingfs limits)\n"));
+            return;
+        }
+        if self.install {
+            if self.kept_objs + objs > self.budget_objs {
+                return self.fail(alloc::format!("lingfs is full -- {path} ({}) does not fit", mb(size)));
+            }
+            if !self.claim(&path) {
+                self.dropped += 1;
+                printf(alloc::format!("lingfu:   skipped {path} (its folder is full: lingfs holds {} entries per folder)\n", lingfs::MAX_TREE_ENTRIES));
+                return;
+            }
+            self.writer = Some(lingfs::ContentWriter::new());
+        }
+        self.kept_objs += objs;
+        self.kept_bytes += size;
+        self.path = path;
+        self.kind = EntryKind::File;
+    }
+
+    /// A file onto the FAT volume: its folders, a free-space check, then a
+    /// streamed file (`media::file_*`). FAT32 holds files up to 4 GiB.
+    fn begin_media_file(&mut self, base: alloc::string::String, path: alloc::string::String, size: u64) {
+        if size > crate::fs::fat::MAX_FILE {
+            self.dropped += 1;
+            printf(alloc::format!("lingfu:   skipped {path}: {} is over FAT32's 4 GiB file limit\n", mb(size)));
+            return;
+        }
+        // Whole clusters (up to 32 KiB) + a little directory overhead.
+        let need = size.div_ceil(32 * 1024) * 32 * 1024 + 4096;
+        if self.install {
+            if need > self.media_free {
+                let free = self.media_free;
+                return self.fail(alloc::format!("the disk is full -- {path} ({}) does not fit in the {} left", mb(size), mb(free)));
+            }
+            let full = alloc::format!("{base}/{path}");
+            let parent = &full[..full.rfind('/').unwrap_or(0)];
+            if !self.made.contains(parent) {
+                if !crate::fs::media::mkdir_p(parent) {
+                    self.dropped += 1;
+                    printf(alloc::format!("lingfu:   skipped {path} (could not create its folder)\n"));
+                    return;
+                }
+                self.made.insert(alloc::string::String::from(parent));
+            }
+            match crate::fs::media::file_create(&full) {
+                Some(f) => self.mfile = Some(f),
+                None => return self.fail(alloc::format!("could not create {path} on the disk")),
+            }
+            self.media_free -= need;
+        }
+        self.kept_bytes += size;
+        self.path = path;
+        self.kind = EntryKind::File;
+    }
+
+    /// Reserve a tree slot for `path` (its folder chain + the file), within
+    /// lingfs's per-folder entry limit. Changes nothing when it doesn't fit.
+    fn claim(&mut self, path: &str) -> bool {
+        let segs: Vec<&str> = path.split('/').collect();
+        let fname = segs[segs.len() - 1];
+        // Walk the chain checking room first.
+        let mut dir = alloc::string::String::new();
+        for (i, seg) in segs.iter().enumerate() {
+            let node = self.dirs.get(&dir);
+            let count = node.map_or(0, |n| n.files.len() + n.subdirs.len());
+            let is_last = i + 1 == segs.len();
+            let present = node.is_some_and(|n| if is_last { n.files.contains_key(fname) } else { n.subdirs.contains(*seg) });
+            if !present && count >= lingfs::MAX_TREE_ENTRIES {
+                return false;
+            }
+            if is_last {
+                break;
+            }
+            if !dir.is_empty() {
+                dir.push('/');
+            }
+            dir.push_str(seg);
+        }
+        // Then create the chain (the file itself is added at end_entry).
+        let mut dir = alloc::string::String::new();
+        for seg in &segs[..segs.len() - 1] {
+            self.dirs.entry(dir.clone()).or_default().subdirs.insert(alloc::string::String::from(*seg));
+            if !dir.is_empty() {
+                dir.push('/');
+            }
+            dir.push_str(seg);
+        }
+        self.dirs.entry(dir).or_default();
+        true
+    }
+
+    fn end_entry(&mut self) {
+        match self.kind {
+            EntryKind::File => {
+                self.files += 1;
+                if let Some(f) = self.mfile.take() {
+                    if !crate::fs::media::file_finish(f) {
+                        let p = self.path.clone();
+                        self.fail(alloc::format!("could not finish {p} on the disk"));
+                    }
+                }
+                if let Some(w) = self.writer.take() {
+                    match w.finish() {
+                        Ok(hash) => {
+                            let (dir, fname) = match self.path.rfind('/') {
+                                Some(i) => (&self.path[..i], &self.path[i + 1..]),
+                                None => ("", &self.path[..]),
+                            };
+                            let (dir, fname) = (alloc::string::String::from(dir), alloc::string::String::from(fname));
+                            self.dirs.entry(dir).or_default().files.insert(fname, hash);
+                        },
+                        Err(()) => {
+                            let p = self.path.clone();
+                            self.fail(alloc::format!("lingfs write failed on {p} (disk full?)"));
+                        },
+                    }
+                }
+            },
+            EntryKind::LongName => {
+                let e = self.meta.iter().position(|&c| c == 0).unwrap_or(self.meta.len());
+                self.long_name = Some(alloc::string::String::from_utf8_lossy(&self.meta[..e]).into_owned());
+            },
+            EntryKind::Pax => {
+                // Records "<len> key=value\n"; only `path` matters here.
+                for rec in self.meta.split(|&b| b == b'\n') {
+                    if let Some(sp) = rec.iter().position(|&b| b == b' ') {
+                        if let Some(v) = rec[sp + 1..].strip_prefix(b"path=") {
+                            self.long_name = Some(alloc::string::String::from_utf8_lossy(v).into_owned());
+                        }
+                    }
+                }
+            },
+            EntryKind::Skip => {},
+        }
+        self.kind = EntryKind::Skip;
+    }
+
+    /// Build the directory trees bottom-up; returns the package root's tree.
+    fn build_tree(&self) -> Result<lingfs::Hash, ()> {
+        let mut paths: Vec<&alloc::string::String> = self.dirs.keys().collect();
+        // Deepest first, so every subdir's hash exists before its parent's.
+        paths.sort_by_key(|p| core::cmp::Reverse(if p.is_empty() { 0 } else { p.matches('/').count() + 1 }));
+        let mut done: alloc::collections::BTreeMap<alloc::string::String, lingfs::Hash> = alloc::collections::BTreeMap::new();
+        for p in paths {
+            let node = &self.dirs[p];
+            let mut ents: Vec<(alloc::string::String, lingfs::Hash, bool)> = Vec::new();
+            for sd in &node.subdirs {
+                let full = if p.is_empty() { sd.clone() } else { alloc::format!("{p}/{sd}") };
+                let h = *done.get(&full).ok_or(())?;
+                ents.push((sd.clone(), h, true));
+            }
+            for (f, h) in &node.files {
+                ents.push((f.clone(), *h, false));
+            }
+            let refs: Vec<(&str, lingfs::Hash, bool)> = ents.iter().map(|(n, h, d)| (n.as_str(), *h, *d)).collect();
+            let h = lingfs::put_dir(&refs)?;
+            done.insert(p.clone(), h);
+        }
+        done.get("").copied().ok_or(())
+    }
+}
+
+/// Lowercase hex of a 32-byte digest.
+fn hex32(d: &[u8; 32]) -> alloc::string::String {
+    let mut s = alloc::string::String::with_capacity(64);
+    for b in d {
+        s.push_str(&alloc::format!("{b:02x}"));
+    }
+    s
+}
+
+/// What happened to one package (for `install_all` / `upgrade_all` tallies).
+#[derive(PartialEq, Clone, Copy)]
+pub enum Outcome {
+    Installed,
+    /// No published version or no download -- nothing to install.
+    Unavailable,
+    /// Bigger than the free space on the install target.
+    TooBig,
+    Failed,
+}
+
+/// Registry metadata for `name`: (latest version, checksum). Err carries the
+/// outcome when there is nothing to fetch.
+fn registry_info(name: &str) -> Result<(alloc::string::String, alloc::string::String), Outcome> {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') {
+        print(b"lingfu: not a package name\n");
+        return Err(Outcome::Failed);
+    }
+    let apistr = alloc::format!("/api/package?name={name}");
     let raw = unsafe { &mut *&raw mut RAW };
-    let Ok(apistr) = core::str::from_utf8(&apipath[..p]) else { return false };
     // One retry: the first HTTPS attempt to the registry occasionally fails to
-    // connect (transient TLS/connect), and a second almost always succeeds --
-    // this is the "could not reach the registry" the user hit on a first try.
-    let alen_opt = match fetch_official(apistr, raw) {
+    // connect (transient TLS/connect), and a second almost always succeeds.
+    let alen_opt = match fetch_official(&apistr, raw) {
         some @ Some(_) => some,
-        None => fetch_official(apistr, raw),
+        None => fetch_official(&apistr, raw),
     };
     let Some(alen) = alen_opt else {
         print(b"lingfu: could not reach the registry\n");
-        return false;
+        return Err(Outcome::Failed);
     };
-    let Some(ver) = json_field(&raw[..alen], b"version") else {
-        print(b"lingfu: package not found or has no published version\n");
-        return false;
-    };
-    let mut verbuf = [0u8; 48];
-    let vlen = ver.len().min(verbuf.len());
-    verbuf[..vlen].copy_from_slice(&ver[..vlen]);
-
-    // 2. Download /dl/<name>-<version>.tgz.
-    let mut dlpath = [0u8; 200];
-    let mut d = 0usize;
-    let mut put = |s: &[u8], d: &mut usize| {
-        for &b in s {
-            if *d < dlpath.len() {
-                dlpath[*d] = b;
-                *d += 1;
-            }
+    let Some(ver) = json_field(&raw[..alen], b"version").filter(|v| !v.is_empty()) else {
+        if contains(&raw[..alen], b"no published") {
+            printf(alloc::format!("lingfu: {name}: no published download -- skipped\n"));
+        } else {
+            printf(alloc::format!("lingfu: {name}: not in the registry\n"));
         }
+        return Err(Outcome::Unavailable);
     };
-    put(b"/dl/", &mut d);
-    put(name.as_bytes(), &mut d);
-    put(b"-", &mut d);
-    put(&verbuf[..vlen], &mut d);
-    put(b".tgz", &mut d);
-    let Ok(dlstr) = core::str::from_utf8(&dlpath[..d]) else { return false };
-    print(b"lingfu: downloading ");
-    print(dlstr.as_bytes());
-    print(b" ...\n");
-    let mut dl: Vec<u8> = Vec::new();
-    dl.resize(MAX_PKG_TGZ, 0);
-    let Some(glen) = fetch_official(dlstr, &mut dl) else {
-        print(b"lingfu: download failed\n");
-        return false;
+    let ver = alloc::string::String::from_utf8_lossy(ver).into_owned();
+    let sum = json_field(&raw[..alen], b"checksum").map(|c| alloc::string::String::from_utf8_lossy(c).to_ascii_lowercase()).unwrap_or_default();
+    Ok((ver, sum))
+}
+
+/// Ask for the last 4 bytes of the .tgz (a Range request): returns (HTTP
+/// status, total download size, gzip ISIZE = uncompressed size mod 4 GiB).
+fn probe_download(dlpath: &str) -> Option<(u16, u64, Option<u64>)> {
+    let mut tail: Vec<u8> = Vec::new();
+    let mut total = 0u64;
+    let mut status = 0u16;
+    let mut ranged = false;
+    let mut noop = |_: &[u8]| {};
+    let r = crate::tls::https_get_stream(
+        OFFICIAL_HOST,
+        443,
+        dlpath,
+        "Range: bytes=-4\r\n",
+        &mut |i: &crate::tls::StreamInfo| {
+            status = i.status;
+            ranged = i.status == 206;
+            total = if ranged { i.range_total.unwrap_or(0) } else { i.content_length.unwrap_or(0) };
+            ranged // a server ignoring Range would send the whole file: stop
+        },
+        &mut |d: &[u8]| {
+            tail.extend_from_slice(d);
+            tail.len() <= 64
+        },
+        &mut noop,
+    );
+    r.ok()?;
+    let isize = (ranged && tail.len() >= 4).then(|| {
+        let t = &tail[tail.len() - 4..];
+        u32::from_le_bytes([t[0], t[1], t[2], t[3]]) as u64
+    });
+    Some((status, total, isize))
+}
+
+/// One streaming pass over the download. Returns the unpacker (its
+/// accounting / error), the BLAKE3 hex of the bytes received, and whether the
+/// body arrived complete. A connection that drops mid-way is resumed with a
+/// `Range: bytes=<got>-` request (up to 4 times): the hash, inflater and tar
+/// parser simply carry on with the next byte.
+fn stream_pass(dlpath: &str, total: u64, mut up: Unpack) -> (Unpack, alloc::string::String, bool) {
+    let mut hasher = ::blake3::Hasher::new();
+    let mut got = 0u64;
+    let step: u64 = if total > 40_000_000 { 8_000_000 } else { 2_000_000 };
+    let mut next = step;
+    let mut complete = false;
+    let mut resumes = 0u32;
+    loop {
+        let from = got;
+        let range = if from == 0 { alloc::string::String::new() } else { alloc::format!("Range: bytes={from}-\r\n") };
+        let mut noop = |_: &[u8]| {};
+        let r = crate::tls::https_get_stream(
+            OFFICIAL_HOST,
+            443,
+            dlpath,
+            &range,
+            // A resume must get the remainder (206), never the whole file again.
+            &mut |i: &crate::tls::StreamInfo| if from == 0 { i.status == 200 } else { i.status == 206 },
+            &mut |d: &[u8]| {
+                hasher.update(d);
+                got += d.len() as u64;
+                if got >= next {
+                    next += step;
+                    printf(alloc::format!("lingfu:   {} / {}\n", mb(got), mb(total)));
+                }
+                up.feed(d);
+                up.error.is_none()
+            },
+            &mut noop,
+        );
+        let why = match r {
+            Ok(i) if i.complete && (i.status == 200 || i.status == 206) && (total == 0 || got == total) => {
+                complete = true;
+                break;
+            },
+            Ok(i) if i.status != 200 && i.status != 206 => {
+                up.fail(alloc::format!("the registry answered HTTP {}", i.status));
+                break;
+            },
+            Ok(i) => i.end,
+            Err(e) => e,
+        };
+        if up.error.is_some() {
+            break;
+        }
+        resumes += 1;
+        if resumes > 4 || total == 0 {
+            up.fail(alloc::format!("download interrupted at {} of {} ({why})", mb(got), mb(total)));
+            break;
+        }
+        printf(alloc::format!("lingfu:   connection lost at {} ({why}) -- resuming\n", mb(got)));
+    }
+    (up, hex32(hasher.finalize().as_bytes()), complete)
+}
+
+/// Install a package from the official registry: resolve its latest version
+/// via `/api/package?name=`, stream `/dl/<name>-<version>.tgz` through BLAKE3 +
+/// gunzip + untar straight into lingfs, and -- only when the download is
+/// complete and its checksum matches -- link it in as `pkg-<name>/` (keeping
+/// the archive's folders) and record the version in `packages/<name>`.
+pub fn install_from_registry(name: &str) -> bool {
+    install_registry(name) == Outcome::Installed
+}
+
+fn install_registry(name: &str) -> Outcome {
+    let vol = crate::vfs::package_volume();
+    if vol.is_none() && !lingfs::is_mounted() {
+        print(b"lingfu: no storage mounted\n");
+        return Outcome::Failed;
+    }
+    printf(alloc::format!("lingfu: resolving {name} ...\n"));
+    let (ver, sum) = match registry_info(name) {
+        Ok(v) => v,
+        Err(o) => return o,
     };
-    if glen >= MAX_PKG_TGZ {
-        // Body filled the whole cap -> it's over the limit (or exactly at it),
-        // so what we hold is a truncated prefix. Reject cleanly rather than
-        // decompress garbage.
-        print(b"lingfu: package too large for the in-kernel installer (>8MB) -- skipped\n");
-        return false;
+    let dlpath = alloc::format!("/dl/{name}-{ver}.tgz");
+
+    // Size first (a 4-byte range request), so hopeless downloads are skipped
+    // before any byte is written.
+    let Some((status, total, isize)) = probe_download(&dlpath).or_else(|| probe_download(&dlpath)) else {
+        print(b"lingfu: could not reach the registry\n");
+        return Outcome::Failed;
+    };
+    if status == 404 {
+        printf(alloc::format!("lingfu: {name} {ver}: no published download -- skipped\n"));
+        return Outcome::Unavailable;
+    }
+    if status != 206 && status != 200 {
+        printf(alloc::format!("lingfu: {name}: the registry answered HTTP {status}\n"));
+        return Outcome::Failed;
+    }
+    let free_ram = crate::mm::frame::free_frame_count() as u64 * 4096;
+    if free_ram < 8 * 1024 * 1024 {
+        printf(alloc::format!("lingfu: only {} of RAM free -- close something first\n", mb(free_ram)));
+        return Outcome::Failed;
+    }
+    if let Some(v) = vol {
+        return install_to_media(name, &ver, &sum, &dlpath, total, isize, v);
     }
 
-    // 3. Gunzip + untar into lingfs under pkg-<name>/.
-    let Some(tar) = gunzip(&dl[..glen]) else {
-        print(b"lingfu: could not decompress the package (truncated?)\n");
-        return false;
-    };
-    let mut pkgdir = [0u8; 64];
-    let mut pd = 0usize;
-    for &b in b"pkg-" {
-        pkgdir[pd] = b;
-        pd += 1;
+    // Capacity. lingfs never frees a block, so a write that later fails still
+    // costs space: decide BEFORE writing.
+    let free_objs = lingfs::free_objects().saturating_sub(RESERVE_OBJECTS);
+    let free_bytes = free_objs as u64 * lingfs::BLOCK_SIZE as u64;
+    let pkgdir = alloc::format!("pkg-{name}");
+    let replacing = lingfs::path_kind(&pkgdir).is_some();
+    if !replacing && lingfs::root_entry_count() >= lingfs::MAX_TREE_ENTRIES {
+        printf(alloc::format!("lingfu: the storage root is full ({} entries) -- remove something first\n", lingfs::MAX_TREE_ENTRIES));
+        return Outcome::Failed;
     }
-    for &b in name.as_bytes() {
-        if pd < pkgdir.len() {
-            pkgdir[pd] = b;
-            pd += 1;
+    if lingfs::commits_left() < 4 {
+        print(b"lingfu: this lingfs volume has used up its commit log -- it is read-only now\n");
+        return Outcome::Failed;
+    }
+    printf(alloc::format!(
+        "lingfu: {name} {ver}: {} download{}; {} free on lingfs\n",
+        mb(total),
+        isize.map(|n| alloc::format!(", {} unpacked", mb(n))).unwrap_or_default(),
+        mb(free_bytes)
+    ));
+    // The unpacked size (gzip ISIZE) bounds what is stored, plus per-file
+    // manifest/tree overhead (~1/100). If it might not fit, a survey pass (a
+    // download that writes nothing) counts what WOULD be kept after skipping
+    // foreign binaries; only then is anything written.
+    let est = isize.unwrap_or(total.saturating_mul(4));
+    let est_objs = (est / lingfs::BLOCK_SIZE as u64) as usize + (est / lingfs::BLOCK_SIZE as u64 / 100) as usize + 64;
+    if est_objs > free_objs {
+        // Compressed bytes over 4x the free space: even if most of it were
+        // skippable foreign binaries the rest would not fit -- don't download
+        // 100+ MB just to find that out.
+        if total > free_bytes.saturating_mul(4) {
+            printf(alloc::format!(
+                "lingfu: {name} needs up to {} on lingfs but only {} is free -- skipped\n",
+                mb(est),
+                mb(free_bytes)
+            ));
+            return Outcome::TooBig;
+        }
+        print(b"lingfu: may not fit -- surveying the archive first (nothing is written)...\n");
+        let (sv, hex, complete) = stream_pass(&dlpath, total, Unpack::new(false, 0));
+        if let Some(e) = &sv.error {
+            printf(alloc::format!("lingfu: {name}: {e}\n"));
+            return Outcome::Failed;
+        }
+        if !complete {
+            printf(alloc::format!("lingfu: {name}: download incomplete\n"));
+            return Outcome::Failed;
+        }
+        if !sum.is_empty() && hex != sum {
+            printf(alloc::format!("lingfu: {name}: CHECKSUM MISMATCH (registry {sum}, got {hex}) -- nothing installed\n"));
+            return Outcome::Failed;
+        }
+        if sv.kept_objs + sv.files / 4 > free_objs {
+            printf(alloc::format!(
+                "lingfu: {name} needs {} on lingfs{} but only {} is free -- skipped\n",
+                mb(sv.kept_objs as u64 * lingfs::BLOCK_SIZE as u64),
+                if sv.foreign > 0 { alloc::format!(" (after skipping {} of Windows/macOS/Linux binaries)", mb(sv.foreign_bytes)) } else { alloc::string::String::new() },
+                mb(free_bytes)
+            ));
+            return Outcome::TooBig;
         }
     }
-    let Ok(pkgdirs) = core::str::from_utf8(&pkgdir[..pd]) else { return false };
-    let files = untar_install(&tar, pkgdirs);
-    if files == 0 {
+
+    printf(alloc::format!("lingfu: downloading {dlpath} ...\n"));
+    let (up, hex, complete) = stream_pass(&dlpath, total, Unpack::new(true, free_objs));
+    if let Some(e) = &up.error {
+        printf(alloc::format!("lingfu: {name}: {e} -- nothing installed\n"));
+        return Outcome::Failed;
+    }
+    if !complete {
+        printf(alloc::format!("lingfu: {name}: download incomplete -- nothing installed\n"));
+        return Outcome::Failed;
+    }
+    if sum.is_empty() {
+        print(b"lingfu: warning: the registry lists no checksum for this version\n");
+    } else if hex != sum {
+        printf(alloc::format!("lingfu: {name}: CHECKSUM MISMATCH (registry {sum}, got {hex}) -- nothing installed\n"));
+        return Outcome::Failed;
+    } else {
+        print(b"lingfu: checksum ok (BLAKE3)\n");
+    }
+    if up.dirs.is_empty() {
         print(b"lingfu: package unpacked to no installable files\n");
+        return Outcome::Failed;
+    }
+    let Ok(tree) = up.build_tree() else {
+        print(b"lingfu: could not write the package's folders (disk full?)\n");
+        return Outcome::Failed;
+    };
+    if lingfs::link_root_dir(&pkgdir, tree).is_err() {
+        print(b"lingfu: could not link the package into storage\n");
+        return Outcome::Failed;
+    }
+    // Record the installed version so `lingfu list` / `ls packages` / upgrade see it.
+    let _ = lingfs::write_in_dir("packages", name, ver.as_bytes());
+    let kept = up.files;
+    printf(alloc::format!("lingfu: installed {name} ({ver}) -- {kept} files, {} in {pkgdir}/\n", mb(up.kept_bytes)));
+    if up.foreign > 0 {
+        printf(alloc::format!("lingfu:   skipped {} non-LingOS binaries ({})\n", up.foreign, mb(up.foreign_bytes)));
+    }
+    if up.dropped > 0 {
+        printf(alloc::format!("lingfu:   {} files did not fit lingfs's limits (listed above)\n", up.dropped));
+    }
+    printf(alloc::format!("lingfu:   lingfs: {} free\n", mb(lingfs::free_objects() as u64 * lingfs::BLOCK_SIZE as u64)));
+    Outcome::Installed
+}
+
+/// Install onto the package volume (a FAT disk: the Pi's SD-card data
+/// partition or x86's second disk). Files stream into a hidden staging folder
+/// `.pkg-<name>.new`; only a complete download whose checksum matches
+/// replaces `pkg-<name>/` (FAT frees space, so a failed attempt costs nothing:
+/// the staging folder is deleted). Free space is checked against the
+/// package's unpacked size up front and again before every file.
+fn install_to_media(name: &str, ver: &str, sum: &str, dlpath: &str, total: u64, isize: Option<u64>, vol: &str) -> Outcome {
+    use crate::fs::media;
+    let base = alloc::format!("media/{vol}");
+    let Some((_, free)) = media::space(&base) else {
+        printf(alloc::format!("lingfu: {base} is not readable\n"));
+        return Outcome::Failed;
+    };
+    // gzip's ISIZE is the unpacked size mod 4 GiB: trust it only when it is
+    // plausible (at least the compressed size, download under 2 GiB); else
+    // assume the archive doubles when unpacked.
+    let est = match isize {
+        Some(n) if n >= total && total < (2u64 << 30) => n,
+        _ => total.saturating_mul(2),
+    };
+    let need = est + est / 50 + 1_000_000;
+    printf(alloc::format!("lingfu: {name} {ver}: {} download, ~{} unpacked; {} free on {base}\n", mb(total), mb(est), mb(free)));
+    if need > free {
+        printf(alloc::format!("lingfu: {name} needs about {} but only {} is free on {base} -- skipped\n", mb(need), mb(free)));
+        return Outcome::TooBig;
+    }
+    let staging = alloc::format!("{base}/.pkg-{name}.new");
+    if media::exists(&staging) {
+        media::delete_tree(&staging);
+    }
+    if !media::mkdir_p(&staging) {
+        printf(alloc::format!("lingfu: could not create {staging}\n"));
+        return Outcome::Failed;
+    }
+    printf(alloc::format!("lingfu: downloading {dlpath} to {base} ...\n"));
+    let (mut up, hex, complete) = stream_pass(dlpath, total, Unpack::new(true, 0).to_media(staging.clone(), free));
+    let bad = if let Some(e) = &up.error {
+        Some(alloc::format!("{e}"))
+    } else if !complete {
+        Some(alloc::string::String::from("download incomplete"))
+    } else if !sum.is_empty() && hex != sum {
+        Some(alloc::format!("CHECKSUM MISMATCH (registry {sum}, got {hex})"))
+    } else if up.files == 0 {
+        Some(alloc::string::String::from("the package unpacked to no installable files"))
+    } else {
+        None
+    };
+    if let Some(why) = bad {
+        if let Some(f) = up.mfile.take() {
+            media::file_abort(f);
+        }
+        media::delete_tree(&staging);
+        printf(alloc::format!("lingfu: {name}: {why} -- nothing installed\n"));
+        return Outcome::Failed;
+    }
+    if sum.is_empty() {
+        print(b"lingfu: warning: the registry lists no checksum for this version\n");
+    } else {
+        print(b"lingfu: checksum ok (BLAKE3)\n");
+    }
+    let dest = alloc::format!("{base}/pkg-{name}");
+    if media::exists(&dest) && !media::delete_tree(&dest) {
+        printf(alloc::format!("lingfu: could not remove the old {dest} -- the new files are in {staging}\n"));
+        return Outcome::Failed;
+    }
+    if !media::rename(&staging, &dest) {
+        printf(alloc::format!("lingfu: could not move {staging} to {dest}\n"));
+        return Outcome::Failed;
+    }
+    // The version record, next to the package (`vfs` maps packages/ here).
+    let _ = media::mkdir_p(&alloc::format!("{base}/packages"));
+    let _ = media::write(&alloc::format!("{base}/packages/{name}"), ver.as_bytes());
+    printf(alloc::format!("lingfu: installed {name} ({ver}) -- {} files, {} in {dest}/ (pkg-{name})\n", up.files, mb(up.kept_bytes)));
+    if up.foreign > 0 {
+        printf(alloc::format!("lingfu:   skipped {} non-LingOS binaries ({})\n", up.foreign, mb(up.foreign_bytes)));
+    }
+    if up.dropped > 0 {
+        printf(alloc::format!("lingfu:   {} files could not be stored (listed above)\n", up.dropped));
+    }
+    if let Some((_, f)) = media::space(&base) {
+        printf(alloc::format!("lingfu:   {base}: {} free\n", mb(f)));
+    }
+    Outcome::Installed
+}
+
+/// `lingfu verify <name>`: stream the latest download through BLAKE3 + gunzip +
+/// tar WITHOUT writing anything, and report the checksum verdict and what an
+/// install would keep. Works for packages far bigger than the disk.
+pub fn verify(name: &str) -> bool {
+    let (ver, sum) = match registry_info(name) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let dlpath = alloc::format!("/dl/{name}-{ver}.tgz");
+    let Some((status, total, _isize)) = probe_download(&dlpath).or_else(|| probe_download(&dlpath)) else {
+        print(b"lingfu: could not reach the registry\n");
+        return false;
+    };
+    if status == 404 {
+        printf(alloc::format!("lingfu: {name} {ver}: no published download\n"));
         return false;
     }
-    // Record the installed version so `lingfu list` / `ls packages` shows it.
-    let _ = lingfs::write_in_dir("packages", name, &verbuf[..vlen]);
-    print(b"lingfu: installed ");
-    print(name.as_bytes());
-    print(b" (");
-    print(&verbuf[..vlen]);
-    print(b") -- source in pkg-");
-    print(name.as_bytes());
-    print(b"/\n");
-    true
+    printf(alloc::format!("lingfu: verifying {dlpath} ({}) -- nothing is written\n", mb(total)));
+    let (sv, hex, complete) = stream_pass(&dlpath, total, Unpack::new(false, 0));
+    if let Some(e) = &sv.error {
+        printf(alloc::format!("lingfu: {name}: {e}\n"));
+        return false;
+    }
+    if !complete {
+        printf(alloc::format!("lingfu: {name}: download incomplete\n"));
+        return false;
+    }
+    let ok = sum.is_empty() || hex == sum;
+    printf(alloc::format!(
+        "lingfu: {name} {ver}: checksum {} (BLAKE3 {hex}); {} files, {} would be installed{}\n",
+        if sum.is_empty() { "not published" } else if ok { "ok" } else { "MISMATCH" },
+        sv.files,
+        mb(sv.kept_bytes),
+        if sv.foreign > 0 { alloc::format!(", {} of foreign binaries skipped", mb(sv.foreign_bytes)) } else { alloc::string::String::new() }
+    ));
+    ok
+}
+
+/// The version lingfu recorded for an installed package (`packages/<name>`,
+/// on the package volume or lingfs -- `vfs` looks in both).
+pub fn installed_version(name: &str) -> Option<alloc::string::String> {
+    let b = crate::vfs::read(&alloc::format!("packages/{name}"))?;
+    Some(alloc::string::String::from_utf8_lossy(&b[..b.len().min(64)]).trim().into())
+}
+
+/// Packages lingfu installed (those with a `packages/<name>` version record).
+pub fn installed_packages() -> Vec<alloc::string::String> {
+    crate::vfs::list("packages").into_iter().filter(|(_, d, _)| !d).map(|(n, _, _)| n).collect()
+}
+
+/// Bring every installed package up to the registry's latest version.
+/// Returns (updated, failed).
+pub fn upgrade_all() -> (usize, usize) {
+    if repo_override().is_some() {
+        print(b"lingfu: upgrade checks the official registry; /repo is set, so nothing to do\n");
+        return (0, 0);
+    }
+    let names = installed_packages();
+    if names.is_empty() {
+        print(b"lingfu: no packages installed yet\n");
+        return (0, 0);
+    }
+    let (mut updated, mut failed, mut current) = (0usize, 0usize, 0usize);
+    for name in &names {
+        let have = installed_version(name).unwrap_or_default();
+        match registry_info(name) {
+            Ok((latest, _)) if latest == have => {
+                current += 1;
+                printf(alloc::format!("lingfu: {name} {have} is up to date\n"));
+            },
+            Ok((latest, _)) => {
+                printf(alloc::format!("lingfu: {name} {have} -> {latest}\n"));
+                if install_registry(name) == Outcome::Installed {
+                    updated += 1;
+                } else {
+                    failed += 1;
+                }
+            },
+            Err(Outcome::Unavailable) => {},
+            Err(_) => failed += 1,
+        }
+    }
+    printf(alloc::format!("lingfu: upgrade done -- {updated} updated, {current} up to date, {failed} failed\n"));
+    (updated, failed)
+}
+
+/// Install every catalog package that isn't installed yet, skipping the ones
+/// with no download and whatever doesn't fit the disk.
+/// Returns (installed, failed); skips are reported but not counted as failures.
+pub fn install_all() -> (usize, usize) {
+    if repo_override().is_some() {
+        print(b"lingfu: install --all works against the official registry; /repo is set\n");
+        return (0, 0);
+    }
+    if !ensure_synced() {
+        return (0, 0);
+    }
+    let names: Vec<alloc::string::String> = entries().into_iter().map(|(n, _, _)| n).collect();
+    let (mut ok, mut failed, mut skipped, mut already) = (0usize, 0usize, 0usize, 0usize);
+    for (i, name) in names.iter().enumerate() {
+        if installed_version(name).is_some() || is_installed(name) {
+            already += 1;
+            continue;
+        }
+        printf(alloc::format!("lingfu: [{}/{}] {name}\n", i + 1, names.len()));
+        match install_registry(name) {
+            Outcome::Installed => ok += 1,
+            Outcome::Unavailable | Outcome::TooBig => skipped += 1,
+            Outcome::Failed => failed += 1,
+        }
+    }
+    printf(alloc::format!(
+        "lingfu: install --all done -- {ok} installed, {already} already here, {skipped} skipped, {failed} failed; lingfs {} free\n",
+        mb(lingfs::free_objects() as u64 * lingfs::BLOCK_SIZE as u64)
+    ));
+    (ok, failed)
+}
+
+/// `lingfu sync`: refresh the catalog, then upgrade what is installed.
+pub fn sync_and_upgrade() -> usize {
+    let n = sync();
+    if n > 0 {
+        printf(alloc::format!("lingfu: {n} packages in the catalog\n"));
+        if lingfs::is_mounted() {
+            upgrade_all();
+        }
+    }
+    n
 }
 
 /// Append one printable-ASCII byte to CATALOG at `w`, returning the new `w`.
@@ -638,7 +1460,7 @@ fn normalize_json(raw: &[u8]) -> usize {
         w = json_copy_number(obj, b"downloads", cat, w);
         w = cat_push_sep(cat, w);
         w = cat_push_sep(cat, w); // filename: empty for the official registry
-        w = json_copy_string(obj, b"description", cat, w, 96);
+        w = json_copy_string(obj, b"description", cat, w, DESC_MAX);
         if w < cat.len() {
             cat[w] = b'\n';
             w += 1;
@@ -785,6 +1607,12 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 /// from the synced catalog, HTTP-GET it, land the blob in lingfs, unpack
 /// via the existing `.lpkg` path. Returns true on a completed install.
 pub fn install(name: &str) -> bool {
+    // `lingfu install --all` (every front end funnels through here): install
+    // every catalog package that fits; true when none failed.
+    if name == "--all" {
+        let (_ok, failed) = install_all();
+        return failed == 0;
+    }
     // Official registry (no local /repo override): resolve the version and pull
     // the source tarball from /dl, unpacking it into lingfs. A local /repo
     // still serves the catalog.txt-listed `.lpkg` blobs (the branch below).

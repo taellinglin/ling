@@ -107,6 +107,72 @@ fn song() -> Daw {
     d
 }
 
+/// the chord of the song at a beat (pitch classes): Am F C G a bar each from beat 16, none in the intro and in the break (96..112)
+fn chord(beat: f64) -> Option<[u8; 3]> {
+    if beat < 16.0 || (96.0..112.0).contains(&beat) || beat >= 144.0 {
+        return None;
+    }
+    Some([[9, 0, 4], [5, 9, 0], [0, 4, 7], [7, 11, 2]][((beat / 4.0).floor() as usize) % 4])
+}
+
+/// How well the chops on `track` fit the song: every pitched chop note is played alone by a sampler over the bank file and its pitch
+/// measured. Returns (notes measured, how many sound within 30 cents of a tone of the chord at their beat - or of the key's scale
+/// where no chord plays -, median distance to it in cents, median |heard - note key| in cents).
+fn measure(d: &mut Daw, track: usize, bank: &str) -> (usize, usize, f32, f32) {
+    use ling_daw::dsp::Instrument;
+    let (stereo, rate) = ling_daw::dsp::sampler::load_audio(bank).expect("bank");
+    let mut sm = ling_daw::dsp::sampler::Sampler::new(rate as f32);
+    let mut z = ling_daw::dsp::sampler::Zone::new("v", "");
+    z.root = 60;
+    sm.add_loaded(z, stereo, rate);
+    let (mut n_meas, mut fit) = (0usize, 0usize);
+    let (mut dist, mut keyerr) = (vec![], vec![]);
+    let clips = num(call(d, "daw_clip_count", &[n(track as f64)])) as usize;
+    for c in 0..clips {
+        let start = num(call(d, "daw_clip_get", &[n(track as f64), n(c as f64), s("start")]));
+        let Val::List(ns) = call(d, "daw_clip_notes", &[n(track as f64), n(c as f64)]) else { continue };
+        let Val::List(ly) = call(d, "daw_note_lyrics", &[n(track as f64), n(c as f64)]) else { continue };
+        for (i, l) in ly.iter().enumerate() {
+            let Val::Str(l) = l else { continue };
+            let Some((a, b, cents)) = ling_daw::dsp::sampler::parse_slice(l) else { continue };
+            let (at, key) = (num(ns[i * 7].clone()) + start, num(ns[i * 7 + 2].clone()));
+            let moved = key - 60.0 + cents as f64 / 100.0;
+            let frames = ((b - a) as f64 / 2f64.powf(moved / 12.0)) as usize;
+            sm.all_off();
+            let mut buf = vec![0f32; 512];
+            for _ in 0..8 {
+                sm.render(&mut buf);
+            }
+            sm.note_on_lyric(key as u8, 0.9, 0.0, 0.5, 0.5, l, 1.0);
+            let mut mono: Vec<f32> = vec![];
+            while mono.len() < frames {
+                buf.fill(0.0);
+                sm.render(&mut buf);
+                mono.extend(buf.chunks(2).map(|f| (f[0] + f[1]) * 0.5));
+            }
+            mono.truncate(frames);
+            let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), rate) else { continue };
+            n_meas += 1;
+            let pcs: Vec<u8> = chord(at).map(|c| c.to_vec()).unwrap_or(vec![0, 2, 4, 5, 7, 9, 11]);
+            let dd = pcs.iter().map(|pc| {
+                let x = (f.midi - *pc as f32).rem_euclid(12.0);
+                x.min(12.0 - x) * 100.0
+            }).fold(f32::MAX, f32::min);
+            dist.push(dd);
+            fit += (dd < 30.0) as usize;
+            if dd >= 30.0 && std::env::var("CHOPS_DEBUG").is_ok() {
+                println!("miss at {at:.2} key {key} heard {:.2} chord {:?} lyric {l}", f.midi, chord(at));
+            }
+            keyerr.push(((f.midi - key as f32) * 100.0).abs());
+        }
+    }
+    let med = |v: &mut Vec<f32>| {
+        v.sort_by(f32::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(f32::NAN)
+    };
+    (n_meas, fit, med(&mut dist), med(&mut keyerr))
+}
+
 #[test]
 fn chopping_a_ling_voice_part_makes_syllable_chops_with_builds() {
     let mut d = song();
@@ -140,6 +206,11 @@ fn chopping_a_ling_voice_part_makes_syllable_chops_with_builds() {
     assert!(ly.iter().all(|l| matches!(l, Val::Str(s) if s.starts_with('@'))), "every chop note carries a slice");
     // the original vocal is untouched
     assert_eq!(num(call(&mut d, "daw_clip_count", &[n(0.0)])), 2.0);
+    // tuned to the song: the chops sound on the chord tones of the bar they play in
+    assert!(msg.contains("tuned to the chords"), "{msg}");
+    let (m, fit, dist, kerr) = measure(&mut d, tracks_before as usize, "cache/chops/chops_Lead_Vocal_2.wav");
+    println!("tuned: {fit} of {m} measured chop notes within 30 cents of a chord tone (median {dist:.1} cents off, {kerr:.1} cents from the note key)");
+    assert!(m >= 60 && fit as f64 >= 0.9 * m as f64, "{fit} of {m}");
     let _ = std::fs::remove_file("cache/chops/chops_Lead_Vocal_2.wav");
 }
 
@@ -162,4 +233,19 @@ fn render_chops_demo() {
     call(&mut d, "daw_bounce", &[s(&format!("{dir}/3_chops_and_drums.wav")), n(0.0), n(144.0), n(2.0), n(16.0), s("wav"), n(0.5)]);
     call(&mut d, "daw_track_set", &[n(1.0), s("mute"), n(1.0)]);
     call(&mut d, "daw_bounce", &[s(&format!("{dir}/4_chops_only.wav")), n(0.0), n(144.0), n(2.0), n(16.0), s("wav"), n(0.5)]);
+    let tuned = measure(&mut d, 4, "cache/chops/chops_Lead_Vocal_2.wav");
+    // the same chops as sung (tune=off), for comparison
+    let mut u = song();
+    let msg_u = text(call(&mut u, "daw_chopx_make", &[n(0.0), s("seed=2;density=0.7;stutter=0.6;tune=off")]));
+    println!("{msg_u}");
+    call(&mut u, "daw_bounce", &[s(&format!("{dir}/5_with_chops_untuned.wav")), n(0.0), n(144.0), n(2.0), n(16.0), s("wav"), n(0.5)]);
+    for t in [0.0, 1.0, 2.0, 3.0] {
+        call(&mut u, "daw_track_set", &[n(t), s("mute"), n(1.0)]);
+    }
+    call(&mut u, "daw_bounce", &[s(&format!("{dir}/6_chops_only_untuned.wav")), n(0.0), n(144.0), n(2.0), n(16.0), s("wav"), n(0.5)]);
+    let untuned = measure(&mut u, 4, "cache/chops/chops_Lead_Vocal_2.wav");
+    let line = |name: &str, x: (usize, usize, f32, f32)| format!("{name}: {} of {} measured chop notes within 30 cents of a tone of the chord at their beat ({:.0} %), median {:.1} cents from the nearest chord tone, {:.1} cents from the note key", x.1, x.0, 100.0 * x.1 as f64 / x.0.max(1) as f64, x.2, x.3);
+    let report = format!("{msg}\n\nuntuned (tune=off): {msg_u}\n\nmeasured (each chop note rendered alone, YIN pitch of the slice):\n{}\n{}\n", line("tuned", tuned), line("untuned", untuned));
+    std::fs::write(format!("{dir}/summary.txt"), &report).unwrap();
+    println!("{report}");
 }

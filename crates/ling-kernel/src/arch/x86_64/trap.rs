@@ -306,6 +306,8 @@ pub fn resume_to_kernel() -> ! {
 #[no_mangle]
 extern "C" fn timer_trap_rust(frame: *mut TrapFrame) -> u64 {
     unsafe { TICKS += 1 };
+    // HD Audio's ring free-runs: pause it if the audio pump has stalled.
+    crate::drivers::hda::watchdog();
     pic::eoi(0);
     let frame_ref = unsafe { &mut *frame };
     if frame_ref.from_userspace() {

@@ -771,3 +771,186 @@ impl Volume {
         Ok(())
     }
 }
+
+/// A file being written cluster by cluster (`Volume::stream_*`): nothing
+/// larger than one cluster is buffered, so a file of any size up to FAT's
+/// 4 GiB limit streams to disk. The directory entry appears only at
+/// `stream_finish`; `stream_abort` gives the clusters back.
+pub struct StreamFile {
+    first: u32,
+    last: u32,
+    size: u64,
+    buf: Vec<u8>,
+}
+
+/// FAT32's largest file (the directory entry's size field is 32-bit).
+pub const MAX_FILE: u64 = u32::MAX as u64;
+
+impl Volume {
+    pub fn stream_begin(&self) -> StreamFile {
+        StreamFile { first: 0, last: 0, size: 0, buf: Vec::with_capacity(self.cluster_bytes()) }
+    }
+
+    fn stream_flush(&mut self, d: &mut dyn Disk, f: &mut StreamFile) -> Result<(), ()> {
+        if f.buf.is_empty() {
+            return Ok(());
+        }
+        let c = self.alloc(d).ok_or(())?; // disk full
+        if f.last != 0 {
+            self.fat_set(d, f.last, c)?;
+        } else {
+            f.first = c;
+        }
+        f.last = c;
+        f.buf.resize(self.cluster_bytes(), 0);
+        d.write(self.cluster_lba(c), &f.buf)?;
+        f.buf.clear();
+        Ok(())
+    }
+
+    /// Append bytes. Err when the disk is full or the file passes 4 GiB.
+    pub fn stream_write(&mut self, d: &mut dyn Disk, f: &mut StreamFile, mut data: &[u8]) -> Result<(), ()> {
+        if f.size + data.len() as u64 > MAX_FILE {
+            return Err(());
+        }
+        f.size += data.len() as u64;
+        let cb = self.cluster_bytes();
+        while !data.is_empty() {
+            let take = (cb - f.buf.len()).min(data.len());
+            f.buf.extend_from_slice(&data[..take]);
+            data = &data[take..];
+            if f.buf.len() == cb {
+                self.stream_flush(d, f)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Write the last partial cluster and create (or replace) `path`'s entry.
+    pub fn stream_finish(&mut self, d: &mut dyn Disk, mut f: StreamFile, path: &str) -> Result<(), ()> {
+        self.stream_flush(d, &mut f)?;
+        let (parent, name) = split_path(path);
+        let pe = self.lookup(d, parent)?.ok_or(())?;
+        if !pe.is_dir {
+            self.free_chain(d, f.first);
+            return Err(());
+        }
+        let dir = self.dir_of(&pe);
+        let r = match self.find_in(d, dir, name)? {
+            Some(e) if e.is_dir => Err(()),
+            Some(e) => {
+                if e.cluster != 0 {
+                    self.free_chain(d, e.cluster);
+                }
+                self.update_entry(d, &e, f.first, f.size as u32)
+            },
+            None => self.create(d, dir, name, 0, f.first, f.size as u32).map(|_| ()),
+        };
+        if r.is_err() && f.first != 0 {
+            self.free_chain(d, f.first);
+        }
+        r
+    }
+
+    /// Drop a half-written file: its clusters go back to the free pool.
+    pub fn stream_abort(&mut self, d: &mut dyn Disk, f: StreamFile) {
+        if f.first != 0 {
+            self.free_chain(d, f.first);
+        }
+    }
+}
+
+// ── random-access reads of big files (a language model's weights) ──────────
+
+/// A file opened for reading anywhere in it without holding it in memory:
+/// its cluster chain walked once into runs of consecutive sectors
+/// `(file offset, first absolute LBA, bytes)`, so a read at any offset of a
+/// multi-GB file costs no FAT walk. Valid while the file is not rewritten.
+pub struct RangeFile {
+    pub size: u64,
+    runs: Vec<(u64, u32, u64)>,
+}
+
+impl Volume {
+    /// Open `path` (a file) for [`RangeFile::read_at`].
+    pub fn open_range(&mut self, d: &mut dyn Disk, path: &str) -> Result<RangeFile, ()> {
+        let e = self.lookup(d, path)?.ok_or(())?;
+        if e.is_dir {
+            return Err(());
+        }
+        let size = e.size as u64;
+        let cb = self.cluster_bytes() as u64;
+        let mut runs: Vec<(u64, u32, u64)> = Vec::new();
+        let mut c = e.cluster;
+        let mut off = 0u64;
+        let mut guard = 0u32;
+        while off < size && self.valid_cluster(c) && !self.eoc(c) && guard < 4_000_000 {
+            let lba = self.cluster_lba(c);
+            match runs.last_mut() {
+                // this cluster follows the last run on the disk: extend it
+                Some(r) if r.1 as u64 + r.2 / SECTOR as u64 == lba as u64 => r.2 += cb,
+                _ => runs.push((off, lba, cb)),
+            }
+            off += cb;
+            c = self.fat_get(d, c)?;
+            guard += 1;
+        }
+        if off < size {
+            return Err(()); // the chain is shorter than the file
+        }
+        Ok(RangeFile { size, runs })
+    }
+}
+
+impl RangeFile {
+    /// Fill `buf` with the bytes at `offset..offset + buf.len()` (all of them
+    /// inside the file). Whole sectors go straight into `buf`.
+    pub fn read_at(&self, d: &mut dyn Disk, offset: u64, buf: &mut [u8]) -> Result<(), ()> {
+        let end = offset.checked_add(buf.len() as u64).ok_or(())?;
+        if end > self.size {
+            return Err(());
+        }
+        let mut pos = offset;
+        let mut done = 0usize;
+        // the run holding `offset`
+        let mut i = match self.runs.binary_search_by(|r| r.0.cmp(&offset)) {
+            Ok(i) => i,
+            Err(i) => i.checked_sub(1).ok_or(())?,
+        };
+        let mut tmp = [0u8; SECTOR];
+        while done < buf.len() {
+            let (roff, lba, rlen) = *self.runs.get(i).ok_or(())?;
+            let in_run = pos - roff;
+            if in_run >= rlen {
+                i += 1;
+                continue;
+            }
+            let take = ((rlen - in_run) as usize).min(buf.len() - done);
+            let sec = lba + (in_run / SECTOR as u64) as u32;
+            let skip = (in_run % SECTOR as u64) as usize;
+            let out = &mut buf[done..done + take];
+            if skip == 0 && take >= SECTOR {
+                // the whole sectors straight in, a partial last one through tmp
+                let whole = take / SECTOR * SECTOR;
+                d.read(sec, &mut out[..whole])?;
+                if whole < take {
+                    d.read(sec + (whole / SECTOR) as u32, &mut tmp)?;
+                    let n = take - whole;
+                    out[whole..].copy_from_slice(&tmp[..n]);
+                }
+            } else {
+                // a partial first sector, then recurse on the rest of this run
+                d.read(sec, &mut tmp)?;
+                let n = (SECTOR - skip).min(take);
+                out[..n].copy_from_slice(&tmp[skip..skip + n]);
+                pos += n as u64;
+                done += n;
+                continue;
+            }
+            pos += take as u64;
+            done += take;
+            i += 1;
+        }
+        Ok(())
+    }
+}

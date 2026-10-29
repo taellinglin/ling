@@ -341,7 +341,8 @@ mod tests {
         let tones = vec![9, 0, 4]; // A minor
         // within the cap: the intended note itself
         assert_eq!(t.fit(69.2, 72, &tones), (72, false));
-        assert_eq!(t.fit(69.2, 64, &tones), (64, false));
+        assert_eq!(t.fit(68.0, 64, &tones), (64, false));
+        assert_eq!(t.fit(69.2, 64, &tones), (69, true), "5.2 semitones down is too far: A itself (an octave of 64 is further still)");
         // an octave up is too far: the same note an octave nearer
         assert_eq!(t.fit(69.2, 81, &tones), (69, true));
         assert_eq!(t.fit(57.0, 76, &tones), (52, true));

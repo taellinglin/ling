@@ -14,7 +14,7 @@
 //! * **Transient** - transient shaper: more or less attack and sustain, from the difference of a fast and a slow envelope.
 //!
 //! All parameters are 0..1 like every other effect; every effect is finite for any input and settings (tests below).
-use super::fx::Effect;
+use super::fx::{Effect, KeyFollow, KeyIn, KeySource};
 use crate::dsp::TAU;
 
 // ── shared parts ────────────────────────────────────────────────────────────────
@@ -45,13 +45,13 @@ impl Tsvf {
     }
 }
 
-fn g_of(fc: f32, sr: f32) -> f32 {
+pub(crate) fn g_of(fc: f32, sr: f32) -> f32 {
     (std::f32::consts::PI * fc.clamp(10.0, sr * 0.45) / sr).tan()
 }
 
 /// a Linkwitz-Riley 4th-order split (two Butterworth sections per side): low + high sum to an all-pass
 #[derive(Clone, Copy, Default)]
-struct Lr4 {
+pub(crate) struct Lr4 {
     l1: Tsvf,
     l2: Tsvf,
     h1: Tsvf,
@@ -59,7 +59,7 @@ struct Lr4 {
 }
 impl Lr4 {
     #[inline]
-    fn split(&mut self, x: f32, g: f32) -> (f32, f32) {
+    pub(crate) fn split(&mut self, x: f32, g: f32) -> (f32, f32) {
         const K: f32 = std::f32::consts::SQRT_2;
         let lo = self.l2.run(self.l1.run(x, g, K).0, g, K).0;
         let hi = self.h2.run(self.h1.run(x, g, K).2, g, K).2;
@@ -111,21 +111,21 @@ impl Hilbert {
 }
 
 /// a fractional delay line
-struct Line {
+pub(crate) struct Line {
     buf: Vec<f32>,
     w: usize,
 }
 impl Line {
-    fn new(n: usize) -> Line {
+    pub(crate) fn new(n: usize) -> Line {
         Line { buf: vec![0.0; n.max(16)], w: 0 }
     }
     #[inline]
-    fn push(&mut self, x: f32) {
+    pub(crate) fn push(&mut self, x: f32) {
         self.buf[self.w] = if x.is_finite() { x } else { 0.0 };
         self.w = (self.w + 1) % self.buf.len();
     }
     #[inline]
-    fn read(&self, d: f32) -> f32 {
+    pub(crate) fn read(&self, d: f32) -> f32 {
         let n = self.buf.len();
         let d = d.clamp(1.0, (n - 3) as f32);
         let p = self.w as f32 - d + n as f32;
@@ -144,17 +144,17 @@ impl Line {
 }
 
 #[inline]
-fn db2lin(d: f32) -> f32 {
+pub(crate) fn db2lin(d: f32) -> f32 {
     10f32.powf(d / 20.0)
 }
 #[inline]
-fn lin2db(x: f32) -> f32 {
+pub(crate) fn lin2db(x: f32) -> f32 {
     20.0 * x.max(1e-9).log10()
 }
 
 /// a quick sanity net: a non-finite sample becomes silence
 #[inline]
-fn fin(x: f32) -> f32 {
+pub(crate) fn fin(x: f32) -> f32 {
     if x.is_finite() {
         x.clamp(-8.0, 8.0)
     } else {
@@ -164,10 +164,11 @@ fn fin(x: f32) -> f32 {
 
 // ── OTT ─────────────────────────────────────────────────────────────────────────
 
-pub const OTT_PARAMS: [(&str, f32); 9] = [("depth", 0.6), ("time", 0.3), ("upward", 0.6), ("downward", 0.8), ("low", 0.5), ("mid", 0.5), ("high", 0.5), ("in", 0.5), ("out", 0.5)];
+pub const OTT_PARAMS: [(&str, f32); 10] = [("depth", 0.6), ("time", 0.3), ("upward", 0.6), ("downward", 0.8), ("low", 0.5), ("mid", 0.5), ("high", 0.5), ("in", 0.5), ("out", 0.5), ("stages", 0.0)];
 
-pub struct Ott {
-    sr: f32,
+/// one up-and-down compressor: the band splits and the band envelopes
+#[derive(Clone, Copy, Default)]
+struct OttStage {
     x1: [Lr4; 2],
     x2: [Lr4; 2],
     ap_low: [Lr4; 2],
@@ -175,6 +176,14 @@ pub struct Ott {
     /// a fast peak follower per band: the upward gain drops the moment a note starts, so there is no spike out of silence
     fast: [f32; 3],
     gain_db: [f32; 3],
+}
+
+/// OTT: `stages` (1-3) identical compressors in series - each pass lifts the detail and flattens the peaks again (the
+/// "OTT on OTT" trick of bass music); `in` drives the first, `out` sets the level after the last.
+pub struct Ott {
+    sr: f32,
+    st: [OttStage; 3],
+    stages: usize,
     depth: f32,
     time: f32,
     up: f32,
@@ -185,20 +194,14 @@ pub struct Ott {
 }
 impl Ott {
     pub fn new(sr: f32) -> Ott {
-        Ott { sr, x1: Default::default(), x2: Default::default(), ap_low: Default::default(), env: [0.0; 3], fast: [0.0; 3], gain_db: [0.0; 3], depth: 0.6, time: 0.3, up: 0.6, down: 0.8, band: [0.0; 3], pre: 0.0, post: 0.0 }
+        Ott { sr, st: [OttStage::default(); 3], stages: 1, depth: 0.6, time: 0.3, up: 0.6, down: 0.8, band: [0.0; 3], pre: 0.0, post: 0.0 }
     }
 }
 /// per band: downward threshold (dBFS), attack and release at time = 1 (seconds)
 const OTT_BAND: [(f32, f32, f32); 3] = [(-28.0, 0.048, 0.28), (-30.0, 0.022, 0.28), (-34.0, 0.0135, 0.13)];
-impl Effect for Ott {
-    fn process(&mut self, buf: &mut [f32]) {
-        let (g1, g2) = (g_of(88.0, self.sr), g_of(2500.0, self.sr));
-        let pre = db2lin(self.pre);
-        let post = db2lin(self.post);
-        let tscale = 0.05 + self.time * 1.95;
-        let coef: Vec<(f32, f32)> = OTT_BAND.iter().map(|b| ((-1.0 / (b.1 * tscale * self.sr)).exp(), (-1.0 / (b.2 * tscale * self.sr)).exp())).collect();
-        let bgain = [db2lin(self.band[0]), db2lin(self.band[1]), db2lin(self.band[2])];
-        let kfa = (-1.0 / (0.0005 * self.sr)).exp();
+impl OttStage {
+    #[allow(clippy::too_many_arguments)]
+    fn run(&mut self, buf: &mut [f32], g1: f32, g2: f32, pre: f32, post: f32, coef: &[(f32, f32); 3], bgain: &[f32; 3], kfa: f32, depth: f32, up: f32, down: f32) {
         for fr in buf.chunks_exact_mut(2) {
             let mut bands = [[0.0f32; 2]; 3];
             for c in 0..2 {
@@ -222,13 +225,13 @@ impl Effect for Ott {
                 let t = OTT_BAND[b].0;
                 let mut g = 0.0;
                 if d > t {
-                    g -= (d - t) * (1.0 - 1.0 / 66.0) * self.down;
+                    g -= (d - t) * (1.0 - 1.0 / 66.0) * down;
                 } else {
                     // upward, faded out near silence so the noise floor is not pulled up
                     let floor = ((du + 78.0) / 18.0).clamp(0.0, 1.0);
-                    g += ((t - du).max(0.0) * (1.0 - 1.0 / 4.0) * self.up).min(36.0) * floor;
+                    g += ((t - du).max(0.0) * (1.0 - 1.0 / 4.0) * up).min(36.0) * floor;
                 }
-                self.gain_db[b] = g * self.depth;
+                self.gain_db[b] = g * depth;
             }
             for c in 0..2 {
                 let mut y = 0.0;
@@ -237,6 +240,25 @@ impl Effect for Ott {
                 }
                 fr[c] = fin(y * post);
             }
+        }
+    }
+}
+impl Effect for Ott {
+    fn process(&mut self, buf: &mut [f32]) {
+        let (g1, g2) = (g_of(88.0, self.sr), g_of(2500.0, self.sr));
+        let pre = db2lin(self.pre);
+        let post = db2lin(self.post);
+        let tscale = 0.05 + self.time * 1.95;
+        let mut coef = [(0.0f32, 0.0f32); 3];
+        for (c, b) in coef.iter_mut().zip(OTT_BAND.iter()) {
+            *c = ((-1.0 / (b.1 * tscale * self.sr)).exp(), (-1.0 / (b.2 * tscale * self.sr)).exp());
+        }
+        let bgain = [db2lin(self.band[0]), db2lin(self.band[1]), db2lin(self.band[2])];
+        let kfa = (-1.0 / (0.0005 * self.sr)).exp();
+        let n = self.stages.clamp(1, 3);
+        for k in 0..n {
+            let (a, b) = (if k == 0 { pre } else { 1.0 }, if k + 1 == n { post } else { 1.0 });
+            self.st[k].run(buf, g1, g2, a, b, &coef, &bgain, kfa, self.depth, self.up, self.down);
         }
     }
     fn set_param(&mut self, n: &str, v: f32) {
@@ -251,6 +273,16 @@ impl Effect for Ott {
             "high" => self.band[2] = (v - 0.5) * 24.0,
             "in" => self.pre = (v - 0.5) * 24.0,
             "out" => self.post = (v - 0.5) * 24.0,
+            "stages" => {
+                let n = 1 + ((v * 3.0) as usize).min(2);
+                if n > self.stages {
+                    // a stage switched on starts from rest
+                    for k in self.stages..n {
+                        self.st[k] = OttStage::default();
+                    }
+                }
+                self.stages = n;
+            }
             _ => {}
         }
     }
@@ -258,7 +290,11 @@ impl Effect for Ott {
         "OTT"
     }
     fn view(&self) -> Vec<f32> {
-        self.gain_db.iter().map(|g| ((g + 24.0) / 48.0).clamp(0.0, 1.0)).collect()
+        // the gain of each band (summed over the stages in use)
+        (0..3).map(|b| {
+            let g: f32 = if self.stages <= 1 { self.st[0].gain_db[b] } else { self.st[..self.stages].iter().map(|s| s.gain_db[b]).sum() };
+            ((g + 24.0) / 48.0).clamp(0.0, 1.0)
+        }).collect()
     }
 }
 
@@ -373,7 +409,7 @@ impl Effect for SplitDrive {
 
 // ── Comb ────────────────────────────────────────────────────────────────────────
 
-pub const COMB_PARAMS: [(&str, f32); 8] = [("note", 0.375), ("fine", 0.5), ("feedback", 0.85), ("damp", 0.3), ("rate", 0.2), ("sweep", 0.0), ("stereo", 0.2), ("mix", 0.5)];
+pub const COMB_PARAMS: [(&str, f32); 11] = [("note", 0.375), ("fine", 0.5), ("feedback", 0.85), ("damp", 0.3), ("rate", 0.2), ("sweep", 0.0), ("stereo", 0.2), ("mix", 0.5), ("keytrack", 0.0), ("track", 0.0), ("kt oct", 0.5)];
 
 pub struct Comb {
     sr: f32,
@@ -388,11 +424,28 @@ pub struct Comb {
     sweep: f32,
     stereo: f32,
     mix: f32,
+    /// key tracking: 0 off (the `note` knob), 1 the track's own notes, 2 the song's chord (its lowest note), 3 another track
+    kt: usize,
+    kt_track: usize,
+    kt_oct: f32,
+    key: KeyIn,
+    /// the followed note (semitones) and where the tuning is on its way to it
+    kt_target: f32,
+    kt_semis: f32,
+    kt_known: bool,
 }
 impl Comb {
     pub fn new(sr: f32) -> Comb {
         let n = (sr / 15.0) as usize + 8;
-        Comb { sr, line: [Line::new(n), Line::new(n)], lp: [0.0; 2], ph: 0.0, note: 48.0, fine: 0.0, fb: 0.7, damp: 0.3, rate: 0.5, sweep: 0.0, stereo: 0.0, mix: 0.5 }
+        Comb { sr, line: [Line::new(n), Line::new(n)], lp: [0.0; 2], ph: 0.0, note: 48.0, fine: 0.0, fb: 0.7, damp: 0.3, rate: 0.5, sweep: 0.0, stereo: 0.0, mix: 0.5, kt: 0, kt_track: 0, kt_oct: 0.0, key: KeyIn::default(), kt_target: 48.0, kt_semis: 48.0, kt_known: false }
+    }
+    fn key_src(&self) -> Option<KeySource> {
+        match self.kt {
+            1 => Some(KeySource::Own),
+            2 => Some(KeySource::Auto),
+            3 => Some(KeySource::Track(self.kt_track)),
+            _ => None,
+        }
     }
 }
 impl Effect for Comb {
@@ -400,12 +453,31 @@ impl Effect for Comb {
         let dl = 1.0 - self.damp * 0.92;
         // a comb's gain grows with its feedback: scaled back so the level stays even across the knob
         let norm = 1.0 - self.fb.abs() * 0.85;
+        let kt = self.kt > 0;
+        if kt && self.key.fresh {
+            // the lowest followed note, moved by whole octaves
+            self.key.fresh = false;
+            if let Some(&k) = self.key.keys().first() {
+                self.kt_target = k as f32 + self.kt_oct * 12.0;
+                if !self.kt_known {
+                    self.kt_semis = self.kt_target;
+                    self.kt_known = true;
+                }
+            }
+        }
+        let kt = kt && self.kt_known;
+        // a glide of about 12 ms to the next note: no click when the tuning jumps
+        let kg = 1.0 - (-1.0 / (0.012 * self.sr)).exp();
         for fr in buf.chunks_exact_mut(2) {
             self.ph = (self.ph + self.rate / self.sr).fract();
             let lfo = (TAU * self.ph).sin() * self.sweep * 12.0;
+            if kt {
+                self.kt_semis += (self.kt_target - self.kt_semis) * kg;
+            }
+            let base = if kt { self.kt_semis } else { self.note };
             for c in 0..2 {
                 let st = if c == 0 { -self.stereo } else { self.stereo } * 0.35;
-                let semis = self.note + self.fine + lfo + st;
+                let semis = base + self.fine + lfo + st;
                 let f = 440.0 * 2f32.powf((semis - 69.0) / 12.0);
                 let d = self.sr / f.max(15.0);
                 let x = fin(fr[c]);
@@ -427,11 +499,32 @@ impl Effect for Comb {
             "sweep" => self.sweep = v,
             "stereo" => self.stereo = v,
             "mix" => self.mix = v,
+            "keytrack" => {
+                self.kt = ((v * 4.0) as usize).min(3);
+                self.key.set_src(self.key_src());
+            }
+            "track" => {
+                self.kt_track = (v * 31.0).round() as usize;
+                self.key.set_src(self.key_src());
+            }
+            "kt oct" => {
+                let o = ((v - 0.5) * 4.0).round();
+                if o != self.kt_oct {
+                    self.kt_target += (o - self.kt_oct) * 12.0;
+                    self.kt_oct = o;
+                }
+            }
             _ => {}
         }
     }
     fn name(&self) -> &'static str {
         "Comb"
+    }
+    fn key_follow(&self) -> Option<KeyFollow> {
+        self.key.follow()
+    }
+    fn set_keys(&mut self, keys: &[u8], from: f64, until: f64) {
+        self.key.set(keys, from, until);
     }
 }
 

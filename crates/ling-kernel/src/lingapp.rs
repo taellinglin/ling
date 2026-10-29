@@ -966,6 +966,16 @@ fn parked_apps() -> &'static mut Vec<AppCtx> {
     unsafe { &mut *(&raw mut PARKED_APPS) }
 }
 
+/// The app parked most recently (the one the idle lock just took off screen).
+pub fn last_parked() -> Option<String> {
+    parked_apps().last().map(|a| String::from(a.name.as_str()))
+}
+
+/// Is this built-in app running (on screen or parked)?
+pub fn is_running(name: &str) -> bool {
+    apps_running().iter().any(|a| a == name)
+}
+
 fn active_app() -> Option<&'static mut AppCtx> {
     unsafe { (*(&raw mut ACTIVE_APP)).as_mut() }
 }
@@ -3274,8 +3284,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         },
         b"px_image" => boolean(px_image(args)),
         // Picture handles (the PC decodes files into images it draws by id): not on the kernel yet.
-        b"image_load" | b"image_w" | b"image_h" => num(-1.0),
-        b"image_draw" | b"image_replace" | b"image_free" => UNIT,
+        b"image_load" | b"image_w" | b"image_h" | b"image_fetch" | b"image_job" | b"image_svg" | b"image_resized" | b"image_tint" | b"re_compile" | b"image_width" | b"image_height" => num(-1.0),
+        b"image_draw" | b"image_replace" | b"image_free" | b"image_fetch_cancel" => UNIT,
+        b"re_exec" | b"re_names" => list_from(alloc::vec::Vec::new()),
+        b"re_error" => mk_str("regular expressions are not available on LingOS yet"),
         b"os_home_folders" => list_from(HOME_FOLDERS.iter().map(|f| mk_str(f)).collect()),
         b"os_user" => mk_str(&os_user()),
         // the iso_* programs are isolates of an app (iso.rs), not apps of their own
@@ -3318,6 +3330,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
             mk_str(&String::from_utf8_lossy(last))
         },
         b"lingfu_sync" => num(crate::drivers::lingfu::sync() as f64),
+        // Bulk jobs (blocking; streamed installs print progress to the console):
+        // how many packages were updated / newly installed.
+        b"lingfu_upgrade_all" => num(crate::drivers::lingfu::upgrade_all().0 as f64),
+        b"lingfu_install_all" => num(crate::drivers::lingfu::install_all().0 as f64),
         b"os_packages" => list_from(crate::drivers::lingfu::installed_apps().iter().map(|s| mk_str(s)).collect()),
         b"os_platform" => mk_str(if cfg!(target_arch = "aarch64") { "LingOS rpi5" } else { "LingOS x86-64" }),
         b"os_app_run" => boolean(app_run(&path_arg(args, 0))),
@@ -3577,6 +3593,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
 
         _ => {
             let _ = str_of;
+            // llm_* (the language model) and daw_ai_available
+            if let Some(v) = crate::drivers::llm::dispatch(name, args) {
+                return Some(v);
+            }
             return crate::drivers::g3d::dispatch(name, args);
         },
     })

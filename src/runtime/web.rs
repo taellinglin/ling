@@ -832,7 +832,11 @@ pub fn get_blocking(url: &str) -> (u16, String) {
     let handle = async_runtime_handle();
     let url = url.to_string();
     handle.block_on(async move {
-        let client = reqwest::Client::new();
+        // a browser-shaped User-Agent: many sites refuse (or strip down) requests without one
+        let client = reqwest::Client::builder()
+            .user_agent(BROWSER_UA)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         match client.get(&url).send().await {
             Ok(resp) => {
                 let status = resp.status().as_u16();
@@ -841,6 +845,68 @@ pub fn get_blocking(url: &str) -> (u16, String) {
             },
             Err(_) => (0, String::new()),
         }
+    })
+}
+
+/// Fetches every address concurrently and blocks until all are in: the bodies in order, ""
+/// for one that failed or answered with an HTTP error.
+pub fn get_all_blocking(urls: &[String]) -> Vec<String> {
+    let handle = async_runtime_handle();
+    let urls = urls.to_vec();
+    handle.block_on(async move {
+        let client = reqwest::Client::builder()
+            .user_agent(BROWSER_UA)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        let jobs = urls.into_iter().map(|u| {
+            let client = client.clone();
+            tokio::spawn(async move {
+                match client.get(&u).send().await {
+                    Ok(resp) if resp.status().as_u16() < 400 => resp.text().await.unwrap_or_default(),
+                    _ => String::new(),
+                }
+            })
+        });
+        let mut out = Vec::new();
+        for j in jobs.collect::<Vec<_>>() {
+            out.push(j.await.unwrap_or_default());
+        }
+        out
+    })
+}
+
+const BROWSER_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Horizon/1.0";
+
+/// Fetches `url` as raw bytes (images, media) with its content type, blocking the calling
+/// thread (callers run it on a worker thread of their own). No cookies and no Referer are
+/// sent. Bodies over `max` bytes are refused.
+pub fn get_bytes_blocking(url: &str, max: usize) -> Result<(Vec<u8>, String), String> {
+    let handle = async_runtime_handle();
+    let url = url.to_string();
+    handle.block_on(async move {
+        let client = reqwest::Client::builder()
+            .user_agent(BROWSER_UA)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        if status >= 400 {
+            return Err(format!("HTTP {status}"));
+        }
+        if resp.content_length().is_some_and(|n| n as usize > max) {
+            return Err("too large".into());
+        }
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        if bytes.len() > max {
+            return Err("too large".into());
+        }
+        Ok((bytes.to_vec(), ctype))
     })
 }
 

@@ -330,6 +330,13 @@ struct Voice {
     noise_dec: f32,
     po: [f32; 2],
     rng: Rng,
+    /// per-note expression (targets from the engine and the smoothed pitch gesture, at control rate): pitch gesture in
+    /// semitones, pressure 0..1, timbre 0..1 (0.5 neutral); `fresh` = the first value is taken at once
+    gest: f32,
+    gcur: f32,
+    press: f32,
+    timb: f32,
+    fresh: bool,
 }
 impl Voice {
     fn new(len: usize) -> Voice {
@@ -360,6 +367,11 @@ impl Voice {
             noise_dec: 0.0,
             po: [0.0; 2],
             rng: Rng::new(1),
+            gest: 0.0,
+            gcur: 0.0,
+            press: 0.0,
+            timb: 0.5,
+            fresh: false,
         }
     }
 
@@ -402,6 +414,14 @@ impl Voice {
             self.bend_off = 0.0;
         }
         let mut pitch = self.cur + self.bend_off;
+        if self.gest != 0.0 || self.gcur != 0.0 {
+            // the pitch gesture, smoothed at control rate (about 3 ms)
+            self.gcur += (self.gest - self.gcur) * (1.0 - (-dt / 0.003).exp());
+            if (self.gcur - self.gest).abs() < 1e-4 {
+                self.gcur = self.gest;
+            }
+            pitch += self.gcur;
+        }
         if pr.vib_cents > 0.01 {
             self.vib_ph += TAU * pr.vib_rate * dt;
             if self.vib_ph > TAU {
@@ -417,7 +437,12 @@ impl Voice {
         let f1 = f * half.exp2();
         self.s[0].set(f0, sr, pr, rel);
         self.s[1].set(f1, sr, pr, rel);
-        let tone = (pr.tone + self.tone_mod).clamp(0.0, 1.0);
+        let tone = if self.press != 0.0 || self.timb != 0.5 {
+            // pressure brightens the string, timbre moves its tone either way
+            (pr.tone + self.tone_mod + self.press * 0.3 + (self.timb - 0.5) * 0.6).clamp(0.0, 1.0)
+        } else {
+            (pr.tone + self.tone_mod).clamp(0.0, 1.0)
+        };
         let cut = 350.0 * 45.0f32.powf(tone) * (0.7 + 0.5 * f / 261.63);
         self.tk = (1.0 - (-TAU * cut / sr).exp()).clamp(0.001, 1.0);
     }
@@ -677,6 +702,11 @@ impl Instrument for Pluck {
         v.gl = ang.cos() * std::f32::consts::SQRT_2;
         v.gr = ang.sin() * std::f32::consts::SQRT_2;
         v.rng = Rng::new(seed);
+        v.gest = 0.0;
+        v.gcur = 0.0;
+        v.press = 0.0;
+        v.timb = 0.5;
+        v.fresh = true;
         self.last_pitch = tgt;
         self.last_key = key;
         self.last_held = true;
@@ -701,6 +731,25 @@ impl Instrument for Pluck {
         self.last_held = false;
     }
 
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.active && !v.released && v.key == key) {
+            v.gest = semis;
+            if v.fresh {
+                v.gcur = semis;
+            }
+        }
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.active && !v.released && v.key == key) {
+            v.press = x;
+        }
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.active && !v.released && v.key == key) {
+            v.timb = x;
+        }
+    }
+
     fn render(&mut self, out: &mut [f32]) {
         let pr = Pr::from(&self.vals);
         let sr = self.sr;
@@ -709,6 +758,9 @@ impl Instrument for Pluck {
         let gain = self.val("level") * 2.0;
         let mut ml = [0.0f32; CHUNK];
         let mut mr = [0.0f32; CHUNK];
+        for v in self.voices.iter_mut() {
+            v.fresh = false;
+        }
         for chunk in out.chunks_mut(CHUNK * 2) {
             let n = chunk.len() / 2;
             ml[..n].iter_mut().for_each(|x| *x = 0.0);

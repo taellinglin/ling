@@ -1,5 +1,5 @@
 pub fn is_builtin(name: &str) -> bool {
-    if name.starts_with("daw_") || name.starts_with("fs_") || name.starts_with("dlg_") || name.starts_with("st_") || name.starts_with("px_") || name.starts_with("body_") {
+    if name.starts_with("daw_") || name.starts_with("fs_") || name.starts_with("dlg_") || name.starts_with("st_") || name.starts_with("px_") || name.starts_with("body_") || name.starts_with("video_") {
         return true;
     }
     match name {
@@ -239,6 +239,18 @@ pub fn is_builtin(name: &str) -> bool {
         "post_now" => true,
         "font_advance" => true,
         "font_fallback" => true,
+        "image_fetch" => true,
+        "image_job" => true,
+        "image_fetch_cancel" => true,
+        "image_svg" => true,
+        "image_resized" => true,
+        "image_free" => true,
+        "image_tint" => true,
+        "http_get_all" => true,
+        "re_compile" => true,
+        "re_exec" => true,
+        "re_error" => true,
+        "re_names" => true,
         "font_glyph_outline" => true,
         "font_load" => true,
         "font_text" => true,

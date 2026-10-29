@@ -1,4 +1,4 @@
-//! Effects: SVF filter, delay, Schroeder reverb, compressor, 3-band EQ, drive.
+//! Effects: SVF filter, delay, Schroeder reverb, compressor, 3-band EQ, drive; the list of every effect and its factory.
 use crate::dsp::TAU;
 
 pub trait Effect: Send {
@@ -33,6 +33,79 @@ pub trait Effect: Send {
     /// The file loaded with `load_source`, empty for none / the built-in.
     fn source(&self) -> String {
         String::new()
+    }
+    /// Which notes the effect follows (the Colour Bass's chord, the Comb's key tracking): None = none. `valid` is the beat range the
+    /// keys it was last given stay right for; the engine only looks the notes up again outside it (see `crate::fxctx::feed_keys`).
+    fn key_follow(&self) -> Option<KeyFollow> {
+        None
+    }
+    /// The MIDI keys sounding in what the effect follows at beat `from` (sorted, no repeats; empty = nothing sounds), unchanged until `until`.
+    fn set_keys(&mut self, _keys: &[u8], _from: f64, _until: f64) {}
+}
+
+/// Where an effect's notes come from.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum KeySource {
+    /// the notes of the effect's own track
+    Own,
+    /// the chord of the song: the other pitched tracks (chord tracks first, else every pitched part), else the own notes
+    Auto,
+    /// the notes of one track (index)
+    Track(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct KeyFollow {
+    pub src: KeySource,
+    pub valid: (f64, f64),
+}
+
+/// The note input of a key-following effect: the source it asked for, the keys last given and how long they hold.
+#[derive(Clone)]
+pub struct KeyIn {
+    pub src: Option<KeySource>,
+    from: f64,
+    until: f64,
+    pub keys: [u8; 32],
+    pub n: usize,
+    /// new keys arrived since the effect last read them
+    pub fresh: bool,
+}
+impl Default for KeyIn {
+    fn default() -> Self {
+        KeyIn { src: None, from: f64::NAN, until: f64::NAN, keys: [0; 32], n: 0, fresh: false }
+    }
+}
+impl KeyIn {
+    pub fn with_src(src: KeySource) -> KeyIn {
+        KeyIn { src: Some(src), ..KeyIn::default() }
+    }
+    pub fn follow(&self) -> Option<KeyFollow> {
+        self.src.map(|s| KeyFollow { src: s, valid: (self.from, self.until) })
+    }
+    /// a new source: the keys are looked up again at once
+    pub fn set_src(&mut self, s: Option<KeySource>) {
+        if s != self.src {
+            self.src = s;
+            self.from = f64::NAN;
+            self.until = f64::NAN;
+        }
+    }
+    /// keys from the engine; an empty set (a rest) keeps the last keys, so a tuned effect holds its chord through the gaps
+    pub fn set(&mut self, keys: &[u8], from: f64, until: f64) {
+        self.from = from;
+        self.until = until;
+        if !keys.is_empty() {
+            let n = keys.len().min(32);
+            if n != self.n || self.keys[..n] != keys[..n] {
+                self.keys[..n].copy_from_slice(&keys[..n]);
+                self.n = n;
+                self.fresh = true;
+            }
+        }
+    }
+    pub fn keys(&self) -> &[u8] {
+        &self.keys[..self.n]
     }
 }
 
@@ -517,7 +590,7 @@ impl Effect for Chorus {
     }
 }
 
-pub const EFFECT_NAMES: [&str; 22] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm", "OTT", "Split Drive", "Comb", "Phaser", "Flanger", "Freq Shifter", "Imager", "Transient", "Articulator"];
+pub const EFFECT_NAMES: [&str; 32] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm", "OTT", "Split Drive", "Comb", "Phaser", "Flanger", "Freq Shifter", "Imager", "Transient", "Articulator", "Colour Bass", "Param EQ", "Volume Shaper", "Hyper Chorus", "Stutter", "Limiter", "Digitize", "Tape Stop", "Shimmer Verb", "Granular Cloud"];
 
 /// Parameter names + default normalised values shown in the UI.
 pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
@@ -543,6 +616,16 @@ pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
         "Imager" => &super::bassfx::IMAGER_PARAMS,
         "Transient" => &super::bassfx::TRANSIENT_PARAMS,
         "Articulator" => &super::articulator::PARAMS,
+        "Colour Bass" => &super::edmfx::COLOUR_PARAMS,
+        "Param EQ" => &super::edmfx::PEQ_PARAMS,
+        "Volume Shaper" => &super::edmfx::SHAPER_PARAMS,
+        "Hyper Chorus" => &super::edmfx::HYPER_PARAMS,
+        "Stutter" => &super::edmfx::STUTTER_PARAMS,
+        "Limiter" => &super::edmfx::LIMITER_PARAMS,
+        "Digitize" => &super::cinefx::DIGITIZE_PARAMS,
+        "Tape Stop" => &super::cinefx::TAPESTOP_PARAMS,
+        "Shimmer Verb" => &super::cinefx::SHIMMER_PARAMS,
+        "Granular Cloud" => &super::cinefx::GRANULAR_PARAMS,
         "Ducker" => &[("depth", 0.45), ("attack", 0.08), ("hold", 0.15), ("release", 0.2), ("curve", 0.35), ("thresh", 0.5), ("mix", 1.0)],
         _ => &[],
     }
@@ -572,6 +655,16 @@ pub fn make(name: &str, sr: f32) -> Option<Box<dyn Effect>> {
         "Imager" => Box::new(super::bassfx::Imager::new(sr)),
         "Transient" => Box::new(super::bassfx::Transient::new(sr)),
         "Articulator" => Box::new(super::articulator::Articulator::new(sr)),
+        "Colour Bass" => Box::new(super::edmfx::ColourBass::new(sr)),
+        "Param EQ" => Box::new(super::edmfx::ParamEq::new(sr)),
+        "Volume Shaper" => Box::new(super::edmfx::VolumeShaper::new(sr)),
+        "Hyper Chorus" => Box::new(super::edmfx::HyperChorus::new(sr)),
+        "Stutter" => Box::new(super::edmfx::Stutter::new(sr)),
+        "Limiter" => Box::new(super::edmfx::Limiter::new(sr)),
+        "Digitize" => Box::new(super::cinefx::Digitize::new(sr)),
+        "Tape Stop" => Box::new(super::cinefx::TapeStop::new(sr)),
+        "Shimmer Verb" => Box::new(super::cinefx::ShimmerVerb::new(sr)),
+        "Granular Cloud" => Box::new(super::cinefx::GranularCloud::new(sr)),
         _ => return None,
     };
     for (n, v) in defaults(name) {
@@ -595,6 +688,16 @@ pub fn presets(name: &str) -> &'static [(&'static str, &'static [(&'static str, 
         "Imager" => &super::bassfx::IMAGER_PRESETS,
         "Transient" => &super::bassfx::TRANSIENT_PRESETS,
         "Articulator" => &super::articulator::PRESETS,
+        "Colour Bass" => &super::edmfx::COLOUR_PRESETS,
+        "Param EQ" => &super::edmfx::PEQ_PRESETS,
+        "Volume Shaper" => &super::edmfx::SHAPER_PRESETS,
+        "Hyper Chorus" => &super::edmfx::HYPER_PRESETS,
+        "Stutter" => &super::edmfx::STUTTER_PRESETS,
+        "Limiter" => &super::edmfx::LIMITER_PRESETS,
+        "Digitize" => &super::cinefx::DIGITIZE_PRESETS,
+        "Tape Stop" => &super::cinefx::TAPESTOP_PRESETS,
+        "Shimmer Verb" => &super::cinefx::SHIMMER_PRESETS,
+        "Granular Cloud" => &super::cinefx::GRANULAR_PRESETS,
         "Ducker" => &[
             ("Kick duck", &[("depth", 0.5), ("attack", 0.06), ("hold", 0.12), ("release", 0.2), ("curve", 0.35)]),
             ("Hard pump", &[("depth", 0.85), ("attack", 0.04), ("hold", 0.2), ("release", 0.32), ("curve", 0.2)]),

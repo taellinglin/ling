@@ -111,6 +111,55 @@ struct Lanes {
     vol: Vec<(f64, f32)>,
     pan: Vec<(f64, f32)>,
     bend: Vec<(f64, f32)>,
+    /// per-note expression sources: polyphonic aftertouch (beat, key, 0..1), channel aftertouch and CC74 (beat, 0..1)
+    poly_at: Vec<(f64, u8, f32)>,
+    chan_at: Vec<(f64, f32)>,
+    cc74: Vec<(f64, f32)>,
+}
+
+/// The points of a channel-wide controller inside a note, as a curve over the note: the value in force at its start, then
+/// every change while it sounds. Empty when nothing moves inside or before it (or it stays at `rest`).
+fn note_curve(pts: &[(f64, f32)], n: &Note, rest: f32) -> crate::model::Curve {
+    let (s, e) = (n.start, n.start + n.len.max(1e-6));
+    let first = pts.iter().filter(|p| p.0 <= s + 1e-9).last().map(|p| p.1).unwrap_or(rest);
+    let mut c = vec![(0.0f32, first)];
+    c.extend(pts.iter().filter(|p| p.0 > s + 1e-9 && p.0 < e - 1e-9).map(|p| (((p.0 - s) / (e - s)) as f32, p.1)));
+    let mut c = crate::gesture::tidy(&c);
+    crate::gesture::prune(&mut c, rest);
+    c
+}
+
+/// Per-note expression from the channel's controllers: polyphonic aftertouch on the note's key and channel aftertouch become
+/// its pressure, CC74 its timbre (MPE slide), and on a monophonic part whose wheel only moves while notes sound, the pitch wheel
+/// becomes each note's pitch gesture (returns true: the wheel needs no lane then).
+fn note_expression(notes: &mut [Note], ln: &Lanes, bend_range: f32) -> bool {
+    for n in notes.iter_mut() {
+        let poly: Vec<(f64, f32)> = ln.poly_at.iter().filter(|p| p.1 == n.key).map(|p| (p.0, p.2)).collect();
+        // pressure starts at 0 for each note (aftertouch is sent after the note-on)
+        let mut pr = note_curve(&poly.iter().copied().filter(|p| p.0 > n.start - 1e-9).collect::<Vec<_>>(), n, 0.0);
+        if pr.is_empty() {
+            pr = note_curve(&ln.chan_at, n, 0.0);
+        }
+        n.press = pr;
+        n.timbre = note_curve(&ln.cc74, n, 0.5);
+    }
+    let moving = ln.bend.iter().any(|p| (p.1 - 0.5).abs() > 0.002);
+    if !moving || notes.is_empty() {
+        return false;
+    }
+    let mut order: Vec<usize> = (0..notes.len()).collect();
+    order.sort_by(|a, b| notes[*a].start.total_cmp(&notes[*b].start));
+    let mono = order.windows(2).all(|w| notes[w[1]].start >= notes[w[0]].start + notes[w[0]].len - 0.01);
+    // every off-centre wheel move falls inside a note (a move between notes would bend the next one before it starts)
+    let inside = ln.bend.iter().filter(|p| (p.1 - 0.5).abs() > 0.002).all(|p| notes.iter().any(|n| p.0 >= n.start - 1e-6 && p.0 < n.start + n.len + 1e-6));
+    if !mono || !inside {
+        return false;
+    }
+    let semis: Vec<(f64, f32)> = ln.bend.iter().map(|p| (p.0, (p.1 - 0.5) * 2.0 * bend_range)).collect();
+    for n in notes.iter_mut() {
+        n.bend = note_curve(&semis, n, 0.0);
+    }
+    true
 }
 
 struct ChanState {
@@ -215,6 +264,8 @@ pub fn parse(data: &[u8]) -> Result<ImportedMidi, String> {
                             // -8192..8191 -> 0..1
                             ln.bend.push((beat, (bend.as_int() as f32 / 8192.0 * 0.5 + 0.5).clamp(0.0, 1.0)));
                         }
+                        MidiMessage::Aftertouch { key, vel } => ln.poly_at.push((beat, key.as_int(), vel.as_int() as f32 / 127.0)),
+                        MidiMessage::ChannelAftertouch { vel } => ln.chan_at.push((beat, vel.as_int() as f32 / 127.0)),
                         MidiMessage::Controller { controller, value } => {
                             let v = value.as_int() as f32;
                             match controller.as_int() {
@@ -227,6 +278,7 @@ pub fn parse(data: &[u8]) -> Result<ImportedMidi, String> {
                                     ln.vol.push((beat, vol_norm(st.cc7, st.cc11)));
                                 }
                                 10 => ln.pan.push((beat, ((v - 64.0) / 63.0).clamp(-1.0, 1.0))),
+                                74 => ln.cc74.push((beat, v / 127.0)),
                                 0 => st.bank = value.as_int() as u16,
                                 32 => {
                                     // bank LSB only matters when the MSB is unused
@@ -313,8 +365,10 @@ pub fn parse(data: &[u8]) -> Result<ImportedMidi, String> {
             // only build a lane when the controller actually moves
             let vol_auto = thin(ln.vol.clone());
             let pan_auto = thin(ln.pan.clone());
-            let bend_auto = thin(ln.bend.clone());
             let bend_range = states.iter().find(|(c, _, _)| *c == seg.chan).map(|(_, st, _)| st.bend_range).unwrap_or(2.0);
+            // aftertouch, CC74 and (on a monophonic part) the wheel become per-note expression
+            let per_note_bend = seg.program.is_some() && note_expression(&mut notes, &ln, bend_range);
+            let bend_auto = if per_note_bend { vec![] } else { thin(ln.bend.clone()) };
             out.push(ImportedTrack {
                 named: !tname.is_empty(),
                 plugin: String::new(),

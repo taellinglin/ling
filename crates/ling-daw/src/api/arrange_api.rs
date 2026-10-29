@@ -199,7 +199,9 @@ fn unloop(c: &mut Clip) {
                 if st < len - EPS {
                     let mut x = b.clone();
                     x.start = st;
-                    x.len = x.len.min(len - st);
+                    if x.len > len - st {
+                        x.cut(0.0, len - st);
+                    }
                     out.push(x);
                 }
             }
@@ -233,11 +235,13 @@ fn split_clip(c: &mut Clip, at: f64, secs: f64) -> Option<Clip> {
                 let end = n.start + n.len;
                 let mut a = n.clone();
                 if end > rel {
-                    a.len = rel - n.start;
+                    // cut with its expression curves kept in place on both sides
+                    a.cut(0.0, rel - n.start);
                     if end - rel >= 0.25 {
                         let mut b = n;
+                        let l0 = b.len;
+                        b.cut(rel - b.start, l0);
                         b.start = 0.0;
-                        b.len = end - rel;
                         r.push(b);
                     }
                 }
@@ -449,7 +453,9 @@ fn cut_tail(c: &mut Clip, newlen: f64) {
     if let ClipData::Midi(n) = &mut c.data {
         n.retain(|x| x.start < newlen - EPS);
         for x in n.iter_mut() {
-            x.len = x.len.min(newlen - x.start);
+            if x.len > newlen - x.start {
+                x.cut(0.0, newlen - x.start);
+            }
         }
     }
     c.len = newlen;
@@ -1492,6 +1498,44 @@ impl Daw {
                         Err(format!("Nothing to draw on {name} from that (try: filter sweep up over the build, volume swell, pump, fade out, open the filter in the drop)."))
                     } else {
                         Ok(format!("{name}, bars {}-{}: {}.", (s / 4.0) as i64 + 1, (e / 4.0).ceil() as i64, done.join(", ")))
+                    }
+                }
+                "gesture" => {
+                    // per-note pitch gestures, only when the request names one (the pitch guard: redesign::gesture_request)
+                    let Some(kind) = crate::redesign::gesture_request(&req) else {
+                        return Err("Name the pitch gesture: scoop, slide / glide, fall, dive or pitch riser.".into());
+                    };
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    let sel = if clip_t >= 0 { clip_t } else { sel_t };
+                    let ti = track_by_words(&en.project, &req, sel).ok_or("Select a track first (click its name).")?;
+                    let (s, e) = match section(&en, &req, None) {
+                        Some(sec) => (sec.s, sec.e),
+                        None => (0.0, f64::MAX),
+                    };
+                    let depth = num_in(&w, &["semitones", "semitone", "st"]).unwrap_or(0.0) as f32;
+                    let mut n = 0;
+                    for c in en.project.tracks[ti].clips.iter_mut() {
+                        if c.end() <= s || c.start >= e {
+                            continue;
+                        }
+                        unloop(c);
+                        let (cs, cl) = (c.start, c.len);
+                        if let ClipData::Midi(notes) = &mut c.data {
+                            n += crate::gesture::write_kind(notes, kind, (s - cs).max(0.0), (e - cs).min(cl), depth);
+                        }
+                    }
+                    let name = en.project.tracks[ti].name.clone();
+                    let what = match kind {
+                        "scoop" => "scoops into the chords",
+                        "slide" => "slides into the next notes",
+                        "fall" => "falls at the phrase ends",
+                        "dive" => "dives",
+                        _ => "pitch risers",
+                    };
+                    if n == 0 {
+                        Err(format!("No notes of {name} fit {what} there (scoops need chord entries or long notes, slides a legato line)."))
+                    } else {
+                        Ok(format!("{name}: {what} on {n} notes (piano roll: Pitch lane to edit, right-click a note to clear)."))
                     }
                 }
                 other => Err(format!("I do not know how to {other} yet.")),

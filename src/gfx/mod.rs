@@ -145,6 +145,9 @@ pub struct GfxState {
     /// True ⇒ `flush_post` already ran the toon post-chain this frame, so
     /// `present` must skip it (keeps UI drawn afterwards out of the post FX).
     pub post_done: bool,
+    /// tm_lens_guard: solids / quads / 3-D triangles with a corner nearer the eye than this are
+    /// skipped (0 = off), so geometry brushing the camera can't smear across the whole view.
+    pub lens_guard: f32,
     /// Distance fog: triangles/lines fade toward `fog_color` from `fog_start`
     /// to `fog_end` (camera-space depth). `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -266,6 +269,7 @@ impl GfxState {
             depth_buf: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
+            lens_guard: 0.0,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
@@ -574,6 +578,9 @@ pub struct GfxState {
     pub zbuf_needs_clear: bool,
     /// Mirrors native: `flush_post` ran the post-chain; `present` skips it.
     pub post_done: bool,
+    /// tm_lens_guard: solids / quads / 3-D triangles with a corner nearer the eye than this are
+    /// skipped (0 = off), so geometry brushing the camera can't smear across the whole view.
+    pub lens_guard: f32,
     /// Distance fog (mirrors native): fade toward `fog_color` from `fog_start`
     /// to `fog_end`. `fog_end <= 0` disables fog.
     pub fog_color: u32,
@@ -637,6 +644,7 @@ impl GfxState {
             depth_buf: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
+            lens_guard: 0.0,
             fog_color: 0x0000_0000,
             fog_start: 0.0,
             fog_end: 0.0,
@@ -792,6 +800,12 @@ impl GfxState {
         };
 
         let near = -self.camera.zdist + 0.05;
+        if self.lens_guard > 0.0 {
+            let g = near + self.lens_guard;
+            if self.camera.depth(ax, ay, az) < g || self.camera.depth(bx, by, bz) < g || self.camera.depth(cx, cy, cz) < g {
+                return;
+            }
+        }
         let vw = [
             (ax, ay, az, self.camera.depth(ax, ay, az), c0),
             (bx, by, bz, self.camera.depth(bx, by, bz), c1),

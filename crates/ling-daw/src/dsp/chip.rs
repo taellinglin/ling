@@ -13,7 +13,7 @@
 //! * the SID filter (low / band / high pass), ring modulation, noise mixed in, bit and sample-rate reduction, and the SNES echo.
 //! Every chip has its own colour: the NES and Game Boy quantize volume to 16 steps and duty to four widths and run their output
 //! through the console's filters (90 Hz high-pass, 14 kHz low-pass).
-use super::{midi_hz, Instrument, Rng};
+use super::{midi_hz, Instrument, Rng, Smooth};
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -129,11 +129,16 @@ struct Voice {
     spos: f64,
     svf: (f32, f32),
     age: u64,
+    /// per-note expression: pitch gesture (semitones), pressure 0..1, timbre 0..1 (0.5 neutral); `fresh` = taken at once
+    pb: Smooth,
+    pr: Smooth,
+    tm: Smooth,
+    fresh: bool,
 }
 
 impl Voice {
     fn new() -> Voice {
-        Voice { on: false, key: 60, vel: 1.0, gate: false, stage: Stage::Idle, env: 0.0, pitch: 60.0, target: 60.0, ph: 0.0, ph2: 0.0, lfsr: 1, noise_ph: 0.0, noise_out: 0.0, t: 0.0, ticks: 0.0, arp_i: 0, arp_dir: 1, arp_ticks: 0.0, step_ticks: 0.0, mstep: [0; 4], sweep: 0.0, spos: 0.0, svf: (0.0, 0.0), age: 0 }
+        Voice { on: false, key: 60, vel: 1.0, gate: false, stage: Stage::Idle, env: 0.0, pitch: 60.0, target: 60.0, ph: 0.0, ph2: 0.0, lfsr: 1, noise_ph: 0.0, noise_out: 0.0, t: 0.0, ticks: 0.0, arp_i: 0, arp_dir: 1, arp_ticks: 0.0, step_ticks: 0.0, mstep: [0; 4], sweep: 0.0, spos: 0.0, svf: (0.0, 0.0), age: 0, pb: Smooth::at(0.0), pr: Smooth::at(0.0), tm: Smooth::at(0.5), fresh: false }
     }
 }
 
@@ -319,6 +324,14 @@ impl Instrument for Chip {
         let vkey = if mono && self.sel("arp", 6) == 5 { *self.held.iter().min().unwrap() } else { key };
         let v = &mut self.voices[i];
         let legato = mono && v.gate && glide;
+        // a legato slide starts where the voice is heard (its pitch gesture included); the new note brings its own gesture
+        if legato && v.pb.cur != 0.0 {
+            v.pitch += v.pb.cur;
+        }
+        v.pb.reset(0.0);
+        v.pr.reset(0.0);
+        v.tm.reset(0.5);
+        v.fresh = true;
         v.on = true;
         v.key = vkey;
         v.vel = vel.clamp(0.0, 1.0);
@@ -352,6 +365,12 @@ impl Instrument for Chip {
                 let v = &mut self.voices[0];
                 v.key = vkey;
                 v.target = v.key as f32;
+                // the returning note's own gesture (if any) arrives with the next block
+                if !v.pb.idle(0.0) {
+                    v.pitch += v.pb.cur;
+                    v.pb.reset(0.0);
+                }
+                v.fresh = true;
                 if jump {
                     v.pitch = v.target;
                 }
@@ -374,6 +393,21 @@ impl Instrument for Chip {
             v.stage = Stage::Idle;
             v.env = 0.0;
             v.on = false;
+        }
+    }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.gate && v.key == key) {
+            v.pb.set(semis, v.fresh);
+        }
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.gate && v.key == key) {
+            v.pr.set(x, v.fresh);
+        }
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.gate && v.key == key) {
+            v.tm.set(x, v.fresh);
         }
     }
     fn set_tempo(&mut self, bpm: f64) {
@@ -425,6 +459,12 @@ impl Instrument for Chip {
         let notes_cache: Vec<Vec<i32>> = self.voices.iter().map(|v| if v.stage != Stage::Idle { self.arp_notes(v.key) } else { vec![] }).collect();
         let width = self.p("width");
         let smp = self.smp.clone();
+        for v in self.voices.iter_mut() {
+            v.pb.begin(frames);
+            v.pr.begin(frames);
+            v.tm.begin(frames);
+            v.fresh = false;
+        }
         for i in 0..frames {
             let (mut sl, mut sr_out) = (0.0f32, 0.0f32);
             for (vi, v) in self.voices.iter_mut().enumerate() {
@@ -506,12 +546,15 @@ impl Instrument for Chip {
                     v.sweep += sweep_rate * dt;
                 }
                 let vibv = if v.t > vib_delay { (TAU * vib_hz * v.t).sin() * vib * ((v.t - vib_delay) * 4.0).min(1.0) } else { 0.0 };
-                let semis = (key + m_arp + v.sweep + vibv + m_pitch).clamp(-24.0, 140.0);
+                let gest = if v.pb.idle(0.0) { 0.0 } else { v.pb.tick() };
+                let (press, timbre) = (if v.pr.idle(0.0) { 0.0 } else { v.pr.tick() }, if v.tm.idle(0.5) { 0.5 } else { v.tm.tick() });
+                let semis = if gest != 0.0 { (key + m_arp + v.sweep + vibv + m_pitch + gest).clamp(-24.0, 140.0) } else { (key + m_arp + v.sweep + vibv + m_pitch).clamp(-24.0, 140.0) };
                 let f = midi_hz(semis);
                 let dph = f / sr;
                 // the oscillator
                 let duty = {
                     let d = if mlen[2] > 0 { m_duty } else { duty0 };
+                    let d = if timbre != 0.5 { d + (timbre - 0.5) * 0.8 } else { d };
                     let d = (d + pwm * 0.45 * (TAU * pwm_hz * v.t).sin()).clamp(0.02, 0.98);
                     if quant {
                         [0.125, 0.25, 0.5, 0.75][((d * 3.0).round() as usize).min(3)]
@@ -601,6 +644,9 @@ impl Instrument for Chip {
                 }
                 // volume: the macro times the envelope, 16 steps on the NES / Game Boy
                 let mut vol = v.env * m_vol * (0.35 + 0.65 * v.vel);
+                if press != 0.0 {
+                    vol *= 1.0 + press * 0.5;
+                }
                 if quant {
                     vol = (vol * 15.0).round() / 15.0;
                 }

@@ -27,7 +27,7 @@
 
 use crate::arch::{rtc, timer};
 use crate::drivers::{
-    browser, display, editor, framebuffer, font8x8, font_unicode, gallery, horizon, kbdlayout,
+    browser, display, editor, framebuffer, font8x8, font_unicode, gallery, horizon, icons, kbdlayout,
     locale, media, messenger, mixer, netstack, pkgman, terminal, theme, ui_scale, wallpaper,
 };
 use crate::fs::lingfs;
@@ -83,7 +83,7 @@ const DOCK_APPS: [u8; 9] = [
     KIND_GALLERY,
     KIND_TERM,
     KIND_MEDIA,
-    KIND_DAW,
+    ACT_RUN_APP,
 ];
 
 #[derive(Clone, Copy)]
@@ -183,7 +183,8 @@ static mut HOVER_DOCK: i32 = -1;
 const SETTINGS_TAB_GENERAL: usize = 0;
 const SETTINGS_TAB_NETWORK: usize = 1;
 const SETTINGS_TAB_AUDIO: usize = 2;
-const SETTINGS_TAB_COUNT: usize = 3;
+const SETTINGS_TAB_STARTUP: usize = 3;
+const SETTINGS_TAB_COUNT: usize = 4;
 const GENERAL_ROWS: usize = 11;
 const NETWORK_ROWS: usize = 3;
 const AUDIO_ROWS: usize = 3;
@@ -198,8 +199,154 @@ fn settings_tab_rows(tab: usize) -> usize {
     match tab {
         SETTINGS_TAB_NETWORK => NETWORK_ROWS,
         SETTINGS_TAB_AUDIO => AUDIO_ROWS,
+        SETTINGS_TAB_STARTUP => startup_rows().len(),
         _ => GENERAL_ROWS,
     }
+}
+
+// -- Startup tab (the same choices as the Pi desktop's Settings > Startup) --
+//   Lock after:   idle minutes before the sign-in screen comes back (apps and
+//                 services keep running under it)
+//   Services:     programs started at boot, before anyone signs in
+//                 (startup.rs; the SSH server is one)
+//   Sign-in apps: started in the background right after this user signs in
+//                 (home/<user>/Programs/LingOS/autostart, one name per line --
+//                 the file the Pi desktop uses)
+const LOCK_STEPS: [u32; 7] = [0, 1, 5, 10, 15, 30, 60];
+static mut LOCK_MIN: u32 = 10;
+
+enum StartupRow {
+    Lock,
+    Service(alloc::string::String),
+    SignIn(&'static str),
+}
+
+fn startup_rows() -> alloc::vec::Vec<StartupRow> {
+    let mut v = alloc::vec![StartupRow::Lock];
+    for s in crate::startup::available() {
+        v.push(StartupRow::Service(s));
+    }
+    for a in crate::app_names() {
+        if !a.starts_with("iso_") {
+            v.push(StartupRow::SignIn(a));
+        }
+    }
+    v
+}
+
+/// What a built-in app is called in menus.
+pub fn app_label(name: &str) -> &str {
+    match name {
+        "lingstation" => "StationX",
+        "lingdev" => "Dev",
+        "lingmodeler" => "Modeler",
+        "horizon" => "Horizon",
+        "messenger" => "Messenger",
+        "wallet" => "Wallet",
+        "ssh" => "SSH + SFTP server",
+        n => n,
+    }
+}
+
+fn set_lock_minutes(m: u32) {
+    unsafe { LOCK_MIN = m };
+    crate::startup::set_lock_after(m as u64 * 60);
+}
+
+fn autostart_path() -> alloc::string::String {
+    alloc::format!("{}/Programs/LingOS/autostart", crate::vfs::home())
+}
+
+/// This user's sign-in apps.
+pub fn autostart_list() -> alloc::vec::Vec<alloc::string::String> {
+    match crate::vfs::read(&autostart_path()) {
+        Some(b) => alloc::string::String::from_utf8_lossy(&b)
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .map(alloc::string::String::from)
+            .collect(),
+        None => alloc::vec::Vec::new(),
+    }
+}
+
+fn autostart_toggle(app: &str) {
+    let mut l = autostart_list();
+    if l.iter().any(|a| a == app) {
+        l.retain(|a| a != app);
+    } else {
+        l.push(alloc::string::String::from(app));
+    }
+    let mut t = alloc::string::String::new();
+    for a in &l {
+        t.push_str(a);
+        t.push('\n');
+    }
+    let _ = crate::vfs::write(&autostart_path(), t.as_bytes());
+}
+
+fn settings_startup_adjust(row: usize, dir: i32) {
+    let rows = startup_rows();
+    match rows.get(row) {
+        Some(StartupRow::Lock) => {
+            let cur = LOCK_STEPS.iter().position(|&m| m == unsafe { LOCK_MIN }).unwrap_or(3) as i32;
+            let next = (cur + dir).clamp(0, LOCK_STEPS.len() as i32 - 1) as usize;
+            set_lock_minutes(LOCK_STEPS[next]);
+            settings_save();
+        },
+        Some(StartupRow::Service(s)) => {
+            crate::startup::set(s, !crate::startup::enabled(s));
+        },
+        Some(StartupRow::SignIn(a)) => autostart_toggle(a),
+        None => {},
+    }
+}
+
+static mut SIGNED_IN_ONCE: [u8; 32] = [0; 32];
+static mut SIGNED_IN_ONCE_LEN: usize = 0;
+static mut RESUME_APP: Option<alloc::string::String> = None;
+
+/// Right after a sign-in: the app the idle lock parked comes back; on this
+/// user's first sign-in of the boot, their sign-in apps start in the
+/// background (the Applications menu brings each one up).
+pub fn after_sign_in() {
+    if let Some(app) = unsafe { (*(&raw mut RESUME_APP)).take() } {
+        crate::lingapp::launch(&app);
+        return;
+    }
+    let user = lingfs::current_user();
+    unsafe {
+        let done = &(&*&raw const SIGNED_IN_ONCE)[..SIGNED_IN_ONCE_LEN];
+        if done == user.as_bytes() {
+            return;
+        }
+        let n = user.len().min(32);
+        SIGNED_IN_ONCE[..n].copy_from_slice(&user.as_bytes()[..n]);
+        SIGNED_IN_ONCE_LEN = n;
+    }
+    for a in autostart_list() {
+        if crate::app_named(a.as_bytes()).is_some() && !crate::lingapp::is_running(&a) {
+            crate::startup::set_bg_start(true);
+            crate::lingapp::launch(&a);
+            crate::startup::set_bg_start(false);
+        }
+    }
+}
+
+/// The desktop asks every frame: time to show the sign-in screen? (The idle
+/// timeout ran out, or an app full-screen was parked for it.)
+pub fn lock_due() -> bool {
+    // The Live session's account has no password anyone types: it never locks.
+    if lingfs::current_user() == "live" {
+        crate::startup::set_lock_after(0);
+        let _ = crate::startup::take_lock_request();
+        return false;
+    }
+    if crate::startup::take_lock_request() {
+        unsafe { *(&raw mut RESUME_APP) = crate::lingapp::last_parked() };
+        return true;
+    }
+    crate::startup::lock_due()
 }
 static mut CLOCK_24H: bool = true;
 
@@ -250,6 +397,7 @@ pub fn settings_save() {
         ui_scale::dpi_index() as u32,
         hz_index() as u32,
         wallpaper::scale_mode() as u32,
+        unsafe { LOCK_MIN },
     ];
     let mut n = 0;
     for (i, v) in vals.iter().enumerate() {
@@ -307,6 +455,7 @@ pub fn settings_load() {
     if let Some(v) = next() {
         wallpaper::set_scale_mode(v as u8);
     }
+    set_lock_minutes(next().unwrap_or(10).min(240));
 }
 
 fn write_u32_into(buf: &mut [u8], mut v: u32) -> usize {
@@ -398,11 +547,30 @@ const ACT_LOGOUT: u8 = 200;
 const ACT_RESTART: u8 = 201;
 const ACT_SHUTDOWN: u8 = 202;
 const ACT_LAUNCH_PKG: u8 = 203;
-/// Run the image's bundled compiled `.ling` app (`bundle_app` in Ling.toml —
-/// LingStationX, LingOS Edition) full-screen; Ctrl+Q returns to the desktop.
-const ACT_RUN_APP: u8 = 204;
-/// Ling Wallet (wallet, full node, miner), when the image bundles it.
+/// The image's built-in `.ling` apps (`[app.<name>]` in Ling.toml -- the same
+/// set the Pi studio image carries), each run full-screen; Ctrl+Q returns to
+/// the desktop, Alt+Tab parks it. A row whose app isn't in the image is hidden.
+const ACT_RUN_APP: u8 = 204; // LingStationX
 const ACT_RUN_WALLET: u8 = 205;
+const ACT_RUN_LINGDEV: u8 = 206;
+const ACT_RUN_LINGMODELER: u8 = 207;
+const ACT_RUN_HORIZON: u8 = 208;
+
+/// The built-in app a menu action runs.
+fn bundled_app(kind: u8) -> Option<&'static str> {
+    match kind {
+        ACT_RUN_APP => Some("lingstation"),
+        ACT_RUN_WALLET => Some("wallet"),
+        ACT_RUN_LINGDEV => Some("lingdev"),
+        ACT_RUN_LINGMODELER => Some("lingmodeler"),
+        ACT_RUN_HORIZON => Some("horizon"),
+        _ => None,
+    }
+}
+
+fn has_app(name: &str) -> bool {
+    crate::app_named(name.as_bytes()).is_some()
+}
 
 // Installed lingfu packages that are runnable on LingOS (have a `main.ling`,
 // at the top or under `src/` as the registry's packages do) appear in the
@@ -438,39 +606,61 @@ struct MenuRow {
     header: &'static str, // non-empty => category header (not an app row)
     app: &'static str,
     kind: u8,
+    icon: u8,
+    tile: u32, // an app row's icon tile colour
 }
-const MENU: [MenuRow; 23] = [
-    MenuRow { header: "Internet", app: "", kind: 255 },
-    MenuRow { header: "", app: "bring (web browser)", kind: KIND_WEB },
-    MenuRow { header: "", app: "horizon (box-model browser)", kind: KIND_HORIZON },
-    MenuRow { header: "", app: "Messenger", kind: KIND_MESSENGER },
-    MenuRow { header: "Accessories", app: "", kind: 255 },
-    MenuRow { header: "", app: "Terminal", kind: KIND_TERM },
-    MenuRow { header: "", app: "Editor", kind: KIND_EDIT },
-    MenuRow { header: "", app: "Files", kind: KIND_FILES },
-    MenuRow { header: "Sound & Video", app: "", kind: 255 },
-    MenuRow { header: "", app: "Gallery", kind: KIND_GALLERY },
-    MenuRow { header: "", app: "Media Player", kind: KIND_MEDIA },
-    MenuRow { header: "", app: "LingStation (music studio)", kind: KIND_DAW },
-    MenuRow { header: "", app: "LingStationX (LingOS Edition)", kind: ACT_RUN_APP },
-    MenuRow { header: "Office", app: "", kind: 255 },
-    MenuRow { header: "", app: "Ling Wallet", kind: ACT_RUN_WALLET },
-    MenuRow { header: "System", app: "", kind: 255 },
-    MenuRow { header: "", app: "Packages", kind: KIND_PKG },
-    MenuRow { header: "", app: "Settings", kind: KIND_SETTINGS },
-    MenuRow { header: "", app: "About LingOS", kind: KIND_ABOUT },
-    MenuRow { header: "Power", app: "", kind: 255 },
-    MenuRow { header: "", app: "Log Out", kind: ACT_LOGOUT },
-    MenuRow { header: "", app: "Restart", kind: ACT_RESTART },
-    MenuRow { header: "", app: "Shut Down", kind: ACT_SHUTDOWN },
+
+const fn hdr(name: &'static str, icon: u8) -> MenuRow {
+    MenuRow { header: name, app: "", kind: 255, icon, tile: 0 }
+}
+
+const fn app(name: &'static str, kind: u8, icon: u8, tile: u32) -> MenuRow {
+    MenuRow { header: "", app: name, kind, icon, tile }
+}
+
+// The Applications menu: a tree of categories (each with its icon; click or
+// Enter folds it) and apps with their icons, named the short way -- no "Ling"
+// prefix -- in the same groups as the Pi desktop's menu.
+const MENU: [MenuRow; 27] = [
+    hdr("Sound & Video", icons::NOTE),
+    app("StationX", ACT_RUN_APP, icons::NOTE, 0xD9488F),
+    app("Gallery", KIND_GALLERY, icons::PICTURE, 0x2F9BD0),
+    app("Media Player", KIND_MEDIA, icons::PLAY, 0xE0702E),
+    hdr("Development", icons::CODE),
+    app("Dev", ACT_RUN_LINGDEV, icons::GAMEPAD, 0x7356E8),
+    app("Modeler", ACT_RUN_LINGMODELER, icons::CUBE, 0x23A566),
+    hdr("Internet", icons::GLOBE),
+    app("Horizon", ACT_RUN_HORIZON, icons::GLOBE, 0x2C7BD6),
+    app("Horizon Lite", KIND_HORIZON, icons::GLOBE, 0x5A7898),
+    app("Bring", KIND_WEB, icons::PAGE_W, 0x3E8798),
+    app("Messenger", KIND_MESSENGER, icons::BUBBLE, 0x1FA894),
+    hdr("Accessories", icons::TOOLBOX),
+    app("Files", KIND_FILES, icons::FOLDER, 0xD99A1E),
+    app("Terminal", KIND_TERM, icons::PROMPT, 0x30333B),
+    app("Editor", KIND_EDIT, icons::PENCIL_PAGE, 0x5F6E7E),
+    hdr("Finance", icons::COIN),
+    app("Wallet", ACT_RUN_WALLET, icons::COIN, 0xC9961A),
+    hdr("System", icons::GEAR),
+    app("Packages", KIND_PKG, icons::BOX, 0x8A6A58),
+    app("Settings", KIND_SETTINGS, icons::GEAR, 0x67768A),
+    app("About", KIND_ABOUT, icons::INFO, 0x4A82E8),
+    hdr("Power", icons::POWER),
+    app("Log Out", ACT_LOGOUT, icons::LOGOUT, 0x8E5BB0),
+    app("Restart", ACT_RESTART, icons::RESTART, 0x2F86C9),
+    app("Shut Down", ACT_SHUTDOWN, icons::POWER, 0xD64545),
+    app("", 255, 0, 0), // (end)
 ];
-const MENU_W: u32 = 210;
-const MENU_ROW_H: u32 = 22;
+const MENU_W: u32 = 236;
+const MENU_ROW_H: u32 = 26;
+const MENU_ICON: u32 = 18;
+/// A category header's action: this + its group number (folds the group).
+const GROUP_ACTION: u32 = 0x2000;
 static mut MENU_OPEN: bool = false;
-/// Keyboard selection cursor into the menu's *selectable* (non-header) rows,
-/// in `menu_walk` order. Only meaningful while `MENU_OPEN`; the mouse path
-/// ignores it (it hit-tests the pointer directly).
+/// Keyboard / hover selection: an index into the visible rows (headers too).
 static mut MENU_SEL: usize = 0;
+/// Folded groups (bit = group number).
+static mut MENU_FOLDED: u64 = 0;
+static mut MENU_LAST_PTR: (i64, i64) = (-1, -1);
 
 pub fn menu_open() -> bool {
     unsafe { MENU_OPEN }
@@ -489,54 +679,34 @@ fn menu_activate(kind: u8) {
         ACT_RESTART => crate::arch::power::reboot(),
         ACT_SHUTDOWN => crate::arch::power::poweroff(),
         ACT_LAUNCH_PKG => launch_pkg(unsafe { PKG_LAUNCH }),
-        ACT_RUN_APP => {
+        k if bundled_app(k).is_some() => {
             unsafe { MENU_OPEN = false };
-            crate::run_first_app();
-        },
-        ACT_RUN_WALLET => {
-            unsafe { MENU_OPEN = false };
-            crate::lingapp::launch("wallet");
+            crate::lingapp::launch(bundled_app(k).unwrap_or(""));
         },
         k => open(k),
     }
 }
 
-/// How many selectable (non-header) rows the menu currently has.
-fn menu_selectable_count() -> usize {
-    let mut n = 0usize;
-    menu_walk(|_r, _l, header, _a| {
-        if !header {
-            n += 1;
-        }
-    });
-    n
-}
-
-/// The action code of the `sel`-th selectable row (sets `PKG_LAUNCH` and
-/// returns `ACT_LAUNCH_PKG` for a package row, mirroring `menu_click`).
-fn menu_nth_action(sel: usize) -> Option<u8> {
-    let mut i = 0usize;
-    let mut found: Option<u32> = None;
-    menu_walk(|_row, _label, header, action| {
-        if header {
-            return;
-        }
-        if i == sel {
-            found = Some(action);
-        }
-        i += 1;
-    });
-    let action = found?;
+/// Choose a row's action: a category header folds / unfolds (the menu stays
+/// open), anything else closes the menu and runs.
+fn menu_choose(action: u32) {
+    if (GROUP_ACTION..GROUP_ACTION + 64).contains(&action) {
+        let g = action - GROUP_ACTION;
+        unsafe { MENU_FOLDED ^= 1u64 << g };
+        mixer::jingle(mixer::EVENT_CLICK);
+        return;
+    }
+    unsafe { MENU_OPEN = false };
     if action >= PKG_ACTION {
         unsafe { PKG_LAUNCH = (action - PKG_ACTION) as usize };
-        return Some(ACT_LAUNCH_PKG);
+        menu_activate(ACT_LAUNCH_PKG);
+    } else if action < 256 {
+        menu_activate(action as u8);
     }
-    Some(action as u8)
 }
 
-/// Move the keyboard selection cursor, clamped to the selectable rows.
 fn menu_move(delta: i32) {
-    let n = menu_selectable_count() as i32;
+    let n = menu_rows().len() as i32;
     if n == 0 {
         return;
     }
@@ -544,15 +714,46 @@ fn menu_move(delta: i32) {
     unsafe { MENU_SEL = (cur + delta).clamp(0, n - 1) as usize };
 }
 
-/// Open the Applications menu from the keyboard: refresh the installed-package
-/// rows (same as the brand-corner click) and reset the selection to the top.
-fn menu_open_kbd() {
+/// Left / Right on the selected row: fold / unfold its group (Left on an app
+/// jumps to its category).
+fn menu_fold_key(open: bool) {
+    let rows = menu_rows();
+    let sel = unsafe { MENU_SEL }.min(rows.len().saturating_sub(1));
+    let Some(r) = rows.get(sel) else { return };
+    let bit = 1u64 << r.group;
+    if r.header {
+        let folded = unsafe { MENU_FOLDED } & bit != 0;
+        if folded == open {
+            unsafe { MENU_FOLDED ^= bit };
+        }
+    } else if !open {
+        if let Some(h) = rows[..sel].iter().rposition(|x| x.header) {
+            unsafe { MENU_SEL = h };
+        }
+    }
+}
+
+/// Open the menu: refresh the installed-package rows, select the top, and
+/// fold the groups if the whole tree wouldn't fit on screen.
+fn menu_show() {
     load_installed_packages();
     unsafe {
         MENU_OPEN = true;
         MENU_SEL = 0;
+        MENU_FOLDED = 0;
+        MENU_LAST_PTR = (-1, -1);
+    }
+    let room = framebuffer::height().saturating_sub(31 + dock_icon_size() * 2);
+    if menu_rect().3 > room {
+        // everything folded but the first group
+        let groups: u64 = menu_rows().iter().filter(|r| r.header).fold(0, |m, r| m | 1u64 << r.group);
+        unsafe { MENU_FOLDED = groups & !2 };
     }
     mixer::jingle(mixer::EVENT_CLICK);
+}
+
+fn menu_open_kbd() {
+    menu_show();
 }
 
 // -- Installed-package launchers -------------------------------------------
@@ -688,61 +889,145 @@ fn load_installed_packages() {
     unsafe { PKG_COUNT = count };
 }
 
-/// Walk every visible menu row in order -- the static built-ins with the
-/// installed-package section (grouped by category) injected just before
-/// "Power" -- invoking `f(row, label, is_header, action)`. `action` is
-/// MENU_HEADER for a header, a window kind (<256) for a built-in app, or
-/// PKG_ACTION+idx for a package. Shared by draw/click/height so they agree.
-fn menu_walk(mut f: impl FnMut(usize, &[u8], bool, u32)) {
-    let mut row = 0usize;
-    for m in MENU.iter() {
-        if m.kind == ACT_RUN_APP && crate::first_app().is_none() {
-            continue; // this image bundles no compiled app
+/// One visible row of the menu tree.
+struct MRow {
+    label: alloc::string::String,
+    icon: u8,
+    tile: u32,
+    header: bool,
+    /// a window kind / ACT_* (<256), PKG_ACTION + package, or GROUP_ACTION + group
+    action: u32,
+    group: u32,
+    /// the last app row of its group (the tree line ends here)
+    last: bool,
+}
+
+/// An installed package's menu name: "ling-wallet" -> "Wallet",
+/// "karaoke-hero" -> "Karaoke Hero", "lingmodeler" -> "Modeler".
+pub fn pretty_name(name: &[u8]) -> alloc::string::String {
+    let s = core::str::from_utf8(name).unwrap_or("");
+    let lower = s.to_ascii_lowercase();
+    let mut rest = s;
+    for pre in ["ling-", "ling_", "ling"] {
+        if lower.starts_with(pre) && s.len() > pre.len() {
+            rest = &s[pre.len()..];
+            break;
         }
-        if (m.kind == ACT_RUN_WALLET || m.header == "Office") && crate::app_named(b"wallet").is_none() {
+    }
+    let mut out = alloc::string::String::new();
+    for w in rest.split(|c| c == '-' || c == '_' || c == ' ').filter(|w| !w.is_empty()) {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        let mut cs = w.chars();
+        if let Some(f) = cs.next() {
+            out.extend(f.to_uppercase());
+            out.push_str(cs.as_str());
+        }
+    }
+    if out.is_empty() {
+        out.push_str(s);
+    }
+    out
+}
+
+/// The visible rows: the built-in tree, with the installed packages' groups
+/// (by their Ling.toml category) just before Power. Folded groups show only
+/// their header. Shared by draw / click / keys so they agree.
+fn menu_rows() -> alloc::vec::Vec<MRow> {
+    let mut out: alloc::vec::Vec<MRow> = alloc::vec::Vec::new();
+    let folded = unsafe { MENU_FOLDED };
+    let mut group = 0u32;
+    let mut push_header = |out: &mut alloc::vec::Vec<MRow>, label: &[u8], icon: u8, g: u32| {
+        out.push(MRow {
+            label: alloc::string::String::from(core::str::from_utf8(label).unwrap_or("")),
+            icon,
+            tile: 0,
+            header: true,
+            action: GROUP_ACTION + g,
+            group: g,
+            last: false,
+        });
+    };
+    for m in MENU.iter() {
+        if m.header.is_empty() && m.app.is_empty() {
+            continue;
+        }
+        if let Some(app) = bundled_app(m.kind) {
+            if !has_app(app) {
+                continue; // not in this image
+            }
+        }
+        // the old native box-model browser only when the real Horizon isn't here
+        if m.kind == KIND_HORIZON && has_app("horizon") {
+            continue;
+        }
+        if m.header == "Development" && !has_app("lingdev") && !has_app("lingmodeler") {
+            continue;
+        }
+        if m.header == "Finance" && !has_app("wallet") {
             continue;
         }
         if m.header == "Power" {
             let pc = unsafe { PKG_COUNT };
             let mut drawn = [false; MAX_MENU_PKGS];
+            let mut pg = 40u32;
             for a in 0..pc {
                 if drawn[a] {
                     continue;
                 }
                 let cat_a = unsafe { &PKG_CAT[a][..PKG_CAT_LEN[a]] };
-                f(row, cat_a, true, MENU_HEADER);
-                row += 1;
+                let cat_name = pretty_name(cat_a);
+                push_header(&mut out, cat_name.as_bytes(), icons::BOX, pg);
                 for b in a..pc {
-                    if drawn[b] {
+                    let cat_b = unsafe { &PKG_CAT[b][..PKG_CAT_LEN[b]] };
+                    if drawn[b] || cat_b != cat_a {
                         continue;
                     }
-                    let cat_b = unsafe { &PKG_CAT[b][..PKG_CAT_LEN[b]] };
-                    if cat_b == cat_a {
-                        drawn[b] = true;
+                    drawn[b] = true;
+                    if folded & (1u64 << pg) == 0 {
                         let name = unsafe { &PKG_NAME[b][..PKG_NAME_LEN[b]] };
-                        f(row, name, false, PKG_ACTION + b as u32);
-                        row += 1;
+                        out.push(MRow {
+                            label: pretty_name(name),
+                            icon: icons::BOX,
+                            tile: 0x7E6BB8,
+                            header: false,
+                            action: PKG_ACTION + b as u32,
+                            group: pg,
+                            last: false,
+                        });
                     }
                 }
+                pg = (pg + 1).min(63);
             }
         }
         if m.header.is_empty() {
-            f(row, m.app.as_bytes(), false, m.kind as u32);
+            if folded & (1u64 << group) == 0 {
+                out.push(MRow {
+                    label: alloc::string::String::from(m.app),
+                    icon: m.icon,
+                    tile: m.tile,
+                    header: false,
+                    action: m.kind as u32,
+                    group,
+                    last: false,
+                });
+            }
         } else {
-            f(row, m.header.as_bytes(), true, MENU_HEADER);
+            group += 1;
+            push_header(&mut out, m.header.as_bytes(), m.icon, group);
         }
-        row += 1;
     }
-}
-
-fn menu_total_rows() -> usize {
-    let mut rows = 0usize;
-    menu_walk(|_r, _l, _h, _a| rows += 1);
-    rows
+    for i in 0..out.len() {
+        if !out[i].header {
+            out[i].last = out.get(i + 1).map(|n| n.header).unwrap_or(true);
+        }
+    }
+    out
 }
 
 fn menu_rect() -> (u32, u32, u32, u32) {
-    let h = menu_total_rows() as u32 * MENU_ROW_H + 30;
+    let h = menu_rows().len() as u32 * MENU_ROW_H + 40;
     (6, 31, MENU_W, h)
 }
 
@@ -751,34 +1036,60 @@ fn brand_hit(mx: i64, my: i64) -> bool {
     my >= 0 && my < 30 && mx >= 0 && mx < 84
 }
 
-/// Returns the app kind if the press landed on an app row, ACT_LAUNCH_PKG for
-/// a package row (with PKG_LAUNCH set), else 255. Closes the menu on any click.
-fn menu_click(mx: i64, my: i64) -> u8 {
+/// The visible row under the pointer.
+fn menu_row_at(mx: i64, my: i64) -> Option<usize> {
     let (rx, ry, rw, rh) = menu_rect();
-    let inside = mx >= rx as i64 && mx < (rx + rw) as i64 && my >= ry as i64 && my < (ry + rh) as i64;
-    unsafe { MENU_OPEN = false };
-    if !inside {
-        return 255;
+    if mx < rx as i64 || mx >= (rx + rw) as i64 || my < ry as i64 || my >= (ry + rh) as i64 {
+        return None;
     }
-    let y0 = ry + 22;
-    let mut hit: u32 = MENU_HEADER;
-    menu_walk(|row, _label, header, action| {
-        if header {
+    let y0 = (ry + 32) as i64;
+    if my < y0 {
+        return None;
+    }
+    let i = ((my - y0) / MENU_ROW_H as i64) as usize;
+    (i < menu_rows().len()).then_some(i)
+}
+
+/// A press while the menu is open: a row runs (or folds); outside closes.
+fn menu_press(mx: i64, my: i64) {
+    match menu_row_at(mx, my) {
+        Some(i) => {
+            let rows = menu_rows();
+            unsafe { MENU_SEL = i };
+            menu_choose(rows[i].action);
+        },
+        None => {
+            let (rx, ry, rw, rh) = menu_rect();
+            let inside = mx >= rx as i64 && mx < (rx + rw) as i64 && my >= ry as i64 && my < (ry + rh) as i64;
+            if !inside {
+                unsafe { MENU_OPEN = false };
+            }
+        },
+    }
+}
+
+/// The pointer moving over the menu selects the row under it.
+fn menu_hover(mx: i64, my: i64) {
+    unsafe {
+        if MENU_LAST_PTR == (mx, my) {
             return;
         }
-        let yy = y0 + row as u32 * MENU_ROW_H;
-        if my >= yy as i64 && my < (yy + MENU_ROW_H) as i64 {
-            hit = action;
+        MENU_LAST_PTR = (mx, my);
+    }
+    if let Some(i) = menu_row_at(mx, my) {
+        unsafe { MENU_SEL = i };
+    }
+}
+
+/// A small fold chevron (pointing right when folded, down when open).
+fn draw_chevron(x: u32, y: u32, open: bool, color: u32) {
+    for i in 0..4u32 {
+        if open {
+            framebuffer::back_fill_rect(x + i, y + 1 + i, 7 - 2 * i, 1, color);
+        } else {
+            framebuffer::back_fill_rect(x + 1 + i, y + i, 1, 7 - 2 * i, color);
         }
-    });
-    if hit == MENU_HEADER {
-        return 255;
     }
-    if hit >= PKG_ACTION {
-        unsafe { PKG_LAUNCH = (hit - PKG_ACTION) as usize };
-        return ACT_LAUNCH_PKG;
-    }
-    hit as u8
 }
 
 /// Draw the applications menu (call last, over windows and dock).
@@ -786,34 +1097,49 @@ pub fn draw_menu() {
     if !unsafe { MENU_OPEN } {
         return;
     }
+    let rows = menu_rows();
     let (rx, ry, rw, rh) = menu_rect();
     let panel = theme::color(theme::SLOT_PANEL);
     let accent = theme::color(theme::SLOT_ACCENT);
+    let text = theme::color(theme::SLOT_TEXT);
+    let dim = theme::color(theme::SLOT_DIM);
+    let guide = icons::mix(dim, panel, 45);
     framebuffer::back_blend_rounded_rect(rx + 4, ry + 5, rw, rh, 10, theme::color(theme::SLOT_SHADOW), 80);
     framebuffer::back_fill_rounded_rect(rx, ry, rw, rh, 10, theme::color(theme::SLOT_PANEL_BORDER));
     framebuffer::back_fill_rounded_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, panel);
-    font8x8::draw_str(rx + 12, ry + 6, b"Applications", accent, panel);
-    let y0 = ry + 22;
-    let text = theme::color(theme::SLOT_TEXT);
-    let dim = theme::color(theme::SLOT_DIM);
+    font8x8::draw_str(rx + 14, ry + 12, b"Applications", accent, panel);
+    framebuffer::back_fill_rect(rx + 12, ry + 26, rw - 24, 1, guide);
+    let y0 = ry + 32;
     let sel = unsafe { MENU_SEL };
-    let mut sidx = 0usize;
-    menu_walk(|row, label, header, _action| {
-        let yy = y0 + row as u32 * MENU_ROW_H;
-        if header {
-            font8x8::draw_str(rx + 10, yy + 6, label, dim, panel);
-        } else {
-            if sidx == sel {
-                // Keyboard selection: an accent pill behind the row, text
-                // recolored to the panel background for contrast on it.
-                framebuffer::back_fill_rounded_rect(rx + 4, yy + 2, rw - 8, MENU_ROW_H - 3, 5, accent);
-                font8x8::draw_str(rx + 24, yy + 6, label, panel, accent);
-            } else {
-                font8x8::draw_str(rx + 24, yy + 6, label, text, panel);
-            }
-            sidx += 1;
+    let folded = unsafe { MENU_FOLDED };
+    let th = 8 * font8x8::scale();
+    for (i, r) in rows.iter().enumerate() {
+        let yy = y0 + i as u32 * MENU_ROW_H;
+        let selected = i == sel;
+        let bg = if selected { icons::mix(accent, panel, 70) } else { panel };
+        if selected {
+            framebuffer::back_fill_rounded_rect(rx + 5, yy + 1, rw - 10, MENU_ROW_H - 2, 6, bg);
         }
-    });
+        let ty = yy + (MENU_ROW_H.saturating_sub(th)) / 2;
+        let iy = yy + (MENU_ROW_H - MENU_ICON) / 2;
+        if r.header {
+            let open = folded & (1u64 << r.group) == 0;
+            draw_chevron(rx + 12, yy + MENU_ROW_H / 2 - 3, open, dim);
+            icons::draw_glyph(r.icon, rx + 24, iy, MENU_ICON, accent, bg);
+            let lx = rx + 24 + MENU_ICON + 8;
+            font8x8::draw_str(lx, ty, r.label.as_bytes(), text, bg);
+            font8x8::draw_str(lx + 1, ty, r.label.as_bytes(), text, bg); // bold
+        } else {
+            // tree guide: down from the category, a branch to this app
+            let gx = rx + 32;
+            let mid = yy + MENU_ROW_H / 2;
+            let bottom = if r.last { mid } else { yy + MENU_ROW_H };
+            framebuffer::back_fill_rect(gx, yy, 1, bottom - yy + 1, guide);
+            framebuffer::back_fill_rect(gx, mid, 10, 1, guide);
+            icons::draw_app(r.icon, r.tile, gx + 12, iy, MENU_ICON);
+            font8x8::draw_str(gx + 12 + MENU_ICON + 8, ty, r.label.as_bytes(), text, bg);
+        }
+    }
 }
 
 /// Launch installed package `idx`: open a Terminal and run its `main.ling`
@@ -1209,7 +1535,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "图",
             Some(KIND_TERM) => "终",
             Some(KIND_MEDIA) => "媒",
-            Some(KIND_DAW) => "L",
+            Some(ACT_RUN_APP) => "L",
             _ => "",
         },
         "ko-KR" => match kind {
@@ -1221,7 +1547,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "갤",
             Some(KIND_TERM) => "터",
             Some(KIND_MEDIA) => "미",
-            Some(KIND_DAW) => "L",
+            Some(ACT_RUN_APP) => "L",
             _ => "",
         },
         _ => match kind {
@@ -1233,7 +1559,7 @@ pub fn dock_letter(i: usize) -> &'static str {
             Some(KIND_GALLERY) => "G",
             Some(KIND_TERM) => "T",
             Some(KIND_MEDIA) => "M",
-            Some(KIND_DAW) => "L",
+            Some(ACT_RUN_APP) => "L",
             _ => "",
         },
     }
@@ -1289,6 +1615,9 @@ pub fn dock_hover(i: usize) -> bool {
 /// Is a window of this dock slot's kind open (running indicator dot)?
 pub fn dock_running(i: usize) -> bool {
     let Some(&kind) = DOCK_APPS.get(i) else { return false };
+    if let Some(app) = bundled_app(kind) {
+        return crate::lingapp::is_running(app);
+    }
     windows().iter().any(|w| w.used && w.kind == kind)
 }
 
@@ -1731,25 +2060,25 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
         PREV_BUTTONS = buttons;
 
         HOVER_DOCK = dock_hit(mx, my);
+        if MENU_OPEN {
+            menu_hover(mx, my);
+        }
 
         if left && !was {
             // Press edge, overlay-priority order: an open app menu first,
             // then the brand corner that toggles it, then tray, dock,
             // windows.
             if MENU_OPEN {
-                let kind = menu_click(mx, my);
-                menu_activate(kind);
+                menu_press(mx, my);
                 PREV_BUTTONS = buttons;
                 return;
             }
             if brand_hit(mx, my) {
-                load_installed_packages();
-                MENU_OPEN = true;
-                mixer::jingle(mixer::EVENT_CLICK);
+                menu_show();
                 PREV_BUTTONS = buttons;
                 return;
             }
-            if tray_hit(mx, my) {
+            if net_card_press(mx, my) || tray_hit(mx, my) {
                 PREV_BUTTONS = buttons;
                 return;
             }
@@ -1757,6 +2086,11 @@ pub fn step(mx: i64, my: i64, buttons: u8) {
             if dock >= 0 {
                 mixer::jingle(mixer::EVENT_CLICK);
                 let kind = DOCK_APPS[dock as usize];
+                if bundled_app(kind).is_some() {
+                    PREV_BUTTONS = buttons;
+                    menu_activate(kind);
+                    return;
+                }
                 match find_kind(kind) {
                     Some(idx) if windows()[idx].minimized => {
                         windows()[idx].minimized = false;
@@ -2040,12 +2374,13 @@ pub fn key(k: u8) {
         match k {
             0x11 => menu_move(-1), // up
             0x12 => menu_move(1),  // down
+            0x13 => menu_fold_key(false),
+            0x14 => menu_fold_key(true),
             10 => {
-                // Enter: activate the selected row, then close.
-                let sel = unsafe { MENU_SEL };
-                unsafe { MENU_OPEN = false };
-                if let Some(kind) = menu_nth_action(sel) {
-                    menu_activate(kind);
+                // Enter: run the selected app, or fold / unfold a category.
+                let rows = menu_rows();
+                if let Some(r) = rows.get(unsafe { MENU_SEL }) {
+                    menu_choose(r.action);
                 }
             },
             0x1B => unsafe { MENU_OPEN = false }, // Esc closes
@@ -2218,6 +2553,9 @@ fn settings_key(k: u8) {
                 } else if SETTINGS_TAB == SETTINGS_TAB_GENERAL && SETTINGS_CURSOR == 2 {
                     open_wallpaper_picker();
                     return;
+                } else if SETTINGS_TAB == SETTINGS_TAB_STARTUP {
+                    settings_startup_adjust(SETTINGS_CURSOR, 1);
+                    return;
                 }
                 settings_save();
             },
@@ -2226,6 +2564,7 @@ fn settings_key(k: u8) {
                 match SETTINGS_TAB {
                     SETTINGS_TAB_NETWORK => settings_network_adjust(SETTINGS_CURSOR, dir),
                     SETTINGS_TAB_AUDIO => settings_audio_adjust(SETTINGS_CURSOR, dir),
+                    SETTINGS_TAB_STARTUP => settings_startup_adjust(SETTINGS_CURSOR, dir),
                     _ => settings_general_adjust(SETTINGS_CURSOR, dir),
                 }
             },
@@ -2727,29 +3066,92 @@ fn files_click(wx: i64, wy: i64, dw: u32, mx: i64, my: i64) -> bool {
 static mut TRAY_OPEN: bool = false;
 static mut TRAY_CURSOR: usize = 0; // 0 = master, 1.. = mixer streams
 
+// Tray, right to left before the clock: sound, network, settings. Each is an
+// 18 px icon (drivers/icons.rs) in a 26 px hit box.
+const TRAY_ICON: u32 = 18;
+static mut NET_OPEN: bool = false;
+
 fn tray_vol_x() -> i64 {
-    framebuffer::width() as i64 - 140
+    framebuffer::width() as i64 - 112
 }
 
 fn tray_net_x() -> i64 {
-    framebuffer::width() as i64 - 110
+    framebuffer::width() as i64 - 142
+}
+
+fn tray_set_x() -> i64 {
+    framebuffer::width() as i64 - 172
+}
+
+fn tray_box(x: i64, mx: i64) -> bool {
+    mx >= x - 4 && mx < x + TRAY_ICON as i64 + 4
 }
 
 fn tray_hit(mx: i64, my: i64) -> bool {
     if my >= 30 {
+        // a click anywhere else closes the network card
+        unsafe { NET_OPEN = false };
         return false;
     }
-    if mx >= tray_vol_x() && mx < tray_vol_x() + 24 {
+    if tray_box(tray_vol_x(), mx) {
         unsafe {
             TRAY_OPEN = !TRAY_OPEN;
             TRAY_CURSOR = 0;
+            NET_OPEN = false;
         }
         mixer::jingle(mixer::EVENT_CLICK);
         return true;
     }
-    // The net icon has no popover yet; swallowing the click keeps it from
-    // falling through to a window underneath.
-    mx >= tray_net_x() && mx < tray_net_x() + 24
+    if tray_box(tray_net_x(), mx) {
+        unsafe {
+            NET_OPEN = !NET_OPEN;
+            TRAY_OPEN = false;
+        }
+        mixer::jingle(mixer::EVENT_CLICK);
+        return true;
+    }
+    if tray_box(tray_set_x(), mx) {
+        unsafe {
+            NET_OPEN = false;
+            TRAY_OPEN = false;
+        }
+        mixer::jingle(mixer::EVENT_CLICK);
+        open(KIND_SETTINGS);
+        return true;
+    }
+    false
+}
+
+/// Open Settings on the Network tab (the network card's button / Enter).
+fn open_network_settings() {
+    unsafe {
+        NET_OPEN = false;
+        SETTINGS_TAB = SETTINGS_TAB_NETWORK;
+        SETTINGS_CURSOR = 0;
+        SETTINGS_SCROLL = 0;
+    }
+    open(KIND_SETTINGS);
+}
+
+fn net_card_rect() -> (u32, u32, u32, u32) {
+    let w = 260u32;
+    let x = (tray_net_x() as u32 + TRAY_ICON / 2).saturating_sub(w / 2).min(framebuffer::width().saturating_sub(w + 8));
+    (x, 34, w, 150)
+}
+
+/// A press inside the open network card (its "Network settings" button).
+fn net_card_press(mx: i64, my: i64) -> bool {
+    if !unsafe { NET_OPEN } {
+        return false;
+    }
+    let (x, y, w, h) = net_card_rect();
+    if !pt_in(mx, my, (x, y, w, h)) {
+        return false;
+    }
+    if pt_in(mx, my, (x + 12, y + h - 36, w - 24, 26)) {
+        open_network_settings();
+    }
+    true
 }
 
 pub fn tray_open() -> bool {
@@ -2758,6 +3160,14 @@ pub fn tray_open() -> bool {
 
 fn tray_key(k: u8) -> bool {
     unsafe {
+        if NET_OPEN {
+            match k {
+                10 => open_network_settings(),
+                0x1B => NET_OPEN = false,
+                _ => {},
+            }
+            return true;
+        }
         if !TRAY_OPEN {
             return false;
         }
@@ -2803,27 +3213,40 @@ pub fn draw_tray(net_up: bool) {
                 s.push_str(&pe);
             }
             let w = s.len() as u32 * font8x8::advance() + 12;
-            let x = (tray_vol_x() as u32).saturating_sub(w + 10);
+            let x = (tray_set_x() as u32).saturating_sub(w + 10);
             framebuffer::back_fill_rounded_rect(x, 7, w, 18, 4, accent);
             framebuffer::back_fill_rounded_rect(x + 1, 8, w - 2, 16, 3, panel);
             font_unicode::draw_utf8_str(x + 6, 11, s.as_bytes(), text, panel, false);
         }
     }
 
-    // Speaker: box + cone triangle-ish (two rects) + a sound arc dot.
-    let vx = tray_vol_x() as u32;
-    framebuffer::back_fill_rect(vx, 11, 6, 8, if mixer::master_volume() > 0 { text } else { dim });
-    framebuffer::back_fill_rect(vx + 6, 8, 5, 14, if mixer::master_volume() > 0 { text } else { dim });
-    if mixer::master_volume() > 0 {
-        framebuffer::back_fill_circle(vx + 16, 15, 2, accent);
+    // The three tray icons; an open popover's icon gets a soft pill.
+    let iy = (30 - TRAY_ICON) / 2;
+    let bar = theme::color(1);
+    let pill = icons::mix(accent, bar, 70);
+    let link = net_up && netstack::self_ip() != [0, 0, 0, 0];
+    let items: [(i64, u8, bool, u32); 3] = [
+        (tray_set_x(), icons::GEAR, false, text),
+        (tray_net_x(), if link { icons::WIFI } else { icons::WIFI_OFF }, unsafe { NET_OPEN }, if link { text } else { dim }),
+        (
+            tray_vol_x(),
+            if mixer::master_volume() > 0 { icons::SPEAKER } else { icons::SPEAKER_MUTE },
+            unsafe { TRAY_OPEN },
+            text,
+        ),
+    ];
+    for (x, id, open, fg) in items {
+        let x = x as u32;
+        let bg = if open { pill } else { bar };
+        if open {
+            framebuffer::back_fill_rounded_rect(x - 4, 3, TRAY_ICON + 8, 24, 6, pill);
+        }
+        icons::draw_glyph(id, x, iy, TRAY_ICON, fg, bg);
     }
 
-    // Net: rounded plug + stem; accent when the NIC is up, dim otherwise.
-    let nx = tray_net_x() as u32;
-    let net_color = if net_up { accent } else { dim };
-    framebuffer::back_fill_rounded_rect(nx, 9, 14, 10, 3, net_color);
-    framebuffer::back_fill_rect(nx + 6, 19, 2, 5, net_color);
-
+    if unsafe { NET_OPEN } {
+        draw_net_card(net_up);
+    }
     if !unsafe { TRAY_OPEN } {
         return;
     }
@@ -2861,6 +3284,41 @@ pub fn draw_tray(net_up: bool) {
             font8x8::draw_str(px + pw - 24, ry, b"!", theme::color(theme::SLOT_ERROR), panel);
         }
     }
+}
+
+/// The network card under the tray icon: link, address, gateway, DNS, and a
+/// button into Settings > Network.
+fn draw_net_card(net_up: bool) {
+    let panel = theme::color(theme::SLOT_PANEL);
+    let accent = theme::color(theme::SLOT_ACCENT);
+    let dim = theme::color(theme::SLOT_DIM);
+    let text = theme::color(theme::SLOT_TEXT);
+    let (x, y, w, h) = net_card_rect();
+    framebuffer::back_blend_rounded_rect(x + 4, y + 5, w, h, 10, theme::color(theme::SLOT_SHADOW), 80);
+    framebuffer::back_fill_rounded_rect(x, y, w, h, 10, theme::color(theme::SLOT_PANEL_BORDER));
+    framebuffer::back_fill_rounded_rect(x + 1, y + 1, w - 2, h - 2, 9, panel);
+    let ip = netstack::self_ip();
+    let link = net_up && ip != [0, 0, 0, 0];
+    icons::draw_glyph(if link { icons::WIFI } else { icons::WIFI_OFF }, x + 14, y + 12, 20, if link { accent } else { dim }, panel);
+    let title: &[u8] = if !net_up {
+        b"No network adapter"
+    } else if link {
+        b"Connected (wired)"
+    } else {
+        b"Not connected"
+    };
+    font8x8::draw_str(x + 44, y + 18, title, text, panel);
+    let rows: [(&[u8], [u8; 4]); 3] = [(b"Address", ip), (b"Gateway", netstack::gateway_ip()), (b"DNS", netstack::dns_servers().0)];
+    for (i, (label, addr)) in rows.iter().enumerate() {
+        let ry = y + 46 + i as u32 * 18;
+        font8x8::draw_str(x + 14, ry, label, dim, panel);
+        draw_ip(x + 100, ry, *addr, text, panel);
+    }
+    let (bx, by, bw, bh) = (x + 12, y + h - 36, w - 24, 26);
+    framebuffer::back_fill_rounded_rect(bx, by, bw, bh, 6, accent);
+    let label = b"Network settings";
+    let lw = label.len() as u32 * font8x8::advance();
+    font8x8::draw_str(bx + (bw.saturating_sub(lw)) / 2, by + 9, label, panel, accent);
 }
 
 // -- Clock -----------------------------------------------------------------
@@ -3098,6 +3556,18 @@ fn content_click(idx: usize, mx: i64, my: i64) -> bool {
                 return true;
             }
         }
+        if unsafe { SETTINGS_TAB } == SETTINGS_TAB_STARTUP {
+            let rows_y = wy.max(0) + TITLEBAR_H as i64 + 14 + 40;
+            let rel = my - (rows_y - 6);
+            if rel >= 0 && mx >= wx + 16 && mx < wx + dw as i64 - 16 {
+                let i = unsafe { SETTINGS_SCROLL } + (rel / 34) as usize;
+                if (rel / 34) < SETTINGS_VISIBLE as i64 && i < startup_rows().len() {
+                    unsafe { SETTINGS_CURSOR = i };
+                    settings_startup_adjust(i, 1);
+                    return true;
+                }
+            }
+        }
         if pt_in(mx, my, settings_ok_rect(wx, wy, dw, dh)) {
             display::apply(display::selected()); // live resolution switch
             settings_save();
@@ -3327,7 +3797,7 @@ fn draw_content_inner(slot: usize) {
             let row_w = dw.saturating_sub(32).max(40);
             let tab = unsafe { SETTINGS_TAB };
             // Tab bar: General | Network.
-            let tab_names = [locale::tr("General"), locale::tr("Network"), locale::tr("Audio")];
+            let tab_names = [locale::tr("General"), locale::tr("Network"), locale::tr("Audio"), locale::tr("Startup")];
             for (t, name) in tab_names.iter().enumerate() {
                 let (tx, ty, tw, th) = settings_tab_rect(wx, wy, dw, t);
                 let active = t == tab;
@@ -3335,11 +3805,84 @@ fn draw_content_inner(slot: usize) {
                 framebuffer::back_fill_rounded_rect(tx, ty, tw, th, 6, bg);
                 framebuffer::back_fill_rounded_rect(tx + 1, ty + 1, tw - 2, th - 2, 5, if active { theme::color(theme::SLOT_TITLEBAR) } else { panel });
                 let fg = if active { theme::color(theme::SLOT_TITLEBAR_TEXT) } else { dim };
-                font_unicode::draw_utf8_str(tx + 12, ty + 6, name.as_bytes(), fg, if active { theme::color(theme::SLOT_TITLEBAR) } else { panel }, locale::render_daemon());
+                let tab_bg = if active { theme::color(theme::SLOT_TITLEBAR) } else { panel };
+                let tab_icon = [icons::GEAR, icons::WIFI, icons::SPEAKER, icons::POWER][t];
+                icons::draw_glyph(tab_icon, tx + 8, ty + 5, 16, fg, tab_bg);
+                font_unicode::draw_utf8_str(tx + 30, ty + 6, name.as_bytes(), fg, tab_bg, locale::render_daemon());
             }
             let rows_y = y + 40; // below the tab bar
 
-            if tab == SETTINGS_TAB_NETWORK {
+            if tab == SETTINGS_TAB_STARTUP {
+                // -- Startup tab: lock timer, boot services, sign-in apps. ----
+                let rows = startup_rows();
+                let auto = autostart_list();
+                let scroll = unsafe { SETTINGS_SCROLL };
+                let vx = x + 230 * font8x8::scale();
+                for vis in 0..SETTINGS_VISIBLE {
+                    let i = scroll + vis;
+                    let Some(r) = rows.get(i) else { break };
+                    let ry = rows_y + vis as u32 * row_h;
+                    draw_row_ring(x, ry.saturating_sub(6), row_w, row_h - 6, unsafe { SETTINGS_CURSOR == i });
+                    match r {
+                        StartupRow::Lock => {
+                            font8x8::draw_str(x + 10, ry, b"Lock after", text, panel);
+                            let m = unsafe { LOCK_MIN };
+                            let mut nb = [0u8; 16];
+                            let nn = if m == 0 {
+                                nb[..5].copy_from_slice(b"never");
+                                5
+                            } else {
+                                let mut k = write_u32_into(&mut nb, m);
+                                for &c in b" min" {
+                                    nb[k] = c;
+                                    k += 1;
+                                }
+                                k
+                            };
+                            font8x8::draw_str(vx, ry, &nb[..nn], accent, panel);
+                        },
+                        StartupRow::Service(s) => {
+                            let mut lb = [0u8; 48];
+                            let mut ln = 0;
+                            for &c in b"At boot: ".iter().chain(app_label(s).as_bytes()) {
+                                if ln < lb.len() {
+                                    lb[ln] = c;
+                                    ln += 1;
+                                }
+                            }
+                            font8x8::draw_str(x + 10, ry, &lb[..ln], text, panel);
+                            let on = crate::startup::enabled(s);
+                            let v: &[u8] = match (on, crate::startup::running(s)) {
+                                (true, true) => b"on (running)",
+                                (true, false) => b"on",
+                                (false, true) => b"off (running)",
+                                (false, false) => b"off",
+                            };
+                            font8x8::draw_str(vx, ry, v, if on { accent } else { dim }, panel);
+                        },
+                        StartupRow::SignIn(a) => {
+                            let mut lb = [0u8; 48];
+                            let mut ln = 0;
+                            for &c in b"At sign-in: ".iter().chain(app_label(a).as_bytes()) {
+                                if ln < lb.len() {
+                                    lb[ln] = c;
+                                    ln += 1;
+                                }
+                            }
+                            font8x8::draw_str(x + 10, ry, &lb[..ln], text, panel);
+                            let on = auto.iter().any(|x| x == a);
+                            font8x8::draw_str(vx, ry, if on { b"on" } else { b"off" }, if on { accent } else { dim }, panel);
+                        },
+                    }
+                }
+                let sb_x = x + row_w.saturating_sub(6);
+                if scroll > 0 {
+                    font8x8::draw_str(sb_x, rows_y, b"^", dim, panel);
+                }
+                if scroll + SETTINGS_VISIBLE < rows.len() {
+                    font8x8::draw_str(sb_x, rows_y + (SETTINGS_VISIBLE as u32 - 1) * row_h, b"v", dim, panel);
+                }
+            } else if tab == SETTINGS_TAB_NETWORK {
                 // -- Network tab: interactive rows + read-only status. --------
                 let net_labels = [locale::tr("IP mode"), locale::tr("Nameserver"), locale::tr("SSH at boot")];
                 for (i, label) in net_labels.iter().enumerate() {
@@ -3416,7 +3959,8 @@ fn draw_content_inner(slot: usize) {
                 framebuffer::back_fill_rounded_rect(x + 40, sy, (mixer::output_level_r().min(100) * mw / 100).max(1), 8, 3, accent);
                 // Honest read-only device facts.
                 sy += 28;
-                font8x8::draw_str(x + 10, sy, b"Device: AC'97   48000 Hz   16-bit   stereo", dim, panel);
+                let dev = alloc::format!("Device: {}   48000 Hz   16-bit   stereo", mixer::device_name());
+                font8x8::draw_str(x + 10, sy, dev.as_bytes(), dim, panel);
                 sy += 18;
                 let mut bb = [0u8; 56];
                 let mut bn = 0;
@@ -3427,7 +3971,7 @@ fn draw_content_inner(slot: usize) {
                 for &c in b" ring (gap-free)" { if bn < bb.len() { bb[bn] = c; bn += 1; } }
                 font8x8::draw_str(x + 10, sy, &bb[..bn], dim, panel);
                 sy += 18;
-                let inp: &[u8] = if mixer::has_capture() { b"Input: capture device present" } else { b"Input: none (this AC'97 is playback-only)" };
+                let inp: &[u8] = if mixer::has_capture() { b"Input: capture device present" } else { b"Input: none (playback only)" };
                 font8x8::draw_str(x + 10, sy, inp, dim, panel);
             } else {
                 // -- General tab: scrollable list. ----------------------------

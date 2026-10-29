@@ -44,6 +44,13 @@ struct FxDoc {
     params: Vec<(String, f32)>,
     #[serde(default)]
     bypass: bool,
+    /// dry/wet mix, 0..1 (projects from before the mix knob have none: fully wet)
+    #[serde(default = "full_wet")]
+    wet: f32,
+}
+
+fn full_wet() -> f32 {
+    1.0
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -930,6 +937,10 @@ pub fn dispatch(name: &[u8], args: &[u64]) -> Option<u64> {
         // ── effects (the list only; no DSP yet) ──
         b"daw_fx_count" => num(effects_of(p, n(0) as i64).map(|v| v.len()).unwrap_or(0) as f64),
         b"daw_fx_name" => mk_str(&effects_of(p, n(0) as i64).and_then(|v| v.get(u(1))).map(|f| f.name.clone()).unwrap_or_default()),
+        b"daw_fx_wet" => num(effects_of(p, n(0) as i64).and_then(|v| v.get(u(1))).map(|f| f.wet).unwrap_or(1.0) as f64),
+        // offline render (WAV export) runs on the host only: never in progress here
+        b"daw_render_state" => num(0.0),
+        b"daw_render_progress" => num(0.0),
         b"daw_fx_bypassed" => boolean(effects_of(p, n(0) as i64).and_then(|v| v.get(u(1))).map(|f| f.bypass).unwrap_or(false)),
         b"daw_fx_params" => list_from(
             effects_of(p, n(0) as i64)

@@ -7,7 +7,7 @@
 //! velocity-to-brightness, hammer/pick click, breath noise, a vowel formant filter, delayed vibrato
 //! and tremolo. The sources are layered by `sub` / `add` / `fm` / `pluck` levels.
 use crate::dsp::fx::{FilterMode, Svf};
-use crate::dsp::{midi_hz, Instrument, Rng, TAU};
+use crate::dsp::{midi_hz, Instrument, Rng, Smooth, TAU};
 
 #[derive(Clone, Copy)]
 pub struct Adsr {
@@ -119,6 +119,9 @@ pub struct SynthParams {
     pub bend: f32,
     /// wheel range: semitones = 1 + v * 23
     pub bend_range: f32,
+    /// legato portamento: 0 = off (every note its own voice); above 0 a note that starts while another is held takes that voice over
+    /// without retriggering it and slides from its pitch (time constant 0.002 + v^2 * 0.8 s), as a mono synth's slide
+    pub glide: f32,
 }
 impl Default for SynthParams {
     fn default() -> Self {
@@ -164,6 +167,7 @@ impl Default for SynthParams {
             vib_delay: 0.0,
             bend: 0.5,
             bend_range: 1.0 / 23.0,
+            glide: 0.0,
         }
     }
 }
@@ -174,6 +178,8 @@ struct Voice {
     key: u8,
     vel: f32,
     freq: f32,
+    /// the sliding pitch while a legato glide runs (Hz), 0 = none (the voice plays `freq`)
+    slide: f32,
     on: bool,
     ph: [f32; 2],
     hph: [f32; NPART],
@@ -202,6 +208,12 @@ struct Voice {
     ks_w: usize,
     ks_lp: f32,
     ks_live: bool,
+    /// per-note expression: pitch gesture (semitones), pressure 0..1, timbre 0..1 (0.5 = neutral), smoothed over each block
+    pb: Smooth,
+    pr: Smooth,
+    tm: Smooth,
+    /// started (or taken over) since the last block: the first expression value is taken at once
+    fresh: bool,
 }
 
 pub struct LingSynth {
@@ -239,6 +251,7 @@ impl LingSynth {
                 key: 0,
                 vel: 0.0,
                 freq: 440.0,
+                slide: 0.0,
                 on: false,
                 ph: [0.0; 2],
                 hph: [0.0; NPART],
@@ -262,6 +275,10 @@ impl LingSynth {
                 ks_w: 0,
                 ks_lp: 0.0,
                 ks_live: false,
+                pb: Smooth::at(0.0),
+                pr: Smooth::at(0.0),
+                tm: Smooth::at(0.5),
+                fresh: false,
             })
             .collect();
         LingSynth { p: SynthParams::default(), voices, sr, rng: Rng::new(7), lfo: 0.0, clock: 0, last: 0 }
@@ -364,6 +381,28 @@ fn osc(ph: f32, wave: f32, pw: f32) -> f32 {
 impl Instrument for LingSynth {
     fn note_on(&mut self, key: u8, vel: f32) {
         self.clock += 1;
+        // legato glide: a held voice (the newest) is taken over and slides to the new note, its envelopes keep going
+        if self.p.glide > 0.0 {
+            if let Some(i) = self.voices.iter().enumerate().filter(|(_, v)| v.on && v.aenv.st != Stage::Off).max_by_key(|(_, v)| v.age).map(|(i, _)| i) {
+                let v = &mut self.voices[i];
+                let mut from = if v.slide > 0.0 { v.slide } else { v.freq };
+                // the slide starts where the voice is heard, its pitch gesture included; the new note brings its own
+                if v.pb.cur != 0.0 {
+                    from *= (v.pb.cur / 12.0).exp2();
+                }
+                v.pb.reset(0.0);
+                v.pr.reset(0.0);
+                v.tm.reset(0.5);
+                v.fresh = true;
+                v.key = key;
+                v.vel = vel;
+                v.freq = midi_hz(key as f32);
+                v.slide = from;
+                v.age = self.clock;
+                self.last = i;
+                return;
+            }
+        }
         let idx = self
             .voices
             .iter()
@@ -381,6 +420,7 @@ impl Instrument for LingSynth {
             v.key = key;
             v.vel = vel;
             v.freq = midi_hz(key as f32);
+            v.slide = 0.0;
             v.on = true;
             v.age = self.clock;
             v.aenv.on();
@@ -395,6 +435,10 @@ impl Instrument for LingSynth {
             v.ck = 1.0;
             v.hph = [0.0; NPART];
             v.ks_live = false;
+            v.pb.reset(0.0);
+            v.pr.reset(0.0);
+            v.tm.reset(0.5);
+            v.fresh = true;
         }
         if string {
             self.excite(idx);
@@ -421,6 +465,21 @@ impl Instrument for LingSynth {
             v.fenv.off();
         }
     }
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.on && v.key == key) {
+            v.pb.set(semis, v.fresh);
+        }
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.on && v.key == key) {
+            v.pr.set(x, v.fresh);
+        }
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.on && v.key == key) {
+            v.tm.set(x, v.fresh);
+        }
+    }
 
     fn render(&mut self, out: &mut [f32]) {
         let p = self.p.clone();
@@ -440,7 +499,15 @@ impl Instrument for LingSynth {
         let t60 = 0.15 * 120.0f32.powf(p.str_decay);
         let ks_k = (0.25 + 0.75 * p.str_bright).clamp(0.1, 1.0);
         let n_vowel = formants(p.vowel);
+        let glide_k = if p.glide > 0.0 { 1.0 - (-dt / (0.002 + p.glide * p.glide * 0.8)).exp() } else { 1.0 };
         let bend_mul = if p.bend != 0.5 { ((p.bend - 0.5) * 2.0 * (1.0 + p.bend_range * 23.0) / 12.0).exp2() } else { 1.0 };
+        let frames = out.len() / 2;
+        for v in self.voices.iter_mut() {
+            v.pb.begin(frames);
+            v.pr.begin(frames);
+            v.tm.begin(frames);
+            v.fresh = false;
+        }
         for fr in out.chunks_exact_mut(2) {
             self.lfo = (self.lfo + dt * (0.1 + p.lfo_rate * 12.0)).fract();
             let lfo = fsin(self.lfo);
@@ -453,7 +520,21 @@ impl Instrument for LingSynth {
                 let ae = v.aenv.tick(&p.amp, dt);
                 let fe = v.fenv.tick(&p.fenv, dt);
                 let vg = if vib_delay > 0.0 { (v.t / vib_delay).min(1.0) } else { 1.0 };
-                let mut f0 = v.freq * bend_mul * (1.0 + lfo * p.lfo_pitch * 0.05 * vg);
+                let base = if v.slide > 0.0 {
+                    v.slide += (v.freq - v.slide) * glide_k;
+                    if (v.slide - v.freq).abs() < v.freq * 1e-4 {
+                        v.slide = 0.0;
+                    }
+                    if v.slide > 0.0 { v.slide } else { v.freq }
+                } else {
+                    v.freq
+                };
+                let mut f0 = base * bend_mul * (1.0 + lfo * p.lfo_pitch * 0.05 * vg);
+                if !v.pb.idle(0.0) {
+                    f0 *= (v.pb.tick() / 12.0).exp2();
+                }
+                // pressure: louder and brighter; timbre: the cutoff either way (as the note's own cutoff)
+                let (press, timbre) = (if v.pr.idle(0.0) { 0.0 } else { v.pr.tick() }, if v.tm.idle(0.5) { 0.5 } else { v.tm.tick() });
                 if bend {
                     v.pe *= pe_decay;
                     f0 *= (pe_semi * v.pe / 12.0).exp2();
@@ -535,11 +616,12 @@ impl Instrument for LingSynth {
                     + p.filt_env * fe
                     + lfo * p.lfo_cut * 0.3
                     + p.key_track * (v.key as f32 - 60.0) * 0.0088
-                    + p.vel_cut * (v.vel - 0.7) * 0.5)
+                    + p.vel_cut * (v.vel - 0.7) * 0.5
+                    + if press != 0.0 || timbre != 0.5 { press * 0.25 + (timbre - 0.5) * 0.8 } else { 0.0 })
                     .clamp(0.0, 1.0);
                 let hz = 30.0 * (20000.0f32 / 30.0).powf(cut);
                 let trem = if p.lfo_amp > 0.0 { 1.0 - p.lfo_amp * 0.5 * (1.0 + lfo) } else { 1.0 };
-                let g = ae * v.vel * p.gain * trem;
+                let g = ae * v.vel * p.gain * trem * if press != 0.0 { 1.0 + press * 0.5 } else { 1.0 };
                 let reso = (p.reso + (v.reso_mod - 0.5) * 0.8).clamp(0.0, 0.95);
                 let ang = (v.pan + 1.0) * std::f32::consts::FRAC_PI_4;
                 let (pl, pr) = (ang.cos() * std::f32::consts::SQRT_2, ang.sin() * std::f32::consts::SQRT_2);
@@ -612,6 +694,7 @@ impl Instrument for LingSynth {
             ("fenv attack", (p.fenv.a / 2.0).sqrt()),
             ("fenv decay", (p.fenv.d / 3.0).sqrt()),
             ("fenv sustain", p.fenv.s),
+            ("glide", p.glide),
         ]
     }
     fn set_param(&mut self, n: &str, v: f32) {
@@ -667,6 +750,7 @@ impl Instrument for LingSynth {
             "fenv attack" => p.fenv.a = v * v * 2.0,
             "fenv decay" => p.fenv.d = v * v * 3.0,
             "fenv sustain" => p.fenv.s = v,
+            "glide" => p.glide = v,
             _ => {}
         }
     }

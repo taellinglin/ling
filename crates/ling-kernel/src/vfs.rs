@@ -33,7 +33,31 @@ pub fn ready() -> bool {
 /// listings merge both. Accounts, the keyring and settings stay in lingfs.
 fn card_path(r: &str) -> Option<String> {
     if (r == "home" || r.starts_with("home/")) && crate::fs::media::has("card") {
-        Some(format!("media/card/{r}"))
+        return Some(format!("media/card/{r}"));
+    }
+    // Installed packages (`pkg-<name>/...`, the `packages/<name>` version
+    // records) live on the package volume when there is one -- lingfs is a
+    // few MiB, packages are often 100+ MB. Same fallback as home/: reads
+    // still find a package lingfs got before the volume existed.
+    if is_package_path(r) {
+        if let Some(v) = package_volume() {
+            return Some(format!("media/{v}/{r}"));
+        }
+    }
+    None
+}
+
+fn is_package_path(r: &str) -> bool {
+    r.starts_with("pkg-") || r == "packages" || r.starts_with("packages/")
+}
+
+/// The FAT volume packages install to: the Pi's SD-card data partition
+/// (`media/card`), else x86's second disk (`media/disk1`); None = lingfs.
+pub fn package_volume() -> Option<&'static str> {
+    if crate::fs::media::has("card") {
+        Some("card")
+    } else if crate::fs::media::has("disk1") {
+        Some("disk1")
     } else {
         None
     }
@@ -287,7 +311,7 @@ pub fn exists(p: &str) -> bool {
     if ready() && (crate::fs::lingfs::path_kind(&r).is_some() || crate::fs::lingfs::path_kind(&n).is_some()) {
         return true;
     }
-    crate::appfs::exists(&n) || crate::appfs::is_dir(&n) || crate::appfs::exists(&r) || img(&n).is_some()
+    crate::appfs::exists(&n) || crate::appfs::is_dir(&n) || crate::appfs::exists(&r) || img(&n).is_some() || (is_model_path(&n) && locate_model(&n).is_some())
 }
 
 pub fn is_dir(p: &str) -> bool {
@@ -444,6 +468,16 @@ pub fn list(p: &str) -> Vec<(String, bool, usize)> {
             push_entry(&mut items, &name, d, size);
         }
     }
+    // The root also shows the packages installed on the package volume.
+    if n.is_empty() {
+        if let Some(v) = package_volume() {
+            for (name, d, size) in crate::fs::media::list(&format!("media/{v}")) {
+                if is_package_path(&name) {
+                    push_entry(&mut items, &name, d, size);
+                }
+            }
+        }
+    }
     if ready() {
         lingfs_list_into(&r, &mut items);
         if r != n {
@@ -468,4 +502,58 @@ pub fn list(p: &str) -> Vec<(String, bool, usize)> {
     }
     items.sort_by(|x, y| y.1.cmp(&x.1).then(x.0.to_lowercase().cmp(&y.0.to_lowercase())));
     items
+}
+
+// ── big files read in pieces (language models) ─────────────────────────────
+
+/// Is `n` a model path the search below applies to: a relative path with a
+/// `models` folder in it (`assets/models/Qwen3-0.6B-Q8_0.gguf`, `models/x`)?
+fn is_model_path(n: &str) -> bool {
+    !crate::fs::media::is_media_path(n) && !n.starts_with("home/") && n.split('/').any(|s| s.eq_ignore_ascii_case("models"))
+}
+
+/// Where a model file an app names by a relative path actually is, on a FAT
+/// volume (`media/<vol>/...`). Models are hundreds of MB to GBs, so they live
+/// on the SD card's data partition (Pi) or the second disk (x86), never in
+/// lingfs or the image. The search, first hit wins:
+///   1. the path as programs resolve it: the app's data folder
+///      (`home/<user>/Programs/<App>/assets/models/...`, on the card on the Pi)
+///   2. an installed package that carries it: `media/<vol>/pkg-*/<path>`
+///   3. the volume's root: `media/<vol>/<path>` (`media/card/assets/models/...`)
+///   4. a plain models folder: `media/<vol>/models/<file name>`
+/// over every mounted volume (card, disk1, usb0, ...). An absolute
+/// `media/...` or `home/...` path (Settings > AI > Browse) is taken as is.
+pub fn locate_model(p: &str) -> Option<String> {
+    let n = norm(p);
+    if crate::fs::media::is_media_path(&n) {
+        return crate::fs::media::exists(&n).then_some(n);
+    }
+    let r = resolve(&n);
+    if let Some(c) = card_path(&r) {
+        if crate::fs::media::exists(&c) && !crate::fs::media::is_dir(&c) {
+            return Some(c);
+        }
+    }
+    let rel = under_root(&n).unwrap_or(n);
+    if !is_model_path(&rel) {
+        return None;
+    }
+    let base = basename(&rel);
+    for vol in crate::fs::media::names() {
+        let v = format!("media/{vol}");
+        for (name, d, _) in crate::fs::media::list(&v) {
+            if d && name.starts_with("pkg-") {
+                let c = format!("{v}/{name}/{rel}");
+                if crate::fs::media::exists(&c) {
+                    return Some(c);
+                }
+            }
+        }
+        for c in [format!("{v}/{rel}"), format!("{v}/models/{base}")] {
+            if crate::fs::media::exists(&c) && !crate::fs::media::is_dir(&c) {
+                return Some(c);
+            }
+        }
+    }
+    None
 }

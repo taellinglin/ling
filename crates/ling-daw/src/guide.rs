@@ -37,6 +37,8 @@ pub struct Guide {
     pub bars: u32,
     pub genre: &'static str,
     pub tracks: Vec<GuideTrack>,
+    /// what else the file says (songanalysis.rs): labelled structure, energy / tension per bar, the emotional story, hook, groove
+    pub shape: crate::songanalysis::Shape,
 }
 
 fn bar_hist(notes: &[(&N, f32)], bar: usize) -> [f64; 12] {
@@ -145,7 +147,12 @@ pub fn analyze(mid: &ImportedMidi) -> Option<Guide> {
     }
     let top = e.iter().cloned().fold(1e-9, f64::max);
     let en: Vec<f64> = e.iter().map(|x| (x / top).clamp(0.0, 1.0)).collect();
-    let sections = if bars >= 8 { sections_from_energy(&en) } else { vec![] };
+    // the structure from repetition, energy and drums (songanalysis.rs), else 4-bar energy blocks
+    let shape = {
+        let parts: Vec<crate::songanalysis::PartIn> = tracks.iter().map(|t| crate::songanalysis::PartIn { name: &t.name, role: t.role, kind: t.kind, notes: &t.notes }).collect();
+        crate::songanalysis::analyze_notes(&parts, bars as usize, key)
+    };
+    let sections = if shape.sections.len() >= 2 { shape.sections.clone() } else if bars >= 8 { sections_from_energy(&en) } else { vec![] };
     // chords: one triad per bar over the busiest eight bars, then the loop that repeats
     let mut prog = String::new();
     if hist.iter().sum::<f64>() > 0.0 && bars >= 2 {
@@ -167,7 +174,24 @@ pub fn analyze(mid: &ImportedMidi) -> Option<Guide> {
             prog = p.join(" ");
         }
     }
-    Some(Guide { bpm: mid.bpm.unwrap_or(120.0).clamp(40.0, 220.0).round(), key, key_conf, prog, sections, bars, genre: crate::ai_import::guess_genre(mid), tracks })
+    Some(Guide { bpm: mid.bpm.unwrap_or(120.0).clamp(40.0, 220.0).round(), key, key_conf, prog, sections, bars, genre: crate::ai_import::guess_genre(mid), tracks, shape })
+}
+
+/// An acapella (transcribe.rs) as a guide: its tempo, key, the chord loop fitted to its melody and its layout (an intro before the
+/// singing, the singer's sections, the band's sections where it rests, an outro), so every bar of the vocal lands where it was sung.
+/// It has no parts of its own (the plan's chords follow the fitted loops; the exact chords go on a track of their own).
+pub fn from_acapella(a: &crate::transcribe::Acapella) -> Guide {
+    Guide {
+        bpm: a.bpm,
+        key: a.key,
+        key_conf: a.key_conf,
+        prog: a.prog.clone(),
+        sections: a.sections.clone(),
+        bars: a.sections.iter().map(|s| s.bars).sum(),
+        genre: "pop",
+        tracks: vec![],
+        shape: a.shape.clone(),
+    }
 }
 
 impl Guide {

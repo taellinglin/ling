@@ -414,6 +414,13 @@ struct Voice {
     g: f32,
     kq: f32,
     use_filter: bool,
+    /// per-note expression: the pitch gesture in cents (target and the value glided to every 16 samples), pressure 0..1 (level),
+    /// timbre 0..1 (0.5 neutral: the filter cutoff when the layer has a filter); `fresh` = the first value is taken at once
+    gest: f32,
+    gcur: f32,
+    press: f32,
+    timb: f32,
+    fresh: bool,
 }
 
 pub struct Sf2Player {
@@ -470,6 +477,11 @@ impl Sf2Player {
             g: 0.0,
             kq: 1.0,
             use_filter: false,
+            gest: 0.0,
+            gcur: 0.0,
+            press: 0.0,
+            timb: 0.5,
+            fresh: false,
         };
         Ok(Sf2Player { sf, path: path.to_string(), sr, preset, bank, program, gain: 0.7, tune: 0.5, bend: 0.5, bend_range: 1.0 / 23.0, env_a: 0.5, env_r: 0.5, voices: vec![blank; VOICES], clock: 0 })
     }
@@ -552,6 +564,11 @@ impl Sf2Player {
             g: 0.0,
             kq: 1.0,
             use_filter: layer.fc < 13300.0 || layer.mod_to_fc != 0.0,
+            gest: 0.0,
+            gcur: 0.0,
+            press: 0.0,
+            timb: 0.5,
+            fresh: true,
         };
         if v.stage == Stage::Attack && atk <= 0.0 {
             v.env = 1.0;
@@ -599,10 +616,32 @@ impl Instrument for Sf2Player {
         }
     }
 
+    fn note_pitch(&mut self, key: u8, semis: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.key == key && !v.released && v.stage != Stage::Off) {
+            v.gest = semis * 100.0;
+            if v.fresh {
+                v.gcur = v.gest;
+            }
+        }
+    }
+    fn note_pressure(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.key == key && !v.released && v.stage != Stage::Off) {
+            v.press = x;
+        }
+    }
+    fn note_timbre(&mut self, key: u8, x: f32) {
+        for v in self.voices.iter_mut().filter(|v| v.key == key && !v.released && v.stage != Stage::Off) {
+            v.timb = x;
+        }
+    }
+
     fn render(&mut self, out: &mut [f32]) {
         let sr = self.sr;
         let dt = 1.0 / sr;
         let data = self.sf.data.clone();
+        for v in self.voices.iter_mut() {
+            v.fresh = false;
+        }
         let gain = self.gain * 1.3;
         let glob_cents = (self.tune - 0.5) * 200.0 + (self.bend - 0.5) * 2.0 * (1.0 + self.bend_range * 23.0) * 100.0;
         for v in self.voices.iter_mut() {
@@ -616,10 +655,18 @@ impl Instrument for Sf2Player {
                     v.t += 16.0 * dt;
                     v.lfo_m = if v.t > l.mod_delay { (((v.t - l.mod_delay) * l.mod_freq).fract() * 4.0 - 2.0).abs() - 1.0 } else { 0.0 };
                     v.lfo_v = if v.t > l.vib_delay { (((v.t - l.vib_delay) * l.vib_freq).fract() * 4.0 - 2.0).abs() - 1.0 } else { 0.0 };
-                    let cents = v.base_cents + glob_cents + v.lfo_m * l.mod_to_pitch + v.lfo_v * l.vib_to_pitch;
+                    let mut cents = v.base_cents + glob_cents + v.lfo_m * l.mod_to_pitch + v.lfo_v * l.vib_to_pitch;
+                    if v.gest != 0.0 || v.gcur != 0.0 {
+                        // the pitch gesture, glided over about 1.5 ms
+                        v.gcur += (v.gest - v.gcur) * 0.35;
+                        if (v.gcur - v.gest).abs() < 0.01 {
+                            v.gcur = v.gest;
+                        }
+                        cents += v.gcur;
+                    }
                     v.step = v.rate_ratio * (cents as f64 / 1200.0).exp2();
                     if v.use_filter {
-                        let fc = l.fc + v.lfo_m * l.mod_to_fc;
+                        let fc = l.fc + v.lfo_m * l.mod_to_fc + if v.timb != 0.5 { (v.timb - 0.5) * 4800.0 } else { 0.0 };
                         let hz = (8.176 * (fc / 1200.0).exp2()).clamp(20.0, sr * 0.45);
                         v.g = (std::f32::consts::PI * hz / sr).tan();
                         v.kq = 1.0 / 10f32.powf(l.q_db / 40.0); // resonance peak of q_db above DC gain
@@ -683,7 +730,7 @@ impl Instrument for Sf2Player {
                     s = v.lp.tick(s, v.g, v.kq);
                 }
                 let trem = if l.mod_to_vol_db != 0.0 { 10f32.powf(v.lfo_m * l.mod_to_vol_db / 20.0) } else { 1.0 };
-                let y = s * v.env * v.amp * gain * trem;
+                let y = s * v.env * v.amp * gain * trem * if v.press != 0.0 { 1.0 + v.press * 0.5 } else { 1.0 };
                 fr[0] += y * v.gl;
                 fr[1] += y * v.gr;
                 v.pos += v.step;

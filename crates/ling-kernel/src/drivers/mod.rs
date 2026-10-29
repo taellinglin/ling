@@ -8,6 +8,9 @@
 pub mod ac97;
 #[cfg(target_arch = "x86_64")]
 pub mod ahci;
+/// Intel High Definition Audio (VirtualBox's default audio controller).
+#[cfg(target_arch = "x86_64")]
+pub mod hda;
 #[cfg(target_arch = "x86_64")]
 pub mod ata;
 #[cfg(target_arch = "x86_64")]
@@ -21,7 +24,7 @@ pub mod display;
 pub mod editor;
 #[cfg(target_arch = "x86_64")]
 pub mod horizon;
-#[cfg(target_arch = "x86_64")]
+// the Qwen3 engine and the llm_* app builtins (both architectures)
 pub mod llm;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod messenger;
@@ -47,6 +50,9 @@ pub mod gallery;
 
 /// Native 3-D (camera, z-buffer, textured meshes, shapes, particles) for compiled games.
 pub mod g3d;
+/// Menu, app and tray icons drawn from shapes (supersampled).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod icons;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub mod framebuffer;
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
