@@ -936,18 +936,47 @@ fn run_build(
     }
 
     let icon = icon_override.as_deref();
+    // Manifest-driven `targets` may declare the project's FULL release set
+    // (win + lin + mac + ...), more than one host can build: OS-native targets
+    // the current host can't produce (and `cross` isn't installed) are skipped
+    // with a note instead of aborting the whole list, so a bare `ling build .`
+    // yields what it can locally and CI builds the rest on its own runners.
+    // An explicit --platform stays strict and still fails loudly.
+    let from_manifest = platforms.is_empty();
+    let skip_foreign = |p: NativePlatform| -> bool {
+        if from_manifest && !p.is_current_host() && !has_cross() {
+            println!(
+                "  [{}] skipped: needs a {} host or `cross` (your CI release workflow builds it)",
+                p.dir_name(),
+                p.dir_name()
+            );
+            true
+        } else {
+            false
+        }
+    };
     for platform in &resolved {
         match platform.as_str() {
             "web" => build_web(&project, out),
             "win" | "windows" => {
-                build_native(&project, out, NativePlatform::Windows, icon, pack, aot)
+                if !skip_foreign(NativePlatform::Windows) {
+                    build_native(&project, out, NativePlatform::Windows, icon, pack, aot)
+                }
             },
-            "lin" | "linux" => build_native(&project, out, NativePlatform::Linux, icon, pack, aot),
+            "lin" | "linux" => {
+                if !skip_foreign(NativePlatform::Linux) {
+                    build_native(&project, out, NativePlatform::Linux, icon, pack, aot)
+                }
+            },
             "mac" | "macos" | "darwin" => {
-                build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
+                if !skip_foreign(NativePlatform::Mac) {
+                    build_native(&project, out, NativePlatform::Mac, icon, pack, aot)
+                }
             },
             "macarm" | "mac-arm" | "mac-arm64" | "macos-arm64" | "apple-silicon" => {
-                build_native(&project, out, NativePlatform::MacArm, icon, pack, aot)
+                if !skip_foreign(NativePlatform::MacArm) {
+                    build_native(&project, out, NativePlatform::MacArm, icon, pack, aot)
+                }
             },
             "kernel" | "bare" => {
                 build_native(&project, out, NativePlatform::BareMetal, icon, pack, aot)
@@ -956,7 +985,9 @@ fn run_build(
                 build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
             },
             "pios" | "pi" | "raspios" | "linux-arm64" | "linarm" | "arm64" => {
-                build_native(&project, out, NativePlatform::PiOs, icon, pack, aot)
+                if !skip_foreign(NativePlatform::PiOs) {
+                    build_native(&project, out, NativePlatform::PiOs, icon, pack, aot)
+                }
             },
             "lingos" | "app" | "apps" => {
                 build_native(&project, out, NativePlatform::Lingos, icon, pack, aot)
