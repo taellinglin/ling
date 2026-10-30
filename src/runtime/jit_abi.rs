@@ -467,12 +467,65 @@ pub unsafe extern "C" fn ling_alloc(size: u64) -> u64 {
     ptr as u64
 }
 
+/// Release an encoded heap handle: drop the box behind it, dispatched on the
+/// kind tag — the boxes are different concrete types per kind (see
+/// `encode_value`), so a tag-blind `Box::from_raw(.. as *mut Value)` would be
+/// UB for strings and lists. Numbers, unit, bools and null pointers are no-ops,
+/// so the codegen can emit releases unconditionally. Takes the full encoded
+/// u64 (not a stripped pointer).
 #[no_mangle]
-pub unsafe extern "C" fn ling_free(ptr: u64) -> u64 {
-    if ptr != 0 {
-        let _ = Box::from_raw(ptr as *mut Value);
+pub unsafe extern "C" fn ling_free(val: u64) -> u64 {
+    if is_number(val) {
+        return TAG_UNIT;
+    }
+    let ptr = decode_ptr(val);
+    if ptr.is_null() {
+        return TAG_UNIT;
+    }
+    match tag_kind(val) {
+        TAG_KIND_STRING => drop(unsafe { Box::from_raw(ptr as *mut String) }),
+        TAG_KIND_LIST => drop(unsafe { Box::from_raw(ptr as *mut Rc<Vec<Value>>) }),
+        TAG_KIND_OK | TAG_KIND_ERR | TAG_KIND_BOXED => {
+            drop(unsafe { Box::from_raw(ptr as *mut Value) })
+        },
+        _ => {},
     }
     TAG_UNIT
+}
+
+/// Clone the box behind an encoded heap handle into a fresh, independently
+/// owned box; identity for numbers/singletons/null. The codegen emits this at
+/// the only places an alias of a box would otherwise be created (a plain
+/// local-to-local copy, the list argument of the in-place list shims when it
+/// isn't the self-accumulator, and arguments handed to another JIT function),
+/// so every boxed local owns its handle exclusively and `ling_free` on
+/// reassignment or return can never free a box another local still holds.
+/// Lists clone only the `Rc` (O(1)); `Rc::make_mut` inside `ling_list_push` /
+/// `ling_list_set` then copy-on-writes when shared, which also keeps JIT list
+/// semantics value-like, matching the interpreter.
+#[no_mangle]
+pub unsafe extern "C" fn ling_retain(val: u64) -> u64 {
+    if is_number(val) {
+        return val;
+    }
+    let ptr = decode_ptr(val);
+    if ptr.is_null() {
+        return val;
+    }
+    let kind = tag_kind(val);
+    let new_ptr = match kind {
+        TAG_KIND_STRING => {
+            Box::into_raw(Box::new(unsafe { &*(ptr as *const String) }.clone())) as u64
+        },
+        TAG_KIND_LIST => {
+            Box::into_raw(Box::new(Rc::clone(unsafe { &*(ptr as *const Rc<Vec<Value>>) }))) as u64
+        },
+        TAG_KIND_OK | TAG_KIND_ERR | TAG_KIND_BOXED => {
+            Box::into_raw(Box::new(unsafe { &*(ptr as *const Value) }.clone())) as u64
+        },
+        _ => return val,
+    };
+    TAG_PATTERN | kind | (new_ptr & PTR_MASK)
 }
 
 #[no_mangle]

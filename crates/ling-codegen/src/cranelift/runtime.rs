@@ -137,6 +137,7 @@ pub static SYMBOL_MAP: &[(&str, &[u8])] = &[
     // Core allocation / panics
     ("__ling_alloc", b"ling_alloc\0"),
     ("__ling_free", b"ling_free\0"),
+    ("__ling_retain", b"ling_retain\0"),
     ("__ling_panic", b"ling_panic\0"),
     // Arithmetic
     ("__ling_add", b"ling_add\0"),
@@ -246,7 +247,8 @@ extern "C" {
     pub fn ling_not(a: u64) -> u64;
 
     pub fn ling_alloc(size: u64) -> u64;
-    pub fn ling_free(ptr: u64) -> u64;
+    pub fn ling_free(val: u64) -> u64;
+    pub fn ling_retain(val: u64) -> u64;
     pub fn ling_panic(msg: u64);
 
     pub fn ling_str_new(ptr: *const u8, len: usize) -> u64;

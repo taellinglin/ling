@@ -68,6 +68,7 @@ fn declare_runtime_functions(module: &mut JITModule) -> HashMap<String, (FuncId,
         ("__ling_bool_to_u64", &[types::I64], types::I64),
         ("__ling_alloc", &[types::I64], types::I64),
         ("__ling_free", &[types::I64], types::I64),
+        ("__ling_retain", &[types::I64], types::I64),
         ("__ling_panic", &[types::I64], types::I64),
         ("__ling_str_new", &[types::I64, types::I64], types::I64),
         ("__ling_str_len", &[types::I64], types::I64),
@@ -384,6 +385,19 @@ impl JitBackend {
         }
 
         let func_arities = self.func_arities.clone();
+        // Ownership-based frees (see TransCtx::frees). LING_JIT_FREE=0 restores
+        // the old leak-everything behaviour as a kill switch. The sweep is every
+        // local that could hold a heap box: whatever numtype didn't prove to be
+        // an integer or a strict bool (those are immediates, never boxed).
+        let frees = std::env::var("LING_JIT_FREE").map_or(true, |v| v != "0");
+        let boxed_sweep: Vec<usize> = if frees {
+            (1..=max_local)
+                .filter(|&i| !nt.local_is_int(&func.name, i))
+                .filter(|&i| !nt.operand_is_bool(&func.name, &Operand::Copy(Local(i))))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let tctx = TransCtx {
             vars: &vars,
             string_gvs: &string_gvs,
@@ -393,6 +407,8 @@ impl JitBackend {
             func_arities: &func_arities,
             nt,
             fname: &func.name,
+            frees,
+            boxed_sweep: &boxed_sweep,
         };
         build_function_body(&mut builder, func, &blocks, &tctx);
         builder.finalize();

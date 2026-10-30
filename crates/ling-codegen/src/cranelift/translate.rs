@@ -64,6 +64,26 @@ pub(crate) fn build_function_body(
                     builder.def_var(var, stored);
                 }
             }
+            if ctx.frees {
+                // Ownership frees (TransCtx::frees): start every potentially
+                // boxed non-parameter local as unit so the releases emitted on
+                // reassignment and at Return can read any local on any path —
+                // releasing unit is a no-op. Parameters were just defined
+                // above; integer locals are never touched by retain/release.
+                let unit = builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
+                if !ctx.nt.local_is_int(ctx.fname, 0) {
+                    if let Some(&var) = ctx.vars.get(&Local(0)) {
+                        builder.def_var(var, unit);
+                    }
+                }
+                for &l in ctx.boxed_sweep {
+                    if l > func.arg_count {
+                        if let Some(&var) = ctx.vars.get(&Local(l)) {
+                            builder.def_var(var, unit);
+                        }
+                    }
+                }
+            }
         }
 
         // A planned branch fusion absorbs its condition's defining statements
@@ -231,6 +251,123 @@ pub(crate) struct TransCtx<'a> {
     pub func_arities: &'a HashMap<String, usize>,
     pub nt: &'a NumberTypes,
     pub fname: &'a str,
+    /// Ownership-based frees. When set, the backend maintains the invariant
+    /// that every boxed local OWNS the box its handle points at: the only two
+    /// constructs that would alias a box (a plain local-to-local copy, and
+    /// arguments handed to another JIT function) emit `__ling_retain` (a
+    /// tag-checked clone; identity for numbers/singletons), and the box a
+    /// local holds is released with `__ling_free` when the local is
+    /// reassigned and when the function returns. Everything else is a borrow:
+    /// runtime shims clone values out of a box and never keep or free it.
+    /// Without this, every heap value JIT code ever allocates leaks — fatal
+    /// for a long-running render loop. Off for AOT; LING_JIT_FREE=0 disables.
+    pub frees: bool,
+    /// Local indices (excluding 0, the return slot) that may hold a heap box:
+    /// everything numtype didn't prove integer or strict-bool. These are
+    /// initialised to unit on entry and released at every return. Empty when
+    /// `frees` is off.
+    pub boxed_sweep: &'a [usize],
+}
+
+/// `__ling_free(handle)`: give back the box a handle owns. A no-op at runtime
+/// for numbers, unit/bools and null, so callers never need a guard.
+pub(crate) fn emit_release(builder: &mut FunctionBuilder, ctx: &TransCtx, handle: Value) {
+    if !ctx.frees {
+        return;
+    }
+    if let Some(&fr) = ctx.runtime_refs.get("__ling_free") {
+        builder.ins().call(fr, &[handle]);
+    }
+}
+
+/// `__ling_retain(handle)`: a fresh, independently owned box with the same
+/// contents (identity for numbers/singletons). Identity when frees are off.
+pub(crate) fn emit_retain(builder: &mut FunctionBuilder, ctx: &TransCtx, handle: Value) -> Value {
+    if !ctx.frees {
+        return handle;
+    }
+    if let Some(&fr) = ctx.runtime_refs.get("__ling_retain") {
+        let inst = builder.ins().call(fr, &[handle]);
+        builder.inst_results(inst)[0]
+    } else {
+        handle
+    }
+}
+
+/// Is this operand a read of a local that can hold a heap box? (Integer-typed
+/// locals are stored raw and boxed back as numbers on demand — never a box.)
+pub(crate) fn is_boxed_local_op(op: &Operand, ctx: &TransCtx) -> bool {
+    matches!(op, Operand::Copy(l) | Operand::Move(l) if !ctx.nt.local_is_int(ctx.fname, l.0))
+}
+
+/// Release the box a `Constant::Str` operand materialized. String literals are
+/// the only constants that allocate (`__ling_str_new` per evaluation), the box
+/// has no owning local, and runtime shims only borrow their arguments — so
+/// whoever evaluated the operand must give the box back after the consuming
+/// call, or every literal used as a binop/builtin/list-element operand leaks
+/// one box per evaluation.
+pub(crate) fn release_const_str(
+    builder: &mut FunctionBuilder,
+    ctx: &TransCtx,
+    op: &Operand,
+    val: Value,
+) {
+    if ctx.frees && matches!(op, Operand::Constant(Constant::Str(_))) {
+        emit_release(builder, ctx, val);
+    }
+}
+
+/// Builtin names that `emit_builtin_call` lowers to the in-place list shims
+/// (`__ling_list_push` / `__ling_list_set`), which CONSUME their list
+/// argument's box — the allocation is recycled into the result. Mirrors the
+/// alias arms in `emit_builtin_call`, including their arity guards.
+pub(crate) fn consumes_list_arg0(name: &str, argc: usize) -> bool {
+    let push = matches!(
+        name,
+        "list_push"
+            | "เพิ่มรายการ"
+            | "列表添加"
+            | "リスト追加"
+            | "목록추가"
+            | "افزودن_به_فهرست"
+            | "أضف_للقائمة"
+            | "הוסף_לרשימה"
+            | "فہرست_میں_شامل_کرو"
+            | "ajouter_liste"
+            | "liste_anhängen"
+            | "добавить_в_список"
+    );
+    let set = matches!(
+        name,
+        "list_set"
+            | "ตั้งรายการ"
+            | "设元素"
+            | "要素設定"
+            | "요소설정"
+            | "تنظیم_عنصر_فهرست"
+            | "عيّن_عنصر_القائمة"
+            | "קבע_איבר_רשימה"
+            | "فہرست_سیٹ"
+    );
+    (push && argc >= 2) || (set && argc >= 3)
+}
+
+/// True when `rvalue` is `dest = list_push(dest, ..)` / `dest = list_set(dest,
+/// ..)` lowered through the in-place shims: the shim recycles dest's old box
+/// INTO the result, so the usual release of dest's previous handle must be
+/// skipped (it IS the new value), and arg0 must not be retained — keeping the
+/// inner Rc unique is exactly what keeps the accumulator pattern O(1).
+pub(crate) fn recycles_dest(rvalue: &Rvalue, dest: Local, ctx: &TransCtx) -> bool {
+    let Rvalue::Call { func: Operand::Constant(Constant::Function(name)), args } = rvalue else {
+        return false;
+    };
+    // A user-defined function of the same name takes the direct-call path and
+    // does not consume anything.
+    if ctx.func_refs.contains_key(name.as_str()) {
+        return false;
+    }
+    consumes_list_arg0(name, args.len())
+        && matches!(args.first(), Some(Operand::Copy(l) | Operand::Move(l)) if *l == dest)
 }
 
 /// The static register representation of a value the translator produces.
@@ -246,7 +383,8 @@ pub(crate) enum Repr {
 
 pub(crate) fn translate_stmt(stmt: &Statement, builder: &mut FunctionBuilder, ctx: &TransCtx) {
     if let StatementKind::Assign(local, rvalue) = &stmt.kind {
-        let (val, repr) = translate_rvalue(rvalue, builder, ctx);
+        let recycled = ctx.frees && recycles_dest(rvalue, *local, ctx);
+        let (val, repr) = translate_rvalue(rvalue, builder, ctx, Some(*local));
         if let Some(&var) = ctx.vars.get(local) {
             // Coerce the produced value into the destination local's static
             // representation. The analysis guarantees an `Int` local only has
@@ -254,6 +392,16 @@ pub(crate) fn translate_stmt(stmt: &Statement, builder: &mut FunctionBuilder, ct
             // case where an integer rides the float path — a truncating round-trip
             // recovers it exactly.
             let dest_int = ctx.nt.local_is_int(ctx.fname, local.0);
+            // Ownership frees: this local owned the box its current handle
+            // points at, and the new value was fully computed above, so even a
+            // self-referencing assign (`bind a = a + ..`) read the old box
+            // before this release. Skipped for integer locals (never boxed)
+            // and when an in-place list builtin just recycled the old box into
+            // `val` itself (releasing it would free the new value).
+            if ctx.frees && !dest_int && !recycled {
+                let old = builder.use_var(var);
+                emit_release(builder, ctx, old);
+            }
             let stored = match (repr, dest_int) {
                 (Repr::Int, false) => int_to_boxed(builder, val),
                 (Repr::Boxed, true) => boxed_to_int(builder, val),
@@ -268,13 +416,23 @@ pub(crate) fn translate_rvalue(
     rvalue: &Rvalue,
     builder: &mut FunctionBuilder,
     ctx: &TransCtx,
+    dest: Option<Local>,
 ) -> (Value, Repr) {
     match rvalue {
         Rvalue::Use(op) => {
             if ctx.nt.operand_is_int(ctx.fname, op) {
                 (translate_op_int(op, builder, ctx), Repr::Int)
             } else {
-                (translate_op(op, builder, ctx), Repr::Boxed)
+                let v = translate_op(op, builder, ctx);
+                // A plain local-to-local copy is one of the two places an
+                // alias of a box would be created (see TransCtx::frees):
+                // clone it so source and destination each own their own box.
+                let v = if is_boxed_local_op(op, ctx) {
+                    emit_retain(builder, ctx, v)
+                } else {
+                    v
+                };
+                (v, Repr::Boxed)
             }
         },
         Rvalue::BinaryOp(op, lhs, rhs) => translate_binop_rvalue(op, lhs, rhs, builder, ctx),
@@ -284,10 +442,9 @@ pub(crate) fn translate_rvalue(
         },
         Rvalue::UnaryOp(op, operand) => {
             let v = translate_op(operand, builder, ctx);
-            (
-                translate_unop(op, builder, v, ctx.runtime_refs),
-                Repr::Boxed,
-            )
+            let out = translate_unop(op, builder, v, ctx.runtime_refs);
+            release_const_str(builder, ctx, operand, v);
+            (out, Repr::Boxed)
         },
         Rvalue::Call { func: callee, args } => {
             let callee_name = match callee {
@@ -341,6 +498,17 @@ pub(crate) fn translate_rvalue(
                         cal_args.truncate(arity);
                     }
                 }
+                // Ownership frees: a JIT callee owns its parameters (it
+                // releases them at its own return), so hand it its own boxes,
+                // never aliases of this frame's locals. Fresh boxes from
+                // constant arguments transfer ownership as-is.
+                if ctx.frees && !is_sys_or_kernel {
+                    for (i, arg) in args.iter().enumerate() {
+                        if i < cal_args.len() && is_boxed_local_op(arg, ctx) {
+                            cal_args[i] = emit_retain(builder, ctx, cal_args[i]);
+                        }
+                    }
+                }
                 let inst = builder.ins().call(fr, &cal_args);
                 let raw = builder.inst_results(inst)[0];
                 if is_sys_or_kernel {
@@ -349,16 +517,33 @@ pub(crate) fn translate_rvalue(
                     (raw, Repr::Boxed)
                 }
             } else {
-                (
-                    emit_builtin_call(
-                        callee_name,
-                        cal_args,
-                        builder,
-                        ctx.builtin_gvs,
-                        ctx.runtime_refs,
-                    ),
-                    Repr::Boxed,
-                )
+                // `dest = list_push(dest, ..)`-shaped calls recycle dest's box
+                // in place (see recycles_dest); the matching arm in
+                // emit_builtin_call must then NOT retain the list argument.
+                let recycled_self = ctx.frees
+                    && dest.is_some_and(|d| {
+                        consumes_list_arg0(&callee_name, args.len())
+                            && matches!(args.first(), Some(Operand::Copy(l) | Operand::Move(l)) if *l == d)
+                    });
+                // String-literal arguments materialized fresh boxes that no
+                // local owns; builtins only borrow their arguments (the
+                // dispatcher clones values out), so give those boxes back
+                // right after the call. This includes the constant pattern
+                // strings the match lowering feeds __ling_pat_test/_part.
+                let const_strs: Vec<Value> = if ctx.frees && !is_sys_or_kernel {
+                    args.iter()
+                        .zip(cal_args.iter())
+                        .filter(|(a, _)| matches!(a, Operand::Constant(Constant::Str(_))))
+                        .map(|(_, v)| *v)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let out = emit_builtin_call(callee_name, cal_args, builder, ctx, recycled_self);
+                for v in const_strs {
+                    emit_release(builder, ctx, v);
+                }
+                (out, Repr::Boxed)
             };
             v
         },
@@ -367,6 +552,9 @@ pub(crate) fn translate_rvalue(
             for op in ops {
                 let v = translate_op(op, builder, ctx);
                 list = emit_runtime_call2(builder, "__ling_list_push", list, v, ctx.runtime_refs);
+                // the push decoded (cloned) the element; a literal's box has
+                // no owner, so give it back here
+                release_const_str(builder, ctx, op, v);
             }
             (list, Repr::Boxed)
         },
@@ -380,6 +568,8 @@ pub(crate) fn translate_rvalue(
                 idx_val,
                 ctx.runtime_refs,
             );
+            release_const_str(builder, ctx, obj, obj_val);
+            release_const_str(builder, ctx, idx, idx_val);
             (v, Repr::Boxed)
         },
         Rvalue::InlineAsm(template) => {
@@ -462,10 +652,10 @@ fn translate_binop_rvalue(
     };
     let lv = translate_op(lhs, builder, ctx);
     let rv = translate_op(rhs, builder, ctx);
-    (
-        translate_binop(op, builder, lv, rv, tys, ctx.runtime_refs),
-        Repr::Boxed,
-    )
+    let out = translate_binop(op, builder, lv, rv, tys, ctx.runtime_refs);
+    release_const_str(builder, ctx, lhs, lv);
+    release_const_str(builder, ctx, rhs, rv);
+    (out, Repr::Boxed)
 }
 
 /// Evaluate an operand as a NaN-boxed value (the universal representation).
@@ -1124,9 +1314,14 @@ pub(crate) fn emit_builtin_call(
     name: String,
     args: Vec<Value>,
     builder: &mut FunctionBuilder,
-    builtin_gvs: &HashMap<String, GlobalValue>,
-    runtime_refs: &HashMap<String, FuncRef>,
+    ctx: &TransCtx,
+    // `dest = list_push(dest, ..)` / `dest = list_set(dest, ..)`: the in-place
+    // shim recycles dest's box, so arg0 must NOT be retained (and the caller
+    // skips releasing dest's old handle — see translate_stmt).
+    recycled_self: bool,
 ) -> Value {
+    let builtin_gvs = ctx.builtin_gvs;
+    let runtime_refs = ctx.runtime_refs;
     // Fast-path for commonly-used builtins with direct JIT implementations
     match name.as_str() {
         "print" | "println" | "พิมพ์" | "印" | "打印" | "印刷" => {
@@ -1143,13 +1338,13 @@ pub(crate) fn emit_builtin_call(
             }
             return emit_runtime_call0(builder, "__ling_print_newline", runtime_refs);
         },
-        "sin" => return unbox_f64_or_call(builder, args, "__ling_sin", runtime_refs),
-        "cos" => return unbox_f64_or_call(builder, args, "__ling_cos", runtime_refs),
-        "sqrt" => return unbox_f64_or_call(builder, args, "__ling_sqrt", runtime_refs),
-        "abs" => return unbox_f64_or_call(builder, args, "__ling_abs", runtime_refs),
-        "floor" => return unbox_f64_or_call(builder, args, "__ling_floor", runtime_refs),
-        "ceil" => return unbox_f64_or_call(builder, args, "__ling_ceil", runtime_refs),
-        "round" => return unbox_f64_or_call(builder, args, "__ling_round", runtime_refs),
+        "sin" => return unbox_f64_or_call(builder, args, "__ling_sin", ctx),
+        "cos" => return unbox_f64_or_call(builder, args, "__ling_cos", ctx),
+        "sqrt" => return unbox_f64_or_call(builder, args, "__ling_sqrt", ctx),
+        "abs" => return unbox_f64_or_call(builder, args, "__ling_abs", ctx),
+        "floor" => return unbox_f64_or_call(builder, args, "__ling_floor", ctx),
+        "ceil" => return unbox_f64_or_call(builder, args, "__ling_ceil", ctx),
+        "round" => return unbox_f64_or_call(builder, args, "__ling_round", ctx),
         "time_now" | "เวลาปัจจุบัน" | "当前时间" | "経過時間" | "현재시간" =>
         {
             return emit_runtime_call0(builder, "__ling_time_now", runtime_refs);
@@ -1182,7 +1377,15 @@ pub(crate) fn emit_builtin_call(
         | "добавить_в_список"
             if args.len() >= 2 =>
         {
-            return emit_runtime_call2(builder, "__ling_list_push", args[0], args[1], runtime_refs);
+            // The shim consumes (recycles) the list argument's box. For the
+            // self-accumulator (`bind acc = list_push(acc, x)`) that box is
+            // exactly dest's old value, which the caller then skips releasing
+            // — the unique Rc keeps the push O(1) in place. Any other list
+            // argument gets its own retained box (an O(1) Rc clone), so the
+            // source local keeps a valid handle and, matching the interpreter,
+            // never observes the push (`Rc::make_mut` copies on write).
+            let list_arg = if recycled_self { args[0] } else { emit_retain(builder, ctx, args[0]) };
+            return emit_runtime_call2(builder, "__ling_list_push", list_arg, args[1], runtime_refs);
         },
         "list_get"
         | "รับรายการ"
@@ -1216,10 +1419,12 @@ pub(crate) fn emit_builtin_call(
         | "فہرست_سیٹ"
             if args.len() >= 3 =>
         {
+            // Same consume/recycle contract as list_push above.
+            let list_arg = if recycled_self { args[0] } else { emit_retain(builder, ctx, args[0]) };
             return emit_runtime_call3(
                 builder,
                 "__ling_list_set",
-                args[0],
+                list_arg,
                 args[1],
                 args[2],
                 runtime_refs,
@@ -1264,8 +1469,9 @@ pub(crate) fn unbox_f64_or_call(
     builder: &mut FunctionBuilder,
     args: Vec<Value>,
     runtime_fn: &str,
-    runtime_refs: &HashMap<String, FuncRef>,
+    ctx: &TransCtx,
 ) -> Value {
+    let runtime_refs = ctx.runtime_refs;
     if args.is_empty() {
         return builder.ins().iconst(types::I64, runtime::TAG_UNIT as i64);
     }
@@ -1291,7 +1497,11 @@ pub(crate) fn unbox_f64_or_call(
     builder.seal_block(block_fast);
 
     builder.switch_to_block(block_slow);
-    builder.def_var(res_var, val);
+    // Non-number operand: the "result" is the input handle itself. Under
+    // ownership frees that would alias the argument's box into the result's
+    // destination local, so hand back an owned clone instead.
+    let kept = emit_retain(builder, ctx, val);
+    builder.def_var(res_var, kept);
     builder.ins().jump(block_merge, &[]);
     builder.seal_block(block_slow);
 
@@ -1368,6 +1578,17 @@ pub(crate) fn translate_terminator(
             // keeps it consistent with that internal representation), so it
             // must be boxed here at the actual return, not just left as-is.
             let ret = if ctx.nt.local_is_int(ctx.fname, 0) { int_to_boxed(builder, ret) } else { ret };
+            // Ownership frees: this frame owns every boxed local's box (see
+            // TransCtx::frees), so give them all back before leaving. The
+            // return slot is excluded — its box now belongs to the caller.
+            // Entry initialised every non-parameter local to unit, so reading
+            // them here is valid on every path (releasing unit is a no-op).
+            if ctx.frees {
+                for &l in ctx.boxed_sweep {
+                    let h = builder.use_var(ctx.vars[&Local(l)]);
+                    emit_release(builder, ctx, h);
+                }
+            }
             builder.ins().return_(&[ret]);
         },
         TerminatorKind::Unreachable => {

@@ -100,8 +100,8 @@ impl LingCompiler {
             ling_f64_sub, ling_floor, ling_free, ling_ge, ling_gt, ling_le, ling_list_get,
             ling_list_len, ling_list_new, ling_list_push, ling_list_set, ling_lt, ling_mul, ling_ne, ling_neg,
             ling_not, ling_or, ling_panic, ling_print, ling_print_newline, ling_print_val,
-            ling_rem, ling_round, ling_sin, ling_sqrt, ling_str_concat, ling_str_eq, ling_str_len,
-            ling_str_new, ling_struct_get, ling_struct_new, ling_sub, ling_time_now,
+            ling_rem, ling_retain, ling_round, ling_sin, ling_sqrt, ling_str_concat, ling_str_eq,
+            ling_str_len, ling_str_new, ling_struct_get, ling_struct_new, ling_sub, ling_time_now,
         };
         use crate::runtime::Interpreter;
 
@@ -150,6 +150,7 @@ impl LingCompiler {
             reg!(ling_bool_to_u64, "bool_to_u64");
             reg!(ling_alloc, "alloc");
             reg!(ling_free, "free");
+            reg!(ling_retain, "retain");
             reg!(ling_panic, "panic");
             reg!(ling_str_new, "str_new");
             reg!(ling_str_len, "str_len");

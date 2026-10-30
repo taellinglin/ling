@@ -971,6 +971,11 @@ impl CodegenBackend for CraneliftBackend {
                 func_arities: &func_arities,
                 nt: &num_types,
                 fname: &func.name,
+                // Ownership frees are JIT-only for now: the LingOS/ling-user
+                // runtime has no ling_retain, and AOT userland processes are
+                // short-lived (the OS reclaims at exit).
+                frees: false,
+                boxed_sweep: &[],
             };
             build_function_body(&mut builder, func, &blocks, &tctx);
             builder.finalize();
