@@ -24,6 +24,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 pub mod acapella;
+pub mod cinema;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Part {

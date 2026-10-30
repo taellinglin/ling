@@ -76,6 +76,19 @@ impl XChaCha20 {
         Ok(out)
     }
 
+    /// Like [`Self::encrypt`] with a caller-supplied nonce (for builds whose
+    /// entropy comes from elsewhere, e.g. the LingOS kernel). Never reuse a
+    /// nonce with the same key. Returns nonce (24 bytes) + ciphertext + tag.
+    pub fn encrypt_with_nonce(&self, nonce_bytes: &[u8; 24], plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
+        let cipher = XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&*self.key));
+        let ct = cipher
+            .encrypt(XNonce::from_slice(nonce_bytes), plaintext)
+            .map_err(|_| "encryption failed")?;
+        let mut out = nonce_bytes.to_vec();
+        out.extend_from_slice(&ct);
+        Ok(out)
+    }
+
     /// Input: nonce (24 bytes) + ciphertext + tag.
     pub fn decrypt(&self, nonce_and_ct: &[u8]) -> Result<Vec<u8>, &'static str> {
         if nonce_and_ct.len() < 24 {

@@ -218,3 +218,54 @@ pub fn resized(img: &RgbaImage, w: u32, h: u32) -> RgbaImage {
     let filter = if w < img.width() / 2 { image::imageops::FilterType::Triangle } else { image::imageops::FilterType::CatmullRom };
     image::imageops::resize(img, w, h, filter)
 }
+
+// ── downloads: file_fetch(url, path) / file_job(id) ──
+
+enum FileJob {
+    Running,
+    Done(f64),
+    Failed,
+}
+
+static FILE_JOBS: Mutex<Vec<FileJob>> = Mutex::new(Vec::new());
+
+/// Start saving `url` (http / https, a data: URI, or a local path) to `path`; returns the job id.
+pub fn file_fetch(url: &str, path: &str) -> usize {
+    let mut jobs = FILE_JOBS.lock().unwrap();
+    jobs.push(FileJob::Running);
+    let id = jobs.len() - 1;
+    drop(jobs);
+    let (url, path) = (url.to_string(), path.to_string());
+    std::thread::spawn(move || {
+        let bytes: Result<Vec<u8>, String> = if let Some(rest) = url.strip_prefix("data:") {
+            data_uri(rest).map(|(b, _)| b)
+        } else if url.starts_with("http://") || url.starts_with("https://") {
+            #[cfg(feature = "web")]
+            {
+                super::web::get_bytes_blocking(&url, 2 * 1024 * 1024 * 1024).map(|(b, _)| b)
+            }
+            #[cfg(not(feature = "web"))]
+            {
+                Err("built without the web feature".to_string())
+            }
+        } else {
+            let p = url.strip_prefix("file:").unwrap_or(&url).trim_start_matches("///");
+            std::fs::read(p).map_err(|e| e.to_string())
+        };
+        let out = bytes.and_then(|b| std::fs::write(&path, &b).map(|_| b.len() as f64).map_err(|e| e.to_string()));
+        FILE_JOBS.lock().unwrap()[id] = match out {
+            Ok(n) => FileJob::Done(n),
+            Err(_) => FileJob::Failed,
+        };
+    });
+    id
+}
+
+/// -2 running, -1 failed, else the number of bytes written
+pub fn file_job(id: usize) -> f64 {
+    match FILE_JOBS.lock().unwrap().get(id) {
+        Some(FileJob::Running) => -2.0,
+        Some(FileJob::Done(n)) => *n,
+        _ => -1.0,
+    }
+}

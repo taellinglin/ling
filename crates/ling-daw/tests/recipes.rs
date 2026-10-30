@@ -364,13 +364,16 @@ fn an_ai_dubstep_song_uses_recipes_when_switched_on() {
     let nt = num(&call(&mut d, "daw_track_count", &[])) as usize;
     let names: Vec<String> = (0..nt).map(|t| st(&call(&mut d, "daw_track_name", &[n(t as f64)]))).collect();
     let gb = names.iter().position(|x| x == "Growl Bass").expect("the growl bass");
-    assert_eq!(st(&call(&mut d, "daw_track_kind", &[n(gb as f64)])), "growl");
+    // a Growl recipe or a Ling Nova riddim recipe (recipes/nova.json)
+    let gk = st(&call(&mut d, "daw_track_kind", &[n(gb as f64)]));
+    assert!(gk == "growl" || gk == "nova", "{gk}");
     assert!(names.iter().any(|x| x.starts_with("Growl Bass · ")), "the switching set on sibling tracks: {names:?}");
     // the same song with recipes off is the old build
     let mut d2 = Daw::new();
     let r2 = list(&call(&mut d2, "daw_song_build", &[s(&line), s(desc), s(""), s(""), n(11.0)]));
     let s2 = st(&r2[4]);
-    assert!(!s2.contains("Sound recipes") && s2.contains("riddim skin"), "{s2}");
+    // (its basses are Ling Nova presets now, moved by their macros, where a Growl took a riddim skin)
+    assert!(!s2.contains("Sound recipes") && (s2.contains("riddim skin") || s2.contains("Nova")), "{s2}");
     // other club genres take their recipes too (supersaw lead, pads, plucks, sub, risers); a folk song takes none
     for (desc, want) in [("uplifting trance at 138 bpm in A minor", "Supersaw"), ("kawaii future bass at 150 bpm", "Sub"), ("liquid drum and bass at 174 bpm", "Reese"), ("acoustic folk song in G major", "")] {
         let mut d = Daw::new();

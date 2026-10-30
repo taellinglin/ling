@@ -638,3 +638,103 @@ cinema	Blaster Burst	a burst of rapid laser shots (fx / percussion, dark, plucky
 cinema	Tractor Beam	a humming Shepard rise with a fast flutter - something is pulling (bass, dark, sustained, slow attack, moving, deep sub)	0.0
 cinema	Warp Out	a falling zap into a fading tone - the ship jumps away (fx / percussion, dark, plucky, moving, wide, deep sub)	2.0
 cinema	Alien Signal	a slow, sparse glitch of tones from far away (lead, airy / very bright, decaying, moving)	0.0
+nova	Yoi Talker	A talking yoi growl: the table sweeps "oo" to "ee" on every 1/8 while a formant filter shapes the throat - the classic vowel bass of dubstep. (bass, dark, decaying)	0.0
+nova	Grind Mouth	A grinding mouth growl: a formant table under a moving formant filter and a gritty FM layer - wet and chewy. (bass, dark, decaying, deep sub)	0.0
+nova	Wet Gargle	A gargling, bubbling growl: a mirror warp plus a comb in the filter makes the wet bubbles of a modern bass drop. (bass, warm, sustained, deep sub)	0.0
+nova	Metal Mouth	A metallic, clangy growl: the neuro grind table ring-modulated by oscillator B - bright and robotic. (bass, dark, sustained, moving, deep sub)	0.0
+nova	Snarl Bass	A snarling growl with a sync warp: the table is synced up as the LFO moves, aggressive and bright. (bass, dark, sustained, deep sub)	0.0
+nova	Robot Vowel	A robotic vowel bass: the Vowel AEIOU table stepped through by a square-ish LFO with a bitcrush warp. (bass, dark, sustained, moving)	0.0
+nova	Hungry Growl	A hungry, open-mouthed growl that opens slowly across each note - for half-time drops. (bass, dark, decaying, deep sub)	0.0
+nova	Brostep Roar	A big brostep roar: a unison growl through a ladder filter, OTT and tube distortion, wide on top - loud and full. (bass, dark, sustained, moving, deep sub)	0.0
+nova	Squelch Wobble	A classic squelchy wobble: a resonant low-pass opening and closing with the LFO - the original dubstep wob. (bass, warm, sustained, moving, deep sub)	0.0
+nova	Triplet Wobble	A triplet wobble: a ladder filter on 1/8 triplets for the rolling half-time feel. (bass, airy / very bright, sustained, moving, wide)	0.0
+nova	Slow Wub	A slow, heavy wub on quarter notes with the wub table under it - deep half-time wobble. (bass, warm, decaying, moving)	0.0
+nova	Laser Wobble	A bright laser wobble: a sync warp that moves with the filter makes each wobble a zap. (fx / percussion, warm, sustained, moving, deep sub)	0.0
+nova	Chainsaw Growl	A buzzing chainsaw growl: the fold-saw table with a fold warp moving on 1/16 notes - raw and saturated. (bass, warm, decaying)	0.0
+nova	Yoi Screamer	A screaming yoi: the yoi table an octave up with a sync warp - the high answer to Yoi Talker. (bass, warm, decaying, deep sub)	0.0
+nova	Hollow Riddim	A hollow, honking riddim bass: a resonant square through a negative comb, stepped by a choppy LFO - minimal and heavy. (bass, warm, sustained, mono)	0.0
+nova	Square Stomp	A stomping square riddim: the dirty square table, a PWM warp and hard clipping - simple and brutal. (bass, bright, sustained, mono)	0.0
+nova	Wonky Riddim	A wonky, off-grid riddim: triplet steps and a bend warp make it lurch. (bass, warm, sustained, mono)	0.0
+nova	Crunch Riddim	A crunchy riddim: a bitcrushed saw table into a downsampling distortion - lo-fi and aggressive. (bass, warm, sustained, mono)	0.0
+nova	Tearout Gate	A tearout gate bass: a fold-warped square chopped by the step LFO into the amp - holes in the sound you can feel. (bass, bright, sustained, mono, deep sub)	0.0
+nova	Honk Riddim	A nasal honk: the formant pulse table with a formant filter held on "a" - the honk that cuts through. (bass, dark, sustained, mono, deep sub)	0.0
+nova	Pluck Riddim	A short, plucky riddim: a fast envelope closes each hit - tight 1/16 machine-gun riddim. (bass, warm, decaying, mono)	0.0
+nova	Prism Colour Bass	A bright colour bass: a supersaw chord stack in the bass register with a filter envelope, OTT and a shimmering top - melodic dubstep's sound. (bass, dark, sustained, deep sub)	0.0
+nova	Neon Colour	A neon colour bass: a saw stack plus a pulse layer, hyper chorus and a bright plate - very wide and glossy. (bass, dark, sustained, moving, deep sub)	0.0
+nova	Liquid Colour	A softer colour bass: rounder tables and a 12 dB filter that wobbles gently - for melodic drops. (bass, dark, sustained, deep sub)	0.0
+nova	Crystal Colour	A glassy colour bass with a ringing bell octave on top - sparkles over the chord stabs. (bass, dark, sustained, deep sub)	0.0
+nova	Hyper Colour	An over-the-top colour bass: wide unison, a wider bend range and heavy OTT - for hyperpop and melodic riddim. (bass, dark, decaying, deep sub)	0.0
+nova	Sunset Colour	A warm sunset colour bass: organ drawbars under the saws, gently driven - for slower melodic bass. (bass, dark, sustained, moving, deep sub)	0.0
+nova	Classic Reese	The classic reese: two detuned saws beating against each other under a ladder filter - the drum and bass staple. (bass, dark, sustained, wide)	0.0
+nova	Dark Reese	A dark, rolling reese with the hollow saw table and a slow phaser - for halftime and neuro. (bass, dark, sustained, wide)	0.0
+nova	Phaser Reese	A reese swept by a phaser and a slowly moving table - wide and alive. (bass, dark, sustained, wide)	0.0
+nova	Grit Reese	A distorted reese: diode-driven saws with OTT - aggressive and forward. (bass, dark, sustained, wide)	0.0
+nova	Neuro Grinder	A neuro grinder: a ring-modulated table and a comb under a 1/16 LFO - the metallic neuro of modern DnB. (bass, dark, sustained, wide, deep sub)	0.0
+nova	Neuro Snap	A neuro bass that snaps like a snare at each hit: an FM feedback layer and a fast envelope into the comb. (bass, dark, sustained, wide, deep sub)	0.0
+nova	Tech Neuro	A tight techy neuro with a quantize warp - digital, stepped grind. (bass, dark, sustained, moving, wide, deep sub)	0.0
+nova	Neuro Hoover	A hoover-flavoured neuro: wide detuned saw octaves with a pitch dip at the start of each note. (bass, dark, sustained, moving)	0.0
+nova	FM Wobbler	An FM wobble bass: oscillator B frequency-modulates A, the FM depth moving with the LFO - glassy and nasty at once. (bass, warm, decaying, moving, deep sub)	0.0
+nova	Digital FM Bass	A hard digital FM bass: the FM 2:1 table moved by a phase warp, crushed a little. (bass, bright, decaying, moving)	0.0
+nova	FM Growler	A growling FM bass: the feedback FM table with a formant filter on top - between FM and vowel. (bass, dark, decaying)	0.0
+nova	Rubber FM	A rubbery, bouncy FM bass for future bass and bass house: a short envelope on the FM depth. (bass, warm, decaying, moving, deep sub)	0.0
+nova	Talking Vowel Bass	A talking bass that says "a-e-i-o-u": the vowel table and a formant filter walk the vowels with the LFO. (bass, dark, sustained)	0.0
+nova	Talk Box Bass	A talk-box bass: the mouth opens and closes on every note (an envelope into the vowel). (bass, dark, sustained, deep sub)	0.0
+nova	Choir Bass	A choral "ah-oh" bass for melodic dubstep - human, wide and dark. (bass, dark, decaying, moving)	0.0
+nova	Clean Sub	A clean sine sub with a touch of harmonics - sits under anything. (bass, dark, sustained, mono)	0.0
+nova	Warm Sub	A warm sub: a sine moving towards a triangle with a little tube drive - audible on phones. (bass, dark, sustained, mono)	0.0
+nova	808 Glide	An 808-style sub with a long glide and saturation - for trap and drill bass lines that slide. (bass, dark, sustained, mono)	0.0
+nova	Square Sub	A square-ish sub, softly filtered - punchier than a sine for house and garage. (bass, dark, sustained, mono)	0.0
+nova	Bass House Wob	A bass house mid-bass: a short, rubbery formant pluck with an organ-like body - bounces on the off-beats. (bass, dark, decaying, mono, deep sub)	0.0
+nova	Future House Bass	A future house bass: metallic, pitched and bouncy, with a fast pitch dip into each note. (bass, dark, decaying, moving, mono, deep sub)	0.0
+nova	Garage Organ Bass	A UK garage organ bass: warm drawbars, short and swung. (bass, dark, decaying, mono, deep sub)	0.0
+nova	Mid Growl	A mid-range growl to layer over a clean sub: no sub of its own, all mids and motion. (bass, warm, decaying, moving)	0.0
+nova	Rolling DnB Bass	A rolling DnB bass: short reese notes with an envelope on the filter - groovy and tight. (bass, dark, sustained, wide)	0.0
+nova	Neon Supersaw	A massive 9-voice supersaw lead with a bright top and a wide hyper chorus - the festival lead. (lead, warm, decaying, moving, wide)	0.0
+nova	Stadium Saw	A huge stadium supersaw: 16 voices, an octave-up layer, a long reverb. (lead, warm, sustained, moving)	0.0
+nova	Trance Supersaw	A trance supersaw with a dotted delay - the classic uplifting lead. (lead, warm, decaying, moving, wide, deep sub)	0.0
+nova	Big Room Lead	A big room lead: detuned saws an octave apart, a pitch blip and hard drive - short, loud riffs. (lead, warm, decaying, moving, wide)	0.0
+nova	Glass Screech	A glassy screech lead: a mirror-warped screech table (a high formant) under a bright low-pass - for dubstep and riddim leads. (lead, airy / very bright, sustained, wide)	0.0
+nova	Laser Screech	A laser screech: a pitch envelope dives from above into each note. (fx / percussion, airy / very bright, sustained, wide)	0.0
+nova	Siren Screech	A siren screech that rises and falls with a slow LFO on the pitch. (lead, airy / very bright, sustained, wide)	0.0
+nova	Brass Lead	A synth brass lead: the brass swell table opened by a slow envelope - bold and warm. (lead, dark, sustained, moving, wide)	0.0
+nova	Hard Brass	A hard brass stab lead: a fast swell, drive and OTT - for big room and festival trap. (lead, warm, sustained, moving, wide)	0.0
+nova	Pluck Lead	A plucky lead: a quick filter envelope, a short decay and a dotted delay - melodies that ring. (pluck / keys, dark, decaying, moving, wide)	4.3
+nova	Chip Lead	A chiptune lead: 8-bit pulses with a fast vibrato - for hyperpop and chip-step. (lead, warm, sustained)	0.0
+nova	Saw Wail	A wailing mono saw lead with portamento and a resonant ladder - singing and expressive. (lead, bright, sustained, moving, wide)	0.0
+nova	Vowel Lead	A talking lead that sings vowels: the formant filter follows the mod wheel and pressure. (lead, warm, sustained, moving, wide)	0.0
+nova	FM Bell Lead	A bright FM bell lead for melodic hooks - a sparkly attack and a singing tail. (pluck / keys, bright, decaying, moving, wide)	0.0
+nova	Hoover Lead	A hoover lead: wide, pitch-dipping, detuned saw octaves - rave energy. (lead, bright, sustained, moving, wide)	0.0
+nova	Future Chord Swell	The future-bass chord: a detuned saw and pulse stack that swells open through the filter, wide and sidechained. (pluck / keys, warm, decaying, moving, wide)	0.0
+nova	Kawaii Chords	Sweet, bright future-bass chords with a bell octave and a chip pulse layer. (pluck / keys, warm, decaying, moving, wide)	0.0
+nova	Wobble Chords	Future-bass chords with a filter wobble on 1/8 triplets - the vocal-chop-like chord movement. (bass, warm, decaying, moving, wide)	0.0
+nova	Supersaw Stab	A short supersaw stab: a plucky envelope, a big unison - for house and progressive chords. (pluck / keys, warm, decaying, moving, wide)	6.0
+nova	Detroit Stab	A dub-techno style chord stab: the organ table, short and filtered, with a delay. (pluck / keys, warm, plucky, moving, wide)	4.0
+nova	Vocal Chord	Chords that sing: choir and vowel tables under a formant filter - human, airy chords. (pluck / keys, warm, decaying, moving, wide)	0.0
+nova	Glass Chord	Glassy, thin chords: the glass table, high-passed, with a long plate - for melodic intros. (pluck / keys, airy / very bright, sustained, wide)	0.0
+nova	Brass Chord Stab	Big brass chord stabs that swell: the brass table opened by the envelope. (pluck / keys, warm, decaying, moving, wide)	0.0
+nova	Reese Chords	Dark detuned reese chords for melodic DnB and halftime - beating and moody. (bass, dark, decaying, moving, wide)	0.0
+nova	Lofi Keys	Soft electric-piano-like chords: the FM 1:1 table, a short decay, a warm filter. (pluck / keys, warm, decaying, moving, wide)	0.0
+nova	Pluck Chords	Plucked future-bass chords: the chord stack with a short envelope - rhythmic and bright. (pluck / keys, warm, plucky, moving, wide)	6.0
+nova	Crystal Pluck	A crystal pluck: the bright pluck-decay table with a bell octave - the future-bass arp sound. (pluck / keys, dark, plucky, moving)	3.2
+nova	Tropical Pluck	A marimba-like tropical pluck: FM partials and a short decay. (pluck / keys, dark, plucky)	2.0
+nova	Saw Pluck	A classic saw pluck: unison saws through a 24 dB filter envelope - progressive house and trance. (pluck / keys, dark, plucky)	1.2
+nova	Kalimba Pluck	A soft kalimba-like pluck from glass partials - gentle and wooden. (pluck / keys, warm, plucky, wide)	6.0
+nova	Chip Pluck	An 8-bit pluck: duty-cycle pulses, very short - for hyperpop arps. (pluck / keys, warm, plucky, moving)	4.0
+nova	Water Pluck	A watery pluck: a phaser filter and a pitch drop make each note a drop of water. (pluck / keys, warm, plucky)	6.0
+nova	Formant Pluck	A vocal pluck: the formant pulse table opened by the envelope - like a chopped vocal. (pluck / keys, warm, plucky)	2.9
+nova	Deep Pluck	A deep pluck for the low mids: a short body that works as a bass pluck in future bass and house. (pluck / keys, dark, plucky, moving, deep sub)	1.2
+nova	Aurora Pad	An evolving pad: additive and vowel tables drifting under two slow LFOs in a long hall - ambient and lush. (pad, dark, decaying, slow attack, moving, wide)	0.0
+nova	Wide Supersaw Pad	A wide supersaw pad with a slow attack - a big soft wall behind breakdowns. (pad, warm, sustained, slow attack, moving, wide)	0.0
+nova	Glass Choir Pad	A glassy choir pad: choir and glass tables, airy noise and a shimmer octave. (pad, bright, decaying, slow attack, moving, wide)	0.0
+nova	Dark Drone Pad	A dark, slowly moving drone pad for intros and tension - low and wide. (pad, warm, decaying, moving, wide)	0.0
+nova	Breathing Pad	A pad that breathes: the level and the filter swell slowly with a sine LFO. (pad, dark, decaying, slow attack, moving, wide)	0.0
+nova	Digital Pad	A digital, stepped pad: spectral noise and quantized tables - modern and glitchy. (pad, dark, decaying, slow attack, moving, wide)	0.0
+nova	Organ Pad	A drawbar organ pad with a slow chorus - warm and gospel-tinged for future bass. (pad, warm, decaying, moving, wide)	2.7
+nova	Shimmer Pad	A shimmering pad: bell partials an octave up over a soft saw, long plate reverb and a slow pan. (pad, bright, sustained, moving, wide)	0.0
+nova	Noise Riser	A white-noise riser: band-passed noise and a detuned stack climbing as M1 goes up - automate M1 across the build. (fx / percussion, warm, sustained)	4.0
+nova	Pitch Riser	A pitch riser: a supersaw climbing two octaves with a flutter that speeds up. (fx / percussion, dark, sustained, wide)	6.0
+nova	Siren FX	A siren: a sync-saw tone wailing up and down with a slow LFO - for builds and drops. (fx / percussion, dark, sustained, wide)	0.0
+nova	Impact Drop	A downlifter impact: a big noisy stack that falls in pitch as it decays - play it on the downbeat of the drop. (fx / percussion, airy / very bright, decaying, moving)	5.8
+nova	Laser Zap	A laser zap: a fast pitch dive from high into the note - for fills and drops. (fx / percussion, bright, plucky, moving, deep sub)	6.0
+nova	White Wash	A white-noise wash: filtered noise swelling and falling with a long reverb - for transitions out of a drop. (fx / percussion, dark, sustained)	1.4
+nova	Glitch Burst	A glitchy stutter: digital noise and a crushed table chopped by a 1/32 LFO - fills before the drop. (fx / percussion, dark, sustained)	0.0

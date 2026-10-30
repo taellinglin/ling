@@ -48,6 +48,7 @@ fn patch_files(kind: &str) -> Vec<(String, String)> {
         "growl" => &[("instruments/Growl", "")],
         "chip" => &[("instruments/Chip", "")],
         "cinema" => &[("instruments/Cinema", "")],
+        "nova" => &[("instruments/Nova", "")],
         "voice" => &[("instruments/Voice", "")],
         "drums" => &[("instruments", "")],
         _ => &[("instruments/Electronic GM", "Electronic: "), ("instruments/GM", "GM: "), ("instruments", "")],
@@ -66,7 +67,7 @@ fn patch_files(kind: &str) -> Vec<(String, String)> {
             // the name inside the file, else the file name without its number / kind prefix
             let stem = p.file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
             let stem = stem.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
-            let stem = ["Growl ", "Voice ", "Prism ", "Chip ", "Cinema "].iter().fold(stem.to_string(), |s, pre| s.strip_prefix(pre).map(|x| x.to_string()).unwrap_or(s));
+            let stem = ["Growl ", "Voice ", "Prism ", "Chip ", "Cinema ", "Nova "].iter().fold(stem.to_string(), |s, pre| s.strip_prefix(pre).map(|x| x.to_string()).unwrap_or(s));
             let inner = text.lines().find_map(|l| l.trim().strip_prefix("name").and_then(|r| r.split_once('"')).and_then(|(_, r)| r.split_once('"')).map(|(n, _)| n.to_string()));
             out.push((format!("{prefix}{}", stem), p.to_string_lossy().into_owned()));
             if let Some(n) = inner {
@@ -107,6 +108,12 @@ fn gm_file(program: u8) -> Option<String> {
 }
 
 pub(super) fn instrument_for(g: &songgen::Genre, role: &str, part: usize) -> (String, Option<String>) {
+    instrument_for_seeded(g, role, part, 0)
+}
+
+/// `instrument_for` with the song's seed: a Ling Nova part rolls among its presets by it (novagen::pick_seeded), so different
+/// songs play different presets
+pub(super) fn instrument_for_seeded(g: &songgen::Genre, role: &str, part: usize, seed: u64) -> (String, Option<String>) {
     if let Some(inst) = crate::ensemble::instrument(role) {
         if inst.kind == Kind::Drums {
             return ("drums".into(), find_patch("drums", "Kit Afro Percussion").or_else(|| find_patch("drums", g.kit)));
@@ -118,6 +125,10 @@ pub(super) fn instrument_for(g: &songgen::Genre, role: &str, part: usize) -> (St
             return ("drums".into(), Some(p));
         }
         return ("drums".into(), None);
+    }
+    // Ling Nova plays the electronic bass, lead, chord and pluck parts of the club genres (its presets' usage notes, novagen.rs)
+    if let Some(p) = crate::novagen::pick_seeded(g.name, role, part, seed).and_then(|n| find_patch("nova", n)) {
+        return ("nova".into(), Some(p));
     }
     // the import tables know which patches suit a genre's role
     let ai_genre = match g.name {
@@ -154,7 +165,8 @@ fn build_choice(kind: &str, patch: &Option<String>, sr: f32) -> Option<Box<dyn c
 /// The instrument for a part, tune-checked: the role's candidates in order (then a General MIDI sound for the role), the first that
 /// plays in tune with 12-tone equal temperament. Drums, risers, voices and unpitched sounds are not judged. The second value says
 /// what was swapped out and why ("" when the first choice was fine). `roll` (from the seed) varies the patch within the plugin.
-fn instrument_in_tune(g: &songgen::Genre, role: &str, part: usize, roll: usize, sr: f32) -> ((String, Option<String>), String) {
+fn instrument_in_tune(g: &songgen::Genre, role: &str, part: usize, roll: usize, seed: u64, sr: f32) -> ((String, Option<String>), String) {
+    let instrument_for = |g: &songgen::Genre, role: &str, part: usize| instrument_for_seeded(g, role, part, seed);
     // the seed rolls among the role's patches on the same plugin (never onto a fallback plugin)
     let first = {
         let b = instrument_for(g, role, part);
@@ -394,6 +406,11 @@ impl Daw {
                 p.theme = self.theme_of(&a.s(10));
                 if p.theme.is_some() {
                     p.notes.push("the lead plays the selected theme in variations".into());
+                }
+                // the Ling Nova presets the build will start from (novagen.rs)
+                let roles: Vec<&str> = p.parts.iter().map(|x| x.role.as_str()).collect();
+                if let Some(n) = crate::novagen::plan_note(&p.genre, &roles, p.seed) {
+                    p.notes.push(n);
                 }
                 let m = songgen::metrics(&p);
                 ok!(Val::List(vec![Val::Str(p.to_line()), Val::Str(p.notes.join("; ")), Val::List(m.into_iter().map(Val::Num).collect())]))
@@ -817,7 +834,7 @@ impl Daw {
                 let mut tracks: Vec<(usize, String)> = vec![];
                 for (pi, part) in plan.parts.iter().enumerate() {
                     let role = part.role.as_str();
-                    let ((kind, patch), tune_note) = instrument_in_tune(g, role, pi, (plan.seed % 3) as usize, self.out.sr);
+                    let ((kind, patch), tune_note) = instrument_in_tune(g, role, pi, (plan.seed % 3) as usize, plan.seed, self.out.sr);
                     if !tune_note.is_empty() {
                         tuned.push(tune_note);
                     }
@@ -1259,14 +1276,15 @@ impl Daw {
                         }
                     }
                 }
-                // articulation (the local chooser, read from the description) on the bass and the lead
+                // articulation (the local chooser, read from the description and the song's form) on the bass and the lead: at most a
+                // lane per job of the part (filter, drive / send), section by section (see articulate::section_move)
                 for (t, role) in &tracks {
                     let k = songgen::role_kind(role);
                     if !matches!(k, Kind::Bass | Kind::Melody) || recipe_of.iter().any(|x| x.0 == *t) {
                         continue;
                     }
                     let prompt = if role.contains("wobble") || role.contains("growl") { format!("{desc} wobble on the drops") } else { desc.clone() };
-                    let chunks = self.call_num("daw_artic_begin", &[Val::Str("single".into()), Val::Num(*t as f64), Val::Num(2.0), Val::Num(plan.seed as f64), Val::Num(0.55), Val::Str(prompt)]);
+                    let chunks = self.call_num("daw_artic_begin", &[Val::Str("song".into()), Val::Num(*t as f64), Val::Num(2.0), Val::Num(plan.seed as f64), Val::Num(0.55), Val::Str(prompt)]);
                     let mut ci = 0.0;
                     while ci < chunks {
                         let _ = self.dispatch("daw_artic_apply", &A(&[Val::Num(ci), Val::Str(String::new())]));
@@ -1301,6 +1319,40 @@ impl Daw {
                             }
                         }
                     }
+                }
+                // Ling Nova parts: the notes in the preset's range and style, its macros moved section by section, a bass trading its
+                // drop bars with sibling presets (novagen.rs)
+                let mut nova_sibs: Vec<usize> = vec![];
+                {
+                    use crate::sounddesign::Sec;
+                    let secs: Vec<Sec> = plan.sections.iter().zip(&starts).map(|(s, st)| Sec { tag: s.tag.clone(), start: *st, end: st + s.bars as f64 * 4.0 }).collect();
+                    for (t, role) in tracks.clone() {
+                        if recipe_of.iter().any(|x| x.0 == t) {
+                            // a Nova recipe on a mono voice that ended up playing chords goes poly (nova_dress does it for the others)
+                            let mut en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
+                            if let Some(tr) = en.project.tracks.get_mut(t) {
+                                let said = crate::polyphony::guard_track(tr);
+                                if !said.is_empty() {
+                                    expressed.push(said);
+                                }
+                            }
+                            continue;
+                        }
+                        let (sibs, line) = self.nova_dress(t, &secs, plan.seed.wrapping_add(t as u64 * 31), songgen::role_kind(&role) == Kind::Bass);
+                        made += sibs.len();
+                        nova_sibs.extend(sibs);
+                        if !line.is_empty() {
+                            expressed.push(line);
+                        }
+                    }
+                }
+                // every automatable lane the build drew is the generator's: Edit > Re-automate All may replace it later (a Growl skin's
+                // per-hit lanes and a recipe's designed lanes stay as they are)
+                {
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    let mut mine: Vec<usize> = tracks.iter().map(|x| x.0).filter(|t| !skinned.contains(t) && !recipe_of.iter().any(|x| x.0 == *t)).collect();
+                    mine.extend(nova_sibs.iter().copied());
+                    super::artic_api::own_all(&mut en.project, &mine);
                 }
                 self.touch();
                 let bright = r.as_ref().map(|r| ((r.bright - 0.16) * 5.0).clamp(-1.0, 1.0)).unwrap_or(0.0);

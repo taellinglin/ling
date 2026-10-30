@@ -127,6 +127,9 @@ gpu = ["dep:wgpu", "dep:pollster"]
 # vertex projection across every NVIDIA device (multi-GPU). Runtime-detected —
 # falls back to the parallel CPU backend when no CUDA device is present.
 cuda = ["ling-gpu/cuda", "ling-physics/cuda", "ling-ai/cuda"]
+# Only the ling-gpu CUDA backend (z-buffer rasteriser + batch projection): no CUDA toolkit needed at build time, the
+# driver and NVRTC are loaded at run time. This is what LingModeler's desktop build turns on. Compiled out on aarch64.
+gpu-cuda = ["ling-gpu/cuda"]
 # Image understanding (vision_load/vision_analyze_start/poll) for
 # chat.ling-lang.org's attach-an-image flow — Moondream2, CUDA-capable.
 # Separate from `llm` so a build can have chat without vision or vice versa.

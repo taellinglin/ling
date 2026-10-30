@@ -368,6 +368,7 @@ pub fn profile_file(path: &str) -> Option<Profile> {
 fn plugin_label(plugin: &str) -> &'static str {
     match plugin {
         "prism" => "Ling Prism",
+        "nova" => "Ling Nova",
         "growl" => "Ling Growl",
         "synth" => "Ling Synth X",
         "pluck" => "Ling Pluck",
@@ -383,14 +384,23 @@ fn plugin_label(plugin: &str) -> &'static str {
 pub fn palette(genre: &str) -> String {
     let mut s = digest();
     s.push_str(role_notes());
-    s.push_str("\nWhat each role will sound like in this song (every one of these is in tune):\n");
+    s.push_str("\nWhat each role will sound like in this song (every one of these is in tune). Each part says its voices: mono (one note at a time) or poly (chords, overlapping notes). A sound marked mono voice plays one note at a time (basslines, leads, 808s, single melodies): never give its role to a poly part, it would drop the chord notes; give a poly part a pad, chords, stab chord, keys, pluck or arp role:\n");
+    // one candidate per role, from the catalogue, as the import chooses (ai_import::pick_full): the genre's drum kit, a sound recipe
+    // where one is made for the genre, Ling Nova in the club genres, else the genre's table - only what the role can use, so it stays short
+    let cat = catalogue("");
+    let mut taken = vec![];
     for role in crate::ai_import::ROLES {
-        let (plugin, name) = crate::ai_import::pick(genre, role, 0, 120.0);
-        if plugin == "auto" {
-            s.push_str(&format!("- {role}: {} (real sampled instruments)\n", plugin_label(plugin)));
+        let p = crate::ai_import::pick_full(&cat, genre, role, 0, 120.0, 0, "", &mut taken);
+        if p.plugin == "auto" {
+            s.push_str(&format!("- {role}: {} (real sampled instruments)\n", plugin_label("auto")));
         } else {
-            let tags = crate::api::song_find_patch(plugin, name).and_then(|p| profile_file(&p)).map(|p| format!(" ({})", p.tags().into_iter().filter(|t| *t != "in tune").collect::<Vec<_>>().join(", "))).unwrap_or_default();
-            s.push_str(&format!("- {role}: {} \"{name}\"{tags}\n", plugin_label(plugin)));
+            let tags = if p.value.ends_with(".ling") { profile_file(&p.value).map(|x| format!(" ({})", x.tags().into_iter().filter(|t| *t != "in tune").collect::<Vec<_>>().join(", "))).unwrap_or_default() } else { String::new() };
+            let voice = match crate::ai_import::pick_mono(&p) {
+                Some(true) => " [mono voice: one note at a time]",
+                Some(false) => " [poly voice: plays chords]",
+                None => "",
+            };
+            s.push_str(&format!("- {role}: {}{tags}{voice}\n", p.source));
         }
     }
     s
@@ -431,6 +441,20 @@ pub fn pair_ok(role: &str, plugin: &str, name: &str) -> bool {
     if plugin == "cinema" {
         return matches!(role, "riser" | "texture" | "fx");
     }
+    // Ling Nova's oscillators play in tune; its presets say which roles they are for (bass, lead, chord, pluck, pad, fx)
+    if plugin == "nova" {
+        return crate::dsp::nova::presets::find(name).map_or(true, |p| {
+            let r = p.usage.role.as_str();
+            let k = crate::songgen::role_kind(role);
+            use crate::compose::Kind;
+            match k {
+                Kind::Bass => r == "bass" || (r == "pluck" && p.usage.lo < 48),
+                Kind::Melody => matches!(r, "lead" | "pluck"),
+                Kind::Pad => matches!(r, "pad" | "chord" | "fx"),
+                _ => r != "bass",
+            }
+        });
+    }
     match crate::api::song_find_patch(plugin, name) {
         Some(path) => ok_for(role, &path),
         None => true,
@@ -454,7 +478,7 @@ pub fn describe(name: &str, path: &str) -> String {
 // ── the plugins ─────────────────────────────────────────────────────────────────
 
 /// What each plugin is, what it does well and what to keep it away from: the language model reads this before it picks instruments.
-pub const PLUGINS: [(&str, &str); 11] = [
+pub const PLUGINS: [(&str, &str); 13] = [
     ("prism", "Ling Prism: polyphonic analog-style synth (two morphing wavetable oscillators with unison, ring/FM/sync, sub, filter, envelopes, built-in chorus/delay/reverb). Hundreds of patches: supersaw and hoover leads, trance/ambient/string pads, sub and rolling basses, plucks, arps, keys, bells. The workhorse for electronic music. Some patches use other tunings (EDO, slendro, just) and are not safe in ordinary songs."),
     ("growl", "Ling Growl: monophonic bass/lead for dubstep, drum and bass and electro: wobble, reese, neuro, hard-sync screech, talking vowel bass. One note at a time: bass lines and lead lines only, never chords or pads."),
     ("synth", "Ling Synth X: polyphonic subtractive + additive + FM + string synth that behaves like a General MIDI set: e-pianos, house pianos, organs, brass, string ensembles, plucked guitars and basses, simple square/sine/breath leads. Good where a recognisable keyboard or acoustic-like sound is wanted."),
@@ -462,9 +486,11 @@ pub const PLUGINS: [(&str, &str); 11] = [
     ("voice", "Ling Voice: formant singer (aria, mei, kai, ren, choir) that sings lyrics from IPA; robotic but intelligible. For vocal lines and choir pads, one voice per part."),
     ("chip", "Ling Chip: the sound chips of the NES, Commodore 64 (SID), Game Boy and SNES: pulse / triangle / saw / noise channels with arpeggios, step sequences, pitch sweeps and the SNES sample channel. For chiptune and game music, retro leads and basses, shimmering arpeggios and 8-bit sound effects."),
     ("cinema", "Ling Cinema: generated sound effects, one per note: risers (noise sweeps, pitch rises, Shepard tones), downlifters, trailer impacts and sub booms, whooshes, sub drops, braams, reverse cymbals, lasers, glitch bursts, tape stops and evolving ambient soundscapes. For transitions (a riser into a drop, an impact on its downbeat, a downlifter after it), film / game sound and atmosphere in intros and breakdowns; not for melodies or chords."),
+    ("nova", "Ling Nova: a wavetable synthesizer for modern electronic and bass music: three wavetable oscillators with 16-voice unison and warps (sync, bend, FM, fold...), formant, comb and ladder filters, a 32-slot mod matrix, eight macros and its own distortion / OTT / reverb rack. About a hundred presets: colour, growl, riddim, neuro, reese, wobble, FM and talking basses, subs, supersaw / screech / brass leads, future-bass chords, plucks, pads and risers. The first choice for dubstep, riddim, future bass, drum and bass, bass house and trap parts."),
     ("drums", "Ling Membrane: physically modelled drum kits (kick, snare, hats, clap, toms, percussion) for each genre; unpitched."),
     ("sf2", "SoundFont / General MIDI player: sampled acoustic instruments (piano, strings, brass, woodwinds, guitars, choir, orchestral percussion). Best for orchestral, folk, jazz and film music where real instruments are expected."),
     ("sampler", "Sampler: plays audio files across the keyboard (drum hits, one-shots, tracker samples); needs audio files, not for generated synth parts."),
+    ("slicer", "Ling Slicer: an audio file cut at its transients, beats or syllables, one slice per key from C3 up, auto-tuned to the key or the chords of the song: chopped breaks, vocal chops, hype shouts ('yo', 'put your hands up') before a drop. Needs a sample, not for generated synth parts."),
     ("script", "Script synth: a user-written instrument; unknown sound, never chosen automatically."),
 ];
 
@@ -472,11 +498,12 @@ pub const PLUGINS: [(&str, &str); 11] = [
 pub fn digest() -> String {
     let mut s = String::from("Instruments available (choose a role; each role is played by the plugin that suits it):\n");
     for (k, d) in PLUGINS.iter() {
-        if matches!(*k, "sampler" | "script") {
+        if matches!(*k, "sampler" | "script" | "slicer") {
             continue;
         }
         s.push_str(&format!("- {d}\n"));
     }
+    s.push_str("- Sound recipes: a whole designed sound (instrument, effect chain, mix, duck under the kick, automation) for riddim and colour basses, 808s, plucks, arps, pads, chord stabs and risers in the genres they are made for.\n- Drum kits: a Ling Membrane kit per genre (Trap, House 909, Drum and Bass, Boom Bap, Lo-Fi, Brushes, Jazz, Rock, Techno Hard ...).\n");
     s.push_str("Every part must be in tune with the song's twelve-tone scale and must not clash with the chords: never choose microtonal, detuned or clangorous sounds for harmony parts.\n");
     s
 }
@@ -484,6 +511,447 @@ pub fn digest() -> String {
 /// the role names with what they sound like, for the model
 pub fn role_notes() -> &'static str {
     "Roles: drums = a drum kit; sub bass = deep sine/triangle low end; rolling bass = moving synth bass line; wobble bass / growl bass = dubstep and DnB bass (single notes); acid bass = squelchy resonant bass; pluck bass = short plucked bass; supersaw lead = wide bright trance/pop lead; synth lead = simple square/saw lead; laser lead = sharp electro lead; vocal lead = voice-like lead; pluck = short plucked chord/arp sound; arp = bright repeating arpeggio; warm pad = soft sustained chords; dark pad = low brooding sustained chords; ambient pad = slow wide texture chords; strings = string ensemble chords; brass = brass stabs/lines; stab chord = short chord hits; keys = electric piano/keys; piano = acoustic-style piano; organ = organ chords; bell = bell/glass tones; choir = sung 'ah' chords; voice = a sung line; riser = rising noise sweep before a drop; texture = quiet noise/atmosphere; guitar = plucked guitar; woodwind = flute/clarinet-like line; hyper lead = very bright pop lead."
+}
+
+// ── the catalogue: every sound the import can choose ───────────────────────────────────────────────────────────────────
+
+/// The role groups the catalogue sorts sounds into (and labels the long lists with): (key, label).
+pub const GROUPS: [(&str, &str); 9] = [("bass", "Bass"), ("lead", "Lead"), ("chords", "Chords"), ("pad", "Pad"), ("pluck", "Pluck / Keys"), ("fx", "FX"), ("drums", "Drums"), ("voice", "Voice"), ("any", "")];
+
+fn group_label(g: &str) -> &'static str {
+    GROUPS.iter().find(|x| x.0 == g).map(|x| x.1).unwrap_or("")
+}
+
+fn group_rank(g: &str) -> usize {
+    GROUPS.iter().position(|x| x.0 == g).unwrap_or(GROUPS.len())
+}
+
+/// One sound the import can put on a part: what the dialog lists, the choice string `daw_midi_import` takes, what it is for.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sound {
+    /// the import dialog's plugin kind: nova, chip, cinema, prism, growl, voice, synth, drums, recipe, sampler, sf2
+    pub kind: &'static str,
+    /// as the dialog lists it ("Bass: Mid Growl", "Kit Trap", "Electronic: Acid Bass")
+    pub label: String,
+    /// the sound's own name (what the role tables, Nova and the recipes call it)
+    pub name: String,
+    /// another name it answers to (the name inside the file, a recipe's id)
+    pub alias: String,
+    /// the choice string: a patch path, "recipe:<id>", "smpkit:<folder>", "smpfile:<file>" or "sf2:<file>"
+    pub value: String,
+    /// bass, lead, chords, pad, pluck, fx, drums, voice or any
+    pub group: &'static str,
+    /// genres it is made for (empty = any)
+    pub genres: Vec<String>,
+    /// where it comes from, in words: Nova, recipe, kit, Prism, Growl, Voice, Chip, Cinema, Synth X, Electronic GM, GM, User,
+    /// sample kit, sample, SoundFont
+    pub source: &'static str,
+}
+
+impl Sound {
+    /// the reason line names the source: "recipe: Riddim Gate A", "kit: Trap", "Nova: Mid Growl"
+    pub fn why(&self) -> String {
+        match self.source {
+            "kit" => format!("kit: {}", self.name.trim_start_matches("Kit ")),
+            "Electronic GM" | "GM" => self.name.clone(),
+            s => format!("{s}: {}", self.name),
+        }
+    }
+    /// can it play a part of this role (by its group)?
+    pub fn fits(&self, role: &str) -> bool {
+        let g = role_group(role);
+        self.group == "any" || self.group == g || (g == "chords" && self.group == "pluck") || (g == "pluck" && self.group == "chords")
+    }
+}
+
+/// the group a song / import role belongs to
+pub fn role_group(role: &str) -> &'static str {
+    let r = role.to_lowercase();
+    if r == "drums" || r == "drum sample" {
+        "drums"
+    } else if r.contains("bass") {
+        "bass"
+    } else if r == "voice" || r == "vocal lead" {
+        "voice"
+    } else if r.contains("lead") || r == "woodwind" || r == "brass" {
+        "lead"
+    } else if r.contains("pad") || r == "strings" || r == "choir" {
+        "pad"
+    } else if r.contains("chord") || r.contains("stab") {
+        "chords"
+    } else if r == "riser" || r == "texture" || r == "fx" {
+        "fx"
+    } else {
+        "pluck"
+    }
+}
+
+/// a preset's group from presetinfo's words ("basses - bass, dark ...", "A crystal pluck ... (pluck / keys, bright")
+fn info_group(info: &str) -> Option<&'static str> {
+    if info.is_empty() {
+        return None;
+    }
+    let head = match info.rfind('(') {
+        Some(i) => &info[i + 1..],
+        None => info,
+    };
+    let class = head.split(',').next().unwrap_or("");
+    let class = class.rsplit(" - ").next().unwrap_or(class).trim().to_lowercase();
+    Some(match class.as_str() {
+        "bass" => "bass",
+        "lead" => "lead",
+        "pad" => "pad",
+        "pluck / keys" => "pluck",
+        "fx / percussion" => "fx",
+        _ => return None,
+    })
+}
+
+/// a group from the words of a name, when nothing better is known
+fn name_group(name: &str) -> &'static str {
+    let n = format!(" {} ", name.to_lowercase());
+    let has = |ws: &[&str]| ws.iter().any(|w| n.contains(w));
+    if has(&[" kit "]) {
+        "drums"
+    } else if has(&["bass", " sub", "808", "reese", "wobble", "growl", " wob"]) {
+        "bass"
+    } else if has(&["riser", "impact", " fx", " hit", "sweep", "noise", "whoosh", " drop", "downlifter", " boom"]) {
+        "fx"
+    } else if has(&["pad", "atmos", "drone", "choir", "string", "ambien"]) {
+        "pad"
+    } else if has(&["chord", "stab"]) {
+        "chords"
+    } else if has(&["pluck", "arp", "keys", "piano", " ep ", "bell", "organ", "rhodes", "guitar", "harp", "mallet", " seq"]) {
+        "pluck"
+    } else if has(&["lead", "screech", "solo", " saw", "square", "brass", "flute"]) {
+        "lead"
+    } else {
+        "any"
+    }
+}
+
+/// the group of a General MIDI program (0-based)
+fn gm_group(p: u8) -> &'static str {
+    match p {
+        0..=31 => "pluck",
+        32..=39 => "bass",
+        40..=55 => "pad",
+        56..=87 => "lead",
+        88..=95 => "pad",
+        96..=103 => "fx",
+        104..=111 => "pluck",
+        _ => "fx",
+    }
+}
+
+/// Which Ling Membrane kit plays which genres, best first (the kits' names): the import's drum parts pick from this.
+pub const KITS: [(&str, &[&str]); 21] = [
+    ("Kit Trap", &["trap", "witch house"]),
+    ("Kit Electro 808", &["pop", "chiptune", "future bass"]),
+    ("Kit House 909", &["house", "deep house", "trance", "edm", "big room"]),
+    ("Kit Techno Hard", &["techno", "hardstyle", "acid techno"]),
+    ("Kit Drum and Bass", &["drum and bass", "breakbeat", "neurofunk"]),
+    ("Kit Industrial", &["dubstep", "riddim", "witch house", "techno"]),
+    ("Kit LoFi", &["lofi"]),
+    ("Kit Boom Bap", &["hip hop", "lofi"]),
+    ("Kit Brushes", &["jazz", "folk", "ambient", "ballad"]),
+    ("Kit Jazz", &["jazz"]),
+    ("Kit Rock", &["rock"]),
+    ("Kit Stadium Rock", &["rock", "cinematic"]),
+    ("Kit Metal", &["metal"]),
+    ("Kit Funk", &["disco", "funk"]),
+    ("Kit Hyperpop", &["hyperpop"]),
+    ("Kit New Wave", &["synthwave"]),
+    ("Kit UK Garage", &["garage"]),
+    ("Kit Dub", &["dub"]),
+    ("Kit Dembow", &["reggaeton"]),
+    ("Kit Afro Percussion", &["afrobeat"]),
+    ("Deep 808", &["trap"]),
+];
+
+/// the genres a kit is listed for
+pub fn kit_genres(name: &str) -> Vec<String> {
+    KITS.iter().find(|k| k.0.eq_ignore_ascii_case(name)).map(|k| k.1.iter().map(|g| g.to_string()).collect()).unwrap_or_default()
+}
+
+/// The kit for a drum part: words in the part's name first ("Brushes", "909", "Amen", "Congas" ...), then the genre's first kit,
+/// then by tempo. Always one of `KITS`.
+pub fn kit_for(genre: &str, part_name: &str, bpm: f64) -> &'static str {
+    let n = part_name.to_lowercase();
+    let hints: [(&[&str], &str); 12] = [
+        (&["brush"], "Kit Brushes"),
+        (&["909"], "Kit House 909"),
+        (&["808", "trap"], "Kit Trap"),
+        (&["amen", "jungle", "dnb", "break"], "Kit Drum and Bass"),
+        (&["conga", "bongo", "djembe", "afro", "shaker"], "Kit Afro Percussion"),
+        (&["metal"], "Kit Metal"),
+        (&["dembow", "reggaeton"], "Kit Dembow"),
+        (&["garage", "2-step", "2step"], "Kit UK Garage"),
+        (&["boom bap", "boombap"], "Kit Boom Bap"),
+        (&["lofi", "lo-fi"], "Kit LoFi"),
+        (&["jazz"], "Kit Jazz"),
+        (&["funk", "disco"], "Kit Funk"),
+    ];
+    for (ws, kit) in hints {
+        if ws.iter().any(|w| n.contains(w)) {
+            return kit;
+        }
+    }
+    let g = genre.trim().to_lowercase();
+    if let Some(k) = KITS.iter().find(|k| k.1.contains(&g.as_str())) {
+        return k.0;
+    }
+    if bpm > 0.0 && bpm < 112.0 {
+        "Kit Electro 808"
+    } else {
+        "Kit House 909"
+    }
+}
+
+/// the .ling files of a folder: (name from the file, the file's path with forward slashes, its text), sorted by file name
+fn ling_files(dir: &str) -> Vec<(String, String, String)> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut files: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("ling")).unwrap_or(false)).collect();
+    files.sort();
+    files
+        .into_iter()
+        .map(|p| {
+            let stem = p.file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
+            (stem, p.to_string_lossy().replace('\\', "/"), std::fs::read_to_string(&p).unwrap_or_default())
+        })
+        .collect()
+}
+
+fn patch_type(text: &str) -> String {
+    text.lines().find_map(|l| l.trim().strip_prefix("type").map(|r| r.trim_start_matches([' ', '=']).trim().split_whitespace().next().unwrap_or("").to_string())).unwrap_or_default()
+}
+
+fn inner_name(text: &str) -> Option<String> {
+    text.lines().find_map(|l| l.trim().strip_prefix("name").and_then(|r| r.split_once('"')).and_then(|(_, r)| r.split_once('"')).map(|(n, _)| n.to_string()))
+}
+
+/// Folders under the sample roots that hold a drum kit (a kick and a snare somewhere inside), at most `max`, shallow first; the
+/// roots themselves are left out (the Sampler's "your sample folders" kit covers them).
+pub fn drum_folders(roots: &[String], max: usize) -> Vec<String> {
+    use std::collections::BTreeMap;
+    // folder -> (kick, snare, depth)
+    let mut seen: BTreeMap<String, (bool, bool, usize)> = BTreeMap::new();
+    let mut files = 0usize;
+    for root in roots {
+        let root_n = root.replace('\\', "/").trim_end_matches('/').to_string();
+        let mut stack: Vec<(std::path::PathBuf, usize)> = vec![(std::path::PathBuf::from(root), 0)];
+        while let Some((d, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 4 {
+                        stack.push((p, depth + 1));
+                    }
+                    continue;
+                }
+                let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+                if !["wav", "flac", "ogg", "mp3", "wv", "aif", "aiff"].contains(&ext.as_str()) {
+                    continue;
+                }
+                files += 1;
+                if files > 40_000 {
+                    break;
+                }
+                let full = p.to_string_lossy().replace('\\', "/");
+                let name = full.rsplit('/').next().unwrap_or("").to_lowercase();
+                let (k, s) = (name.contains("kick") || name.starts_with("bd"), name.contains("snare") || name.starts_with("sd"));
+                // every folder between the root and the file
+                let mut dir = full.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default();
+                let mut lvl = depth + 1;
+                while dir.len() > root_n.len() && dir.starts_with(&root_n) && lvl > 0 {
+                    let en = seen.entry(dir.clone()).or_insert((false, false, lvl));
+                    en.0 |= k;
+                    en.1 |= s;
+                    dir = dir.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default();
+                    lvl -= 1;
+                }
+            }
+        }
+    }
+    let mut v: Vec<(usize, String)> = seen.into_iter().filter(|(_, f)| f.0 && f.1).map(|(d, f)| (f.2, d)).collect();
+    v.sort();
+    v.into_iter().take(max).map(|x| x.1).collect()
+}
+
+/// Scan every source of sound: the instrument folders (Nova, Chip, Cinema, Prism, Growl, Voice, Synth X / Electronic GM / GM, User),
+/// the drum kits, the sound recipes, the Sampler's kits and files (drum folders under `roots`, the shipped one-shots), the SoundFonts.
+/// Paths are relative to the app folder (the working directory).
+pub fn scan(roots: &str) -> Vec<Sound> {
+    let mut v: Vec<Sound> = vec![];
+    // Ling Nova: the factory presets as files, grouped by the role their usage note names
+    for (stem, path, text) in ling_files("instruments/Nova") {
+        let alias = stem.strip_prefix("Nova ").unwrap_or(&stem).to_string();
+        let name = inner_name(&text).unwrap_or_else(|| alias.clone());
+        let p = crate::dsp::nova::presets::find(&name);
+        let group = match p.map(|p| p.usage.role.as_str()) {
+            Some("bass") => "bass",
+            Some("lead") => "lead",
+            Some("chord") => "chords",
+            Some("pluck") => "pluck",
+            Some("pad") => "pad",
+            Some("fx") => "fx",
+            _ => name_group(&name),
+        };
+        v.push(Sound { kind: "nova", label: format!("{}: {name}", group_label(group)), name, alias, value: path, group, genres: p.map(|p| p.usage.genres.clone()).unwrap_or_default(), source: "Nova" });
+    }
+    // the other synths' preset folders: grouped by presetinfo's words, else by the name
+    for (kind, dir, prefix, source) in [("chip", "instruments/Chip", "Chip ", "Chip"), ("cinema", "instruments/Cinema", "Cinema ", "Cinema"), ("prism", "instruments/Prism", "Prism ", "Prism"), ("growl", "instruments/Growl", "Growl ", "Growl"), ("voice", "instruments/Voice", "Voice ", "Voice")] {
+        for (stem, path, text) in ling_files(dir) {
+            let name = stem.strip_prefix(prefix).unwrap_or(&stem).to_string();
+            let alias = inner_name(&text).unwrap_or_default();
+            let group = if kind == "voice" {
+                "voice"
+            } else {
+                info_group(&crate::presetinfo::info(kind, &name)).or_else(|| info_group(&crate::presetinfo::info(kind, &alias))).unwrap_or_else(|| if kind == "cinema" { "fx" } else { name_group(&name) })
+            };
+            let label = if kind == "voice" { name.clone() } else { format!("{}: {name}", group_label(group)) };
+            v.push(Sound { kind, label, name, alias, value: path, group, genres: vec![], source });
+        }
+    }
+    // Ling Synth X's loose patches and the Ling Membrane kits (the top folder mixes kinds: the file says which)
+    for (stem, path, text) in ling_files("instruments") {
+        match patch_type(&text).as_str() {
+            "synth" => v.push(Sound { kind: "synth", label: stem.clone(), name: stem.clone(), alias: inner_name(&text).unwrap_or_default(), value: path, group: name_group(&stem), genres: vec![], source: "Synth X" }),
+            "drums" => v.push(Sound { kind: "drums", label: stem.clone(), name: stem.clone(), alias: inner_name(&text).unwrap_or_default(), value: path, group: "drums", genres: kit_genres(&stem), source: "kit" }),
+            _ => {}
+        }
+    }
+    // Electronic GM and General MIDI: numbered by program, listed without the number
+    for (dir, prefix, source) in [("instruments/Electronic GM", "Electronic: ", "Electronic GM"), ("instruments/GM", "GM: ", "GM")] {
+        for (stem, path, text) in ling_files(dir) {
+            let num: u8 = stem.split(' ').next().and_then(|n| n.parse::<u16>().ok()).map(|n| n.saturating_sub(1).min(127) as u8).unwrap_or(0);
+            let bare = stem.split_once(' ').map(|x| x.1.to_string()).unwrap_or_else(|| stem.clone());
+            let name = format!("{prefix}{bare}");
+            v.push(Sound { kind: "synth", label: name.clone(), name, alias: format!("{prefix}{}", inner_name(&text).unwrap_or_default()), value: path, group: gm_group(num), genres: vec![], source });
+        }
+    }
+    // your own presets (the + next to a preset chooser): listed with the instrument they belong to
+    for (stem, path, text) in ling_files("instruments/User") {
+        let kind: &'static str = match patch_type(&text).as_str() {
+            "prism" => "prism",
+            "growl" => "growl",
+            "voice" => "voice",
+            "nova" => "nova",
+            "chip" => "chip",
+            "cinema" => "cinema",
+            "drums" => "drums",
+            "synth" | "sf2" => "synth",
+            _ => continue,
+        };
+        v.push(Sound { kind, label: format!("User: {stem}"), name: stem.clone(), alias: inner_name(&text).unwrap_or_default(), value: path, group: name_group(&stem), genres: vec![], source: "User" });
+    }
+    // the sound recipes: the instrument, the effect chain, the mix and the automation as one design
+    let lib = crate::recipes::library();
+    for r in lib.recipes.iter().filter(|r| !r.is_master()) {
+        let group = match r.role.as_str() {
+            "bass" => "bass",
+            "lead" => "lead",
+            "chord" => "chords",
+            "pad" => "pad",
+            "arp" => "pluck",
+            _ => "fx",
+        };
+        v.push(Sound { kind: "recipe", label: format!("{}: {}", group_label(group), r.name), name: r.name.clone(), alias: r.id.clone(), value: format!("recipe:{}", r.id), group, genres: r.genres.clone(), source: "recipe" });
+    }
+    // Ling Sampler: drum kits built from sample folders by the General MIDI drum map, and the shipped one-shots
+    let roots_v: Vec<String> = roots.split('|').map(|r| r.trim().to_string()).filter(|r| !r.is_empty() && std::path::Path::new(r).is_dir()).collect();
+    v.push(Sound { kind: "sampler", label: "Drum kit: your sample folders (by drum name)".into(), name: "your sample folders".into(), alias: String::new(), value: "smpkit:".into(), group: "drums", genres: vec![], source: "sample kit" });
+    for d in drum_folders(&roots_v, 24) {
+        let base = roots_v.iter().map(|r| r.replace('\\', "/")).find(|r| d.starts_with(r.as_str())).unwrap_or_default();
+        let rel = d.strip_prefix(base.as_str()).unwrap_or(&d).trim_start_matches('/').to_string();
+        v.push(Sound { kind: "sampler", label: format!("Drum kit: {rel}"), name: rel.clone(), alias: String::new(), value: format!("smpkit:{d}"), group: "drums", genres: vec![], source: "sample kit" });
+    }
+    for dir in ["samples/FX", "../samples/FX"] {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        let mut fs: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| ["wav", "flac", "ogg"].contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false)).collect();
+        fs.sort();
+        for f in fs {
+            let stem = f.file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
+            let name: String = stem
+                .split(' ')
+                .map(|w| {
+                    let mut c = w.chars();
+                    c.next().map(|x| x.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            v.push(Sound { kind: "sampler", label: format!("FX one-shot: {name}"), name, alias: String::new(), value: format!("smpfile:{}", f.to_string_lossy().replace('\\', "/")), group: "fx", genres: vec![], source: "sample" });
+        }
+        break;
+    }
+    // SoundFonts: each file by name (the part's General MIDI program plays)
+    for dir in ["assets/soundfonts", "soundfonts"] {
+        let Ok(rd) = std::fs::read_dir(dir) else { continue };
+        let mut fs: Vec<std::path::PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|e| ["sf2", "sf3"].contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false)).collect();
+        fs.sort();
+        for f in fs {
+            let name = f.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            v.push(Sound { kind: "sf2", label: format!("{name} (the part's General MIDI program)"), name: name.clone(), alias: f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), value: format!("sf2:{}", f.to_string_lossy().replace('\\', "/")), group: "any", genres: vec![], source: "SoundFont" });
+        }
+    }
+    // the long lists read by role: your own presets first, then grouped (Bass, Lead, Chords, Pad, Pluck / Keys, FX), file order within
+    v.sort_by(|a, b| {
+        let grouped = |s: &Sound| matches!(s.kind, "nova" | "chip" | "cinema" | "prism" | "growl" | "recipe") && s.source != "User";
+        let ka = if grouped(a) { group_rank(a.group) } else { 0 };
+        let kb = if grouped(b) { group_rank(b.group) } else { 0 };
+        a.kind.cmp(b.kind).then((b.source == "User").cmp(&(a.source == "User"))).then(ka.cmp(&kb))
+    });
+    v
+}
+
+fn dir_stamp(d: &str) -> String {
+    std::fs::metadata(d).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|x| x.as_millis().to_string()).unwrap_or_default()
+}
+
+/// The catalogue, scanned once and again whenever a folder changes (a preset saved, a recipe added, a kit dropped in).
+pub fn catalogue(roots: &str) -> std::sync::Arc<Vec<Sound>> {
+    static C: OnceLock<Mutex<Option<(String, std::sync::Arc<Vec<Sound>>)>>> = OnceLock::new();
+    let cwd = std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut key = format!("{cwd}|{roots}|{}", crate::recipes::library().recipes.len());
+    for d in ["instruments", "instruments/Nova", "instruments/Chip", "instruments/Cinema", "instruments/Prism", "instruments/Growl", "instruments/Voice", "instruments/User", "instruments/GM", "instruments/Electronic GM", "samples/FX", "assets/soundfonts"] {
+        key.push('|');
+        key.push_str(&dir_stamp(d));
+    }
+    let m = C.get_or_init(|| Mutex::new(None));
+    if let Some((k, c)) = m.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if *k == key {
+            return c.clone();
+        }
+    }
+    let c = std::sync::Arc::new(scan(roots));
+    *m.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, c.clone()));
+    c
+}
+
+/// The catalogue entry a picker's (plugin, name) means: by its label, its name or alias, or its choice string (case does not matter).
+pub fn find_sound<'a>(cat: &'a [Sound], kind: &str, name: &str) -> Option<&'a Sound> {
+    let w = name.trim().to_lowercase();
+    if w.is_empty() {
+        return None;
+    }
+    let of_kind = || cat.iter().filter(move |s| s.kind == kind);
+    of_kind()
+        .find(|s| s.label.to_lowercase() == w)
+        .or_else(|| of_kind().find(|s| s.name.to_lowercase() == w || (!s.alias.is_empty() && s.alias.to_lowercase() == w)))
+        .or_else(|| of_kind().find(|s| s.value.to_lowercase() == w))
+}
+
+/// how many sounds each source has: (source, count), in catalogue order
+pub fn counts(cat: &[Sound]) -> Vec<(&'static str, usize)> {
+    let mut v: Vec<(&'static str, usize)> = vec![];
+    for s in cat {
+        match v.iter_mut().find(|x| x.0 == s.source) {
+            Some(x) => x.1 += 1,
+            None => v.push((s.source, 1)),
+        }
+    }
+    v
 }
 
 #[cfg(test)]

@@ -68,6 +68,49 @@ void project_points(const float* world, float* out, const float* cam, int n) {
     out[3*i+1] = cy + focal * ry / d;
     out[3*i+2] = rz;
 }
+
+// Depth-buffered triangle raster. One thread per triangle walks its bounding box; for every covered pixel centre it
+// interpolates 1/depth and keeps the nearest triangle with a 64-bit atomicMax on (depth bits << 32 | triangle + 1) -
+// positive floats order like their bit patterns, so a larger key is nearer, and a later triangle wins a tie.
+extern "C" __global__
+void raster_tris(const float* tri, unsigned long long* vis, int ntri, int w, int h, float ox, float oy) {
+    int t = blockIdx.x * blockDim.x + threadIdx.x;
+    if (t >= ntri) return;
+    const float* p = tri + 9 * t;
+    float ax = p[0] - ox, ay = p[1] - oy, az = p[2];
+    float bx = p[3] - ox, by = p[4] - oy, bz = p[5];
+    float cx = p[6] - ox, cy = p[7] - oy, cz = p[8];
+    float area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (fabsf(area) < 1e-12f) return;
+    float inv = 1.0f / area;
+    int x0 = max(0, (int)floorf(fminf(ax, fminf(bx, cx)) - 0.5f));
+    int y0 = max(0, (int)floorf(fminf(ay, fminf(by, cy)) - 0.5f));
+    int x1 = min(w - 1, (int)ceilf(fmaxf(ax, fmaxf(bx, cx)) - 0.5f));
+    int y1 = min(h - 1, (int)ceilf(fmaxf(ay, fmaxf(by, cy)) - 0.5f));
+    for (int y = y0; y <= y1; ++y) {
+        float py = y + 0.5f;
+        for (int x = x0; x <= x1; ++x) {
+            float px = x + 0.5f;
+            float w0 = ((bx - px) * (cy - py) - (cx - px) * (by - py)) * inv;
+            float w1 = ((cx - px) * (ay - py) - (ax - px) * (cy - py)) * inv;
+            float w2 = 1.0f - w0 - w1;
+            if (w0 < -1e-4f || w1 < -1e-4f || w2 < -1e-4f) continue;
+            float z = w0 * az + w1 * bz + w2 * cz;
+            if (!(z > 0.0f)) continue;
+            unsigned long long key = ((unsigned long long)__float_as_uint(z) << 32) | (unsigned int)(t + 1);
+            atomicMax(vis + (size_t)y * w + x, key);
+        }
+    }
+}
+
+// visibility buffer -> 0xFF000000 | rgb (0 where no triangle reached the pixel)
+extern "C" __global__
+void raster_resolve(const unsigned long long* vis, const unsigned int* col, unsigned int* out, int npix) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= npix) return;
+    unsigned long long k = vis[i];
+    out[i] = (k == 0ULL) ? 0u : (0xFF000000u | col[(unsigned int)(k & 0xFFFFFFFFULL) - 1u]);
+}
 "#;
 
 /// Below these element counts the multi-GPU split costs more (extra host↔device
@@ -87,8 +130,12 @@ impl CudaBackend {
     pub fn on_ordinal(ordinal: usize) -> Option<Self> {
         let dev = CudaDevice::new(ordinal).ok()?;
         let ptx = compile_ptx(KERNELS).ok()?;
-        dev.load_ptx(ptx, "ling_gpu", &["nbody_accel_range", "project_points"])
-            .ok()?;
+        dev.load_ptx(
+            ptx,
+            "ling_gpu",
+            &["nbody_accel_range", "project_points", "raster_tris", "raster_resolve"],
+        )
+        .ok()?;
         let name = format!(
             "CUDA[{ordinal}]: {}",
             dev.name().unwrap_or_else(|_| "NVIDIA GPU".into())
@@ -180,9 +227,50 @@ impl CudaBackend {
     }
 }
 
+impl CudaBackend {
+    /// z-buffered raster of one scene on this device; CPU z-buffer on any driver error
+    fn raster(&self, scene: &crate::RasterScene, out: &mut [u32]) {
+        let npix = scene.width * scene.height;
+        let nt = scene.colors.len().min(scene.tris.len() / 9);
+        if npix == 0 || out.len() < npix {
+            return;
+        }
+        if nt == 0 {
+            out[..npix].fill(0);
+            return;
+        }
+        let mut run = || -> Result<(), DriverError> {
+            let tri_d = self.dev.htod_sync_copy(&scene.tris[..nt * 9])?;
+            let col_d = self.dev.htod_sync_copy(&scene.colors[..nt])?;
+            let mut vis_d = self.dev.alloc_zeros::<u64>(npix)?;
+            let mut out_d = self.dev.alloc_zeros::<u32>(npix)?;
+            let f = self.dev.get_func("ling_gpu", "raster_tris").unwrap();
+            unsafe {
+                f.launch(
+                    LaunchConfig::for_num_elems(nt as u32),
+                    (&tri_d, &mut vis_d, nt as i32, scene.width as i32, scene.height as i32, scene.x0, scene.y0),
+                )?;
+            }
+            let g = self.dev.get_func("ling_gpu", "raster_resolve").unwrap();
+            unsafe {
+                g.launch(LaunchConfig::for_num_elems(npix as u32), (&vis_d, &col_d, &mut out_d, npix as i32))?;
+            }
+            self.dev.dtoh_sync_copy_into(&out_d, &mut out[..npix])?;
+            Ok(())
+        };
+        if run().is_err() {
+            crate::cpu::raster_cpu(scene, out);
+        }
+    }
+}
+
 impl Backend for CudaBackend {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn raster_tris(&self, scene: &crate::RasterScene, out: &mut [u32]) {
+        self.raster(scene, out);
     }
 
     fn is_gpu(&self) -> bool {
@@ -242,6 +330,11 @@ impl MultiCudaBackend {
 impl Backend for MultiCudaBackend {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    // one frame is one z-buffer: it is rasterised on the first card (splitting it would need a depth merge)
+    fn raster_tris(&self, scene: &crate::RasterScene, out: &mut [u32]) {
+        self.devs[0].raster(scene, out);
     }
 
     fn is_gpu(&self) -> bool {

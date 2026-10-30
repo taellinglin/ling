@@ -690,7 +690,7 @@ impl Interpreter {
         if !(name.starts_with("tm_")
             || name.starts_with("coll_")
             || name.starts_with("pfx_")
-            || matches!(name, "str_to_hex" | "hex_to_str" | "net_local_ip" | "rand_seed" | "clipboard_set" | "clipboard_get" | "random_hex"))
+            || matches!(name, "str_to_hex" | "hex_to_str" | "net_local_ip" | "rand_seed" | "clipboard_set" | "clipboard_get" | "random_hex" | "net_upnp_map" | "net_upnp_poll" | "net_upnp_unmap"))
         {
             return None;
         }
@@ -815,7 +815,9 @@ impl Interpreter {
                 ];
                 let mut px = vec![0u32; (n * n) as usize];
                 let k = span / n as f32;
-                for j in 0..n {
+                // rows are independent: fill them across the thread pool
+                use rayon::prelude::*;
+                px.par_chunks_mut(n as usize).enumerate().for_each(|(j, row)| {
                     let z = z0 + (j as f32 + 0.5) * k;
                     for i in 0..n {
                         let x = x0 + (i as f32 + 0.5) * k;
@@ -854,9 +856,9 @@ impl Interpreter {
                             }
                         }
                         let al = al.clamp(0.0, 1.0);
-                        px[(j * n + i) as usize] = ((al * 255.0) as u32) << 24 | ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
+                        row[i as usize] = ((al * 255.0) as u32) << 24 | ((c[0] * 255.0) as u32) << 16 | ((c[1] * 255.0) as u32) << 8 | (c[2] * 255.0) as u32;
                     }
-                }
+                });
                 let tex = Arc::new(TexData { w: n, h: n, px });
                 if id >= 0.0 && (id as usize) < self.g3d.texs.len() {
                     self.g3d.texs[id as usize] = tex;
@@ -947,6 +949,21 @@ impl Interpreter {
                     .map(|a| a.ip().to_string())
                     .unwrap_or_default();
                 Ok(Value::Str(ip))
+            },
+            // net_upnp_map(port, description): ask the router (UPnP IGD) to forward TCP `port` here, in
+            //   the background. net_upnp_poll() -> "" while it works, "ok|<public ip>", "cgnat|<ip>"
+            //   (the router's public side is itself carrier-NAT / private: a forward can't reach it),
+            //   or "fail|<reason>". net_upnp_unmap() removes the forward.
+            "net_upnp_map" => {
+                let port = num(args, 0, 4747.0) as u16;
+                let desc = text(args, 1);
+                upnp::start_map(port, if desc.is_empty() { "Ling game".into() } else { desc });
+                Ok(Value::Unit)
+            },
+            "net_upnp_poll" => Ok(Value::Str(upnp::poll())),
+            "net_upnp_unmap" => {
+                upnp::unmap();
+                Ok(Value::Unit)
             },
             // random_hex(bytes): bytes of OS randomness as hex (keys and seeds; rand() is not for secrets)
             "random_hex" => {
@@ -2143,4 +2160,197 @@ fn clipboard_get() -> String {
         }
     }
     String::new()
+}
+
+
+/// A small UPnP Internet Gateway Device client (SSDP discovery, the device description, SOAP
+/// AddPortMapping / GetExternalIPAddress / DeletePortMapping) on std sockets only.
+mod upnp {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    type Mapping = (String, String, u16);
+    static STATE: Mutex<(String, Option<Mapping>)> = Mutex::new((String::new(), None));
+
+    pub fn start_map(port: u16, desc: String) {
+        if let Ok(mut st) = STATE.lock() {
+            st.0.clear();
+        }
+        std::thread::spawn(move || {
+            let r = map(port, &desc);
+            if let Ok(mut st) = STATE.lock() {
+                match r {
+                    Ok((ip, ctl, svc)) => {
+                        st.0 = if is_shared(&ip) { format!("cgnat|{ip}") } else { format!("ok|{ip}") };
+                        st.1 = Some((ctl, svc, port));
+                    },
+                    Err(e) => st.0 = format!("fail|{e}"),
+                }
+            }
+        });
+    }
+
+    pub fn poll() -> String {
+        STATE.lock().map(|s| s.0.clone()).unwrap_or_default()
+    }
+
+    pub fn unmap() {
+        let m = STATE.lock().ok().and_then(|mut s| s.1.take());
+        if let Some((ctl, svc, port)) = m {
+            let body = format!("<NewRemoteHost></NewRemoteHost><NewExternalPort>{port}</NewExternalPort><NewProtocol>TCP</NewProtocol>");
+            let _ = soap(&ctl, &svc, "DeletePortMapping", &body);
+        }
+    }
+
+    /// 100.64.0.0/10 (carrier NAT) and the private ranges: a forward there doesn't reach the internet.
+    fn is_shared(ip: &str) -> bool {
+        let o: Vec<u8> = ip.split('.').filter_map(|x| x.parse().ok()).collect();
+        o.len() == 4
+            && (o[0] == 10 || (o[0] == 100 && (64..128).contains(&o[1])) || (o[0] == 172 && (16..32).contains(&o[1])) || (o[0] == 192 && o[1] == 168))
+    }
+
+    fn map(port: u16, desc: &str) -> Result<(String, String, String), String> {
+        let loc = discover()?;
+        let (host, path) = split_url(&loc)?;
+        let xml = http(&host, "GET", &path, &[], "")?;
+        let (svc, ctl_path) = find_service(&xml).ok_or("the router offers no WAN connection service")?;
+        let ctl = if ctl_path.starts_with("http") {
+            ctl_path
+        } else {
+            let b = xml_tag(&xml, "URLBase").map(|b| b.trim_end_matches('/').to_string()).unwrap_or_else(|| format!("http://{host}"));
+            format!("{}{}{}", b, if ctl_path.starts_with('/') { "" } else { "/" }, ctl_path)
+        };
+        // our own address, as the router sees it
+        let me = {
+            let (h, _) = split_url(&ctl)?;
+            let addr: SocketAddr = h.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad router address")?;
+            let s = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+            s.connect(addr).map_err(|e| e.to_string())?;
+            s.local_addr().map_err(|e| e.to_string())?.ip().to_string()
+        };
+        let body = format!(
+            "<NewRemoteHost></NewRemoteHost><NewExternalPort>{port}</NewExternalPort><NewProtocol>TCP</NewProtocol><NewInternalPort>{port}</NewInternalPort><NewInternalClient>{me}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{desc}</NewPortMappingDescription><NewLeaseDuration>7200</NewLeaseDuration>"
+        );
+        // a two-hour lease first (a crashed game can't leave the port open for good); some routers
+        // only take a permanent one
+        let r = soap(&ctl, &svc, "AddPortMapping", &body)?;
+        if r.contains("<errorCode>") {
+            let r2 = soap(&ctl, &svc, "AddPortMapping", &body.replace("<NewLeaseDuration>7200<", "<NewLeaseDuration>0<"))?;
+            if r2.contains("<errorCode>") {
+                return Err(format!("the router refused the forward ({})", xml_tag(&r2, "errorDescription").unwrap_or_default()));
+            }
+        }
+        let ipr = soap(&ctl, &svc, "GetExternalIPAddress", "")?;
+        let ip = xml_tag(&ipr, "NewExternalIPAddress").unwrap_or_default();
+        if ip.is_empty() {
+            return Err("the router didn't report its public address".into());
+        }
+        Ok((ip, ctl, svc))
+    }
+
+    fn discover() -> Result<String, String> {
+        let s = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+        s.set_read_timeout(Some(Duration::from_millis(400))).ok();
+        let targets = [
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:1",
+            "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
+            "urn:schemas-upnp-org:service:WANIPConnection:1",
+        ];
+        for st in targets {
+            let msg = format!("M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {st}\r\n\r\n");
+            for _ in 0..2 {
+                let _ = s.send_to(msg.as_bytes(), "239.255.255.250:1900");
+                let mut buf = [0u8; 2048];
+                let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+                while std::time::Instant::now() < deadline {
+                    if let Ok((n, _)) = s.recv_from(&mut buf) {
+                        let t = String::from_utf8_lossy(&buf[..n]);
+                        for line in t.lines() {
+                            if let Some((k, v)) = line.split_once(':') {
+                                if k.trim().eq_ignore_ascii_case("location") {
+                                    return Ok(v.trim().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err("no UPnP router answered (UPnP may be switched off in the router)".into())
+    }
+
+    fn split_url(u: &str) -> Result<(String, String), String> {
+        let rest = u.strip_prefix("http://").ok_or("not an http URL")?;
+        let (h, p) = match rest.split_once('/') {
+            Some((h, p)) => (h.to_string(), format!("/{p}")),
+            None => (rest.to_string(), "/".to_string()),
+        };
+        let h = if h.contains(':') { h } else { format!("{h}:80") };
+        Ok((h, p))
+    }
+
+    fn http(host: &str, method: &str, path: &str, headers: &[(&str, String)], body: &str) -> Result<String, String> {
+        let addr = host.to_socket_addrs().map_err(|e| e.to_string())?.next().ok_or("bad address")?;
+        let mut c = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| e.to_string())?;
+        c.set_read_timeout(Some(Duration::from_secs(4))).ok();
+        let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+        for (k, v) in headers {
+            req.push_str(&format!("{k}: {v}\r\n"));
+        }
+        req.push_str("\r\n");
+        req.push_str(body);
+        c.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+        let mut out = Vec::new();
+        let _ = c.read_to_end(&mut out);
+        let t = String::from_utf8_lossy(&out).into_owned();
+        Ok(match t.split_once("\r\n\r\n") {
+            Some((_, b)) => b.to_string(),
+            None => t,
+        })
+    }
+
+    fn soap(ctl: &str, svc: &str, action: &str, args: &str) -> Result<String, String> {
+        let (host, path) = split_url(ctl)?;
+        let body = format!(
+            "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{svc}\">{args}</u:{action}></s:Body></s:Envelope>"
+        );
+        let headers = [("Content-Type", "text/xml; charset=\"utf-8\"".to_string()), ("SOAPAction", format!("\"{svc}#{action}\""))];
+        http(&host, "POST", &path, &headers, &body)
+    }
+
+    fn xml_tag(x: &str, tag: &str) -> Option<String> {
+        let open = format!("<{tag}>");
+        let a = x.find(&open)? + open.len();
+        let b = x[a..].find(&format!("</{tag}>"))? + a;
+        Some(x[a..b].trim().to_string())
+    }
+
+    /// The first WANIPConnection / WANPPPConnection service: (serviceType, controlURL).
+    fn find_service(xml: &str) -> Option<(String, String)> {
+        for block in xml.split("<service>").skip(1) {
+            let block = block.split("</service>").next().unwrap_or("");
+            if let Some(st) = xml_tag(block, "serviceType") {
+                if st.contains("WANIPConnection") || st.contains("WANPPPConnection") {
+                    return Some((st, xml_tag(block, "controlURL")?));
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn finds_the_wan_service() {
+            let x = "<root><URLBase>http://192.168.0.1:5000/</URLBase><service><serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType><controlURL>/l3f</controlURL></service><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/ctl/IPConn</controlURL></service></root>";
+            assert_eq!(super::find_service(x), Some(("urn:schemas-upnp-org:service:WANIPConnection:1".into(), "/ctl/IPConn".into())));
+        }
+        #[test]
+        fn carrier_nat_is_shared() {
+            assert!(super::is_shared("100.72.3.4"));
+            assert!(!super::is_shared("81.2.69.160"));
+        }
+    }
 }

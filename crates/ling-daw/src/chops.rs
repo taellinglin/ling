@@ -20,11 +20,15 @@
 //!   none and play as recorded) and each chop note is a static transposition onto a chord tone of what sounds where it plays (else
 //!   the key), by the smallest shift, never more than [`Tune::max_shift`] semitones (an intended note further away is played an
 //!   octave nearer or on another chord tone).
+//! * Production edits ([`edits`]): swells, tape stops, risers, gates, flips ... planned over the song's sections and put on the
+//!   composed chops, a few per section.
 use crate::compose::Rng;
 use crate::dsp::sampler::{Config, Zone};
 use crate::model::Note;
 use crate::theory::Key;
 
+pub mod edits;
+pub mod kit;
 mod tune;
 pub use tune::{chop_f0, chord_at, Tune, TuneMode, TuneStats, F0};
 
@@ -619,6 +623,44 @@ pub struct Vocal {
     pub rev: Vec<(usize, Chop)>,
     pub rate: u32,
     pub bpm: f64,
+    /// per piece, 0 .. 1: how clean it is to play alone ([`cleanness`]); empty = all clean (a vocal built by hand)
+    pub clean: Vec<f32>,
+}
+
+/// How clean a chop is to play on its own, 0 .. 1: a steady voiced vowel scores by the pitch tracker's confidence; an unvoiced chop
+/// with a hissing spectrum (many zero crossings: a breath, an "s", noise) next to nothing; other unvoiced chops (a "t", a shout) in
+/// between - fine for rhythm, not for a melody. A very short chop and one much quieter than the vocal's typical `typical` level (a
+/// breath, bleed) score less; a sustained one a little more.
+pub fn cleanness(mono: &[f32], s: usize, e: usize, rate: u32, f0: Option<F0>, level: f32, typical: f32) -> f32 {
+    let e = e.min(mono.len());
+    if e <= s + 8 {
+        return 0.0;
+    }
+    let x = &mono[s..e];
+    let zc = x.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count() as f32 / x.len() as f32;
+    let mut q = match f0 {
+        Some(f) => 0.5 + 0.5 * f.conf,
+        None if zc > 0.12 => 0.05,
+        None => 0.3,
+    };
+    let dur = (e - s) as f32 / rate.max(1) as f32;
+    if dur < 0.06 {
+        q *= 0.5;
+    } else if dur >= 0.15 {
+        q += 0.1;
+    }
+    if typical > 0.0 && level < 0.35 * typical {
+        q *= 0.4;
+    }
+    q.clamp(0.0, 1.0)
+}
+
+/// the cleanness of every piece of `v` (the typical level is the median piece's)
+fn clean_all(v: &Vocal, mono: &[f32], f0s: &[Option<F0>]) -> Vec<f32> {
+    let mut lv: Vec<f32> = v.pieces.iter().map(|p| p.chop.level).collect();
+    lv.sort_by(f32::total_cmp);
+    let typical = lv.get(lv.len() / 2).copied().unwrap_or(0.0);
+    v.pieces.iter().zip(f0s).map(|(p, f)| cleanness(mono, p.chop.start as usize, p.chop.end as usize, v.rate, *f, p.chop.level, typical)).collect()
 }
 
 /// the hop whose level is within 2 % of the peak of the lowest in `[frame - back, frame + fwd]`, the one nearest `frame`
@@ -632,14 +674,6 @@ fn snap_edge(env: &[f32], hop: usize, frame: i64, back: i64, fwd: i64, peak: f32
     let mn = (lo..=hi).map(|h| env[h as usize]).fold(f32::MAX, f32::min);
     let eps = mn + 0.02 * peak;
     (lo..=hi).filter(|h| env[*h as usize] <= eps).min_by_key(|h| (h * hop as i64 - frame).abs()).map(|h| h * hop as i64).unwrap_or(frame)
-}
-
-/// the pitch of a chop (tune.rs: the steady voiced middle), None when it is unvoiced or unsure
-fn chop_pitch(mono: &[f32], s: usize, e: usize, rate: u32) -> Option<f32> {
-    if e > mono.len() {
-        return None;
-    }
-    chop_f0(mono, s, e, rate).map(|f| f.midi)
 }
 
 impl Vocal {
@@ -656,6 +690,7 @@ impl Vocal {
         let mut v = Vocal { rate, bpm, ..Vocal::default() };
         let mut wid = 0usize;
         let mut prev_end = 0i64;
+        let mut f0s: Vec<Option<F0>> = vec![];
         for (i, u) in us.iter().enumerate() {
             let next_s0 = us.get(i + 1).map(|n| n.s0);
             let s1 = match next_s0 {
@@ -684,12 +719,15 @@ impl Vocal {
             prev_end = e;
             let (su, eu) = (s as usize, e as usize);
             let level = env[(su / hop).min(env.len().saturating_sub(1))..(eu / hop).clamp(1, env.len())].iter().sum::<f32>() / ((eu - su) / hop).max(1) as f32;
-            let midi = chop_pitch(&mono, su, eu, rate);
+            let f0 = if eu <= mono.len() { chop_f0(&mono, su, eu, rate) } else { None };
+            let midi = f0.map(|f| f.midi);
+            f0s.push(f0);
             if u.new_word && !v.pieces.is_empty() {
                 wid += 1;
             }
             v.pieces.push(Piece { chop: Chop { start: s as u32, end: e as u32, midi, level }, text: norm_word(&u.text), word: wid, nth: 0, of: 1, start: u.start, len: u.len, key: u.key, stress: 0.0 });
         }
+        v.clean = clean_all(&v, &mono, &f0s);
         v.index(hot);
         v
     }
@@ -702,6 +740,7 @@ impl Vocal {
         let tr = transients(stereo, rate);
         let mut v = Vocal { rate, bpm, ..Vocal::default() };
         let top = env.iter().copied().fold(1e-9f32, f32::max);
+        let mut f0s: Vec<Option<F0>> = vec![];
         for (i, (s, _)) in tr.iter().enumerate() {
             let s = *s as usize;
             let limit = tr.get(i + 1).map(|x| x.0 as usize).unwrap_or(frames).min(s + (0.6 * rate as f64) as usize).min(frames);
@@ -717,15 +756,55 @@ impl Vocal {
                 continue;
             }
             let level = env[s / hop..(e / hop).min(env.len())].iter().sum::<f32>() / ((e - s) / hop).max(1) as f32;
-            let midi = chop_pitch(&mono, s, e, rate);
+            let f0 = if e <= mono.len() { chop_f0(&mono, s, e, rate) } else { None };
+            let midi = f0.map(|f| f.midi);
+            f0s.push(f0);
             let beat = origin + s as f64 / rate as f64 * bpm / 60.0;
             let len = (e - s) as f64 / rate as f64 * bpm / 60.0;
             let wid = v.pieces.len();
             let key = midi.map(|m| m.round().clamp(24.0, 108.0) as u8).unwrap_or(60);
             v.pieces.push(Piece { chop: Chop { start: s as u32, end: e as u32, midi, level }, text: String::new(), word: wid, nth: 0, of: 1, start: beat, len, key, stress: 0.0 });
         }
+        v.clean = clean_all(&v, &mono, &f0s);
         v.index(hot);
         v
+    }
+
+    /// A vocal of chops cut at the transients (Make Medley without acapellas: [`pick_chops`]) for the production edits: every chop
+    /// a word of its own, where it lies in the recording; a sung chop counts as clean, an unpitched one as fit for rhythm only.
+    pub fn from_chops(ch: &[Chop], rate: u32, bpm: f64) -> Vocal {
+        let mut v = Vocal { rate, bpm, ..Vocal::default() };
+        let k = bpm / 60.0 / rate.max(1) as f64;
+        for (i, c) in ch.iter().enumerate() {
+            let key = c.midi.map(|m| m.round().clamp(24.0, 108.0) as u8).unwrap_or(60);
+            v.pieces.push(Piece { chop: c.clone(), text: String::new(), word: i, nth: 0, of: 1, start: c.start as f64 * k, len: (c.end - c.start) as f64 * k, key, stress: 0.0 });
+        }
+        v.clean = ch.iter().map(|c| if c.midi.is_some() { 0.8 } else { 0.3 }).collect();
+        v.index(&[]);
+        v
+    }
+
+    /// how clean piece `pi` is to play alone (1 when not measured)
+    pub fn clean_of(&self, pi: usize) -> f32 {
+        self.clean.get(pi).copied().unwrap_or(1.0)
+    }
+
+    /// the mean cleanness of word `w`'s pieces
+    fn word_clean(&self, w: usize) -> f32 {
+        let r = self.word_pieces(w);
+        if r.is_empty() {
+            return 0.0;
+        }
+        r.clone().map(|p| self.clean_of(p)).sum::<f32>() / r.len() as f32
+    }
+
+    /// the piece of `range` to repeat in a stutter: `first` (the word's attack: "fa-fa-falling") when it is clean, else the cleanest,
+    /// most stressed one - never a breath when something else is there
+    fn stutter_piece(&self, range: std::ops::Range<usize>, first: usize) -> usize {
+        if self.clean_of(first) >= 0.35 {
+            return first;
+        }
+        range.max_by(|a, b| (self.clean_of(*a) * (0.5 + self.pieces[*a].stress)).total_cmp(&(self.clean_of(*b) * (0.5 + self.pieces[*b].stress)))).unwrap_or(first)
     }
 
     /// words, lines, stress and the hook from the pieces
@@ -802,7 +881,8 @@ impl Vocal {
         let (all, hot) = counts.get(t).copied().unwrap_or((1.0, 0.0));
         let (a, b) = self.words[wi];
         let stress = self.pieces[a..b].iter().map(|p| p.stress as f64).sum::<f64>() / (b - a) as f64;
-        all + 1.5 * hot + 0.15 * (b - a) as f64 + 0.5 * stress
+        // a breathy or noisy take of the word makes a poor hook
+        (all + 1.5 * hot + 0.15 * (b - a) as f64 + 0.5 * stress) * (0.55 + 0.45 * self.word_clean(wi) as f64)
     }
 
     fn pick_hook(&mut self, hot: &[(f64, f64)], known: bool) {
@@ -845,8 +925,8 @@ impl Vocal {
         let l = &self.lines[best.1];
         let (w0, w1) = (self.pieces[l.first].word, self.pieces[l.end - 1].word);
         self.hook_word = (w0..=w1).max_by(|a, b| {
-            let sa = if known { self.word_score(*a, &counts) } else { 0.0 } + self.pieces[self.words[*a].0..self.words[*a].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * 0.1;
-            let sb = if known { self.word_score(*b, &counts) } else { 0.0 } + self.pieces[self.words[*b].0..self.words[*b].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * 0.1;
+            let sa = if known { self.word_score(*a, &counts) } else { 0.0 } + self.pieces[self.words[*a].0..self.words[*a].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * 0.1 * self.word_clean(*a) as f64;
+            let sb = if known { self.word_score(*b, &counts) } else { 0.0 } + self.pieces[self.words[*b].0..self.words[*b].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * 0.1 * self.word_clean(*b) as f64;
             sa.total_cmp(&sb)
         });
     }
@@ -979,10 +1059,34 @@ pub struct Edm {
     pub riser: bool,
     /// how the chops are tuned to the song (tune.rs)
     pub tune: Tune,
+    /// the song's genre ("" = none): how busy the chops are and how the stutters roll ([`genre_feel`])
+    pub genre: String,
 }
 impl Default for Edm {
     fn default() -> Edm {
-        Edm { density: 0.6, stutter: 0.5, build: Build::Dj, layer: true, reverse: true, dry: true, riser: false, tune: Tune::default() }
+        Edm { density: 0.6, stutter: 0.5, build: Build::Dj, layer: true, reverse: true, dry: true, riser: false, tune: Tune::default(), genre: String::new() }
+    }
+}
+
+/// How a genre plays vocal chops: (density, stutter) multipliers and the grid its stutters roll on (beats; 0 = by the stutter
+/// amount and the energy). Trap rolls its stutters in triplets like its hi-hats; the bass genres (dubstep, drum and bass,
+/// future bass, hyperpop, breakbeat) stutter hard on 1/32s; house and trance keep to 16ths; pop and the band / acoustic
+/// genres use fewer, gentler chops.
+pub fn genre_feel(genre: &str) -> (f64, f64, f64) {
+    let g = genre.to_lowercase();
+    let has = |ws: &[&str]| ws.iter().any(|w| g.contains(w));
+    if g.trim().is_empty() {
+        (1.0, 1.0, 0.0)
+    } else if has(&["trap", "drill", "phonk", "hip hop", "hip-hop", "rap"]) {
+        (0.85, 1.0, 1.0 / 6.0)
+    } else if has(&["dubstep", "riddim", "drum and bass", "dnb", "jungle", "future bass", "hyperpop", "breakbeat", "breakcore", "edm", "electro", "big room"]) {
+        (1.0, 1.2, 0.125)
+    } else if has(&["house", "techno", "trance", "garage", "dance"]) {
+        (1.0, 0.85, 0.25)
+    } else if has(&["lofi", "lo-fi", "ballad", "folk", "jazz", "ambient", "cinematic", "orchestral", "rock", "acoustic"]) {
+        (0.55, 0.4, 0.25)
+    } else {
+        (0.8, 0.7, 0.0)
     }
 }
 
@@ -1197,7 +1301,10 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
     }
     let role = role_of(c.tag);
     let e = c.energy.clamp(0.0, 1.0);
-    let o = c.o;
+    // the genre scales how busy the chops are and sets the stutters' roll
+    let (gd, gs, groll) = genre_feel(&c.o.genre);
+    let felt = Edm { density: (c.o.density * gd).clamp(0.0, 1.0), stutter: (c.o.stutter * gs).clamp(0.0, 1.0), ..c.o.clone() };
+    let o = &felt;
     let mut rng = Rng::new(c.seed ^ 0xED_C405);
     let key = Key::new(c.key.0, c.key.1);
     let hook_line = c.vocal.hook_line.unwrap_or(0).min(v.lines.len().saturating_sub(1));
@@ -1205,11 +1312,17 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
     let line = &v.lines[hook_line];
     // the second word of the hook line, for the answer
     let (w0, w1) = (v.pieces[line.first].word, v.pieces[line.end - 1].word);
-    let second = (w0..=w1).filter(|w| *w != hook_word).max_by(|a, b| {
-        let s = |w: &usize| v.pieces[v.words[*w].0..v.words[*w].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>();
-        s(a).total_cmp(&s(b))
-    });
-    let second = second.unwrap_or(hook_word);
+    // the answers to the hook word, best first: the words of the hook line that carry (no "the", no breath); the call stays the
+    // same every phrase so the hook is recognised, the answer changes on the second phrase when the line has another word to say
+    let wscore = |w: usize| v.pieces[v.words[w].0..v.words[w].1].iter().map(|p| p.stress as f64 * p.len).sum::<f64>() * v.word_clean(w) as f64;
+    let mut answers: Vec<usize> = (w0..=w1).filter(|w| *w != hook_word).collect();
+    answers.sort_by(|a, b| wscore(*b).total_cmp(&wscore(*a)));
+    let second = answers.first().copied().unwrap_or(hook_word);
+    answers.retain(|w| *w == second || (!STOP.contains(&v.word_text[*w].as_str()) && v.word_clean(*w) >= 0.35 && wscore(*w) > 0.0));
+    answers.truncate(2);
+    if answers.is_empty() {
+        answers.push(second);
+    }
     let build_beats = if c.build_beats > 0.0 {
         c.build_beats.min(c.beats)
     } else if role == Role::Build && o.build != Build::Off {
@@ -1220,13 +1333,16 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
     let body = (c.beats - build_beats).max(0.0);
     let layered = o.layer && e >= 0.6 && rng.chance(0.4 + 0.5 * e);
     let mut m = Mk { v, key, harmony: c.harmony, beats: c.beats, layered, octave: rng.chance(0.4), main: vec![], layer: vec![], tune: o.tune, stats: TuneStats::default() };
-    // the syllables the gated rhythm sounds, in the order they were sung
-    let mut pool: Vec<usize> = (line.first..line.end).filter(|p| v.pieces[*p].stress >= 0.6).collect();
+    // the syllables the gated rhythm sounds, in the order they were sung: the stressed, clean ones (no breaths, no hiss)
+    let mut pool: Vec<usize> = (line.first..line.end).filter(|p| v.pieces[*p].stress >= 0.6 && v.clean_of(*p) >= 0.35).collect();
+    if pool.len() < 2 {
+        pool = (line.first..line.end).filter(|p| v.clean_of(*p) >= 0.35).collect();
+    }
     if pool.len() < 2 {
         pool = (line.first..line.end).collect();
     }
     let mut cursor = 0usize;
-    let grid = if o.stutter >= 0.7 && e >= 0.65 { 0.125 } else { 0.25 };
+    let grid = if groll > 0.0 { groll } else if o.stutter >= 0.7 && e >= 0.65 { 0.125 } else { 0.25 };
     let bars = (body / 4.0).ceil() as usize;
     match role {
         _ if body < 0.5 || c.only_swell => {}
@@ -1241,26 +1357,32 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
                 let kicks = steps_in(c.drums, &[35, 36], t0);
                 let snares = steps_in(c.drums, &[38, 40], t0);
                 let mut taken: Vec<(f64, f64)> = vec![];
+                // the four-bar phrase this bar is in: the call repeats, the answer and the stutter vary
+                let phrase = bar / 4;
                 match bar % 4 {
                     0 => {
-                        // the call (a dry hit of the word on the very first downbeat) and the answer on beat 3
+                        // the call (a dry hit of the word on the very first downbeat) and the answer on beat 3 (on the "and" of 3
+                        // with another word on the second phrase)
                         let dry = bar == 0 && o.dry;
                         let span = m.word(hook_word, t0, if dry { 1.0 } else { 0.85 }, dry, !dry, 2.0);
                         out.dry |= dry;
                         taken.push((t0, t0 + span.max(0.5)));
-                        if avail >= 3.0 {
-                            let span = m.word(second, t0 + 2.0, 0.8, false, true, 1.75);
-                            taken.push((t0 + 2.0, t0 + 2.0 + span.max(0.5)));
+                        let (aw, at) = if phrase % 2 == 1 { (answers[1 % answers.len()], t0 + 2.5) } else { (answers[0], t0 + 2.0) };
+                        if avail >= at - t0 + 1.0 {
+                            let span = m.word(aw, at, 0.8, false, true, 1.75);
+                            taken.push((at, at + span.max(0.5)));
                         }
                     }
                     2 => {
                         m.word(hook_word, t0, 0.8, false, true, 1.0);
                         taken.push((t0, t0 + 1.0));
-                        if o.stutter >= 0.15 && avail >= 2.5 {
-                            // fa-fa-fa-falling: the first syllable repeated into the word on beat 3
+                        // the stutter lands on beat 3, on beat 4 in the second phrase
+                        let land = if phrase % 2 == 1 { 3.0 } else { 2.0 };
+                        if o.stutter >= 0.15 && avail >= land + 0.5 {
+                            // fa-fa-fa-falling: the first syllable repeated into the word
                             let k = if o.stutter >= 0.6 { 4 } else { 3 };
-                            let landing = t0 + 2.0;
-                            let fp = v.words[hook_word].0;
+                            let landing = t0 + land;
+                            let fp = v.stutter_piece(v.word_pieces(hook_word), v.words[hook_word].0);
                             for j in 0..k {
                                 let at = landing - (k - j) as f64 * 0.25;
                                 let vel = 0.55 + 0.3 * j as f32 / k as f32;
@@ -1268,24 +1390,29 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
                                 m.put(fp, at, 0.22, vel, pitch, 0, Some(0.23), false);
                             }
                             out.stutters += 1;
-                            let span = m.word(hook_word, landing, 0.95, false, true, 1.5);
+                            let span = m.word(hook_word, landing, 0.95, false, true, if land > 2.5 { 1.0 } else { 1.5 });
                             taken.push((landing - k as f64 * 0.25, landing + span.max(0.5)));
                         }
                     }
                     _ => {}
                 }
-                // the stutter that closes the fourth bar: the last syllable of the hook in the last beat
-                if bar % 4 == 3 && o.stutter >= 0.25 && e >= 0.4 && avail >= 4.0 {
-                    let lp = line.end - 1;
-                    let n = (1.0 / grid) as usize;
+                // the stutter that closes the fourth bar: the last syllable of the hook in the last beat (its cleanest syllable when
+                // the last is a breath); into a drop the section's last bar rolls two beats, twice as fast
+                let into_drop = c.next_hot && bar + 1 == bars;
+                if (bar % 4 == 3 || into_drop) && o.stutter >= 0.25 && e >= 0.4 && avail >= 4.0 {
+                    let lw = v.pieces[line.end - 1].word;
+                    let lo = v.word_pieces(lw).start.min(line.end.saturating_sub(3)).max(line.first);
+                    let lp = v.stutter_piece(lo..line.end, line.end - 1);
+                    let (g, from) = if into_drop { ((grid * 0.5).max(1.0 / 16.0), 2.0) } else { (grid, 3.0) };
+                    let n = ((4.0 - from) / g).round() as usize;
                     for j in 0..n {
-                        let at = t0 + 3.0 + j as f64 * grid;
+                        let at = t0 + from + j as f64 * g;
                         let vel = 0.5 + 0.45 * j as f32 / n as f32;
                         let pitch = m.pitch(lp, at);
-                        m.put(lp, at, grid * 0.9, vel, pitch, 0, Some(grid * 0.92), false);
+                        m.put(lp, at, g * 0.9, vel, pitch, 0, Some(g * 0.92), false);
                     }
                     out.stutters += 1;
-                    taken.push((t0 + 3.0, t0 + 4.0));
+                    taken.push((t0 + from, t0 + 4.0));
                 }
                 let h = if bar % 4 == 1 { hits } else { (hits * 2 / 3).max(2) };
                 gated(&mut m, &mut rng, t0, avail, h, &taken, &kicks, &snares, &pool, &mut cursor, 0.55 + 0.15 * e as f32, &mut out.fills);
@@ -1302,7 +1429,8 @@ pub fn compose_edm(c: &EdmCtx) -> EdmOut {
             // verses, intros: a soft accent of the hook word on the off-beat of every other bar (every fourth when it is thin)
             let every = if o.density < 0.3 { 4 } else { 2 };
             for bar in (0..bars).step_by(every) {
-                m.word(if (bar / every) % 2 == 0 { hook_word } else { second }, bar as f64 * 4.0 + 2.0, 0.5, false, false, 1.5);
+                let k = bar / every;
+                m.word(if k % 2 == 0 { hook_word } else { answers[(k / 2) % answers.len()] }, bar as f64 * 4.0 + 2.0, 0.5, false, false, 1.5);
             }
             if e >= 0.5 && o.density >= 0.7 {
                 let kicks = steps_in(c.drums, &[35, 36], 0.0);
@@ -1975,5 +2103,99 @@ mod edm_tests {
         assert!(out.stages.iter().all(|s| s.at >= 24.0 - 1e-9));
         assert!(out.main.iter().any(|n| n.start < 24.0), "the verse part");
         assert_eq!(out.hp.first().unwrap().0, 24.0);
+    }
+
+    // ── choosing the chops musically ──
+
+    /// the short vocal with its "need" a breath (soft noise) instead of a sung note
+    fn breathy() -> (Vocal, Vec<f32>) {
+        let n = score();
+        let mut a = sung(&n);
+        let u = &units(&n)[1];
+        let (s, e) = ((u.s0 * RATE as f64) as usize, ((u.s1 - 0.04) * RATE as f64) as usize);
+        let mut seed = 99u32;
+        for f in s..e {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            let x = ((seed >> 9) as f32 / (1u32 << 23) as f32 - 0.5) * 0.12;
+            a[f * 2] = x;
+            a[f * 2 + 1] = x;
+        }
+        (Vocal::from_notes(&a, RATE, &n, BPM, &CutOpts::default(), &[]), a)
+    }
+
+    #[test]
+    fn breaths_score_low_and_stay_out_of_the_rhythm() {
+        let (mut v, _) = breathy();
+        assert_eq!(v.pieces[1].text, "need");
+        assert!(v.clean_of(1) < 0.3, "the breath: {}", v.clean_of(1));
+        for p in [0usize, 3, 4, 7] {
+            assert!(v.clean_of(p) > 0.6, "{} is clean: {}", v.pieces[p].text, v.clean_of(p));
+        }
+        // even with the breath in the hook line, no chop plays it
+        v.hook_line = Some(0);
+        v.hook_word = Some(3);
+        let drums = drums_floor(32.0);
+        let harmony = vec![Note::new(0.0, 32.0, 45, 0.7)];
+        let o = Edm { stutter: 0.9, density: 1.0, ..Edm::default() };
+        let out = compose_edm(&EdmCtx { beats: 32.0, key: (9, true), energy: 0.95, tag: "drop", drums: &drums, harmony: &harmony, vocal: &v, bpm: BPM, seed: 5, o: &o, build_beats: 0.0, next_hot: false, loop_line: None, only_swell: false });
+        assert!(out.main.len() >= 20);
+        let breath = v.pieces[1].chop.start;
+        assert!(out.main.iter().chain(out.layer.iter()).all(|n| parse(&n.lyric) != breath), "the breath is never chopped");
+    }
+
+    #[test]
+    fn the_call_repeats_while_the_answer_moves() {
+        let (v, _, _) = vocal_of(&CutOpts::default());
+        let drums = drums_floor(32.0);
+        let harmony = vec![Note::new(0.0, 32.0, 45, 0.7)];
+        let o = Edm { stutter: 0.6, density: 0.6, ..Edm::default() };
+        let out = compose_edm(&EdmCtx { beats: 32.0, key: (9, true), energy: 0.9, tag: "drop", drums: &drums, harmony: &harmony, vocal: &v, bpm: BPM, seed: 2, o: &o, build_beats: 0.0, next_hot: false, loop_line: None, only_swell: false });
+        let at = |b: f64| out.main.iter().filter(|n| (n.start - b).abs() < 1e-6).map(|n| parse(&n.lyric)).collect::<Vec<_>>();
+        let hook0 = v.pieces[v.words[v.hook_word.unwrap()].0].chop.start;
+        // the call: the hook word on the downbeat of both phrases
+        assert!(at(0.0).contains(&hook0) && at(16.0).contains(&hook0));
+        // the answer: on beat 3 of the first phrase, on the "and" of 3 in the second (a kick sits on beat 3: nothing else is there)
+        let ans = at(2.0);
+        assert_eq!(ans.len(), 1, "{ans:?}");
+        assert!(at(18.0).is_empty(), "{:?}", at(18.0));
+        let later = at(18.5);
+        assert!(!later.is_empty() && v.words.iter().any(|(a, _)| later.contains(&v.pieces[*a].chop.start)), "an answer word at 18.5: {later:?}");
+        // the stutter of the third bar lands a beat later in the second phrase
+        let st = |t0: f64| out.main.iter().filter(|n| n.start >= t0 && n.start < t0 + 4.0 && (n.len - 0.22).abs() < 1e-6).map(|n| n.start - t0).fold(0.0f64, f64::max);
+        assert!(st(24.0) > st(8.0) + 0.5, "{} / {}", st(8.0), st(24.0));
+    }
+
+    #[test]
+    fn stutters_roll_harder_into_a_drop() {
+        let (v, _, _) = vocal_of(&CutOpts::default());
+        let drums = drums_floor(16.0);
+        let o = Edm { stutter: 0.8, density: 0.6, reverse: false, ..Edm::default() };
+        let ctx = EdmCtx { beats: 16.0, key: (9, true), energy: 0.9, tag: "chorus", drums: &drums, harmony: &[], vocal: &v, bpm: BPM, seed: 4, o: &o, build_beats: 0.0, next_hot: false, loop_line: None, only_swell: false };
+        let roll = |out: &EdmOut| out.main.iter().filter(|n| n.start >= 14.0 && n.len <= 0.13).count();
+        let plain = compose_edm(&ctx);
+        let into = compose_edm(&EdmCtx { next_hot: true, ..ctx });
+        assert!(roll(&into) >= 24 && roll(&into) > 2 * roll(&plain), "{} into the drop, {} otherwise", roll(&into), roll(&plain));
+        // the rest of the chorus is the same arrangement
+        assert_eq!(plain.main.iter().filter(|n| n.start < 12.0).count(), into.main.iter().filter(|n| n.start < 12.0).count());
+    }
+
+    #[test]
+    fn the_genre_sets_how_busy_the_chops_are_and_how_they_roll() {
+        let (v, _, _) = vocal_of(&CutOpts::default());
+        let drums = drums_floor(32.0);
+        let harmony = vec![Note::new(0.0, 32.0, 45, 0.7)];
+        let mk = |g: &str| {
+            let o = Edm { stutter: 0.7, density: 0.8, genre: g.into(), ..Edm::default() };
+            compose_edm(&EdmCtx { beats: 32.0, key: (9, true), energy: 0.9, tag: "drop", drums: &drums, harmony: &harmony, vocal: &v, bpm: BPM, seed: 3, o: &o, build_beats: 0.0, next_hot: false, loop_line: None, only_swell: false })
+        };
+        // trap rolls its stutters in triplets: six to the beat closing the fourth bar
+        let trap = mk("trap");
+        let last: Vec<f64> = trap.main.iter().filter(|n| n.start >= 15.0 - 1e-6 && n.start < 16.0 && n.len < 0.2).map(|n| n.start - 15.0).collect();
+        assert_eq!(last.len(), 6, "{last:?}");
+        assert!(last.windows(2).all(|w| ((w[1] - w[0]) - 1.0 / 6.0).abs() < 1e-6));
+        // dubstep chops harder than lo-fi
+        let (dub, lofi) = (mk("dubstep"), mk("lofi"));
+        assert!(dub.main.len() as f64 > 1.3 * lofi.main.len() as f64, "{} vs {}", dub.main.len(), lofi.main.len());
+        assert_eq!(genre_feel(""), (1.0, 1.0, 0.0), "no genre: as before");
     }
 }

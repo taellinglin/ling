@@ -6,7 +6,13 @@
 //! * an instrument track is sampled with its own instrument (dry, at full velocity, with the track's level baked in). Formats with
 //!   keymapped instruments (XM, IT, MPTM) get a sample every few semitones over the range the track plays, each note mapped to the nearest;
 //!   MOD and S3M (one sample per instrument) get ONE sample at the middle of the track's range that the notes transpose. A drum kit (Ling
-//!   Membrane) is sampled per drum key instead and every hit plays its own sample untransposed.
+//!   Membrane) is sampled per drum key instead and every hit plays its own sample untransposed. A Ling Slicer is not sampled through
+//!   a held note: every slice it plays becomes its own sample straight from the slice audio, with its trims, fades, reverse, gain,
+//!   the filter and its pitch baked in (dsp/slicer.rs `bake`); a slice the auto-tune moves gets one sample per shift it plays at
+//!   (the shift the DAW gives the note at its beat, so chord and key changes stay), on the keys above the slices. The slices sit on
+//!   their own keys (root + i) in one keymapped instrument (IT / MPTM; XM: 16 a chunk), or one instrument each (MOD, S3M), and play
+//!   untransposed. Gated and looped slices get note-offs / cuts at the note's end (a looped slice keeps its loop), one-shots ring;
+//!   the slices of a choke group share one channel so each one cuts the last, as in the DAW.
 //! * every sample is the note held for the track's typical note length plus its release; a sound that sustains gets a loop on whole
 //!   periods of its pitch near the end of the held part, at upward zero crossings with the best-matching waveform (IT: a sustain loop, so
 //!   the release still plays after the note-off; XM, S3M, MOD: a normal loop, the sample ends there and the note-off fades or cuts it).
@@ -199,6 +205,16 @@ enum Kind {
     Melodic,
     Kit,
     Audio,
+    /// a Ling Slicer: the event keys are the samples' keys (see `slicer_plan`)
+    Slices,
+}
+
+/// What a Ling Slicer track plays: per event its gate (a note end) and choke group; per sample key the (slice, cents) it bakes
+#[derive(Clone, Debug, Default)]
+struct SlcInfo {
+    gate: Vec<bool>,
+    choke: Vec<u8>,
+    vars: HashMap<u8, (usize, i32)>,
 }
 
 #[derive(Clone, Debug)]
@@ -219,6 +235,42 @@ struct Plan {
     spans: Vec<(f64, f64)>,
     pan: f32,
     vol: f32,
+    slc: Option<SlcInfo>,
+}
+
+/// A Slicer track's events on sample keys: each (slice, cents) it plays at gets a key - the unshifted slices their own key (root + i),
+/// the shifted ones the keys above the last slice - and every event keeps its gate and choke group
+fn slicer_plan(inst: &mut dyn crate::dsp::Instrument, evs: Vec<Ev>) -> (Vec<Ev>, SlcInfo) {
+    let flat: Vec<f64> = evs.iter().flat_map(|e| [e.s, e.key as f64]).collect();
+    let r = inst.command("tracker", &flat, "");
+    let mut info = SlcInfo::default();
+    let mut out = vec![];
+    let mut shifted: Vec<(usize, i32)> = vec![];
+    let root = inst.get_param("root").map(|v| (v * 127.0).round() as i32).unwrap_or(48);
+    let nslices = inst.command("count", &[], "").first().copied().unwrap_or(0.0) as i32;
+    for (e, v) in evs.iter().zip(r.chunks_exact(5)) {
+        if v[0] < 0.0 {
+            continue;
+        }
+        let (slice, cents) = (v[0] as usize, v[1] as i32);
+        let key = if cents == 0 {
+            root + slice as i32
+        } else {
+            let j = shifted.iter().position(|x| *x == (slice, cents)).unwrap_or_else(|| {
+                shifted.push((slice, cents));
+                shifted.len() - 1
+            });
+            root + nslices + j as i32
+        };
+        if !(0..120).contains(&key) {
+            continue;
+        }
+        info.vars.insert(key as u8, (slice, cents));
+        info.gate.push(v[2] > 0.5);
+        info.choke.push(v[4] as u8);
+        out.push(Ev { key: key as u8, ..e.clone() });
+    }
+    (out, info)
 }
 
 fn track_notes(t: &Track) -> Vec<Ev> {
@@ -240,17 +292,17 @@ fn track_notes(t: &Track) -> Vec<Ev> {
     out
 }
 
-fn plans(p: &Project) -> Vec<Plan> {
+fn plans(p: &mut Project) -> Vec<Plan> {
     let solo = p.tracks.iter().any(|t| t.solo);
     let mut out = vec![];
-    for (ti, t) in p.tracks.iter().enumerate() {
+    for (ti, t) in p.tracks.iter_mut().enumerate() {
         if t.mute || (solo && !t.solo) || t.clips.is_empty() {
             continue;
         }
         if matches!(t.kind, TrackKind::Audio) {
             let spans: Vec<(f64, f64)> = t.clips.iter().filter(|c| matches!(c.data, ClipData::Audio { .. })).map(|c| (c.start, c.end())).collect();
             if !spans.is_empty() {
-                out.push(Plan { t: ti, name: t.name.clone(), kind: Kind::Audio, evs: vec![], spans, pan: t.pan, vol: 1.0 });
+                out.push(Plan { t: ti, name: t.name.clone(), kind: Kind::Audio, evs: vec![], spans, pan: t.pan, vol: 1.0, slc: None });
             }
             continue;
         }
@@ -258,8 +310,15 @@ fn plans(p: &Project) -> Vec<Plan> {
         if evs.is_empty() || t.inst.is_none() {
             continue;
         }
+        if t.inst_kind == "slicer" {
+            let (evs, info) = slicer_plan(t.inst.as_mut().unwrap().as_mut(), evs);
+            if !evs.is_empty() {
+                out.push(Plan { t: ti, name: t.name.clone(), kind: Kind::Slices, evs, spans: vec![], pan: t.pan, vol: t.volume, slc: Some(info) });
+            }
+            continue;
+        }
         let kit = t.inst_kind == "drums" || (t.inst_kind != "voice" && crate::tracker::looks_percussive(&t.name) && evs.iter().map(|e| e.key).collect::<std::collections::BTreeSet<_>>().len() <= 24);
-        out.push(Plan { t: ti, name: t.name.clone(), kind: if kit { Kind::Kit } else { Kind::Melodic }, evs, spans: vec![], pan: t.pan, vol: t.volume });
+        out.push(Plan { t: ti, name: t.name.clone(), kind: if kit { Kind::Kit } else { Kind::Melodic }, evs, spans: vec![], pan: t.pan, vol: t.volume, slc: None });
     }
     out
 }
@@ -272,6 +331,8 @@ struct Rendered {
     /// frames the note was held
     held: usize,
     lp: Option<(usize, usize)>,
+    /// the rate the data was made at (the engine's, a Slicer's file rate)
+    rate: f32,
 }
 
 /// The offline copy of the project the samples are rendered from, with what has been rendered so far (shared by every format).
@@ -301,6 +362,19 @@ impl Renderer {
     fn note(&mut self, plan: &Plan, key: u8) -> Rendered {
         if let Some(r) = self.notes.get(&(plan.t, key)) {
             return r.clone();
+        }
+        // a Slicer's slice: baked from the slice audio (at the file's rate: the sample plays at that rate on its own key)
+        if let Some((slice, cents)) = plan.slc.as_ref().and_then(|s| s.vars.get(&key)).copied() {
+            let v = self.eng.project.tracks.get_mut(plan.t).and_then(|t| t.inst.as_mut()).map(|i| i.command("bake", &[slice as f64, cents as f64], "")).unwrap_or_default();
+            let r = if v.len() > 3 {
+                let data: Vec<f32> = v[3..].iter().map(|x| *x as f32 * plan.vol).collect();
+                let lp = (v[1] >= 0.0).then(|| (v[1] as usize, v[2] as usize));
+                Rendered { held: data.len(), data, lp, rate: v[0] as f32 }
+            } else {
+                Rendered { data: vec![], held: 0, lp: None, rate: self.sr }
+            };
+            self.notes.insert((plan.t, key), r.clone());
+            return r;
         }
         let hold = self.hold_for(plan);
         let sr = self.sr;
@@ -341,7 +415,7 @@ impl Renderer {
         let end = mono.iter().rposition(|x| x.abs() > 1e-4).map(|i| i + 1).unwrap_or(0).max(held.min(mono.len()));
         mono.truncate(end);
         let lp = if plan.kind == Kind::Melodic { find_loop(&mono, held, sr, key) } else { None };
-        let r = Rendered { data: mono, held, lp };
+        let r = Rendered { data: mono, held, lp, rate: sr };
         self.notes.insert((plan.t, key), r.clone());
         r
     }
@@ -457,7 +531,7 @@ fn roots(keys: &[u8], every: u8) -> Vec<u8> {
 /// The module for `fmt`: what to sample (within the format's limits), the samples rendered, the rows written.
 pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
     let mut report = vec![];
-    let ps = plans(&rend.eng.project);
+    let ps = plans(&mut rend.eng.project);
     let p = &rend.eng.project;
     let title = if o.title.is_empty() { p.name.clone() } else { o.title.clone() };
     let bpm0 = p.bpm;
@@ -509,7 +583,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                 }
                 match pl.kind {
                     Kind::Melodic => roots(&used_keys(pl), every).into_iter().map(|k| Want::Note(pi, k)).collect(),
-                    Kind::Kit => kit_keys(pl, kit_keep).into_iter().map(|k| Want::Note(pi, k)).collect(),
+                    Kind::Kit | Kind::Slices => kit_keys(pl, kit_keep).into_iter().map(|k| Want::Note(pi, k)).collect(),
                     Kind::Audio => segs(pl, seg).into_iter().map(|(a, b)| Want::Seg(pi, a, b)).collect(),
                 }
             })
@@ -529,7 +603,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
         } else if every < 255 {
             every = 255;
         } else if kit_keep > 4 {
-            let biggest = ps.iter().filter(|pl| pl.kind == Kind::Kit).map(|pl| used_keys(pl).len()).max().unwrap_or(0);
+            let biggest = ps.iter().filter(|pl| matches!(pl.kind, Kind::Kit | Kind::Slices)).map(|pl| used_keys(pl).len()).max().unwrap_or(0);
             kit_keep = if kit_keep == usize::MAX { biggest.saturating_sub(1).max(4) } else { kit_keep - 1 };
         } else if let Some(last) = (0..ps.len()).rev().find(|i| !dropped.contains(i)) {
             dropped.push(last);
@@ -547,6 +621,16 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
     }
     if kit_keep != usize::MAX {
         report.push(format!("drum kits keep their {kit_keep} most used sounds; the others play the nearest"));
+        // the Slicer slices that lost their sample, by name
+        for pl in ps.iter().filter(|pl| pl.kind == Kind::Slices) {
+            let keep = kit_keys(pl, kit_keep);
+            let Some(info) = pl.slc.as_ref() else { continue };
+            let mut gone: Vec<String> = used_keys(pl).into_iter().filter(|k| !keep.contains(k)).filter_map(|k| info.vars.get(&k)).map(|(s, c)| if *c == 0 { format!("slice {}", s + 1) } else { format!("slice {} {:+}c", s + 1, c) }).collect();
+            gone.dedup();
+            if !gone.is_empty() {
+                report.push(format!("\"{}\": no room for {} (they play the slice's own sample, or the nearest)", pl.name, gone.join(", ")));
+            }
+        }
     }
 
     // render the samples; one instrument per plan (keymapped: chunks of per_ins), or per sample
@@ -585,8 +669,12 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                         }
                         None => (r.data.clone(), None, false),
                     };
-                    let name = format!("{} {}{}", pl.name, crate::theory::SHARP[(*key % 12) as usize], (*key / 12) as i32 - 1);
-                    smps.push(XSmp { name, data: vec![], rate: sr as f64, root: *key, lp, tail });
+                    let name = match pl.slc.as_ref().and_then(|s| s.vars.get(key)) {
+                        Some((s, 0)) => format!("{} slice {}", pl.name, s + 1),
+                        Some((s, c)) => format!("{} slice {} {:+}c", pl.name, s + 1, c),
+                        None => format!("{} {}{}", pl.name, crate::theory::SHARP[(*key % 12) as usize], (*key / 12) as i32 - 1),
+                    };
+                    smps.push(XSmp { name, data: vec![], rate: r.rate as f64, root: *key, lp, tail });
                     raw.push(data);
                     made.push((smps.len() - 1, *key));
                 }
@@ -659,7 +747,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                 for (si, key) in chunk {
                     match pl.kind {
                         Kind::Melodic => {}
-                        Kind::Kit => {
+                        Kind::Kit | Kind::Slices => {
                             note_map[pi].insert(*key, (inum, *key));
                         }
                         Kind::Audio => {
@@ -689,7 +777,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                             note_map[pi].insert(k, (inum, k));
                         }
                     }
-                    Kind::Kit => {
+                    Kind::Kit | Kind::Slices => {
                         note_map[pi].insert(*key, (inum, *key));
                     }
                     Kind::Audio => {
@@ -700,8 +788,20 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                 }
             }
         }
+        // a shifted slice that lost its sample plays the slice's own sample
+        if let (Kind::Slices, Some(info)) = (pl.kind, pl.slc.as_ref()) {
+            for e in &pl.evs {
+                if note_map[pi].contains_key(&e.key) {
+                    continue;
+                }
+                let Some((slice, _)) = info.vars.get(&e.key) else { continue };
+                if let Some(v) = info.vars.iter().find(|(k, (s, c))| s == slice && *c == 0 && note_map[pi].contains_key(k)).and_then(|(k, _)| note_map[pi].get(k)).copied() {
+                    note_map[pi].insert(e.key, v);
+                }
+            }
+        }
         // a kit key that was not sampled plays the nearest one that was
-        if pl.kind == Kind::Kit {
+        if matches!(pl.kind, Kind::Kit | Kind::Slices) {
             let have: Vec<(u8, (u16, u8))> = note_map[pi].iter().map(|(k, v)| (*k, *v)).collect();
             for e in &pl.evs {
                 if !note_map[pi].contains_key(&e.key) {
@@ -720,28 +820,49 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
     }
     // the events of every plan as rows: (on row, off row, note, instrument, volume)
     let rows_total = ((end_beat * rpb as f64).ceil() as usize + 1).max(1);
-    let mut lanes_of: Vec<Vec<Vec<(usize, usize, u8, u16, i16)>>> = vec![];
+    // (on row, off row, note, instrument, volume, gate: a note end is written, choke group)
+    let mut lanes_of: Vec<Vec<Vec<(usize, usize, u8, u16, i16, bool, u8)>>> = vec![];
     for (pi, pl) in ps.iter().enumerate() {
-        let mut items: Vec<(usize, usize, u8, u16, i16)> = vec![];
+        let mut items: Vec<(usize, usize, u8, u16, i16, bool, u8)> = vec![];
         if pl.kind == Kind::Audio {
             for (a, b, inum, key) in &seg_map[pi] {
                 let on = (a * rpb as f64).round() as usize;
                 let off = ((b * rpb as f64).round() as usize).max(on + 1);
-                items.push((on, off, *key, *inum, 64));
+                items.push((on, off, *key, *inum, 64, false, 0));
             }
         } else {
-            for e in &pl.evs {
+            for (ei, e) in pl.evs.iter().enumerate() {
                 let Some((inum, note)) = note_map[pi].get(&e.key) else { continue };
                 let on = (e.s * rpb as f64).round() as usize;
                 let off = ((e.e * rpb as f64).round() as usize).max(on + 1);
-                items.push((on, off, *note, *inum, (e.vel.clamp(0.0, 1.0) * 64.0).round().max(1.0) as i16));
+                let (gate, choke) = pl.slc.as_ref().map(|s| (s.gate[ei], s.choke[ei])).unwrap_or((false, 0));
+                items.push((on, off, *note, *inum, (e.vel.clamp(0.0, 1.0) * 64.0).round().max(1.0) as i16, gate, choke));
             }
         }
         items.sort_by_key(|x| (x.0, x.2));
         lanes_of.push(vec![]);
         let lanes = lanes_of.last_mut().unwrap();
         let mut ends: Vec<usize> = vec![];
+        // a Slicer's choke group keeps one channel: the next slice of the group cuts the one sounding
+        let mut group_lane: HashMap<u8, usize> = HashMap::new();
         for it in items {
+            if it.6 > 0 {
+                let li = match group_lane.get(&it.6) {
+                    Some(l) => *l,
+                    None if lanes.len() < 8 => {
+                        lanes.push(vec![]);
+                        ends.push(usize::MAX);
+                        group_lane.insert(it.6, lanes.len() - 1);
+                        lanes.len() - 1
+                    }
+                    None => continue,
+                };
+                if lanes[li].last().map(|x| x.0 == it.0).unwrap_or(false) {
+                    continue;
+                }
+                lanes[li].push(it);
+                continue;
+            }
             let free = ends.iter().position(|e| *e <= it.0);
             let li = match free {
                 Some(l) => l,
@@ -788,7 +909,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                 break;
             }
             chan_pan[ch] = ps[pi].pan;
-            for (k, (on, off, note, inum, vol)) in lane.iter().enumerate() {
+            for (k, (on, off, note, inum, vol, gate, _)) in lane.iter().enumerate() {
                 if *on >= rows_total {
                     continue;
                 }
@@ -797,6 +918,7 @@ pub fn build(rend: &mut Renderer, fmt: Fmt, o: &Opts) -> XSong {
                 let next = lane.get(k + 1).map(|x| x.0).unwrap_or(usize::MAX);
                 let needs = match ps[pi].kind {
                     Kind::Melodic => matches!(fmt, Fmt::It | Fmt::Mptm | Fmt::Xm) || looped_plan[pi],
+                    Kind::Slices => *gate,
                     _ => false,
                 };
                 if needs && *off < next && *off < rows_total && rows[*off][ch].note < 0 {
@@ -1569,6 +1691,115 @@ mod tests {
             std::fs::write(format!("{dir}/tone.{}", f.ext()), write(&t, f)).unwrap();
         }
         song().bounce_wav(&format!("{dir}/full.daw.wav"), 1.0).unwrap();
+    }
+
+    /// a Ling Slicer track: `n` slices (clicks, then a tone slice at D4 + 60 cents) played in order, then the tone slice once more
+    /// over C major (tuned to E) on a gated, looped slice; the slicer's tune set to chords
+    fn slicer_song(n: usize) -> (Engine, u8) {
+        let sr = 22050u32;
+        let mut x: Vec<f32> = vec![];
+        let mut rng = crate::dsp::Rng::new(3);
+        for _ in 0..n - 1 {
+            for j in 0..(sr as usize / 5) {
+                let v = if j < 1500 { rng.next() * (-(j as f32) / 300.0).exp() * 0.8 } else { 0.0 };
+                x.extend([v, v]);
+            }
+        }
+        let hz = 440.0 * 2f32.powf((62.6 - 69.0) / 12.0);
+        for j in 0..(sr as usize * 6 / 10) {
+            let t = j as f32 / sr as f32;
+            let v = (std::f32::consts::TAU * hz * t).sin() * 0.5 * (t / 0.005).min(1.0);
+            x.extend([v, v]);
+        }
+        let dir = std::env::temp_dir().join(format!("ling_trk_slicer_{}_{n}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("slices.wav");
+        let spec = hound::WavSpec { channels: 2, sample_rate: sr, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for v in &x {
+            w.write_sample((v * 32767.0) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+        use crate::dsp::Instrument;
+        let mut s = crate::dsp::slicer::Slicer::new(22050.0);
+        s.set_param("gap", 0.3);
+        s.command("open", &[], &path.to_string_lossy());
+        assert_eq!(s.slices.len(), n, "noise bursts, then the tone: {:?}", s.slices.iter().map(|x| x.start).collect::<Vec<_>>());
+        let mut e = Engine::new(22050.0);
+        e.project.bpm = 120.0;
+        let root = s.root();
+        let last = n - 1;
+        s.command("set", &[last as f64, 11.0, 1.0], "");
+        s.command("set", &[last as f64, 12.0, 1.0], "");
+        let mut h = vec![];
+        for k in [48u8, 60, 64, 67] {
+            h.push(Note::new(0.0, 64.0, k, 0.8));
+        }
+        s.timeline = crate::dsp::slicer::timeline(&h, 4.0);
+        s.set_param("tune", 1.0);
+        let mut t = Track::new("Chops", TrackKind::Instrument, 0, Some(Box::new(s)));
+        t.inst_kind = "slicer".into();
+        let mut c = Clip::midi(0.0, n as f64 + 4.0, "chops");
+        if let ClipData::Midi(v) = &mut c.data {
+            for i in 0..n {
+                v.push(Note::new(i as f64 * 0.5, 0.25, root + i as u8, 0.9));
+            }
+            v.push(Note::new(n as f64 * 0.5 + 1.0, 1.0, root + last as u8, 0.9));
+        }
+        t.clips.push(c);
+        e.project.tracks.push(t);
+        (e, root)
+    }
+
+    #[test]
+    fn a_slicer_exports_one_sample_per_slice_in_every_format() {
+        let n = 6;
+        let mut r = Renderer::new(slicer_song(n).0);
+        let root = slicer_song(n).1;
+        for f in [Fmt::Mod, Fmt::S3m, Fmt::Xm, Fmt::It, Fmt::Mptm] {
+            let s = build(&mut r, f, &Opts::default());
+            // the slices, in order, and the tuned one (the tone, sung at D4 + 60c over C major: to E, +140 cents)
+            let names: Vec<&str> = s.smps.iter().map(|x| x.name.as_str()).collect();
+            // (the tone slice always plays over C major: only its tuned sample is used)
+            for i in 0..n - 1 {
+                assert!(names.iter().any(|nm| nm.ends_with(&format!("slice {}", i + 1))), "{f:?}: {names:?}");
+            }
+            let tuned = s.smps.iter().find(|x| x.name.contains("c") && x.name.contains(&format!("slice {n} +"))).unwrap_or_else(|| panic!("{f:?}: no tuned sample in {names:?}"));
+            let data: Vec<f32> = tuned.data.iter().map(|v| *v as f32 / 32768.0).collect();
+            let p = crate::chops::chop_f0(&data, 1000, data.len() - 1000, tuned.rate as u32).expect("pitched").midi;
+            assert!((p - 64.0).abs() < 0.15, "{f:?}: the tuned sample sounds E4 ({p})");
+            assert!(tuned.lp.is_some(), "{f:?}: the looped slice keeps its loop");
+            // the notes: the slices in order on their keys, untransposed, then the tuned one on its own key
+            let cells: Vec<XCell> = s.rows.iter().flatten().filter(|c| c.note >= 0 && c.note < 120).copied().collect();
+            assert_eq!(cells.len(), n + 1, "{f:?}");
+            for (i, c) in cells.iter().take(n - 1).enumerate() {
+                assert_eq!(c.note, (root as usize + i) as i16, "{f:?}: slice {i} on root + {i}");
+                let sm = &s.smps[s.ins[c.ins as usize - 1].map[c.note as usize]];
+                assert!(sm.name.ends_with(&format!("slice {}", i + 1)) && sm.root as i16 == c.note, "{f:?}: {}", sm.name);
+            }
+            for t in [cells[n - 1], cells[n]] {
+                assert!(s.smps[s.ins[t.ins as usize - 1].map[t.note as usize]].name.contains("+"), "{f:?}: the tuned notes play the tuned sample");
+                assert_eq!(t.note, (root as usize + n) as i16, "{f:?}: the tuned sample sits on the first key above the slices");
+            }
+            // the gated slice ends with a note-off / cut; the one-shots ring
+            let ends = s.rows.iter().flatten().filter(|c| c.note == NOTE_OFF || c.note == NOTE_CUT).count();
+            assert!(ends >= 1, "{f:?}");
+            // one choke group: one channel
+            assert_eq!(s.nch, if f == Fmt::Mod { 4 } else { 1 }, "{f:?}");
+            let m = crate::tracker::parse_module(&write(&s, f)).unwrap_or_else(|e| panic!("{f:?}: {e}"));
+            let back = m.orders.iter().flat_map(|p| m.patterns[*p].iter().flatten()).filter(|c| c.note >= 0 && c.note < 120).count();
+            assert_eq!(back, n + 1, "{f:?}: the notes come back");
+            let sm: Vec<String> = m.ins.iter().flat_map(|i| i.smps.iter()).filter(|x| !x.data.is_empty()).map(|x| x.name.clone()).collect();
+            assert!(sm.len() >= n, "{f:?}: {sm:?}");
+        }
+    }
+
+    #[test]
+    fn a_slicer_over_the_mod_limit_drops_the_rarest_slices_and_says_which() {
+        let mut r = Renderer::new(slicer_song(40).0);
+        let s = build(&mut r, Fmt::Mod, &Opts::default());
+        assert!(s.smps.len() <= 31);
+        assert!(s.report.iter().any(|l| l.contains("no room for") && l.contains("slice")), "{:?}", s.report);
     }
 
     #[test]

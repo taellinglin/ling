@@ -38,7 +38,7 @@ fn safe(s: &str) -> String {
 }
 
 impl Daw {
-    fn wt_dir(&self, sub: &str) -> std::path::PathBuf {
+    pub(super) fn wt_dir(&self, sub: &str) -> std::path::PathBuf {
         if self.path.is_empty() {
             std::env::temp_dir().join(format!("lingstation_{sub}"))
         } else {
@@ -47,7 +47,7 @@ impl Daw {
     }
 
     /// a file name in `dir` that is not taken yet
-    fn wt_fresh(dir: &std::path::Path, stem: &str, ext: &str) -> String {
+    pub(super) fn wt_fresh(dir: &std::path::Path, stem: &str, ext: &str) -> String {
         let _ = std::fs::create_dir_all(dir);
         let mut n = 1;
         loop {
@@ -62,7 +62,7 @@ impl Daw {
 
     /// Render track `ti` alone in a private engine: its clip `ci` (moved to the start), or one note `key` (2 beats) when `note` is set.
     /// Returns interleaved stereo at the engine's rate and the length rendered in beats.
-    fn wt_render_alone(&mut self, ti: usize, ci: Option<usize>, note: Option<u8>) -> Result<Vec<f32>, String> {
+    pub(super) fn wt_render_alone(&mut self, ti: usize, ci: Option<usize>, note: Option<u8>) -> Result<Vec<f32>, String> {
         let sr = self.out.sr;
         let mut doc = {
             let en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
@@ -151,7 +151,7 @@ impl Daw {
         let (ok, kind) = {
             let mut en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
             match en.project.tracks.get_mut(target) {
-                Some(t) if t.inst_kind == "growl" || t.inst_kind == "prism" => (t.inst.as_mut().map(|i| i.command("wt_load", &[], &path)).and_then(|r| r.first().copied()).unwrap_or(0.0), t.inst_kind.clone()),
+                Some(t) if t.inst_kind == "growl" || t.inst_kind == "prism" || t.inst_kind == "nova" => (t.inst.as_mut().map(|i| i.command("wt_load", &[], &path)).and_then(|r| r.first().copied()).unwrap_or(0.0), t.inst_kind.clone()),
                 _ => (0.0, String::new()),
             }
         };
@@ -161,8 +161,8 @@ impl Daw {
                 "Resampled {name} into a {}-frame wavetable (pitch {:.1} Hz), saved as wavetables/{file}: {} plays it ({}; position scans the frames)",
                 cycles.len(),
                 f0,
-                if kind == "growl" { "Ling Growl" } else { "Ling Prism" },
-                if kind == "growl" { "osc A, user table" } else { "osc A, user table; b user for osc B" }
+                if kind == "growl" { "Ling Growl" } else if kind == "nova" { "Ling Nova" } else { "Ling Prism" },
+                if kind == "growl" { "osc A, user table" } else if kind == "nova" { "osc A, the User table (any oscillator can pick it)" } else { "osc A, user table; b user for osc B" }
             );
         } else {
             self.status = format!("Wrote the wavetable {path} (the target track is not a Growl or Prism: load it from one with Load wavetable)");
@@ -236,7 +236,7 @@ impl Daw {
                 let (target, path) = (a.u(0), a.s(1));
                 let r = {
                     let mut en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
-                    en.project.tracks.get_mut(target).filter(|t| t.inst_kind == "growl" || t.inst_kind == "prism").and_then(|t| t.inst.as_mut()).map(|i| i.command("wt_load", &[], &path)).unwrap_or_default()
+                    en.project.tracks.get_mut(target).filter(|t| t.inst_kind == "growl" || t.inst_kind == "prism" || t.inst_kind == "nova").and_then(|t| t.inst.as_mut()).map(|i| i.command("wt_load", &[], &path)).unwrap_or_default()
                 };
                 let ok = r.first().copied().unwrap_or(0.0);
                 self.status = if ok > 0.5 {
@@ -262,7 +262,7 @@ impl Daw {
                     .project
                     .tracks
                     .get(a.u(0))
-                    .filter(|t| t.inst_kind == "growl" || t.inst_kind == "prism")
+                    .filter(|t| t.inst_kind == "growl" || t.inst_kind == "prism" || t.inst_kind == "nova")
                     .and_then(|t| t.inst.as_ref())
                     .map(|i| (i.info("wavetable"), i.info("frames").parse::<f64>().unwrap_or(0.0)))
                     .unwrap_or_default();

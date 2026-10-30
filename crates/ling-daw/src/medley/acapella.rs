@@ -650,6 +650,18 @@ pub fn sung_notes(v: &Vocal, from: f64, to: f64) -> Vec<Note> {
         .collect()
 }
 
+/// Call and response with a singing acapella: the chop notes that would sound over one of its lines (`sung`: spans in the notes'
+/// time; a chop must end `margin` beats before a line starts and may start where one ends) are left out, so the chops answer in
+/// the gaps between the lines; a reverse swell that ends where a line starts stays (it leads into the word). -> how many left out
+pub fn answer_gaps(notes: &mut Vec<Note>, sung: &[(f64, f64)], margin: f64) -> usize {
+    let before = notes.len();
+    notes.retain(|n| {
+        let (a, b) = (n.start, n.start + n.len.max(0.03));
+        !sung.iter().any(|(s, e)| a < e - 1e-6 && b > s - margin && !(b <= s + 0.02 && n.len >= 1.0))
+    });
+    before - notes.len()
+}
+
 /// a stutter into a line: its first pitched syllable three times on the 1/16s before the line (tuned to the chord there, the
 /// acapella's own shift kept), louder each time; notes relative to `sec0`
 pub fn stutter_into(v: &Vocal, line: usize, at: f64, sec0: f64, key: (u8, bool), harmony: &[Note], shift: i32, tune: &chops::Tune) -> Vec<Note> {
@@ -689,6 +701,26 @@ pub fn carrier_chord(key: (u8, bool), harmony: &[Note], t: f64) -> Vec<u8> {
     v.sort_unstable();
     v.dedup();
     v
+}
+
+#[cfg(test)]
+mod answer_tests {
+    use super::*;
+
+    #[test]
+    fn the_chops_answer_the_vocal_between_its_lines() {
+        // lines sung over beats 0..6 and 8..14; chops every beat, and a two-beat swell into the second line
+        let mut ns: Vec<Note> = (0..16).map(|b| Note::new(b as f64, 0.5, 60, 0.8)).collect();
+        ns.push(Note::new(6.0, 2.0, 60, 0.9));
+        let sung = [(0.0, 6.0), (8.0, 14.0)];
+        let gone = answer_gaps(&mut ns, &sung, 0.125);
+        let left: Vec<f64> = ns.iter().map(|n| n.start).collect();
+        assert_eq!(left, vec![6.0, 7.0, 14.0, 15.0, 6.0], "only the gaps (and the swell into the line) keep chops");
+        assert_eq!(gone, 12);
+        // nothing sung: nothing moves
+        let mut all: Vec<Note> = (0..4).map(|b| Note::new(b as f64, 0.5, 60, 0.8)).collect();
+        assert_eq!(answer_gaps(&mut all, &[], 0.125), 0);
+    }
 }
 
 #[cfg(test)]

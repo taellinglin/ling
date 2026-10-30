@@ -1,7 +1,7 @@
 //! Make Medley with an acapella (api/medley_api.rs, medley/acapella.rs): a synthetic vocal (Ling Voice, bounced; no recording of
 //! anyone) under a mashup of the MIDI folder - its level lane at 0 where the chops carry the vocal and back up on the downbeat they
-//! end, the chops tuned to the chords, stressed lines with harmonies on chord tones and a vocoder fed by the line, and the story,
-//! feel and sound recipes changing the build. `render_medley_popculture` (ignored) writes renders/medley_popculture/.
+//! end, the chops on a Ling Slicer kit tuned to the chords, stressed lines with harmonies on chord tones and a vocoder fed by the
+//! line, and the story, feel and sound recipes changing the build. `render_medley_popculture` (ignored) writes renders/medley_popculture/.
 use ling_daw::{Daw, Val};
 
 fn n(x: f64) -> Val {
@@ -144,7 +144,10 @@ fn harmony_at(d: &mut Daw, b: f64, cache: &mut Vec<(usize, Vec<(f64, f64, f64, S
     if cache.is_empty() {
         let nm = names(d);
         for (t, name) in nm.iter().enumerate() {
-            if name.starts_with("Drums") || name.starts_with("Chops") || name.starts_with("Breaks") || name.starts_with("Riser") || name.starts_with("Noise") || name.starts_with("Vocoder") {
+            if name.starts_with("Drums") || name.starts_with("Chops") || name.starts_with("Breaks") || name.starts_with("Riser") || name.starts_with("Noise") || name.starts_with("Vocoder")
+                || ling_daw::medley::cinema::KINDS.iter().any(|(_, k, _)| name == k)
+            {
+                // the transition effects (Ling Cinema) are sound effects, not harmony
                 continue;
             }
             if num(call(d, "daw_track_get", &[n(t as f64), s("audio")])) > 0.5 {
@@ -190,36 +193,35 @@ fn cents_to(m: f32, pcs: &[u8]) -> f32 {
         .fold(f32::MAX, f32::min)
 }
 
-/// every pitched note of the chop track `t` played alone by a sampler over `bank`: (beat, key, heard MIDI)
-fn heard_chops(d: &mut Daw, t: usize, label: &str, bank: &str) -> Vec<(f64, f64, f32)> {
+/// every pitched note of the chop track `t` (clips named `label`) played alone by the track's own Ling Slicer at its beat (its
+/// auto-tune reading the song there) and measured: (beat, heard MIDI)
+fn heard_chops(d: &mut Daw, t: usize, label: &str) -> Vec<(f64, f32)> {
     use ling_daw::dsp::Instrument;
-    let (stereo, rate) = ling_daw::dsp::sampler::load_audio(bank).expect("bank");
-    let mut sm = ling_daw::dsp::sampler::Sampler::new(rate as f32);
-    let mut z = ling_daw::dsp::sampler::Zone::new("v", "");
-    z.root = 60;
-    sm.add_loaded(z, stereo, rate);
+    let picked: Vec<(f64, f64, f64)> = notes(d, t, label).into_iter().map(|(b, l, k, _)| (b, l, k)).collect();
+    let eng = d.engine();
+    let mut en = eng.lock().unwrap();
+    let (sr, bpm) = (en.sr, en.project.bpm);
+    assert_eq!(en.project.tracks[t].inst_kind, "slicer", "the chops are on Ling Slicer");
+    let inst = en.project.tracks[t].inst.as_mut().expect("a Slicer");
     let mut out = vec![];
-    for (b, _, key, l) in notes(d, t, label) {
-        let Some((a, e, cents)) = ling_daw::dsp::sampler::parse_slice(&l) else { continue };
-        let moved = key - 60.0 + cents as f64 / 100.0;
-        let frames = ((e - a) as f64 / 2f64.powf(moved / 12.0)) as usize;
-        sm.all_off();
+    for (b, len, key) in picked {
+        inst.all_off();
+        inst.note_beat(b);
+        inst.note_on(key as u8, 0.9);
+        let frames = ((len * 60.0 / bpm).clamp(0.12, 1.0) * sr as f64) as usize;
         let mut buf = vec![0f32; 512];
-        for _ in 0..8 {
-            sm.render(&mut buf);
-        }
-        sm.note_on_lyric(key as u8, 0.9, 0.0, 0.5, 0.5, &l, 1.0);
         let mut mono: Vec<f32> = vec![];
         while mono.len() < frames {
             buf.fill(0.0);
-            sm.render(&mut buf);
+            inst.render(&mut buf);
             mono.extend(buf.chunks(2).map(|f| (f[0] + f[1]) * 0.5));
         }
         mono.truncate(frames);
-        if let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), rate) {
-            out.push((b, key, f.midi));
+        if let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), sr as u32) {
+            out.push((b, f.midi));
         }
     }
+    inst.all_off();
     out
 }
 
@@ -292,21 +294,21 @@ fn an_acapella_sings_where_the_chops_stop_and_its_hook_gets_harmonies() {
         }
     }
     assert!(sung >= 2, "{sung}");
-    // the chops are tuned to the chords: each note played alone and measured
-    let bank = "cache/medley/acap_synth_vocal_100bpm_100_bank.wav";
-    let heard = heard_chops(&mut d, ch, "chops", bank);
+    // the chops are on a Ling Slicer kit, tuned by it to the chords: each note played alone at its beat and measured
+    assert!(r.contains("chops on Ling Slicer:"), "{r}");
+    let heard = heard_chops(&mut d, ch, "chops");
     assert!(heard.len() >= 10, "{}", heard.len());
     let mut cache = vec![];
-    let (mut on_key, mut on_chord) = (0, 0);
-    for (b, key, m) in &heard {
-        on_key += ((m - *key as f32).abs() * 100.0 < 30.0) as usize;
+    let mut on_chord = 0;
+    for (b, m) in &heard {
         let pcs = harmony_at(&mut d, *b, &mut cache);
         if pcs.is_empty() || cents_to(*m, &pcs) < 30.0 {
             on_chord += 1;
+        } else if std::env::var("CHOPS_DEBUG").is_ok() {
+            println!("off at {b:.2}: heard {m:.2} over {pcs:?}");
         }
     }
-    println!("chops: {} measured, {on_key} on their note, {on_chord} on a tone sounding with them", heard.len());
-    assert!(on_key as f64 >= 0.95 * heard.len() as f64, "{on_key} of {}", heard.len());
+    println!("chops: {} measured, {on_chord} on a tone sounding with them", heard.len());
     assert!(on_chord as f64 >= 0.85 * heard.len() as f64, "{on_chord} of {}", heard.len());
     // the stressed hook: harmony voices whose notes land on tones sounding with them
     let h = track(&mut d, "Harmony · synth vocal 100bpm").expect("a harmony track");
@@ -389,6 +391,71 @@ fn the_story_feel_and_recipes_change_the_medley() {
 }
 
 #[test]
+fn an_edm_medley_gets_one_hype_shout_per_drop_and_the_chops_answer_the_vocal() {
+    if !at_lsx() {
+        return;
+    }
+    let vocal = acapella();
+    // the vocal sings everywhere (replace=0) and the drops and builds layer chops with it, every other one from a second acapella
+    // (chopped only): those answer the singer between its lines
+    let mut d = Daw::new();
+    let r = build(&mut d, &format!("layering=0.8;rolls=0.9;genre=dubstep;chops=chops;acap={vocal};acapx={vocal};replace=0;stress=0;recipes=0;feel=0;hype=clean;story=a storm"), 4.0);
+    println!("{r}");
+    assert!(r.contains("left out to answer the vocal between its lines"), "{r}");
+    let secs = sections(&mut d);
+    let drops: Vec<f64> = secs.iter().skip(1).filter(|s| s.2 == "drop").map(|s| s.0).collect();
+    assert!(!drops.is_empty(), "{secs:?}");
+    let h = track(&mut d, "Hype Shout").expect("a hype shout track");
+    assert_eq!(text(call(&mut d, "daw_track_kind", &[n(h as f64)])), "slicer");
+    assert!(r.contains("hype shout: Hype MC Clean before"), "{r}");
+    // one phrase per drop, ending on its downbeat
+    let clips: Vec<(f64, f64)> = (0..num(call(&mut d, "daw_clip_count", &[n(h as f64)])) as usize)
+        .map(|c| (num(call(&mut d, "daw_clip_get", &[n(h as f64), n(c as f64), s("start")])), num(call(&mut d, "daw_clip_get", &[n(h as f64), n(c as f64), s("end")]))))
+        .collect();
+    assert_eq!(clips.len(), drops.len(), "{clips:?} / {drops:?}");
+    for (c, d0) in clips.iter().zip(&drops) {
+        assert!((c.1 - d0).abs() < 1e-6, "the shout ends on the drop: {c:?} {d0}");
+    }
+    // pop gets none, and nothing is shouted unless asked
+    let mut p = Daw::new();
+    let rp = build(&mut p, &format!("layering=0.8;rolls=0.9;genre=pop;acap={vocal};recipes=0;feel=0;hype=clean;story=a storm"), 4.0);
+    assert!(!rp.contains("hype shout") && track(&mut p, "Hype Shout").is_none(), "{rp}");
+    let mut q = Daw::new();
+    let rq = build(&mut q, &format!("layering=0.8;rolls=0.9;genre=dubstep;acap={vocal};recipes=0;feel=0;story=a storm"), 4.0);
+    assert!(!rq.contains("hype shout") && track(&mut q, "Hype Shout").is_none(), "{rq}");
+}
+
+#[test]
+fn a_medley_reports_its_edits_and_off_leaves_them_out() {
+    if !at_lsx() {
+        return;
+    }
+    let vocal = acapella();
+    let mut d = Daw::new();
+    let r = build(&mut d, &format!("layering=0.8;rolls=0.9;genre=dubstep;chops=chops;acap={vocal};acapx={vocal};replace=0;stress=0;recipes=0;feel=0;edits=auto;story=a storm"), 4.0);
+    println!("{r}");
+    assert!(r.contains("; edits: "), "{r}");
+    let clause = r.split("; edits: ").nth(1).unwrap_or("").split(';').next().unwrap_or("").to_string();
+    let total: usize = clause.split(", ").filter_map(|p| p.split(' ').next().and_then(|x| x.parse::<usize>().ok())).sum();
+    let secs = sections(&mut d);
+    assert!(total >= 2 && total <= 3 * secs.len(), "{total} edits over {} sections: {clause}", secs.len());
+    // an air pocket stops every part before its drop: nothing of the medley starts in the half beat before
+    if clause.contains("air pocket") {
+        let drops: Vec<f64> = secs.iter().skip(1).filter(|s| s.2 == "drop").map(|s| s.0).collect();
+        let nm = names(&mut d);
+        let mut silent = 0;
+        for d0 in &drops {
+            let busy = (0..nm.len()).filter(|t| !nm[*t].starts_with("Acapella")).any(|t| notes(&mut d, t, "").iter().any(|n| n.0 >= d0 - 0.5 + 1e-6 && n.0 < d0 - 1e-6));
+            silent += (!busy) as usize;
+        }
+        assert!(silent >= 1, "a pocket somewhere: {drops:?}");
+    }
+    let mut o = Daw::new();
+    let ro = build(&mut o, &format!("layering=0.8;rolls=0.9;genre=dubstep;chops=chops;acap={vocal};acapx={vocal};replace=0;stress=0;recipes=0;feel=0;edits=off;story=a storm"), 4.0);
+    assert!(!ro.contains("edits:") && track(&mut o, "Chops edits").is_none(), "{ro}");
+}
+
+#[test]
 #[ignore]
 fn render_medley_popculture() {
     if !at_lsx() {
@@ -418,10 +485,13 @@ fn render_medley_popculture() {
         report.push_str(&format!("{a:>6.1}..{b:>6.1} {tag:<6} acapella level {:.2}\n", at(&vol, (a + b) * 0.5)));
     }
     let ch = track(&mut d, "Chops · ").unwrap();
-    let bank = std::fs::read_dir("cache/medley").unwrap().flatten().map(|e| e.path()).find(|p| p.to_string_lossy().contains("0_synthetic_acapella_100bpm_100_bank")).unwrap();
-    let heard = heard_chops(&mut d, ch, "chops", &bank.to_string_lossy());
-    let on_key = heard.iter().filter(|(_, k, m)| ((m - *k as f32).abs() * 100.0) < 30.0).count();
-    report.push_str(&format!("\nchops measured alone: {} pitched notes, {on_key} within 30 cents of their note\n", heard.len()));
+    let heard = heard_chops(&mut d, ch, "chops");
+    let mut cache = vec![];
+    let on_chord = heard.iter().filter(|(b, m)| {
+        let pcs = harmony_at(&mut d, *b, &mut cache);
+        pcs.is_empty() || cents_to(*m, &pcs) < 30.0
+    }).count();
+    report.push_str(&format!("\nchops measured alone on their Slicer: {} pitched notes, {on_chord} within 30 cents of a tone sounding with them\n", heard.len()));
     std::fs::write(format!("{dir}/summary.txt"), &report).unwrap();
     println!("{report}");
 }

@@ -489,6 +489,8 @@ pub fn expr_settings(inst: &str, x: &Expr, params: &[(String, f32)]) -> (Vec<(St
             }
         }
         "pluck" => put(&mut set, "glide", if g > 0.01 { (g - 0.01) / 0.5 } else { 0.0 }),
+        // Ling Nova: its presets glide where they are meant to; a wanted glide sets the portamento (0.5 ms + 3 s x v^2)
+        "nova" if g > 0.0 => put(&mut set, "porta", ((g - 0.0005).max(0.0) / 3.0).sqrt()),
         _ => {}
     }
     // the instruments' own arpeggiators are off: the arpeggio is in the notes
@@ -579,6 +581,16 @@ pub fn expr_settings(inst: &str, x: &Expr, params: &[(String, f32)]) -> (Vec<(St
                     put(&mut set, &format!("{l} sync"), 0.0);
                     vib_lane = Some((format!("x {l}pit"), 0.5, (0.5 + v.depth / 48.0).clamp(0.5, 1.0)));
                     break;
+                }
+            }
+            "nova" => {
+                // a Nova lead's vibrato is LFO 1 into the pitch, scaled by macro 2 (its "Vibrato" macro): the lane draws macro 2
+                let val = |n: &str| params.iter().find(|(k, _)| k == n).map(|(_, x)| *x).unwrap_or(-1.0);
+                let has = (1..=32).any(|k| (val(&format!("x{k} src")) - 5.0 / 24.0).abs() < 1e-3 && (val(&format!("x{k} aux")) - 18.0 / 24.0).abs() < 1e-3);
+                if has {
+                    put(&mut set, "l1 delay", 0.0);
+                    put(&mut set, "l1 rise", 0.0);
+                    vib_lane = Some(("m2".to_string(), 0.0, (v.depth / 0.29).clamp(0.0, 1.0)));
                 }
             }
             _ => {}

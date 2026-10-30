@@ -1,0 +1,1712 @@
+# Ling Nova factory presets: [Name] sections of `key = value` lines (format in dsp/nova/presets.rs). Templates start with `_`;
+# a preset names one with `base = _x` and starts from its sound and its usage notes.
+#
+# Macro conventions across the library: M1 opens / morphs the sound, M2 adds the growl / movement, M3 the grit (distortion and
+# multiband), M4 the space (reverb, delay, width), M5 the sub or the body, M6 the tone (formant, pitch or colour), M7 the rate of
+# the movement, M8 the width or a special trick named in the preset.
+
+# ════════════════════════════════════════════ templates ════════════════════════════════════════════
+
+[_bass]
+cat = Bass
+role = bass
+voice mode = mono
+porta = 0.18
+porta mode = legato
+vel amp = 0.25
+e1 a = 0.07
+e1 d = 0.6
+e1 s = 1
+e1 r = 0.36
+a on = on
+sub on = on
+sub shape = sine
+sub oct = -1
+sub level = 0.7
+sub route = dry
+img on = on
+img width = 0.55
+img mono = 0.43
+level = 0.62
+mix = Sidechain it to the kick (a fast duck), keep everything under 120 Hz mono (the imager does it) and leave the sub to this patch or to a separate sub, not both.
+
+[_growl]
+base = _bass
+family = growl
+genres = dubstep, riddim, brostep, drum and bass, bass house, trap
+range = E1-E2
+style = stab8
+play = Mono, short 1/8 and 1/16 stabs on one or two notes, slides of a fifth or an octave between phrases; let some notes ring for the movement.
+macros = Open|Growl|Grit|Space|Sub|Formant|Rate|Width
+notes = M1 opens the table and the filter (ride it up through the build, keep it high in the drop); M2 is the growl movement (the LFO into the table and the formant - automate it on 1/8 or 1/16 steps in the drop); M3 is the grit (distortion into OTT); M4 a little room; M5 the sub; M6 shifts the formant; M7 speeds the growl LFO up; M8 widens the top.
+pattern = Bar 1 a long growl note, bar 2 1/16 stabs, answer with a sibling preset; wobble rate 1/8 with M7 low, 1/16 with M7 high.
+auto = m1 rise/high/low; m2 low/wob8/low; m3 mid/high/low; m4 mid/low/high
+switch = growl
+a table = Growl Formant
+a pos = 0.3
+a uni = 0.1333
+a det = 0.12
+a width = 0.4
+b on = on
+b table = Saw Stack
+b oct = +1
+b pos = 0.2
+b level = 0.45
+f1 on = on
+f1 type = formant
+f1 cut = 0.35
+f1 res = 0.55
+f1 mix = 0.8
+f1 var = 0.5
+l1 shape = custom
+l1 sync = on
+l1 div = 1/8
+l1 smooth = 0.75
+l1 p1 = 0
+l1 p2 = 0.7
+l1 p3 = 1
+l1 p4 = 0.55
+l1 p5 = 0.2
+l1 p6 = 0.85
+l1 p7 = 0.4
+l1 p8 = 0.1
+m1 = 0.6
+m2 = 0.6
+m3 = 0.5
+m4 = 0.1
+m5 = 0.35
+m6 = 0.5
+m7 = 0
+mod = m1 > a pos : 0.35
+mod = m1 > f1 cut : 0.3
+mod = l1 > a pos : 0.5 aux=m2
+mod = l1 > f1 cut : 0.5 aux=m2
+mod = m3 > dist drive : 0.55
+mod = m3 > ott depth : 0.5
+mod = m4 > rev mix : 0.5
+mod = m5 > sub level : 0.6
+mod = m6 > f1 var : 0.5 bi
+mod = m7 > l1 rate : 0.25
+mod = m8 > img width : 0.4
+sub level = 0.2
+dist on = on
+dist mode = tube
+dist drive = 0.3
+dist mix = 0.75
+ott on = on
+ott depth = 0.35
+ott mix = 0.8
+rev on = on
+rev mix = 0
+rev plate = on
+rev size = 0.3
+rev decay = 0.3
+a oct = +1
+eq on = on
+eq low = 0.4
+eq mid = 0.66
+eq high = 0.55
+
+[_riddim]
+base = _growl
+family = riddim
+genres = riddim, dubstep, brostep
+range = E1-G2
+style = stab16
+play = Mono, the same note over and over in stepped 1/16 and 1/8 rhythms with gaps; the space between hits is the groove.
+macros = Open|Step|Grit|Space|Sub|Hollow|Rate|Width
+notes = M1 opens the honk; M2 is the stepped riddim movement (keep it low in the build, high in the drop, alternate with a sibling preset each bar); M3 the crunch; M6 makes it hollower (a deeper notch); M7 the step rate (1/8 to 1/16T).
+pattern = Triplet-feel 1/16 hits on one note; alternate two riddim presets bar by bar (call and response); leave the third beat empty.
+auto = m1 rise/high/low; m2 low/step16/low; m3 mid/high/low
+switch = riddim
+a table = Riddim Square
+a pos = 0.2
+a uni = 0
+b on = off
+f1 type = comb -
+f1 cut = 0.5
+f1 key = 1
+f1 res = 0.5
+f1 mix = 0.5
+l1 shape = custom
+l1 smooth = 0.1
+l1 div = 1/8
+l1 p1 = 1
+l1 p2 = 0.2
+l1 p3 = 0.8
+l1 p4 = 0
+l1 p5 = 1
+l1 p6 = 0.5
+l1 p7 = 0.9
+l1 p8 = 0.1
+mod = m6 > f1 res : 0.4
+
+[_colour]
+base = _bass
+family = colour
+genres = colour bass, melodic dubstep, future bass, dubstep, hybrid trap
+range = A1-C3
+style = chords
+play = Chords or power chords (root, fifth, octave) in the bass register, played as 1/8 and 1/16 stabs that follow the chord changes; pitch bends between chords.
+macros = Open|Wobble|Grit|Space|Sub|Shimmer|Rate|Width
+notes = M1 opens the low-pass (closed for the build, open in the drop); M2 the wobble on the filter; M3 drive and OTT; M4 reverb and width; M6 adds the bright top octave.
+pattern = 1/8 chord stabs on the off-beats with a 1/16 roll at the end of the bar; swap with a sibling colour preset every two bars.
+auto = m1 rise/high/low; m2 low/wob16/low; m3 mid/high/low; m4 mid/low/high
+switch = colour
+voice mode = poly
+voices = 0.4
+porta = 0
+a table = Saw Stack
+a pos = 0.5
+a uni = 0.4
+a det = 0.35
+a width = 0.9
+b on = on
+b table = Basic Shapes
+b pos = 1
+b level = 0.5
+b oct = 0
+f1 on = on
+f1 type = lp 24
+f1 cut = 0.55
+f1 res = 0.35
+f1 key = 0.5
+e2 a = 0
+e2 d = 0.5
+e2 s = 0
+l1 sync = on
+l1 div = 1/16
+l1 shape = sine
+m1 = 0.7
+m2 = 0.3
+m3 = 0.45
+m4 = 0.3
+m5 = 0.5
+mod = m1 > f1 cut : 0.35
+mod = e2 > f1 cut : 0.2
+mod = l1 > f1 cut : 0.35 aux=m2
+mod = m3 > dist drive : 0.5
+mod = m3 > ott depth : 0.5
+mod = m4 > rev mix : 0.45
+mod = m4 > hyp mix : 0.5
+mod = m5 > sub level : 0.5
+mod = m6 > c level : 0.8
+mod = m7 > l1 rate : 0.25
+mod = m8 > img width : 0.4
+c on = on
+c table = Saw Stack
+c oct = +1
+c level = 0
+sub level = 0.2
+dist on = on
+dist mode = soft
+dist drive = 0.2
+ott on = on
+ott depth = 0.3
+hyp on = on
+hyp mix = 0
+rev on = on
+rev mix = 0
+rev size = 0.45
+
+[_reese]
+base = _bass
+family = reese
+genres = drum and bass, neurofunk, dubstep, techno, jungle
+range = C1-C2
+style = held
+play = Mono, long held notes and slow slides (portamento) - a reese moves by itself; two-note phrases an octave apart.
+macros = Open|Detune|Grit|Space|Sub|Phase|Rate|Width
+notes = M1 opens the low-pass; M2 widens the detune (more beating); M3 the distortion; M5 the sub; M6 sweeps a phaser through it; M7 speeds up the movement.
+pattern = Whole and half notes with a slide into the downbeat; automate M1 slowly over 4 bars.
+auto = m1 rise/mid/low; m2 low/mid/low; m3 low/high/low; m6 low/wob4/low
+switch = reese
+porta = 0.32
+porta mode = always
+a table = Basic Shapes
+a pos = 0.67
+a uni = 0.1333
+a det = 0.3
+b on = on
+b table = Hollow Saw
+b pos = 0.4
+b fine = 0.56
+b uni = 0.1333
+b det = 0.3
+f1 on = on
+f1 type = ladder
+f1 cut = 0.45
+f1 res = 0.2
+f1 key = 0.6
+m1 = 0.5
+m2 = 0.5
+m3 = 0.4
+m5 = 0.6
+mod = m1 > f1 cut : 0.3
+mod = m2 > a det : 0.4
+mod = m2 > b det : 0.4
+mod = m3 > dist drive : 0.6
+mod = m5 > sub level : 0.5
+mod = m6 > phs mix : 1
+mod = m7 > l1 rate : 0.3
+mod = m4 > rev mix : 0.4
+mod = m8 > img width : 0.4
+mod = l1 > b fine : 0.04 bi
+l1 sync = off
+l1 rate = 0.3
+sub level = 0.3
+dist on = on
+dist mode = tube
+dist drive = 0.2
+dist filt = pre hp
+dist freq = 0.25
+dist mix = 0.6
+phs on = on
+phs mix = 0
+phs rate = 0.15
+rev on = on
+rev mix = 0
+
+[_neuro]
+base = _reese
+family = neuro
+genres = neurofunk, drum and bass, dubstep
+range = C1-C2
+style = stab16
+play = Mono, syncopated 1/16 bursts on one note with short slides; let a long note growl at the end of the phrase.
+macros = Open|Grind|Grit|Space|Sub|Notch|Rate|Width
+notes = M1 opens it; M2 drives the grind LFO into the table and the comb; M3 is the distortion and OTT stack; M6 moves the comb notch; M7 the grind rate.
+pattern = Two-bar call: 1/16 stabs then a held, moving note; switch with another neuro preset on the answer.
+auto = m1 rise/high/low; m2 low/wob16/low; m3 mid/high/low
+switch = neuro
+porta = 0.15
+porta mode = legato
+a table = Neuro Grind
+a pos = 0.3
+b table = FM Feedback
+b pos = 0.5
+b fine = 0.5
+b level = 0.4
+f1 type = comb +
+f1 cut = 0.55
+f1 key = 1
+f1 res = 0.6
+f1 mix = 0.45
+l1 sync = on
+l1 div = 1/16
+l1 shape = custom
+l1 smooth = 0.6
+m2 = 0.6
+mod = l1 > a pos : 0.45 aux=m2
+mod = l1 > f1 cut : 0.2 aux=m2
+mod = m6 > f1 var : 0.6 bi
+ott on = on
+ott depth = 0.5
+
+[_sub]
+base = _bass
+family = sub
+genres = trap, dubstep, drum and bass, future bass, house, hip hop, uk garage
+range = C1-C2
+style = held
+play = Mono, the root notes of the chords, held or in long syncopated notes; 808-style slides with the portamento.
+macros = Body|Glide|Drive|-|Sub|Tone|-|-
+notes = M1 adds harmonics on top (so it reads on small speakers); M2 lengthens the glide; M3 saturates it; M6 brightens the tone.
+pattern = Root notes on the kick pattern; an octave slide into the drop.
+auto = m1 low/mid/low; m3 low/mid/low
+switch = sub
+a table = Basic Shapes
+a pos = 0
+a level = 0.8
+sub on = off
+f1 on = off
+img width = 0
+m1 = 0.2
+mod = m1 > a pos : 0.25
+mod = m2 > porta : 0.5
+mod = m3 > dist drive : 0.5
+mod = m6 > a pos : 0.2
+dist on = on
+dist mode = soft
+dist drive = 0.1
+dist mix = 0.5
+
+[_lead]
+cat = Lead
+role = lead
+family = lead
+genres = future bass, melodic dubstep, trance, edm, progressive house, hyperpop
+range = C4-C6
+style = held
+play = Mono or two-voice lines, held notes with slides between them; let long notes vibrate (wheel or pressure).
+macros = Open|Vibrato|Grit|Space|Glide|Tone|Rate|Width
+notes = M1 opens the filter and the table; M2 the vibrato depth; M3 the drive; M4 delay and reverb; M5 the glide; M6 the tone.
+pattern = The topline in the drop, an octave up in the last 8 bars.
+auto = m1 rise/high/mid; m4 mid/low/high
+mix = High-pass below 150 Hz, a 1/8 dotted delay on long notes, sidechain lightly.
+voice mode = legato
+porta = 0.15
+porta mode = legato
+e1 a = 0.15
+e1 r = 0.55
+a on = on
+a table = Saw Stack
+a pos = 0.4
+a uni = 0.4
+a det = 0.25
+f1 on = on
+f1 type = lp 24
+f1 cut = 0.7
+f1 res = 0.15
+f1 key = 0.5
+l1 sync = off
+l1 rate = 0.6
+l1 shape = sine
+l1 delay = 0.45
+l1 rise = 0.5
+m1 = 0.6
+m4 = 0.4
+mod = m1 > f1 cut : 0.25
+mod = m1 > a pos : 0.3
+mod = l1 > pitch : 0.012 bi aux=m2
+mod = wheel > pitch : 0.01 bi aux=l1
+mod = press > f1 cut : 0.2
+mod = m3 > dist drive : 0.5
+mod = m4 > dly mix : 0.4
+mod = m4 > rev mix : 0.35
+mod = m5 > porta : 0.5
+mod = m6 > a pos : 0.3
+mod = m8 > img width : 0.4
+dist on = on
+dist mode = soft
+dist drive = 0.05
+dly on = on
+dly mix = 0
+dly div = 1/8D
+rev on = on
+rev mix = 0
+img on = on
+img width = 0.6
+img mono = 0.3
+level = 0.6
+
+[_chord]
+cat = Chords
+role = chord
+family = chord
+genres = future bass, melodic dubstep, edm, progressive house, kawaii, hyperpop
+range = C3-C5
+style = chords
+play = Polyphonic chords (four or five notes, open voicings), in rhythmic stabs or held with the sidechain pumping them.
+macros = Open|Swell|Grit|Space|Detune|Shimmer|Wobble|Width
+notes = M1 opens the low-pass (the future-bass swell in a build); M2 a volume swell per chord; M3 saturation; M4 reverb; M5 the unison detune; M6 the octave on top; M7 the filter wobble; M8 the width.
+pattern = Off-beat 1/8 stabs or held chords with a hard sidechain; 1/16 rolls before the drop; pitch the last chord down.
+auto = m1 rise/high/mid; m4 mid/low/high; m7 low/wob8/low
+mix = Heavy sidechain from the kick, high-pass at 120 Hz, wide (the imager keeps the low mono).
+voices = 0.6
+e1 a = 0.1
+e1 d = 0.6
+e1 s = 0.85
+e1 r = 0.55
+a on = on
+a table = Saw Stack
+a pos = 0.6
+a uni = 0.4667
+a det = 0.4
+a width = 1
+b on = on
+b table = Pulse Width
+b pos = 0.3
+b uni = 0.2667
+b det = 0.3
+b level = 0.45
+f1 on = on
+f1 type = lp 12
+f1 cut = 0.62
+f1 res = 0.2
+f1 key = 0.4
+e2 a = 0
+e2 d = 0.55
+e2 s = 0.3
+l1 sync = on
+l1 div = 1/8
+m1 = 0.6
+m4 = 0.4
+m5 = 0.4
+mod = m1 > f1 cut : 0.35
+mod = e2 > f1 cut : 0.15
+mod = m2 > e1 a : 0.5
+mod = m3 > dist drive : 0.4
+mod = m4 > rev mix : 0.45
+mod = m5 > a det : 0.4
+mod = m6 > c level : 0.6
+mod = l1 > f1 cut : 0.3 aux=m7
+mod = m8 > img width : 0.4
+c on = on
+c table = Saw Stack
+c oct = +1
+c level = 0
+dist on = on
+dist mode = soft
+dist drive = 0.05
+rev on = on
+rev mix = 0
+rev size = 0.6
+hyp on = on
+hyp mix = 0.3
+img on = on
+img width = 0.7
+img mono = 0.4
+level = 0.58
+
+[_pluck]
+cat = Pluck
+role = pluck
+family = pluck
+genres = future bass, tropical house, progressive house, trance, edm, kawaii
+range = C4-C6
+style = pluck
+play = Fast melodic 1/8 and 1/16 lines, arpeggios over the chords; short notes.
+macros = Open|Decay|Grit|Space|Body|Tone|-|Width
+notes = M1 opens the filter envelope; M2 lengthens the decay; M3 drive; M4 delay and reverb (more in breakdowns); M5 the body (lower oscillator); M6 the tone.
+pattern = 1/16 arpeggio of the chord in the build, a 1/8 melody in the drop; delay synced to 1/8 dotted.
+auto = m1 rise/high/mid; m4 mid/low/high
+mix = High-pass at 200 Hz, a 1/8 dotted ping-pong delay, sidechain lightly.
+voices = 0.53
+e1 a = 0.02
+e1 d = 0.5
+e1 s = 0
+e1 r = 0.48
+a on = on
+a table = Basic Shapes
+a pos = 0.67
+a uni = 0.2
+a det = 0.18
+b on = on
+b table = Pluck Decay
+b pos = 0
+b oct = +1
+b level = 0.35
+f1 on = on
+f1 type = lp 24
+f1 cut = 0.4
+f1 res = 0.25
+f1 key = 0.6
+e2 a = 0
+e2 d = 0.45
+e2 s = 0
+m1 = 0.6
+m2 = 0.3
+m4 = 0.4
+mod = e2 > f1 cut : 0.35 aux=m1
+mod = m1 > f1 cut : 0.15
+mod = e2 > b pos : 0.5
+mod = m2 > e1 d : 0.25
+mod = m2 > e2 d : 0.2
+mod = m3 > dist drive : 0.4
+mod = m4 > dly mix : 0.4
+mod = m4 > rev mix : 0.3
+mod = m5 > b level : 0.4
+mod = m6 > a pos : 0.3 bi
+mod = m8 > img width : 0.4
+dist on = on
+dist drive = 0.05
+dly on = on
+dly mix = 0
+dly div = 1/8D
+rev on = on
+rev mix = 0
+img on = on
+img width = 0.65
+level = 0.6
+
+[_pad]
+cat = Pad
+role = pad
+family = pad
+genres = future bass, ambient, melodic dubstep, trance, chillout, progressive house
+range = C3-C5
+style = held
+play = Long held chords (a bar or more), slow changes; let the movement do the work.
+macros = Brightness|Motion|Grit|Space|Air|Shimmer|Rate|Width
+notes = M1 brightness; M2 the motion (LFO into the table and the filter); M3 saturation; M4 space; M5 air (noise); M6 the shimmer octave; M7 the motion rate; M8 the width.
+pattern = Whole-bar chords in intros and breakdowns, under the drop very quietly or not at all.
+auto = m1 rise/mid/mid; m2 mid/low/high; m4 mid/low/high
+mix = High-pass at 150-200 Hz, duck it under the drop or leave it out, wide.
+voices = 0.6
+e1 a = 0.62
+e1 d = 0.7
+e1 s = 0.9
+e1 r = 0.72
+a on = on
+a table = Additive Pad
+a pos = 0.4
+a uni = 0.4
+a det = 0.25
+b on = on
+b table = Vowel AEIOU
+b pos = 0.2
+b uni = 0.2667
+b det = 0.2
+b level = 0.4
+f1 on = on
+f1 type = lp 12
+f1 cut = 0.6
+f1 res = 0.1
+l1 sync = off
+l1 rate = 0.18
+l1 shape = sine
+l2 sync = off
+l2 rate = 0.12
+l2 shape = smooth
+noise type = pink
+noise level = 0
+m1 = 0.5
+m2 = 0.5
+m4 = 0.5
+mod = m1 > f1 cut : 0.35
+mod = l1 > a pos : 0.4 aux=m2
+mod = l2 > b pos : 0.5 aux=m2
+mod = l2 > f1 cut : 0.1 bi aux=m2
+mod = m3 > dist drive : 0.4
+mod = m4 > rev mix : 0.6
+mod = m5 > noise level : 0.4
+mod = m6 > c level : 0.5
+mod = m7 > l1 rate : 0.3
+mod = m7 > l2 rate : 0.3
+mod = m8 > img width : 0.5
+noise on = on
+c on = on
+c table = Glass
+c oct = +1
+c level = 0
+dist on = on
+dist drive = 0
+rev on = on
+rev mix = 0
+rev size = 0.85
+rev decay = 0.6
+cho on = on
+cho mix = 0.4
+img on = on
+img width = 0.75
+img mono = 0.4
+level = 0.55
+
+[_fx]
+cat = FX
+role = fx
+family = riser
+genres = edm, dubstep, future bass, trance, drum and bass, house
+range = C3-C5
+style = riser
+play = One long note across the build (4 or 8 bars), or a hit on the downbeat.
+macros = Rise|Motion|Grit|Space|Noise|Pitch|Rate|Width
+notes = M1 is the rise itself (automate it 0 to 1 across the build); M2 the flutter; M3 grit; M4 space; M5 noise against tone; M6 the pitch sweep.
+pattern = Start 8 bars before the drop, end on the downbeat; cut it dead or let the reverb tail ring.
+auto = m1 rise/low/low; m4 high/low/high
+mix = High-pass it, wide, and duck the music a little as it peaks.
+voices = 0.2
+e1 a = 0.3
+e1 r = 0.65
+a on = on
+a table = Saw Stack
+a uni = 0.4667
+a det = 0.4
+noise on = on
+noise type = white
+noise level = 0.5
+f1 on = on
+f1 type = bp 12
+f1 cut = 0.4
+f1 res = 0.3
+l1 sync = on
+l1 div = 1/16
+m1 = 0
+m2 = 0.3
+m4 = 0.5
+m5 = 0.5
+mod = m1 > f1 cut : 0.55
+mod = m1 > pitch : 0.5
+mod = m1 > amp : 0.5
+mod = l1 > amp : -0.4 aux=m2
+mod = m3 > dist drive : 0.6
+mod = m4 > rev mix : 0.6
+mod = m5 > noise level : 0.5
+mod = m6 > a pitch : 0.5 bi
+mod = m7 > l1 rate : 0.3
+mod = m8 > img width : 0.4
+dist on = on
+dist drive = 0
+rev on = on
+rev mix = 0
+rev size = 0.8
+img on = on
+img width = 0.8
+level = 0.55
+
+# ════════════════════════════════════════════ bass: growl ════════════════════════════════════════════
+
+[Yoi Talker]
+base = _growl
+desc = A talking yoi growl: the table sweeps "oo" to "ee" on every 1/8 while a formant filter shapes the throat - the classic vowel bass of dubstep.
+a table = Yoi
+f1 var = 0.45
+pattern = One long yoi per bar on the root, 1/16 stabs on the last beat; switch with Hollow Riddim or Grind Mouth every bar.
+level = 0.579
+
+[Grind Mouth]
+base = _growl
+desc = A grinding mouth growl: a formant table under a moving formant filter and a gritty FM layer - wet and chewy.
+b table = FM Bass
+b pos = 0.6
+f1 var = 0.35
+l1 div = 1/16
+dist mode = diode
+dist drive = 0.4
+pattern = 1/16 stabs with a long growl at the end of every 2 bars.
+level = 0.592
+
+[Wet Gargle]
+base = _growl
+desc = A gargling, bubbling growl: a mirror warp plus a comb in the filter makes the wet bubbles of a modern bass drop.
+a w1 type = mirror
+a w1 amt = 0.4
+f1 type = comb +
+f1 key = 1
+f1 cut = 0.5
+f1 mix = 0.55
+l1 div = 1/16
+pattern = Short 1/16 gargles; leave rests; call-and-response with Yoi Talker.
+level = 0.647
+
+[Metal Mouth]
+base = _growl
+desc = A metallic, clangy growl: the neuro grind table ring-modulated by oscillator B - bright and robotic.
+a table = Neuro Grind
+a w1 type = rm
+a w1 amt = 0.35
+a fm src = b
+b table = Metallic
+b oct = 0
+f1 var = 0.65
+dist mode = hard
+level = 0.654
+
+[Snarl Bass]
+base = _growl
+desc = A snarling growl with a sync warp: the table is synced up as the LFO moves, aggressive and bright.
+a w1 type = sync
+a w1 amt = 0.25
+mod = l1 > a w1 amt : 0.4 aux=m2
+dist drive = 0.4
+level = 0.667
+
+[Robot Vowel]
+base = _growl
+desc = A robotic vowel bass: the Vowel AEIOU table stepped through by a square-ish LFO with a bitcrush warp.
+a table = Vowel AEIOU
+a w1 type = crush
+a w1 amt = 0.35
+l1 smooth = 0.05
+pattern = Stepped 1/8 vowels: "a-e-i-o"; switch with Yoi Talker on every second bar.
+level = 0.608
+
+[Hungry Growl]
+base = _growl
+desc = A hungry, open-mouthed growl that opens slowly across each note - for half-time drops.
+l1 div = 1/4
+l1 shape = saw up
+f1 res = 0.45
+a pos = 0.15
+pattern = Half-time: one note per beat with the growl opening across it.
+auto = m1 rise/high/low; m2 low/wob4/low; m3 mid/high/low
+level = 0.655
+
+[Brostep Roar]
+base = _growl
+desc = A big brostep roar: a unison growl through a ladder filter, OTT and tube distortion, wide on top - loud and full.
+a uni = 0.2667
+a det = 0.2
+f1 type = ladder
+f1 cut = 0.45
+f1 res = 0.45
+f1 mix = 1
+dist drive = 0.45
+ott depth = 0.55
+level = 0.689
+
+[Squelch Wobble]
+base = _growl
+family = wobble
+desc = A classic squelchy wobble: a resonant low-pass opening and closing with the LFO - the original dubstep wob.
+a table = Saw Stack
+a pos = 0.2
+f1 type = lp 24
+f1 cut = 0.5
+f1 res = 0.6
+f1 mix = 1
+l1 shape = sine
+l1 div = 1/8
+mod = l1 > f1 cut : 0.35 aux=m2
+pattern = Wobble rate changes per bar: 1/4, 1/8, 1/8T, 1/16 (ride M7).
+auto = m1 rise/high/low; m2 low/wob8/low; m7 low/step8/low
+switch = wobble
+level = 0.632
+
+[Triplet Wobble]
+base = Squelch Wobble
+desc = A triplet wobble: a ladder filter on 1/8 triplets for the rolling half-time feel.
+l1 div = 1/8T
+f1 type = ladder
+f1 res = 0.5
+level = 0.516
+
+[Slow Wub]
+base = Squelch Wobble
+desc = A slow, heavy wub on quarter notes with the wub table under it - deep half-time wobble.
+l1 div = 1/4
+a table = Wub Sweep
+mod = l1 > a pos : 0.5 aux=m2
+level = 0.562
+
+[Laser Wobble]
+base = Squelch Wobble
+desc = A bright laser wobble: a sync warp that moves with the filter makes each wobble a zap.
+a w1 type = sync
+a w1 amt = 0.3
+mod = l1 > a w1 amt : 0.5 aux=m2
+level = 0.654
+
+[Chainsaw Growl]
+base = _growl
+desc = A buzzing chainsaw growl: the fold-saw table with a fold warp moving on 1/16 notes - raw and saturated.
+a table = Fold Saw
+a w1 type = fold
+a w1 amt = 0.2
+mod = l1 > a w1 amt : 0.3 aux=m2
+l1 div = 1/16
+dist mode = hard
+level = 0.607
+
+[Yoi Screamer]
+base = Yoi Talker
+desc = A screaming yoi: the yoi table an octave up with a sync warp - the high answer to Yoi Talker.
+a oct = +1
+a w2 type = sync
+a w2 amt = 0.15
+range = E2-E3
+
+# ════════════════════════════════════════════ bass: riddim ════════════════════════════════════════════
+level = 0.628
+
+[Hollow Riddim]
+base = _riddim
+desc = A hollow, honking riddim bass: a resonant square through a negative comb, stepped by a choppy LFO - minimal and heavy.
+level = 0.593
+
+[Square Stomp]
+base = _riddim
+desc = A stomping square riddim: the dirty square table, a PWM warp and hard clipping - simple and brutal.
+a table = Dirty Square
+a w1 type = pwm
+a w1 amt = 0.3
+mod = l1 > a w1 amt : 0.4 aux=m2
+dist mode = hard
+dist drive = 0.45
+level = 0.524
+
+[Wonky Riddim]
+base = _riddim
+desc = A wonky, off-grid riddim: triplet steps and a bend warp make it lurch.
+l1 div = 1/16T
+a w1 type = bend+
+a w1 amt = 0.4
+mod = l1 > a w1 amt : 0.4 aux=m2
+level = 0.593
+
+[Crunch Riddim]
+base = _riddim
+desc = A crunchy riddim: a bitcrushed saw table into a downsampling distortion - lo-fi and aggressive.
+a table = Bitcrush Saw
+a pos = 0.5
+dist mode = downsample
+dist drive = 0.35
+dist mix = 0.6
+level = 0.753
+
+[Tearout Gate]
+base = _riddim
+desc = A tearout gate bass: a fold-warped square chopped by the step LFO into the amp - holes in the sound you can feel.
+a w1 type = fold
+a w1 amt = 0.3
+mod = l1 > amp : -0.6 aux=m2
+mod = l1 > a w1 amt : 0.3 aux=m2
+level = 0.680
+
+[Honk Riddim]
+base = _riddim
+desc = A nasal honk: the formant pulse table with a formant filter held on "a" - the honk that cuts through.
+a table = Formant Pulse
+f1 type = formant
+f1 cut = 0.05
+f1 res = 0.6
+f1 mix = 0.7
+f1 key = 0
+level = 0.595
+
+[Pluck Riddim]
+base = _riddim
+desc = A short, plucky riddim: a fast envelope closes each hit - tight 1/16 machine-gun riddim.
+e1 d = 0.45
+e1 s = 0.2
+e2 a = 0
+e2 d = 0.4
+e2 s = 0
+mod = e2 > a pos : 0.4
+
+# ════════════════════════════════════════════ bass: colour ════════════════════════════════════════════
+level = 0.716
+
+[Prism Colour Bass]
+base = _colour
+desc = A bright colour bass: a supersaw chord stack in the bass register with a filter envelope, OTT and a shimmering top - melodic dubstep's sound.
+level = 0.594
+
+[Neon Colour]
+base = _colour
+desc = A neon colour bass: a saw stack plus a pulse layer, hyper chorus and a bright plate - very wide and glossy.
+b table = Pulse Width
+b oct = 0
+b pos = 0.4
+hyp mix = 0.4
+rev plate = on
+level = 0.623
+
+[Liquid Colour]
+base = _colour
+desc = A softer colour bass: rounder tables and a 12 dB filter that wobbles gently - for melodic drops.
+a table = Additive Pad
+a pos = 0.7
+f1 type = lp 12
+dist drive = 0.1
+level = 0.613
+
+[Crystal Colour]
+base = _colour
+desc = A glassy colour bass with a ringing bell octave on top - sparkles over the chord stabs.
+c table = Bell Partials
+c pos = 0.6
+m6 = 0.5
+level = 0.586
+
+[Hyper Colour]
+base = _colour
+desc = An over-the-top colour bass: wide unison, a wider bend range and heavy OTT - for hyperpop and melodic riddim.
+a uni = 0.6
+ott depth = 0.55
+bend range = 0.25
+level = 0.723
+
+[Sunset Colour]
+base = _colour
+desc = A warm sunset colour bass: organ drawbars under the saws, gently driven - for slower melodic bass.
+b table = Organ Drawbars
+b oct = 0
+b pos = 0.7
+f1 cut = 0.5
+
+# ════════════════════════════════════════════ bass: neuro / reese ════════════════════════════════════════════
+level = 0.599
+
+[Classic Reese]
+base = _reese
+desc = The classic reese: two detuned saws beating against each other under a ladder filter - the drum and bass staple.
+level = 0.450
+
+[Dark Reese]
+base = _reese
+desc = A dark, rolling reese with the hollow saw table and a slow phaser - for halftime and neuro.
+f1 cut = 0.38
+m6 = 0.5
+level = 0.549
+
+[Phaser Reese]
+base = _reese
+desc = A reese swept by a phaser and a slowly moving table - wide and alive.
+m6 = 0.7
+mod = l1 > a pos : 0.2
+level = 0.556
+
+[Grit Reese]
+base = _reese
+desc = A distorted reese: diode-driven saws with OTT - aggressive and forward.
+dist mode = diode
+dist drive = 0.45
+ott on = on
+ott depth = 0.45
+level = 0.656
+
+[Neuro Grinder]
+base = _neuro
+desc = A neuro grinder: a ring-modulated table and a comb under a 1/16 LFO - the metallic neuro of modern DnB.
+level = 0.682
+
+[Neuro Snap]
+base = _neuro
+desc = A neuro bass that snaps like a snare at each hit: an FM feedback layer and a fast envelope into the comb.
+e2 a = 0
+e2 d = 0.35
+e2 s = 0
+mod = e2 > f1 cut : 0.3
+level = 0.682
+
+[Tech Neuro]
+base = _neuro
+desc = A tight techy neuro with a quantize warp - digital, stepped grind.
+a w1 type = quantize
+a w1 amt = 0.5
+mod = l1 > a w1 amt : 0.3 aux=m2
+level = 0.681
+
+[Neuro Hoover]
+base = _neuro
+desc = A hoover-flavoured neuro: wide detuned saw octaves with a pitch dip at the start of each note.
+a table = Saw Octaves
+a uni = 0.4
+a det = 0.4
+e3 a = 0
+e3 d = 0.4
+e3 s = 0
+mod = e3 > pitch : -0.05
+
+# ════════════════════════════════════════════ bass: FM / talking ════════════════════════════════════════════
+level = 0.656
+
+[FM Wobbler]
+base = _growl
+family = fm
+desc = An FM wobble bass: oscillator B frequency-modulates A, the FM depth moving with the LFO - glassy and nasty at once.
+a table = Basic Shapes
+a pos = 0
+a w1 type = fm
+a w1 amt = 0.3
+a fm src = b
+b table = Basic Shapes
+b pos = 0
+b oct = 0
+b level = 0
+mod = l1 > a w1 amt : 0.5 aux=m2
+mod = m6 > b fine : 0.3 bi
+f1 type = lp 24
+f1 mix = 1
+f1 cut = 0.6
+switch = fm
+level = 0.571
+
+[Digital FM Bass]
+base = FM Wobbler
+desc = A hard digital FM bass: the FM 2:1 table moved by a phase warp, crushed a little.
+a table = FM 2:1
+a w1 type = pm
+a w1 amt = 0.25
+a w2 type = crush
+a w2 amt = 0.2
+level = 0.520
+
+[FM Growler]
+base = FM Wobbler
+desc = A growling FM bass: the feedback FM table with a formant filter on top - between FM and vowel.
+a table = FM Feedback
+f1 type = formant
+f1 mix = 0.6
+level = 0.511
+
+[Rubber FM]
+base = FM Wobbler
+desc = A rubbery, bouncy FM bass for future bass and bass house: a short envelope on the FM depth.
+e2 a = 0
+e2 d = 0.4
+e2 s = 0.1
+mod = e2 > a w1 amt : 0.4
+genres = future bass, bass house, house, trap
+style = stab8
+level = 0.559
+
+[Talking Vowel Bass]
+base = _growl
+family = talk
+desc = A talking bass that says "a-e-i-o-u": the vowel table and a formant filter walk the vowels with the LFO.
+a table = Vowel AEIOU
+f1 type = formant
+f1 mix = 1
+f1 cut = 0.2
+mod = l1 > f1 cut : 0.6 aux=m2
+switch = talk
+level = 0.615
+
+[Talk Box Bass]
+base = Talking Vowel Bass
+desc = A talk-box bass: the mouth opens and closes on every note (an envelope into the vowel).
+a table = Talk Box
+e2 a = 0.35
+e2 d = 0.55
+e2 s = 0.2
+mod = e2 > a pos : 0.6
+mod = e2 > f1 cut : 0.4
+level = 0.690
+
+[Choir Bass]
+base = Talking Vowel Bass
+desc = A choral "ah-oh" bass for melodic dubstep - human, wide and dark.
+a table = Choir Ah
+a uni = 0.2667
+f1 var = 0.35
+
+# ════════════════════════════════════════════ bass: sub / mid ════════════════════════════════════════════
+level = 0.567
+
+[Clean Sub]
+base = _sub
+desc = A clean sine sub with a touch of harmonics - sits under anything.
+m1 = 0.05
+level = 0.478
+
+[Warm Sub]
+base = _sub
+desc = A warm sub: a sine moving towards a triangle with a little tube drive - audible on phones.
+m1 = 0.35
+dist drive = 0.2
+level = 0.490
+
+[808 Glide]
+base = _sub
+desc = An 808-style sub with a long glide and saturation - for trap and drill bass lines that slide.
+porta = 0.35
+porta mode = always
+e1 d = 0.72
+e1 s = 0.5
+m3 = 0.5
+dist mode = tube
+dist drive = 0.3
+style = slide
+play = Mono, long notes that slide (portamento) between roots an octave or a fifth apart.
+genres = trap, drill, hip hop, future bass, dubstep
+level = 0.377
+
+[Square Sub]
+base = _sub
+desc = A square-ish sub, softly filtered - punchier than a sine for house and garage.
+a pos = 1
+f1 on = on
+f1 type = lp 24
+f1 cut = 0.3
+genres = house, uk garage, bass house, techno
+level = 0.494
+
+[Bass House Wob]
+base = _bass
+family = mid
+desc = A bass house mid-bass: a short, rubbery formant pluck with an organ-like body - bounces on the off-beats.
+genres = bass house, house, uk garage, future house
+range = C2-C3
+style = stab8
+play = Mono, short off-beat 1/8 notes; octave jumps.
+macros = Open|Bounce|Grit|Space|Sub|Vowel|Rate|Width
+notes = M1 opens; M2 the bounce (envelope depth into the vowel); M3 drive; M6 the vowel.
+pattern = Off-beat 1/8 notes with octave jumps every bar.
+auto = m1 rise/high/low; m2 low/high/low; m3 low/mid/low
+switch = mid
+a table = Organ Drawbars
+a pos = 0.6
+f1 on = on
+f1 type = formant
+f1 cut = 0.4
+f1 res = 0.5
+e1 d = 0.5
+e1 s = 0.3
+e2 a = 0
+e2 d = 0.4
+e2 s = 0
+m1 = 0.6
+m2 = 0.6
+mod = m1 > f1 mix : 0.3
+mod = e2 > f1 cut : 0.4 aux=m2
+mod = m3 > dist drive : 0.5
+mod = m6 > f1 var : 0.5 bi
+dist on = on
+dist drive = 0.2
+ott on = on
+ott depth = 0.3
+sub level = 0.3
+level = 0.757
+
+[Future House Bass]
+base = Bass House Wob
+desc = A future house bass: metallic, pitched and bouncy, with a fast pitch dip into each note.
+a table = Metallic
+a pos = 0.4
+e3 a = 0
+e3 d = 0.25
+e3 s = 0
+mod = e3 > pitch : 0.04
+level = 0.758
+
+[Garage Organ Bass]
+base = Bass House Wob
+desc = A UK garage organ bass: warm drawbars, short and swung.
+f1 type = lp 12
+f1 cut = 0.5
+genres = uk garage, house, deep house
+level = 0.743
+
+[Mid Growl]
+base = _growl
+family = mid
+desc = A mid-range growl to layer over a clean sub: no sub of its own, all mids and motion.
+sub on = off
+range = C2-C3
+switch = mid
+level = 0.574
+
+[Rolling DnB Bass]
+base = _reese
+family = mid
+desc = A rolling DnB bass: short reese notes with an envelope on the filter - groovy and tight.
+e1 d = 0.5
+e1 s = 0.6
+e2 a = 0
+e2 d = 0.45
+e2 s = 0
+mod = e2 > f1 cut : 0.3
+style = stab8
+
+# ════════════════════════════════════════════ leads ════════════════════════════════════════════
+level = 0.535
+
+[Neon Supersaw]
+base = _lead
+family = supersaw
+desc = A massive 9-voice supersaw lead with a bright top and a wide hyper chorus - the festival lead.
+a uni = 0.5333
+a det = 0.35
+b on = on
+b table = Saw Stack
+b oct = -1
+b uni = 0.2667
+b level = 0.4
+hyp on = on
+hyp mix = 0.35
+switch = supersaw
+level = 0.915
+
+[Stadium Saw]
+base = Neon Supersaw
+desc = A huge stadium supersaw: 16 voices, an octave-up layer, a long reverb.
+a uni = 1
+c on = on
+c table = Saw Stack
+c oct = +1
+c level = 0.3
+m4 = 0.6
+level = 0.937
+
+[Trance Supersaw]
+base = Neon Supersaw
+desc = A trance supersaw with a dotted delay - the classic uplifting lead.
+genres = trance, progressive house, edm
+m4 = 0.6
+f1 cut = 0.75
+level = 1.000
+
+[Big Room Lead]
+base = Neon Supersaw
+desc = A big room lead: detuned saws an octave apart, a pitch blip and hard drive - short, loud riffs.
+genres = big room, edm, festival trap, hardstyle
+e3 a = 0
+e3 d = 0.3
+e3 s = 0
+mod = e3 > pitch : 0.04
+dist drive = 0.3
+style = stab8
+level = 0.637
+
+[Glass Screech]
+base = _lead
+family = screech
+desc = A glassy screech lead: a mirror-warped screech table (a high formant) under a bright low-pass - for dubstep and riddim leads.
+genres = dubstep, riddim, brostep, drum and bass
+voice mode = mono
+a table = Screech
+a uni = 0.1333
+a w1 type = mirror
+a w1 amt = 0.3
+f1 type = lp 24
+f1 cut = 0.74
+f1 key = 0.3
+f1 res = 0.3
+f1 mix = 0.8
+l2 sync = on
+l2 div = 1/16
+mod = l2 > a w1 amt : 0.3 aux=m2
+m2 = 0.4
+dist on = on
+dist drive = 0.35
+range = C4-C5
+style = stab16
+play = Mono, short screams of 1/16 notes with pitch bends; answer the bass.
+switch = screech
+level = 1.000
+
+[Laser Screech]
+base = Glass Screech
+desc = A laser screech: a pitch envelope dives from above into each note.
+e3 a = 0
+e3 d = 0.4
+e3 s = 0
+mod = e3 > pitch : 0.25
+level = 1.000
+
+[Siren Screech]
+base = Glass Screech
+desc = A siren screech that rises and falls with a slow LFO on the pitch.
+l3 sync = on
+l3 div = 1/2
+mod = l3 > pitch : 0.08 bi
+level = 1.000
+
+[Brass Lead]
+base = _lead
+family = brass
+desc = A synth brass lead: the brass swell table opened by a slow envelope - bold and warm.
+a table = Brass Swell
+a uni = 0.2
+e2 a = 0.45
+e2 d = 0.6
+e2 s = 0.6
+mod = e2 > a pos : 0.6
+mod = e2 > f1 cut : 0.2
+switch = brass
+level = 0.736
+
+[Hard Brass]
+base = Brass Lead
+desc = A hard brass stab lead: a fast swell, drive and OTT - for big room and festival trap.
+e2 a = 0.25
+dist drive = 0.3
+ott on = on
+ott depth = 0.4
+genres = big room, festival trap, edm, dubstep
+level = 0.750
+
+[Pluck Lead]
+base = _lead
+family = pluck lead
+desc = A plucky lead: a quick filter envelope, a short decay and a dotted delay - melodies that ring.
+e1 d = 0.58
+e1 s = 0.35
+e2 a = 0
+e2 d = 0.48
+e2 s = 0.1
+mod = e2 > f1 cut : 0.35
+f1 cut = 0.45
+style = pluck
+level = 1.000
+
+[Chip Lead]
+base = _lead
+family = chip
+desc = A chiptune lead: 8-bit pulses with a fast vibrato - for hyperpop and chip-step.
+a table = Chip Pulse
+a uni = 0
+a pos = 0.3
+l1 delay = 0.3
+m2 = 0.5
+genres = hyperpop, chiptune, kawaii, future bass
+level = 0.784
+
+[Saw Wail]
+base = _lead
+desc = A wailing mono saw lead with portamento and a resonant ladder - singing and expressive.
+voice mode = mono
+a table = Basic Shapes
+a pos = 0.67
+a uni = 0.1333
+f1 type = ladder
+f1 res = 0.35
+porta = 0.25
+m2 = 0.4
+level = 0.705
+
+[Vowel Lead]
+base = _lead
+family = talk
+desc = A talking lead that sings vowels: the formant filter follows the mod wheel and pressure.
+a table = Vowel AEIOU
+a pos = 0.2
+f1 type = formant
+f1 cut = 0.25
+mod = wheel > f1 cut : 0.6
+mod = press > a pos : 0.5
+level = 0.633
+
+[FM Bell Lead]
+base = _lead
+family = bell
+desc = A bright FM bell lead for melodic hooks - a sparkly attack and a singing tail.
+a table = FM 3:2
+a pos = 0.5
+e2 a = 0
+e2 d = 0.55
+e2 s = 0.2
+mod = e2 > a pos : 0.4
+e1 s = 0.5
+e1 d = 0.66
+level = 0.804
+
+[Hoover Lead]
+base = _lead
+desc = A hoover lead: wide, pitch-dipping, detuned saw octaves - rave energy.
+a table = Saw Octaves
+a pos = 0.6
+a uni = 0.5333
+a det = 0.45
+e3 a = 0
+e3 d = 0.42
+e3 s = 0
+mod = e3 > pitch : -0.05
+genres = hardstyle, rave, drum and bass, techno, edm
+
+# ════════════════════════════════════════════ chords ════════════════════════════════════════════
+level = 0.853
+
+[Future Chord Swell]
+base = _chord
+desc = The future-bass chord: a detuned saw and pulse stack that swells open through the filter, wide and sidechained.
+switch = chord
+level = 0.860
+
+[Kawaii Chords]
+base = _chord
+desc = Sweet, bright future-bass chords with a bell octave and a chip pulse layer.
+b table = Chip Pulse
+c table = Bell Partials
+m6 = 0.4
+level = 0.824
+
+[Wobble Chords]
+base = _chord
+desc = Future-bass chords with a filter wobble on 1/8 triplets - the vocal-chop-like chord movement.
+m7 = 0.6
+l1 div = 1/8T
+switch = chord
+level = 0.860
+
+[Supersaw Stab]
+base = _chord
+family = stab
+desc = A short supersaw stab: a plucky envelope, a big unison - for house and progressive chords.
+e1 d = 0.52
+e1 s = 0.2
+e1 r = 0.45
+genres = progressive house, big room, edm, house, trance
+switch = stab
+level = 1.000
+
+[Detroit Stab]
+base = Supersaw Stab
+desc = A dub-techno style chord stab: the organ table, short and filtered, with a delay.
+a table = Organ Drawbars
+a pos = 0.6
+f1 cut = 0.5
+m4 = 0.6
+genres = deep house, techno, house
+level = 1.000
+
+[Vocal Chord]
+base = _chord
+desc = Chords that sing: choir and vowel tables under a formant filter - human, airy chords.
+a table = Choir Ah
+b table = Vowel AEIOU
+f1 type = formant
+f1 cut = 0.1
+f1 mix = 0.5
+level = 0.703
+
+[Glass Chord]
+base = _chord
+desc = Glassy, thin chords: the glass table, high-passed, with a long plate - for melodic intros.
+a table = Glass
+b table = Bell Partials
+f1 type = hp 12
+f1 cut = 0.3
+rev plate = on
+level = 1.000
+
+[Brass Chord Stab]
+base = _chord
+family = brass
+desc = Big brass chord stabs that swell: the brass table opened by the envelope.
+a table = Brass Swell
+e2 a = 0.3
+e2 s = 0.5
+mod = e2 > a pos : 0.6
+switch = stab
+level = 0.675
+
+[Reese Chords]
+base = _chord
+desc = Dark detuned reese chords for melodic DnB and halftime - beating and moody.
+a table = Hollow Saw
+a pos = 0.4
+f1 type = ladder
+f1 cut = 0.5
+genres = drum and bass, halftime, melodic dubstep
+level = 0.788
+
+[Lofi Keys]
+base = _chord
+family = keys
+desc = Soft electric-piano-like chords: the FM 1:1 table, a short decay, a warm filter.
+a table = FM 1:1
+a pos = 0.3
+a uni = 0.1333
+b on = off
+e1 d = 0.7
+e1 s = 0.3
+f1 cut = 0.55
+genres = lofi, chillout, future bass, house
+level = 0.961
+
+[Pluck Chords]
+base = _chord
+desc = Plucked future-bass chords: the chord stack with a short envelope - rhythmic and bright.
+e1 d = 0.5
+e1 s = 0
+e1 r = 0.5
+e2 d = 0.45
+mod = e2 > f1 cut : 0.25
+style = chords
+
+# ════════════════════════════════════════════ plucks ════════════════════════════════════════════
+level = 1.000
+
+[Crystal Pluck]
+base = _pluck
+desc = A crystal pluck: the bright pluck-decay table with a bell octave - the future-bass arp sound.
+switch = pluck
+level = 1.000
+
+[Tropical Pluck]
+base = _pluck
+desc = A marimba-like tropical pluck: FM partials and a short decay.
+a table = FM 2:1
+a pos = 0.3
+b on = off
+e1 d = 0.48
+genres = tropical house, future bass, pop, house
+level = 1.000
+
+[Saw Pluck]
+base = _pluck
+desc = A classic saw pluck: unison saws through a 24 dB filter envelope - progressive house and trance.
+a uni = 0.4
+a det = 0.3
+genres = progressive house, trance, edm, big room
+level = 1.000
+
+[Kalimba Pluck]
+base = _pluck
+desc = A soft kalimba-like pluck from glass partials - gentle and wooden.
+a table = Glass
+a pos = 0.1
+a level = 1
+b on = off
+f1 type = lp 12
+level = 1.000
+
+[Chip Pluck]
+base = _pluck
+desc = An 8-bit pluck: duty-cycle pulses, very short - for hyperpop arps.
+a table = Chip Pulse
+a pos = 0.5
+a uni = 0
+f1 on = off
+genres = hyperpop, chiptune, kawaii
+level = 1.000
+
+[Water Pluck]
+base = _pluck
+desc = A watery pluck: a phaser filter and a pitch drop make each note a drop of water.
+f1 type = phaser
+f1 res = 0.6
+e3 a = 0
+e3 d = 0.3
+e3 s = 0
+mod = e3 > pitch : 0.04
+level = 1.000
+
+[Formant Pluck]
+base = _pluck
+desc = A vocal pluck: the formant pulse table opened by the envelope - like a chopped vocal.
+a table = Formant Pulse
+mod = e2 > a pos : 0.6
+level = 1.000
+
+[Deep Pluck]
+base = _pluck
+desc = A deep pluck for the low mids: a short body that works as a bass pluck in future bass and house.
+range = C2-C4
+a oct = -1
+sub on = on
+sub level = 0.4
+genres = future bass, house, bass house
+
+# ════════════════════════════════════════════ pads ════════════════════════════════════════════
+level = 1.000
+
+[Aurora Pad]
+base = _pad
+desc = An evolving pad: additive and vowel tables drifting under two slow LFOs in a long hall - ambient and lush.
+switch = pad
+level = 0.788
+
+[Wide Supersaw Pad]
+base = _pad
+desc = A wide supersaw pad with a slow attack - a big soft wall behind breakdowns.
+a table = Saw Stack
+a uni = 0.6
+a det = 0.35
+f1 cut = 0.55
+level = 1.000
+
+[Glass Choir Pad]
+base = _pad
+desc = A glassy choir pad: choir and glass tables, airy noise and a shimmer octave.
+a table = Choir Ah
+b table = Glass
+m5 = 0.3
+m6 = 0.4
+level = 0.847
+
+[Dark Drone Pad]
+base = _pad
+desc = A dark, slowly moving drone pad for intros and tension - low and wide.
+a table = Hollow Saw
+f1 cut = 0.4
+range = C2-C4
+genres = dubstep, drum and bass, ambient, techno
+level = 0.898
+
+[Breathing Pad]
+base = _pad
+desc = A pad that breathes: the level and the filter swell slowly with a sine LFO.
+mod = l1 > amp : -0.3 aux=m2
+mod = l1 > f1 cut : 0.15 aux=m2
+level = 0.789
+
+[Digital Pad]
+base = _pad
+desc = A digital, stepped pad: spectral noise and quantized tables - modern and glitchy.
+a table = Spectral Noise
+b table = Digital Steps
+l2 shape = s&h
+level = 0.789
+
+[Organ Pad]
+base = _pad
+desc = A drawbar organ pad with a slow chorus - warm and gospel-tinged for future bass.
+a table = Organ Drawbars
+b on = off
+level = 1.000
+
+[Shimmer Pad]
+base = _pad
+desc = A shimmering pad: bell partials an octave up over a soft saw, long plate reverb and a slow pan.
+a table = Bell Partials
+a pos = 0.7
+m6 = 0.6
+rev plate = on
+
+# ════════════════════════════════════════════ fx ════════════════════════════════════════════
+level = 0.837
+
+[Noise Riser]
+base = _fx
+desc = A white-noise riser: band-passed noise and a detuned stack climbing as M1 goes up - automate M1 across the build.
+switch = riser
+level = 1.000
+
+[Pitch Riser]
+base = _fx
+desc = A pitch riser: a supersaw climbing two octaves with a flutter that speeds up.
+noise level = 0.2
+m5 = 0.2
+mod = m1 > l1 rate : 0.4
+level = 1.000
+
+[Siren FX]
+base = _fx
+desc = A siren: a sync-saw tone wailing up and down with a slow LFO - for builds and drops.
+a table = Sync Saw
+l2 sync = on
+l2 div = 1/2
+mod = l2 > pitch : 0.2 bi
+noise level = 0
+level = 1.000
+
+[Impact Drop]
+base = _fx
+desc = A downlifter impact: a big noisy stack that falls in pitch as it decays - play it on the downbeat of the drop.
+e1 a = 0
+e1 d = 0.8
+e1 s = 0
+e2 a = 0
+e2 d = 0.75
+e2 s = 0
+mod = e2 > pitch : 0.4
+mod = e2 > f1 cut : 0.4
+m1 = 0.5
+auto = m1 high/high/high; m4 high/high/high
+level = 1.000
+
+[Laser Zap]
+base = _fx
+desc = A laser zap: a fast pitch dive from high into the note - for fills and drops.
+e1 a = 0
+e1 d = 0.62
+e1 s = 0
+e3 a = 0
+e3 d = 0.38
+e3 s = 0
+mod = e3 > pitch : 1
+noise level = 0
+f1 type = lp 24
+f1 cut = 0.85
+level = 1.000
+m1 = 0.5
+style = stab8
+auto = m1 mid/mid/mid
+
+[White Wash]
+base = _fx
+desc = A white-noise wash: filtered noise swelling and falling with a long reverb - for transitions out of a drop.
+a on = off
+noise level = 0.9
+f1 type = lp 12
+m5 = 1
+level = 1.000
+
+[Glitch Burst]
+base = _fx
+desc = A glitchy stutter: digital noise and a crushed table chopped by a 1/32 LFO - fills before the drop.
+a table = Digital Steps
+a w1 type = crush
+a w1 amt = 0.5
+noise type = digital
+l1 div = 1/32
+m2 = 0.9
+style = stab16
+auto = m1 rise/mid/low; m2 high/high/low
+level = 0.659
+

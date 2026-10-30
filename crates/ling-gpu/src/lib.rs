@@ -14,7 +14,9 @@
 use std::sync::OnceLock;
 
 mod cpu;
-#[cfg(feature = "cuda")]
+// The CUDA backend is never built for aarch64 (Raspberry Pi 5 and other ARM boards): no NVIDIA driver there, and the Pi
+// builds must stay pure CPU, so even `--features cuda` is a no-op on that architecture.
+#[cfg(all(feature = "cuda", not(target_arch = "aarch64")))]
 mod cuda;
 
 /// Camera parameters for [`Backend::project_points`] — mirrors
@@ -32,6 +34,20 @@ pub struct CameraParams {
     pub tx: f32,
     pub ty: f32,
     pub tz: f32, // camera world position
+}
+
+/// One frame of flat-coloured triangles for [`Backend::raster_tris`] (used by the LingModeler viewport).
+#[derive(Clone, Copy)]
+pub struct RasterScene<'a> {
+    /// screen position of the target's top-left pixel
+    pub x0: f32,
+    pub y0: f32,
+    pub width: usize,
+    pub height: usize,
+    /// per triangle, 3 corners x (screen x, screen y, 1/camera depth) = 9 floats, counter-clockwise or clockwise alike
+    pub tris: &'a [f32],
+    /// one 0xRRGGBB colour per triangle (already shaded). A later triangle wins an exact depth tie.
+    pub colors: &'a [u32],
 }
 
 /// A compute device. Implementations must be cheap to share (`Send + Sync`).
@@ -57,6 +73,13 @@ pub trait Backend: Send + Sync {
     /// Batch perspective projection. `world` is interleaved xyz (len `3*n`);
     /// `out` receives interleaved (screen_x, screen_y, camera_depth) (len `3*n`).
     fn project_points(&self, world: &[f32], cam: &CameraParams, out: &mut [f32]);
+
+    /// Depth-buffered triangle rasterisation. `out` (len `width*height`) receives `0xFF000000 | rgb` for every pixel a
+    /// triangle covers (the nearest one, by 1/depth) and `0` where nothing was drawn. Exact z-buffer: faces of
+    /// different objects occlude each other per pixel, so no draw-order sorting is needed. Default: software z-buffer.
+    fn raster_tris(&self, scene: &RasterScene, out: &mut [u32]) {
+        cpu::raster_cpu(scene, out);
+    }
 }
 
 /// Partition `n` output rows into `k` contiguous, near-equal `[lo, hi)` ranges
@@ -65,7 +88,7 @@ pub trait Backend: Send + Sync {
 /// equal speed finishing at the same time. With `k == 0` (or `1`) the whole
 /// range is returned as a single chunk; when `n < k` the trailing ranges are
 /// empty (`lo == hi`), which the kernels treat as a no-op.
-#[cfg(any(feature = "cuda", test))]
+#[cfg(any(all(feature = "cuda", not(target_arch = "aarch64")), test))]
 pub(crate) fn split_ranges(n: usize, k: usize) -> Vec<(usize, usize)> {
     let k = k.max(1);
     let base = n / k;
@@ -85,8 +108,12 @@ pub(crate) fn split_ranges(n: usize, k: usize) -> Vec<(usize, usize)> {
 pub fn backend() -> &'static dyn Backend {
     static B: OnceLock<Box<dyn Backend>> = OnceLock::new();
     let b = B.get_or_init(|| {
-        #[cfg(feature = "cuda")]
+        #[cfg(all(feature = "cuda", not(target_arch = "aarch64")))]
         {
+            // LING_NO_GPU=1 forces the CPU path (diagnostics, or a machine where the GPU is busy)
+            if std::env::var("LING_NO_GPU").map(|v| v != "0" && !v.is_empty()).unwrap_or(false) {
+                return Box::new(cpu::CpuBackend::new()) as Box<dyn Backend>;
+            }
             // Prefer every visible CUDA device (e.g. dual RTX 4090); the
             // multi-GPU backend collapses to a single device when only one is
             // present, and to the CPU when none initialise.

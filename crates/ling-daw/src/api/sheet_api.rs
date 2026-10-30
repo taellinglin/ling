@@ -149,6 +149,14 @@ impl Daw {
                 self.sheet_gen += 1;
                 // one file per page, rewritten whenever that page is drawn again
                 let file = std::env::temp_dir().join(format!("lsx_sheet_{}_p{}.png", std::process::id(), pg));
+                // a browser cannot load a picture (image_load is -1 there) and has no files to save one to: the page is drawn from
+                // daw_sheet_geo, so only its size is needed
+                #[cfg(target_arch = "wasm32")]
+                let (w, h) = {
+                    let _ = (&svg, &fdir);
+                    (width, (width as f64 * if o.landscape { 990.0 / 1400.0 } else { 1400.0 / 990.0 }).ceil() as u32)
+                };
+                #[cfg(not(target_arch = "wasm32"))]
                 let (w, h) = match render_png(&svg, width, &fdir, &file) {
                     Ok(x) => x,
                     Err(e) => {

@@ -201,6 +201,56 @@ impl Interpreter {
         let n = |i: usize| Self::num(args, i, 0.0);
         let unit = Some(Ok(Value::Unit));
         match name {
+            // px_lines(ea, eb, px, py, pd, colour, alpha, esel, sel_colour): a whole mesh's edges in one call. Edges with
+            // an end behind the near plane (pd <= 0.05) are skipped; edges flagged in esel get a doubled highlight line.
+            "px_lines" => {
+                let fl = |v: Option<&Value>| -> Vec<f64> {
+                    match v {
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n } else { 0.0 }).collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                let (ea, eb, px, py, pd, esel) = (fl(args.first()), fl(args.get(1)), fl(args.get(2)), fl(args.get(3)), fl(args.get(4)), fl(args.get(7)));
+                let (col, alpha, scol) = (n(5), n(6), n(8));
+                let num = Value::Number;
+                for i in 0..ea.len().min(eb.len()) {
+                    let (a, b) = (ea[i] as usize, eb[i] as usize);
+                    if a >= px.len() || b >= px.len() || pd[a] <= 0.05 || pd[b] <= 0.05 {
+                        continue;
+                    }
+                    if i < esel.len() && esel[i] > 0.5 {
+                        self.px_builtin("px_line", &[num(px[a]), num(py[a]), num(px[b]), num(py[b]), num(scol), num(1.0)]);
+                        self.px_builtin("px_line", &[num(px[a] + 1.0), num(py[a]), num(px[b] + 1.0), num(py[b]), num(scol), num(0.6)]);
+                    } else {
+                        self.px_builtin("px_line", &[num(px[a]), num(py[a]), num(px[b]), num(py[b]), num(col), num(alpha)]);
+                    }
+                }
+                unit
+            }
+            // px_dots(px, py, pd, vsel, active, colour, sel_colour, active_colour): vertex markers for a whole mesh
+            "px_dots" => {
+                let fl = |v: Option<&Value>| -> Vec<f64> {
+                    match v {
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n } else { 0.0 }).collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                let (px, py, pd, vsel) = (fl(args.first()), fl(args.get(1)), fl(args.get(2)), fl(args.get(3)));
+                let (act, col, scol, acol) = (n(4), n(5), n(6), n(7));
+                let num = Value::Number;
+                for i in 0..px.len().min(py.len()).min(pd.len()) {
+                    if pd[i] <= 0.05 {
+                        continue;
+                    }
+                    if i < vsel.len() && vsel[i] > 0.5 {
+                        let c = if i as f64 == act { acol } else { scol };
+                        self.px_builtin("px_rect", &[num(px[i] - 2.0), num(py[i] - 2.0), num(5.0), num(5.0), num(c)]);
+                    } else {
+                        self.px_builtin("px_rect", &[num(px[i] - 1.0), num(py[i] - 1.0), num(3.0), num(3.0), num(col)]);
+                    }
+                }
+                unit
+            }
             "px_text" => {
                 // px_text(font, x, y, size, colour, text [, crisp]) — anti-aliased, honours px_clip; crisp > 0 sharpens the edge coverage
                 // (soft grey fringes pushed to clear or solid) so small labels stay legible

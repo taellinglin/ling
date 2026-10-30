@@ -2,9 +2,13 @@
 //!
 //! The vocal is a track: an audio track made by SingTTS / Voice Skin (its source MIDI part, still in the project, says which syllable
 //! starts where), a Ling Voice track (bounced alone to a WAV next to the project), or any audio (cut at its transients). The cutting
-//! and the arrangement are `chops.rs` (`Vocal::from_notes`, `compose_edm`); this file reads the project, writes the sampler tracks
-//! (one sampler zone holds the whole vocal, a note's lyric "@start:end:cents" plays a slice), the Vox Filter lane of the builds and
-//! the sidechain from the kick.
+//! and the arrangement are `chops.rs` (`Vocal::from_notes`, `compose_edm`); this file reads the project, writes the chop tracks -
+//! Ling Slicer kits (chops/kit.rs: one slice per key, every syllable the arrangement plays, tuned by the Slicer to the chords at
+//! the beat each note plays; [`Daw::chops_on_slicer`]), or with `slicer=0` the Sampler tracks of old (one zone holds the whole
+//! vocal, a note's lyric "@start:end:cents" plays a slice; projects that have them still load and play them) - the Vox Filter
+//! lane of the builds and the sidechain from the kick. The production edits (chops/edits.rs, option `edits=`) are planned over
+//! the song's sections and put on the composed chops; their risers, pads, gates, doubles and ear candy play on a third track,
+//! "Vocal Chops edits", their sweeps and throws are lanes on the chop tracks.
 use super::{Daw, A, Val};
 use crate::chops as ch;
 use crate::model::*;
@@ -176,6 +180,56 @@ fn is_vocal(en: &crate::engine::Engine, i: usize) -> bool {
 }
 
 impl Daw {
+    /// The chop tracks `tracks` (notes with Sampler slice lyrics over the bank `file`, laid out as `lay` says) moved onto Ling Slicer
+    /// kits of `file` (chops/kit.rs), tuned by the Slicer in the chops' tuning mode on the song's harmony (read as the Slicer reads
+    /// it: every harmonic track but the chops), then synced (the shifted slices rendered ahead). -> (slices, notes, variants merged)
+    pub(super) fn chops_on_slicer(&mut self, tracks: &[usize], file: &str, lay: &ch::kit::Layout, tune: &ch::Tune) -> (usize, usize, usize) {
+        let sr = self.out.sr;
+        let Ok((st, rate)) = crate::dsp::sampler::load_audio(file) else { return (0, 0, 0) };
+        let mono = crate::dsp::slicer::mono_of(&st);
+        let mode = ch::kit::tune_mode(tune);
+        let mut tot = (0usize, 0usize, 0usize);
+        {
+            let mut en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
+            // the chop tracks are Slicers from here on: none of them is harmony for the others
+            for t in tracks {
+                if let Some(tr) = en.project.tracks.get_mut(*t) {
+                    tr.inst_kind = "slicer".into();
+                }
+            }
+            for t in tracks {
+                let tl = crate::dsp::slicer::timeline(&super::slicer_api::harmony_for(&en.project, *t, 0), 4.0);
+                let Some(tr) = en.project.tracks.get_mut(*t) else { continue };
+                let notes: Vec<(f64, Note)> = tr.clips.iter().flat_map(|c| match &c.data {
+                    ClipData::Midi(ns) => ns.iter().map(|n| (c.start + n.start, n.clone())).collect::<Vec<_>>(),
+                    _ => vec![],
+                }).collect();
+                let input: Vec<(f64, &Note)> = notes.iter().map(|(b, n)| (*b, n)).collect();
+                let kit = ch::kit::build(&input, lay, &mono, rate, &tl, mode, ch::kit::ROOT);
+                let mut k = 0usize;
+                for c in tr.clips.iter_mut() {
+                    let ClipData::Midi(ns) = &mut c.data else { continue };
+                    let mut keep: Vec<Note> = vec![];
+                    for n in ns.drain(..) {
+                        if let Some(key) = kit.keys.get(k).copied().flatten() {
+                            keep.push(Note { key, lyric: String::new(), ..n });
+                        }
+                        k += 1;
+                    }
+                    *ns = keep;
+                }
+                tot.0 += kit.slices.len();
+                tot.1 += kit.keys.iter().flatten().count();
+                tot.2 += kit.merged;
+                tr.inst = Some(Box::new(crate::dsp::slicer::Slicer::with_slices(sr, file, kit.slices, &ch::kit::params(mode))));
+            }
+        }
+        for t in tracks {
+            let _ = self.slc_sync(*t);
+        }
+        tot
+    }
+
     pub(super) fn chopx_dispatch(&mut self, name: &str, a: &A) -> Result<Val, String> {
         let eng = self.out.engine.clone();
         macro_rules! ok {
@@ -242,11 +296,21 @@ impl Daw {
             }
             "daw_chopx_make" => {
                 // (vocal track, options "density=0.6;stutter=0.5;build=dj|stutter|off;sections=auto|all|chorus,drop;layer=1;reverse=1;dry=1;
-                //  riser=0;duck=0.4;seed=1;tune=off|key|chords|fine;tunefine=0..1;tunemax=5") -> a sentence about what was made, or ""
-                //  (the status line says why)
+                //  riser=0;duck=0.4;seed=1;tune=off|key|chords|fine;tunefine=0..1;tunemax=5;genre=<the song's>;slicer=1;
+                //  edits=auto|light|more|off|<list: swell,tapestop,...>") -> a sentence about what was made, or "" (the status line says
+                //  why). slicer=0: the chops on Sampler tracks, as before Ling Slicer.
+                //  An option this build does not know is ignored (Opt only looks up the keys it reads).
                 let t = a.u(0);
                 let o = Opt::parse(&a.s(1));
                 let seed = o.f("seed", 1.0).max(0.0) as u64;
+                let on_slicer = o.b("slicer", true);
+                let genre = match o.s("genre") {
+                    Some(g) if !g.is_empty() => g.to_string(),
+                    _ => {
+                        let en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                        en.project.meta.iter().find(|(k, _)| k == "ai.genre").map(|(_, v)| v.clone()).unwrap_or_default()
+                    }
+                };
                 let edm = ch::Edm {
                     density: o.f("density", 0.6).clamp(0.0, 1.0),
                     stutter: o.f("stutter", 0.5).clamp(0.0, 1.0),
@@ -256,8 +320,10 @@ impl Daw {
                     dry: o.b("dry", true),
                     riser: o.b("riser", false),
                     tune: ch::Tune::parse(o.s("tune").unwrap_or("fine"), o.s("tunefine").and_then(|v| v.parse().ok()), o.s("tunemax").and_then(|v| v.parse().ok())),
+                    genre: genre.clone(),
                 };
                 let which = o.s("sections").unwrap_or("auto").to_string();
+                let edits = ch::edits::Which::parse(o.s("edits").unwrap_or("auto"));
                 let duck = o.f("duck", 0.4).clamp(0.0, 1.0);
                 let sr = self.out.sr;
                 // ── the vocal: audio and, when known, its syllables ──
@@ -385,6 +451,11 @@ impl Daw {
                     ok!("")
                 }
                 let mut bank = vocal.add_reverse(&src.stereo);
+                // on the Slicer a reversed chop is the slice played backwards: the file is the recording alone
+                let lay = ch::kit::Layout::of_vocal(&vocal, (src.stereo.len() / 2) as u32);
+                if on_slicer {
+                    bank.truncate(src.stereo.len());
+                }
                 // a quiet recording (a bounced voice) is brought up to a healthy level so the chops sit in the mix
                 let peak = bank.iter().fold(0.0f32, |m, x| m.max(x.abs()));
                 if peak > 1e-4 && peak < 0.7 {
@@ -403,6 +474,11 @@ impl Daw {
                     len: f64,
                     tag: String,
                     out: ch::EdmOut,
+                    sec: usize,
+                    only_swell: bool,
+                    drums: Vec<Note>,
+                    harm: Vec<Note>,
+                    fx: Vec<Note>,
                 }
                 let mut parts: Vec<Part> = vec![];
                 for (i, (s, e, tag)) in secs.iter().enumerate() {
@@ -452,19 +528,60 @@ impl Daw {
                         only_swell,
                     });
                     if !out.main.is_empty() {
-                        parts.push(Part { start: *s, len, tag: tag.clone(), out });
+                        parts.push(Part { start: *s, len, tag: tag.clone(), out, sec: i, only_swell, drums: d, harm: h, fx: vec![] });
                     }
                 }
                 if parts.is_empty() {
                     self.status = "Vocal chops: no section to put chops in (tag the sections on the ruler, or choose \"all\")".into();
                     ok!("")
                 }
+                // ── the production edits: planned over the song's sections, put on each section's chops ──
+                let (mut sweeps, mut throws, mut used): (Vec<(f64, f64)>, Vec<(f64, f64)>, Vec<ch::edits::Kind>) = (vec![], vec![], vec![]);
+                if edits.on {
+                    let content = ch::edits::Content::of(&vocal, on_slicer, 1);
+                    let spots: Vec<ch::edits::Spot> = secs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (s, e, tag))| {
+                            let p = parts.iter().find(|p| p.sec == i);
+                            let build = p.map(|p| !p.out.stages.is_empty()).unwrap_or(false);
+                            ch::edits::Spot { tag: tag.clone(), beats: e - s, energy: sec_energy[i], chopped: p.map(|p| !p.only_swell).unwrap_or(false), song: 0, build, swell: p.map(|p| p.out.swells > 0).unwrap_or(false), riser: build && edm.riser, sings: false }
+                        })
+                        .collect();
+                    let eplan = ch::edits::plan(&spots, &genre, &edits, &content, seed);
+                    // how many sections of each role came before (the edits vary with the repeats)
+                    let mut nth = [0usize; 4];
+                    for p in parts.iter_mut() {
+                        let ri = ch::role_of(&p.tag) as usize;
+                        let k = nth[ri];
+                        if !p.only_swell {
+                            nth[ri] += 1;
+                        }
+                        let kinds = &eplan[p.sec];
+                        if kinds.is_empty() {
+                            continue;
+                        }
+                        let next_hot = secs.get(p.sec + 1).map(|n| ch::role_of(&n.2) == ch::Role::Hot).unwrap_or(false);
+                        let at = ch::edits::At { beats: p.len, key, energy: sec_energy[p.sec], drums: &p.drums, harmony: &p.harm, vocal: &vocal, tune: edm.tune, genre: &genre, bpm: src.bpm, seed: seed.wrapping_mul(977).wrapping_add(p.sec as u64), silence: p.out.silence, slicer: on_slicer, next_hot, nth: k };
+                        let eo = ch::edits::apply(&at, kinds, &mut p.out.main, &mut p.out.layer);
+                        sweeps.extend(eo.sweeps.iter().map(|(a, b)| (p.start + a, p.start + b)));
+                        throws.extend(eo.throws.iter().map(|(a, b)| (p.start + a, p.start + b)));
+                        p.fx = eo.fx;
+                        used.extend(eo.used);
+                    }
+                }
                 // ── the tracks ──
                 let cfg = ch::config(&file_s);
                 let json = serde_json::to_string(&cfg).unwrap_or_default();
                 let any_layer = parts.iter().any(|p| !p.out.layer.is_empty());
+                let any_fx = parts.iter().any(|p| !p.fx.is_empty());
                 let mut tracks: Vec<usize> = vec![];
-                for nm in [format!("Vocal Chops · {}", src.name), format!("Vocal Chops layer · {}", src.name)].into_iter().take(if any_layer { 2 } else { 1 }) {
+                // what each track plays: 0 the chops, 1 their layer, 2 the edits
+                let mut plays: Vec<usize> = vec![];
+                for (k, nm) in [format!("Vocal Chops · {}", src.name), format!("Vocal Chops layer · {}", src.name), format!("Vocal Chops edits · {}", src.name)].into_iter().enumerate() {
+                    if (k == 1 && !any_layer) || (k == 2 && !any_fx) {
+                        continue;
+                    }
                     let n = match self.dispatch("daw_track_add", &A(&[Val::Str("sampler".into()), Val::Str(String::new())])) {
                         Ok(Val::Num(x)) if x >= 0.0 => x as usize,
                         _ => {
@@ -474,6 +591,7 @@ impl Daw {
                     };
                     let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(n as f64), Val::Str(nm)]));
                     tracks.push(n);
+                    plays.push(k);
                 }
                 let mut summary_builds = 0usize;
                 {
@@ -483,11 +601,15 @@ impl Daw {
                             if let Some(tr) = en.project.tracks.get_mut(*tk) {
                                 tr.inst = Some(Box::new(smp));
                                 tr.inst_kind = "sampler".into();
-                                tr.volume = if ti == 0 { 0.85 } else { 0.55 };
+                                tr.volume = [0.85, 0.55, 0.5][plays[ti]];
                             }
                         }
                         for p in &parts {
-                            let notes = if ti == 0 { &p.out.main } else { &p.out.layer };
+                            let notes = match plays[ti] {
+                                0 => &p.out.main,
+                                1 => &p.out.layer,
+                                _ => &p.fx,
+                            };
                             if notes.is_empty() {
                                 continue;
                             }
@@ -528,6 +650,25 @@ impl Daw {
                         }
                     }
                 }
+                // the chops on Ling Slicer kits, tuned by it to the song's harmony
+                let kit = if on_slicer { Some(self.chops_on_slicer(&tracks, &file_s, &lay, &edm.tune)) } else { None };
+                // the edits' sound: the edits track's filter and reverb, the sweeps on every chop track, the throws on the chops
+                if !used.is_empty() {
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    let bpm = en.project.bpm;
+                    for (ti, tk) in tracks.iter().enumerate() {
+                        let Some(tr) = en.project.tracks.get_mut(*tk) else { continue };
+                        if plays[ti] == 2 {
+                            ch::edits::dress_fx_track(tr, sr);
+                        }
+                        if !sweeps.is_empty() {
+                            ch::edits::add_sweeps(tr, &sweeps);
+                        }
+                        if plays[ti] == 0 {
+                            ch::edits::add_throws(tr, &throws, bpm, &genre, sr);
+                        }
+                    }
+                }
                 // the kick ducks the chops
                 let kick_track = {
                     let en = eng.lock().unwrap_or_else(|p| p.into_inner());
@@ -539,7 +680,7 @@ impl Daw {
                     }
                 }
                 self.touch();
-                let notes: usize = parts.iter().map(|p| p.out.main.len() + p.out.layer.len()).sum();
+                let notes: usize = parts.iter().map(|p| p.out.main.len() + p.out.layer.len() + p.fx.len()).sum();
                 let stutters: usize = parts.iter().map(|p| p.out.stutters).sum();
                 let swells: usize = parts.iter().map(|p| p.out.swells).sum();
                 let hook = vocal.hook_text();
@@ -561,8 +702,16 @@ impl Daw {
                     )
                 };
                 let stage_text = parts.iter().find(|p| !p.out.stages.is_empty()).map(|p| p.out.stages.iter().map(|s| if s.len >= 4.0 { "1".to_string() } else { format!("1/{}", (4.0 / s.len).round()) }).collect::<Vec<_>>().join(" > ")).unwrap_or_default();
+                let kit_text = match kit {
+                    Some((sl, _, merged)) => format!("; on Ling Slicer: {sl} slices from C2 up (a key each){}", if merged > 0 { format!(" ({merged} rare variants share a neighbour's key)") } else { String::new() }),
+                    None => "; on a Sampler".to_string(),
+                };
+                let edit_text = match ch::edits::tally(&used) {
+                    t if t.is_empty() => String::new(),
+                    t => format!("; edits: {t}"),
+                };
                 let msg = format!(
-                    "Vocal chops: {} syllables / {} words of {} ({}); hook: \"{}\"; {} notes in {} sections ({} builds{}), {} stutters, {} reverse swells, key {}{}",
+                    "Vocal chops: {} syllables / {} words of {} ({}); hook: \"{}\"; {} notes in {} sections ({} builds{}), {} stutters, {} reverse swells, key {}{}{}{}",
                     vocal.pieces.len(),
                     vocal.words.len(),
                     src.name,
@@ -575,7 +724,9 @@ impl Daw {
                     stutters,
                     swells,
                     crate::theory::Key { tonic: key.0, minor: key.1 }.name(),
-                    tune_text
+                    tune_text,
+                    kit_text,
+                    edit_text
                 );
                 self.status = msg.clone();
                 ok!(msg)

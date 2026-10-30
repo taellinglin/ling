@@ -132,9 +132,12 @@ mod songan_api;
 mod medley_api;
 mod arrange_api;
 mod chops_api;
+mod slicer_api;
 mod recipe_api;
+mod nova_api;
 mod wt_api;
 mod noteexpr_api;
+mod import_api;
 
 /// The patch file a role table's (plugin, name) means, for the sound catalogue.
 pub fn song_find_patch(kind: &str, name: &str) -> Option<String> {
@@ -333,6 +336,12 @@ impl Daw {
         }
         if name.starts_with("daw_vox_") {
             return self.vox_dispatch(name, a);
+        }
+        if name.starts_with("daw_slc_") {
+            return self.slc_dispatch(name, a);
+        }
+        if name.starts_with("daw_imp_") {
+            return self.imp_dispatch(name, a);
         }
         if name.starts_with("daw_mix_") {
             return self.mix_dispatch(name, a);
@@ -1067,6 +1076,8 @@ impl Daw {
             "daw_project_path" => ok!(self.path.clone()),
             // ── transport ──
             "daw_play" => {
+                // the Ling Slicers read the song's harmony and render their tuned slices before the first note
+                self.slc_sync_all();
                 e!().play();
                 Ok(Val::Unit)
             }
@@ -1369,14 +1380,16 @@ impl Daw {
                 match crate::midi_import::parse_any(&a.s(0), &data) {
                     Ok(m) => {
                         let reply = crate::ai_import::parse_reply(&a.s(1));
-                        let c = crate::ai_import::choose_for(&m, &reply, &a.s(2));
+                        // optional seed: the Nova presets and the guessed parts roll by it (0 = the first of each)
+                        let c = crate::ai_import::choose_seeded(&m, &reply, &a.s(2), if a.0.len() > 3 { a.n(3).abs() as u64 } else { 0 });
                         ok!(Val::List(c.into_iter().flat_map(|c| [Val::Num(c.part as f64), Val::Str(c.plugin), Val::Str(c.patch), Val::Str(c.why)]).collect()))
                     }
                     Err(_) => ok!(Val::List(vec![])),
                 }
             }
             "daw_ai_example" => ok!(Val::List({
-                let (q, a) = crate::ai_import::example();
+                // optional genre: the club genres get a bass-music example (the roles Ling Nova plays)
+                let (q, a) = crate::ai_import::example_for(&a.s(0));
                 vec![Val::Str(q), Val::Str(a)]
             })),
             "daw_ai_genre_prompt" => {
@@ -1525,6 +1538,23 @@ impl Daw {
                         }
                     }
                 }
+                // more choices (the import catalogue, soundcat.rs): "recipe:<id>" (a sound recipe's instrument, chain, mix and automation),
+                // "smpfile:<file>" (one sample played across the keys in a Sampler), "smpkit:<folder>" (a drum part as a Sampler kit: each
+                // General MIDI drum key gets the folder's sample for that drum; "" = the sample folders); the genre for the recipes: arg 6
+                let genre_arg = a.s(5).trim().to_lowercase();
+                let is_new = |c: &str| c.starts_with("recipe:") || c.starts_with("smpfile:") || c.starts_with("smpkit:");
+                let mut smp_kits: HashMap<usize, Vec<(u8, String)>> = HashMap::new();
+                for (ti, c) in choices.iter().enumerate() {
+                    let Some(dir) = c.strip_prefix("smpkit:") else { continue };
+                    let Some(it) = mid.tracks.get(ti) else { continue };
+                    let roots: Vec<String> = if dir.trim().is_empty() { self.smp_roots.split('|').map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect() } else { vec![dir.trim().to_string()] };
+                    let mut keys: Vec<u8> = it.notes.iter().map(|n| n.key).collect();
+                    keys.sort_unstable();
+                    keys.dedup();
+                    smp_kits.insert(ti, smp_api::kit_from_folders(&roots, &keys));
+                }
+                // the recipes to put on the parts once their tracks exist: (track, recipe id)
+                let mut recipe_parts: Vec<(usize, String)> = vec![];
                 // audio parts (FL Studio audio clips / sample channels): decode the samples before taking the engine lock
                 let mut loaded: HashMap<String, Arc<Sample>> = HashMap::new();
                 for it in &mid.tracks {
@@ -1576,6 +1606,15 @@ impl Daw {
                     } else if let Some(kind) = choice.strip_prefix("kind:") {
                         // a plugin with its default sound
                         Some(patch::Patch { kind: kind.to_string(), name: String::new(), ..Default::default() })
+                    } else if let Some(id) = choice.strip_prefix("recipe:") {
+                        // the recipe's instrument for now; the whole recipe goes on once the track exists (below)
+                        let inst = crate::recipes::library().get(id).filter(|r| !r.is_master()).map(|r| r.instrument.clone());
+                        if inst.is_none() {
+                            self.status = format!("No sound recipe '{id}' - using the default sound");
+                        }
+                        inst.map(|k| patch::Patch { kind: k, name: String::new(), ..Default::default() })
+                    } else if is_new(&choice) {
+                        None
                     } else {
                         match std::fs::read_to_string(&choice) {
                             Ok(text) => Some(patch::parse(&text)),
@@ -1643,7 +1682,23 @@ impl Daw {
                             sampler_inst = Some(b);
                         }
                     }
-                    let sf_path: String = if let Some(p) = choice.strip_prefix("sf2:") { p.to_string() } else if choice == "gm" || own { String::new() } else { self.gm_sf2.clone() };
+                    // Ling Sampler choices: one sample across the keys (its root found from its pitch), or a drum kit by the GM drum map
+                    if let Some(p) = choice.strip_prefix("smpfile:") {
+                        let mut s = crate::dsp::sampler::Sampler::new(sr);
+                        if crate::dsp::Instrument::command(&mut s, "add", &[], p).first().copied().unwrap_or(-1.0) >= 0.0 {
+                            sampler_inst = Some(Box::new(s));
+                        } else {
+                            self.status = format!("{}: {} - using the default sound", it.name, crate::dsp::Instrument::info(&s, "error"));
+                        }
+                    }
+                    if let Some(hits) = smp_kits.get(&ti).filter(|h| !h.is_empty()) {
+                        let mut s = crate::dsp::sampler::Sampler::new(sr);
+                        for (key, p) in hits {
+                            crate::dsp::Instrument::command(&mut s, "add_lib", &[*key as f64, 0.0], p);
+                        }
+                        sampler_inst = Some(Box::new(s));
+                    }
+                    let sf_path: String = if let Some(p) = choice.strip_prefix("sf2:") { p.to_string() } else if choice == "gm" || own || sampler_inst.is_some() { String::new() } else { self.gm_sf2.clone() };
                     if !sf_path.is_empty() && chosen.is_none() {
                         if let Some(mut si) = crate::dsp::make_instrument_file("sf2", sr, &sf_path) {
                             if si.midi_select(it.bank, it.program.unwrap_or(0) as u16, it.program.is_none()) {
@@ -1716,8 +1771,37 @@ impl Daw {
                     let len = it.notes.iter().map(|x| x.start + x.len).fold(0.0, f64::max).ceil().max(1.0);
                     t.clips.push(Clip { start, len, name: file.clone(), loop_len: 0.0, lyric_text: String::new(), lyric_lang: String::new(), tag: String::new(), data: ClipData::Midi(it.notes.clone()) });
                     default_comp(&mut t, sr);
+                    let recipe = choice.strip_prefix("recipe:").filter(|_| t.inst_kind != "sf2" && t.inst_kind != "sampler").map(|s| s.to_string());
                     en.project.tracks.push(t);
                     made += 1;
+                    if let Some(id) = recipe {
+                        recipe_parts.push((en.project.tracks.len() - 1, id));
+                    }
+                }
+                // the sound recipes, now that the tracks (and the song's length) exist: instrument, chain, mix, duck and automation; the
+                // notes stay as the file wrote them. The part's bend lane is kept (a recipe keeps only volume and pan lanes of its own).
+                let mut recipes_done = 0usize;
+                for (ti, id) in &recipe_parts {
+                    let lib = crate::recipes::library();
+                    let Some(r) = lib.get(id) else { continue };
+                    let keep: Vec<AutoLane> = en.project.tracks[*ti].auto.iter().filter(|l| l.param == "bend").cloned().collect();
+                    let _ = recipe_api::apply_recipe(&mut en, *ti, r, &[], &genre_arg, "", 1 + *ti as u64);
+                    let tr = &mut en.project.tracks[*ti];
+                    for l in keep {
+                        if !tr.auto.iter().any(|x| x.param == l.param) {
+                            tr.auto.push(l);
+                        }
+                    }
+                    recipes_done += 1;
+                }
+                // a chord part on a mono / legato Nova voice (a patch or a recipe picked for it) would drop notes: its voice goes poly
+                let mut voiced = 0usize;
+                for ti in n0..en.project.tracks.len() {
+                    let said = crate::polyphony::guard_track(&mut en.project.tracks[ti]);
+                    if !said.is_empty() {
+                        eprintln!("[import] {said}");
+                        voiced += 1;
+                    }
                 }
                 if let (Some(k), false) = (kit_idx, kit_notes.is_empty()) {
                     if let Some(t) = en.project.tracks.get_mut(k) {
@@ -1777,6 +1861,12 @@ impl Daw {
                     }
                 }
                 self.status = format!("Imported {made} track(s) from {file} ({:.0} bars)", (mid.length_beats / 4.0).ceil());
+                if recipes_done > 0 {
+                    self.status += &format!(" - {recipes_done} sound recipe(s)");
+                }
+                if voiced > 0 {
+                    self.status += &format!(" - {voiced} Nova chord part(s) set to a poly voice");
+                }
                 if mapped + loose > 0 {
                     self.status += &format!(" - automation: {mapped} mapped to parameters, {loose} waiting for a parameter (Automation lanes)");
                 }
@@ -2637,7 +2727,7 @@ impl Daw {
                         rng ^= rng >> 17;
                         rng ^= rng << 5;
                         // never the levels, nor the Limiter's drive / ceiling or the Stutter's always-on trigger
-                        if matches!(*pn, "mix" | "level" | "width" | "gain" | "ceiling" | "trigger") {
+                        if matches!(*pn, "mix" | "level" | "width" | "gain" | "ceiling" | "trigger" | "push" | "input" | "output" | "slot") || pn.ends_with(" solo") || pn.ends_with(" gain") {
                             continue;
                         }
                         let r = (rng & 0xffff) as f32 / 65535.0;
@@ -2850,6 +2940,7 @@ impl Daw {
                 if self.render.as_ref().map(|j| j.result.lock().unwrap_or_else(|p| p.into_inner()).is_none()).unwrap_or(false) {
                     return Ok(Val::Num(0.0)); // one render at a time
                 }
+                self.slc_sync_all();
                 let mut doc = {
                     let en = e!();
                     project::to_doc(&en)

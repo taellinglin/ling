@@ -72,7 +72,7 @@ enum StAction {
     Skip { t: usize, c: usize, name: String, why: String },
 }
 
-fn sections_of(en: &crate::engine::Engine) -> (Vec<arrange::Section>, usize) {
+pub(super) fn sections_of(en: &crate::engine::Engine) -> (Vec<arrange::Section>, usize) {
     let end = en.project.tracks.iter().flat_map(|t| t.clips.iter()).map(|c| c.end()).fold(0.0, f64::max);
     let nbars = ((end / 4.0).ceil() as usize).clamp(0, 2048);
     let mut feats = vec![BarFeat::default(); nbars];

@@ -14,10 +14,14 @@ pub mod cinema;
 pub mod fx;
 pub mod vox;
 pub mod hypergrowl;
+pub mod master;
+pub mod warp;
+pub mod nova;
 pub mod growl;
 pub mod prism;
 pub mod sampler;
 pub mod sf2;
+pub mod slicer;
 pub mod synth;
 pub mod voice;
 pub mod wavetable;
@@ -36,6 +40,9 @@ pub trait Instrument: Send {
     fn note_on_lyric(&mut self, key: u8, vel: f32, pan: f32, cutoff: f32, reso: f32, _lyric: &str, _len_samples: f32) {
         self.note_on_ex(key, vel, pan, cutoff, reso);
     }
+    /// The arrangement beat the next `note_on` starts at, sent just before it by the sequencer: an instrument that follows the song's
+    /// harmony (the Ling Slicer's auto-tune) looks the key and the chord up there. Live notes have none.
+    fn note_beat(&mut self, _beat: f64) {}
     fn note_off(&mut self, key: u8);
     /// Per-note pitch gesture: the voice(s) sounding `key` play `semis` semitones away from it (0 = in tune). The engine calls
     /// it once per render block while a note with a pitch gesture (scoop, slide, dive, 808 glide) sounds; the instrument
@@ -206,6 +213,7 @@ impl Rng {
 /// Like `make_instrument`, for kinds that need a file ("sf2" = SoundFont).
 pub fn make_instrument_file(kind: &str, sr: f32, path: &str) -> Option<Box<dyn Instrument>> {
     match kind {
+        "slicer" => Some(Box::new(slicer::Slicer::with_file(sr, path))),
         "sf2" => match sf2::Sf2Player::new(sr, path) {
             Ok(p) => Some(Box::new(p)),
             Err(e) => {
@@ -228,6 +236,8 @@ pub fn make_instrument(kind: &str, sr: f32) -> Option<Box<dyn Instrument>> {
         "pluck" => Some(Box::new(pluck::Pluck::new(sr))),
         "chip" => Some(Box::new(chip::Chip::new(sr))),
         "cinema" => Some(Box::new(cinema::Cinema::new(sr))),
+        "slicer" => Some(Box::new(slicer::Slicer::new(sr))),
+        "nova" => Some(Box::new(nova::Nova::new(sr))),
         "script" => Some(Box::new(scriptdsp::ScriptSynth::new(sr))),
         _ => None,
     }

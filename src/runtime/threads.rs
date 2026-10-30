@@ -523,7 +523,7 @@ fn builtin_cap(name: &str) -> Option<&'static str> {
         | "image_save" | "music_lrc" | "music_load" | "music_midi_load" | "mesh_load" | "font_load"
         | "record_frame" | "screenshot" | "tm_tex_load" | "svg_begin" | "svg_end" | "audio_sample_load"
         | "llm_load" | "vision_load" | "stt_start" | "stt_align" | "stt_align_srt" => "fs",
-        "run_process" => "proc",
+        "run_process" | "proc_start" | "proc_poll" | "proc_kill" => "proc",
         "open_window" | "present" => "gui",
         // db aliases (generated from the dispatch arms)
         "בצע_במסד_נתונים" | "פתח_מסד_נתונים" | "שאילתת_מסד_נתונים" | "اجرای_پایگاه_داده" |

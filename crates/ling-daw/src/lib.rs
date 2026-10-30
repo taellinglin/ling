@@ -58,6 +58,9 @@ pub mod fxctx;
 pub mod loudness;
 pub mod recipes;
 pub mod gesture;
+pub mod novagen;
+pub mod importprod;
+pub mod polyphony;
 
 pub use audio::flush_denormals;
 pub use engine::{set_parallel_render, set_track_sleep, Engine, SharedEngine, SLEEP_AFTER};

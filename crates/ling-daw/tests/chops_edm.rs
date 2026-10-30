@@ -1,5 +1,5 @@
 //! Vocal Chops end to end: a Ling Voice part with fitted lyrics, drums, bass and pad over tagged sections -> daw_chopx_make ->
-//! sampler tracks of syllable slices, builds with a high-pass lane, the kick ducking them. `render_chops_demo` (ignored) bounces the
+//! Ling Slicer tracks of syllable slices (tuned by the Slicer at every beat), builds with a high-pass lane, the kick ducking them. `render_chops_demo` (ignored) bounces the
 //! whole song to renders/chops_demo/.
 use ling_daw::{Daw, Val};
 
@@ -115,55 +115,105 @@ fn chord(beat: f64) -> Option<[u8; 3]> {
     Some([[9, 0, 4], [5, 9, 0], [0, 4, 7], [7, 11, 2]][((beat / 4.0).floor() as usize) % 4])
 }
 
-/// How well the chops on `track` fit the song: every pitched chop note is played alone by a sampler over the bank file and its pitch
-/// measured. Returns (notes measured, how many sound within 30 cents of a tone of the chord at their beat - or of the key's scale
-/// where no chord plays -, median distance to it in cents, median |heard - note key| in cents).
+/// every note of the Ling Slicer chop track `t`, played alone by the track's own Slicer at its beat (so its auto-tune reads the
+/// song's harmony there) and measured: (beat, heard MIDI); notes on unpitched slices give none
+fn heard_on_slicer(d: &mut Daw, t: usize) -> Vec<(f64, f32)> {
+    use ling_daw::dsp::Instrument;
+    let eng = d.engine();
+    let mut en = eng.lock().unwrap();
+    let sr = en.sr;
+    let tr = &mut en.project.tracks[t];
+    assert_eq!(tr.inst_kind, "slicer", "the chops are on Ling Slicer");
+    let notes: Vec<(f64, f64, u8)> = tr.clips.iter().flat_map(|c| match &c.data {
+        ling_daw::model::ClipData::Midi(ns) => ns.iter().map(|n| (c.start + n.start, n.len, n.key)).collect::<Vec<_>>(),
+        _ => vec![],
+    }).collect();
+    let bpm = en.project.bpm;
+    let inst = en.project.tracks[t].inst.as_mut().expect("a Slicer");
+    let mut out = vec![];
+    for (b, len, key) in notes {
+        inst.all_off();
+        let mut buf = vec![0f32; 512];
+        inst.note_beat(b);
+        inst.note_on(key, 0.9);
+        let frames = ((len * 60.0 / bpm).clamp(0.12, 1.0) * sr as f64) as usize;
+        let mut mono: Vec<f32> = vec![];
+        while mono.len() < frames {
+            buf.fill(0.0);
+            inst.render(&mut buf);
+            mono.extend(buf.chunks(2).map(|f| (f[0] + f[1]) * 0.5));
+        }
+        mono.truncate(frames);
+        if let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), sr as u32) {
+            out.push((b, f.midi));
+        }
+    }
+    inst.all_off();
+    out
+}
+
+/// How well the chops on `track` fit the song: every pitched chop note is played alone (its Slicer, or a sampler over the bank file
+/// for chops made with slicer=0) and its pitch measured. Returns (notes measured, how many sound within 30 cents of a tone of the
+/// chord at their beat - or of the key's scale where no chord plays -, median distance to it in cents, median |heard - note key|
+/// in cents (the Sampler's notes only: a Slicer note's key is its slice)).
 fn measure(d: &mut Daw, track: usize, bank: &str) -> (usize, usize, f32, f32) {
     use ling_daw::dsp::Instrument;
-    let (stereo, rate) = ling_daw::dsp::sampler::load_audio(bank).expect("bank");
-    let mut sm = ling_daw::dsp::sampler::Sampler::new(rate as f32);
-    let mut z = ling_daw::dsp::sampler::Zone::new("v", "");
-    z.root = 60;
-    sm.add_loaded(z, stereo, rate);
+    let on_slicer = text(call(d, "daw_track_kind", &[n(track as f64)])) == "slicer";
+    let mut heard: Vec<(f64, f32, Option<f64>)> = vec![];
+    if on_slicer {
+        heard = heard_on_slicer(d, track).into_iter().map(|(b, m)| (b, m, None)).collect();
+    } else {
+        let (stereo, rate) = ling_daw::dsp::sampler::load_audio(bank).expect("bank");
+        let mut sm = ling_daw::dsp::sampler::Sampler::new(rate as f32);
+        let mut z = ling_daw::dsp::sampler::Zone::new("v", "");
+        z.root = 60;
+        sm.add_loaded(z, stereo, rate);
+        let clips = num(call(d, "daw_clip_count", &[n(track as f64)])) as usize;
+        for c in 0..clips {
+            let start = num(call(d, "daw_clip_get", &[n(track as f64), n(c as f64), s("start")]));
+            let Val::List(ns) = call(d, "daw_clip_notes", &[n(track as f64), n(c as f64)]) else { continue };
+            let Val::List(ly) = call(d, "daw_note_lyrics", &[n(track as f64), n(c as f64)]) else { continue };
+            for (i, l) in ly.iter().enumerate() {
+                let Val::Str(l) = l else { continue };
+                let Some((a, b, cents)) = ling_daw::dsp::sampler::parse_slice(l) else { continue };
+                let (at, key) = (num(ns[i * 7].clone()) + start, num(ns[i * 7 + 2].clone()));
+                let moved = key - 60.0 + cents as f64 / 100.0;
+                let frames = ((b - a) as f64 / 2f64.powf(moved / 12.0)) as usize;
+                sm.all_off();
+                let mut buf = vec![0f32; 512];
+                for _ in 0..8 {
+                    sm.render(&mut buf);
+                }
+                sm.note_on_lyric(key as u8, 0.9, 0.0, 0.5, 0.5, l, 1.0);
+                let mut mono: Vec<f32> = vec![];
+                while mono.len() < frames {
+                    buf.fill(0.0);
+                    sm.render(&mut buf);
+                    mono.extend(buf.chunks(2).map(|f| (f[0] + f[1]) * 0.5));
+                }
+                mono.truncate(frames);
+                if let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), rate) {
+                    heard.push((at, f.midi, Some(key)));
+                }
+            }
+        }
+    }
     let (mut n_meas, mut fit) = (0usize, 0usize);
     let (mut dist, mut keyerr) = (vec![], vec![]);
-    let clips = num(call(d, "daw_clip_count", &[n(track as f64)])) as usize;
-    for c in 0..clips {
-        let start = num(call(d, "daw_clip_get", &[n(track as f64), n(c as f64), s("start")]));
-        let Val::List(ns) = call(d, "daw_clip_notes", &[n(track as f64), n(c as f64)]) else { continue };
-        let Val::List(ly) = call(d, "daw_note_lyrics", &[n(track as f64), n(c as f64)]) else { continue };
-        for (i, l) in ly.iter().enumerate() {
-            let Val::Str(l) = l else { continue };
-            let Some((a, b, cents)) = ling_daw::dsp::sampler::parse_slice(l) else { continue };
-            let (at, key) = (num(ns[i * 7].clone()) + start, num(ns[i * 7 + 2].clone()));
-            let moved = key - 60.0 + cents as f64 / 100.0;
-            let frames = ((b - a) as f64 / 2f64.powf(moved / 12.0)) as usize;
-            sm.all_off();
-            let mut buf = vec![0f32; 512];
-            for _ in 0..8 {
-                sm.render(&mut buf);
-            }
-            sm.note_on_lyric(key as u8, 0.9, 0.0, 0.5, 0.5, l, 1.0);
-            let mut mono: Vec<f32> = vec![];
-            while mono.len() < frames {
-                buf.fill(0.0);
-                sm.render(&mut buf);
-                mono.extend(buf.chunks(2).map(|f| (f[0] + f[1]) * 0.5));
-            }
-            mono.truncate(frames);
-            let Some(f) = ling_daw::chops::chop_f0(&mono, 0, mono.len(), rate) else { continue };
-            n_meas += 1;
-            let pcs: Vec<u8> = chord(at).map(|c| c.to_vec()).unwrap_or(vec![0, 2, 4, 5, 7, 9, 11]);
-            let dd = pcs.iter().map(|pc| {
-                let x = (f.midi - *pc as f32).rem_euclid(12.0);
-                x.min(12.0 - x) * 100.0
-            }).fold(f32::MAX, f32::min);
-            dist.push(dd);
-            fit += (dd < 30.0) as usize;
-            if dd >= 30.0 && std::env::var("CHOPS_DEBUG").is_ok() {
-                println!("miss at {at:.2} key {key} heard {:.2} chord {:?} lyric {l}", f.midi, chord(at));
-            }
-            keyerr.push(((f.midi - key as f32) * 100.0).abs());
+    for (at, m, key) in heard {
+        n_meas += 1;
+        let pcs: Vec<u8> = chord(at).map(|c| c.to_vec()).unwrap_or(vec![0, 2, 4, 5, 7, 9, 11]);
+        let dd = pcs.iter().map(|pc| {
+            let x = (m - *pc as f32).rem_euclid(12.0);
+            x.min(12.0 - x) * 100.0
+        }).fold(f32::MAX, f32::min);
+        dist.push(dd);
+        fit += (dd < 30.0) as usize;
+        if dd >= 30.0 && std::env::var("CHOPS_DEBUG").is_ok() {
+            println!("miss at {at:.2} heard {m:.2} chord {:?}", chord(at));
+        }
+        if let Some(k) = key {
+            keyerr.push(((m - k as f32) * 100.0).abs());
         }
     }
     let med = |v: &mut Vec<f32>| {
@@ -201,9 +251,13 @@ fn chopping_a_ling_voice_part_makes_syllable_chops_with_builds() {
     // clip 0 is the reverse swell out of the verse, clip 1 the build
     let Val::List(notes) = call(&mut d, "daw_clip_notes", &[n(tracks_before), n(1.0)]) else { panic!("notes") };
     assert!(notes.len() >= 7 * 20, "{}", notes.len());
-    let lyrics = call(&mut d, "daw_note_lyrics", &[n(tracks_before), n(0.0)]);
-    let Val::List(ly) = lyrics else { panic!() };
-    assert!(ly.iter().all(|l| matches!(l, Val::Str(s) if s.starts_with('@'))), "every chop note carries a slice");
+    // on Ling Slicer: every chop note plays a slice of the kit (keys from C2 up), and the kit plays the syllables of the vocal
+    assert_eq!(text(call(&mut d, "daw_track_kind", &[n(tracks_before)])), "slicer");
+    assert!(msg.contains("on Ling Slicer"), "{msg}");
+    let Val::List(sl) = call(&mut d, "daw_slc_slices", &[n(tracks_before)]) else { panic!("slices") };
+    let count = sl.len() / 17;
+    assert!(count >= 4 && count <= 92, "{count}");
+    assert!(notes.chunks(7).all(|x| (36.0..36.0 + count as f64).contains(&num(x[2].clone()))), "every chop note plays a slice");
     // the original vocal is untouched
     assert_eq!(num(call(&mut d, "daw_clip_count", &[n(0.0)])), 2.0);
     // tuned to the song: the chops sound on the chord tones of the bar they play in
@@ -212,6 +266,70 @@ fn chopping_a_ling_voice_part_makes_syllable_chops_with_builds() {
     println!("tuned: {fit} of {m} measured chop notes within 30 cents of a chord tone (median {dist:.1} cents off, {kerr:.1} cents from the note key)");
     assert!(m >= 60 && fit as f64 >= 0.9 * m as f64, "{fit} of {m}");
     let _ = std::fs::remove_file("cache/chops/chops_Lead_Vocal_2.wav");
+}
+
+/// the tracks' names
+fn names(d: &mut Daw) -> Vec<String> {
+    (0..num(call(d, "daw_track_count", &[])) as usize).map(|i| text(call(d, "daw_track_name", &[n(i as f64)]))).collect()
+}
+
+/// a track's automation lanes (their parameters)
+fn lanes(d: &mut Daw, t: usize) -> Vec<String> {
+    match call(d, "daw_auto_lanes", &[n(t as f64)]) {
+        Val::List(v) => v.into_iter().map(text).collect(),
+        _ => vec![],
+    }
+}
+
+/// how many edits the sentence's "edits: 2 reverse swells, 1 tape stop" clause counts
+fn edits_in(msg: &str) -> usize {
+    let Some(i) = msg.find("; edits: ") else { return 0 };
+    msg[i + 9..].split(';').next().unwrap_or("").split(", ").filter_map(|p| p.split(' ').next().and_then(|x| x.parse::<usize>().ok())).sum()
+}
+
+#[test]
+fn production_edits_are_planned_reported_and_can_be_turned_off() {
+    let mut d = song();
+    let before = num(call(&mut d, "daw_track_count", &[])) as usize;
+    let msg = text(call(&mut d, "daw_chopx_make", &[n(0.0), s("seed=2;density=0.7;stutter=0.6;genre=house;edits=auto")]));
+    println!("{msg}");
+    assert!(msg.contains("; edits: "), "{msg}");
+    let total = edits_in(&msg);
+    // six sections: a few edits, not one every bar (36 bars)
+    assert!((2..=14).contains(&total), "{total}: {msg}");
+    // house: the build into the first drop gets a riser over its loops, on the edits track (a Slicer with its own sound)
+    assert!(msg.contains("pitch riser"), "{msg}");
+    let nm = names(&mut d);
+    let fx = nm.iter().position(|x| x.starts_with("Vocal Chops edits")).expect("an edits track");
+    assert!(fx >= before);
+    assert_eq!(text(call(&mut d, "daw_track_kind", &[n(fx as f64)])), "slicer");
+    assert!(num(call(&mut d, "daw_clip_count", &[n(fx as f64)])) >= 1.0);
+    let main = nm.iter().position(|x| x.starts_with("Vocal Chops ·")).unwrap();
+    // a sweep is the Slicer's cutoff lane, a throw a lane on the chops' Delay
+    if msg.contains("filter sweep") {
+        assert!(lanes(&mut d, main).iter().any(|l| l == "cutoff"), "{:?}", lanes(&mut d, main));
+    }
+    if msg.contains("echo throw") {
+        assert!(lanes(&mut d, main).iter().filter(|l| l.starts_with("fx")).count() >= 2, "the hp lane and the throw: {:?}", lanes(&mut d, main));
+    }
+    // off: none, and no edits track; a list: only those
+    let mut o = song();
+    let off = text(call(&mut o, "daw_chopx_make", &[n(0.0), s("seed=2;density=0.7;stutter=0.6;genre=house;edits=off")]));
+    assert!(off.starts_with("Vocal chops:") && !off.contains("edits:"), "{off}");
+    assert!(!names(&mut o).iter().any(|x| x.starts_with("Vocal Chops edits")));
+    let mut l = song();
+    let only = text(call(&mut l, "daw_chopx_make", &[n(0.0), s("seed=2;density=0.7;stutter=0.6;genre=house;edits=tapestop,throw,dive")]));
+    println!("{only}");
+    let clause = only.split("; edits: ").nth(1).unwrap_or("").split(';').next().unwrap_or("").to_string();
+    assert!(!clause.is_empty(), "{only}");
+    assert!(clause.split(", ").all(|p| p.contains("tape stop") || p.contains("echo throw") || p.contains("pitch dive")), "{clause}");
+    // the old option string (no edits= at all) plans them too: auto is the default
+    let mut a = song();
+    let dflt = text(call(&mut a, "daw_chopx_make", &[n(0.0), s("seed=2;density=0.7;stutter=0.6;genre=house")]));
+    assert!(dflt.contains("; edits: "), "{dflt}");
+    for f in ["cache/chops/chops_Lead_Vocal_2.wav"] {
+        let _ = std::fs::remove_file(f);
+    }
 }
 
 #[test]

@@ -14,6 +14,11 @@ fn note_name(k: u8) -> String {
     format!("{}{}", NOTE[(k % 12) as usize], (k as i32 / 12) - 1)
 }
 
+/// The part's polyphony as crate::polyphony measures it (legato overlaps ignored): mono or poly, and how much
+pub fn part_poly(t: &ImportedTrack) -> crate::polyphony::Poly {
+    crate::polyphony::measure(&t.notes)
+}
+
 /// Largest number of notes sounding at once, and the average over note onsets.
 fn polyphony(t: &ImportedTrack) -> (usize, f32) {
     let mut ev: Vec<(f64, i32)> = Vec::with_capacity(t.notes.len() * 2);
@@ -89,8 +94,10 @@ fn describe_part(i: usize, t: &ImportedTrack, bars: f64) -> String {
         String::new()
     };
     let busy = if density > 12.0 { "very busy" } else if density > 5.0 { "busy" } else { "sparse" };
+    // the measured polyphony (legato overlaps ignored): a poly part needs a sound that plays chords
+    let voices = if t.program.is_none() { "drums".to_string() } else { part_poly(t).words() };
     format!(
-        "Part {i}: \"{}\" - {kind}, {register}, {texture}{feel}, {busy} ({n} notes, range {}-{}), avg velocity {avg_vel:.2}",
+        "Part {i}: \"{}\" - {kind}, {register}, {texture}{feel}, {busy} ({n} notes, range {}-{}), avg velocity {avg_vel:.2}, voices: {voices}",
         t.name,
         note_name(lo),
         note_name(hi)
@@ -136,8 +143,8 @@ pub fn fl_plugin_hint(plugin: &str) -> &'static str {
 }
 
 /// The genres the model may name (the GenreBrain): each biases which plugin plays which role.
-pub const GENRES: [&str; 20] = [
-    "trance", "house", "deep house", "techno", "disco", "hyperpop", "witch house", "lofi", "ambient", "pop", "rock", "jazz", "cinematic", "synthwave", "drum and bass", "dubstep", "hardstyle", "chiptune", "orchestral", "folk",
+pub const GENRES: [&str; 22] = [
+    "trance", "house", "deep house", "techno", "disco", "hyperpop", "witch house", "lofi", "ambient", "pop", "rock", "jazz", "cinematic", "synthwave", "drum and bass", "dubstep", "hardstyle", "chiptune", "orchestral", "folk", "trap", "hip hop",
 ];
 
 /// A genre from tempo, drums and harmony alone, for when no model is available or it answers badly.
@@ -156,6 +163,17 @@ pub fn guess_genre(mid: &ImportedMidi) -> &'static str {
     }
     if has(&["wobble", "wub", "reese", "dubstep"]) {
         return "dubstep";
+    }
+    if has(&["trap", "drill"]) {
+        return "trap";
+    }
+    if has(&["hip hop", "hiphop", "hip-hop", "boom bap", "boombap", " rap"]) {
+        return "hip hop";
+    }
+    // half-time drums with rolling hats (16ths and faster) between 130 and 160 BPM: trap
+    let hats: usize = drums.iter().flat_map(|t| t.notes.iter()).filter(|n| matches!(n.key, 42 | 44 | 46)).count();
+    if !drums.is_empty() && !four && (130.0..=160.0).contains(&bpm) && hats as f64 / bars > 14.0 {
+        return "trap";
     }
     if drums.is_empty() && melodic.len() <= 3 {
         return if bpm < 90.0 { "ambient" } else { "cinematic" };
@@ -195,9 +213,9 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         // an orchestra's percussion is the General MIDI kit of the soundfont, not a house machine
         ("orchestral" | "cinematic", "drums") => &[("auto", "")],
         ("orchestral" | "cinematic" | "folk" | "jazz" | "rock", "strings" | "brass" | "woodwind" | "piano" | "guitar" | "organ" | "keys" | "bell" | "choir") => &[("auto", "")],
-        ("lofi" | "jazz", "keys" | "piano") => &[("prism", "Moonlight EP"), ("prism", "Rhodes Dream")],
-        ("lofi", "sub bass" | "rolling bass") => &[("prism", "Warm Sub")],
-        ("lofi", "warm pad" | "ambient pad") => &[("prism", "Tape Dream"), ("prism", "Soft Pad")],
+        ("lofi" | "jazz" | "hip hop" | "trap", "keys" | "piano") => &[("prism", "Moonlight EP"), ("prism", "Rhodes Dream")],
+        ("lofi" | "hip hop", "sub bass" | "rolling bass") => &[("prism", "Warm Sub")],
+        ("lofi" | "hip hop", "warm pad" | "ambient pad") => &[("prism", "Tape Dream"), ("prism", "Soft Pad")],
         ("ambient", "warm pad" | "dark pad" | "ambient pad") => &[("prism", "Ether Pad"), ("prism", "Tranquility Pad"), ("prism", "Atlantis Pad")],
         // Ling Cinema's soundscapes are the atmosphere of ambient and film music
         ("ambient" | "cinematic", "texture") => &[("cinema", "Wind Field"), ("cinema", "Dark Space"), ("prism", "Radio Ghost")],
@@ -208,8 +226,8 @@ pub fn genre_candidates(genre: &str, role: &str) -> Option<&'static [(&'static s
         ("trance", "rolling bass" | "sub bass") => &[("prism", "Rolling Bass"), ("prism", "Bajo Trance")],
         ("hardstyle", _) if lead => &[("prism", "Hardstyle Lead"), ("prism", "Hoover Dark")],
         ("hardstyle", "rolling bass" | "sub bass" | "pluck bass" | "growl bass") => &[("prism", "Bass Donk"), ("prism", "Mega Bass")],
-        ("dubstep" | "drum and bass", "rolling bass" | "sub bass" | "wobble bass" | "growl bass") => &[("growl", "wobble"), ("growl", "neuro"), ("growl", "reese"), ("growl", "comb growl"), ("growl", "riddim fold"), ("growl", "neuro reese"), ("growl", "brass growl")],
-        ("dubstep", _) if lead => &[("growl", "laser"), ("prism", "Dubstep Lead"), ("growl", "screech lead"), ("growl", "comb screech")],
+        ("dubstep" | "drum and bass", "rolling bass" | "sub bass" | "wobble bass" | "growl bass") => &[("growl", "wobble"), ("growl", "neuro"), ("growl", "reese"), ("growl", "comb growl"), ("growl", "riddim fold"), ("growl", "neuro reese"), ("growl", "brass growl"), ("nova", "Yoi Talker"), ("nova", "Neuro Grinder")],
+        ("dubstep", _) if lead => &[("growl", "laser"), ("prism", "Dubstep Lead"), ("growl", "screech lead"), ("growl", "comb screech"), ("nova", "Glass Screech")],
         ("house" | "deep house", "rolling bass" | "sub bass") => &[("prism", "Offbeat Bass"), ("prism", "Offbeat Bass Two")],
         ("house" | "deep house", "stab chord" | "keys" | "piano") => &[("prism", "Deep Stab"), ("prism", "Dub Chord"), ("synth", "Electronic: House Piano")],
         ("disco", "rolling bass" | "sub bass" | "pluck bass") => &[("prism", "Octave Bass"), ("prism", "Funk Pluck")],
@@ -242,18 +260,18 @@ fn candidates(role: &str) -> &'static [(&'static str, &'static str)] {
         "growl bass" => &[("growl", "growl"), ("growl", "neuro"), ("growl", "comb growl"), ("growl", "brass growl"), ("growl", "shifted growl")],
         "acid bass" => &[("synth", "Electronic: Acid Bass"), ("prism", "Bubble Bass")],
         "pluck bass" => &[("prism", "Octave Bass"), ("synth", "Electronic: Techno Pluck Bass")],
-        "supersaw lead" => &[("prism", "Supersaw Lead"), ("prism", "Sugar Stack")],
+        "supersaw lead" => &[("prism", "Supersaw Lead"), ("prism", "Sugar Stack"), ("nova", "Neon Supersaw")],
         "synth lead" => &[("synth", "Electronic: Square Lead"), ("prism", "Quarter Lead")],
         "laser lead" => &[("growl", "laser"), ("growl", "stab"), ("growl", "screech lead"), ("growl", "complextro stab")],
         "vocal lead" => &[("growl", "yoi"), ("voice", "aria")],
-        "pluck" => &[("prism", "Trance Pluck"), ("prism", "Deep Pluck"), ("prism", "Funk Pluck")],
+        "pluck" => &[("prism", "Trance Pluck"), ("prism", "Deep Pluck"), ("prism", "Funk Pluck"), ("nova", "Crystal Pluck")],
         "arp" => &[("prism", "Chipmunk Arp"), ("prism", "Cursed Arp"), ("prism", "Glitch Pluck")],
         "warm pad" => &[("prism", "Uplift Pad"), ("prism", "Candy Pad"), ("prism", "Phaser Pad")],
         "dark pad" => &[("prism", "Witch Drag"), ("prism", "Dark Choir"), ("prism", "Black Mass")],
         "ambient pad" => &[("prism", "Tape Dream"), ("prism", "Analog Hum"), ("prism", "Slendro Pad"), ("prism", "Bohlen Drone")],
         "strings" => &[("prism", "Disco Strings"), ("synth", "Electronic: Supersaw Ensemble")],
         "brass" => &[("prism", "Brass Stab"), ("synth", "Electronic: Analog Brass")],
-        "stab chord" => &[("prism", "Deep Stab"), ("prism", "Dub Chord")],
+        "stab chord" => &[("prism", "Deep Stab"), ("prism", "Dub Chord"), ("nova", "Supersaw Stab")],
         "keys" => &[("prism", "Dream Keys"), ("synth", "Electronic: DX E-Piano")],
         "piano" => &[("synth", "Electronic: EDM Grand"), ("synth", "Electronic: House Piano")],
         "organ" => &[("synth", "Electronic: M1 House Organ"), ("synth", "Electronic: Italo Organ")],
@@ -278,7 +296,7 @@ pub fn guess_role(t: &ImportedTrack) -> &'static str {
     let has = |ws: &[&str]| ws.iter().any(|w| name.contains(w));
     let table: [(&[&str], &str); 20] = [
         (&["wobble", "wub"], "wobble bass"),
-        (&["reese", "neuro", "growl"], "growl bass"),
+        (&["reese", "neuro", "growl", "riddim", "tearout"], "growl bass"),
         (&["acid", "303"], "acid bass"),
         (&["sub", "808"], "sub bass"),
         (&["bass"], "rolling bass"),
@@ -363,21 +381,167 @@ pub fn role_choice(role: &str, part: usize, bpm: f64) -> (&'static str, &'static
 /// clash (soundcat); the part number picks among what is left. Drums have their own table.
 pub fn pick(genre: &str, role: &str, part: usize, bpm: f64) -> (&'static str, &'static str) {
     if role == "drums" {
-        return role_choice(role, part, bpm);
+        return ("drums", crate::soundcat::kit_for(genre, "", bpm));
     }
     let from_genre = genre_candidates(genre, role).map(|l| crate::soundcat::safe_list(role, l)).filter(|l| l.iter().all(|(p, n)| crate::soundcat::pair_ok(role, p, n)));
     let list = match from_genre {
         Some(l) if !l.is_empty() => l,
         _ => crate::soundcat::safe_list(role, candidates(role)),
     };
+    // jazz, rock, folk and orchestral never get Ling Nova, not even from the general table
+    let list: Vec<(&'static str, &'static str)> = if acoustic_genre(genre) && list.iter().any(|x| x.0 != "nova") { list.into_iter().filter(|x| x.0 != "nova").collect() } else { list };
     list[part % list.len()]
+}
+
+/// genres that keep their acoustic / General MIDI sounds: Ling Nova never plays in them
+pub fn acoustic_genre(genre: &str) -> bool {
+    matches!(genre, "jazz" | "rock" | "folk" | "orchestral")
+}
+
+/// The Ling Nova preset for `role` in `genre`, rolled by `seed` (novagen::pick_seeded: the club genres' growl, wobble, reese and sub
+/// basses, supersaw and screech leads, plucks, stabs and pads; pop, synthwave, ambient, lo-fi, techno and film music only their
+/// palette); None for drums, for the acoustic genres, and where Nova has nothing that plays the role in tune.
+pub fn nova_for(genre: &str, role: &str, part: usize, seed: u64) -> Option<&'static str> {
+    nova_for_part(genre, role, part, seed, crate::polyphony::role_expect(role))
+}
+
+/// `nova_for` for a part of known polyphony (`poly`, crate::polyphony): the preset's voice must fit it - a chord part never gets a
+/// mono / legato preset when a poly one plays the role, a single line prefers a mono one (novagen::pick_for_part)
+pub fn nova_for_part(genre: &str, role: &str, part: usize, seed: u64, poly: Option<bool>) -> Option<&'static str> {
+    if role == "drums" || acoustic_genre(genre) {
+        return None;
+    }
+    let cands: Vec<&'static str> = (0..3).filter_map(|k| crate::novagen::pick_for_part(genre, role, part + k, seed, poly)).filter(|n| crate::soundcat::pair_ok(role, "nova", n) || (poly == Some(true) && crate::dsp::nova::presets::find(n).map_or(false, |p| !p.is_mono() && p.usage.role == "chord"))).collect();
+    let fits = |n: &&'static str| crate::dsp::nova::presets::find(n).map_or(true, |p| crate::polyphony::fits(p.is_mono(), poly));
+    cands.iter().copied().find(|n| fits(&n)).or(cands.first().copied())
+}
+
+/// `pick`, Nova-aware and seeded: a Ling Nova preset where Nova has one for the role in the genre (see `nova_for`), else the genre's
+/// table and the general one (only patches that play in tune). The way New AI Song chooses (song_api `instrument_for_seeded`).
+pub fn pick_seeded(genre: &str, role: &str, part: usize, bpm: f64, seed: u64) -> (String, String) {
+    pick_seeded_part(genre, role, part, bpm, seed, crate::polyphony::role_expect(role))
+}
+
+/// `pick_seeded` for a part of known polyphony (see `nova_for_part`)
+pub fn pick_seeded_part(genre: &str, role: &str, part: usize, bpm: f64, seed: u64, poly: Option<bool>) -> (String, String) {
+    if let Some(n) = nova_for_part(genre, role, part, seed, poly) {
+        return ("nova".into(), n.to_string());
+    }
+    let (p, n) = pick(genre, role, part, bpm);
+    (p.to_string(), n.to_string())
+}
+
+/// the roles a sound recipe can play better than a plain preset (the recipe brings its effect chain, mix, duck and automation)
+const RECIPE_ROLES: [&str; 12] = ["arp", "pluck", "warm pad", "dark pad", "ambient pad", "stab chord", "riser", "texture", "sub bass", "rolling bass", "wobble bass", "growl bass"];
+
+/// The sound recipe for `role` in `genre`, when one is made for the genre (recipes.rs `pick`, rolled by the seed, `avoid` = recipes other
+/// parts took): plucks, arps, pads, chord stabs, risers and atmospheres in the genres the recipes list. A bass only when the words ask
+/// for a recipe's own style beyond the role ("riddim", "colour", "808", "tearout" ...) or for trap's 808: Nova and Growl play
+/// plain wobbles and growls. Never in the acoustic genres. Returns (id, name).
+pub fn recipe_for(genre: &str, role: &str, part: usize, seed: u64, words: &str, avoid: &[String]) -> Option<(String, String)> {
+    recipe_for_part(genre, role, part, seed, words, avoid, None)
+}
+
+/// `recipe_for` for a part of known polyphony: a Ling Nova recipe on a mono / legato voice never plays a chord part
+pub fn recipe_for_part(genre: &str, role: &str, part: usize, seed: u64, words: &str, avoid: &[String], poly: Option<bool>) -> Option<(String, String)> {
+    if acoustic_genre(genre) || !RECIPE_ROLES.contains(&role) || genre.trim().is_empty() {
+        return None;
+    }
+    let lib = crate::recipes::library();
+    let lw = format!(" {} ", words.to_lowercase());
+    // the words beyond the role's own ("Wobble" on a wobble bass asks for nothing more; "Riddim" asks for a riddim recipe)
+    let extra: String = lw.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() > 2 && !role.split(' ').any(|r| r == *w)).collect::<Vec<_>>().join(" ");
+    let extra = format!(" {extra} ");
+    let asks = |r: &crate::recipes::Recipe| r.styles.iter().chain(r.tags.iter()).any(|s| s.len() > 2 && extra.contains(&format!(" {s} ")));
+    // the recipes made for the genre (or a style of it) that fit the role, best first
+    let voiced = |r: &crate::recipes::Recipe| crate::polyphony::recipe_mono(r).map_or(true, |m| crate::polyphony::fits(m, poly));
+    let ranked: Vec<(f64, &crate::recipes::Recipe)> = crate::recipes::rank(&lib, role, genre, words, -1.0).into_iter().filter(|(_, r)| crate::recipes::genre_fit(r, genre) >= 0.8 && !avoid.contains(&r.id) && voiced(r)).collect();
+    let asked: Vec<(f64, &crate::recipes::Recipe)> = ranked.iter().copied().filter(|(_, r)| asks(r)).collect();
+    // a bass only when the words ask for a recipe's style, or trap's 808
+    if role.contains("bass") && asked.is_empty() && !(genre == "trap" && role == "sub bass") {
+        return None;
+    }
+    let pool = if asked.is_empty() { ranked } else { asked };
+    let top = pool.first()?.0;
+    let close: Vec<&crate::recipes::Recipe> = pool.iter().filter(|(sc, _)| *sc >= top - 1.0).map(|(_, r)| *r).collect();
+    let mut rng = crate::compose::Rng::new(seed.wrapping_add(part as u64 * 7919) ^ 0x5EC1_9E5);
+    let r = close[(rng.next() % close.len() as u64) as usize];
+    Some((r.id.clone(), r.name.clone()))
+}
+
+/// One pick: the dialog's plugin kind, the sound's label as the dialog lists it, the choice string the import takes, and the source in
+/// words for the reason line ("recipe: Riddim Gate A", "kit: Trap", "Nova: Mid Growl").
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pick {
+    pub plugin: String,
+    pub label: String,
+    pub value: String,
+    pub source: String,
+}
+
+/// a (plugin, name) from the role tables as the catalogue lists it
+pub fn resolve(cat: &[crate::soundcat::Sound], plugin: &str, name: &str) -> Pick {
+    if plugin == "auto" {
+        return Pick { plugin: "auto".into(), label: String::new(), value: "auto".into(), source: "General MIDI (soundfont or built-in)".into() };
+    }
+    match crate::soundcat::find_sound(cat, plugin, name) {
+        Some(s) => Pick { plugin: s.kind.to_string(), label: s.label.clone(), value: s.value.clone(), source: s.why() },
+        // not in the catalogue (another working folder): the name, its patch file if one is found
+        None => {
+            let value = if plugin == "recipe" { format!("recipe:{name}") } else { crate::api::song_find_patch(plugin, name).unwrap_or_else(|| format!("kind:{plugin}")) };
+            Pick { plugin: plugin.to_string(), label: name.to_string(), value, source: format!("{plugin}: {name}") }
+        }
+    }
+}
+
+/// The whole pick for a part of `role`: a drum kit by genre (and the part's name), a sound recipe where one beats a plain preset, a Ling
+/// Nova preset in the club genres, else the genre's table and the general one - always an entry of the catalogue, so the dialog finds it
+/// and the import plays it. `words` = the part's name and the song's style words; `avoid` collects the recipes taken.
+pub fn pick_full(cat: &[crate::soundcat::Sound], genre: &str, role: &str, part: usize, bpm: f64, seed: u64, words: &str, avoid: &mut Vec<String>) -> Pick {
+    pick_full_part(cat, genre, role, part, bpm, seed, words, avoid, crate::polyphony::role_expect(role))
+}
+
+/// `pick_full` for a part of known polyphony (`poly`: Some(true) chords, Some(false) one note at a time; crate::polyphony measures
+/// it): the Nova presets and Nova recipes whose voice fits the part come first, and a chord part is never left on a mono voice
+#[allow(clippy::too_many_arguments)]
+pub fn pick_full_part(cat: &[crate::soundcat::Sound], genre: &str, role: &str, part: usize, bpm: f64, seed: u64, words: &str, avoid: &mut Vec<String>, poly: Option<bool>) -> Pick {
+    if role == "drums" {
+        if matches!(genre, "orchestral" | "cinematic") {
+            return resolve(cat, "auto", "");
+        }
+        let kit = crate::soundcat::kit_for(genre, words, bpm);
+        return resolve(cat, "drums", kit);
+    }
+    if let Some((id, _)) = recipe_for_part(genre, role, part, seed, words, &avoid[..], poly) {
+        let p = resolve(cat, "recipe", &id);
+        avoid.push(id);
+        return p;
+    }
+    let (plugin, name) = pick_seeded_part(genre, role, part, bpm, seed, poly);
+    resolve(cat, &plugin, &name)
+}
+
+/// the voice of a pick when it is a Ling Nova sound (a Nova patch or a Nova recipe): Some(true) mono / legato, Some(false) poly
+pub fn pick_mono(p: &Pick) -> Option<bool> {
+    if p.plugin == "recipe" || p.value.starts_with("recipe:") {
+        return crate::polyphony::nova_choice_mono("recipe", &p.value);
+    }
+    if p.plugin == "nova" {
+        // the patch file, else the preset the label names ("Bass: Mid Growl")
+        return crate::polyphony::nova_choice_mono("nova", &p.value).or_else(|| crate::polyphony::nova_choice_mono("nova", p.label.rsplit(": ").next().unwrap_or(&p.label)));
+    }
+    None
 }
 
 pub struct Choice {
     pub part: usize,
     pub role: String,
+    /// the dialog's plugin kind ("auto", "nova", "recipe", "drums", "lib" ...)
     pub plugin: String,
+    /// the sound as the dialog lists it (for "lib": the words to look for)
     pub patch: String,
+    /// the choice string daw_midi_import takes
+    pub value: String,
     pub why: String,
 }
 pub struct Reply {
@@ -454,11 +618,19 @@ pub fn choose(mid: &ImportedMidi, reply: &Reply) -> Vec<Choice> {
 
 /// like `choose`, with the song's genre (from the model's first answer or `guess_genre`) deciding between plugins
 pub fn choose_for(mid: &ImportedMidi, reply: &Reply, genre: &str) -> Vec<Choice> {
+    choose_seeded(mid, reply, genre, 0)
+}
+
+/// like `choose_for`, rolled by `seed`: the Nova presets (and the parts the model gave no role) differ from import to import
+pub fn choose_seeded(mid: &ImportedMidi, reply: &Reply, genre: &str, seed: u64) -> Vec<Choice> {
     let bpm = mid.bpm.unwrap_or(0.0);
     let melodic = mid.tracks.iter().filter(|t| t.samples.is_empty() && t.program.is_some()).count();
     // a small model tends to give one role to everything: let each role cover at most a third of the parts
     let cap = (melodic / 3).max(2);
     let mut used: std::collections::HashMap<&'static str, usize> = Default::default();
+    // every pick is an entry of the catalogue (what the dialog lists and the import plays)
+    let cat = crate::soundcat::catalogue("");
+    let mut taken: Vec<String> = vec![];
     mid.tracks
         .iter()
         .enumerate()
@@ -472,9 +644,18 @@ pub fn choose_for(mid: &ImportedMidi, reply: &Reply, genre: &str) -> Vec<Choice>
             // a tracker module's percussion: look for a drum sample outside the module (the importer falls back to its own sample when none is found)
             if t.sampler.is_some() && t.percussive {
                 let words = sample_words(t, reply, i);
-                return Choice { part: i, role: "drum sample".to_string(), plugin: "lib".to_string(), patch: words.clone(), why: format!("drum sample: \"{words}\" from the library, else its own sample") };
+                return Choice { part: i, role: "drum sample".to_string(), plugin: "lib".to_string(), patch: words.clone(), value: format!("lib:{words}"), why: format!("drum sample: \"{words}\" from the library, else its own sample") };
             }
             let med = median_key(t);
+            // the part's measured polyphony: a chord part named as a lead (one note at a time) by the model is not taken - a mono
+            // voice would drop its notes - and the guess (pads and stabs for chords) plays it instead
+            let pp = part_poly(t);
+            let poly = if t.program.is_none() { None } else { pp.wants_poly() };
+            let chordy = pp.is_poly() && pp.max >= 3;
+            let from_model = match from_model {
+                Some(r) if chordy && r.contains("lead") => None,
+                x => x,
+            };
             // a drum part is drums whatever the model says, and a melodic part is never drums
             let (role, by_model) = match (t.program.is_none(), from_model) {
                 (true, _) => ("drums", true),
@@ -489,11 +670,27 @@ pub fn choose_for(mid: &ImportedMidi, reply: &Reply, genre: &str) -> Vec<Choice>
                     }
                 }
             };
+            // a part named "Lead" that plays chords of three or more notes is a chord part: a stab or a pad by its note lengths
+            let role: &'static str = if chordy && role.contains("lead") {
+                let avg = t.notes.iter().map(|x| x.len).sum::<f64>() / t.notes.len().max(1) as f64;
+                if avg > 1.5 { "warm pad" } else { "stab chord" }
+            } else {
+                role
+            };
             if !t.program.is_none() {
                 *used.entry(role).or_insert(0) += 1;
             }
-            let (plugin, patch) = pick(genre, role, i, bpm);
-            Choice { part: i, role: role.to_string(), plugin: plugin.to_string(), patch: patch.to_string(), why: format!("{role}{}", if by_model { "" } else { " (guessed from name and range)" }) }
+            // the part's own name and the style the model heard steer the recipes and the kit ("Riddim", "Brushes", "808")
+            let words = format!("{} {} {}", t.name, t.plugin, reply.style);
+            let p = pick_full_part(&cat, genre, role, i, bpm, seed, &words, &mut taken, poly);
+            // a Nova sound says its voice against the part's ("poly part on a poly voice"); a mono voice left on a chord part (no poly
+            // sound plays the role) is switched to poly on import (polyphony::guard_track)
+            let voice = match (pick_mono(&p), poly) {
+                (Some(m), Some(pl)) => format!(" ({} part, {} voice{})", if pl { "poly" } else { "mono" }, if m { "mono" } else { "poly" }, if m && pl { ": set to poly on import" } else { "" }),
+                _ => String::new(),
+            };
+            let why = format!("{role}{} - {}{voice}", if by_model { "" } else { " (guessed from name and range)" }, p.source);
+            Choice { part: i, role: role.to_string(), plugin: p.plugin, patch: p.label, value: p.value, why }
         })
         .collect()
 }
@@ -516,6 +713,26 @@ pub fn example() -> (String, String) {
     let mid = ImportedMidi { tracks: vec![mk("Kit", None, kit), mk("Bass", Some(38), bass), mk("Chords", Some(89), chords), mk("Melody", Some(80), lead), mk("Part 5", Some(0), arp)], bpm: Some(126.0), tempos: vec![], length_beats: 32.0 };
     let q = prompt("example.mid", &mid);
     let a = r#"{"style": "house", "parts": [{"part": 0, "role": "drums"}, {"part": 1, "role": "rolling bass"}, {"part": 2, "role": "warm pad"}, {"part": 3, "role": "supersaw lead"}, {"part": 4, "role": "arp"}]}"#.to_string();
+    (q, a)
+}
+
+/// The worked example for a genre: a bass-music song (wobble and sub basses, a supersaw lead, plucks, a pad - the roles Ling Nova
+/// plays) for the club genres, else the house song of `example`.
+pub fn example_for(genre: &str) -> (String, String) {
+    if !crate::novagen::edm(genre) {
+        return example();
+    }
+    use crate::model::Note;
+    let mk = |name: &str, program: Option<u8>, notes: Vec<Note>| ImportedTrack { named: true, plugin: String::new(), name: name.into(), program, bank: 0, channel: 0, notes, volume: 1.0, pan: 0.0, vol_auto: vec![], pan_auto: vec![], bend_auto: vec![], bend_range: 2.0, samples: vec![], sampler: None, percussive: false, extra_auto: vec![] };
+    let kit: Vec<Note> = (0..32).flat_map(|b| [(0.0, 36u8), (1.0, 38), (0.5, 42), (1.5, 42)].into_iter().map(move |(o, k)| Note::new(b as f64 * 2.0 + o, 0.1, k, 0.85))).collect();
+    let wob: Vec<Note> = (0..32).map(|b| Note::new(b as f64 * 2.0, 1.5, 40 + (b % 3) as u8, 0.9)).collect();
+    let sub: Vec<Note> = (0..16).map(|b| Note::new(b as f64 * 4.0, 3.5, 28 + (b % 2) as u8 * 3, 0.85)).collect();
+    let lead: Vec<Note> = (0..32).map(|b| Note::new(b as f64 * 2.0, 1.0, 74 + (b % 5) as u8, 0.85)).collect();
+    let pluck: Vec<Note> = (0..128).map(|b| Note::new(b as f64 * 0.5, 0.2, 64 + (b % 4) as u8 * 3, 0.7)).collect();
+    let pad: Vec<Note> = (0..8).flat_map(|b| [52u8, 55, 59, 62].into_iter().map(move |k| Note::new(b as f64 * 8.0, 7.8, k, 0.6))).collect();
+    let mid = ImportedMidi { tracks: vec![mk("Drums", None, kit), mk("Wub", Some(38), wob), mk("Low", Some(38), sub), mk("Lead", Some(81), lead), mk("Seq", Some(5), pluck), mk("Atmos", Some(89), pad)], bpm: Some(140.0), tempos: vec![], length_beats: 64.0 };
+    let q = prompt("example.mid", &mid);
+    let a = r#"{"style": "dubstep", "parts": [{"part": 0, "role": "drums"}, {"part": 1, "role": "wobble bass"}, {"part": 2, "role": "sub bass"}, {"part": 3, "role": "supersaw lead"}, {"part": 4, "role": "pluck"}, {"part": 5, "role": "warm pad"}]}"#.to_string();
     (q, a)
 }
 
@@ -658,6 +875,7 @@ mod tests {
         let growl = names("Growl", "Growl ");
         let chip = names("Chip", "Chip ");
         let cinema = names("Cinema", "Cinema ");
+        let nova = names("Nova", "Nova ");
         let voice = names("Voice", "Voice ");
         let egm: Vec<String> = names("Electronic GM", "").into_iter().map(|n| format!("Electronic: {}", n.split_once(' ').map(|x| x.1).unwrap_or(&n))).collect();
         let kits = names(".", "");
@@ -668,6 +886,7 @@ mod tests {
                     "growl" => growl.iter().any(|p| p == patch),
                     "chip" => chip.iter().any(|p| p == patch),
                     "cinema" => cinema.iter().any(|p| p == patch),
+                    "nova" => nova.iter().any(|p| p == patch),
                     "voice" => voice.iter().any(|p| p == patch),
                     _ => egm.iter().any(|p| p == patch),
                 };
@@ -688,6 +907,7 @@ mod tests {
                             "growl" => growl.iter().any(|p| p == patch),
                             "chip" => chip.iter().any(|p| p == patch),
                             "cinema" => cinema.iter().any(|p| p == patch),
+                            "nova" => nova.iter().any(|p| p == patch),
                             "voice" => voice.iter().any(|p| p == patch),
                             _ => egm.iter().any(|p| p == patch),
                         };
@@ -696,6 +916,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn nova_plays_the_club_genres_and_never_jazz_rock_or_folk() {
+        let wob: Vec<Note> = (0..32).map(|b| Note::new(b as f64, 0.9, 38, 0.9)).collect();
+        let lead: Vec<Note> = (0..32).map(|b| Note::new(b as f64 * 0.5, 0.4, 76, 0.8)).collect();
+        let mid = ImportedMidi { tracks: vec![part("Wobble", Some(38), wob), part("Lead", Some(80), lead)], bpm: Some(140.0), tempos: vec![], length_beats: 32.0 };
+        let reply = parse_reply(r#"{"parts":[{"part":0,"role":"wobble bass"},{"part":1,"role":"supersaw lead"}]}"#);
+        let dub = choose_seeded(&mid, &reply, "dubstep", 5);
+        assert!(dub.iter().all(|c| c.plugin == "nova"), "{:?}", dub.iter().map(|c| (&c.plugin, &c.patch)).collect::<Vec<_>>());
+        for g in ["jazz", "rock", "folk"] {
+            assert!(choose_seeded(&mid, &reply, g, 5).iter().all(|c| c.plugin != "nova"), "{g}");
+        }
+        // the model said nothing: the guesses still roll a Nova preset by the seed
+        let none = choose_seeded(&mid, &parse_reply(""), "dubstep", 9);
+        assert_eq!(none.len(), 2);
+        assert!(none.iter().any(|c| c.plugin == "nova") && none.iter().all(|c| c.why.contains("guessed")));
+        let (q, a) = example_for("dubstep");
+        assert!(q.contains("Part 5") && parse_reply(&a).parts.len() == 6);
+        assert!(crate::soundcat::palette("dubstep").contains("Nova"), "the palette offers Nova presets");
     }
 
     #[test]
@@ -708,7 +948,7 @@ mod tests {
         let reply = parse_reply(r#"{"parts":[{"part":0,"role":"supersaw lead"}]}"#);
         let trance = choose_for(&mid, &reply, "trance");
         let chip = choose_for(&mid, &reply, "chiptune");
-        assert_eq!(trance[0].plugin, "prism");
+        assert_eq!(trance[0].plugin, "nova", "a trance lead plays a Nova supersaw: {}", trance[0].why);
         assert_eq!(chip[0].plugin, "chip", "a chiptune lead is a square on Ling Chip");
         let orch = choose_for(&mid, &parse_reply(r#"{"parts":[{"part":0,"role":"strings"}]}"#), "orchestral");
         assert_eq!(orch[0].plugin, "auto", "orchestral strings stay on General MIDI");

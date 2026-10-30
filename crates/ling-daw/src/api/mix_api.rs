@@ -216,12 +216,32 @@ fn level_shift(list: &[TrackInfo], plan: &[Change]) -> f32 {
     }
 }
 
+/// The master's limiting stage: the last Ling Master that is on (its limiter is the end of its chain), else the last Limiter that is
+/// on, else the last of either (bypassed). AI Mix & Master drives that one and nothing else, so the master is never limited twice.
+pub(crate) fn master_limiter(fx: &[EffectSlot]) -> Option<usize> {
+    let lim = |s: &EffectSlot| s.name == "Ling Master" || s.name == "Limiter";
+    fx.iter()
+        .rposition(|s| s.name == "Ling Master" && !s.bypass)
+        .or_else(|| fx.iter().rposition(|s| s.name == "Limiter" && !s.bypass))
+        .or_else(|| fx.iter().rposition(lim))
+}
+
+/// A limiting slot's settings in the Limiter's parameter names (gain, ceiling, release, lookahead) and the trim after it (linear).
+fn limiter_settings(s: &EffectSlot) -> (Vec<(&'static str, f32)>, f32) {
+    if s.name == "Ling Master" {
+        (crate::dsp::master::Master::limiter_params(&s.params), crate::dsp::master::Master::out_gain(&s.params))
+    } else {
+        (s.params.clone(), 1.0)
+    }
+}
+
 /// The master move for a loudness target: the drive into the true-peak Limiter (or a master volume cut for a quieter target) that the
 /// loudness model says reaches `target`, after the planned level moves. None when the master is already there.
 #[allow(clippy::too_many_arguments)]
 fn master_change(en: &Engine, list: &[TrackInfo], plan: &[Change], model: &LoudModel, master: &Stat, target: f32, ceiling: f32, why: &str) -> Option<Change> {
-    let cur = en.project.master_effects.iter().rev().find(|s| s.name == "Limiter");
-    let params: Vec<(&str, f32)> = cur.map(|s| s.params.clone()).unwrap_or_else(|| crate::dsp::fx::defaults("Limiter").to_vec());
+    let cur = master_limiter(&en.project.master_effects).map(|i| &en.project.master_effects[i]);
+    let (params, trim): (Vec<(&str, f32)>, f32) = cur.map(limiter_settings).unwrap_or_else(|| (crate::dsp::fx::defaults("Limiter").to_vec(), 1.0));
+    let lname = if cur.map(|s| s.name == "Limiter").unwrap_or(false) { "the true-peak Limiter" } else { "Ling Master's limiter" };
     // loud targets get the fast release
     let rp = loudness::release_for(target);
     let mut timing = params.clone();
@@ -237,12 +257,12 @@ fn master_change(en: &Engine, list: &[TrackInfo], plan: &[Change], model: &LoudM
     let cur_drive = params.iter().find(|p| p.0 == "gain").map(|p| p.1 * 24.0).unwrap_or(0.0);
     let cur_ceil = params.iter().find(|p| p.0 == "ceiling").map(|p| p.1 * 6.0 - 6.0).unwrap_or(-1.0);
     let cur_rel = params.iter().find(|p| p.0 == "release").map(|p| p.1).unwrap_or(0.5);
-    let same = cur.is_some() && (cur_drive - drive).abs() < 0.3 && (cur_ceil - ceiling).abs() < 0.05 && (cur_rel - rp).abs() < 0.01 && (en.project.master_volume - mv).abs() < 0.02;
+    let same = cur.is_some() && !cur.map(|s| s.bypass).unwrap_or(true) && (trim - 1.0).abs() < 1e-3 && (cur_drive - drive).abs() < 0.3 && (cur_ceil - ceiling).abs() < 0.05 && (cur_rel - rp).abs() < 0.01 && (en.project.master_volume - mv).abs() < 0.02;
     if same {
         return None;
     }
     let reach = if (est - target).abs() > 0.6 { format!(" (it can reach about {est:.1} LUFS)") } else { String::new() };
-    let how = if g >= 0.0 { format!("{drive:+.1} dB into the true-peak Limiter") } else { format!("the master down {:.1} dB after the Limiter", -g) };
+    let how = if g >= 0.0 { format!("{drive:+.1} dB into {lname}") } else { format!("the master down {:.1} dB after {lname}", -g) };
     Some(Change {
         track: -1,
         what: "master".into(),
@@ -251,19 +271,34 @@ fn master_change(en: &Engine, list: &[TrackInfo], plan: &[Change], model: &LoudM
     })
 }
 
-/// put (or update) the Limiter at the end of the master chain: drive dB, ceiling dBTP, release (its 0..1 parameter)
+/// Drive the master's limiting stage (see `master_limiter`): drive dB, ceiling dBTP, release (the Limiter's 0..1 parameter). A master
+/// without one gets a Ling Master at the end of its chain (its defaults are the plain true-peak limiter); every other Limiter or Ling
+/// Master on the master is bypassed, so nothing limits twice.
 fn set_master_limiter(en: &mut Engine, drive: f32, ceiling: f32, release: f32, sr: f32) {
     let fx = &mut en.project.master_effects;
-    if !fx.iter().any(|s| s.name == "Limiter") {
-        if let Some(s) = EffectSlot::new("Limiter", sr) {
-            fx.push(s);
+    let i = match master_limiter(fx) {
+        Some(i) => i,
+        None => match EffectSlot::new("Ling Master", sr) {
+            Some(s) => {
+                fx.push(s);
+                fx.len() - 1
+            }
+            None => return,
+        },
+    };
+    for (j, s) in fx.iter_mut().enumerate() {
+        if j != i && (s.name == "Limiter" || s.name == "Ling Master") {
+            s.bypass = true;
         }
     }
-    if let Some(s) = fx.iter_mut().rev().find(|s| s.name == "Limiter") {
-        s.bypass = false;
-        set_fx(s, "gain", (drive / 24.0).clamp(0.0, 1.0));
-        set_fx(s, "ceiling", ((ceiling + 6.0) / 6.0).clamp(0.0, 1.0));
-        set_fx(s, "release", release);
+    let s = &mut fx[i];
+    s.bypass = false;
+    let (g, c, r) = if s.name == "Ling Master" { ("push", "ceiling", "lim rel") } else { ("gain", "ceiling", "release") };
+    set_fx(s, g, (drive / 24.0).clamp(0.0, 1.0));
+    set_fx(s, c, ((ceiling + 6.0) / 6.0).clamp(0.0, 1.0));
+    set_fx(s, r, release);
+    if s.name == "Ling Master" {
+        set_fx(s, "output", 1.0);
     }
 }
 
@@ -395,11 +430,23 @@ impl Daw {
                         // master), 18 dB down so nothing clips on the way out, brought back up exactly; then the end of the chain
                         // (Limiter, master volume, safety limiter) is applied to measure the master as it plays now
                         let mut e = make(&mut cache);
-                        let lim: Option<Vec<(&'static str, f32)>> = e.project.master_effects.iter().rev().find(|s| s.name == "Limiter" && !s.bypass).map(|s| s.params.clone());
-                        for s in e.project.master_effects.iter_mut().filter(|s| s.name == "Limiter") {
-                            s.bypass = true;
+                        let li = master_limiter(&e.project.master_effects).filter(|i| !e.project.master_effects[*i].bypass);
+                        let (lim, trim) = match li {
+                            Some(i) => {
+                                let (p, t) = limiter_settings(&e.project.master_effects[i]);
+                                (Some(p), t)
+                            }
+                            None => (None, 1.0),
+                        };
+                        for (j, s) in e.project.master_effects.iter_mut().enumerate() {
+                            if s.name == "Limiter" {
+                                s.bypass = true;
+                            } else if s.name == "Ling Master" && Some(j) == li {
+                                // its bands, clipper and saturation stay in, its limiter and output trim come out
+                                s.fx.command("prelimit", &[1.0], "");
+                            }
                         }
-                        let (mv, el) = (e.project.master_volume, e.project.limiter);
+                        let (mv, el) = (e.project.master_volume * trim, e.project.limiter);
                         e.project.master_volume = 0.125;
                         e.project.limiter = false;
                         let dummy = AtomicU32::new(0);
@@ -841,6 +888,28 @@ mod loudness_tests {
     }
 
     #[test]
+    fn the_master_is_never_limited_twice() {
+        let sr = 48000.0;
+        // a Limiter and a Ling Master: the Ling Master is driven, the plain Limiter steps aside
+        let mut e = Engine::new(sr);
+        e.project.master_effects.push(EffectSlot::new("Limiter", sr).unwrap());
+        e.project.master_effects.push(EffectSlot::new("Ling Master", sr).unwrap());
+        set_master_limiter(&mut e, 6.0, -1.0, 0.3, sr);
+        let fx = &e.project.master_effects;
+        assert_eq!(fx.len(), 2);
+        assert!(fx[0].bypass && !fx[1].bypass);
+        assert!((fx[1].params.iter().find(|p| p.0 == "push").unwrap().1 - 0.25).abs() < 1e-6);
+        assert!((fx[1].params.iter().find(|p| p.0 == "lim rel").unwrap().1 - 0.3).abs() < 1e-6);
+        // an older project with only a Limiter keeps it, and gets no second one
+        let mut e = Engine::new(sr);
+        e.project.master_effects.push(EffectSlot::new("Limiter", sr).unwrap());
+        set_master_limiter(&mut e, 3.0, -1.0, 0.5, sr);
+        assert_eq!(e.project.master_effects.len(), 1);
+        assert_eq!(e.project.master_effects[0].name, "Limiter");
+        assert!(!e.project.master_effects[0].bypass);
+    }
+
+    #[test]
     fn the_master_move_reaches_the_genre_loudness_through_the_limiter() {
         let sr = 48000.0;
         let buf = mix(sr);
@@ -855,7 +924,7 @@ mod loudness_tests {
             let mut e2 = Engine::new(sr);
             e2.project.master_volume = c.values[0];
             set_master_limiter(&mut e2, c.values[1], c.values[2], c.values[3], sr);
-            assert_eq!(e2.project.master_effects.last().unwrap().name, "Limiter");
+            assert_eq!(e2.project.master_effects.last().unwrap().name, "Ling Master");
             let mut b = buf.clone();
             for ch in b.chunks_mut(512) {
                 e2.project.master_effects[0].process(ch);

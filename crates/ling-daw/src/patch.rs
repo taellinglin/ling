@@ -93,6 +93,8 @@ pub fn build(p: &Patch, sr: f32) -> Option<Box<dyn Instrument>> {
     // a factory preset's file: the level trim that puts it with the rest of its instrument (presetinfo.rs)
     if !p.name.is_empty() {
         crate::presetinfo::apply_trim(inst.as_mut(), &p.kind, &p.name);
+        // an instrument with built-in presets remembers which one the file is (Ling Nova shows its usage notes)
+        let _ = inst.command("named", &[], &p.name);
     }
     Some(inst)
 }
@@ -100,7 +102,7 @@ pub fn build(p: &Patch, sr: f32) -> Option<Box<dyn Instrument>> {
 pub fn dump(kind: &str, name: &str, state: &[(String, f32)], fx: &[FxSpec]) -> String {
     let mut s = String::new();
     s.push_str(&format!("# {} patch — edit freely; load from the Instrument tab\n", match kind { "drums" => "Ling Membrane", "growl" => "Ling Growl", "voice" => "Ling Voice",
-        "prism" => "Ling Prism", "cinema" => "Ling Cinema", _ => "Ling Synth X" }));
+        "prism" => "Ling Prism", "cinema" => "Ling Cinema", "nova" => "Ling Nova", "slicer" => "Ling Slicer", _ => "Ling Synth X" }));
     s.push_str(&format!("name = \"{name}\"\ntype = {kind}\n"));
     let mut line = String::new();
     for (k, v) in state {

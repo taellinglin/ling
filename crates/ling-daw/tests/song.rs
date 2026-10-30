@@ -89,7 +89,7 @@ fn a_dubstep_song_gets_sound_design() {
     assert!(line.contains("design=0.85"), "{line}");
     let r = list(&call(&mut d, "daw_song_build", &[s(&line), s(desc), s(""), s(""), n(11.0)]));
     let summary = st(&r[4]);
-    assert!(summary.contains("Sound design") && summary.contains("Split Drive") && summary.contains("riddim skin"), "{summary}");
+    assert!(summary.contains("Sound design") && summary.contains("Split Drive") && (summary.contains("riddim skin") || summary.contains("Nova")), "{summary}");
     let nt = num(&call(&mut d, "daw_track_count", &[])) as usize;
     let mut bass_ok = false;
     for t in 0..nt {

@@ -431,7 +431,22 @@ mod imp {
             }
         }
         let Some(vt) = vtrack else {
-            return Err(other_video.unwrap_or("no H.264 video track").to_string());
+            // An audio-only file (.m4a): no pictures, just the AAC track on the player's clock.
+            let Some(at) = atrack else {
+                return Err(other_video.unwrap_or("no H.264 video or AAC audio track").to_string());
+            };
+            let t = &mp4.tracks()[&at];
+            let duration = t.duration().as_secs_f64();
+            {
+                let mut st = sh.st.lock().unwrap();
+                st.duration = duration;
+                st.decode_done = true;
+                if st.state == 0 {
+                    st.state = 1;
+                }
+            }
+            audio::run(sh, data, at);
+            return Ok(());
         };
         let (avcc, timescale, tw, th) = {
             let t = &mp4.tracks()[&vt];

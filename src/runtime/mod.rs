@@ -16,6 +16,10 @@ pub(crate) mod jit_abi;
 #[cfg(all(not(target_arch = "wasm32"), feature = "llm"))]
 mod llm;
 #[cfg(not(target_arch = "wasm32"))]
+mod glb;
+#[cfg(not(target_arch = "wasm32"))]
+mod gpuview;
+#[cfg(not(target_arch = "wasm32"))]
 mod stt;
 #[cfg(not(target_arch = "wasm32"))]
 mod terrain_bg;
@@ -2083,7 +2087,10 @@ impl Interpreter {
     pub fn new() -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         let audio = AudioEngine::new()
-            .map_err(|e| eprintln!("audio init failed (no sound): {e}"))
+            .map_err(|e| {
+                eprintln!("audio init failed (no sound): {e}");
+                linux_audio_hint();
+            })
             .ok();
         Self::build(
             #[cfg(not(target_arch = "wasm32"))]
@@ -8756,6 +8763,250 @@ impl Interpreter {
                     Value::Number(dir_z as f64),
                 ])));
             },
+            // list_cat(a, b) -> a new list; list_iota(n) -> [0, 1, ..., n-1]
+            "list_cat" => {
+                let mut out: Vec<Value> = Vec::new();
+                for a in args.iter().take(2) {
+                    if let Value::List(l) = a {
+                        out.extend(l.iter().cloned());
+                    }
+                }
+                return Ok(Value::List(out.into()));
+            },
+            "list_iota" => {
+                let n = self.arg_num(&args, 0, 0.)?.max(0.0) as usize;
+                return Ok(Value::List((0..n).map(|i| Value::Number(i as f64)).collect::<Vec<_>>().into()));
+            },
+            // mesh3d_project(vx, vy, vz, m12, persp, f_or_s, cx, cy) -> [px, py, pd, pcx, pcy, pcz, hash]
+            // m12 = the first 12 entries (3 rows) of the object-to-camera matrix; camera looks down -Z, d = -z
+            #[cfg(not(target_arch = "wasm32"))]
+            "mesh3d_project" => {
+                let fl = |v: Option<&Value>| -> Vec<f64> {
+                    match v {
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n } else { 0.0 }).collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                let (vx, vy, vz, m) = (fl(args.first()), fl(args.get(1)), fl(args.get(2)), fl(args.get(3)));
+                let n = vx.len().min(vy.len()).min(vz.len());
+                if m.len() < 12 {
+                    return Ok(Value::List(Vec::new().into()));
+                }
+                let persp = self.arg_num(&args, 4, 1.)? > 0.5;
+                let fs = self.arg_num(&args, 5, 500.)?;
+                let (cx, cy) = (self.arg_num(&args, 6, 0.)?, self.arg_num(&args, 7, 0.)?);
+                let cap = |_: usize| Vec::<Value>::with_capacity(n);
+                let (mut px, mut py, mut pd, mut pcx, mut pcy, mut pcz) = (cap(0), cap(0), cap(0), cap(0), cap(0), cap(0));
+                let mut vh = n as f64 * 7919.0;
+                for k in 0..n {
+                    let (x, y, z) = (vx[k], vy[k], vz[k]);
+                    vh += (x * 1.31 + y * 2.17 + z * 3.07) * (((k % 13) + 1) as f64);
+                    let xc = m[0] * x + m[1] * y + m[2] * z + m[3];
+                    let yc = m[4] * x + m[5] * y + m[6] * z + m[7];
+                    let zc = m[8] * x + m[9] * y + m[10] * z + m[11];
+                    let d = -zc;
+                    if persp {
+                        let dd = d.max(0.0001);
+                        px.push(Value::Number(cx + xc * fs / dd));
+                        py.push(Value::Number(cy - yc * fs / dd));
+                    } else {
+                        px.push(Value::Number(cx + xc * fs));
+                        py.push(Value::Number(cy - yc * fs));
+                    }
+                    pd.push(Value::Number(d));
+                    pcx.push(Value::Number(xc));
+                    pcy.push(Value::Number(yc));
+                    pcz.push(Value::Number(zc));
+                }
+                let l = |v: Vec<Value>| Value::List(v.into());
+                return Ok(Value::List(vec![l(px), l(py), l(pd), l(pcx), l(pcy), l(pcz), Value::Number(vh)].into()));
+            },
+            // mesh3d_fill(fi, fs, fc, px, py, pcx, pcy, pcz, pd, fcol, fsel, base, flags, sel_col, red_col, o)
+            //   -> [face_ids, depths, object_ids] of the faces drawn, far to near.
+            // Painter's algorithm by average depth, back-face cull, Newell normal, camera-light shading and selection tints:
+            // the same look as LingModeler's interpreted path, in native code. flags: 1 cull, 2 x-ray, 4 edit-mode face
+            // selection tint, 8 object-selected tint. Honours px_clip.
+            #[cfg(not(target_arch = "wasm32"))]
+            "mesh3d_fill" => {
+                let fl = |v: Option<&Value>| -> Vec<f64> {
+                    match v {
+                        Some(Value::List(l)) => l.iter().map(|x| if let Value::Number(n) = x { *n } else { 0.0 }).collect(),
+                        _ => Vec::new(),
+                    }
+                };
+                let (fi, fs, fc) = (fl(args.first()), fl(args.get(1)), fl(args.get(2)));
+                let (px, py) = (fl(args.get(3)), fl(args.get(4)));
+                let (pcx, pcy, pcz, pd) = (fl(args.get(5)), fl(args.get(6)), fl(args.get(7)), fl(args.get(8)));
+                let (fcol, fsel) = (fl(args.get(9)), fl(args.get(10)));
+                let base = self.arg_num(&args, 11, 0.)? as u32;
+                let flags = self.arg_num(&args, 12, 0.)? as u32;
+                let (sel_col, red_col) = (self.arg_num(&args, 13, 0.)? as u32, self.arg_num(&args, 14, 0.)? as u32);
+                let oid = self.arg_num(&args, 15, 0.)?;
+                let gpu_mode = self.arg_num(&args, 16, 0.)? > 0.5;
+                let (cull, xray, edit, osel) = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0, flags & 8 != 0);
+                let unpack = |c: u32| ((c >> 16) & 255, (c >> 8) & 255, c & 255);
+                let pack = |r: f64, g: f64, b: f64| -> u32 {
+                    ((r.clamp(0.0, 255.0).floor() as u32) << 16) | ((g.clamp(0.0, 255.0).floor() as u32) << 8) | (b.clamp(0.0, 255.0).floor() as u32)
+                };
+                let tint = |c: u32, k: f64| {
+                    let (r, g, b) = unpack(c);
+                    pack((r as f64 * k).min(255.0), (g as f64 * k).min(255.0), (b as f64 * k).min(255.0))
+                };
+                let mix = |a: u32, b: u32, t: f64| {
+                    let (ar, ag, ab) = unpack(a);
+                    let (br, bg, bb) = unpack(b);
+                    pack(
+                        ar as f64 + (br as f64 - ar as f64) * t,
+                        ag as f64 + (bg as f64 - ag as f64) * t,
+                        ab as f64 + (bb as f64 - ab as f64) * t,
+                    )
+                };
+                // collect drawable faces (every corner in front of the near plane) with their average depth
+                let nf = fc.len().min(fs.len());
+                let mut faces: Vec<(usize, f64)> = Vec::with_capacity(nf);
+                for f in 0..nf {
+                    let (s, c) = (fs[f] as usize, fc[f] as usize);
+                    if c < 3 || s + c > fi.len() {
+                        continue;
+                    }
+                    let mut z = 0.0;
+                    let mut ok = true;
+                    for k in 0..c {
+                        let v = fi[s + k] as usize;
+                        if v >= pd.len() || v >= px.len() || v >= pcx.len() || pd[v] < 0.05 {
+                            ok = false;
+                            break;
+                        }
+                        z += pd[v];
+                    }
+                    if ok {
+                        faces.push((f, z / c as f64));
+                    }
+                }
+                faces.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                let clip = self.px_clip;
+                let mut gfx = self.gfx.borrow_mut();
+                let (w, h) = (gfx.width, gfx.height);
+                let mut out_f: Vec<Value> = Vec::with_capacity(faces.len());
+                let mut out_z: Vec<Value> = Vec::with_capacity(faces.len());
+                let mut out_o: Vec<Value> = Vec::with_capacity(faces.len());
+                for &(f, z) in &faces {
+                    let (s, c) = (fs[f] as usize, fc[f] as usize);
+                    let (mut nx, mut ny, mut nz) = (0.0f64, 0.0f64, 0.0f64);
+                    for k in 0..c {
+                        let va = fi[s + k] as usize;
+                        let vb = fi[s + (k + 1) % c] as usize;
+                        let (ax, ay, az) = (pcx[va], pcy[va], pcz[va]);
+                        let (bx, by, bz) = (pcx[vb], pcy[vb], pcz[vb]);
+                        nx += (ay - by) * (az + bz);
+                        ny += (az - bz) * (ax + bx);
+                        nz += (ax - bx) * (ay + by);
+                    }
+                    let nl = (nx * nx + ny * ny + nz * nz).sqrt();
+                    if nl <= 1e-9 {
+                        continue;
+                    }
+                    let (mut nx, mut ny, mut nz) = (nx / nl, ny / nl, nz / nl);
+                    let a0 = fi[s] as usize;
+                    let facing = nx * pcx[a0] + ny * pcy[a0] + nz * pcz[a0] < 0.0;
+                    if !facing {
+                        if cull {
+                            continue;
+                        }
+                        nx = -nx;
+                        ny = -ny;
+                        nz = -nz;
+                    }
+                    let mut col = base;
+                    if f < fcol.len() && fcol[f] >= 0.0 {
+                        col = fcol[f] as u32;
+                    }
+                    let l = nx * 0.35 + ny * 0.5 + nz * 0.8;
+                    let inten = 0.32 + 0.68 * l.max(0.0) + 0.08 * (-ny).max(0.0);
+                    col = tint(col, inten.min(1.35));
+                    if edit && f < fsel.len() && fsel[f] > 0.5 {
+                        col = mix(col, sel_col, 0.45);
+                    } else if osel {
+                        col = mix(col, sel_col, 0.08);
+                    }
+                    if !facing {
+                        col = mix(col, red_col, 0.25);
+                    }
+                    let mut pts: Vec<[f32; 2]> = Vec::with_capacity(c + 1);
+                    for k in 0..c {
+                        let v = fi[s + k] as usize;
+                        pts.push([px[v] as f32, py[v] as f32]);
+                    }
+                    if gpu_mode {
+                        // z-buffer batch (gpu_raster_begin / gpu_raster_end): no sorting, painting or clipping here
+                        let zs: Vec<f32> = (0..c).map(|k| (1.0 / pd[fi[s + k] as usize]) as f32).collect();
+                        gpuview::push_poly(&pts, &zs, col);
+                        out_f.push(Value::Number(f as f64));
+                        out_z.push(Value::Number(z));
+                        out_o.push(Value::Number(oid));
+                        continue;
+                    }
+                    pts.push(pts[0]);
+                    if let Some([cx0, cy0, cx1, cy1]) = clip {
+                        let (x0, y0, x1, y1) = (cx0 as f32, cy0 as f32, cx1 as f32, cy1 as f32);
+                        let (mut lo_x, mut lo_y, mut hi_x, mut hi_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                        for p in &pts {
+                            lo_x = lo_x.min(p[0]);
+                            hi_x = hi_x.max(p[0]);
+                            lo_y = lo_y.min(p[1]);
+                            hi_y = hi_y.max(p[1]);
+                        }
+                        if hi_x < x0 || lo_x > x1 || hi_y < y0 || lo_y > y1 {
+                            continue;
+                        }
+                        if lo_x < x0 || hi_x > x1 || lo_y < y0 || hi_y > y1 {
+                            for (axis, edge, sign) in [(0usize, x0, 1.0f32), (0, x1, -1.0), (1, y0, 1.0), (1, y1, -1.0)] {
+                                let inp = std::mem::take(&mut pts);
+                                let n = inp.len();
+                                for i in 0..n {
+                                    let (a, b) = (inp[i], inp[(i + 1) % n]);
+                                    let (da, db) = (sign * (a[axis] - edge), sign * (b[axis] - edge));
+                                    if da >= 0.0 {
+                                        pts.push(a);
+                                    }
+                                    if (da >= 0.0) != (db >= 0.0) {
+                                        let t = da / (da - db);
+                                        pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+                                    }
+                                }
+                                if pts.len() < 3 {
+                                    break;
+                                }
+                            }
+                            if pts.len() < 3 {
+                                continue;
+                            }
+                            let p0 = pts[0];
+                            pts.push(p0);
+                        }
+                    }
+                    let (color, add) = if xray { (tint(col, 0.45), true) } else { (col, false) };
+                    // tiny faces (finely tessellated skin / printed cloth): a hard-edged fill tiles without seams, whereas
+                    // anti-aliased edges of neighbouring triangles let the background show through as a dark net
+                    let (mut bx0, mut by0, mut bx1, mut by1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                    for p in &pts {
+                        bx0 = bx0.min(p[0]);
+                        bx1 = bx1.max(p[0]);
+                        by0 = by0.min(p[1]);
+                        by1 = by1.max(p[1]);
+                    }
+                    if !xray && (bx1 - bx0).max(by1 - by0) < 14.0 {
+                        crate::gfx::raster::fill_contours(&mut gfx.buffer, w, h, color, add, std::slice::from_ref(&pts));
+                    } else {
+                        crate::gfx::raster::fill_contours_aa(&mut gfx.buffer, w, h, color, add, std::slice::from_ref(&pts));
+                    }
+                    out_f.push(Value::Number(f as f64));
+                    out_z.push(Value::Number(z));
+                    out_o.push(Value::Number(oid));
+                }
+                let l = |v: Vec<Value>| Value::List(v.into());
+                return Ok(Value::List(vec![l(out_f), l(out_z), l(out_o)].into()));
+            },
             // draw_poly([x0,y0,x1,y1,…]) — filled 2-D polygon in the current colour,
             // honouring the blend mode (additive → translucent glow). Auto-closes.
             #[cfg(not(target_arch = "wasm32"))]
@@ -8786,6 +9037,43 @@ impl Interpreter {
                         let p0 = pts[0];
                         pts.push(p0);
                     } // close
+                    // honour px_clip (UI panels / viewports): Sutherland-Hodgman against the clip rectangle
+                    if let Some([cx0, cy0, cx1, cy1]) = self.px_clip {
+                        let (x0, y0, x1, y1) = (cx0 as f32, cy0 as f32, cx1 as f32, cy1 as f32);
+                        let (mut lo_x, mut lo_y, mut hi_x, mut hi_y) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+                        for p in &pts {
+                            lo_x = lo_x.min(p[0]);
+                            hi_x = hi_x.max(p[0]);
+                            lo_y = lo_y.min(p[1]);
+                            hi_y = hi_y.max(p[1]);
+                        }
+                        if hi_x < x0 || lo_x > x1 || hi_y < y0 || lo_y > y1 {
+                            return Ok(Value::Unit);
+                        }
+                        if lo_x < x0 || hi_x > x1 || lo_y < y0 || hi_y > y1 {
+                            // (axis, edge, keep the side where sign * (coord - edge) >= 0)
+                            for (axis, edge, sign) in [(0usize, x0, 1.0f32), (0, x1, -1.0), (1, y0, 1.0), (1, y1, -1.0)] {
+                                let inp = std::mem::take(&mut pts);
+                                let n = inp.len();
+                                for i in 0..n {
+                                    let (a, b) = (inp[i], inp[(i + 1) % n]);
+                                    let (da, db) = (sign * (a[axis] - edge), sign * (b[axis] - edge));
+                                    if da >= 0.0 {
+                                        pts.push(a);
+                                    }
+                                    if (da >= 0.0) != (db >= 0.0) {
+                                        let t = da / (da - db);
+                                        pts.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+                                    }
+                                }
+                                if pts.len() < 3 {
+                                    return Ok(Value::Unit);
+                                }
+                            }
+                            let p0 = pts[0];
+                            pts.push(p0);
+                        }
+                    }
                     let mut gfx = self.gfx.borrow_mut();
                     let (w, h, color, add) = (gfx.width, gfx.height, gfx.color, gfx.blend == 1);
                     crate::gfx::raster::fill_contours_aa(
@@ -11537,6 +11825,96 @@ impl Interpreter {
                 let ok = f.and_then(|mut f| f.write_all(&bytes)).is_ok();
                 return Ok(Value::Bool(ok));
             },
+            // lmesh_bin_read(path) -> [] when the file is not a binary 'LMSH' mesh, else [height, vx, vy, vz, tri_indices, tri_rgb]:
+            // the engine's triangle-soup format ('LMSH', u32 ver, f32 height, u32 ntri, ntri x (9 f32 + 3 u8)) with equal positions welded
+            #[cfg(not(target_arch = "wasm32"))]
+            "lmesh_bin_read" => {
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
+                let b = std::fs::read(&path).unwrap_or_default();
+                if b.len() < 16 || &b[0..4] != b"LMSH" {
+                    return Ok(Value::List(Vec::new().into()));
+                }
+                let rd = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+                let ntri = (rd(12) as usize).min((b.len() - 16) / 39);
+                let height = f32::from_bits(rd(8));
+                let mut map: std::collections::HashMap<[u32; 3], usize> = std::collections::HashMap::new();
+                let (mut vx, mut vy, mut vz) = (Vec::new(), Vec::new(), Vec::new());
+                let (mut idx, mut rgb) = (Vec::with_capacity(ntri * 3), Vec::with_capacity(ntri));
+                for t in 0..ntri {
+                    let o = 16 + t * 39;
+                    for c in 0..3 {
+                        let k = [rd(o + c * 12), rd(o + c * 12 + 4), rd(o + c * 12 + 8)];
+                        let n = map.len();
+                        let i = *map.entry(k).or_insert_with(|| {
+                            vx.push(Value::Number(f32::from_bits(k[0]) as f64));
+                            vy.push(Value::Number(f32::from_bits(k[1]) as f64));
+                            vz.push(Value::Number(f32::from_bits(k[2]) as f64));
+                            n
+                        });
+                        idx.push(Value::Number(i as f64));
+                    }
+                    rgb.push(Value::Number(b[o + 36] as f64 * 65536.0 + b[o + 37] as f64 * 256.0 + b[o + 38] as f64));
+                }
+                let l = |v: Vec<Value>| Value::List(v.into());
+                return Ok(l(vec![Value::Number(height as f64), l(vx), l(vy), l(vz), l(idx), l(rgb)]));
+            },
+            // glb_read(path) -> [] on failure (see glb_error), else a list of objects
+            // [name, vx, vy, vz, tri_indices, face_starts, face_counts, face_rgb, uv] read from a .glb / .gltf (positions in world space,
+            // one colour per triangle sampled from the base-colour texture, vertex colours or the colour factor)
+            #[cfg(not(target_arch = "wasm32"))]
+            "glb_read" => {
+                let path = self.arg_str(&args, 0, "").replace('\\', "/");
+                let l = |v: Vec<Value>| Value::List(v.into());
+                match glb::read(&path) {
+                    Ok(objs) => {
+                        let mut res = Vec::with_capacity(objs.len());
+                        for o in objs {
+                            let nf = o.fcol.len();
+                            res.push(l(vec![
+                                Value::Str(o.name),
+                                l(o.vx.iter().map(|&x| Value::Number(x as f64)).collect()),
+                                l(o.vy.iter().map(|&x| Value::Number(x as f64)).collect()),
+                                l(o.vz.iter().map(|&x| Value::Number(x as f64)).collect()),
+                                l(o.fi.iter().map(|&x| Value::Number(x as f64)).collect()),
+                                l((0..nf).map(|i| Value::Number((i * 3) as f64)).collect()),
+                                l((0..nf).map(|_| Value::Number(3.0)).collect()),
+                                l(o.fcol.iter().map(|&x| Value::Number(x as f64)).collect()),
+                                l(o.uv.iter().map(|&x| Value::Number(x as f64)).collect()),
+                            ]));
+                        }
+                        return Ok(l(res));
+                    },
+                    Err(e) => {
+                        glb::set_error(e);
+                        return Ok(l(Vec::new()));
+                    },
+                }
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "glb_error" => return Ok(Value::Str(glb::last_error())),
+            // gpu_active() -> bool: a CUDA device is driving ling-gpu (always false on aarch64 / Raspberry Pi builds, no
+            // `cuda` feature, or LING_NO_GPU=1). gpu_name() -> device description.
+            #[cfg(not(target_arch = "wasm32"))]
+            "gpu_active" => return Ok(Value::Bool(ling_gpu::gpu_active())),
+            #[cfg(not(target_arch = "wasm32"))]
+            "gpu_name" => return Ok(Value::Str(ling_gpu::device_name().to_string())),
+            // gpu_raster_begin() starts a frame batch; mesh3d_fill(.., gpu = 1) adds shaded faces to it
+            #[cfg(not(target_arch = "wasm32"))]
+            "gpu_raster_begin" => {
+                gpuview::begin();
+                return Ok(Value::Bool(true));
+            },
+            // gpu_raster_end(x, y, w, h) -> triangles drawn: one z-buffered pass over the batch, composited into the
+            // framebuffer inside the rectangle and the current px_clip
+            #[cfg(not(target_arch = "wasm32"))]
+            "gpu_raster_end" => {
+                let (x, y, w, h) = (self.arg_num(&args, 0, 0.)? as i32, self.arg_num(&args, 1, 0.)? as i32, self.arg_num(&args, 2, 0.)? as i32, self.arg_num(&args, 3, 0.)? as i32);
+                let clip = self.px_clip;
+                let mut gfx = self.gfx.borrow_mut();
+                let (bw, bh) = (gfx.width, gfx.height);
+                let n = gpuview::end(x, y, w, h, clip, &mut gfx.buffer, bw, bh);
+                return Ok(Value::Number(n as f64));
+            },
             // file_append_file(dst, src) -> bytes copied, -1 when either file cannot be used: streams src onto the end of dst
             #[cfg(not(target_arch = "wasm32"))]
             "file_append_file" => {
@@ -11817,6 +12195,68 @@ impl Interpreter {
                         },
                         Err(_) => return Ok(Value::Number(-1.0)),
                     }
+                }
+            },
+            // proc_start(cmd, args_list, log_path) -> id (-1 = spawn failure). The non-blocking
+            // run_process: no shell, stdout+stderr append to log_path; proc_poll(id) -> -2 while
+            // running, else the exit code (-1 unknown id); proc_kill(id) stops it.
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "proc_start" => {
+                let cmd = self.arg_str(&args, 0, "");
+                let argv = self.arg_list_str(&args, 1);
+                let log_path = self.arg_str(&args, 2, "");
+                let make_stdio = || -> std::process::Stdio {
+                    if log_path.is_empty() {
+                        std::process::Stdio::null()
+                    } else {
+                        std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(&log_path)
+                            .map(std::process::Stdio::from)
+                            .unwrap_or_else(|_| std::process::Stdio::null())
+                    }
+                };
+                let mut c = std::process::Command::new(&cmd);
+                c.args(&argv).stdin(std::process::Stdio::null()).stdout(make_stdio()).stderr(make_stdio());
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+                }
+                match c.spawn() {
+                    Ok(child) => {
+                        let mut reg = procs().lock().unwrap();
+                        reg.0 += 1;
+                        let id = reg.0;
+                        reg.1.insert(id, (child, None));
+                        return Ok(Value::Number(id as f64));
+                    },
+                    Err(_) => return Ok(Value::Number(-1.0)),
+                }
+            },
+            #[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+            "proc_poll" | "proc_kill" => {
+                let id = self.arg_num(&args, 0, 0.0)? as u32;
+                let mut reg = procs().lock().unwrap();
+                let Some(entry) = reg.1.get_mut(&id) else { return Ok(Value::Number(-1.0)) };
+                if name == "proc_kill" {
+                    let _ = entry.0.kill();
+                    let _ = entry.0.wait();
+                    reg.1.remove(&id);
+                    return Ok(Value::Number(0.0));
+                }
+                if let Some(code) = entry.1 {
+                    return Ok(Value::Number(code));
+                }
+                match entry.0.try_wait() {
+                    Ok(Some(st)) => {
+                        let code = st.code().unwrap_or(-1) as f64;
+                        entry.1 = Some(code);
+                        return Ok(Value::Number(code));
+                    },
+                    Ok(None) => return Ok(Value::Number(-2.0)),
+                    Err(_) => return Ok(Value::Number(-1.0)),
                 }
             },
             // tar_gz_extract_to(tar_path, entry_name, out_path) -> bool. Byte-perfect
@@ -14288,6 +14728,19 @@ impl Interpreter {
                 let id = self.arg_num(&args, 0, -1.0)?;
                 let names = if id < 0.0 { Vec::new() } else { jsre::names(id as usize) };
                 return Ok(Value::List(std::rc::Rc::new(names.into_iter().map(Value::Str).collect())));
+            },
+            // file_fetch(url, path) — save an address (http / https / data: / a path) to a file off
+            // this thread; a job id. file_job(job) — -2 running, -1 failed, else the bytes written.
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_fetch" => {
+                let u = self.arg_str(&args, 0, "");
+                let p = self.arg_str(&args, 1, "");
+                return Ok(Value::Number(webimg::file_fetch(&u, &p) as f64));
+            },
+            #[cfg(not(target_arch = "wasm32"))]
+            "file_job" => {
+                let id = self.arg_num(&args, 0, -1.0)?;
+                return Ok(Value::Number(if id < 0.0 { -1.0 } else { webimg::file_job(id as usize) }));
             },
             #[cfg(not(target_arch = "wasm32"))]
             "image_fetch" => {
@@ -19393,13 +19846,95 @@ DP-1 connected 2560x1440+1920+0
     }
 }
 
-/// Query the primary display resolution on non-Windows platforms.
-/// Falls back to 1920×1080 if the size cannot be determined.
+/// Query the primary display resolution on non-Windows platforms: the primary output's active mode
+/// from `xrandr` (X11 and XWayland), else the framebuffer's size (`/sys/class/graphics/fb0`), else
+/// 1920×1080. On macOS, `system_profiler` reports the main display.
 #[cfg(all(not(target_arch = "wasm32"), not(windows)))]
 fn native_screen_size() -> (f64, f64) {
-    // On Linux/macOS we don't have an easy dependency-free call; return a
-    // sensible default. Callers can always pass explicit dimensions.
+    if let Some((w, h)) = xrandr_primary_size() {
+        return (w as f64, h as f64);
+    }
+    #[cfg(target_os = "macos")]
+    if let Some((w, h)) = mac_main_display_size() {
+        return (w as f64, h as f64);
+    }
+    if let Ok(t) = std::fs::read_to_string("/sys/class/graphics/fb0/virtual_size") {
+        let v: Vec<f64> = t.trim().split(',').filter_map(|x| x.parse().ok()).collect();
+        if v.len() == 2 && v[0] >= 320.0 && v[1] >= 240.0 {
+            return (v[0], v[1]);
+        }
+    }
     (1920.0, 1080.0)
+}
+
+/// The primary (else the first connected) output's active mode from `xrandr --current`.
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn xrandr_primary_size() -> Option<(i32, i32)> {
+    let out = std::process::Command::new("xrandr").arg("--current").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_xrandr_size(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Pure parse for [`xrandr_primary_size`]: a `connected ... WxH+X+Y` line, the `primary` one first.
+#[cfg(all(not(target_arch = "wasm32"), not(windows)))]
+fn parse_xrandr_size(text: &str) -> Option<(i32, i32)> {
+    let geom = |line: &str| -> Option<(i32, i32)> {
+        line.split_whitespace().find_map(|tok| {
+            let (wh, _) = tok.split_once('+')?;
+            let (w, h) = wh.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| l.contains(" connected")).collect();
+    lines.iter().find(|l| l.contains(" primary")).and_then(|l| geom(l)).or_else(|| lines.iter().find_map(|l| geom(l)))
+}
+
+#[cfg(target_os = "macos")]
+fn mac_main_display_size() -> Option<(i32, i32)> {
+    let out = std::process::Command::new("system_profiler").arg("SPDisplaysDataType").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    // "Resolution: 3024 x 1964 Retina" - the first display listed is the main one
+    let line = text.lines().find(|l| l.trim_start().starts_with("Resolution:"))?;
+    let nums: Vec<i32> = line.split(|c: char| !c.is_ascii_digit()).filter_map(|x| x.parse().ok()).collect();
+    if nums.len() >= 2 { Some((nums[0], nums[1])) } else { None }
+}
+
+/// Explain the usual reason for no sound on a Linux desktop (once).
+fn linux_audio_hint() {
+    #[cfg(target_os = "linux")]
+    {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let root = std::env::var("USER").map(|u| u == "root").unwrap_or(false) || std::env::var("HOME").map(|h| h == "/root").unwrap_or(false);
+            if root {
+                eprintln!("  (running as root: the desktop's sound server belongs to your user - run the game as your normal user for sound)");
+            } else {
+                eprintln!("  (no ALSA device: on a PipeWire / PulseAudio desktop install the ALSA bridge, e.g. pipewire-alsa or libasound2-plugins)");
+            }
+        });
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32"), not(windows)))]
+mod xrandr_size_tests {
+    use super::parse_xrandr_size;
+    #[test]
+    fn primary_wins() {
+        let t = "Screen 0: minimum 8 x 8, current 4480 x 1440
+DP-1 connected 1920x1080+2560+0 (normal)
+eDP-1 connected primary 2560x1440+0+0 (normal) 344mm x 194mm
+";
+        assert_eq!(parse_xrandr_size(t), Some((2560, 1440)));
+    }
+    #[test]
+    fn first_connected() {
+        let t = "HDMI-1 disconnected
+XWAYLAND0 connected 1920x1200+0+0 0mm x 0mm
+";
+        assert_eq!(parse_xrandr_size(t), Some((1920, 1200)));
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -19614,4 +20149,10 @@ impl Interpreter {
             Some(_) => Err(EvalErr::Runtime(format!("capability \"{cap}\" not granted"))),
         }
     }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "web"))]
+fn procs() -> &'static std::sync::Mutex<(u32, HashMap<u32, (std::process::Child, Option<f64>)>)> {
+    static R: std::sync::OnceLock<std::sync::Mutex<(u32, HashMap<u32, (std::process::Child, Option<f64>)>)>> = std::sync::OnceLock::new();
+    R.get_or_init(|| std::sync::Mutex::new((0, HashMap::new())))
 }

@@ -412,6 +412,11 @@ impl JitBackend {
         };
         build_function_body(&mut builder, func, &blocks, &tctx);
         builder.finalize();
+        // LING_JIT_TRACE=1: name each function before cranelift compiles it (release builds abort on a
+        // cranelift panic, so the last name printed is the one it failed on).
+        if std::env::var("LING_JIT_TRACE").map_or(false, |v| v != "0") {
+            eprintln!("jit: {}", func.name);
+        }
         self.module.define_function(fid, &mut ctx).unwrap();
     }
 

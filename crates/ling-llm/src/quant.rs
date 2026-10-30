@@ -16,6 +16,30 @@ use alloc::vec::Vec;
 /// the largest piece of a weight tensor held in one allocation
 pub const CHUNK_BYTES: usize = 8 << 20;
 
+/// Rows per chunk: the chunk size (a power of two from 64 KiB to [`CHUNK_BYTES`], less a little room for an allocator's header) that
+/// wastes the least once every chunk is rounded up to a power of two, as a buddy allocator does (LingOS's: a 2.2 MB tensor in one
+/// piece takes 4 MiB there, an exact 4 MiB piece 8 MiB). Ties go to the bigger chunks.
+fn rows_per_chunk(rows: usize, row_bytes: usize) -> usize {
+    const SLACK: usize = 64;
+    let held = |b: usize| (b + SLACK).next_power_of_two();
+    let mut best = ((CHUNK_BYTES - SLACK) / row_bytes).max(1);
+    let mut best_cost = usize::MAX;
+    let mut p = CHUNK_BYTES;
+    while p >= 64 << 10 {
+        let rpc = (p - SLACK) / row_bytes;
+        if rpc >= 1 {
+            let (full, rem) = (rows / rpc, rows % rpc);
+            let cost = full * held(rpc * row_bytes) + if rem > 0 { held(rem * row_bytes) } else { 0 };
+            if cost < best_cost {
+                best_cost = cost;
+                best = rpc;
+            }
+        }
+        p /= 2;
+    }
+    best
+}
+
 pub struct QTensor {
     pub dtype: DType,
     pub rows: usize,
@@ -35,7 +59,7 @@ impl QTensor {
         if abs.checked_add((rows * row_bytes) as u64).map_or(true, |end| end > src.len()) {
             return Err(Error::Format("a tensor runs past the end of the file"));
         }
-        let rows_per_chunk = (CHUNK_BYTES / row_bytes).max(1);
+        let rows_per_chunk = rows_per_chunk(rows, row_bytes);
         let mut chunks = Vec::new();
         let mut start = 0;
         while start < rows {

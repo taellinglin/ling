@@ -503,7 +503,7 @@ pub fn parse_reply(reply: &str) -> Vec<Pick> {
 // ── the prompt ───────────────────────────────────────────────────────────────
 
 pub fn system() -> String {
-    "You are a sound designer who writes parameter automation for a DAW. You are given one track, its tempo, the length of the section, a request and numbered parameters with what each one does. For every parameter pick an articulation pattern, how many beats one cycle lasts, and the low and high value (0 to 1) it moves between. Match the pattern to the job of the parameter: filters wobble, sweep or pluck, drive pumps or swells, mix and space breathe or rise, pitch only drifts a little. Do not give every parameter the same pattern. Answer with one JSON array and nothing else.".to_string()
+    "You are a sound designer who writes parameter automation for a DAW. You are given one track, its tempo, the length of the section, a request and numbered parameters with what each one does. For every parameter pick an articulation pattern, how many beats one cycle lasts, and the low and high value (0 to 1) it moves between. Match the pattern to the job of the parameter: filters wobble, sweep or pluck, drive pumps or swells, mix and space breathe or rise, pitch only drifts a little. Respect the genre and the part: no wobble on pads or vocals, no stutter on sustained chords, nothing rhythmic in a ballad or an ambient piece; drums and vocals barely move. Do not give every parameter the same pattern. Answer with one JSON array and nothing else.".to_string()
 }
 
 pub fn pattern_list() -> String {
@@ -517,8 +517,8 @@ pub fn example() -> String {
     )
 }
 
-pub fn user_prompt(track: &str, bpm: f64, bars: f64, request: &str, params: &[(String, Role, f32)]) -> String {
-    let mut s = format!("Track: {track}, {} BPM, {} bars. Request: {}\nPatterns: {}\nCycle lengths in beats: 0.25 0.5 1 2 4 8 16\nParameters:\n", bpm.round() as i64, bars.round() as i64, if request.trim().is_empty() { "something musical and varied" } else { request.trim() }, pattern_list());
+pub fn user_prompt(track: &str, bpm: f64, bars: f64, request: &str, form: &str, params: &[(String, Role, f32)]) -> String {
+    let mut s = format!("Track: {track}, {} BPM, {} bars. Request: {}\n{}Patterns: {}\nCycle lengths in beats: 0.25 0.5 1 2 4 8 16\nParameters:\n", bpm.round() as i64, bars.round() as i64, if request.trim().is_empty() { "something musical and varied" } else { request.trim() }, if form.is_empty() { String::new() } else { format!("{form}\n") }, pattern_list());
     for (i, (n, r, v)) in params.iter().enumerate() {
         s.push_str(&format!("{i} {n} ({}) now {v:.2}\n", r.word()));
     }
@@ -1247,6 +1247,623 @@ fn render_flat(spec: &Spec, ctx: &Ctx) -> Vec<(f64, f32)> {
     finish(out)
 }
 
+// ── the song's form: what each section asks of the automation ──────────────────
+//
+// A lane is laid out section by section. Each section gets a move that suits its place in the song, the part playing it, the
+// parameter's job and the genre: the intro opens up gently, verses barely move, builds rise (filter open, sends up, pump deepening,
+// width narrowing), the drops and choruses carry the energetic patterns on the parts that can take them, breaks open up slowly and
+// the outro closes. Depth follows the section's energy, every section starts its cycles on its own downbeat, and a track carries at
+// most three moving lanes.
+
+/// what kind of section a tag names
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SecKind {
+    Intro,
+    Verse,
+    Pre,
+    Build,
+    Chorus,
+    Drop,
+    Break,
+    Bridge,
+    Outro,
+}
+
+impl SecKind {
+    pub fn word(self) -> &'static str {
+        match self {
+            SecKind::Intro => "intro",
+            SecKind::Verse => "verse",
+            SecKind::Pre => "pre-chorus",
+            SecKind::Build => "build",
+            SecKind::Chorus => "chorus",
+            SecKind::Drop => "drop",
+            SecKind::Break => "break",
+            SecKind::Bridge => "bridge",
+            SecKind::Outro => "outro",
+        }
+    }
+    /// how much is usually going on in such a section (0..1), mixed with what the music measures
+    pub fn prior(self) -> f32 {
+        match self {
+            SecKind::Intro | SecKind::Break | SecKind::Outro => 0.3,
+            SecKind::Verse | SecKind::Bridge => 0.5,
+            SecKind::Pre => 0.6,
+            SecKind::Build => 0.7,
+            SecKind::Chorus => 0.85,
+            SecKind::Drop => 1.0,
+        }
+    }
+    pub fn peak(self) -> bool {
+        matches!(self, SecKind::Chorus | SecKind::Drop)
+    }
+}
+
+/// the section a tag ("intro", "Chorus 2", "pre-chorus", "breakdown", "drop2" ...) names; anything unknown is a verse
+pub fn sec_kind(tag: &str) -> SecKind {
+    let t = tag.trim().to_lowercase();
+    let t = t.trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ' || c == '_' || c == '-' || c == '#');
+    let has = |w: &[&str]| w.iter().any(|x| t.contains(x));
+    if t.starts_with("pre") {
+        SecKind::Pre
+    } else if has(&["intro"]) {
+        SecKind::Intro
+    } else if has(&["outro", "coda", "ending"]) || t == "end" {
+        SecKind::Outro
+    } else if has(&["build", "rise", "riser", "lift"]) {
+        SecKind::Build
+    } else if has(&["drop", "climax", "final"]) {
+        SecKind::Drop
+    } else if has(&["chorus", "hook", "refrain"]) {
+        SecKind::Chorus
+    } else if has(&["break", "interlude", "instrumental"]) {
+        SecKind::Break
+    } else if has(&["bridge", "middle"]) {
+        SecKind::Bridge
+    } else {
+        SecKind::Verse
+    }
+}
+
+/// does a name (a clip's, say) look like a section tag at all?
+pub fn is_section_name(s: &str) -> bool {
+    let t = s.trim().to_lowercase();
+    let t = t.trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ' || c == '_' || c == '-' || c == '#');
+    !t.is_empty() && ["intro", "verse", "pre", "chorus", "hook", "refrain", "build", "drop", "break", "interlude", "bridge", "outro", "coda"].iter().any(|w| t == *w || t.starts_with(w))
+}
+
+/// one section of the song as a lane sees it
+#[derive(Clone, Debug, PartialEq)]
+pub struct SecCtx {
+    pub tag: String,
+    pub kind: SecKind,
+    pub b0: f64,
+    pub b1: f64,
+    /// 0..1
+    pub energy: f32,
+}
+
+/// The form from (start, end, tag) spans and the energy measured in each (0..1, may be empty): snapped to whole bars, sorted, the
+/// tag's usual level mixed half and half with the measured one.
+pub fn form_of(spans: &[(f64, f64, String)], measured: &[f32]) -> Vec<SecCtx> {
+    let mut v: Vec<SecCtx> = spans
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.0.is_finite() && s.1.is_finite())
+        .map(|(i, s)| {
+            let kind = sec_kind(&s.2);
+            let e = match measured.get(i) {
+                Some(m) if m.is_finite() => 0.5 * kind.prior() + 0.5 * m.clamp(0.0, 1.0),
+                _ => kind.prior(),
+            };
+            SecCtx { tag: s.2.trim().to_string(), kind, b0: (s.0 / 4.0).round().max(0.0) * 4.0, b1: (s.1 / 4.0).round() * 4.0, energy: e.clamp(0.0, 1.0) }
+        })
+        .filter(|s| s.b1 > s.b0)
+        .collect();
+    v.sort_by(|a, b| a.b0.total_cmp(&b.b0));
+    // overlapping tags: a section ends where the next begins
+    for k in 0..v.len().saturating_sub(1) {
+        let next = v[k + 1].b0;
+        if v[k].b1 > next {
+            v[k].b1 = next;
+        }
+    }
+    v.retain(|s| s.b1 > s.b0);
+    v
+}
+
+/// The sections covering b0..b1: cut at the range, gaps between tags filled with a quiet verse, nothing shorter than a bar.
+pub fn secs_in(secs: &[SecCtx], b0: f64, b1: f64) -> Vec<SecCtx> {
+    let mut out: Vec<SecCtx> = vec![];
+    let mut t = b0;
+    let filler = |a: f64, b: f64, e: f32| SecCtx { tag: String::new(), kind: SecKind::Verse, b0: a, b1: b, energy: e };
+    for s in secs.iter().filter(|s| s.b1 > b0 + 1e-6 && s.b0 < b1 - 1e-6) {
+        let (a, b) = (s.b0.max(b0), s.b1.min(b1));
+        if a > t + 3.99 {
+            out.push(filler(t, a, s.energy.min(0.5)));
+        }
+        let a = if a > t + 1e-6 && a <= t + 3.99 { t } else { a.max(t) };
+        if b > a + 3.99 {
+            out.push(SecCtx { b0: a, b1: b, ..s.clone() });
+            t = b;
+        } else if let Some(l) = out.last_mut() {
+            l.b1 = b;
+            t = b;
+        }
+    }
+    if b1 > t + 3.99 || out.is_empty() {
+        let e = out.last().map(|s| s.energy).unwrap_or(0.5);
+        out.push(filler(t, b1, e));
+    } else if let Some(l) = out.last_mut() {
+        l.b1 = b1;
+    }
+    out
+}
+
+/// "intro build, 2 verses, build, 2 drops, break, outro fade": what a form asks for, as the status line says it
+pub fn form_summary(secs: &[SecCtx]) -> String {
+    let mut order: Vec<(SecKind, usize)> = vec![];
+    for s in secs {
+        match order.iter_mut().find(|o| o.0 == s.kind) {
+            Some(o) => o.1 += 1,
+            None => order.push((s.kind, 1)),
+        }
+    }
+    order
+        .iter()
+        .map(|(k, n)| {
+            let w = match k {
+                SecKind::Intro => "intro build".to_string(),
+                SecKind::Outro => "outro fade".to_string(),
+                SecKind::Pre => "pre-chorus lift".to_string(),
+                SecKind::Break => "breakdown".to_string(),
+                _ => k.word().to_string(),
+            };
+            if *n > 1 {
+                let pl = if w.ends_with('h') || w.ends_with('s') { "es" } else { "s" };
+                format!("{n} {w}{pl}")
+            } else {
+                w
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// what a track plays in the arrangement
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Part {
+    Bass,
+    Lead,
+    Pad,
+    Keys,
+    Vocal,
+    Drums,
+    Fx,
+    Other,
+}
+
+impl Part {
+    pub fn word(self) -> &'static str {
+        match self {
+            Part::Bass => "bass",
+            Part::Lead => "lead",
+            Part::Pad => "pad",
+            Part::Keys => "keys / chords",
+            Part::Vocal => "vocal",
+            Part::Drums => "drums",
+            Part::Fx => "fx / riser",
+            Part::Other => "part",
+        }
+    }
+}
+
+/// A track's part from its words (track name, instrument, patch) and, when they say nothing, its notes: the mean key, how often
+/// it plays chords (0..1) and how long its notes are (beats).
+pub fn part_of(words: &str, drums: bool, mean_key: f64, chordy: f32, mean_len: f64) -> Part {
+    let w = words.to_lowercase();
+    let has = |x: &[&str]| x.iter().any(|y| w.contains(y));
+    if drums || has(&["drum", "kit", "perc", "kick", "snare", "hat", "beat", "clap", "cymbal", "tom "]) {
+        Part::Drums
+    } else if has(&["vocal", "vox", "voice", "sing", "acapella", "lyric", "rap "]) {
+        Part::Vocal
+    } else if has(&["riser", "sweep", "uplift", "downlift", "impact", "whoosh", "noise", "fx"]) {
+        Part::Fx
+    } else if has(&["bass", "808", "sub", "growl", "reese", "wobble"]) {
+        Part::Bass
+    } else if has(&["pad", "string", "choir", "atmos", "drone", "ambience", "warm"]) {
+        Part::Pad
+    } else if has(&["piano", "keys", "rhodes", "organ", "chord", "guitar", "stab"]) {
+        Part::Keys
+    } else if has(&["lead", "melody", "hook", "pluck", "arp", "saw", "solo", "flute", "sax", "trumpet", "bell", "synth"]) {
+        Part::Lead
+    } else if !mean_key.is_finite() || mean_key <= 0.0 {
+        Part::Other
+    } else if mean_key < 48.0 {
+        Part::Bass
+    } else if chordy > 0.5 && mean_len >= 1.5 {
+        Part::Pad
+    } else if chordy > 0.5 {
+        Part::Keys
+    } else {
+        Part::Lead
+    }
+}
+
+/// what the genre allows: wobbles (bass music), pumping (club), gates and stutters, or a gentle hand everywhere (ballads, ambient)
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Style {
+    pub wobble: bool,
+    pub pump: bool,
+    pub stutter: bool,
+    pub gentle: bool,
+    /// how far moves go (1 = as the amount says)
+    pub depth: f32,
+}
+
+/// The style of a genre name (the project's "ai.genre", or any words). Without a genre, a song with drops is treated as club music
+/// and anything else as pop.
+pub fn style_of(genre: &str, has_drop: bool) -> Style {
+    let g = genre.to_lowercase();
+    let has = |x: &[&str]| x.iter().any(|y| g.contains(y));
+    if has(&["ballad", "ambient", "lofi", "lo-fi", "jazz", "folk", "acoustic", "classical", "orchestral", "cinematic", "piano", "singer", "soul", "blues", "gospel", "lullaby", "chill"]) {
+        return Style { wobble: false, pump: false, stutter: false, gentle: true, depth: 0.55 };
+    }
+    let wobble = has(&["dubstep", "riddim", "brostep", "neuro", "drum and bass", "dnb", "bass music", "wobble"]);
+    let stutter = wobble || has(&["glitch", "idm", "hyperpop", "future bass", "trance", "breakbeat", "edm"]);
+    let pump = wobble || has(&["house", "trance", "techno", "future bass", "disco", "garage", "edm", "hardstyle", "synthwave", "hyperpop", "electro", "big room", "club", "dance"]);
+    if wobble || pump || stutter {
+        return Style { wobble, pump, stutter, gentle: false, depth: 1.0 };
+    }
+    if g.trim().is_empty() && has_drop {
+        return Style { wobble: false, pump: true, stutter: false, gentle: false, depth: 0.9 };
+    }
+    // pop, rock, hip hop, reggaeton ...: movement, but nothing that announces itself
+    Style { wobble: false, pump: false, stutter: false, gentle: false, depth: 0.8 }
+}
+
+/// the job a lane does in the arrangement
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Slot {
+    /// the filter / brightness: the main movement
+    Tone,
+    /// the reverb / delay send
+    Space,
+    Drive,
+    /// stereo width (never the track's pan)
+    Width,
+    /// timbre, modulation depth, resonance
+    Color,
+    /// pan, envelopes, rates and the rest: only moves where the music is at full energy
+    Extra,
+}
+
+/// the slot a parameter of this role fills
+pub fn slot_of(key: &str, name: &str, role: Role) -> Slot {
+    match role {
+        Role::Filter => Slot::Tone,
+        Role::Space | Role::Mix => Slot::Space,
+        Role::Drive => Slot::Drive,
+        Role::Pan if key != "pan" && has(&name.to_lowercase(), &["width", "stereo", "spread"]) => Slot::Width,
+        Role::Timbre | Role::ModDepth | Role::Reso => Slot::Color,
+        _ => Slot::Extra,
+    }
+}
+
+/// how well a parameter does a slot's job (higher is better, None = not at all)
+fn slot_fit(slot: Slot, key: &str, name: &str, role: Role) -> Option<i32> {
+    let n = name.to_lowercase();
+    match slot {
+        Slot::Tone => match role {
+            Role::Filter => {
+                let mut s = 10;
+                if has(&n, &["cut"]) {
+                    s += 3;
+                }
+                if has(&n, &["filter", "flt", "lp", "bright"]) {
+                    s += 2;
+                }
+                // a high-pass or an EQ band is a poor main movement
+                if has(&n, &["hp", "high", "low", "mid", "bandw"]) {
+                    s -= 4;
+                }
+                Some(s)
+            }
+            Role::Timbre | Role::ModDepth => Some(2),
+            _ => None,
+        },
+        Slot::Space => match role {
+            Role::Mix if has(&n, &["rv", "rev", "verb", "dl", "del", "echo", "send", "space", "hall", "room"]) => Some(10),
+            Role::Mix => Some(5),
+            Role::Space if !has(&n, &["time", "pre", "damp"]) => Some(3),
+            _ => None,
+        },
+        Slot::Drive => (role == Role::Drive && !has(&n, &["gate", "asym"])).then_some(5),
+        Slot::Width => (role == Role::Pan && key != "pan" && has(&n, &["width", "stereo", "spread"])).then_some(5),
+        Slot::Color => match role {
+            Role::Timbre | Role::ModDepth => Some(4),
+            Role::Reso => Some(3),
+            _ => None,
+        },
+        Slot::Extra => None,
+    }
+}
+
+/// the slots a part moves in a song, most important first (at most three)
+pub fn part_slots(part: Part) -> &'static [Slot] {
+    match part {
+        Part::Bass => &[Slot::Tone, Slot::Drive],
+        Part::Lead => &[Slot::Tone, Slot::Space, Slot::Drive],
+        Part::Pad => &[Slot::Tone, Slot::Space, Slot::Width],
+        Part::Keys => &[Slot::Tone, Slot::Space],
+        Part::Vocal => &[Slot::Space],
+        Part::Drums => &[Slot::Tone],
+        Part::Fx => &[Slot::Tone, Slot::Width, Slot::Space],
+        Part::Other => &[Slot::Tone, Slot::Space],
+    }
+}
+
+/// Which of a track's parameters (key, name, role) carry its movement in a song: one per slot of the part, the best fit for each.
+/// Returns (index into `params`, slot).
+pub fn song_lanes(part: Part, params: &[(String, String, Role)]) -> Vec<(usize, Slot)> {
+    let mut out: Vec<(usize, Slot)> = vec![];
+    for &slot in part_slots(part) {
+        let best = params.iter().enumerate().filter(|(i, _)| !out.iter().any(|o| o.0 == *i)).filter_map(|(i, (k, n, r))| slot_fit(slot, k, n, *r).map(|s| (i, s))).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0)));
+        if let Some((i, _)) = best {
+            out.push((i, slot));
+        }
+    }
+    out
+}
+
+/// May a pattern (the model's or the words' choice for the full-energy sections) play on this part in this kind of section?
+pub fn fits(p: &str, part: Part, kind: SecKind, style: &Style, asked: &[&str]) -> bool {
+    if p == "hold" {
+        return true;
+    }
+    let asked = asked.contains(&p);
+    match part {
+        Part::Vocal => return matches!(p, "breathe" | "arc" | "drift"),
+        Part::Drums => return matches!(p, "breathe" | "sweep" | "build" | "fade") && !kind.peak(),
+        _ => {}
+    }
+    match kind {
+        SecKind::Intro => matches!(p, "build" | "breathe" | "sweep" | "drift"),
+        SecKind::Outro => matches!(p, "fade" | "breathe" | "drift"),
+        SecKind::Verse | SecKind::Bridge | SecKind::Break => matches!(p, "breathe" | "drift" | "arc" | "sweep" | "swell" | "open" | "answer"),
+        SecKind::Pre | SecKind::Build => matches!(p, "riser" | "build" | "accel" | "sweep" | "arc") || p == "pump" && (style.pump || asked),
+        SecKind::Chorus | SecKind::Drop => {
+            if style.gentle && rhythmic(p) && !asked {
+                return false;
+            }
+            match p {
+                // never on pads, keys or vocals
+                "wobble" => matches!(part, Part::Bass | Part::Lead | Part::Fx | Part::Other) && (style.wobble || asked),
+                // never on sustained harmony
+                "stutter" | "groove" => matches!(part, Part::Bass | Part::Lead | Part::Fx) && (style.stutter || asked),
+                "pump" => style.pump || asked,
+                "random" | "steps" => matches!(part, Part::Lead | Part::Fx | Part::Other) && !style.gentle,
+                // a drop is not a riser
+                "riser" | "build" | "accel" | "fade" => false,
+                _ => true,
+            }
+        }
+    }
+}
+
+/// a section's move for one lane
+#[derive(Clone, Debug, PartialEq)]
+pub struct Move {
+    pub pattern: &'static str,
+    /// beats per cycle
+    pub rate: f64,
+    pub lo: f32,
+    pub hi: f32,
+    /// the pump deepens (and its ceiling rises) through the section
+    pub grow: bool,
+    /// beats at the end of the section that climb into the next one (a short lift into a drop with no build before it)
+    pub lead: f64,
+    pub lead_to: f32,
+}
+
+impl Move {
+    fn hold(cur: f32) -> Move {
+        Move { pattern: "hold", rate: 8.0, lo: cur, hi: cur, grow: false, lead: 0.0, lead_to: cur }
+    }
+    fn of(pattern: &'static str, rate: f64, lo: f32, hi: f32) -> Move {
+        let (lo, hi) = span(lo, hi);
+        Move { pattern, rate: snap_rate(rate), lo, hi, grow: false, lead: 0.0, lead_to: hi }
+    }
+}
+
+/// a window clamped into 0..1 without moving its anchor (a build that ends on the parameter's value still ends there), at least 0.04 wide
+fn span(lo: f32, hi: f32) -> (f32, f32) {
+    let (lo, hi) = (lo.min(hi), lo.max(hi));
+    let (lo, hi) = (lo.clamp(0.0, 1.0), hi.clamp(0.0, 1.0));
+    if hi - lo < 0.04 {
+        fit(lo, lo + 0.04)
+    } else {
+        (lo, hi)
+    }
+}
+
+/// everything a lane's section moves depend on
+#[derive(Clone, Debug)]
+pub struct LaneCtx<'a> {
+    pub slot: Slot,
+    pub role: Role,
+    pub part: Part,
+    /// the parameter's own value (0..1): every move starts from it and rests on it
+    pub cur: f32,
+    /// 0..1, the Amount slider
+    pub amount: f32,
+    pub style: Style,
+    pub has_notes: bool,
+    /// the model's (or the words') choice for the full-energy sections, used there when it fits
+    pub main: Option<&'a Spec>,
+    /// the patterns the user's words asked for
+    pub asked: &'a [&'static str],
+    /// false for the second filter of a track and so on: it only moves where the music is at full energy
+    pub primary: bool,
+}
+
+/// The move of one lane in section `i` of `secs`. Deterministic for a seed.
+pub fn section_move(l: &LaneCtx, secs: &[SecCtx], i: usize, seed: u32) -> Move {
+    let Some(s) = secs.get(i) else { return Move::hold(l.cur) };
+    let cur = if l.cur.is_finite() { l.cur.clamp(0.0, 1.0) } else { 0.5 };
+    let e = s.energy.clamp(0.0, 1.0);
+    // how far this section moves: the amount, the section's energy, the genre and how much the parameter can take
+    let d = ((0.1 + 0.4 * l.amount.clamp(0.0, 1.0)) * (0.4 + 0.6 * e) * l.style.depth * l.role.scale().max(0.5)).clamp(0.04, 0.5);
+    let next = secs.get(i + 1).map(|x| x.kind);
+    let bars = (s.b1 - s.b0) / 4.0;
+    let pick = |v: &[f64], salt: u32| v[(mix(seed, i as u8, salt) as usize) % v.len()];
+    let hold = Move::hold(cur);
+    use Part as P;
+    use SecKind as K;
+    use Slot as S;
+    // the model's / the words' choice, where the music is at full energy and it suits the part and the genre
+    if s.kind.peak() {
+        if let Some(m) = l.main.filter(|m| fits(m.pattern, l.part, s.kind, &l.style, l.asked)) {
+            let (mid, half) = ((m.lo + m.hi) * 0.5, (m.hi - m.lo).abs() * 0.5 * (0.5 + 0.5 * e) * l.style.depth);
+            let rate = if m.pattern == "pump" { 1.0 } else { m.rate };
+            return Move::of(m.pattern, rate, mid - half, mid + half);
+        }
+    }
+    if !l.primary && l.slot != S::Width {
+        return hold;
+    }
+    let mut mv = match (s.kind, l.slot) {
+        (_, S::Extra) => hold,
+        // the intro opens gently: the filter from closed to where it sits, a pad's or a lead's room drying into the song
+        (K::Intro, S::Tone) if l.part != P::Vocal => Move::of("build", 16.0, cur - 1.4 * d, cur),
+        (K::Intro, S::Space) if matches!(l.part, P::Pad | P::Fx | P::Lead | P::Keys) => Move::of("fade", 16.0, cur, cur + d),
+        (K::Intro, _) => hold,
+        // verses barely move: a slow breath on the parts that sustain, nothing else
+        (K::Verse, S::Tone) if matches!(l.part, P::Pad | P::Lead | P::Keys | P::Fx) && !l.style.gentle || l.part == P::Pad => Move::of("breathe", 16.0, cur - 0.35 * d, cur + 0.2 * d),
+        (K::Verse, _) => hold,
+        (K::Bridge, S::Tone) if matches!(l.part, P::Pad | P::Lead | P::Keys) => Move::of("arc", 16.0, cur - 0.6 * d, cur + 0.3 * d),
+        (K::Bridge, S::Space) if matches!(l.part, P::Lead | P::Vocal | P::Pad) => Move::of("breathe", 16.0, cur, cur + 0.5 * d),
+        (K::Bridge, _) => hold,
+        // builds rise: the filter opens, the sends come up, the pump deepens, the width narrows (and springs back on the drop)
+        (K::Pre | K::Build, slot) => {
+            let dd = if s.kind == K::Build { d } else { 0.6 * d };
+            match slot {
+                S::Tone => match l.part {
+                    P::Vocal => hold,
+                    P::Drums => Move::of("build", 16.0, cur - dd, cur),
+                    P::Bass if l.style.wobble && s.kind == K::Build && bars >= 4.0 => Move::of("accel", 4.0, cur - 0.5 * dd, cur + dd),
+                    P::Pad | P::Keys if l.style.pump && s.kind == K::Build && bars >= 4.0 => Move { grow: true, ..Move::of("pump", 1.0, cur - dd, cur + 0.8 * dd) },
+                    _ => Move::of("build", 16.0, cur - 0.5 * dd, cur + 1.2 * dd),
+                },
+                S::Space if l.part == P::Vocal => {
+                    if s.kind == K::Build {
+                        Move::of("build", 16.0, cur, cur + 0.5 * dd)
+                    } else {
+                        hold
+                    }
+                }
+                S::Space => Move::of("build", 16.0, cur, cur + 1.2 * dd),
+                S::Drive => Move::of("build", 16.0, cur, cur + 0.6 * dd),
+                S::Width => Move::of("fade", 16.0, cur - 1.5 * dd, cur),
+                S::Color => Move::of("build", 16.0, cur, cur + 0.8 * dd),
+                S::Extra => hold,
+            }
+        }
+        // the drops and choruses: the energetic patterns, on the parts and in the genres that take them
+        (K::Chorus | K::Drop, S::Tone) => {
+            let drop = s.kind == K::Drop;
+            match l.part {
+                P::Bass if drop && l.style.wobble => Move::of("wobble", pick(&[0.5, 1.0, 1.0, 2.0], 21), cur - 1.2 * d, cur + 0.6 * d),
+                P::Bass if drop && l.style.pump && l.has_notes => Move::of("pluck", 4.0, cur - 0.8 * d, cur + 0.5 * d),
+                P::Pad | P::Keys if l.style.pump && !l.style.gentle => Move::of("pump", 1.0, cur - 1.2 * d, cur),
+                P::Pad => Move::of("arc", 16.0, cur - 0.4 * d, cur + 0.4 * d),
+                P::Lead if drop && l.style.stutter && e >= 0.7 => {
+                    if mix(seed, i as u8, 23) % 2 == 0 {
+                        Move::of("stutter", 0.25, cur - 1.2 * d, cur + 0.2 * d)
+                    } else {
+                        Move::of("groove", 16.0, cur - 1.2 * d, cur + 0.2 * d)
+                    }
+                }
+                P::Lead if drop && l.has_notes && !l.style.gentle => Move::of(if mix(seed, i as u8, 25) % 2 == 0 { "pluck" } else { "open" }, 4.0, cur - 0.8 * d, cur + 0.5 * d),
+                P::Lead => Move::of("arc", 16.0, cur - 0.5 * d, cur + 0.4 * d),
+                P::Fx => Move::of("sweep", 16.0, cur - d, cur + 0.5 * d),
+                _ => hold,
+            }
+        }
+        (K::Chorus | K::Drop, S::Drive) if s.kind == K::Drop && l.has_notes && !l.style.gentle => Move::of("swell", 4.0, cur - 0.3 * d, cur + 0.6 * d),
+        // dry and wide in the drop: the sends and the width rest where they are set
+        (K::Chorus | K::Drop, _) => hold,
+        // a breakdown opens up, slowly
+        (K::Break, S::Tone) if matches!(l.part, P::Drums | P::Vocal) => hold,
+        (K::Break, S::Tone) if l.style.gentle => Move::of("breathe", 16.0, cur - 0.6 * d, cur),
+        (K::Break, S::Tone) => Move::of("sweep", 32.0, cur - 1.2 * d, cur),
+        (K::Break, S::Space) => Move::of("breathe", 16.0, cur, cur + if l.part == P::Vocal { 0.5 } else { 1.0 } * d),
+        (K::Break, _) => hold,
+        // the outro closes: the filter down, the tail longer
+        (K::Outro, S::Tone) if l.part != P::Vocal => Move::of("fade", 16.0, cur - 1.4 * d, cur),
+        (K::Outro, S::Space) => Move::of("build", 16.0, cur, cur + if l.part == P::Vocal { 0.5 } else { 1.0 } * d),
+        (K::Outro, _) => hold,
+        _ => hold,
+    };
+    // a quiet section that runs straight into a drop or a chorus lifts over its last bars
+    if l.slot == S::Tone && matches!(s.kind, K::Verse | K::Break | K::Bridge) && matches!(next, Some(K::Drop | K::Chorus)) && !matches!(l.part, P::Vocal | P::Drums) && bars >= 4.0 {
+        mv.lead = if bars >= 16.0 { 8.0 } else { 4.0 };
+        mv.lead_to = (cur + 0.6 * d).min(1.0);
+    }
+    mv
+}
+
+/// Lay out a lane section by section: each move over its own bars (cycles restart on the section's downbeat), a hold resting on the
+/// parameter's value, a lead-in climbing over the last bars into the next section. Empty when nothing moves anywhere.
+pub fn render_form(moves: &[(SecCtx, Move)], cur: f32, ctx: &Ctx) -> Vec<(f64, f32)> {
+    if moves.iter().all(|(_, m)| m.pattern == "hold" && m.lead <= 0.0) {
+        return vec![];
+    }
+    let cur = if cur.is_finite() { cur.clamp(0.0, 1.0) } else { 0.5 };
+    let mut out: Vec<(f64, f32)> = vec![];
+    for (k, (s, m)) in moves.iter().enumerate() {
+        let lead = if m.lead > 0.0 { m.lead.min((s.b1 - s.b0) * 0.5) } else { 0.0 };
+        let end = s.b1 - lead;
+        let mut pts = if m.pattern == "hold" {
+            vec![]
+        } else {
+            let c = Ctx { b0: s.b0, b1: end, phrase: ctx.phrase, notes: ctx.notes, groove: ctx.groove, seed: ctx.seed ^ (k as u32 + 1).wrapping_mul(0x9E37_79B9), fills: ctx.fills };
+            // the section's last value lands just before the next downbeat, so the change happens on it
+            render(&Spec { pattern: m.pattern, rate: m.rate, lo: m.lo, hi: m.hi }, &c).into_iter().map(|p| (p.0.min(end - 0.01), p.1)).collect()
+        };
+        if m.grow && !pts.is_empty() {
+            // the pump starts shallow and deepens to the full window while its ceiling climbs from the value to the top
+            let (lo, hi) = (m.lo.min(m.hi), m.lo.max(m.hi));
+            let len = (end - s.b0).max(1e-6);
+            for p in pts.iter_mut() {
+                let f = (((p.0 - s.b0) / len).clamp(0.0, 1.0)) as f32;
+                let ceil = cur + (hi - cur) * f;
+                p.1 = (ceil - (hi - p.1) * f).clamp(lo.min(cur), hi);
+            }
+        }
+        if pts.is_empty() {
+            pts = vec![(s.b0, cur), (end - 0.01, cur)];
+        }
+        out.extend(pts);
+        if lead > 0.0 {
+            for kk in 0..=6 {
+                let x = kk as f64 / 6.0;
+                out.push((end + lead * x * 0.99, cur + (m.lead_to - cur) * (x * x) as f32));
+            }
+        }
+    }
+    finish(out)
+}
+
+/// The song's form for the model: what the track plays, the genre, and the sections it spans.
+pub fn form_prompt(secs: &[SecCtx], genre: &str, part: Part) -> String {
+    let mut s = format!("This track is the {}{}. Song form: ", part.word(), if genre.trim().is_empty() { String::new() } else { format!(" in a {} song", genre.trim()) });
+    let items: Vec<String> = secs.iter().take(24).map(|x| format!("{} {} bars (energy {:.1})", x.kind.word(), ((x.b1 - x.b0) / 4.0).round(), x.energy)).collect();
+    s.push_str(&items.join(" > "));
+    s.push_str(". Your pattern plays in the choruses and drops; the intro, verses, builds, breaks and outro get gentle moves of their own (filters opening, sends rising), so choose what suits this part at full energy.");
+    s
+}
+
 // ── tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1502,5 +2119,248 @@ mod tests {
         assert_eq!(snap_rate(3.0), 4.0);
         assert_eq!(snap_rate(f64::NAN), 1.0);
         assert_eq!(snap_rate(1000.0), 32.0);
+    }
+
+    // ── the song's form ──
+
+    /// intro 8 bars, verse 16, build 8, drop 16, break 8, drop 16, outro 8
+    fn club_form() -> Vec<SecCtx> {
+        let tags = [("intro", 8.0), ("verse", 16.0), ("build", 8.0), ("drop", 16.0), ("break", 8.0), ("drop 2", 16.0), ("outro", 8.0)];
+        let mut t = 0.0;
+        let spans: Vec<(f64, f64, String)> = tags
+            .iter()
+            .map(|(n, bars)| {
+                let s = (t, t + bars * 4.0, n.to_string());
+                t += bars * 4.0;
+                s
+            })
+            .collect();
+        form_of(&spans, &[])
+    }
+
+    fn lane<'a>(slot: Slot, role: Role, part: Part, style: Style, main: Option<&'a Spec>) -> LaneCtx<'a> {
+        LaneCtx { slot, role, part, cur: 0.6, amount: 0.6, style, has_notes: true, main, asked: &[], primary: true }
+    }
+
+    const PARTS: [Part; 8] = [Part::Bass, Part::Lead, Part::Pad, Part::Keys, Part::Vocal, Part::Drums, Part::Fx, Part::Other];
+    const SLOTS: [(Slot, Role); 5] = [(Slot::Tone, Role::Filter), (Slot::Space, Role::Mix), (Slot::Drive, Role::Drive), (Slot::Width, Role::Pan), (Slot::Color, Role::Timbre)];
+
+    fn styles() -> Vec<Style> {
+        vec![style_of("dubstep", true), style_of("house", true), style_of("trance", true), style_of("pop", false), style_of("ballad", false), style_of("", true)]
+    }
+
+    #[test]
+    fn sections_are_read_from_their_tags() {
+        assert_eq!(sec_kind("Intro"), SecKind::Intro);
+        assert_eq!(sec_kind("verse 2"), SecKind::Verse);
+        assert_eq!(sec_kind("pre-chorus"), SecKind::Pre);
+        assert_eq!(sec_kind("prechorus"), SecKind::Pre);
+        assert_eq!(sec_kind("buildup"), SecKind::Build);
+        assert_eq!(sec_kind("drop2"), SecKind::Drop);
+        assert_eq!(sec_kind("Chorus 3"), SecKind::Chorus);
+        assert_eq!(sec_kind("breakdown"), SecKind::Break);
+        assert_eq!(sec_kind("bridge"), SecKind::Bridge);
+        assert_eq!(sec_kind("outro"), SecKind::Outro);
+        assert_eq!(sec_kind("whatever"), SecKind::Verse);
+        assert!(is_section_name("verse 2") && is_section_name("Drop") && !is_section_name("Pattern") && !is_section_name("Bass"));
+        // snapped to bars, overlaps cut, gaps filled with a quiet verse, the range cut
+        let f = form_of(&[(0.3, 31.0, "intro".into()), (30.0, 64.0, "drop".into())], &[0.2, 1.0]);
+        assert_eq!((f[0].b0, f[0].b1, f[1].b0), (0.0, 32.0, 32.0));
+        assert!(f[1].energy > f[0].energy);
+        let s = secs_in(&f, 16.0, 96.0);
+        assert_eq!(s.iter().map(|x| (x.b0, x.b1, x.kind)).collect::<Vec<_>>(), vec![(16.0, 32.0, SecKind::Intro), (32.0, 64.0, SecKind::Drop), (64.0, 96.0, SecKind::Verse)]);
+        assert_eq!(form_summary(&club_form()), "intro build, verse, build, 2 drops, breakdown, outro fade");
+    }
+
+    #[test]
+    fn the_intro_never_moves_rhythmically() {
+        let f = club_form();
+        let wob = Spec { pattern: "wobble", rate: 1.0, lo: 0.2, hi: 0.9 };
+        for st in styles() {
+            for part in PARTS {
+                for (slot, role) in SLOTS {
+                    for main in [None, Some(&wob)] {
+                        let m = section_move(&lane(slot, role, part, st, main), &f, 0, 7);
+                        assert!(!rhythmic(m.pattern) && m.pattern != "accel", "{part:?} {slot:?}: {} in the intro", m.pattern);
+                    }
+                }
+            }
+        }
+        // the filter opens up to where it sits
+        let m = section_move(&lane(Slot::Tone, Role::Filter, Part::Pad, style_of("house", true), None), &f, 0, 7);
+        assert_eq!(m.pattern, "build");
+        assert!((m.hi - 0.6).abs() < 1e-6 && m.lo < 0.5);
+    }
+
+    #[test]
+    fn a_build_rises_and_the_width_springs_back_on_the_drop() {
+        let f = club_form();
+        let st = style_of("trance", true);
+        let notes: Vec<(f64, f64)> = (0..512).map(|i| (i as f64, 0.5)).collect();
+        let (b0, b1) = (f[2].b0, f[2].b1);
+        for part in [Part::Lead, Part::Pad, Part::Bass, Part::Fx] {
+            for (slot, role) in [(Slot::Tone, Role::Filter), (Slot::Space, Role::Mix), (Slot::Drive, Role::Drive)] {
+                let l = lane(slot, role, part, st, None);
+                let moves: Vec<(SecCtx, Move)> = (0..f.len()).map(|i| (f[i].clone(), section_move(&l, &f, i, 3))).collect();
+                if moves[2].1.pattern == "hold" {
+                    continue;
+                }
+                let c = Ctx { b0: 0.0, b1: 384.0, phrase: 0.0, notes: &notes, groove: &[], seed: 3, fills: true };
+                let pts = render_form(&moves, 0.6, &c);
+                // the ceiling climbs (a deepening pump dips further too, so its top is what rises)
+                let at = |t0: f64, t1: f64| pts.iter().filter(|p| p.0 >= t0 && p.0 < t1).map(|p| p.1).fold(0.0f32, f32::max);
+                assert!(at(b1 - 4.0, b1) > at(b0, b0 + 4.0) + 0.05, "{part:?} {slot:?}: the build does not rise ({} -> {})", at(b0, b0 + 4.0), at(b1 - 4.0, b1));
+                if moves[2].1.grow {
+                    let dip = |t0: f64, t1: f64| pts.iter().filter(|p| p.0 >= t0 && p.0 < t1).map(|p| p.1).fold(1.0f32, f32::min);
+                    assert!(dip(b1 - 4.0, b1) < dip(b0, b0 + 4.0) - 0.05, "{part:?}: the pump does not deepen");
+                }
+            }
+        }
+        let l = lane(Slot::Width, Role::Pan, Part::Pad, st, None);
+        let moves: Vec<(SecCtx, Move)> = (0..f.len()).map(|i| (f[i].clone(), section_move(&l, &f, i, 3))).collect();
+        let c = Ctx { b0: 0.0, b1: 384.0, phrase: 0.0, notes: &[], groove: &[], seed: 3, fills: true };
+        let pts = render_form(&moves, 0.6, &c);
+        let before = pts.iter().filter(|p| p.0 < b1 && p.0 > b1 - 1.0).map(|p| p.1).fold(1.0f32, f32::min);
+        let after = pts.iter().find(|p| p.0 >= b1).unwrap().1;
+        assert!(before < 0.45 && (after - 0.6).abs() < 1e-3, "width {before} -> {after}");
+    }
+
+    #[test]
+    fn the_drop_carries_the_energy_on_the_right_parts() {
+        let f = club_form();
+        let m = |part, slot, role, st: Style| section_move(&lane(slot, role, part, st, None), &f, 3, 9).pattern;
+        assert_eq!(m(Part::Bass, Slot::Tone, Role::Filter, style_of("dubstep", true)), "wobble");
+        assert_eq!(m(Part::Pad, Slot::Tone, Role::Filter, style_of("house", true)), "pump");
+        assert!(matches!(m(Part::Lead, Slot::Tone, Role::Filter, style_of("dubstep", true)), "stutter" | "groove"));
+        // drums and vocals hardly move, and nothing wobbles on a pad or a vocal even when asked
+        for st in styles() {
+            assert_eq!(m(Part::Drums, Slot::Tone, Role::Filter, st), "hold");
+            assert_eq!(m(Part::Vocal, Slot::Space, Role::Mix, st), "hold");
+        }
+        let wob = Spec { pattern: "wobble", rate: 1.0, lo: 0.2, hi: 0.9 };
+        let stut = Spec { pattern: "stutter", rate: 0.25, lo: 0.2, hi: 0.9 };
+        for part in [Part::Pad, Part::Vocal, Part::Keys] {
+            for sp in [&wob, &stut] {
+                let p = section_move(&lane(Slot::Tone, Role::Filter, part, style_of("dubstep", true), Some(sp)), &f, 3, 9).pattern;
+                assert!(p != "wobble" && p != "stutter" && p != "groove", "{part:?}: {p}");
+            }
+        }
+        // the model's wobble on a dubstep bass is kept in the drop, not in the verse
+        let l = lane(Slot::Tone, Role::Filter, Part::Bass, style_of("dubstep", true), Some(&wob));
+        assert_eq!(section_move(&l, &f, 3, 9).pattern, "wobble");
+        assert!(!rhythmic(section_move(&l, &f, 1, 9).pattern));
+    }
+
+    #[test]
+    fn a_ballad_stays_restrained() {
+        let f = club_form();
+        let st = style_of("piano ballad", false);
+        assert!(st.gentle);
+        let asked = Spec { pattern: "pump", rate: 1.0, lo: 0.1, hi: 0.9 };
+        for part in PARTS {
+            for (slot, role) in SLOTS {
+                for i in 0..f.len() {
+                    for main in [None, Some(&asked)] {
+                        let p = section_move(&lane(slot, role, part, st, main), &f, i, 5).pattern;
+                        assert!(!rhythmic(p) && p != "accel", "{part:?} {slot:?} in the {}: {p}", f[i].tag);
+                    }
+                }
+            }
+        }
+        // and it moves less than a club track would
+        let w = |st: Style| {
+            let m = section_move(&lane(Slot::Tone, Role::Filter, Part::Pad, st, None), &f, 2, 5);
+            m.hi - m.lo
+        };
+        assert!(w(st) < w(style_of("house", true)) * 0.7);
+    }
+
+    #[test]
+    fn quiet_sections_move_little_and_depth_follows_the_energy() {
+        let f = club_form();
+        let st = style_of("house", true);
+        // the verse breathes on the pad and holds on the bass, drums, vocal
+        assert_eq!(section_move(&lane(Slot::Tone, Role::Filter, Part::Bass, st, None), &f, 1, 1).pattern, "hold");
+        assert_eq!(section_move(&lane(Slot::Space, Role::Mix, Part::Lead, st, None), &f, 1, 1).pattern, "hold");
+        let v = section_move(&lane(Slot::Tone, Role::Filter, Part::Pad, st, None), &f, 1, 1);
+        assert!(v.pattern == "breathe" && v.hi - v.lo < 0.15, "{v:?}");
+        // the breakdown opens slowly, the outro closes
+        let b = section_move(&lane(Slot::Tone, Role::Filter, Part::Lead, st, None), &f, 4, 1);
+        assert!(b.pattern == "sweep" && b.rate >= 16.0);
+        assert_eq!(section_move(&lane(Slot::Tone, Role::Filter, Part::Lead, st, None), &f, 6, 1).pattern, "fade");
+        // the same move is deeper in a louder section
+        let mut lo = f.clone();
+        lo[2].energy = 0.2;
+        let mut hi = f.clone();
+        hi[2].energy = 1.0;
+        let w = |s: &[SecCtx]| {
+            let m = section_move(&lane(Slot::Space, Role::Mix, Part::Lead, st, None), s, 2, 1);
+            m.hi - m.lo
+        };
+        assert!(w(&hi) > w(&lo) * 1.3);
+        // a secondary lane only moves where the music is at full energy
+        let mut l = lane(Slot::Tone, Role::Filter, Part::Lead, st, None);
+        l.primary = false;
+        assert!((0..f.len()).all(|i| section_move(&l, &f, i, 1).pattern == "hold"));
+    }
+
+    #[test]
+    fn a_verse_straight_into_a_drop_lifts_over_its_last_bars() {
+        let spans = vec![(0.0, 64.0, "verse".to_string()), (64.0, 128.0, "drop".to_string())];
+        let f = form_of(&spans, &[]);
+        let l = lane(Slot::Tone, Role::Filter, Part::Lead, style_of("pop", false), None);
+        let m = section_move(&l, &f, 0, 1);
+        assert!(m.lead > 0.0 && m.lead_to > 0.6);
+        let moves: Vec<(SecCtx, Move)> = (0..2).map(|i| (f[i].clone(), section_move(&l, &f, i, 1))).collect();
+        let pts = render_form(&moves, 0.6, &Ctx { b0: 0.0, b1: 128.0, phrase: 0.0, notes: &[], groove: &[], seed: 1, fills: false });
+        let top = pts.iter().filter(|p| p.0 > 56.0 && p.0 < 64.0).map(|p| p.1).fold(0.0f32, f32::max);
+        assert!(top > 0.62, "no lift into the drop ({top})");
+    }
+
+    #[test]
+    fn section_lanes_restart_on_the_downbeat_and_are_deterministic() {
+        let f = club_form();
+        let st = style_of("dubstep", true);
+        let l = lane(Slot::Tone, Role::Filter, Part::Bass, st, None);
+        let moves: Vec<(SecCtx, Move)> = (0..f.len()).map(|i| (f[i].clone(), section_move(&l, &f, i, 42))).collect();
+        let notes: Vec<(f64, f64)> = (0..384).map(|i| (i as f64, 0.5)).collect();
+        let c = Ctx { b0: 0.0, b1: 384.0, phrase: 0.0, notes: &notes, groove: &[], seed: 42, fills: true };
+        let a = render_form(&moves, 0.6, &c);
+        let b = render_form(&moves, 0.6, &c);
+        assert_eq!(a, b);
+        let moves2: Vec<(SecCtx, Move)> = (0..f.len()).map(|i| (f[i].clone(), section_move(&l, &f, i, 42))).collect();
+        assert_eq!(moves, moves2);
+        assert!(a.windows(2).all(|w| w[1].0 > w[0].0) && a.iter().all(|p| (0.0..=1.0).contains(&p.1)));
+        // every section boundary has a point at (or just after) its downbeat, and the drop's wobble rate is a bar division
+        for s in &f {
+            assert!(a.iter().any(|p| p.0 >= s.b0 - 1e-6 && p.0 < s.b0 + 0.05), "nothing at {}", s.b0);
+        }
+        assert!([0.5, 1.0, 2.0, 4.0].contains(&moves[3].1.rate));
+        // a lane that holds everywhere is not written at all
+        let v = lane(Slot::Extra, Role::Env, Part::Vocal, st, None);
+        let hold: Vec<(SecCtx, Move)> = (0..f.len()).map(|i| (f[i].clone(), section_move(&v, &f, i, 1))).collect();
+        assert!(render_form(&hold, 0.5, &c).is_empty());
+    }
+
+    #[test]
+    fn a_track_gets_at_most_a_lane_per_job() {
+        let p = |v: &[&str]| v.iter().map(|n| (n.to_string(), n.to_string(), role_of(n))).collect::<Vec<_>>();
+        let params = p(&["hp cut", "cut", "res", "drive", "rv mix", "rv size", "width", "pan", "attack", "vowel"]);
+        let pick = |part| song_lanes(part, &params).iter().map(|(i, s)| (params[*i].0.clone(), *s)).collect::<Vec<_>>();
+        assert_eq!(pick(Part::Pad), vec![("cut".to_string(), Slot::Tone), ("rv mix".to_string(), Slot::Space), ("width".to_string(), Slot::Width)]);
+        assert_eq!(pick(Part::Bass), vec![("cut".to_string(), Slot::Tone), ("drive".to_string(), Slot::Drive)]);
+        assert_eq!(pick(Part::Vocal), vec![("rv mix".to_string(), Slot::Space)]);
+        for part in PARTS {
+            let v = pick(part);
+            assert!(v.len() <= 3 && !v.iter().any(|x| x.0 == "pan"), "{part:?}: {v:?}");
+        }
+        assert_eq!(part_of("Sub Bass", false, 40.0, 0.0, 1.0), Part::Bass);
+        assert_eq!(part_of("Warm Pad (Ling Prism)", false, 60.0, 0.9, 4.0), Part::Pad);
+        assert_eq!(part_of("Track 3", false, 64.0, 0.8, 4.0), Part::Pad);
+        assert_eq!(part_of("Track 4", false, 30.0, 0.0, 0.5), Part::Bass);
+        assert_eq!(part_of("Lead Vocal", false, 64.0, 0.0, 0.5), Part::Vocal);
+        assert_eq!(part_of("x", true, 40.0, 0.0, 0.2), Part::Drums);
+        assert!(style_of("dubstep", true).wobble && !style_of("house", true).wobble && style_of("house", true).pump);
+        assert!(!style_of("pop", false).pump && style_of("", true).pump && style_of("lofi hip hop", false).gentle);
     }
 }

@@ -103,6 +103,7 @@ fn sched_notes(inst: &mut Option<Box<dyn Instrument>>, held: &mut Vec<(u8, u64)>
         let ns = base + n.start;
         if ns >= w0 && ns < w1 {
             if let Some(i) = inst.as_mut() {
+                i.note_beat(ns);
                 i.note_on_lyric(n.key, n.vel, n.pan, n.cutoff, n.reso, &n.lyric, (n.len.min(limit - n.start) / bps) as f32);
             }
             let end_beat = ns + n.len.min(limit - n.start);

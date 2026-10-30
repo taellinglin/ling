@@ -259,8 +259,10 @@ pub fn trim_db(kind: &str, preset: &str) -> f32 {
 /// the instrument's level knob and how it maps to gain: (name, exponent of the gain law)
 pub fn level_param(kind: &str) -> Option<(&'static str, f32)> {
     match kind {
-        "growl" | "prism" | "chip" | "cinema" => Some((if matches!(kind, "chip" | "cinema") { "level" } else { "out" }, 2.0)),
+        "growl" | "prism" | "chip" | "cinema" | "nova" => Some((if matches!(kind, "chip" | "cinema" | "nova") { "level" } else { "out" }, 2.0)),
         "pluck" => Some(("level", 1.0)),
+        // the Ling Slicer's level knob is squared into its gain (dsp/slicer.rs)
+        "slicer" => Some(("level", 2.0)),
         _ => None,
     }
 }
@@ -322,7 +324,7 @@ mod tests {
     #[ignore]
     fn loudness_medians() {
         let sr = 44100.0;
-        for kind in ["growl", "prism", "pluck", "chip", "cinema"] {
+        for kind in ["growl", "prism", "pluck", "chip", "cinema", "nova"] {
             let probe = crate::dsp::make_instrument(kind, sr).unwrap();
             let names: Vec<String> = probe.presets().iter().take(48).map(|s| s.to_string()).collect();
             let mut l: Vec<f32> = names
@@ -359,7 +361,7 @@ mod tests {
                 }
             }
         }
-        for kind in ["growl", "prism", "pluck", "chip", "cinema"] {
+        for kind in ["growl", "prism", "pluck", "chip", "cinema", "nova"] {
             if !only.is_empty() && !only.iter().any(|k| k == kind) {
                 continue;
             }

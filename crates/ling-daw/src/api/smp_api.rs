@@ -65,6 +65,59 @@ fn search_sets(words: &[String]) -> Vec<Vec<String>> {
     sets
 }
 
+/// the best readable sample in an index for some words: the words as asked, then as a sample library says them, then fewer and fewer
+fn best_in(idx: &[(String, String)], words: &[String]) -> Option<String> {
+    for set in search_sets(words) {
+        let mut hits: Vec<(f64, &String)> = idx.iter().filter_map(|(p, lc)| score(lc, &set).map(|s| (s, p))).collect();
+        hits.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(y.1)));
+        // the best one that can actually be read
+        for (_, p) in hits.into_iter().take(80) {
+            if crate::dsp::sampler::load_audio(p).map(|(d, _)| !d.is_empty()).unwrap_or(false) {
+                return Some(p.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The words a General MIDI drum key is looked for with in a sample library.
+pub fn gm_drum_words(key: u8) -> &'static str {
+    match key {
+        35 | 36 => "kick",
+        37 => "rim",
+        38 | 40 => "snare",
+        39 => "clap",
+        41 | 43 => "low tom",
+        45 | 47 => "mid tom",
+        48 | 50 => "high tom",
+        42 | 44 => "closed hat",
+        46 => "open hat",
+        49 | 57 => "crash",
+        51 | 59 => "ride",
+        52 => "china",
+        53 => "ride bell",
+        54 => "tambourine",
+        55 => "splash",
+        56 => "cowbell",
+        60..=62 => "bongo",
+        63..=64 => "conga",
+        65 | 66 => "timbale",
+        67 | 68 => "agogo",
+        69 | 70 => "shaker",
+        75 => "clave",
+        76 | 77 => "wood block",
+        80 | 81 => "triangle",
+        _ => "perc",
+    }
+}
+
+/// A drum kit from sample folders: for every General MIDI drum key a part plays, the best sample for that drum's name, as (key, file).
+/// Keys without a sample are left out (they stay silent rather than playing the wrong drum).
+pub fn kit_from_folders(roots: &[String], keys: &[u8]) -> Vec<(u8, String)> {
+    let idx = index(roots);
+    keys.iter().filter_map(|k| best_in(&idx, &gm_drum_words(*k).split(' ').map(|w| w.to_string()).collect::<Vec<_>>()).map(|p| (*k, p))).collect()
+}
+
 impl Daw {
     /// the best sample file for some words (a drum name) under the sample folders, if there is one
     pub(super) fn find_sample(&mut self, words: &str) -> Option<String> {
@@ -77,18 +130,7 @@ impl Daw {
             self.smp_index = Some((self.smp_roots.clone(), index(&roots)));
         }
         let idx = &self.smp_index.as_ref()?.1;
-        // the words as asked, then as a sample library says them, then fewer and fewer of them
-        for set in search_sets(&words) {
-            let mut hits: Vec<(f64, &String)> = idx.iter().filter_map(|(p, lc)| score(lc, &set).map(|s| (s, p))).collect();
-            hits.sort_by(|x, y| y.0.total_cmp(&x.0).then(x.1.cmp(y.1)));
-            // the best one that can actually be read
-            for (_, p) in hits.into_iter().take(80) {
-                if crate::dsp::sampler::load_audio(p).map(|(d, _)| !d.is_empty()).unwrap_or(false) {
-                    return Some(p.clone());
-                }
-            }
-        }
-        None
+        best_in(idx, &words)
     }
 
     pub(super) fn smp_dispatch(&mut self, name: &str, a: &A) -> Result<Val, String> {

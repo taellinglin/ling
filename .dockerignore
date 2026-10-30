@@ -1,4 +1,10 @@
 target/
+# local scratch build folders (other target dirs, the shared target) - never part of the image
+target-*/
+.ling-shared-target/
+.ling-build/
+crates/*/target/
+crates/*/target-*/
 .git/
 *.log
 ling-lang.org/

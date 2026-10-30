@@ -6,6 +6,12 @@
 //! recipes' master moves. Acapellas (medley/acapella.rs) play under it the way a live mashup uses them: the chops (chops.rs
 //! `compose_edm`, tuned to the chords) carry the vocal where the plan says, the acapella's level lane at 0 there and back up on the
 //! downbeat they end, and the key lines stressed with harmonies, a vocoder, doubles, a telephone filter or a stutter.
+//! The chops play on Ling Slicer kits (chops/kit.rs, `Daw::chops_on_slicer`: a slice per key, tuned by the Slicer to the chords at
+//! every beat they play); where another acapella sings with them (vocal + chops) they answer that voice in the gaps between its
+//! lines instead of singing over it. With `hype=`, an EDM / trap medley gets a hype shout from the sample pack before each drop (one per drop,
+//! Ling Slicer; the chops make room for it). The production edits (chops/edits.rs, `edits=`) are planned over the medley's sections
+//! (a change of song is a transition): on the chops, an edits track per chop source, the echo throws on the acapellas' last words
+//! and another acapella answering the one that sings (call and response); an air pocket stops every part before its drop.
 use super::song_api::{apply_design, find_patch, instrument_for, medley_phrases, write_wav16};
 use super::{Daw, A, Val};
 use crate::chops::{self, Vocal};
@@ -56,8 +62,16 @@ struct Acap {
     bank: Vec<f32>,
     /// the sampler config of its chops
     bank_json: String,
+    /// the bank as written (the Slicer's file) and where its slices come from
+    bank_file: String,
+    lay: chops::kit::Layout,
     /// rendered shifts: semitones -> the sample (written next to the project)
     shifted: HashMap<i32, Arc<Sample>>,
+}
+
+/// the genres a hype shout belongs in: the club genres (EDM) and trap
+fn hype_genre(g: &str) -> bool {
+    matches!(g, "trance" | "house" | "deep house" | "techno" | "acid techno" | "hardstyle" | "garage" | "hyperpop" | "trap" | "drum and bass" | "dubstep" | "future bass" | "breakbeat")
 }
 
 fn sanitize(s: &str) -> String {
@@ -108,10 +122,12 @@ impl Daw {
     /// first main acapella's), options) -> a sentence. Options "k=v;..." with the story last ("story=<any text>"):
     /// layering=0..1; rolls=0..1; arc=<story arc or feel>; feelarc=<emotion arc>; genre=<sounds>; registers=layer|guard|off;
     /// align= / breakdown= / answer= / clash= / risers= (0 = off); design=0..1; feel=0..1; recipes=0|1; recipenotes=0|1;
-    /// master=0|1; flow=0|1; expr=0|1; chops=off|chops|breakcore; chopn=; choplen=; chopvar=; chopick=random|best; vocal=<file>;
-    /// acap=<file>|<file> (main acapellas: they sing); acapx=<file>|... (acapellas only chopped); replace=0|1 (the chops replace the
-    /// vocal: its level 0 where they play, back up after); vocret=fade|cut; stress=0..1 (how many lines are stressed);
-    /// stressways=auto|harmonies|vocoder|doubles.
+    /// master=0|1; flow=0|1; cinema=0|1 (the Ling Cinema transition effects); expr=0|1; chops=off|chops|breakcore; chopn=; choplen=; chopvar=; chopick=random|best; vocal=<file>;
+    /// chopslicer=0|1 (the chops on Ling Slicer kits, the default; 0 = on Samplers as before); acap=<file>|<file> (main acapellas:
+    /// they sing); acapx=<file>|... (acapellas only chopped); replace=0|1 (the chops replace the vocal: its level 0 where they play,
+    /// back up after); vocret=fade|cut; stress=0..1 (how many lines are stressed); stressways=auto|harmonies|vocoder|doubles;
+    /// hype=off|clean|explicit (EDM / trap genres: a hype shout before each drop, off by default); edits=auto|light|more|off|<list>
+    /// (the production edits, chops/edits.rs). Keys this build does not know are ignored (`opt` looks up only what it reads).
     pub(super) fn medley_build(&mut self, a: &A) -> Result<Val, String> {
         let eng = self.out.engine.clone();
         macro_rules! ok {
@@ -163,7 +179,7 @@ impl Daw {
                         _ => (0.0, "unknown"),
                     },
                 };
-                acaps.push(Acap { name, main, rate, bpm_src, bpm_how: how, stretch: 1.0, key: (0, false), prep: stereo, vocal: Vocal::default(), phase: 0.0, hooks: vec![], reps: vec![], bank: vec![], bank_json: String::new(), shifted: HashMap::new() });
+                acaps.push(Acap { name, main, rate, bpm_src, bpm_how: how, stretch: 1.0, key: (0, false), prep: stereo, vocal: Vocal::default(), phase: 0.0, hooks: vec![], reps: vec![], bank: vec![], bank_json: String::new(), bank_file: String::new(), lay: chops::kit::Layout::default(), shifted: HashMap::new() });
             }
         }
         if !acaps.is_empty() && !acaps.iter().any(|x| x.main) {
@@ -189,6 +205,7 @@ impl Daw {
             x.key = ac::key_of(&x.vocal).unwrap_or(crate::medley::common_key(&ph));
             x.phase = ac::bar_phase(&x.vocal);
             x.bank = x.vocal.add_reverse(&x.prep);
+            x.lay = chops::kit::Layout::of_vocal(&x.vocal, (x.prep.len() / 2) as u32);
             x.reps = ac::line_repeats(&x.vocal);
             let hl = x.vocal.hook_line;
             if let Some(h) = hl {
@@ -373,10 +390,39 @@ impl Daw {
         let picks = ac::choose(&cands, stress_amt, ways);
 
         // ── the chops of every section (acapellas: lyric-aware EDM chops of the section's chop source, tuned to its chords) ──
-        let edm = chops::Edm { density: 0.6, stutter: if style == chops::Style::Breakcore { 0.9 } else { 0.55 }, ..chops::Edm::default() };
+        let edm = chops::Edm { density: 0.6, stutter: if style == chops::Style::Breakcore { 0.9 } else { 0.55 }, genre: if style == chops::Style::Breakcore { "breakcore".into() } else { g.name.to_string() }, ..chops::Edm::default() };
+        let on_slicer = flag("chopslicer");
+        let mut answered = 0usize;
         // per acapella: per section (main, layer) chop notes
         let mut sec_chops: Vec<Vec<(Vec<Note>, Vec<Note>)>> = (0..acaps.len()).map(|_| vec![(vec![], vec![]); secs.len()]).collect();
         let mut chop_tune = chops::TuneStats::default();
+        // the production edits: their notes on each acapella's edits track (per section), the sweeps and throws of its chop tracks,
+        // the throws on its vocal (absolute beats), the air pockets before the drops
+        let which = chops::edits::Which::parse(&opt("edits").unwrap_or_default());
+        let mut sec_fx: Vec<Vec<Vec<Note>>> = (0..acaps.len()).map(|_| vec![vec![]; secs.len()]).collect();
+        let mut ed_sweeps: Vec<Vec<(f64, f64)>> = vec![vec![]; acaps.len()];
+        let mut ed_throws: Vec<Vec<(f64, f64)>> = vec![vec![]; acaps.len()];
+        let mut voc_throws: Vec<Vec<(f64, f64)>> = vec![vec![]; acaps.len()];
+        let mut pockets: Vec<(f64, f64)> = vec![];
+        let mut edits_used: Vec<chops::edits::Kind> = vec![];
+        // the song each section comes from (its slot's spine file): a change of song is a transition for the edits
+        let song_of: Vec<usize> = {
+            let mut files: Vec<String> = vec![];
+            secs.iter()
+                .map(|s| {
+                    let si = s.slot.or(s.roll.map(|r| r.0)).unwrap_or(0).min(mash.slots.len().saturating_sub(1));
+                    let f = mash.slots.get(si).and_then(|sl| ph.get(sl.spine)).map(|p| p.file.clone()).unwrap_or_default();
+                    match files.iter().position(|x| *x == f) {
+                        Some(k) => k,
+                        None => {
+                            files.push(f);
+                            files.len() - 1
+                        }
+                    }
+                })
+                .collect()
+        };
+        let mut composed: Vec<Option<(usize, chops::EdmOut)>> = (0..secs.len()).map(|_| None).collect();
         if !acaps.is_empty() {
             for i in 0..secs.len() {
                 let v = plan[i];
@@ -408,7 +454,95 @@ impl Daw {
                     only_swell,
                 });
                 chop_tune.add(&out.tune);
-                sec_chops[src][i] = (out.main, out.layer);
+                composed[i] = Some((src, out));
+            }
+            let mut content = chops::edits::Content { voices: acaps.len(), slicer: on_slicer, reverse: on_slicer, ..Default::default() };
+            for x in acaps.iter().filter(|x| !x.vocal.pieces.is_empty()) {
+                let c = chops::edits::Content::of(&x.vocal, on_slicer, acaps.len());
+                content.sustain |= c.sustain;
+                content.pitched |= c.pitched;
+                content.words = content.words.max(c.words);
+                content.hits |= c.hits;
+                content.reverse |= c.reverse;
+            }
+            let spots: Vec<chops::edits::Spot> = (0..secs.len())
+                .map(|i| {
+                    let out = composed[i].as_ref().map(|c| &c.1);
+                    chops::edits::Spot { tag: secs[i].tag.to_string(), beats: secs[i].beats(), energy: secs[i].energy, chopped: plan[i].chops(), song: song_of[i], build: secs[i].tag == "build" || out.map(|o| !o.stages.is_empty()).unwrap_or(false), swell: out.map(|o| o.swells > 0).unwrap_or(false), riser: false, sings: plan[i].sings() }
+                })
+                .collect();
+            let eplan = chops::edits::plan(&spots, g.name, &which, &content, seed);
+            let egenre = if style == chops::Style::Breakcore { "breakcore" } else { g.name };
+            let mut nth = [0usize; 4];
+            for i in 0..secs.len() {
+                let v = plan[i];
+                let kinds = &eplan[i];
+                let ri = chops::role_of(secs[i].tag) as usize;
+                let k = nth[ri];
+                if spots[i].chopped {
+                    nth[ri] += 1;
+                }
+                if let Some((src, out)) = composed[i].take() {
+                    let silence = out.silence;
+                    let (mut main, mut layer) = (out.main, out.layer);
+                    let mut fx: Vec<Note> = vec![];
+                    // the edits on the chops (a throw where an acapella sings goes on the vocal; the answers are placed below)
+                    let ek: Vec<chops::edits::Kind> = kinds.iter().copied().filter(|k| *k != chops::edits::Kind::Response && !(v.sings() && *k == chops::edits::Kind::Throw)).collect();
+                    if !ek.is_empty() {
+                        let (d, h, _) = &ctx[i];
+                        let next_hot = secs.get(i + 1).map(|n| chops::role_of(n.tag) == chops::Role::Hot).unwrap_or(false);
+                        let at = chops::edits::At { beats: secs[i].beats(), key: secs[i].key, energy: secs[i].energy, drums: d, harmony: h, vocal: &acaps[src].vocal, tune: chops::Tune::default(), genre: egenre, bpm, seed: seed.wrapping_mul(977).wrapping_add(i as u64), silence, slicer: on_slicer, next_hot, nth: k };
+                        let eo = chops::edits::apply(&at, &ek, &mut main, &mut layer);
+                        let s0 = secs[i].start;
+                        ed_sweeps[src].extend(eo.sweeps.iter().map(|(a, b)| (s0 + a, s0 + b)));
+                        ed_throws[src].extend(eo.throws.iter().map(|(a, b)| (s0 + a, s0 + b)));
+                        pockets.extend(eo.pockets.iter().map(|(a, b)| (s0 + a, s0 + b)));
+                        fx = eo.fx;
+                        edits_used.extend(eo.used);
+                    }
+                    // another acapella sings in this section: its chops answer that voice in the gaps between its lines, never over a
+                    // word (the singer's own chops layered on its hook stay: that is the vocal + chops sound)
+                    if let (Vox::Both, Some(e), true) = (v, &excerpt[i], src != owner[i]) {
+                        let x = &acaps[owner[i]];
+                        let sung: Vec<(f64, f64)> = e.lines.iter().filter_map(|li| x.vocal.lines.get(*li)).map(|l| (e.at + (l.start - e.from) - secs[i].start, e.at + (l.stop - e.from) - secs[i].start)).collect();
+                        answered += ac::answer_gaps(&mut main, &sung, 0.125) + ac::answer_gaps(&mut layer, &sung, 0.125) + ac::answer_gaps(&mut fx, &sung, 0.125);
+                    }
+                    sec_chops[src][i] = (main, layer);
+                    sec_fx[src][i] = fx;
+                }
+                // the vocal's edits: an echo throw on the singer's last word, another acapella answering its lines
+                let (Some(e), true) = (&excerpt[i], v.sings()) else { continue };
+                let m = owner[i];
+                let x = &acaps[m];
+                let sec0 = secs[i].start;
+                let lines: Vec<&chops::Line> = e.lines.iter().filter_map(|li| x.vocal.lines.get(*li)).filter(|l| e.at + (l.stop - e.from) <= secs[i].end + 0.5).collect();
+                if kinds.contains(&chops::edits::Kind::Throw) {
+                    if let Some(l) = lines.last() {
+                        let w = x.vocal.pieces[l.end - 1].word;
+                        let ws = x.vocal.pieces[x.vocal.word_pieces(w).start].start;
+                        let at = e.at + (ws - e.from);
+                        if at >= sec0 {
+                            voc_throws[m].push((at, at + (l.stop - ws) + 3.0));
+                            edits_used.push(chops::edits::Kind::Throw);
+                        }
+                    }
+                }
+                if kinds.contains(&chops::edits::Kind::Response) {
+                    let other = (1..acaps.len()).map(|k| (m + k) % acaps.len()).find(|o| acaps[*o].vocal.hook_word.is_some() && !acaps[*o].vocal.pieces.is_empty());
+                    if let Some(o) = other {
+                        let sung: Vec<(f64, f64)> = lines.iter().map(|l| (e.at + (l.start - e.from) - sec0, e.at + (l.stop - e.from) - sec0)).collect();
+                        let y = &acaps[o].vocal;
+                        let need = y.hook_word.map(|w| y.word_pieces(w).map(|p| y.pieces[p].len).sum::<f64>()).unwrap_or(1.0).clamp(0.75, 2.0);
+                        let ats = chops::edits::response_at(&sung, secs[i].beats(), need, 2);
+                        for at in &ats {
+                            let ns_ = chops::edits::answer_notes(y, *at, secs[i].key, &ctx[i].1, &chops::Tune::default(), 0.7);
+                            sec_chops[o][i].0.extend(ns_);
+                        }
+                        if !ats.is_empty() {
+                            edits_used.push(chops::edits::Kind::Response);
+                        }
+                    }
+                }
             }
         }
         // stutters into stressed lines live on the chop track of the singer
@@ -426,9 +560,12 @@ impl Daw {
         let _ = std::fs::create_dir_all(&samples_dir);
         for (ai, x) in acaps.iter_mut().enumerate() {
             let tag = format!("{}_{:.0}", sanitize(&x.name), bpm);
-            if sec_chops[ai].iter().any(|s| !s.0.is_empty() || !s.1.is_empty()) {
+            if sec_chops[ai].iter().any(|s| !s.0.is_empty() || !s.1.is_empty()) || sec_fx[ai].iter().any(|s| !s.is_empty()) {
                 let f = samples_dir.join(format!("acap_{tag}_bank.wav"));
-                if write_wav16(&f, &x.bank, x.rate).is_ok() {
+                // on the Slicer a reversed chop is its slice played backwards: the recording alone
+                let data = if on_slicer { &x.bank[..x.prep.len().min(x.bank.len())] } else { &x.bank[..] };
+                if write_wav16(&f, data, x.rate).is_ok() {
+                    x.bank_file = f.to_string_lossy().replace('\\', "/");
                     // the bank is a new file: its chops' frames are those of the prepared recording, reversed copies after it
                     x.bank_json = serde_json::to_string(&chops::config(&f.to_string_lossy().replace('\\', "/"))).unwrap_or_default();
                 }
@@ -547,7 +684,7 @@ impl Daw {
                     let kits: Vec<&str> = std::iter::once(g.kit).chain(KITS.iter().copied().filter(|x| *x != g.kit)).collect();
                     ("drums".to_string(), find_patch("drums", kits[k % kits.len()]))
                 } else {
-                    instrument_for(g, l.role, k / 3)
+                    super::song_api::instrument_for_seeded(g, l.role, k / 3, seed)
                 };
                 let idx = match wanted.iter().position(|w| w.0 == l.cat && w.1 == kind && w.2 == patch) {
                     Some(i) => i,
@@ -584,6 +721,8 @@ impl Daw {
         // the vocal chops without acapellas: the chosen file, else a vocal audio file in the folder, else syllables sung by Ling Voice
         // (saved next to the project); cut into chops, tuned on a Sampler (chops.rs)
         let mut chop_cfg: Option<(String, Vec<chops::Chop>)> = None;
+        let mut chop_kit: Option<(String, chops::kit::Layout)> = None;
+        let mut chop_rate = sr as u32;
         let mut chop_name = String::new();
         if style != chops::Style::Off && acaps.is_empty() {
             let is_audio = |p: &Path| p.extension().map(|e| ["wav", "mp3", "ogg", "flac", "aiff", "m4a"].contains(&e.to_string_lossy().to_lowercase().as_str())).unwrap_or(false);
@@ -609,9 +748,11 @@ impl Daw {
                     random: opt("chopick").map(|v| v != "best").unwrap_or(true),
                 };
                 let ch = chops::pick_chops(&stereo, rate, &co, seed);
+                chop_rate = rate;
                 if !ch.is_empty() {
                     let cfg = chops::config(&file);
                     chop_name = Path::new(&file).file_stem().map(|s| s.to_string_lossy().replace('_', " ")).unwrap_or_default();
+                    chop_kit = Some((file.clone(), chops::kit::Layout::of_chops(&ch, (stereo.len() / 2) as u32)));
                     chop_cfg = Some((serde_json::to_string(&cfg).unwrap_or_default(), ch));
                 }
             }
@@ -635,6 +776,40 @@ impl Daw {
             };
             chop_notes.push((m, y, br));
         }
+        // the rolls loop the slots' chops as they were composed; the edits go on the slots' own
+        let roll_chops: Vec<(Vec<Note>, Vec<Note>, Vec<Note>)> = chop_notes.clone();
+        let mut plain_fx: Vec<Vec<Note>> = vec![vec![]; mash.slots.len()];
+        let mut plain_sweeps: Vec<(f64, f64)> = vec![];
+        let mut plain_throws: Vec<(f64, f64)> = vec![];
+        if let (Some((_, ch)), true) = (&chop_cfg, which.on) {
+            let pv = Vocal::from_chops(ch, chop_rate, bpm);
+            let content = chops::edits::Content::of(&pv, on_slicer, 0);
+            let spots: Vec<chops::edits::Spot> = secs.iter().enumerate().map(|(i, s)| chops::edits::Spot { tag: s.tag.to_string(), beats: s.beats(), energy: s.energy, chopped: s.slot.map(|si| !chop_notes[si].0.is_empty()).unwrap_or(false), song: song_of[i], build: s.tag == "build", swell: false, riser: false, sings: false }).collect();
+            let eplan = chops::edits::plan(&spots, g.name, &which, &content, seed);
+            let egenre = if style == chops::Style::Breakcore { "breakcore" } else { g.name };
+            let mut nth = [0usize; 4];
+            for (i, s) in secs.iter().enumerate() {
+                let Some(si) = s.slot else { continue };
+                let ri = chops::role_of(s.tag) as usize;
+                let k = nth[ri];
+                if spots[i].chopped {
+                    nth[ri] += 1;
+                }
+                if eplan[i].is_empty() || chop_notes[si].0.is_empty() {
+                    continue;
+                }
+                let (d, h, _) = &ctx[i];
+                let next_hot = secs.get(i + 1).map(|n| chops::role_of(n.tag) == chops::Role::Hot).unwrap_or(false);
+                let at = chops::edits::At { beats: s.beats(), key: s.key, energy: s.energy, drums: d, harmony: h, vocal: &pv, tune: chops::Tune::default(), genre: egenre, bpm, seed: seed.wrapping_mul(977).wrapping_add(i as u64), silence: 0.0, slicer: on_slicer, next_hot, nth: k };
+                let (m, y, _) = &mut chop_notes[si];
+                let eo = chops::edits::apply(&at, &eplan[i], m, y);
+                plain_sweeps.extend(eo.sweeps.iter().map(|(a, b)| (s.start + a, s.start + b)));
+                plain_throws.extend(eo.throws.iter().map(|(a, b)| (s.start + a, s.start + b)));
+                pockets.extend(eo.pockets.iter().map(|(a, b)| (s.start + a, s.start + b)));
+                plain_fx[si] = eo.fx;
+                edits_used.extend(eo.used);
+            }
+        }
         // their tracks: the chops, their layer, the breaks
         let mut extra: [Option<usize>; 3] = [None, None, None];
         if chop_cfg.is_some() {
@@ -644,6 +819,14 @@ impl Daw {
                     let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(nm)]));
                     extra[i] = Some(t as usize);
                 }
+            }
+        }
+        let mut fx_t: Option<usize> = None;
+        if chop_cfg.is_some() && plain_fx.iter().any(|f| !f.is_empty()) {
+            let t = self.call_num("daw_track_add", &[Val::Str("sampler".into()), Val::Str(String::new())]);
+            if t >= 0.0 {
+                let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(format!("Chops edits · {chop_name}"))]));
+                fx_t = Some(t as usize);
             }
         }
         if chop_notes.iter().any(|c| !c.2.is_empty()) {
@@ -656,9 +839,17 @@ impl Daw {
         }
         // the acapellas' chop tracks (main, layer) per acapella
         let mut acap_chop_t: Vec<[Option<usize>; 2]> = vec![[None, None]; acaps.len()];
+        let mut acap_fx_t: Vec<Option<usize>> = vec![None; acaps.len()];
         for (ai, x) in acaps.iter().enumerate() {
             if x.bank_json.is_empty() {
                 continue;
+            }
+            if sec_fx[ai].iter().any(|s| !s.is_empty()) {
+                let t = self.call_num("daw_track_add", &[Val::Str("sampler".into()), Val::Str(String::new())]);
+                if t >= 0.0 {
+                    let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(format!("Chops edits · {}", x.name))]));
+                    acap_fx_t[ai] = Some(t as usize);
+                }
             }
             for (k, nm) in [format!("Chops · {}", x.name), format!("Chops layer · {}", x.name)].into_iter().enumerate() {
                 if k == 1 && sec_chops[ai].iter().all(|s| s.1.is_empty()) {
@@ -703,10 +894,30 @@ impl Daw {
         }
         let mut sweep_t: Option<usize> = None;
         if !sweeps.is_empty() {
-            let t = self.call_num("daw_track_add", &[Val::Str("prism".into()), Val::Str(String::new())]);
+            let t = self.call_num("daw_track_add", &[Val::Str("cinema".into()), Val::Str(String::new())]);
             if t >= 0.0 {
                 let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str("Noise Sweep".into())]));
                 sweep_t = Some(t as usize);
+            }
+        }
+        // the transition effects on Ling Cinema (medley/cinema.rs): hits and sub drops on the landings, downlifters out of the drops,
+        // a reverse swell into the acapella's return after the chops, swipes across the straight cuts, ambience in the intro and
+        // the breaks; one track per kind
+        let cues = if flag("cinema") {
+            let cs: Vec<crate::medley::cinema::CueSec> = secs.iter().map(|s| crate::medley::cinema::CueSec { start: s.start, end: s.end, tag: s.tag, slot: s.slot, energy: s.energy, tonic: s.key.0 }).collect();
+            crate::medley::cinema::cues(&cs, &plan, g.name)
+        } else {
+            vec![]
+        };
+        let mut cue_t: Vec<(&'static str, usize, f32)> = vec![];
+        for (what, name, lvl) in crate::medley::cinema::KINDS {
+            if !cues.iter().any(|c| c.what == what) {
+                continue;
+            }
+            let t = self.call_num("daw_track_add", &[Val::Str("cinema".into()), Val::Str(String::new())]);
+            if t >= 0.0 {
+                let _ = self.dispatch("daw_track_set_name", &A(&[Val::Num(t), Val::Str(name.into())]));
+                cue_t.push((what, t as usize, lvl));
             }
         }
         // the acapellas' tracks: the main vocal, and the stress tracks it needs (harmonies, double, octave, telephone, vocoder)
@@ -758,7 +969,7 @@ impl Daw {
         // ── the arrangement on the timeline ──
         let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((json, _)) = &chop_cfg {
-            for t in extra[..2].iter().flatten() {
+            for t in extra[..2].iter().flatten().chain(fx_t.iter()) {
                 if let Ok(smp) = crate::dsp::sampler::Sampler::from_config(sr, json, None) {
                     if let Some(tr) = en.project.tracks.get_mut(*t) {
                         tr.inst = Some(Box::new(smp));
@@ -768,7 +979,7 @@ impl Daw {
             }
         }
         for (ai, x) in acaps.iter().enumerate() {
-            for t in acap_chop_t[ai].iter().flatten() {
+            for t in acap_chop_t[ai].iter().flatten().chain(acap_fx_t[ai].iter()) {
                 if let Ok(smp) = crate::dsp::sampler::Sampler::from_config(sr, &x.bank_json, None) {
                     if let Some(tr) = en.project.tracks.get_mut(*t) {
                         tr.inst = Some(Box::new(smp));
@@ -823,6 +1034,13 @@ impl Daw {
                             }
                         }
                     }
+                    if let (Some(t), false) = (fx_t, plain_fx[si].is_empty()) {
+                        let mut c = Clip::midi(at, s.beats, "chop edits");
+                        c.data = ClipData::Midi(plain_fx[si].clone());
+                        if let Some(tr) = en.project.tracks.get_mut(t) {
+                            tr.clips.push(c);
+                        }
+                    }
                 }
                 (None, Some((ri, kind))) => {
                     // a loop roll: the slot's layers shrinking into a lift, or the next slot's growing back out of a drop
@@ -843,9 +1061,9 @@ impl Daw {
                     }
                     for (k, label) in [(0usize, "chops roll"), (1, "chops layer roll"), (2, "breaks roll")] {
                         let notes = match k {
-                            0 => &chop_notes[ri].0,
-                            1 => &chop_notes[ri].1,
-                            _ => &chop_notes[ri].2,
+                            0 => &roll_chops[ri].0,
+                            1 => &roll_chops[ri].1,
+                            _ => &roll_chops[ri].2,
                         };
                         if let (Some(t), false) = (extra[k], notes.is_empty()) {
                             let mut c = Clip::midi(at, crate::medley::ROLL_BEATS, label);
@@ -889,6 +1107,13 @@ impl Daw {
                     if let ClipData::Midi(v) = &mut c.data {
                         v.extend(notes.iter().cloned());
                     }
+                    if let Some(tr) = en.project.tracks.get_mut(t) {
+                        tr.clips.push(c);
+                    }
+                }
+                if let (Some(t), false) = (acap_fx_t[ai], sec_fx[ai][i].is_empty()) {
+                    let mut c = Clip::midi(at, sc.beats(), "chop edits");
+                    c.data = ClipData::Midi(sec_fx[ai][i].clone());
                     if let Some(tr) = en.project.tracks.get_mut(t) {
                         tr.clips.push(c);
                     }
@@ -981,7 +1206,8 @@ impl Daw {
                 *v = from_n(&nn);
             }
         }
-        // the noise sweep: a Prism playing only its noise, a low-pass opening and a swell to the drop (as New AI Song's)
+        // the noise sweep: Ling Cinema's noise riser, one held note per sweep (the riser's length is the note's, so it peaks on the
+        // downbeat or at the breath before it), the volume lane swelling it a little more on top (as New AI Song's)
         if let Some(t) = sweep_t {
             if let Some(tr) = en.project.tracks.get_mut(t) {
                 for (st, len) in &sweeps {
@@ -990,20 +1216,34 @@ impl Daw {
                     tr.clips.push(c);
                 }
                 if let Some(inst) = tr.inst.as_mut() {
-                    for (n, v) in [("a lvl", 0.0), ("b lvl", 0.0), ("sub", 0.0), ("noise", 1.0), ("noise c", 0.9), ("res", 0.35), ("keytr", 0.5), ("fenv", 0.5), ("amp a", 0.0), ("amp s", 1.0), ("amp r", 0.3), ("rv mix", 0.25), ("rv size", 0.7), ("drift", 0.0), ("glide", 0.0), ("out", 0.55)] {
-                        inst.set_param(n, v);
-                    }
+                    inst.load_preset("White Noise Riser");
+                    crate::presetinfo::apply_trim(inst.as_mut(), "cinema", "White Noise Riser");
+                    inst.set_param("release", 0.05);
                 }
                 let v = (tr.volume / 1.5).clamp(0.0, 1.0);
-                let (mut cut, mut vol): (Vec<(f64, f32)>, Vec<(f64, f32)>) = (vec![(0.0, 0.12)], vec![(0.0, 0.0)]);
+                let mut vol: Vec<(f64, f32)> = vec![(0.0, 0.0)];
                 for (st, len) in &sweeps {
                     let end = st + len;
-                    cut.extend([(*st, 0.12), (st + len * 0.7, 0.5), (end - 0.02, 0.95), (end, 0.12)]);
-                    vol.extend([(*st, 0.0), (st + len * 0.6, v * 0.35), (end - 0.02, v), (end, 0.0)]);
+                    vol.extend([(*st, v * 0.6), (st + len * 0.6, v * 0.8), (end - 0.02, v), (end, 0.0)]);
                 }
                 tr.auto.retain(|l| l.param != "cut" && l.param != "vol");
-                tr.auto.push(AutoLane { param: "cut".into(), points: cut });
                 tr.auto.push(AutoLane { param: "vol".into(), points: vol });
+            }
+        }
+        // the cue tracks: a clip and a held note per cue, the kind's preset, its level under the music
+        for (what, t, lvl) in &cue_t {
+            if let Some(tr) = en.project.tracks.get_mut(*t) {
+                for c in cues.iter().filter(|c| c.what == *what) {
+                    let mut clip = Clip::midi(c.start, c.len, what);
+                    clip.data = ClipData::Midi(vec![Note::new(0.0, c.len, c.key, c.vel)]);
+                    tr.clips.push(clip);
+                }
+                let preset = crate::medley::cinema::preset(what, g.name);
+                if let Some(inst) = tr.inst.as_mut() {
+                    inst.load_preset(preset);
+                    crate::presetinfo::apply_trim(inst.as_mut(), "cinema", preset);
+                }
+                tr.volume *= *lvl;
             }
         }
         // the riser swells through the build and is gone in the breath before the drop
@@ -1251,7 +1491,7 @@ impl Daw {
         // the feel: the story / arc's emotional plan over the medley's sections, every medley track played with it
         let feel_amt = opt("feel").and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.7).clamp(0.0, 1.0) as f32;
         let mut feel_note = String::new();
-        let midi_tracks: Vec<usize> = tracks.iter().chain(extra.iter()).flatten().copied().chain(acap_chop_t.iter().flat_map(|r| r.iter().flatten().copied())).collect();
+        let midi_tracks: Vec<usize> = tracks.iter().chain(extra.iter()).chain(std::iter::once(&fx_t)).chain(acap_fx_t.iter()).flatten().copied().chain(acap_chop_t.iter().flat_map(|r| r.iter().flatten().copied())).collect();
         if feel_amt > 0.0 {
             let fsecs: Vec<crate::feel::Sec> = secs.iter().map(|s| crate::feel::Sec { start: s.start, end: s.end, tag: s.tag.to_string() }).collect();
             let words: Vec<String> = vec![story.clone(); fsecs.len()];
@@ -1301,6 +1541,111 @@ impl Daw {
         }
         let end = secs.last().map(|s| s.end).unwrap_or(start0);
         drop(en);
+        // Ling Nova layers: the notes in the preset's range and style, the macros moved section by section, a bass trading its drop
+        // bars with sibling presets (novagen.rs)
+        {
+            let nsecs: Vec<crate::sounddesign::Sec> = secs.iter().map(|s| crate::sounddesign::Sec { tag: s.tag.to_string(), start: s.start, end: s.end }).collect();
+            let mut lines: Vec<String> = vec![];
+            for (t, role) in jobs.iter().copied() {
+                if recipe_tracks.contains(&t) {
+                    // a Nova recipe on a mono voice that ended up playing chords goes poly (nova_dress does it for the others)
+                    let mut en = self.out.engine.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(tr) = en.project.tracks.get_mut(t) {
+                        let said = crate::polyphony::guard_track(tr);
+                        if !said.is_empty() {
+                            lines.push(said);
+                        }
+                    }
+                    continue;
+                }
+                let (_, line) = self.nova_dress(t, &nsecs, seed.wrapping_add(t as u64 * 31), songgen::role_kind(role) == crate::compose::Kind::Bass);
+                if !line.is_empty() {
+                    lines.push(line);
+                }
+            }
+            if !lines.is_empty() {
+                design_note.push_str(&format!("; Nova: {}", lines.join("; ")));
+            }
+        }
+        // ── the chops on Ling Slicer kits (chops/kit.rs), each tuned by the Slicer to the song's chords at the beat it plays ──
+        let mut kit_slices = 0usize;
+        if on_slicer {
+            let tune = chops::Tune::default();
+            if let Some((file, lay)) = &chop_kit {
+                let ts: Vec<usize> = extra[..2].iter().flatten().chain(fx_t.iter()).copied().collect();
+                kit_slices += self.chops_on_slicer(&ts, file, lay, &tune).0;
+            }
+            for (ai, x) in acaps.iter().enumerate() {
+                let ts: Vec<usize> = acap_chop_t[ai].iter().flatten().chain(acap_fx_t[ai].iter()).copied().collect();
+                if !ts.is_empty() && !x.bank_file.is_empty() {
+                    kit_slices += self.chops_on_slicer(&ts, &x.bank_file, &x.lay, &tune).0;
+                }
+            }
+        }
+        // ── the edits' sound: the edits tracks' filter and reverb, the sweeps on the chop tracks, the throws on the chops and the
+        // acapellas, the air pockets through every part of the medley (the acapellas sing on) ──
+        if !edits_used.is_empty() {
+            let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+            let mut groups: Vec<(Vec<usize>, Option<usize>, &Vec<(f64, f64)>, &Vec<(f64, f64)>)> = vec![(extra[..2].iter().flatten().chain(fx_t.iter()).copied().collect(), extra[0], &plain_sweeps, &plain_throws)];
+            for ai in 0..acaps.len() {
+                groups.push((acap_chop_t[ai].iter().flatten().chain(acap_fx_t[ai].iter()).copied().collect(), acap_chop_t[ai][0], &ed_sweeps[ai], &ed_throws[ai]));
+            }
+            for t in fx_t.iter().chain(acap_fx_t.iter().flatten()) {
+                if let Some(tr) = en.project.tracks.get_mut(*t) {
+                    chops::edits::dress_fx_track(tr, sr);
+                }
+            }
+            for (ts, main, sw, th) in groups {
+                for t in &ts {
+                    if let (Some(tr), false) = (en.project.tracks.get_mut(*t), sw.is_empty()) {
+                        chops::edits::add_sweeps(tr, sw);
+                    }
+                }
+                if let Some(tr) = main.and_then(|t| en.project.tracks.get_mut(t)) {
+                    chops::edits::add_throws(tr, th, bpm, g.name, sr);
+                }
+            }
+            for (ai, th) in voc_throws.iter().enumerate() {
+                if let Some(tr) = acap_t[ai].and_then(|t| en.project.tracks.get_mut(t)) {
+                    chops::edits::add_throws(tr, th, bpm, g.name, sr);
+                }
+            }
+            if !pockets.is_empty() {
+                for tr in en.project.tracks.iter_mut() {
+                    for c in tr.clips.iter_mut().filter(|c| c.start >= start0 - 1e-6) {
+                        let cs = c.start;
+                        if let ClipData::Midi(v) = &mut c.data {
+                            chops::edits::cut_pockets(v, cs, &pockets);
+                        }
+                    }
+                }
+            }
+        }
+        // ── the hype shouts: EDM / trap only, one per drop, from the sample pack on a Slicer; the chops make room for them ──
+        let hype = opt("hype").unwrap_or_default().to_lowercase();
+        let mut hype_note = String::new();
+        if matches!(hype.as_str(), "1" | "on" | "clean" | "explicit") && hype_genre(g.name) {
+            let drops: Vec<f64> = secs.iter().enumerate().filter(|(i, s)| *i > 0 && s.tag == "drop").map(|(_, s)| s.start).collect();
+            if let Some((ht, kit, span)) = self.slc_hype_at(&drops, hype == "explicit") {
+                let chop_tracks: Vec<usize> = extra[..2].iter().flatten().chain(fx_t.iter()).chain(acap_fx_t.iter().flatten()).copied().chain(acap_chop_t.iter().flat_map(|r| r.iter().flatten().copied())).collect();
+                let mut moved = 0usize;
+                {
+                    let mut en = eng.lock().unwrap_or_else(|p| p.into_inner());
+                    for t in &chop_tracks {
+                        let Some(tr) = en.project.tracks.get_mut(*t) else { continue };
+                        for c in tr.clips.iter_mut() {
+                            let cs = c.start;
+                            let ClipData::Midi(v) = &mut c.data else { continue };
+                            let before = v.len();
+                            v.retain(|n| !drops.iter().any(|d| cs + n.start >= d - span - 0.05 && cs + n.start < *d - 1e-6));
+                            moved += before - v.len();
+                        }
+                    }
+                }
+                let _ = self.slc_sync(ht);
+                hype_note = format!("; hype shout: {kit} before {} drop(s){}", drops.len(), if moved > 0 { format!(" ({moved} chop notes made room)") } else { String::new() });
+            }
+        }
         self.touch();
 
         // ── the sentence ──
@@ -1331,10 +1676,22 @@ impl Daw {
                 acap_said.join(", "),
                 if replace { " (the chops replace the vocal, its level back up on the downbeat they end)" } else { "" },
                 parts.join(" > "),
-                if chop_tune.tuned + chop_tune.kept > 0 { format!("; chops tuned to the chords: {} of {} notes moved (median {:.0} cents)", chop_tune.tuned, chop_tune.tuned + chop_tune.kept, chop_tune.median_shift()) } else { String::new() }
+                if chop_tune.tuned + chop_tune.kept > 0 { format!("; chops tuned to the chords: {} of {} notes moved (median {:.0} cents){}", chop_tune.tuned, chop_tune.tuned + chop_tune.kept, chop_tune.median_shift(), if answered > 0 { format!(", {answered} left out to answer the vocal between its lines") } else { String::new() }) } else { String::new() }
             ) + &if stress_said.is_empty() { if stress_amt > 0.0 { "; no line stressed".to_string() } else { String::new() } } else { format!("; stressed lines: {}", stress_said.join("; ")) }
         };
+        let vocal_plan = vocal_plan + &if kit_slices > 0 { format!("; chops on Ling Slicer: {kit_slices} slices, a key each, tuned at every beat they play") } else { String::new() };
         let flow_note = if flow && (fills + crashes + brolls + sweeps.len()) > 0 { format!("; flow: {fills} fill(s), {crashes} crash(es), {brolls} build roll(s), {} noise sweep(s)", sweeps.len()) } else { String::new() };
+        let flow_note = if cues.is_empty() {
+            flow_note
+        } else {
+            let kinds: Vec<String> = crate::medley::cinema::KINDS.iter().filter_map(|(w, _, _)| match cues.iter().filter(|c| c.what == *w).count() { 0 => None, k => Some(format!("{k} {w}")) }).collect();
+            flow_note + &format!("; cinema fx: {}", kinds.join(", "))
+        };
+        let flow_note = flow_note + &hype_note;
+        let flow_note = match chops::edits::tally(&edits_used) {
+            t if t.is_empty() => flow_note,
+            t => flow_note + &format!("; edits: {t}"),
+        };
         ok!(format!(
             "{}: {} phrases from {} files ({} in all) at {:.0} bpm, {} bars; story: {}; keys: {}; {} clips ({} layered from other files) on {} instruments; {} loop rolls{}{}{}{}{}{}{}{}{}; order: {}{}",
             if layering > 0.05 { "Mashup" } else { "Medley" },

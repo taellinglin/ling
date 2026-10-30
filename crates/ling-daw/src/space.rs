@@ -274,7 +274,7 @@ pub struct InstTweak {
 
 /// Effects whose job is to change the pitch (or detune): never in an automatic chain, except on a riser
 pub fn pitch_altering(effect: &str) -> bool {
-    matches!(effect, "Freq Shifter" | "Chorus" | "Flanger" | "Vocoder" | "Ringstorm" | "Digitize" | "Tape Stop" | "Shimmer Verb" | "Granular Cloud")
+    matches!(effect, "Freq Shifter" | "Chorus" | "Flanger" | "Vocoder" | "Ringstorm" | "Digitize" | "Tape Stop" | "Shimmer Verb" | "Granular Cloud" | "Ling Warp")
 }
 
 /// The limits an instrument's own reverb / delay / chorus / release get in this space, and the pitch-altering parameters (vibrato, pitch

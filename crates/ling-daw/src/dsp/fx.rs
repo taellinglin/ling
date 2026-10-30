@@ -590,7 +590,7 @@ impl Effect for Chorus {
     }
 }
 
-pub const EFFECT_NAMES: [&str; 32] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm", "OTT", "Split Drive", "Comb", "Phaser", "Flanger", "Freq Shifter", "Imager", "Transient", "Articulator", "Colour Bass", "Param EQ", "Volume Shaper", "Hyper Chorus", "Stutter", "Limiter", "Digitize", "Tape Stop", "Shimmer Verb", "Granular Cloud"];
+pub const EFFECT_NAMES: [&str; 34] = ["EQ", "Compressor", "Drive", "Delay", "Reverb", "Chorus", "Vox Filter", "Vox Reverb", "Vocal Halo", "Rainbow Hypergrowl", "Ducker", "Vocoder", "Ringstorm", "OTT", "Split Drive", "Comb", "Phaser", "Flanger", "Freq Shifter", "Imager", "Transient", "Articulator", "Colour Bass", "Param EQ", "Volume Shaper", "Hyper Chorus", "Stutter", "Limiter", "Digitize", "Tape Stop", "Shimmer Verb", "Granular Cloud", "Ling Warp", "Ling Master"];
 
 /// Parameter names + default normalised values shown in the UI.
 pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
@@ -626,6 +626,8 @@ pub fn defaults(name: &str) -> &'static [(&'static str, f32)] {
         "Tape Stop" => &super::cinefx::TAPESTOP_PARAMS,
         "Shimmer Verb" => &super::cinefx::SHIMMER_PARAMS,
         "Granular Cloud" => &super::cinefx::GRANULAR_PARAMS,
+        "Ling Warp" => &super::warp::WARP_PARAMS,
+        "Ling Master" => &super::master::MASTER_PARAMS,
         "Ducker" => &[("depth", 0.45), ("attack", 0.08), ("hold", 0.15), ("release", 0.2), ("curve", 0.35), ("thresh", 0.5), ("mix", 1.0)],
         _ => &[],
     }
@@ -665,6 +667,8 @@ pub fn make(name: &str, sr: f32) -> Option<Box<dyn Effect>> {
         "Tape Stop" => Box::new(super::cinefx::TapeStop::new(sr)),
         "Shimmer Verb" => Box::new(super::cinefx::ShimmerVerb::new(sr)),
         "Granular Cloud" => Box::new(super::cinefx::GranularCloud::new(sr)),
+        "Ling Warp" => Box::new(super::warp::Warp::new(sr)),
+        "Ling Master" => Box::new(super::master::Master::new(sr)),
         _ => return None,
     };
     for (n, v) in defaults(name) {
@@ -698,6 +702,8 @@ pub fn presets(name: &str) -> &'static [(&'static str, &'static [(&'static str, 
         "Tape Stop" => &super::cinefx::TAPESTOP_PRESETS,
         "Shimmer Verb" => &super::cinefx::SHIMMER_PRESETS,
         "Granular Cloud" => &super::cinefx::GRANULAR_PRESETS,
+        "Ling Warp" => &super::warp::WARP_PRESETS,
+        "Ling Master" => &super::master::MASTER_PRESETS,
         "Ducker" => &[
             ("Kick duck", &[("depth", 0.5), ("attack", 0.06), ("hold", 0.12), ("release", 0.2), ("curve", 0.35)]),
             ("Hard pump", &[("depth", 0.85), ("attack", 0.04), ("hold", 0.2), ("release", 0.32), ("curve", 0.2)]),

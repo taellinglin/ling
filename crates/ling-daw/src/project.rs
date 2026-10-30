@@ -264,7 +264,7 @@ pub fn to_doc(e: &Engine) -> ProjectDoc {
                 clips: t.clips.iter().map(clip_doc).collect(),
                 session: t.session.iter().map(clip_doc).collect(),
                 auto: t.auto.iter().map(auto_doc).collect(),
-                config: if t.inst_kind == "sampler" || t.inst_kind == "script" || t.inst_kind == "chip" || t.inst_kind == "growl" || t.inst_kind == "prism" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
+                config: if t.inst_kind == "sampler" || t.inst_kind == "script" || t.inst_kind == "chip" || t.inst_kind == "growl" || t.inst_kind == "prism" || t.inst_kind == "slicer" || t.inst_kind == "nova" { t.inst.as_ref().map(|i| i.info("config")).unwrap_or_default() } else { String::new() },
             })
             .collect(),
     }
@@ -407,8 +407,8 @@ pub fn apply_doc(e: &mut Engine, d: &ProjectDoc, base: Option<&std::path::Path>,
             };
             if let Some(i) = i.as_mut() {
                 i.load_state(&state);
-                // Ling Chip: its own sample, stored relative to the project (samples/...)
-                if matches!(kind.as_str(), "chip" | "growl" | "prism") && !td.config.is_empty() {
+                // Ling Chip: its own sample, stored relative to the project (samples/...); the Ling Slicer's file likewise
+                if matches!(kind.as_str(), "chip" | "growl" | "prism" | "slicer" | "nova") && !td.config.is_empty() {
                     i.command("load", &[], &resolve_file(&td.config, base));
                 }
             }
@@ -603,7 +603,7 @@ fn pack_one(file: &str, dir: &std::path::Path) -> Option<String> {
 /// The audio files a Sampler plays are copied into `<project>/samples/` and the zones refer to them relatively; so is a Ling Chip's
 /// own sample.
 fn pack_samples(doc: &mut ProjectDoc, dir: &std::path::Path) {
-    for t in doc.tracks.iter_mut().filter(|t| matches!(t.instrument.as_str(), "chip" | "growl" | "prism") && !t.config.is_empty()) {
+    for t in doc.tracks.iter_mut().filter(|t| matches!(t.instrument.as_str(), "chip" | "growl" | "prism" | "slicer" | "nova") && !t.config.is_empty()) {
         if let Some(r) = pack_one(&t.config, dir) {
             t.config = r;
         }
