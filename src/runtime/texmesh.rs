@@ -14,6 +14,10 @@ use std::sync::Arc;
 
 use crate::gfx::depth::{TexData, TexShade, TexVert};
 
+/// txm_draw groups at least this big are transformed + shaded on rayon.
+#[cfg(not(target_arch = "wasm32"))]
+const PAR_TRIS: usize = 1024;
+
 pub struct TxGroup {
     pub name: String,
     pub pos: Vec<[f32; 3]>,
@@ -182,31 +186,68 @@ pub(super) fn push_poly_g(
     shade: Option<&Arc<TexShade>>,
     guard: bool,
 ) -> usize {
-    let near = -gfx.camera.zdist + 0.05;
+    let lg = if guard { gfx.lens_guard } else { 0.0 };
+    match prep_poly(&gfx.camera, lg, wp, uv, cull) {
+        Some((tv, cn)) => push_prepped(gfx, &tv, cn, tex, tint, shade),
+        None => 0,
+    }
+}
+
+/// Queue a triangle `prep_poly` produced (a fan of 1 or 2 when near-clipped to a quad).
+pub(super) fn push_prepped(
+    gfx: &mut crate::gfx::GfxState,
+    tv: &[TexVert; 4],
+    cn: usize,
+    tex: &Arc<TexData>,
+    tint: u32,
+    shade: Option<&Arc<TexShade>>,
+) -> usize {
+    let sh = shade.cloned();
+    if cn == 4 {
+        gfx.depth_queue.push_triangle_tex_shaded([tv[0], tv[1], tv[2]], tex.clone(), tint, [0.0; 4], true, sh.clone());
+        gfx.depth_queue.push_triangle_tex_shaded([tv[0], tv[2], tv[3]], tex.clone(), tint, [0.0; 4], true, sh);
+        2
+    } else {
+        gfx.depth_queue.push_triangle_tex_shaded([tv[0], tv[1], tv[2]], tex.clone(), tint, [0.0; 4], true, sh);
+        1
+    }
+}
+
+/// The pure half of `push_poly_g` (no GfxState writes, so it runs on worker
+/// threads): near-plane clip, lens guard (`lens_guard` 0 = off), projection and
+/// back-face cull. Returns the projected polygon and its vertex count (3 or 4).
+pub(super) fn prep_poly(
+    cam: &crate::gfx::Camera3D,
+    lens_guard: f32,
+    wp: [[f32; 3]; 3],
+    uv: [[f32; 2]; 3],
+    cull: u8,
+) -> Option<([TexVert; 4], usize)> {
+    let near = -cam.zdist + 0.05;
     let d = [
-        gfx.camera.depth(wp[0][0], wp[0][1], wp[0][2]),
-        gfx.camera.depth(wp[1][0], wp[1][1], wp[1][2]),
-        gfx.camera.depth(wp[2][0], wp[2][1], wp[2][2]),
+        cam.depth(wp[0][0], wp[0][1], wp[0][2]),
+        cam.depth(wp[1][0], wp[1][1], wp[1][2]),
+        cam.depth(wp[2][0], wp[2][1], wp[2][2]),
     ];
     if d[0] <= near && d[1] <= near && d[2] <= near {
-        return 0;
+        return None;
     }
     // lens guard (tm_lens_guard): a prop triangle with a corner close to the eye is
     // dropped — the camera swinging through a tree or wall otherwise smears huge
     // near-clipped slivers across the view. Large triangles (terrain quads, 16 u)
     // are kept so the ground under a low camera never opens a hole.
-    if guard && gfx.lens_guard > 0.0 {
+    if lens_guard > 0.0 {
         // (was × 6 — a 1.5-unit bubble at the default 0.25 that blanked whole
         // wall/house tiles the camera merely passed close to; × 2 only drops
         // geometry practically touching the lens)
-        let g = near + gfx.lens_guard * 2.0;
+        let g = near + lens_guard * 2.0;
         if d[0] < g || d[1] < g || d[2] < g {
             let e = |i: usize, j: usize| {
                 let (dx, dy, dz) = (wp[i][0] - wp[j][0], wp[i][1] - wp[j][1], wp[i][2] - wp[j][2]);
                 dx * dx + dy * dy + dz * dz
             };
             if e(0, 1).max(e(1, 2)).max(e(2, 0)) < 36.0 {
-                return 0;
+                return None;
             }
         }
     }
@@ -230,30 +271,23 @@ pub(super) fn push_poly_g(
         }
     }
     if cn < 3 {
-        return 0;
+        return None;
     }
-    let zd = gfx.camera.zdist;
+    let zd = cam.zdist;
     let mut tv = [TexVert::default(); 4];
     for k in 0..cn {
         let (p, t) = cp[k];
-        let (sx, sy, z) = gfx.camera.project(p[0], p[1], p[2]);
+        let (sx, sy, z) = cam.project(p[0], p[1], p[2]);
         let iw = 1.0 / (z + zd).max(1e-4);
         tv[k] = TexVert { x: sx, y: sy, z, iw, uw: t[0] * iw, vw: t[1] * iw, wx: p[0] * iw, wy: p[1] * iw, wz: p[2] * iw };
     }
     if cull != 0 {
         let area = (tv[1].x - tv[0].x) * (tv[2].y - tv[0].y) - (tv[1].y - tv[0].y) * (tv[2].x - tv[0].x);
         if (cull == 1 && area > 0.0) || (cull == 2 && area < 0.0) {
-            return 0;
+            return None;
         }
     }
-    let sh = shade.cloned();
-    gfx.depth_queue.push_triangle_tex_shaded([tv[0], tv[1], tv[2]], tex.clone(), tint, [0.0; 4], true, sh.clone());
-    let mut n = 1;
-    if cn == 4 {
-        gfx.depth_queue.push_triangle_tex_shaded([tv[0], tv[2], tv[3]], tex.clone(), tint, [0.0; 4], true, sh);
-        n = 2;
-    }
-    n
+    Some((tv, cn))
 }
 
 impl super::Interpreter {
@@ -362,6 +396,8 @@ impl super::Interpreter {
                 };
                 let mesh = &self.tex_meshes[mi as usize];
                 let mut count = 0usize;
+                let cam = gfx.camera.clone();
+                let lg = gfx.lens_guard;
                 for (gidx, g) in mesh.groups.iter().enumerate() {
                     if gi >= 0 && gidx != gi as usize {
                         continue;
@@ -372,7 +408,7 @@ impl super::Interpreter {
                     if group_culled(&gfx, mi as usize, gidx, g, &m, sc, o) {
                         continue;
                     }
-                    for t in &g.idx {
+                    let tri = |t: &[u32; 3]| -> Option<([TexVert; 4], usize, u32)> {
                         let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
                         let wp = [
                             add3(mul3s(&m, g.pos[a], sc), o),
@@ -380,6 +416,7 @@ impl super::Interpreter {
                             add3(mul3s(&m, g.pos[c], sc), o),
                         ];
                         let uv = [g.uv[a], g.uv[b], g.uv[c]];
+                        let (tv, cn) = prep_poly(&cam, lg, wp, uv, cull)?;
                         // flat per-triangle diffuse shade + optional PBR-ish spec, baked into the tint (cheap)
                         let tt = if shade_amt > 0.0 || spec_k > 0.0 {
                             let fnrm = norm(cross(sub(wp[1], wp[0]), sub(wp[2], wp[0])));
@@ -405,7 +442,23 @@ impl super::Interpreter {
                         } else {
                             tint
                         };
-                        count += push_poly(&mut gfx, wp, uv, &tex, tt, cull, shade.as_ref());
+                        Some((tv, cn, tt))
+                    };
+                    // big groups (terrain chunks, buildings): transform + shade on all
+                    // cores, then queue in mesh order so the output is unchanged
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if g.idx.len() >= PAR_TRIS {
+                        use rayon::prelude::*;
+                        let out: Vec<Option<([TexVert; 4], usize, u32)>> = g.idx.par_iter().with_min_len(256).map(tri).collect();
+                        for (tv, cn, tt) in out.into_iter().flatten() {
+                            count += push_prepped(&mut gfx, &tv, cn, &tex, tt, shade.as_ref());
+                        }
+                        continue;
+                    }
+                    for t in &g.idx {
+                        if let Some((tv, cn, tt)) = tri(t) {
+                            count += push_prepped(&mut gfx, &tv, cn, &tex, tt, shade.as_ref());
+                        }
                     }
                 }
                 gfx.depth_queue.set_state(pm, pa);

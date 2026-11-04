@@ -169,8 +169,8 @@ impl Blip {
 }
 
 struct BgmTrack {
-    /// Interleaved stereo samples at `src_rate`.
-    samples: Vec<f32>,
+    /// Interleaved stereo samples at `src_rate` (shared with the decode cache).
+    samples: Arc<Vec<f32>>,
     src_rate: u32,
     /// Fractional stereo-pair index (advances by `src_rate / device_rate` per sample).
     pos: f64,
@@ -877,6 +877,30 @@ pub struct AudioEngine {
     _stream: cpal::Stream,
     /// Device sample rate (informational).
     pub out_rate: u32,
+    /// Bumped by every `load_bgm`; a background decode only installs its track
+    /// if no newer request arrived meanwhile.
+    bgm_gen: Arc<std::sync::atomic::AtomicU64>,
+    /// Recently decoded BGM tracks, so switching back (world ↔ battle) is instant.
+    bgm_cache: Arc<Mutex<Vec<BgmCached>>>,
+    /// Last `set_bgm_volume` (tagged with the bgm generation it was issued in),
+    /// so a volume change during an async decode applies to the new track.
+    bgm_late_vol: Arc<Mutex<Option<(u64, f32)>>>,
+}
+
+struct BgmCached {
+    path: String,
+    stamp: Option<(u64, std::time::SystemTime)>,
+    samples: Arc<Vec<f32>>,
+    src_rate: u32,
+}
+
+/// Decoded-sample budget of the BGM cache (f32s; 48 Mi ≈ 192 MB). Tracks larger
+/// than this are never cached — they are only decoded off-thread.
+const BGM_CACHE_FLOATS: usize = 48 << 20;
+
+fn bgm_stamp(path: &str) -> Option<(u64, std::time::SystemTime)> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.len(), m.modified().ok()?))
 }
 
 impl AudioEngine {
@@ -898,7 +922,14 @@ impl AudioEngine {
         let stream = build_stream(&device, &config, channels, Arc::clone(&state), fmt)?;
         stream.play()?;
 
-        Ok(Self { state, _stream: stream, out_rate })
+        Ok(Self {
+            state,
+            _stream: stream,
+            out_rate,
+            bgm_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            bgm_cache: Arc::new(Mutex::new(Vec::new())),
+            bgm_late_vol: Arc::new(Mutex::new(None)),
+        })
     }
 
     // ── Tone control ─────────────────────────────────────────────────────────
@@ -1196,19 +1227,79 @@ impl AudioEngine {
 
     /// Load a WAV file and start looping it as background music.
     /// Silently ignores missing files so scenes still run in silent environments.
+    /// Decoding a multi-minute WAV takes tens of ms, so it runs on a background
+    /// thread (the previous track keeps playing until the new one is ready);
+    /// recently used tracks are cached and switch instantly.
     pub fn load_bgm(&self, path: &str, vol: f32) {
-        match load_wav(path) {
-            Ok((samples, src_rate)) => {
-                if let Ok(mut s) = self.state.lock() {
-                    s.bgm = Some(BgmTrack { samples, src_rate, pos: 0.0, volume: vol });
+        use std::sync::atomic::Ordering;
+        let gen = self.bgm_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let stamp = bgm_stamp(path);
+        let hit = self.bgm_cache.lock().ok().and_then(|mut c| {
+            let i = c.iter().position(|e| e.path == path && e.stamp == stamp && stamp.is_some())?;
+            let e = c.remove(i);
+            let r = (Arc::clone(&e.samples), e.src_rate);
+            c.push(e);
+            Some(r)
+        });
+        if let Some((samples, src_rate)) = hit {
+            let old = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|mut s| s.bgm.replace(BgmTrack { samples, src_rate, pos: 0.0, volume: vol }));
+            drop(old); // freed outside the lock the audio callback needs
+            return;
+        }
+        let (state, gen_ctr, cache) = (Arc::clone(&self.state), Arc::clone(&self.bgm_gen), Arc::clone(&self.bgm_cache));
+        let late_vol = Arc::clone(&self.bgm_late_vol);
+        let path = path.to_string();
+        let job = move || {
+            if gen_ctr.load(Ordering::SeqCst) != gen {
+                return; // a newer request arrived before this decode started
+            }
+            let (samples, src_rate) = match load_wav(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("audio: bgm load failed ({path}): {e}");
+                    return;
+                },
+            };
+            let samples = Arc::new(samples);
+            if let Ok(mut c) = cache.lock() {
+                c.retain(|e| e.path != path);
+                if stamp.is_some() && samples.len() <= BGM_CACHE_FLOATS {
+                    while !c.is_empty()
+                        && c.iter().map(|e| e.samples.len()).sum::<usize>() + samples.len() > BGM_CACHE_FLOATS
+                    {
+                        c.remove(0);
+                    }
+                    c.push(BgmCached { path: path.clone(), stamp, samples: Arc::clone(&samples), src_rate });
                 }
-            },
-            Err(e) => eprintln!("audio: bgm load failed ({path}): {e}"),
+            }
+            let mut old = None;
+            if let Ok(mut s) = state.lock() {
+                // checked under the lock so a newer (cached) switch can't be overwritten
+                if gen_ctr.load(Ordering::SeqCst) == gen {
+                    // audio_bgm_volume issued while this track was decoding still applies
+                    let volume = match late_vol.lock() {
+                        Ok(v) => v.filter(|&(g, _)| g == gen).map_or(vol, |(_, v)| v),
+                        Err(_) => vol,
+                    };
+                    old = s.bgm.replace(BgmTrack { samples, src_rate, pos: 0.0, volume });
+                }
+            }
+            drop(old); // freed outside the lock the audio callback needs
+        };
+        if std::thread::Builder::new().name("ling-bgm-load".into()).spawn(job).is_err() {
+            eprintln!("audio: could not start the bgm loader thread");
         }
     }
 
     /// Adjust BGM playback volume without reloading.
     pub fn set_bgm_volume(&self, vol: f32) {
+        if let Ok(mut v) = self.bgm_late_vol.lock() {
+            *v = Some((self.bgm_gen.load(std::sync::atomic::Ordering::SeqCst), vol));
+        }
         if let Ok(mut s) = self.state.lock() {
             if let Some(bgm) = &mut s.bgm {
                 bgm.volume = vol;

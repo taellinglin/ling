@@ -485,16 +485,34 @@ impl GltfModel {
             return self.bind_positions();
         }
         let sw = src.world_mats(anim_idx, time);
-        let own = self.world_mats(usize::MAX, 0.0);
-        let joint_mat: Vec<Mat4> = self.skins[0].joints.iter()
+        let joint_mat = self.joint_mats_named(src, &sw);
+        self.skin_with(&joint_mat)
+    }
+
+    /// Skinning matrices for THIS model's joints taken from `src`'s posed node
+    /// world matrices `sw`, matched by node NAME (first match wins); a joint
+    /// `src` lacks keeps this model's own bind pose.
+    fn joint_mats_named(&self, src: &GltfModel, sw: &[Mat4]) -> Vec<Mat4> {
+        let n = self.nodes.len();
+        let mut by_name: std::collections::HashMap<&str, usize> = std::collections::HashMap::with_capacity(src.nodes.len());
+        for (k, nd) in src.nodes.iter().enumerate() {
+            if !nd.name.is_empty() {
+                by_name.entry(nd.name.as_str()).or_insert(k);
+            }
+        }
+        let mut own: Option<Vec<Mat4>> = None;
+        self.skins[0].joints.iter()
             .map(|j| {
                 if j.node_idx >= n { return Mat4::IDENTITY; }
                 let nm = &self.nodes[j.node_idx].name;
-                let w = if nm.is_empty() { None } else { src.nodes.iter().position(|x| x.name == *nm).map(|k| sw[k]) };
-                w.unwrap_or(own[j.node_idx]) * j.inverse_bind
+                let w = if nm.is_empty() { None } else { by_name.get(nm.as_str()).and_then(|&k| sw.get(k).copied()) };
+                let w = match w {
+                    Some(w) => w,
+                    None => own.get_or_insert_with(|| self.world_mats(usize::MAX, 0.0))[j.node_idx],
+                };
+                w * j.inverse_bind
             })
-            .collect();
-        self.skin_with(&joint_mat)
+            .collect()
     }
 
     /// Clip `anim_idx` at `time` (sampled from `src`'s animations when given,
@@ -513,15 +531,7 @@ impl GltfModel {
             }
             Some(sm) => {
                 let sw = sm.world_mats_posed(anim_idx, time, pose);
-                let own = self.world_mats(usize::MAX, 0.0);
-                self.skins[0].joints.iter()
-                    .map(|j| {
-                        if j.node_idx >= n { return Mat4::IDENTITY; }
-                        let nm = &self.nodes[j.node_idx].name;
-                        let w = if nm.is_empty() { None } else { sm.nodes.iter().position(|x| x.name == *nm).map(|k| sw[k]) };
-                        w.unwrap_or(own[j.node_idx]) * j.inverse_bind
-                    })
-                    .collect()
+                self.joint_mats_named(sm, &sw)
             }
         };
         self.skin_with(&joint_mat)
@@ -612,26 +622,33 @@ impl GltfModel {
     }
 
     fn skin_with(&self, joint_mat: &[Mat4]) -> Vec<Vec<[f32; 3]>> {
-        // skin each (visible) mesh
+        let skin_vert = |v: &GltfVertex| -> [f32; 3] {
+            let p = Vec4::new(v.pos.x, v.pos.y, v.pos.z, 1.0);
+            let mut acc = Vec4::ZERO;
+            let mut wsum = 0.0f32;
+            for k in 0..4 {
+                let w = v.weights[k];
+                if w <= 0.0 { continue; }
+                let ji = v.joints[k] as usize;
+                if ji < joint_mat.len() {
+                    acc += joint_mat[ji] * p * w;
+                    wsum += w;
+                }
+            }
+            if wsum > 1e-4 { let o = acc / wsum; [o.x, o.y, o.z] } else { [v.pos.x, v.pos.y, v.pos.z] }
+        };
+        // skin each (visible) mesh; big meshes fan out over the thread pool
+        // (per-vertex results are independent, so the output is identical)
         self.meshes.iter().enumerate().map(|(mi, mesh)| {
             if self.mesh_hidden.get(mi).copied().unwrap_or(false) {
                 return Vec::new();
             }
-            mesh.verts.iter().map(|v| {
-                let p = Vec4::new(v.pos.x, v.pos.y, v.pos.z, 1.0);
-                let mut acc = Vec4::ZERO;
-                let mut wsum = 0.0f32;
-                for k in 0..4 {
-                    let w = v.weights[k];
-                    if w <= 0.0 { continue; }
-                    let ji = v.joints[k] as usize;
-                    if ji < joint_mat.len() {
-                        acc += joint_mat[ji] * p * w;
-                        wsum += w;
-                    }
-                }
-                if wsum > 1e-4 { let o = acc / wsum; [o.x, o.y, o.z] } else { [v.pos.x, v.pos.y, v.pos.z] }
-            }).collect()
+            #[cfg(not(target_arch = "wasm32"))]
+            if mesh.verts.len() >= 2048 {
+                use rayon::prelude::*;
+                return mesh.verts.par_iter().with_min_len(512).map(skin_vert).collect();
+            }
+            mesh.verts.iter().map(skin_vert).collect()
         }).collect()
     }
 

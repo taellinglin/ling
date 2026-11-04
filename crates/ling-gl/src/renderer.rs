@@ -11,11 +11,21 @@ struct GpuTexture {
 /// Encodes [`Scene`]s into render passes on a device you provide.
 pub struct Renderer {
     pipelines: [wgpu::RenderPipeline; 3],
-    frame_layout: wgpu::BindGroupLayout,
     batch_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     white: GpuTexture,
     textures: HashMap<u64, GpuTexture>,
+    /// Last encode's texture uploads: [count, pixels, ms] (for profiling).
+    pub last_upload: [f64; 3],
+    /// Per-frame constants: one persistent buffer + bind group, rewritten each encode.
+    frame_buf: wgpu::Buffer,
+    frame_bg: wgpu::BindGroup,
+    /// Vertex / batch-uniform buffers, reused across encodes and grown on demand.
+    vbuf: Option<wgpu::Buffer>,
+    ubuf: Option<wgpu::Buffer>,
+    /// Batch bind groups per texture (None = white): the uniforms bind at a dynamic
+    /// offset, so these live as long as `ubuf` and the texture do.
+    groups: HashMap<Option<u64>, wgpu::BindGroup>,
 }
 
 fn pipeline(
@@ -124,7 +134,16 @@ impl Renderer {
         let batch_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ling-gl-batch"),
             entries: &[
-                uniform(0, wgpu::ShaderStages::FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(UNIFORM_BYTES as u64),
+                    },
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -161,12 +180,58 @@ impl Renderer {
             ..Default::default()
         });
         let white = upload(device, queue, 1, 1, &[255, 255, 255, 255]);
-        Renderer { pipelines, frame_layout, batch_layout, sampler, white, textures: HashMap::new() }
+        let frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ling-gl-frame"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ling-gl-frame"),
+            layout: &frame_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buf.as_entire_binding() }],
+        });
+        Renderer {
+            pipelines,
+            batch_layout,
+            sampler,
+            white,
+            textures: HashMap::new(),
+            last_upload: [0.0; 3],
+            frame_buf,
+            frame_bg,
+            vbuf: None,
+            ubuf: None,
+            groups: HashMap::new(),
+        }
     }
 
     /// Drop cached textures (e.g. after the engine reloads its assets).
     pub fn clear_textures(&mut self) {
         self.textures.clear();
+        self.groups.clear();
+    }
+
+    /// Free one cached texture (it is re-uploaded if a later scene lists it again).
+    pub fn remove_texture(&mut self, id: u64) {
+        self.textures.remove(&id);
+        self.groups.remove(&Some(id));
+    }
+
+    /// A buffer of `usage` holding at least `need` bytes: `slot`'s when it fits, else a
+    /// new one with headroom. Returns true when it was (re)allocated.
+    fn ensure(device: &wgpu::Device, slot: &mut Option<wgpu::Buffer>, need: u64, usage: wgpu::BufferUsages, label: &str) -> bool {
+        if matches!(slot, Some(b) if b.size() >= need) {
+            return false;
+        }
+        let size = (need + need / 2).max(1 << 16).div_ceil(256) * 256;
+        *slot = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        true
     }
 
     /// Record the scene into `enc`, clearing `color`/`depth` first.
@@ -181,40 +246,77 @@ impl Renderer {
         width: u32,
         height: u32,
     ) {
+        let t_up = std::time::Instant::now();
+        let (mut n_up, mut px_up) = (0usize, 0usize);
         for t in &scene.textures {
             if t.w > 0 && t.h > 0 && t.px.len() >= (t.w * t.h) as usize && !self.textures.contains_key(&t.id) {
                 let g = upload(device, queue, t.w, t.h, &argb_to_rgba(&t.px[..(t.w * t.h) as usize]));
                 self.textures.insert(t.id, g);
+                n_up += 1;
+                px_up += (t.w * t.h) as usize;
             }
         }
+        self.last_upload = [n_up as f64, px_up as f64, t_up.elapsed().as_secs_f64() * 1000.0];
         let frame: [f32; 4] = [width as f32, height as f32, ZFAR, scene.zdist];
-        let frame_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ling-gl-frame"),
-            contents: bytemuck::cast_slice(&frame),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let frame_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ling-gl-frame"),
-            layout: &self.frame_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: frame_buf.as_entire_binding() }],
-        });
+        queue.write_buffer(&self.frame_buf, 0, bytemuck::cast_slice(&frame));
 
-        // Buffers and bind groups must outlive the pass, so build them first.
-        let mut prepared: Vec<(usize, wgpu::Buffer, wgpu::BindGroup, u32)> = Vec::new();
-        for b in scene.batches.iter().filter(|b| b.verts.len() >= 3) {
-            let n = (b.verts.len() / 3 * 3) as u32;
-            let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("ling-gl-verts"),
-                contents: bytemuck::cast_slice(&b.verts[..n as usize]),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let bg = self.batch_group(device, b);
+        // Every batch shares one persistent vertex buffer and one uniform buffer
+        // (dynamic offsets), so a frame allocates no GPU objects once warm. Queue
+        // writes land before this encoder's submit, so one encode per submit.
+        let live: Vec<&Batch> = scene.batches.iter().filter(|b| b.verts.len() >= 3).collect();
+        let align = device.limits().min_uniform_buffer_offset_alignment.max(1) as usize;
+        let ustride = UNIFORM_BYTES.div_ceil(align) * align;
+        let mut ubytes: Vec<u8> = vec![0; ustride * live.len()];
+        let mut draws: Vec<(usize, u32, u32, Option<u64>)> = Vec::with_capacity(live.len());
+        let mut total = 0usize;
+        for (i, b) in live.iter().enumerate() {
+            let n = b.verts.len() / 3 * 3;
+            let u = batch_uniforms(b);
+            ubytes[i * ustride..i * ustride + UNIFORM_BYTES].copy_from_slice(bytemuck::cast_slice(&u));
             let pi = match b.blend {
                 Blend::Opaque => 0,
                 Blend::Alpha => 1,
                 Blend::Additive => 2,
             };
-            prepared.push((pi, vb, bg, n));
+            // Missing textures draw white; key by what is actually bound.
+            let key = b.texture.filter(|id| self.textures.contains_key(id));
+            draws.push((pi, total as u32, n as u32, key));
+            total += n;
+        }
+        if total > 0 {
+            let vsz = std::mem::size_of::<Vertex>();
+            Self::ensure(device, &mut self.vbuf, (total * vsz) as u64, wgpu::BufferUsages::VERTEX, "ling-gl-verts");
+            if Self::ensure(device, &mut self.ubuf, ubytes.len() as u64, wgpu::BufferUsages::UNIFORM, "ling-gl-batch") {
+                self.groups.clear();
+            }
+            let (Some(vb), Some(ub)) = (&self.vbuf, &self.ubuf) else { return };
+            if let Some(mut view) = queue.write_buffer_with(vb, 0, wgpu::BufferSize::new((total * vsz) as u64).unwrap()) {
+                // Copy each batch straight into the staging memory (no concatenated Vec).
+                let mut rest: &mut [u8] = &mut view;
+                let mut jobs: Vec<(&mut [u8], &[Vertex])> = Vec::with_capacity(live.len());
+                for b in &live {
+                    let src = &b.verts[..b.verts.len() / 3 * 3];
+                    let (dst, tail) = std::mem::take(&mut rest).split_at_mut(src.len() * vsz);
+                    jobs.push((dst, src));
+                    rest = tail;
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    use rayon::prelude::*;
+                    jobs.into_par_iter().for_each(|(d, s)| d.copy_from_slice(bytemuck::cast_slice(s)));
+                }
+                #[cfg(target_arch = "wasm32")]
+                for (d, s) in jobs {
+                    d.copy_from_slice(bytemuck::cast_slice(s));
+                }
+            }
+            queue.write_buffer(ub, 0, &ubytes);
+            for &(_, _, _, key) in &draws {
+                if !self.groups.contains_key(&key) {
+                    let g = self.batch_group(device, key, ub);
+                    self.groups.insert(key, g);
+                }
+            }
         }
 
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -243,46 +345,60 @@ impl Renderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        rp.set_bind_group(0, &frame_bg, &[]);
-        for (pi, vb, bg, n) in &prepared {
-            rp.set_pipeline(&self.pipelines[*pi]);
-            rp.set_bind_group(1, bg, &[]);
+        rp.set_bind_group(0, &self.frame_bg, &[]);
+        if let (Some(vb), true) = (&self.vbuf, total > 0) {
             rp.set_vertex_buffer(0, vb.slice(..));
-            rp.draw(0..*n, 0..1);
+            let mut cur_pi = usize::MAX;
+            for (i, &(pi, first, n, key)) in draws.iter().enumerate() {
+                if pi != cur_pi {
+                    rp.set_pipeline(&self.pipelines[pi]);
+                    cur_pi = pi;
+                }
+                rp.set_bind_group(1, &self.groups[&key], &[(i * ustride) as u32]);
+                rp.draw(first..first + n, 0..1);
+            }
         }
     }
 
-    fn batch_group(&self, device: &wgpu::Device, b: &Batch) -> wgpu::BindGroup {
-        let mut u = [0.0f32; 72];
-        u[..8].copy_from_slice(&[
-            b.fog.color[0],
-            b.fog.color[1],
-            b.fog.color[2],
-            b.fog.start,
-            b.fog.end,
-            b.lighting.amb,
-            if b.lighting.lit { 1.0 } else { 0.0 },
-            b.lighting.lights.len().min(crate::MAX_LIGHTS) as f32,
-        ]);
-        for (i, l) in b.lighting.lights.iter().take(crate::MAX_LIGHTS).enumerate() {
-            u[8 + i * 8..8 + i * 8 + 8].copy_from_slice(&[l[0], l[1], l[2], l[6], l[3], l[4], l[5], l[7]]);
-        }
-        let ub = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ling-gl-batch"),
-            contents: bytemuck::cast_slice(&u),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let tex = b.texture.and_then(|id| self.textures.get(&id)).unwrap_or(&self.white);
+    fn batch_group(&self, device: &wgpu::Device, key: Option<u64>, ub: &wgpu::Buffer) -> wgpu::BindGroup {
+        let tex = key.and_then(|id| self.textures.get(&id)).unwrap_or(&self.white);
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ling-gl-batch"),
             layout: &self.batch_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: ub,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(UNIFORM_BYTES as u64),
+                    }),
+                },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&tex.view) },
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             ],
         })
     }
+}
+
+const UNIFORM_BYTES: usize = 72 * 4;
+
+fn batch_uniforms(b: &Batch) -> [f32; 72] {
+    let mut u = [0.0f32; 72];
+    u[..8].copy_from_slice(&[
+        b.fog.color[0],
+        b.fog.color[1],
+        b.fog.color[2],
+        b.fog.start,
+        b.fog.end,
+        b.lighting.amb,
+        if b.lighting.lit { 1.0 } else { 0.0 },
+        b.lighting.lights.len().min(crate::MAX_LIGHTS) as f32,
+    ]);
+    for (i, l) in b.lighting.lights.iter().take(crate::MAX_LIGHTS).enumerate() {
+        u[8 + i * 8..8 + i * 8 + 8].copy_from_slice(&[l[0], l[1], l[2], l[6], l[3], l[4], l[5], l[7]]);
+    }
+    u
 }
 
 /// Offscreen renderer with CPU readback (native only).
@@ -292,13 +408,31 @@ pub struct Headless {
     queue: wgpu::Queue,
     renderer: Renderer,
     adapter_name: String,
+    /// Render targets + readback buffers, reused while the frame size holds.
+    targets: Option<Targets>,
+    /// Last render's [encode+submit, GPU wait, unpack] in ms (for profiling).
+    pub timings: [f64; 3],
+}
+
+/// Per-size offscreen colour/depth targets and their mappable readback buffers.
+#[cfg(not(target_arch = "wasm32"))]
+struct Targets {
+    width: usize,
+    height: usize,
+    color: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    rb: wgpu::Buffer,
+    zrb: wgpu::Buffer,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Headless {
     /// `None` when no GPU adapter or device is available.
     pub fn new() -> Option<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
+        let backends = wgpu::util::backend_bits_from_env().unwrap_or(wgpu::Backends::all());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends, ..Default::default() });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
@@ -316,13 +450,14 @@ impl Headless {
         .ok()?;
         device.on_uncaptured_error(Box::new(|e| eprintln!("[ling-gl] GPU error: {e}")));
         let renderer = Renderer::new(&device, &queue, wgpu::TextureFormat::Rgba8Unorm);
-        Some(Headless { adapter_name: adapter.get_info().name, device, queue, renderer })
+        Some(Headless { adapter_name: format!("{} ({:?})", adapter.get_info().name, adapter.get_info().backend), device, queue, renderer, targets: None, timings: [0.0; 3] })
     }
 
     /// Release GPU objects in order and wait for the device to idle. process::exit otherwise
     /// destroys the Vulkan device from thread-local destructors inside ExitProcess, which crashes.
     pub fn shutdown(self) {
-        let Headless { device, queue, renderer, .. } = self;
+        let Headless { device, queue, renderer, targets, .. } = self;
+        drop(targets);
         let idle = queue.submit(std::iter::empty());
         device.poll(wgpu::Maintain::wait_for(idle));
         drop(renderer);
@@ -358,6 +493,7 @@ impl Headless {
     }
 
     fn render_impl(&mut self, scene: &Scene, width: usize, height: usize, out: &mut [u32], over: bool, mut zbuf: Option<(&mut [f32], f32)>) -> bool {
+        use rayon::prelude::*;
         if width == 0 || height == 0 || out.len() < width * height {
             return false;
         }
@@ -367,41 +503,49 @@ impl Headless {
             }
         }
         let size = wgpu::Extent3d { width: width as u32, height: height as u32, depth_or_array_layers: 1 };
-        let color = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ling-gl-color"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let depth = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ling-gl-depth"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
         let padded = (width * 4).div_ceil(256) * 256;
-        let rb = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ling-gl-readback"),
-            size: (padded * height) as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let zrb = zbuf.as_ref().map(|_| {
-            self.device.create_buffer(&wgpu::BufferDescriptor {
+        // Targets and readback buffers are reused frame to frame (every pass clears
+        // both attachments), instead of allocating ~4 full-frame GPU objects per flush.
+        if !matches!(&self.targets, Some(t) if t.width == width && t.height == height) {
+            self.targets = None;
+            let color = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("ling-gl-color"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let depth = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("ling-gl-depth"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: DEPTH_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let rb = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("ling-gl-readback"),
+                size: (padded * height) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let zrb = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ling-gl-depth-readback"),
                 size: (padded * height) as u64,
                 usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                 mapped_at_creation: false,
-            })
-        });
+            });
+            let color_view = color.create_view(&Default::default());
+            let depth_view = depth.create_view(&Default::default());
+            self.targets = Some(Targets { width, height, color, color_view, depth, depth_view, rb, zrb });
+        }
+        let Some(t) = self.targets.as_ref() else { return false };
+        let t_enc = std::time::Instant::now();
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("ling-gl") });
@@ -409,21 +553,21 @@ impl Headless {
             &self.device,
             &self.queue,
             &mut enc,
-            &color.create_view(&Default::default()),
-            &depth.create_view(&Default::default()),
+            &t.color_view,
+            &t.depth_view,
             scene,
             width as u32,
             height as u32,
         );
         enc.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
-                texture: &color,
+                texture: &t.color,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::ImageCopyBuffer {
-                buffer: &rb,
+                buffer: &t.rb,
                 layout: wgpu::ImageDataLayout {
                     offset: 0,
                     bytes_per_row: Some(padded as u32),
@@ -432,16 +576,17 @@ impl Headless {
             },
             size,
         );
-        if let Some(zrb) = &zrb {
+        let want_z = zbuf.is_some();
+        if want_z {
             enc.copy_texture_to_buffer(
                 wgpu::ImageCopyTexture {
-                    texture: &depth,
+                    texture: &t.depth,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::DepthOnly,
                 },
                 wgpu::ImageCopyBuffer {
-                    buffer: zrb,
+                    buffer: &t.zrb,
                     layout: wgpu::ImageDataLayout {
                         offset: 0,
                         bytes_per_row: Some(padded as u32),
@@ -452,13 +597,15 @@ impl Headless {
             );
         }
         self.queue.submit(Some(enc.finish()));
+        let enc_ms = t_enc.elapsed().as_secs_f64() * 1000.0;
+        let t_wait = std::time::Instant::now();
 
-        let slice = rb.slice(..);
+        let slice = t.rb.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let zslice = zrb.as_ref().map(|b| b.slice(..));
+        let zslice = if want_z { Some(t.zrb.slice(..)) } else { None };
         let (ztx, zrx) = std::sync::mpsc::channel();
         if let Some(zs) = &zslice {
             zs.map_async(wgpu::MapMode::Read, move |r| {
@@ -466,49 +613,92 @@ impl Headless {
             });
         }
         let _ = self.device.poll(wgpu::Maintain::Wait);
-        if !matches!(rx.recv(), Ok(Ok(()))) {
+        let color_ok = matches!(rx.recv(), Ok(Ok(())));
+        let z_ok = zslice.is_some() && matches!(zrx.recv(), Ok(Ok(())));
+        let wait_ms = t_wait.elapsed().as_secs_f64() * 1000.0;
+        let t_unpack = std::time::Instant::now();
+        if !color_ok {
+            // Leave nothing mapped behind for the next frame: rebuild the targets.
+            self.targets = None;
             return false;
         }
-        if let (Some(zs), Some((z, zd))) = (&zslice, zbuf.as_mut()) {
-            if matches!(zrx.recv(), Ok(Ok(()))) {
-                let data = zs.get_mapped_range();
-                for y in 0..height {
-                    let row = &data[y * padded..y * padded + width * 4];
-                    for (x, p) in row.chunks_exact(4).enumerate() {
-                        let d = f32::from_le_bytes([p[0], p[1], p[2], p[3]]);
-                        if d < 0.9999 {
-                            let v = d * ZFAR - *zd;
-                            let o = &mut z[y * width + x];
-                            if v < *o {
-                                *o = v;
+        if let (Some(zs), Some((z, zd)), true) = (&zslice, zbuf.as_mut(), z_ok) {
+            let data = zs.get_mapped_range();
+            let bytes: &[u8] = &data;
+            let zd = *zd;
+            z[..width * height].par_chunks_mut(width).enumerate().for_each(|(y, zrow)| {
+                let row = &bytes[y * padded..y * padded + width * 4];
+                match bytemuck::try_cast_slice::<u8, f32>(row) {
+                    Ok(ds) => {
+                        for (&d, o) in ds.iter().zip(zrow.iter_mut()) {
+                            if d < 0.9999 {
+                                let v = d * ZFAR - zd;
+                                if v < *o {
+                                    *o = v;
+                                }
                             }
                         }
-                    }
+                    },
+                    Err(_) => {
+                        for (p, o) in row.chunks_exact(4).zip(zrow.iter_mut()) {
+                            let d = f32::from_le_bytes([p[0], p[1], p[2], p[3]]);
+                            if d < 0.9999 {
+                                let v = d * ZFAR - zd;
+                                if v < *o {
+                                    *o = v;
+                                }
+                            }
+                        }
+                    },
                 }
-            }
+            });
         }
-        if let Some(zrb) = &zrb {
-            zrb.unmap();
+        if z_ok {
+            t.zrb.unmap();
         }
         {
             let data = slice.get_mapped_range();
-            for y in 0..height {
-                let row = &data[y * padded..y * padded + width * 4];
-                for (x, p) in row.chunks_exact(4).enumerate() {
-                    let o = &mut out[y * width + x];
-                    if over {
-                        // Colour is premultiplied by the blend state, so: src + dst * (1 - a).
-                        let inv = 255 - p[3] as u32;
-                        let d = *o;
-                        let ch = |s: u8, sh: u32| ((s as u32 + ((d >> sh) & 0xFF) * inv / 255).min(255)) << sh;
-                        *o = ch(p[0], 16) | ch(p[1], 8) | ch(p[2], 0);
-                    } else {
-                        *o = ((p[0] as u32) << 16) | ((p[1] as u32) << 8) | p[2] as u32;
-                    }
+            let bytes: &[u8] = &data;
+            // RGBA8 little-endian word → 0x00RRGGBB
+            #[inline(always)]
+            fn rgb(p: u32) -> u32 {
+                ((p & 0xFF) << 16) | (p & 0xFF00) | ((p >> 16) & 0xFF)
+            }
+            #[inline(always)]
+            fn over_px(p: u32, d: u32) -> u32 {
+                // Colour is premultiplied by the blend state, so: src + dst * (1 - a).
+                let a = p >> 24;
+                if a == 255 {
+                    rgb(p)
+                } else if p == 0 {
+                    d & 0x00FF_FFFF // nothing drawn here
+                } else {
+                    let inv = 255 - a;
+                    let ch = |s: u32, sh: u32| ((s + ((d >> sh) & 0xFF) * inv / 255).min(255)) << sh;
+                    ch(p & 0xFF, 16) | ch((p >> 8) & 0xFF, 8) | ch((p >> 16) & 0xFF, 0)
                 }
             }
+            out[..width * height].par_chunks_mut(width).enumerate().for_each(|(y, orow)| {
+                let row = &bytes[y * padded..y * padded + width * 4];
+                let words: std::borrow::Cow<[u32]> = match bytemuck::try_cast_slice::<u8, u32>(row) {
+                    Ok(ws) => std::borrow::Cow::Borrowed(ws),
+                    Err(_) => std::borrow::Cow::Owned(
+                        row.chunks_exact(4).map(|p| u32::from_le_bytes([p[0], p[1], p[2], p[3]])).collect(),
+                    ),
+                };
+                if over {
+                    for (&p, o) in words.iter().zip(orow.iter_mut()) {
+                        *o = over_px(p, *o);
+                    }
+                } else {
+                    for (&p, o) in words.iter().zip(orow.iter_mut()) {
+                        *o = rgb(p);
+                    }
+                }
+            });
         }
-        rb.unmap();
+        t.rb.unmap();
+        self.timings = [enc_ms, wait_ms, t_unpack.elapsed().as_secs_f64() * 1000.0];
         true
     }
 }
@@ -550,12 +740,69 @@ mod tests {
         }
         scene.batches.push(Batch { texture: Some(7), verts, ..Default::default() });
         let mut out = vec![0u32; w * h];
-        for i in 0..8 {
+        let mut z = vec![f32::INFINITY; w * h];
+        eprintln!("adapter {}", gpu.adapter_name());
+        for i in 0..12 {
             let t = std::time::Instant::now();
-            assert!(gpu.render(&scene, w, h, &mut out));
-            eprintln!("frame {i}: {:?}", t.elapsed());
+            assert!(gpu.render_over_depth(&scene, w, h, &mut out, &mut z));
+            eprintln!("frame {i}: {:?} enc/wait/unpack {:?}", t.elapsed(), gpu.timings);
             scene.textures.clear();
         }
+    }
+
+    /// The game's dense-area shape (run 5: ~40k tris in ~130 batches, ~30 textures).
+    /// cargo test --release -p ling-gl dense_bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn dense_bench() {
+        let Some(mut gpu) = Headless::new() else { return };
+        let (w, h) = (1920usize, 1080usize);
+        let mut scene = Scene::new([0.0; 3]);
+        for id in 0..30u64 {
+            scene.textures.push(Texture { id, w: 256, h: 256, px: vec![0xFF8040C0 ^ id as u32; 256 * 256] });
+        }
+        let lights = vec![[0.0, 5.0, 0.0, 1.0, 0.9, 0.8, 1.0, 40.0]; 4];
+        for b in 0..130usize {
+            let mut verts = Vec::with_capacity(310 * 3);
+            for i in 0..310usize {
+                let k = b * 310 + i;
+                let (x, y, z) = ((k % 140) as f32 * 13.7, (k / 140 % 77) as f32 * 14.0, 10.0 + (k % 9) as f32);
+                for (dx, dy) in [(0.0, 0.0), (26.0, 0.0), (0.0, 13.0)] {
+                    verts.push(vert(x + dx, y + dy, z, dx / 26.0, dy / 13.0, [1.0; 4]));
+                }
+            }
+            scene.batches.push(Batch {
+                texture: Some((b % 30) as u64),
+                blend: if b % 13 == 12 { Blend::Alpha } else { Blend::Opaque },
+                fog: Fog { start: 20.0, end: 90.0, color: [0.5, 0.6, 0.7] },
+                lighting: Lighting { lit: true, amb: 0.4, lights: lights.clone() },
+                verts,
+            });
+        }
+        let mut out = vec![0u32; w * h];
+        let mut z = vec![f32::INFINITY; w * h];
+        eprintln!("adapter {} tris {}", gpu.adapter_name(), scene.tri_count());
+        let mut acc = [0.0f64; 4];
+        let n = 40;
+        for i in 0..n + 5 {
+            let t = std::time::Instant::now();
+            assert!(gpu.render_over_depth(&scene, w, h, &mut out, &mut z));
+            let wall = t.elapsed().as_secs_f64() * 1000.0;
+            if i >= 5 {
+                acc[0] += gpu.timings[0];
+                acc[1] += gpu.timings[1];
+                acc[2] += gpu.timings[2];
+                acc[3] += wall;
+            }
+        }
+        let f = n as f64;
+        eprintln!(
+            "dense: encode {:.2} wait {:.2} unpack {:.2} total {:.2} ms",
+            acc[0] / f,
+            acc[1] / f,
+            acc[2] / f,
+            acc[3] / f
+        );
     }
 
     #[test]

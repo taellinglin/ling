@@ -18,51 +18,231 @@ use crate::gfx::raster;
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 
-/// Number of horizontal bands to rasterise a flush across. 1 = serial.
+/// Number of horizontal bands to rasterise `nrows` rows across. 1 = serial.
 ///
-/// Banding pays off only when fill (pixels written) dominates: each band re-runs
-/// per-triangle setup, so a flush of many *tiny* triangles (e.g. text glyphs)
-/// would just multiply that setup. Gate on estimated covered area, not call count.
+/// Calls are binned by their y-extent (see [`raster_rows`]), so a band only
+/// re-runs setup for the triangles that actually touch it; that makes many
+/// thin bands cheap and keeps every core busy (work stealing evens out bands
+/// that hold more of the scene).
 #[cfg(not(target_arch = "wasm32"))]
-fn render_bands(width: usize, height: usize, est_pixels: usize) -> usize {
-    let screen = width * height;
-    if width == 0 || height < 256 || est_pixels < screen {
+fn render_bands(nrows: usize, n_calls: usize) -> usize {
+    if nrows < 48 || n_calls < 16 {
         return 1;
     }
-    let by_rows = height / 96; // keep bands ≥ ~96 rows tall
-    let by_fill = est_pixels / screen; // more overdraw → more bands worth it
-    rayon::current_num_threads()
-        .min(by_rows)
-        .min(by_fill.max(1) + 1)
-        .max(1)
+    (rayon::current_num_threads() * 3).min(nrows / 24).max(1)
 }
 
+/// Conservative screen-y extent of a call (pixels, before any band shift);
+/// `None` when a coordinate is not finite (such calls go to every band).
 #[cfg(not(target_arch = "wasm32"))]
-fn estimate_fill(calls: &[DrawCall]) -> usize {
-    let mut px = 0.0f32;
-    for c in calls {
-        let (a, b) = match c.kind {
-            DrawKind::Triangle { x0, y0, x1, y1, x2, y2, .. }
-            | DrawKind::TriangleG { x0, y0, x1, y1, x2, y2, .. } => {
-                let w = x0.max(x1).max(x2) - x0.min(x1).min(x2);
-                let h = y0.max(y1).max(y2) - y0.min(y1).min(y2);
-                (w, h)
-            },
-            DrawKind::Line { .. } => (0.0, 0.0),
-            DrawKind::TriangleT { ref v, .. } => {
-                let w = v[0].x.max(v[1].x).max(v[2].x) - v[0].x.min(v[1].x).min(v[2].x);
-                let h = v[0].y.max(v[1].y).max(v[2].y) - v[0].y.min(v[1].y).min(v[2].y);
-                (w, h)
-            },
-        };
-        px += 0.5 * a * b;
+#[inline]
+fn call_y_range(c: &DrawCall) -> Option<(f32, f32)> {
+    let (a, b, d) = match c.kind {
+        DrawKind::Triangle { y0, y1, y2, .. } | DrawKind::TriangleG { y0, y1, y2, .. } => (y0, y1, y2),
+        DrawKind::Line { y0, y1, .. } => (y0, y1, y1),
+        DrawKind::TriangleT { ref v, .. } => (v[0].y, v[1].y, v[2].y),
+    };
+    if !(a.is_finite() && b.is_finite() && d.is_finite()) {
+        return None;
     }
-    px.max(0.0) as usize
+    Some((a.min(b).min(d), a.max(b).max(d)))
 }
 
-#[cfg(target_arch = "wasm32")]
-fn render_bands(_w: usize, _h: usize, _n: usize) -> usize {
-    1
+/// Rasterise `calls` (already in draw order) into rows `row0 .. row0 + nrows`
+/// of a `width`-wide framebuffer; `buf` / `zbuf` hold exactly those rows.
+///
+/// The rows are split into horizontal bands rasterised in parallel. Each band
+/// owns a disjoint slice of `buf`/`zbuf`, so a pixel is touched by exactly one
+/// thread, and each band walks its calls in the sorted order, preserving the
+/// painter's per-pixel order. Calls are binned by y-extent first so a band only
+/// visits the calls that can touch it.
+fn raster_rows(
+    calls: &[DrawCall],
+    buf: &mut [u32],
+    zbuf: Option<&mut [f32]>,
+    width: usize,
+    row0: usize,
+    nrows: usize,
+    aa: bool,
+) {
+    if width == 0 || nrows == 0 {
+        return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let bands = render_bands(nrows, calls.len());
+        if bands > 1 {
+            let rows = nrows.div_ceil(bands);
+            let bands = nrows.div_ceil(rows);
+            // Margin covers AA edges / line feathering past the vertex extent.
+            const MARGIN: f32 = 4.0;
+            let lo_lim = row0 as f32;
+            let hi_lim = (row0 + nrows) as f32;
+            let mut bins: Vec<Vec<u32>> = vec![Vec::new(); bands];
+            for (i, c) in calls.iter().enumerate() {
+                let (b0, b1) = match call_y_range(c) {
+                    Some((lo, hi)) => {
+                        let lo = lo - MARGIN;
+                        let hi = hi + MARGIN;
+                        if hi < lo_lim || lo >= hi_lim {
+                            continue; // entirely outside these rows: draws nothing here
+                        }
+                        let b0 = ((lo - lo_lim).max(0.0) as usize / rows).min(bands - 1);
+                        let b1 = ((hi - lo_lim).max(0.0) as usize / rows).min(bands - 1);
+                        (b0, b1)
+                    },
+                    None => (0, bands - 1),
+                };
+                for bin in &mut bins[b0..=b1] {
+                    bin.push(i as u32);
+                }
+            }
+            let job = |b: usize, bbuf: &mut [u32], mut bz: Option<&mut [f32]>| {
+                let ysh = (row0 + b * rows) as f32;
+                let bh = bbuf.len() / width;
+                for &i in &bins[b] {
+                    rasterize_call(&calls[i as usize], bbuf, bz.as_deref_mut(), width, bh, ysh, aa);
+                }
+            };
+            match zbuf {
+                Some(z) => buf
+                    .par_chunks_mut(rows * width)
+                    .zip(z.par_chunks_mut(rows * width))
+                    .enumerate()
+                    .for_each(|(b, (bbuf, bz))| job(b, bbuf, Some(bz))),
+                None => buf
+                    .par_chunks_mut(rows * width)
+                    .enumerate()
+                    .for_each(|(b, bbuf)| job(b, bbuf, None)),
+            }
+            return;
+        }
+    }
+    let ysh = row0 as f32;
+    match zbuf {
+        Some(z) => {
+            for call in calls {
+                rasterize_call(call, buf, Some(&mut *z), width, nrows, ysh, aa);
+            }
+        },
+        None => {
+            for call in calls {
+                rasterize_call(call, buf, None, width, nrows, ysh, aa);
+            }
+        },
+    }
+}
+
+/// Reset a z-buffer to "nothing drawn" (+∞), in parallel on native.
+fn reset_depth(z: &mut [f32]) {
+    #[cfg(not(target_arch = "wasm32"))]
+    z.par_chunks_mut(1 << 16).for_each(|c| c.fill(f32::INFINITY));
+    #[cfg(target_arch = "wasm32")]
+    z.fill(f32::INFINITY);
+}
+
+/// Size `z` to `n` (filled with +∞) or reset it when `reset_z`.
+fn prepare_depth(z: &mut Vec<f32>, n: usize, reset_z: bool) {
+    if z.len() != n {
+        z.clear();
+        z.resize(n, f32::INFINITY);
+    } else if reset_z {
+        reset_depth(z);
+    }
+}
+
+/// Sort key for "largest depth first": ascending u32 order = descending depth,
+/// with NaN first and -0/+0 tied. Callers pack it above an index for stability.
+#[inline]
+fn desc_key(d: f32) -> u32 {
+    if d.is_nan() {
+        return 0;
+    }
+    let d = if d == 0.0 { 0.0 } else { d };
+    let b = d.to_bits();
+    let asc = if b >> 31 == 1 { !b } else { b | 0x8000_0000 };
+    !asc
+}
+
+/// Order calls back-to-front (largest depth first), ties in submission order:
+/// exactly the order of a stable sort on depth, but it sorts packed 8-byte
+/// (depth, index) keys and then moves each ~170-byte call once, instead of
+/// shuffling the calls themselves through a merge sort (50k calls: ~9 ms → <1 ms).
+fn sort_back_to_front(calls: &mut Vec<DrawCall>) {
+    let n = calls.len();
+    if n < 2 || n > u32::MAX as usize {
+        if n >= 2 {
+            calls.sort_by(|a, b| b.depth.partial_cmp(&a.depth).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        return;
+    }
+    let mut keys: Vec<u64> = SORT_KEYS.with(|k| std::mem::take(&mut *k.borrow_mut()));
+    keys.clear();
+    keys.extend(
+        calls
+            .iter()
+            .enumerate()
+            .map(|(i, c)| ((desc_key(c.depth) as u64) << 32) | i as u64),
+    );
+    if keys.windows(2).all(|w| w[0] <= w[1]) {
+        SORT_KEYS.with(|k| *k.borrow_mut() = keys);
+        return; // already in order
+    }
+    // Keys are unique (index in the low bits), so any sort gives one order.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        if n >= 16384 {
+            keys.par_sort_unstable();
+        } else {
+            keys.sort_unstable();
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    keys.sort_unstable();
+    // The gather target is a pooled buffer (a fresh multi-MB Vec per flush is
+    // mostly page faults); the old `calls` buffer becomes the next target.
+    let mut out: Vec<DrawCall> = SORT_OUT.with(|o| std::mem::take(&mut *o.borrow_mut()));
+    out.clear();
+    out.reserve(n);
+    // SAFETY: `keys` holds every index in 0..n exactly once, so each call is
+    // moved out of `calls` exactly once into a distinct slot of `out`; `calls`
+    // is then emptied without dropping, so nothing is dropped twice. No code
+    // between the moves can panic.
+    unsafe {
+        let src = calls.as_ptr() as usize;
+        let dst = out.as_mut_ptr() as usize;
+        let gather = |j0: usize, ks: &[u64]| {
+            let src = src as *const DrawCall;
+            let dst = dst as *mut DrawCall;
+            for (j, k) in ks.iter().enumerate() {
+                std::ptr::copy_nonoverlapping(src.add((*k & 0xFFFF_FFFF) as usize), dst.add(j0 + j), 1);
+            }
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            const CH: usize = 8192;
+            if n >= 2 * CH {
+                keys.par_chunks(CH).enumerate().for_each(|(c, ks)| gather(c * CH, ks));
+            } else {
+                gather(0, &keys);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        gather(0, &keys);
+        calls.set_len(0);
+        out.set_len(n);
+    }
+    std::mem::swap(calls, &mut out);
+    SORT_OUT.with(|o| *o.borrow_mut() = out);
+    SORT_KEYS.with(|k| *k.borrow_mut() = keys);
+}
+
+thread_local! {
+    /// Reused sort keys / gather target for [`sort_back_to_front`].
+    static SORT_KEYS: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SORT_OUT: std::cell::RefCell<Vec<DrawCall>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Rasterise one queued call into a band starting `ysh` rows down: every y
@@ -298,60 +478,118 @@ pub(crate) mod gl_scene {
         ling_gl::Vertex { x, y, iw, uw: uw * iw, vw: vw * iw, tint: [c[0], c[1], c[2], a], w: [0.0; 3] }
     }
 
-    /// Pack sorted calls into batches (consecutive calls sharing texture, blend and
-    /// shading merge). Textures not yet in `known` are attached to the scene.
-    pub fn build(calls: &[DrawCall], known: &mut HashSet<u64>) -> ling_gl::Scene {
+    /// The set of texture ids the GPU side already holds.
+    pub trait TexKnown {
+        /// Record `id` as used this frame; true when the GPU doesn't have it yet.
+        fn mark(&mut self, id: u64) -> bool;
+    }
+    impl TexKnown for HashSet<u64> {
+        fn mark(&mut self, id: u64) -> bool {
+            self.insert(id)
+        }
+    }
+
+    /// Pack calls into batches. Opaque calls group by texture + shading (the GPU
+    /// depth-tests them, so their order is free); blended ones draw back-to-front
+    /// (largest depth first, ties in submission order) whatever order `calls` is in,
+    /// with consecutive ones sharing texture, blend and shading merged. Textures not
+    /// yet in `known` are attached to the scene.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn build<K: TexKnown>(calls: &[DrawCall], known: &mut K) -> ling_gl::Scene {
+        build_pooled(calls, known, &mut Vec::new())
+    }
+
+    /// Return a drawn scene's vertex Vecs to `pool` for [`build_pooled`], in reverse so
+    /// the next frame's batches (usually the same shape) get back their own capacity.
+    pub fn recycle(scene: ling_gl::Scene, pool: &mut Vec<Vec<ling_gl::Vertex>>) {
+        for b in scene.batches.into_iter().rev() {
+            if pool.len() < 4096 {
+                pool.push(b.verts);
+            }
+        }
+    }
+
+    /// [`build`] taking batch vertex Vecs from `pool`, so steady frames don't
+    /// allocate (and page-fault in) megabytes of fresh vertex memory.
+    pub fn build_pooled<'a, K: TexKnown>(calls: &'a [DrawCall], known: &mut K, pool: &mut Vec<Vec<ling_gl::Vertex>>) -> ling_gl::Scene {
         let mut scene = ling_gl::Scene::new([0.0; 3]);
         scene.clear_alpha = 0.0;
         let zd = super::raster::persp_zd();
-        scene.zdist = if zd.is_finite() { zd } else { 0.0 };
-        let mut last_shade: Option<usize> = None;
-        let mut opaque: Vec<ling_gl::Batch> = Vec::new();
-        let mut opaque_ix: std::collections::HashMap<(Option<u64>, Option<usize>), usize> = std::collections::HashMap::new();
-        for call in calls {
-            let a = call.alpha.clamp(0.0, 1.0);
-            let blend = match (call.mode, a < 0.999) {
+        let zdist = if zd.is_finite() { zd } else { 0.0 };
+        scene.zdist = zdist;
+        let mut textures: Vec<ling_gl::Texture> = Vec::new();
+        // Texture id per Arc address. Within one build every call holds its Arc,
+        // so an address names one live texture: hash its content once, not per call.
+        let mut tex_ids: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        let mut last_tex: (usize, u64) = (0, 0);
+        // Fog + lighting of a call, only materialised when it opens a new batch.
+        let shading = |sh: Option<&TexShade>| -> (ling_gl::Fog, ling_gl::Lighting) {
+            match sh {
+                Some(sh) => (
+                    if sh.fog_end > 0.0 {
+                        ling_gl::Fog { start: sh.fog_start, end: sh.fog_end, color: rgb(sh.fog_color) }
+                    } else {
+                        ling_gl::Fog::default()
+                    },
+                    ling_gl::Lighting { lit: sh.lit, amb: sh.amb, lights: sh.lights.clone() },
+                ),
+                None => (ling_gl::Fog::default(), ling_gl::Lighting::default()),
+            }
+        };
+        let blend_of = |call: &DrawCall| -> ling_gl::Blend {
+            match (call.mode, call.alpha.clamp(0.0, 1.0) < 0.999) {
                 (1, _) => ling_gl::Blend::Additive,
                 (0, false) => ling_gl::Blend::Opaque,
-                (0, true) => ling_gl::Blend::Alpha,
                 _ => ling_gl::Blend::Alpha,
-            };
-            let mut fog = ling_gl::Fog::default();
-            let mut lighting = ling_gl::Lighting::default();
-            let mut shade_id = 0usize;
-            let (tex_id, verts): (Option<u64>, [ling_gl::Vertex; 3]) = match &call.kind {
+            }
+        };
+        // (texture, shading, shading key, vertices) of a triangle call.
+        type Conv<'s> = (Option<u64>, Option<&'s TexShade>, Option<usize>, [ling_gl::Vertex; 3]);
+        let mut convert = |call: &'a DrawCall| -> Option<Conv<'a>> {
+            let a = call.alpha.clamp(0.0, 1.0);
+            Some(match &call.kind {
                 DrawKind::Triangle { x0, y0, z0, x1, y1, z1, x2, y2, z2 } => {
                     let c = rgb(call.color);
-                    (None, [vert(*x0, *y0, *z0, 0.0, 0.0, c, a, scene.zdist), vert(*x1, *y1, *z1, 0.0, 0.0, c, a, scene.zdist), vert(*x2, *y2, *z2, 0.0, 0.0, c, a, scene.zdist)])
+                    (None, None, None, [vert(*x0, *y0, *z0, 0.0, 0.0, c, a, zdist), vert(*x1, *y1, *z1, 0.0, 0.0, c, a, zdist), vert(*x2, *y2, *z2, 0.0, 0.0, c, a, zdist)])
                 },
                 DrawKind::TriangleG { x0, y0, z0, c0, x1, y1, z1, c1, x2, y2, z2, c2, .. } => (
                     None,
+                    None,
+                    None,
                     [
-                        vert(*x0, *y0, *z0, 0.0, 0.0, rgb(*c0), a, scene.zdist),
-                        vert(*x1, *y1, *z1, 0.0, 0.0, rgb(*c1), a, scene.zdist),
-                        vert(*x2, *y2, *z2, 0.0, 0.0, rgb(*c2), a, scene.zdist),
+                        vert(*x0, *y0, *z0, 0.0, 0.0, rgb(*c0), a, zdist),
+                        vert(*x1, *y1, *z1, 0.0, 0.0, rgb(*c1), a, zdist),
+                        vert(*x2, *y2, *z2, 0.0, 0.0, rgb(*c2), a, zdist),
                     ],
                 ),
                 DrawKind::TriangleT { v, tex, tint, shade, .. } => {
-                    let id = {
-                        // Arc addresses get reused by short-lived textures (portraits, hair), so mix in a content sample.
-                        let mut h = std::sync::Arc::as_ptr(tex) as usize as u64 ^ ((tex.w as u64) << 32 | tex.h as u64);
-                        let step = (tex.px.len() / 64).max(1);
-                        for p in tex.px.iter().step_by(step) {
-                            h = (h ^ *p as u64).wrapping_mul(0x100000001b3);
-                        }
-                        h
+                    let addr = std::sync::Arc::as_ptr(tex) as usize;
+                    let id = if addr == last_tex.0 && addr != 0 {
+                        last_tex.1
+                    } else {
+                        let id = match tex_ids.get(&addr) {
+                            Some(id) => *id,
+                            None => {
+                                // Arc addresses get reused by short-lived textures (portraits, hair), so mix in a content sample.
+                                let mut h = addr as u64 ^ ((tex.w as u64) << 32 | tex.h as u64);
+                                let step = (tex.px.len() / 64).max(1);
+                                for p in tex.px.iter().step_by(step) {
+                                    h = (h ^ *p as u64).wrapping_mul(0x100000001b3);
+                                }
+                                tex_ids.insert(addr, h);
+                                if known.mark(h) {
+                                    textures.push(ling_gl::Texture { id: h, w: tex.w, h: tex.h, px: tex.px.clone() });
+                                }
+                                h
+                            },
+                        };
+                        last_tex = (addr, id);
+                        id
                     };
-                    if known.insert(id) {
-                        scene.textures.push(ling_gl::Texture { id, w: tex.w, h: tex.h, px: tex.px.clone() });
-                    }
-                    if let Some(sh) = shade {
-                        shade_id = std::sync::Arc::as_ptr(sh) as usize;
-                        if sh.fog_end > 0.0 {
-                            fog = ling_gl::Fog { start: sh.fog_start, end: sh.fog_end, color: rgb(sh.fog_color) };
-                        }
-                        lighting = ling_gl::Lighting { lit: sh.lit, amb: sh.amb, lights: sh.lights.clone() };
-                    }
+                    let (sh, key) = match shade {
+                        Some(sh) => (Some(&**sh), Some(std::sync::Arc::as_ptr(sh) as usize)),
+                        None => (None, None),
+                    };
                     let c = rgb(*tint);
                     let mk = |t: &TexVert| ling_gl::Vertex {
                         x: t.x,
@@ -362,31 +600,76 @@ pub(crate) mod gl_scene {
                         tint: [c[0], c[1], c[2], a],
                         w: [t.wx, t.wy, t.wz],
                     };
-                    (Some(id), [mk(&v[0]), mk(&v[1]), mk(&v[2])])
+                    (Some(id), sh, key, [mk(&v[0]), mk(&v[1]), mk(&v[2])])
                 },
-                DrawKind::Line { .. } => continue,
-            };
-            let key = if shade_id == 0 { None } else { Some(shade_id) };
-            if blend == ling_gl::Blend::Opaque {
-                // The GPU depth-tests, so opaque draw order is irrelevant: group by
-                // texture + shading instead of interleaving them in depth order,
-                // which collapses tens of thousands of batches into a few hundred.
-                let idx = *opaque_ix.entry((tex_id, key)).or_insert_with(|| {
-                    opaque.push(ling_gl::Batch { texture: tex_id, blend, fog, lighting, verts: Vec::new() });
-                    opaque.len() - 1
-                });
-                opaque[idx].verts.extend_from_slice(&verts);
+                DrawKind::Line { .. } => return None,
+            })
+        };
+        let fresh = |pool: &mut Vec<Vec<ling_gl::Vertex>>| -> Vec<ling_gl::Vertex> {
+            let mut v = pool.pop().unwrap_or_default();
+            v.clear();
+            v
+        };
+
+        // The GPU depth-tests opaque triangles, so they group by texture + shading in
+        // submission order, which collapses tens of thousands of calls into a few
+        // hundred batches. Blended calls are only keyed here and sorted below.
+        let mut opaque: Vec<ling_gl::Batch> = Vec::new();
+        let mut opaque_ix: std::collections::HashMap<(Option<u64>, Option<usize>), usize> = std::collections::HashMap::new();
+        let mut last_opaque: Option<((Option<u64>, Option<usize>), usize)> = None;
+        let mut blended: Vec<u64> = Vec::new();
+        for (i, call) in calls.iter().enumerate() {
+            if blend_of(call) != ling_gl::Blend::Opaque {
+                if !matches!(call.kind, DrawKind::Line { .. }) {
+                    blended.push(((desc_key(call.depth) as u64) << 32) | i as u64);
+                }
                 continue;
             }
-            match scene.batches.last_mut() {
-                Some(b) if b.texture == tex_id && b.blend == blend && last_shade == key => b.verts.extend_from_slice(&verts),
-                _ => scene.batches.push(ling_gl::Batch { texture: tex_id, blend, fog, lighting, verts: verts.to_vec() }),
+            let Some((tex_id, sh, key, verts)) = convert(call) else { continue };
+            let k = (tex_id, key);
+            let idx = match last_opaque {
+                Some((lk, li)) if lk == k => li,
+                _ => {
+                    let idx = match opaque_ix.get(&k) {
+                        Some(i) => *i,
+                        None => {
+                            let (fog, lighting) = shading(sh);
+                            let verts = fresh(pool);
+                            opaque.push(ling_gl::Batch { texture: tex_id, blend: ling_gl::Blend::Opaque, fog, lighting, verts });
+                            opaque_ix.insert(k, opaque.len() - 1);
+                            opaque.len() - 1
+                        },
+                    };
+                    last_opaque = Some((k, idx));
+                    idx
+                },
+            };
+            opaque[idx].verts.extend_from_slice(&verts);
+        }
+
+        // Blended geometry draws after all opaque (which writes depth), back-to-front.
+        blended.sort_unstable();
+        let mut last_shade: Option<usize> = None;
+        let first_blended = opaque.len();
+        let mut batches = opaque;
+        for k in &blended {
+            let call = &calls[(k & 0xFFFF_FFFF) as usize];
+            let blend = blend_of(call);
+            let Some((tex_id, sh, key, verts)) = convert(call) else { continue };
+            let merge = batches.len() > first_blended;
+            match batches.last_mut() {
+                Some(b) if merge && b.texture == tex_id && b.blend == blend && last_shade == key => b.verts.extend_from_slice(&verts),
+                _ => {
+                    let (fog, lighting) = shading(sh);
+                    let mut v = fresh(pool);
+                    v.extend_from_slice(&verts);
+                    batches.push(ling_gl::Batch { texture: tex_id, blend, fog, lighting, verts: v })
+                },
             }
             last_shade = key;
         }
-        // Opaque first (writes depth), then blended geometry back-to-front.
-        opaque.append(&mut scene.batches);
-        scene.batches = opaque;
+        scene.batches = batches;
+        scene.textures = textures;
         scene
     }
 }
@@ -394,14 +677,29 @@ pub(crate) mod gl_scene {
 #[cfg(all(feature = "gl", not(target_arch = "wasm32")))]
 mod gl_bridge {
     use super::*;
-    use std::collections::HashSet;
 
     pub struct Bridge {
         pub gpu: Option<ling_gl::Headless>,
-        pub known: HashSet<u64>,
+        pub known: TexLru,
         pub frames: u32,
         pub slow: u32,
+        /// Batch vertex Vecs recycled between flushes.
+        pub pool: Vec<Vec<ling_gl::Vertex>>,
     }
+
+    /// GPU-resident texture ids with the flush they were last drawn in.
+    #[derive(Default)]
+    pub struct TexLru {
+        pub last: std::collections::HashMap<u64, u32>,
+        pub frame: u32,
+    }
+    impl super::gl_scene::TexKnown for TexLru {
+        fn mark(&mut self, id: u64) -> bool {
+            self.last.insert(id, self.frame).is_none()
+        }
+    }
+    /// Above this many cached textures, ones not drawn for a few flushes are freed.
+    const TEX_SOFT_CAP: usize = 400;
 
     thread_local! {
         pub static BRIDGE: std::cell::RefCell<Option<Bridge>> = const { std::cell::RefCell::new(None) };
@@ -430,21 +728,33 @@ mod gl_bridge {
                 } else {
                     eprintln!("[ling-gl] no GPU adapter; using the CPU rasteriser");
                 }
-                Bridge { gpu, known: HashSet::new(), frames: 0, slow: 0 }
+                Bridge { gpu, known: TexLru::default(), frames: 0, slow: 0, pool: Vec::new() }
             });
             let Some(gpu) = br.gpu.as_mut() else { return false };
             // Tiny flushes (UI, portraits) cost more in readback than they save.
             if calls.len() < 1500 || w * h < 640 * 360 {
                 return false;
             }
-            if br.known.len() > 400 {
-                br.known.clear();
-                gpu.renderer_mut().clear_textures();
+            // Short-lived textures (portraits, name plates, regenerated skins) get
+            // fresh ids, so the cache grows; evict only the stale ones instead of
+            // wiping it, which re-uploaded every live texture (multi-ms GPU stalls).
+            br.known.frame = br.known.frame.wrapping_add(1);
+            if br.known.last.len() > TEX_SOFT_CAP {
+                let now = br.known.frame;
+                let r = gpu.renderer_mut();
+                br.known.last.retain(|id, seen| {
+                    let keep = now.wrapping_sub(*seen) <= 2;
+                    if !keep {
+                        r.remove_texture(*id);
+                    }
+                    keep
+                });
             }
 
             let t_build = std::time::Instant::now();
-            let scene = super::gl_scene::build(calls, &mut br.known);
+            let scene = super::gl_scene::build_pooled(calls, &mut br.known, &mut br.pool);
             let build_ms = t_build.elapsed().as_millis();
+            crate::runtime::ling_phase_add(crate::runtime::phase::GL_BUILD, t_build.elapsed().as_nanos());
             let t0 = std::time::Instant::now();
             let n_batches = scene.batches.len();
             let n_tex = scene.textures.len();
@@ -452,6 +762,22 @@ mod gl_bridge {
                 Some(z) => gpu.render_over_depth(&scene, w, h, buf, z.as_mut_slice()),
                 None => gpu.render_over(&scene, w, h, buf),
             }));
+            {
+                use crate::runtime::{ling_phase_add, phase};
+                let [e, wt, u] = gpu.timings;
+                ling_phase_add(phase::GL_ENCODE, (e * 1e6) as u128);
+                ling_phase_add(phase::GL_WAIT, (wt * 1e6) as u128);
+                ling_phase_add(phase::GL_UNPACK, (u * 1e6) as u128);
+                let [un, upx, ums] = gpu.renderer_mut().last_upload;
+                ling_phase_add(phase::GL_UPLOAD, (ums * 1e6) as u128);
+                ling_phase_add(phase::GL_UPLOADS, un as u128);
+                ling_phase_add(phase::GL_UPLOAD_PX, upx as u128);
+                ling_phase_add(phase::GL_TRIS, calls.len() as u128);
+                crate::runtime::ling_phase_batches(n_batches);
+                super::gl_scene::recycle(scene, &mut br.pool);
+                let other = t0.elapsed().as_secs_f64() * 1000.0 - (e + wt + u);
+                ling_phase_add(phase::GL_OTHER, (other.max(0.0) * 1e6) as u128);
+            }
             if std::env::var("LING_GPU_LOG").is_ok() {
                 eprintln!(
                     "[ling-gl] flush {}x{} calls={} batches={} new_tex={} build {} ms, render {} ms",
@@ -632,8 +958,41 @@ pub struct DepthQueue {
 
 impl Default for DepthQueue {
     fn default() -> Self {
-        Self { calls: Vec::new(), cur_mode: 0, cur_alpha: 1.0 }
+        // Reuse a drained queue's buffer: a frame's queue is swapped out with
+        // `mem::take` and consumed by `flush`, so without this every frame
+        // regrows a fresh Vec to 100k+ calls (tens of MB of page faults).
+        let calls = CALLS_POOL.with(|p| {
+            let mut p = p.borrow_mut();
+            let best = (0..p.len()).max_by_key(|&i| p[i].capacity());
+            best.map(|i| p.swap_remove(i)).unwrap_or_default()
+        });
+        Self { calls, cur_mode: 0, cur_alpha: 1.0 }
     }
+}
+
+impl Drop for DepthQueue {
+    fn drop(&mut self) {
+        if self.calls.capacity() == 0 {
+            return;
+        }
+        let mut v = std::mem::take(&mut self.calls);
+        v.clear();
+        let _ = CALLS_POOL.try_with(|p| {
+            if let Ok(mut p) = p.try_borrow_mut() {
+                p.push(v);
+                if p.len() > 2 {
+                    let small = (0..p.len()).min_by_key(|&i| p[i].capacity()).unwrap_or(0);
+                    p.swap_remove(small);
+                }
+            }
+        });
+    }
+}
+
+thread_local! {
+    /// Emptied draw-call buffers kept for the next [`DepthQueue::default`].
+    static CALLS_POOL: std::cell::RefCell<Vec<Vec<DrawCall>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 impl DepthQueue {
@@ -912,47 +1271,50 @@ impl DepthQueue {
         // co-planar / same-depth overlapping primitives (e.g. adjacent boot/title
         // glyphs at z=0) never swap draw order frame-to-frame — kills the
         // "lit↔unlit" flicker that an unstable sort produced on ties.
-        #[cfg(not(target_arch = "wasm32"))]
-        let _s = std::time::Instant::now();
-        self.calls.sort_by(|a, b| {
-            b.depth
-                .partial_cmp(&a.depth)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        crate::runtime::ling_phase_add(crate::runtime::phase::SORT, _s.elapsed().as_nanos());
         #[cfg(all(feature = "gl", not(target_arch = "wasm32")))]
         {
             // The GPU path keeps its own depth; still reset the CPU z-buffer so
             // geometry drawn later on the CPU (portraits, UI models) isn't occluded by last frame's depth.
             let mut zb = zbuf;
+            let _tz = std::time::Instant::now();
             if let Some(z) = zb.as_deref_mut() {
-                if z.len() != width * height {
-                    z.clear();
-                    z.resize(width * height, f32::INFINITY);
-                } else if reset_z {
-                    z.iter_mut().for_each(|v| *v = f32::INFINITY);
-                }
+                prepare_depth(z, width * height, reset_z);
             }
+            let tz = _tz.elapsed().as_nanos();
+            // Unsorted: the GPU depth-tests opaque triangles and gl_scene orders the
+            // blended ones itself, so only the CPU fallback needs the full sort.
             if gl_flush(&self.calls, buf, zb.as_deref_mut(), width, height) {
-                // The GPU drew the triangles; lines still go through the CPU path.
+                // The GPU drew the triangles; lines still go through the CPU, back-to-front.
                 let _tl = std::time::Instant::now();
-                let mut n_lines = 0usize;
-                for call in &self.calls {
-                    if matches!(call.kind, DrawKind::Line { .. }) {
-                        n_lines += 1;
-                        rasterize_call(call, buf, None, width, height, 0.0, aa);
-                    }
+                let mut lines: Vec<u64> = self
+                    .calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| matches!(c.kind, DrawKind::Line { .. }))
+                    .map(|(i, c)| ((desc_key(c.depth) as u64) << 32) | i as u64)
+                    .collect();
+                lines.sort_unstable();
+                for k in &lines {
+                    rasterize_call(&self.calls[(k & 0xFFFF_FFFF) as usize], buf, None, width, height, 0.0, aa);
                 }
+                crate::runtime::ling_phase_add(crate::runtime::phase::LINES, tz + _tl.elapsed().as_nanos());
                 if std::env::var("LING_GPU_LOG").is_ok() {
-                    eprintln!("[ling-gl]   sort {} ms, {} cpu lines {} ms", _s.elapsed().as_millis() - _tl.elapsed().as_millis(), n_lines, _tl.elapsed().as_millis());
+                    eprintln!("[ling-gl]   {} cpu lines {} ms", lines.len(), _tl.elapsed().as_millis());
                 }
                 return;
             }
+            let _s = std::time::Instant::now();
+            sort_back_to_front(&mut self.calls);
+            crate::runtime::ling_phase_add(crate::runtime::phase::SORT, _s.elapsed().as_nanos());
             return self.flush_cpu(buf, zb, reset_z, width, height, aa);
         }
         #[cfg(not(all(feature = "gl", not(target_arch = "wasm32"))))]
         {
+            #[cfg(not(target_arch = "wasm32"))]
+            let _s = std::time::Instant::now();
+            sort_back_to_front(&mut self.calls);
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::runtime::ling_phase_add(crate::runtime::phase::SORT, _s.elapsed().as_nanos());
             // Web: the scene is drawn by WebGL2 over the finished CPU frame at present time.
             #[cfg(all(feature = "gl-web", target_arch = "wasm32"))]
             if self.calls.len() >= 1500 && width * height >= 640 * 360 && crate::gfx::webgl_scene::ready() {
@@ -979,7 +1341,7 @@ impl DepthQueue {
 
     #[allow(clippy::ptr_arg)]
     fn flush_cpu(
-        mut self,
+        self,
         buf: &mut Vec<u32>,
         zbuf: Option<&mut Vec<f32>>,
         reset_z: bool,
@@ -991,64 +1353,45 @@ impl DepthQueue {
         let _r = std::time::Instant::now();
         #[cfg(not(target_arch = "wasm32"))]
         let _guard = FlushTimer(_r);
-        let calls = &self.calls;
-        // Split the framebuffer into horizontal bands rasterised in parallel.
-        // Each band owns a disjoint slice of `buf`/`zbuf`, so a pixel is touched
-        // by exactly one thread; processing the sorted call list inside every
-        // band preserves the painter's per-pixel order. Worth the thread hop only
-        // when there is enough fill to amortise it.
-        #[cfg(not(target_arch = "wasm32"))]
-        let bands = render_bands(width, height, estimate_fill(calls));
-        #[cfg(target_arch = "wasm32")]
-        let bands = render_bands(width, height, 0);
+        let n = (width * height).min(buf.len());
+        let rows = if width == 0 { 0 } else { n / width };
+        let n = rows * width;
         match zbuf {
             Some(z) => {
-                if z.len() != width * height {
-                    z.clear();
-                    z.resize(width * height, f32::INFINITY);
-                } else if reset_z {
-                    z.iter_mut().for_each(|v| *v = f32::INFINITY);
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                if bands > 1 {
-                    let rows = height.div_ceil(bands);
-                    buf.par_chunks_mut(rows * width)
-                        .zip(z.par_chunks_mut(rows * width))
-                        .enumerate()
-                        .for_each(|(b, (bbuf, bz))| {
-                            let ysh = (b * rows) as f32;
-                            let bh = bbuf.len() / width;
-                            for call in calls {
-                                rasterize_call(call, bbuf, Some(bz), width, bh, ysh, aa);
-                            }
-                        });
-                    return;
-                }
-                let _ = bands;
-                for call in calls {
-                    rasterize_call(call, buf, Some(z), width, height, 0.0, aa);
-                }
+                prepare_depth(z, width * height, reset_z);
+                raster_rows(&self.calls, &mut buf[..n], Some(&mut z[..n]), width, 0, rows, aa);
             },
-            None => {
-                #[cfg(not(target_arch = "wasm32"))]
-                if bands > 1 {
-                    let rows = height.div_ceil(bands);
-                    buf.par_chunks_mut(rows * width)
-                        .enumerate()
-                        .for_each(|(b, bbuf)| {
-                            let ysh = (b * rows) as f32;
-                            let bh = bbuf.len() / width;
-                            for call in calls {
-                                rasterize_call(call, bbuf, None, width, bh, ysh, aa);
-                            }
-                        });
-                    return;
-                }
-                let _ = bands;
-                for call in calls {
-                    rasterize_call(call, buf, None, width, height, 0.0, aa);
-                }
+            None => raster_rows(&self.calls, &mut buf[..n], None, width, 0, rows, aa),
+        }
+    }
+
+    /// Sort and rasterise on the CPU into rows `y0..y1` only — the
+    /// picture-in-picture path (`flush_3d_clip`). Never takes the GPU path: a
+    /// small box isn't worth a full-frame upload + readback, and only the band
+    /// of rows that holds the box is touched (the z-buffer is still reset in
+    /// full when `reset_z`, as a full flush would).
+    #[allow(clippy::too_many_arguments, clippy::ptr_arg)]
+    pub fn flush_rows(
+        mut self,
+        buf: &mut Vec<u32>,
+        zbuf: Option<&mut Vec<f32>>,
+        reset_z: bool,
+        width: usize,
+        height: usize,
+        y0: usize,
+        y1: usize,
+        aa: bool,
+    ) {
+        sort_back_to_front(&mut self.calls);
+        let y1 = y1.min(height).min(buf.len() / width.max(1));
+        let y0 = y0.min(y1);
+        let rows = y0 * width..y1 * width;
+        match zbuf {
+            Some(z) => {
+                prepare_depth(z, width * height, reset_z);
+                raster_rows(&self.calls, &mut buf[rows.clone()], Some(&mut z[rows]), width, y0, y1 - y0, aa);
             },
+            None => raster_rows(&self.calls, &mut buf[rows], None, width, y0, y1 - y0, aa),
         }
     }
 
@@ -1153,5 +1496,39 @@ impl DepthQueue {
             buf.resize(width * height, 0);
         }
         crate::gfx::wgpu_raster::raster(&verts, width, height, clear, buf)
+    }
+}
+
+#[cfg(all(test, feature = "gl-web"))]
+mod gl_scene_tests {
+    use super::*;
+
+    fn tri(depth: f32, alpha: f32, x: f32) -> DrawCall {
+        DrawCall {
+            depth,
+            color: 0x808080,
+            mode: 0,
+            alpha,
+            unlit: false,
+            kind: DrawKind::Triangle { x0: x, y0: 0.0, z0: depth, x1: x + 1.0, y1: 0.0, z1: depth, x2: x, y2: 1.0, z2: depth },
+        }
+    }
+
+    #[test]
+    fn unsorted_input_draws_blended_back_to_front() {
+        // Submission order, as the GPU path now receives it.
+        let calls = vec![tri(5.0, 1.0, 1.0), tri(3.0, 0.5, 2.0), tri(9.0, 1.0, 3.0), tri(10.0, 0.5, 4.0), tri(3.0, 0.5, 5.0)];
+        let mut known = std::collections::HashSet::new();
+        let mut pool = vec![vec![ling_gl::Vertex::default(); 7]];
+        let scene = gl_scene::build_pooled(&calls, &mut known, &mut pool);
+        assert_eq!(scene.batches.len(), 2);
+        let xs = |b: &ling_gl::Batch| b.verts.iter().step_by(3).map(|v| v.x).collect::<Vec<_>>();
+        assert_eq!(scene.batches[0].blend, ling_gl::Blend::Opaque);
+        assert_eq!(xs(&scene.batches[0]), vec![1.0, 3.0]);
+        // Furthest first; the depth-3 tie keeps submission order.
+        assert_eq!(scene.batches[1].blend, ling_gl::Blend::Alpha);
+        assert_eq!(xs(&scene.batches[1]), vec![4.0, 2.0, 5.0]);
+        gl_scene::recycle(scene, &mut pool);
+        assert_eq!(pool.len(), 2);
     }
 }

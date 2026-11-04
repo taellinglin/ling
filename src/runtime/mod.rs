@@ -4049,6 +4049,31 @@ impl Interpreter {
                 }
                 return Ok(Value::Str(String::new()));
             },
+            // list_set(lst, idx, val) → new list with index replaced. Engine builtin
+            // (O(n) one copy) to replace the O(n²) ling `ตั้งรายการ` that looped
+            // list_push + list_get (each of which copied the whole list).
+            "list_set"
+            | "ตั้งรายการ"
+            | "设元素"
+            | "要素設定"
+            | "요소설정"
+            | "تنظیم_عنصر_فهرست"
+            | "عيّن_عنصر_القائمة"
+            | "קבע_איבר_רשימה"
+            | "فہرست_سیٹ" => {
+                let idx = self.arg_num(&args, 1, 0.0)? as usize;
+                let mut ai = args.into_iter();
+                let lst = ai.next().unwrap_or(Value::List(Rc::new(vec![])));
+                ai.next(); // skip idx
+                let val = ai.next().unwrap_or(Value::Unit);
+                if let Value::List(mut v) = lst {
+                    if idx < v.len() {
+                        Rc::make_mut(&mut v)[idx] = val;
+                    }
+                    return Ok(Value::List(v));
+                }
+                return Ok(Value::List(Rc::new(vec![])));
+            },
             // font_width(handle, px, "string") — pixel width of a string in a loaded font.
                         "font_width"
             | "ความกว้างฟอนต์"
@@ -6032,38 +6057,48 @@ impl Interpreter {
                                     let dw = (ch as f32 * ba).round() as usize;
                                     (dw.min(cw), ch, (cw - dw.min(cw)) / 2, 0usize)
                                 };
-                                let mut full = vec![0u32; cw * ch];
+                                let mut full = ui_pool_take(cw * ch);
+                                // pooled buffer: only the letterbox bars need clearing
+                                if oy > 0 || ox > 0 || dh < ch || dw < cw {
+                                    full.fill(0);
+                                }
                                 let xs: Vec<usize> = (0..dw).map(|x| (x * w / dw.max(1)).min(w - 1)).collect();
-                                for y in 0..dh {
+                                // identity column map (layer at display width) ⇒ None: runs copy straight
+                                let vxs: Vec<Option<Vec<usize>>> = overlays
+                                    .iter()
+                                    .map(|o| {
+                                        (o.w != dw).then(|| (0..dw).map(|x| (x * o.w / dw.max(1)).min(o.w.saturating_sub(1))).collect())
+                                    })
+                                    .collect();
+                                let src = &g.buffer;
+                                let ov = &overlays;
+                                let blit_row = |y: usize, drow: &mut [u32]| {
                                     let sy = (y * h / dh.max(1)).min(h - 1);
-                                    let srow = &g.buffer[sy * w..sy * w + w];
-                                    let drow = &mut full[(oy + y) * cw + ox..(oy + y) * cw + ox + dw];
+                                    let srow = &src[sy * w..sy * w + w];
                                     for (d, &sx) in drow.iter_mut().zip(xs.iter()) {
                                         *d = srow[sx];
                                     }
-                                }
-                                for (off, base, vw, vh) in &overlays {
-                                    let (vw, vh) = (*vw, *vh);
-                                    if vw == 0 || vh == 0 { continue; }
-                                    let vxs: Vec<usize> = (0..dw).map(|x| (x * vw / dw.max(1)).min(vw - 1)).collect();
-                                    for y in 0..dh {
-                                        let vy = (y * vh / dh.max(1)).min(vh - 1);
-                                        let orow = &off[vy * vw..vy * vw + vw];
-                                        let brow = &base[vy * vw..vy * vw + vw];
-                                        let drow = &mut full[(oy + y) * cw + ox..(oy + y) * cw + ox + dw];
-                                        for (d, &vx) in drow.iter_mut().zip(vxs.iter()) {
-                                            let c = orow[vx];
-                                            if c != brow[vx] {
-                                                *d = c;
-                                            }
-                                        }
+                                    for (o, vx) in ov.iter().zip(vxs.iter()) {
+                                        if o.w == 0 || o.h == 0 { continue; }
+                                        let vy = (y * o.h / dh.max(1)).min(o.h - 1);
+                                        o.apply_row(vy, drow, vx.as_deref());
                                     }
+                                };
+                                {
+                                    use rayon::prelude::*;
+                                    full.par_chunks_mut(cw)
+                                        .enumerate()
+                                        .skip(oy)
+                                        .take(dh)
+                                        .for_each(|(ry, row)| blit_row(ry - oy, &mut row[ox..ox + dw]));
                                 }
                                 win.update_with_buffer(&full, cw, ch)
                                     .map_err(|e| EvalErr::from(format!("present error: {e}")))?;
+                                ui_pool_put(full);
                             }
                             ling_phase_add(phase::BLIT, _b.elapsed().as_nanos());
                         }
+                        drop(overlays);
                         // resizable windows: the framebuffer follows the client size (next frame)
                         if g.resizable {
                             if let Some((nw, nh)) = g.window.as_ref().map(|w| w.get_size()) {
@@ -6502,23 +6537,48 @@ impl Interpreter {
                     // same size as the frame (native 1080p, scale 1): draw straight into
                     // the frame; only a snapshot is kept for ui_pixel_drawn. ui_end sees
                     // the empty `real` and just leaves the buffer as drawn.
-                    let base = g.buffer.clone();
+                    let base = ui_pool_copy(&g.buffer);
                     g.ui_layer = Some((Vec::new(), rw, rh, base));
                     UI_SCALE.with(|c| c.set(sc));
                     return Ok(Value::Unit);
                 }
                 let real = std::mem::take(&mut g.buffer);
-                let mut off = vec![0u32; vw * vh];
+                // native scaled layers are diffed against `real` itself at ui_end,
+                // so they skip the second full-size copy
+                #[cfg(not(target_arch = "wasm32"))]
+                let lean = (vw > rw || vh > rh) && SCALED_BUF.load(std::sync::atomic::Ordering::Relaxed) != 0;
+                #[cfg(target_arch = "wasm32")]
+                let lean = false;
+                let mut off = ui_pool_take(vw * vh);
+                let mut base = if lean { Vec::new() } else { ui_pool_take(vw * vh) };
                 let xs: Vec<usize> = (0..vw).map(|vx| (vx * rw / vw).min(rw - 1)).collect();
-                for vy in 0..vh {
+                let up_row = |vy: usize, dst: &mut [u32]| {
                     let ry = (vy * rh / vh).min(rh - 1);
                     let src = &real[ry * rw..ry * rw + rw];
-                    let dst = &mut off[vy * vw..vy * vw + vw];
                     for (d, &rx) in dst.iter_mut().zip(xs.iter()) {
                         *d = src[rx];
                     }
+                };
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    use rayon::prelude::*;
+                    if lean {
+                        off.par_chunks_mut(vw).enumerate().for_each(|(vy, d)| up_row(vy, d));
+                    } else {
+                        off.par_chunks_mut(vw)
+                            .zip(base.par_chunks_mut(vw))
+                            .enumerate()
+                            .for_each(|(vy, (d, b))| {
+                                up_row(vy, d);
+                                b.copy_from_slice(d);
+                            });
+                    }
                 }
-                let base = off.clone();
+                #[cfg(target_arch = "wasm32")]
+                for (vy, (d, b)) in off.chunks_mut(vw).zip(base.chunks_mut(vw)).enumerate() {
+                    up_row(vy, d);
+                    b.copy_from_slice(d);
+                }
                 g.buffer = off;
                 g.width = vw;
                 g.height = vh;
@@ -6550,13 +6610,25 @@ impl Interpreter {
                 let y = self.arg_num(&args, 1, -1.0)?;
                 let g = self.gfx.borrow();
                 let mut hit = 0.0;
-                if let Some((_, _, _, base)) = g.ui_layer.as_ref() {
+                if let Some((real, rw, rh, base)) = g.ui_layer.as_ref() {
                     if x >= 0.0 && y >= 0.0 {
                         let (xi, yi) = (x as usize, y as usize);
                         if xi < g.width && yi < g.height {
                             let i = yi * g.width + xi;
-                            if i < base.len() && i < g.buffer.len() && g.buffer[i] != base[i] {
-                                hit = 1.0;
+                            // lean (native scaled) layer: the untouched value is the
+                            // scene pixel ui_begin upscaled into this spot
+                            let b = if base.is_empty() && !real.is_empty() {
+                                let (rw, rh) = (*rw, *rh);
+                                let ry = (yi * rh / g.height).min(rh - 1);
+                                let rx = (xi * rw / g.width).min(rw - 1);
+                                real.get(ry * rw + rx).copied()
+                            } else {
+                                base.get(i).copied()
+                            };
+                            if let (Some(b), Some(&c)) = (b, g.buffer.get(i)) {
+                                if c != b {
+                                    hit = 1.0;
+                                }
                             }
                         }
                     }
@@ -6571,10 +6643,10 @@ impl Interpreter {
             },
             "ui_end" => {
                 let mut g = self.gfx.borrow_mut();
-                if let Some((mut real, rw, rh, base)) = g.ui_layer.take() {
+                if let Some((mut real, rw, rh, mut base)) = g.ui_layer.take() {
                     if real.is_empty() {
                         // direct mode (see ui_begin): the UI is already in the frame
-                        drop(base);
+                        ui_pool_put(base);
                         UI_SCALE.with(|c| c.set(1.0));
                         return Ok(Value::Unit);
                     }
@@ -6588,19 +6660,39 @@ impl Interpreter {
                     let native_overlay = (vw > rw || vh > rh) && SCALED_BUF.load(std::sync::atomic::Ordering::Relaxed) != 0;
                     #[cfg(target_arch = "wasm32")]
                     let native_overlay = false;
-                    if detached {
-                        // browser: the UI goes to its own canvas at its own resolution
-                        #[cfg(target_arch = "wasm32")]
-                        crate::gfx::wasm_ui_overlay_put(&off, &base, vw, vh);
-                    } else if native_overlay {
+                    let xs: Vec<usize> = (0..vw).map(|vx| (vx * rw / vw).min(rw - 1)).collect();
+                    let base_px = |vy: usize, vx: usize| real[(vy * rh / vh).min(rh - 1) * rw + xs[vx]];
+                    if native_overlay {
                         // native, scaled render (3-D below display res): keep the UI at its
-                        // own resolution; present() upscales the frame, then lays this on top
-                        g.ui_overlays.push((off, base, vw, vh));
+                        // own resolution; present() upscales the frame, then lays the
+                        // pixels this layer drew on top
+                        let ov = if base.is_empty() {
+                            crate::gfx::UiOverlay::diff(&off, vw, vh, base_px)
+                        } else {
+                            crate::gfx::UiOverlay::diff(&off, vw, vh, |vy, vx| base[vy * vw + vx])
+                        };
+                        ui_pool_put(off);
+                        ui_pool_put(base);
+                        g.ui_overlays.push(ov);
                         g.buffer = real;
                         g.width = rw;
                         g.height = rh;
                         UI_SCALE.with(|c| c.set(1.0));
                         return Ok(Value::Unit);
+                    }
+                    if base.is_empty() {
+                        // lean layer whose scaled-buffer mode changed mid-layer
+                        base = ui_pool_take(vw * vh);
+                        for vy in 0..vh {
+                            for vx in 0..vw {
+                                base[vy * vw + vx] = base_px(vy, vx);
+                            }
+                        }
+                    }
+                    if detached {
+                        // browser: the UI goes to its own canvas at its own resolution
+                        #[cfg(target_arch = "wasm32")]
+                        crate::gfx::wasm_ui_overlay_put(&off, &base, vw, vh);
                     } else if vw > rw || vh > rh {
                         // SHRINKING the UI (virtual layer bigger than the frame, e.g. a
                         // 720-p HUD on a 432-p web canvas): point sampling dropped whole
@@ -6651,6 +6743,8 @@ impl Interpreter {
                             }
                         }
                     }
+                    ui_pool_put(off);
+                    ui_pool_put(base);
                     g.buffer = real;
                     g.width = rw;
                     g.height = rh;
@@ -8312,7 +8406,7 @@ impl Interpreter {
             | "วาดแอนิเมชันมีพื้นผิว" | "رسم_انیمیشن_بافت‌دار" | "ارسم_رسما_متحركا_منقوشا"
             | "צייר_אנימציה_ממורקמת" | "ٹیکسچرڈ_اینیمیشن_ڈرا" | "dessiner_animation_texturée"
             | "texturierte_animation_zeichnen" | "нарисовать_текстурную_анимацию" => {
-                use crate::gfx::depth::{TexData, TexShade, TexVert};
+                use crate::gfx::depth::{TexShade, TexVert};
                 let hh = self.arg_num(&args, 0, -1.0)? as i64;
                 let ox = self.arg_num(&args, 1, 0.0)? as f32;
                 let oy = self.arg_num(&args, 2, 0.0)? as f32;
@@ -8474,35 +8568,95 @@ impl Interpreter {
                 };
                 let (pm, pa) = (gfx.blend, gfx.alpha);
                 gfx.depth_queue.set_state(pm, 1.0);
+                // the GPU/CPU batch projector knows nothing of the hyperbolic warp or roll —
+                // project per vertex with the real camera when either is on, so skinned
+                // models stay glued to the (warped) ground. Otherwise project inline with
+                // the CPU backend's exact formula unless a real GPU backend is active (a
+                // thread-pool / device round trip per small mesh costs more than the math).
+                let warp = gfx.camera.hyp_r > 0.0 || gfx.camera.srz != 0.0;
+                let batch_proj = !warp && ling_gpu::gpu_active();
+                // scratch reused across this model's meshes
+                let mut world: Vec<f32> = Vec::new();
+                let mut proj: Vec<f32> = Vec::new();
+                let mut tvs: Vec<TexVert> = Vec::new();
                 for (mi, mesh) in model.meshes.iter().enumerate() {
                     let sk = match skinned.get(mi) { Some(s) => s, None => continue };
                     let nv = sk.len();
                     if nv == 0 { continue; }
-                    let mut world = vec![0.0f32; nv * 3];
-                    for i in 0..nv {
-                        let gx = sk[i][0] * scale;
-                        let gy = -sk[i][1] * scale;
-                        let gz = -sk[i][2] * scale;
-                        let rx = gx * cyy + gz * sy;
-                        let rz = -gx * sy + gz * cyy;
-                        world[i * 3] = ox + rx;
-                        world[i * 3 + 1] = oy + gy;
-                        world[i * 3 + 2] = oz + rz;
+                    let tex = cache.get(&(hh as usize, mi)).cloned();
+                    if world.len() < nv * 3 {
+                        world.resize(nv * 3, 0.0);
+                        proj.resize(nv * 3, 0.0);
                     }
-                    let mut proj = vec![0.0f32; nv * 3];
-                    ling_gpu::backend().project_points(&world, &cp, &mut proj);
-                    // the GPU/CPU batch projector knows nothing of the hyperbolic warp or roll —
-                    // re-project per vertex with the real camera when either is on, so skinned
-                    // models stay glued to the (warped) ground
-                    if gfx.camera.hyp_r > 0.0 || gfx.camera.srz != 0.0 {
-                        for i in 0..world.len() / 3 {
-                            let (sx, sy, sz) = gfx.camera.project(world[i * 3], world[i * 3 + 1], world[i * 3 + 2]);
-                            proj[i * 3] = sx;
-                            proj[i * 3 + 1] = sy;
-                            proj[i * 3 + 2] = sz;
+                    if tvs.len() < nv {
+                        tvs.resize(nv, TexVert::default());
+                    }
+                    let want_tv = tex.is_some();
+                    {
+                        let cam = &gfx.camera;
+                        // vertices [base, base + w.len()/3): model → world → screen → TexVert
+                        let run = |base: usize, w: &mut [f32], p: &mut [f32], tv: &mut [TexVert]| {
+                            for k in 0..w.len() / 3 {
+                                let i = base + k;
+                                let gx = sk[i][0] * scale;
+                                let gy = -sk[i][1] * scale;
+                                let gz = -sk[i][2] * scale;
+                                let rx = gx * cyy + gz * sy;
+                                let rz = -gx * sy + gz * cyy;
+                                let (wx, wy, wz) = (ox + rx, oy + gy, oz + rz);
+                                w[k * 3] = wx;
+                                w[k * 3 + 1] = wy;
+                                w[k * 3 + 2] = wz;
+                                if batch_proj { continue; }
+                                let (px, py, pz) = if warp {
+                                    cam.project(wx, wy, wz)
+                                } else {
+                                    let cwx = wx - cp.tx;
+                                    let cwy = wy - cp.ty;
+                                    let cwz = wz - cp.tz;
+                                    let crx = cwx * cp.cry - cwz * cp.sry;
+                                    let rz1 = cwx * cp.sry + cwz * cp.cry;
+                                    let cry_ = cwy * cp.crx - rz1 * cp.srx;
+                                    let crz = cwy * cp.srx + rz1 * cp.crx;
+                                    let d = crz + cp.zdist;
+                                    (cp.cx + cp.focal * crx / d, cp.cy + cp.focal * cry_ / d, crz)
+                                };
+                                p[k * 3] = px;
+                                p[k * 3 + 1] = py;
+                                p[k * 3 + 2] = pz;
+                                if want_tv {
+                                    let iw = 1.0 / (pz + zd).max(1e-4);
+                                    let uv = mesh.verts[i].uv;
+                                    tv[k] = TexVert { x: px, y: py, z: pz, iw, uw: uv.x * iw, vw: uv.y * iw, wx: wx * iw, wy: wy * iw, wz: wz * iw };
+                                }
+                            }
+                        };
+                        let (w, p, tv) = (&mut world[..nv * 3], &mut proj[..nv * 3], &mut tvs[..nv]);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            if nv >= 4096 {
+                                use rayon::prelude::*;
+                                const CH: usize = 1024;
+                                w.par_chunks_mut(CH * 3).zip(p.par_chunks_mut(CH * 3)).zip(tv.par_chunks_mut(CH)).enumerate()
+                                    .for_each(|(c, ((w, p), tv))| run(c * CH, w, p, tv));
+                            } else {
+                                run(0, w, p, tv);
+                            }
+                        }
+                        #[cfg(target_arch = "wasm32")]
+                        run(0, w, p, tv);
+                    }
+                    if batch_proj {
+                        ling_gpu::backend().project_points(&world[..nv * 3], &cp, &mut proj[..nv * 3]);
+                        if want_tv {
+                            for i in 0..nv {
+                                let pz = proj[i * 3 + 2];
+                                let iw = 1.0 / (pz + zd).max(1e-4);
+                                let uv = mesh.verts[i].uv;
+                                tvs[i] = TexVert { x: proj[i * 3], y: proj[i * 3 + 1], z: pz, iw, uw: uv.x * iw, vw: uv.y * iw, wx: world[i * 3] * iw, wy: world[i * 3 + 1] * iw, wz: world[i * 3 + 2] * iw };
+                            }
                         }
                     }
-                    let tex = cache.get(&(hh as usize, mi)).cloned();
                     let tint = match model.mesh_tint.get(mi) {
                         Some(&mt) if mt != 0xFFFFFF => {
                             let ch = |s: u32| (((tint >> s) & 0xFF) * ((mt >> s) & 0xFF) / 255) << s;
@@ -8549,12 +8703,7 @@ impl Interpreter {
                         }
                         match &tex {
                             Some(tx) => {
-                                let mk = |i: usize, d: f32| -> TexVert {
-                                    let iw = 1.0 / (d + zd).max(1e-4);
-                                    let uv = mesh.verts[i].uv;
-                                    TexVert { x: proj[i * 3], y: proj[i * 3 + 1], z: d, iw, uw: uv.x * iw, vw: uv.y * iw, wx: world[i * 3] * iw, wy: world[i * 3 + 1] * iw, wz: world[i * 3 + 2] * iw }
-                                };
-                                let v = [mk(ia, da), mk(ib, db), mk(ic, dc)];
+                                let v = [tvs[ia], tvs[ib], tvs[ic]];
                                 gfx.depth_queue.push_triangle_tex_shaded(v, tx.clone(), tint, [0.0; 4], true, shade.clone());
                             },
                             None => {
@@ -13935,31 +14084,7 @@ impl Interpreter {
                 }
                 return Ok(Value::Number(default));
             },
-            // list_set(lst, idx, val) → new list with index replaced. Engine builtin
-            // (O(n) one copy) to replace the O(n²) ling `ตั้งรายการ` that looped
-            // list_push + list_get (each of which copied the whole list).
-            "list_set"
-            | "ตั้งรายการ"
-            | "设元素"
-            | "要素設定"
-            | "요소설정"
-            | "تنظیم_عنصر_فهرست"
-            | "عيّن_عنصر_القائمة"
-            | "קבע_איבר_רשימה"
-            | "فہرست_سیٹ" => {
-                let idx = self.arg_num(&args, 1, 0.0)? as usize;
-                let mut ai = args.into_iter();
-                let lst = ai.next().unwrap_or(Value::List(Rc::new(vec![])));
-                ai.next(); // skip idx
-                let val = ai.next().unwrap_or(Value::Unit);
-                if let Value::List(mut v) = lst {
-                    if idx < v.len() {
-                        Rc::make_mut(&mut v)[idx] = val;
-                    }
-                    return Ok(Value::List(v));
-                }
-                return Ok(Value::List(Rc::new(vec![])));
-            },
+            // list_set(lst, idx, val): lives in the hot table near list_get.
             "list_join"
             | "join"
             | "รวมรายการ"
@@ -20411,28 +20536,41 @@ impl Interpreter {
                     let y0 = cy.clamp(0, h as i64) as usize;
                     let x1 = (cx + cw).clamp(0, w as i64) as usize;
                     let y1 = (cy + ch).clamp(0, h as i64) as usize;
-                    // save the rect's surroundings by saving the whole frame (simple, one copy)
-                    let before = gfx.buffer.clone();
                     let dt = gfx.depth_test;
                     let reset_z = gfx.zbuf_needs_clear;
                     let (bm, ba) = (gfx.blend, gfx.alpha);
                     let aa = gfx.antialias;
                     let queue = std::mem::take(&mut gfx.depth_queue);
-                    {
-                        let g = &mut *gfx;
-                        crate::gfx::raster::set_persp_zd(g.camera.zdist);
-                        let z = if dt { Some(&mut g.depth_buf) } else { None };
-                        queue.flush(&mut g.buffer, z, reset_z, w, h, aa);
-                    }
-                    let buf = &mut gfx.buffer;
-                    for y in 0..h {
-                        let inside_y = y >= y0 && y < y1;
-                        let row = y * w;
-                        if !inside_y {
-                            buf[row..row + w].copy_from_slice(&before[row..row + w]);
-                        } else {
-                            buf[row..row + x0].copy_from_slice(&before[row..row + x0]);
-                            buf[row + x1..row + w].copy_from_slice(&before[row + x1..row + w]);
+                    if x1 > x0 && y1 > y0 && gfx.buffer.len() >= w * h {
+                        // Only rows y0..y1 are rasterised (CPU, banded), so only
+                        // those rows need saving; the columns left/right of the box
+                        // are restored from the copy afterwards.
+                        let before: Vec<u32> = gfx.buffer[y0 * w..y1 * w].to_vec();
+                        {
+                            let g = &mut *gfx;
+                            crate::gfx::raster::set_persp_zd(g.camera.zdist);
+                            let z = if dt { Some(&mut g.depth_buf) } else { None };
+                            queue.flush_rows(&mut g.buffer, z, reset_z, w, h, y0, y1, aa);
+                        }
+                        let buf = &mut gfx.buffer;
+                        for y in y0..y1 {
+                            let row = y * w;
+                            let src = (y - y0) * w;
+                            buf[row..row + x0].copy_from_slice(&before[src..src + x0]);
+                            buf[row + x1..row + w].copy_from_slice(&before[src + x1..src + w]);
+                        }
+                    } else {
+                        // Empty box: nothing visible; just honour the pending z reset.
+                        drop(queue);
+                        if dt && reset_z {
+                            let n = w * h;
+                            let z = &mut gfx.depth_buf;
+                            if z.len() != n {
+                                z.clear();
+                                z.resize(n, f32::INFINITY);
+                            } else {
+                                z.fill(f32::INFINITY);
+                            }
                         }
                     }
                     gfx.zbuf_needs_clear = false;
@@ -20508,7 +20646,11 @@ impl Interpreter {
                     gfx.zbuf_needs_clear = false;
                     gfx.depth_queue.set_state(bm, ba);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                let _t = std::time::Instant::now();
                 gfx.toon_post_process();
+                #[cfg(not(target_arch = "wasm32"))]
+                ling_phase_add(phase::TOON, _t.elapsed().as_nanos());
                 gfx.post_done = true;
                 return Ok(Value::Unit);
             },
@@ -21521,6 +21663,54 @@ fn set_scaled_buffer(on: bool, w: usize, h: usize) {
 // coordinates, so a HUD laid out for one resolution scales to any other.
 thread_local! {
     static UI_SCALE: std::cell::Cell<f32> = std::cell::Cell::new(1.0);
+    // Recycled frame-sized buffers for ui_begin/ui_end snapshots: a fresh 8 MB
+    // Vec per layer (several layers a frame at 1080p) costs page faults every frame.
+    static UI_POOL: std::cell::RefCell<Vec<Vec<u32>>> = std::cell::RefCell::new(Vec::new());
+}
+fn ui_pool_take(len: usize) -> Vec<u32> {
+    // best fit: the smallest pooled buffer that already holds `len` (frame- and
+    // display-sized buffers share the pool, and growing one re-faults its pages)
+    let mut v = UI_POOL
+        .with(|p| {
+            let mut p = p.borrow_mut();
+            let pick = p
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| b.capacity() >= len)
+                .min_by_key(|(_, b)| b.capacity())
+                .map(|(i, _)| i)
+                .or_else(|| p.len().checked_sub(1));
+            pick.map(|i| p.swap_remove(i))
+        })
+        .unwrap_or_default();
+    v.resize(len, 0);
+    v
+}
+fn ui_pool_copy(src: &[u32]) -> Vec<u32> {
+    let mut v = ui_pool_take(src.len());
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        const CH: usize = 1 << 16;
+        v.par_chunks_mut(CH)
+            .zip(src.par_chunks(CH))
+            .for_each(|(d, s)| d.copy_from_slice(s));
+    }
+    #[cfg(target_arch = "wasm32")]
+    v.copy_from_slice(src);
+    v
+}
+fn ui_pool_put(v: Vec<u32>) {
+    if v.capacity() == 0 {
+        return;
+    }
+    UI_POOL.with(|p| {
+        let mut p = p.borrow_mut();
+        // 3 UI layers × (layer + snapshot) + the present buffer stay in flight
+        if p.len() < 10 {
+            p.push(v);
+        }
+    });
 }
 fn ui_scale_now() -> f32 {
     UI_SCALE.with(|c| c.get())
@@ -21843,9 +22033,10 @@ fn ling_fps_tick() {
 // software-rasteriser breakdown the builtin profiler can't separate (the work is
 // all inside the `present`/`flush_3d` builtins).
 thread_local! {
-    static LING_PHASE: std::cell::RefCell<(bool, u64, [u128; 5])> = std::cell::RefCell::new(
-        (std::env::var_os("LING_PHASE").is_some(), 0, [0; 5])
+    static LING_PHASE: std::cell::RefCell<(bool, u64, [u128; 16])> = std::cell::RefCell::new(
+        (std::env::var_os("LING_PHASE").is_some(), 0, [0; 16])
     );
+    static LING_PHASE_EXTRA: std::cell::Cell<(u64, Option<std::time::Instant>)> = const { std::cell::Cell::new((0, None)) };
 }
 
 /// Phase indices for [`ling_phase_add`].
@@ -21855,6 +22046,20 @@ pub mod phase {
     pub const BLIT: usize = 2;
     pub const DISTORT: usize = 3;
     pub const SORT: usize = 4;
+    pub const GL_BUILD: usize = 5;
+    pub const GL_ENCODE: usize = 6;
+    pub const GL_WAIT: usize = 7;
+    pub const GL_UNPACK: usize = 8;
+    /// GPU flush time outside encode/wait/unpack (texture uploads, setup, drops).
+    pub const GL_OTHER: usize = 9;
+    /// GPU path: CPU z-reset + CPU-drawn lines after the GPU composite.
+    pub const LINES: usize = 10;
+    /// Counters (not ns): triangles sent to the GPU, textures uploaded, their pixels.
+    pub const GL_TRIS: usize = 11;
+    pub const GL_UPLOADS: usize = 12;
+    pub const GL_UPLOAD_PX: usize = 13;
+    /// ns spent converting + uploading new textures (inside encode).
+    pub const GL_UPLOAD: usize = 14;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -21865,6 +22070,15 @@ pub fn ling_phase_add(idx: usize, nanos: u128) {
         if p.0 {
             p.2[idx] += nanos;
         }
+    });
+}
+
+/// Tally GPU batches submitted this report window.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn ling_phase_batches(n: usize) {
+    LING_PHASE_EXTRA.with(|c| {
+        let (b, t) = c.get();
+        c.set((b + n as u64, t));
     });
 }
 
@@ -21879,16 +22093,33 @@ fn ling_phase_frame() {
         if p.1 >= 120 {
             let f = p.1 as f64;
             let ms = |i: usize| p.2[i] as f64 / 1e6 / f;
+            let (batches, t_last) = LING_PHASE_EXTRA.with(|c| c.get());
+            let now = std::time::Instant::now();
+            let wall = t_last.map_or(0.0, |t| now.duration_since(t).as_secs_f64() * 1000.0 / f);
+            LING_PHASE_EXTRA.with(|c| c.set((0, Some(now))));
             eprintln!(
-                "[phase] sort={:.2} flush={:.2} toon={:.2} blit={:.2} distort={:.2} ms/frame",
+                "[phase] wall={:.2} ({:.1} fps) sort={:.2} flush={:.2} [gl build={:.2} encode={:.2} (upload={:.2} n={:.1} {:.0}kpx) wait={:.2} unpack={:.2} other={:.2} lines={:.2} batches={:.0} tris={:.1}k] toon={:.2} blit={:.2} distort={:.2} ms/frame",
+                wall,
+                if wall > 0.0 { 1000.0 / wall } else { 0.0 },
                 ms(phase::SORT),
                 ms(phase::FLUSH),
+                ms(phase::GL_BUILD),
+                ms(phase::GL_ENCODE),
+                ms(phase::GL_UPLOAD),
+                p.2[phase::GL_UPLOADS] as f64 / f,
+                p.2[phase::GL_UPLOAD_PX] as f64 / f / 1000.0,
+                ms(phase::GL_WAIT),
+                ms(phase::GL_UNPACK),
+                ms(phase::GL_OTHER),
+                ms(phase::LINES),
+                batches as f64 / f,
+                p.2[phase::GL_TRIS] as f64 / f / 1000.0,
                 ms(phase::TOON),
                 ms(phase::BLIT),
                 ms(phase::DISTORT)
             );
             p.1 = 0;
-            p.2 = [0; 5];
+            p.2 = [0; 16];
         }
     });
 }

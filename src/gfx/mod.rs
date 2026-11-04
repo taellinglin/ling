@@ -43,6 +43,106 @@ pub use toon::ToonConfig;
 pub const UNLIT: u32 = 0x0100_0000;
 pub const RGB_MASK: u32 = 0x00FF_FFFF;
 
+/// A display-resolution UI layer (native scaled render), reduced to the pixels
+/// it drew: runs per row, so present composites only those instead of diffing
+/// two full-size buffers per layer.
+#[derive(Default)]
+pub struct UiOverlay {
+    pub w: usize,
+    pub h: usize,
+    /// Row `y`'s runs are `spans[row_start[y]..row_start[y + 1]]`.
+    pub row_start: Vec<u32>,
+    /// (x0, len, offset into `px`)
+    pub spans: Vec<[u32; 3]>,
+    pub px: Vec<u32>,
+}
+
+impl UiOverlay {
+    /// Collect the runs where `layer` differs from `base_px(y, x)`.
+    pub fn diff<F>(layer: &[u32], w: usize, h: usize, base_px: F) -> UiOverlay
+    where
+        F: Fn(usize, usize) -> u32 + Sync,
+    {
+        const BAND: usize = 16;
+        let band = |b: usize| {
+            let (mut counts, mut spans, mut px) = (Vec::with_capacity(BAND), Vec::new(), Vec::new());
+            for y in b * BAND..((b + 1) * BAND).min(h) {
+                let row = &layer[y * w..y * w + w];
+                let n0 = spans.len();
+                let mut x = 0;
+                while x < w {
+                    if row[x] == base_px(y, x) {
+                        x += 1;
+                        continue;
+                    }
+                    let x0 = x;
+                    while x < w && row[x] != base_px(y, x) {
+                        x += 1;
+                    }
+                    spans.push([x0 as u32, (x - x0) as u32, px.len() as u32]);
+                    px.extend_from_slice(&row[x0..x]);
+                }
+                counts.push((spans.len() - n0) as u32);
+            }
+            (counts, spans, px)
+        };
+        let nb = (h + BAND - 1) / BAND;
+        #[cfg(not(target_arch = "wasm32"))]
+        let parts: Vec<(Vec<u32>, Vec<[u32; 3]>, Vec<u32>)> = {
+            use rayon::prelude::*;
+            (0..nb).into_par_iter().map(band).collect()
+        };
+        #[cfg(target_arch = "wasm32")]
+        let parts: Vec<(Vec<u32>, Vec<[u32; 3]>, Vec<u32>)> = (0..nb).map(band).collect();
+        let mut o = UiOverlay {
+            w,
+            h,
+            row_start: Vec::with_capacity(h + 1),
+            spans: Vec::with_capacity(parts.iter().map(|p| p.1.len()).sum()),
+            px: Vec::with_capacity(parts.iter().map(|p| p.2.len()).sum()),
+        };
+        o.row_start.push(0);
+        for (counts, spans, px) in parts {
+            let po = o.px.len() as u32;
+            for c in counts {
+                let last = *o.row_start.last().unwrap_or(&0);
+                o.row_start.push(last + c);
+            }
+            o.spans.extend(spans.into_iter().map(|[x0, n, p]| [x0, n, p + po]));
+            o.px.extend_from_slice(&px);
+        }
+        o
+    }
+
+    /// Lay row `vy` of this layer onto a display row; `vx[dx]` maps display
+    /// columns to layer columns (monotonic). Identity mapping when `vx` is None.
+    pub fn apply_row(&self, vy: usize, drow: &mut [u32], vx: Option<&[usize]>) {
+        if vy + 1 >= self.row_start.len() {
+            return;
+        }
+        let (a, b) = (self.row_start[vy] as usize, self.row_start[vy + 1] as usize);
+        for s in &self.spans[a..b] {
+            let (x0, n, p) = (s[0] as usize, s[1] as usize, s[2] as usize);
+            let src = &self.px[p..p + n];
+            match vx {
+                None => {
+                    let end = (x0 + n).min(drow.len());
+                    if x0 < end {
+                        drow[x0..end].copy_from_slice(&src[..end - x0]);
+                    }
+                },
+                Some(vx) => {
+                    let d0 = vx.partition_point(|&v| v < x0);
+                    let d1 = vx.partition_point(|&v| v < x0 + n);
+                    for dx in d0..d1.min(drow.len()) {
+                        drow[dx] = src[vx[dx] - x0];
+                    }
+                },
+            }
+        }
+    }
+}
+
 /// Tunable mapping for `cast_shadow`: how a blob/contact shadow's size and
 /// opacity change with the caster's height above the surface. Defaults give the
 /// natural look — small/dark/sharp when the caster touches down, growing larger,
@@ -141,12 +241,14 @@ pub struct GfxState {
     /// (`เติม`) so it persists across a frame's multiple flushes (like
     /// `glClear(DEPTH)`), then accumulates correct occlusion across all layers.
     pub depth_buf: Vec<f32>,
-    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy)
+    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy).
+    /// The copy is empty for native scaled layers; ui_pixel_drawn/ui_end then
+    /// compare against `real` sampled at the same nearest-neighbour positions.
     pub ui_layer: Option<(Vec<u32>, usize, usize, Vec<u32>)>,
     /// Native scaled render: UI layers kept at their own (display) resolution and
     /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
-    /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
-    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
+    /// crisp instead of being averaged down into the low-res frame.
+    pub ui_overlays: Vec<UiOverlay>,
     /// True ⇒ the next depth flush clears the z-buffer first (set by `เติม` /
     /// `clear_depth`). Lets the z-buffer span a frame's many `flush_3d` calls.
     pub zbuf_needs_clear: bool,
@@ -726,7 +828,7 @@ pub struct GfxState {
     /// Native scaled render: UI layers kept at their own (display) resolution and
     /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
     /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
-    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
+    pub ui_overlays: Vec<UiOverlay>,
     /// Mirrors native: next depth flush clears the z-buffer first.
     pub zbuf_needs_clear: bool,
     /// Mirrors native: `flush_post` ran the post-chain; `present` skips it.
@@ -1092,5 +1194,37 @@ impl GfxState {
         }
         self.color = pen;
         self.meshes[id] = mesh;
+    }
+}
+
+#[cfg(test)]
+mod ui_overlay_tests {
+    use super::UiOverlay;
+
+    #[test]
+    fn diff_then_apply_reproduces_layer() {
+        let (w, h) = (37usize, 21usize);
+        let base: Vec<u32> = (0..w * h).map(|i| (i as u32).wrapping_mul(2654435761) & 0xFFFFFF).collect();
+        let mut layer = base.clone();
+        for (i, p) in layer.iter_mut().enumerate() {
+            if (i * 7) % 5 == 0 || (i / w == 3) {
+                *p ^= 0x10101;
+            }
+        }
+        let ov = UiOverlay::diff(&layer, w, h, |y, x| base[y * w + x]);
+        assert_eq!(ov.row_start.len(), h + 1);
+        for y in 0..h {
+            let mut row = base[y * w..y * w + w].to_vec();
+            ov.apply_row(y, &mut row, None);
+            assert_eq!(&row[..], &layer[y * w..y * w + w]);
+        }
+        // 2x horizontal upscale through a column map
+        let vx: Vec<usize> = (0..w * 2).map(|x| x / 2).collect();
+        for y in 0..h {
+            let mut row: Vec<u32> = vx.iter().map(|&x| base[y * w + x]).collect();
+            ov.apply_row(y, &mut row, Some(&vx));
+            let want: Vec<u32> = vx.iter().map(|&x| layer[y * w + x]).collect();
+            assert_eq!(row, want);
+        }
     }
 }

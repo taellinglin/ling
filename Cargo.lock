@@ -7380,6 +7380,7 @@ version = "2030.0.10"
 dependencies = [
  "bytemuck",
  "pollster",
+ "rayon",
  "wgpu 22.1.0",
 ]
 

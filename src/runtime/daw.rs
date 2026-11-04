@@ -130,6 +130,36 @@ impl Interpreter {
     }
 
     fn st_builtin(&mut self, name: &str, args: &[Value]) -> Option<EvalResult> {
+        // Reads borrow a string key instead of allocating one (st_get runs
+        // thousands of times a frame in game UIs).
+        let skey: Option<&str> = match args.first() {
+            Some(Value::Str(s)) => Some(s.as_str()),
+            _ => None,
+        };
+        match (name, skey) {
+            ("st_get", Some(k)) => {
+                return Some(Ok(self
+                    .gstore
+                    .get(k)
+                    .cloned()
+                    .or_else(|| args.get(1).cloned())
+                    .unwrap_or(Value::Number(0.0))))
+            }
+            ("st_has", Some(k)) => {
+                return Some(Ok(Value::Number(self.gstore.contains_key(k) as i32 as f64)))
+            }
+            ("st_set", Some(k)) => {
+                let v = args.get(1).cloned().unwrap_or(Value::Unit);
+                match self.gstore.get_mut(k) {
+                    Some(slot) => *slot = v,
+                    None => {
+                        self.gstore.insert(k.to_string(), v);
+                    }
+                }
+                return Some(Ok(Value::Unit));
+            }
+            _ => {}
+        }
         let key = args.first().map(|v| v.to_string()).unwrap_or_default();
         let ok = |v: Value| Some(Ok(v));
         match name {

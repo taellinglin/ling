@@ -23,6 +23,8 @@ bytemuck = { version = "1", features = ["derive"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { version = "22", optional = true }
 pollster = { version = "0.3", optional = true }
+# Parallel readback conversion (colour composite + depth merge) of full frames.
+rayon = "1.9"
 
 # On the web wgpu targets WebGL2 through its GL backend, so the same renderer
 # and WGSL shader run on the browser's graphics card.

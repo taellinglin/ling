@@ -1515,32 +1515,114 @@ pub fn depth_of_field(
     let r_h = rad.div_ceil(2).max(1) as i32; // blur radius in half-res pixels
     let inv_win = 1.0 / (2 * r_h + 1) as f32;
 
-    // Downsample (2×2 average) into half-res f32 planes.
-    let mut rc = vec![0f32; hn];
-    let mut gc = vec![0f32; hn];
-    let mut bc = vec![0f32; hn];
+    // Scratch planes are pooled across frames (six fresh multi-MB planes per
+    // frame cost thousands of page faults); every element is overwritten.
+    let mut pool = DOF_SCRATCH.with(|p| std::mem::take(&mut *p.borrow_mut()));
+    pool.resize_with(6, Vec::new);
+    for v in pool.iter_mut() {
+        if v.len() != hn {
+            v.clear();
+            v.resize(hn, 0.0);
+        }
+    }
     {
-        let down_row = |hy: usize, rows: (&mut [f32], &mut [f32], &mut [f32])| {
+        let (planes, tmps) = pool.split_at_mut(3);
+        let [rc, gc, bc] = planes else { unreachable!() };
+        let [tr, tg, tb] = tmps else { unreachable!() };
+
+        let hwi = hw as i32;
+        // Horizontal box blur of one half-res row (sliding window).
+        let hpass = |src: &[f32], out_row: &mut [f32]| {
+            let mut acc = 0.0f32;
+            let mut k = -r_h;
+            while k <= r_h {
+                acc += src[k.clamp(0, hwi - 1) as usize];
+                k += 1;
+            }
+            for (x, out) in out_row.iter_mut().enumerate() {
+                *out = acc * inv_win;
+                let lo = (x as i32 - r_h).clamp(0, hwi - 1) as usize;
+                let hi2 = (x as i32 + r_h + 1).clamp(0, hwi - 1) as usize;
+                acc += src[hi2] - src[lo];
+            }
+        };
+        // Downsample (2x2 average) one half-res row into the r/g/b planes, then
+        // blur it horizontally into the tmp planes: fused and row-parallel.
+        let buf_ro: &[u32] = buf;
+        let down_h = |hy: usize,
+                      r: &mut [f32],
+                      g: &mut [f32],
+                      b: &mut [f32],
+                      t0: &mut [f32],
+                      t1: &mut [f32],
+                      t2: &mut [f32]| {
             let y0 = (hy * 2).min(height - 1);
             let y1 = (hy * 2 + 1).min(height - 1);
             for hx in 0..hw {
                 let x0 = (hx * 2).min(width - 1);
                 let x1 = (hx * 2 + 1).min(width - 1);
-                let (mut r, mut g, mut b) = (0f32, 0f32, 0f32);
+                let (mut sr, mut sg, mut sb) = (0f32, 0f32, 0f32);
                 for &i in &[
                     y0 * width + x0,
                     y0 * width + x1,
                     y1 * width + x0,
                     y1 * width + x1,
                 ] {
-                    let p = buf[i];
-                    r += ((p >> 16) & 0xFF) as f32;
-                    g += ((p >> 8) & 0xFF) as f32;
-                    b += (p & 0xFF) as f32;
+                    let p = buf_ro[i];
+                    sr += ((p >> 16) & 0xFF) as f32;
+                    sg += ((p >> 8) & 0xFF) as f32;
+                    sb += (p & 0xFF) as f32;
                 }
-                rows.0[hx] = r * 0.25;
-                rows.1[hx] = g * 0.25;
-                rows.2[hx] = b * 0.25;
+                r[hx] = sr * 0.25;
+                g[hx] = sg * 0.25;
+                b[hx] = sb * 0.25;
+            }
+            hpass(r, t0);
+            hpass(g, t1);
+            hpass(b, t2);
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use rayon::prelude::*;
+            rc.par_chunks_mut(hw)
+                .zip(gc.par_chunks_mut(hw))
+                .zip(bc.par_chunks_mut(hw))
+                .zip(tr.par_chunks_mut(hw))
+                .zip(tg.par_chunks_mut(hw))
+                .zip(tb.par_chunks_mut(hw))
+                .enumerate()
+                .for_each(|(hy, (((((r, g), b), t0), t1), t2))| {
+                    down_h(hy, r, g, b, t0, t1, t2)
+                });
+        }
+        #[cfg(target_arch = "wasm32")]
+        for (hy, (((((r, g), b), t0), t1), t2)) in rc
+            .chunks_mut(hw)
+            .zip(gc.chunks_mut(hw))
+            .zip(bc.chunks_mut(hw))
+            .zip(tr.chunks_mut(hw))
+            .zip(tg.chunks_mut(hw))
+            .zip(tb.chunks_mut(hw))
+            .enumerate()
+        {
+            down_h(hy, r, g, b, t0, t1, t2);
+        }
+
+        // Vertical box blur of the tmp planes back into r/g/b (now the blurred
+        // image). Row-wise accumulation keeps each pixel's summation order.
+        let (tr, tg, tb) = (&*tr, &*tg, &*tb);
+        let vpass = |y: usize, src: &[f32], out_row: &mut [f32]| {
+            out_row.fill(0.0);
+            let mut k = -r_h;
+            while k <= r_h {
+                let yy = (y as i32 + k).clamp(0, hh as i32 - 1) as usize;
+                for (o, &t) in out_row.iter_mut().zip(&src[yy * hw..yy * hw + hw]) {
+                    *o += t;
+                }
+                k += 1;
+            }
+            for o in out_row.iter_mut() {
+                *o *= inv_win;
             }
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -1550,84 +1632,25 @@ pub fn depth_of_field(
                 .zip(gc.par_chunks_mut(hw))
                 .zip(bc.par_chunks_mut(hw))
                 .enumerate()
-                .for_each(|(hy, ((r, g), b))| down_row(hy, (r, g, b)));
+                .for_each(|(y, ((r, g), b))| {
+                    vpass(y, tr, r);
+                    vpass(y, tg, g);
+                    vpass(y, tb, b);
+                });
         }
         #[cfg(target_arch = "wasm32")]
-        for (hy, ((r, g), b)) in rc
+        for (y, ((r, g), b)) in rc
             .chunks_mut(hw)
             .zip(gc.chunks_mut(hw))
             .zip(bc.chunks_mut(hw))
             .enumerate()
         {
-            down_row(hy, (r, g, b));
+            vpass(y, tr, r);
+            vpass(y, tg, g);
+            vpass(y, tb, b);
         }
     }
-
-    // Separable box blur on the half-res planes (H: sliding window; V: direct
-    // small-window sum — both row-parallel on native).
-    let hwi = hw as i32;
-    let blur = |src: &[f32]| -> Vec<f32> {
-        let mut tmp = vec![0f32; hn];
-        let hpass = |y: usize, out_row: &mut [f32]| {
-            let row = y * hw;
-            let mut acc = 0.0f32;
-            let mut k = -r_h;
-            while k <= r_h {
-                acc += src[row + k.clamp(0, hwi - 1) as usize];
-                k += 1;
-            }
-            for (x, out) in out_row.iter_mut().enumerate() {
-                *out = acc * inv_win;
-                let lo = (x as i32 - r_h).clamp(0, hwi - 1) as usize;
-                let hi2 = (x as i32 + r_h + 1).clamp(0, hwi - 1) as usize;
-                acc += src[row + hi2] - src[row + lo];
-            }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            tmp.par_chunks_mut(hw)
-                .enumerate()
-                .for_each(|(y, row)| hpass(y, row));
-        }
-        #[cfg(target_arch = "wasm32")]
-        for (y, row) in tmp.chunks_mut(hw).enumerate() {
-            hpass(y, row);
-        }
-
-        let mut out = vec![0f32; hn];
-        let vpass = |y: usize, out_row: &mut [f32]| {
-            for (x, o) in out_row.iter_mut().enumerate() {
-                let mut acc = 0.0f32;
-                let mut k = -r_h;
-                while k <= r_h {
-                    let yy = (y as i32 + k).clamp(0, hh as i32 - 1) as usize;
-                    acc += tmp[yy * hw + x];
-                    k += 1;
-                }
-                *o = acc * inv_win;
-            }
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            use rayon::prelude::*;
-            out.par_chunks_mut(hw)
-                .enumerate()
-                .for_each(|(y, row)| vpass(y, row));
-        }
-        #[cfg(target_arch = "wasm32")]
-        for (y, row) in out.chunks_mut(hw).enumerate() {
-            vpass(y, row);
-        }
-        out
-    };
-
-    let rb = blur(&rc);
-    let gb = blur(&gc);
-    let bb = blur(&bc);
-    drop(rc);
-    drop(gc);
-    drop(bc);
+    let (rb, gb, bb) = (&pool[0][..], &pool[1][..], &pool[2][..]);
 
     // Bilinear sample of a half-res plane at full-res pixel coords.
     let samp = |s: &[f32], fx: f32, fy: f32| -> f32 {
@@ -1643,6 +1666,15 @@ pub fn depth_of_field(
         let b = s[y1 * hw + x0] * (1.0 - tx) + s[y1 * hw + x1] * tx;
         a * (1.0 - ty) + b * ty
     };
+    // Column half of `samp` at integer x, shared by all three planes on the
+    // oil-free path: (x0, x1, tx) per full-res column.
+    let cols: Vec<(usize, usize, f32)> = (0..width)
+        .map(|x| {
+            let gx = (x as f32 * 0.5).min(hw as f32 - 1.0).max(0.0);
+            let x0 = gx as usize;
+            (x0, (x0 + 1).min(hw - 1), gx - x0 as f32)
+        })
+        .collect();
 
     // Composite: lerp sharp→blurred by circle-of-confusion, preserving any
     // tag bits (UNLIT ink survives the blur untagged-quantisation). With
@@ -1652,6 +1684,11 @@ pub fn depth_of_field(
     // far-field shimmer.
     let comp_row = |y: usize, row: &mut [u32]| {
         let fy = y as f32;
+        let gy = (fy * 0.5).min(hh as f32 - 1.0).max(0.0);
+        let sy0 = gy as usize;
+        let sy1 = (sy0 + 1).min(hh - 1);
+        let ty = gy - sy0 as f32;
+        let (o0, o1) = (sy0 * hw, sy1 * hw);
         for (x, px) in row.iter_mut().enumerate() {
             let i = y * width + x;
             let z = zbuf[i];
@@ -1673,9 +1710,9 @@ pub fn depth_of_field(
             let (mut r, mut g, mut b);
             if oil > 0.0 {
                 let off = coc * oil * 3.0;
-                r = pr * s + samp(&rb, fx - off, fy) * coc;
-                g = pg * s + samp(&gb, fx, fy) * coc;
-                b = pb * s + samp(&bb, fx + off, fy) * coc;
+                r = pr * s + samp(rb, fx - off, fy) * coc;
+                g = pg * s + samp(gb, fx, fy) * coc;
+                b = pb * s + samp(bb, fx + off, fy) * coc;
                 // gentle hue swirl toward an iridescent film
                 let k = oil * coc * 0.22;
                 let (r0, g0, b0) = (r, g, b);
@@ -1683,9 +1720,15 @@ pub fn depth_of_field(
                 g = g0 * (1.0 - k) + r0 * k;
                 b = b0 * (1.0 - k) + g0 * k;
             } else {
-                r = pr * s + samp(&rb, fx, fy) * coc;
-                g = pg * s + samp(&gb, fx, fy) * coc;
-                b = pb * s + samp(&bb, fx, fy) * coc;
+                let (x0, x1, tx) = cols[x];
+                let bil = |s: &[f32]| -> f32 {
+                    let a = s[o0 + x0] * (1.0 - tx) + s[o0 + x1] * tx;
+                    let b = s[o1 + x0] * (1.0 - tx) + s[o1 + x1] * tx;
+                    a * (1.0 - ty) + b * ty
+                };
+                r = pr * s + bil(rb) * coc;
+                g = pg * s + bil(gb) * coc;
+                b = pb * s + bil(bb) * coc;
             }
             let r = r.round().clamp(0.0, 255.0) as u32;
             let g = g.round().clamp(0.0, 255.0) as u32;
@@ -1705,6 +1748,14 @@ pub fn depth_of_field(
     for (y, row) in buf[..n].chunks_mut(width).enumerate() {
         comp_row(y, row);
     }
+    drop(cols);
+    DOF_SCRATCH.with(|p| *p.borrow_mut() = pool);
+}
+
+thread_local! {
+    /// Reused half-res scratch planes for [`depth_of_field`].
+    static DOF_SCRATCH: std::cell::RefCell<Vec<Vec<f32>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
