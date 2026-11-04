@@ -506,6 +506,8 @@ fn declare_runtime_functions(
         ("ling_kernel_services_boot_configure", &[], types::I64),
         ("ling_kernel_sshd_serve", &[], types::I64),
         ("ling_kernel_sshd_start", &[], types::I64),
+        ("ling_kernel_sshd_set", &[types::I64], types::I64),
+        ("ling_kernel_sshd_running", &[], types::I64),
         ("ling_kernel_services_ssh_enabled", &[], types::I64),
         ("ling_kernel_messenger_start", &[], types::I64),
         ("ling_kernel_locale_selected", &[], types::I64),

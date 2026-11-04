@@ -775,6 +775,57 @@ pub fn fill_rect_grad(
     let y0 = y.floor().max(0.0) as i32;
     let x1 = (x + rw).ceil().min(width as f32) as i32;
     let y1 = (y + rh).ceil().min(height as f32) as i32;
+    if x1 <= x0 || y1 <= y0 {
+        return;
+    }
+
+    // ── fast paths: opaque + normal blend writes whole rows at once ──
+    // (UI chrome tends to be large solid / gradient rects; the per-pixel
+    // composite_pixel path below costs ~20ns/px, these ~0.3ns/px.)
+    if alpha >= 1.0 && mode == 0 {
+        let (xs, xe) = (x0 as usize, x1 as usize);
+        if c0 == c1 {
+            // solid rect → memset each row
+            for py in y0 as usize..y1 as usize {
+                buf[py * width + xs..py * width + xe].fill(c0);
+            }
+            return;
+        }
+        if dir != 0 {
+            // vertical gradient → one colour per row
+            for py in y0..y1 {
+                let t = ((py as f32 + 0.5 - y) / rh).clamp(0.0, 1.0);
+                let col = if oklab {
+                    crate::gfx::color::mix_oklab(c0, c1, t)
+                } else {
+                    let r = r0 + (r1 - r0) * t;
+                    let g = g0 + (g1 - g0) * t;
+                    let b = b0 + (b1 - b0) * t;
+                    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                };
+                let py = py as usize;
+                buf[py * width + xs..py * width + xe].fill(col);
+            }
+        } else {
+            // horizontal gradient → compute one row, copy it to the rest
+            let mut row: Vec<u32> = Vec::with_capacity(xe - xs);
+            for px in x0..x1 {
+                let t = ((px as f32 + 0.5 - x) / rw).clamp(0.0, 1.0);
+                row.push(if oklab {
+                    crate::gfx::color::mix_oklab(c0, c1, t)
+                } else {
+                    let r = r0 + (r1 - r0) * t;
+                    let g = g0 + (g1 - g0) * t;
+                    let b = b0 + (b1 - b0) * t;
+                    ((r as u32) << 16) | ((g as u32) << 8) | (b as u32)
+                });
+            }
+            for py in y0 as usize..y1 as usize {
+                buf[py * width + xs..py * width + xe].copy_from_slice(&row);
+            }
+        }
+        return;
+    }
 
     for py in y0..y1 {
         let tv = ((py as f32 + 0.5 - y) / rh).clamp(0.0, 1.0);
@@ -2143,7 +2194,7 @@ pub fn set_persp_zd(zd: f32) {
     PERSP_ZD.store(zd.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 #[inline]
-fn persp_zd() -> f32 {
+pub(crate) fn persp_zd() -> f32 {
     f32::from_bits(PERSP_ZD.load(std::sync::atomic::Ordering::Relaxed))
 }
 /// Per-vertex 1/w for the perspective depth, or None (fall back to linear) when
@@ -2181,30 +2232,39 @@ fn tex_fetch(t: &crate::gfx::depth::TexData, x: i32, y: i32) -> u32 {
 }
 
 /// Bilinear, wrapping texel fetch at texture coordinates (u, v) in texels.
+/// 8-bit fixed-point weights; the four channels blend two-at-a-time in packed
+/// 16-bit lanes (RB / AG) instead of 16 float lerps through a loop.
 #[inline]
 fn tex_bilinear(t: &crate::gfx::depth::TexData, u: f32, v: f32) -> [f32; 4] {
     let u = u - 0.5;
     let v = v - 0.5;
     let x0 = u.floor();
     let y0 = v.floor();
-    let fx = u - x0;
-    let fy = v - y0;
+    let fx = ((u - x0) * 256.0) as u32;
+    let fy = ((v - y0) * 256.0) as u32;
+    let xm = (t.w - 1) as i32;
+    let ym = (t.h - 1) as i32;
     let (xi, yi) = (x0 as i32, y0 as i32);
-    let c00 = tex_fetch(t, xi, yi);
-    let c10 = tex_fetch(t, xi + 1, yi);
-    let c01 = tex_fetch(t, xi, yi + 1);
-    let c11 = tex_fetch(t, xi + 1, yi + 1);
-    let mut out = [0.0f32; 4];
-    for (k, sh) in [16u32, 8, 0, 24].iter().enumerate() {
-        let a = ((c00 >> sh) & 255) as f32;
-        let b = ((c10 >> sh) & 255) as f32;
-        let c = ((c01 >> sh) & 255) as f32;
-        let d = ((c11 >> sh) & 255) as f32;
-        let top = a + (b - a) * fx;
-        let bot = c + (d - c) * fx;
-        out[k] = top + (bot - top) * fy;
+    let xa = (xi & xm) as usize;
+    let xb = ((xi + 1) & xm) as usize;
+    let ra = ((yi & ym) as u32 * t.w) as usize;
+    let rb = (((yi + 1) & ym) as u32 * t.w) as usize;
+    let c00 = t.px[ra + xa];
+    let c10 = t.px[ra + xb];
+    let c01 = t.px[rb + xa];
+    let c11 = t.px[rb + xb];
+    const M: u32 = 0x00FF_00FF;
+    #[inline(always)]
+    fn lerp2(a: u32, b: u32, f: u32) -> u32 {
+        ((a * (256 - f) + b * f) >> 8) & M
     }
-    out
+    let rb_top = lerp2(c00 & M, c10 & M, fx);
+    let rb_bot = lerp2(c01 & M, c11 & M, fx);
+    let ag_top = lerp2((c00 >> 8) & M, (c10 >> 8) & M, fx);
+    let ag_bot = lerp2((c01 >> 8) & M, (c11 >> 8) & M, fx);
+    let rbv = lerp2(rb_top, rb_bot, fy);
+    let agv = lerp2(ag_top, ag_bot, fy);
+    [((rbv >> 16) & 255) as f32, (agv & 255) as f32, (rbv & 255) as f32, ((agv >> 16) & 255) as f32]
 }
 
 /// Perspective-correct textured triangle with optional z-test / z-write, pen
@@ -2301,15 +2361,45 @@ pub fn fill_triangle_tex_shaded(
     let persp_ok = zd.is_finite() && v[0].z + zd > 0.0;
     // equal 1/w on every vertex (sprites, billboards): affine, no per-pixel divide
     let affine = (v[0].iw - v[1].iw).abs() < 1e-9 && (v[0].iw - v[2].iw).abs() < 1e-9;
+    let sgn = if tot0 > 0.0 { 1.0f32 } else { -1.0 };
+    let de = [de0 * sgn, de1 * sgn, de2 * sgn];
+    let ripples_on = shade.map(|s| !s.ripples.is_empty()).unwrap_or(false);
     for py in min_y..=max_y {
         let fy = py as f32 + 0.5;
         let fx0 = min_x as f32 + 0.5;
         let mut e0 = (x1 - x0) * (fy - y0) - (y1 - y0) * (fx0 - x0);
         let mut e1 = (x2 - x1) * (fy - y1) - (y2 - y1) * (fx0 - x1);
         let mut e2 = (x0 - x2) * (fy - y2) - (y0 - y2) * (fx0 - x2);
+        // analytic span of this row: solve each edge function >= 0 (in the winding's
+        // sign) for the pixel offset, widen by a pixel, and keep the exact per-pixel
+        // inside test below, so coverage is unchanged while the empty bbox corners of
+        // long thin triangles are skipped
+        let mut lo = 0i32;
+        let mut hi = max_x - min_x;
+        let mut empty = false;
+        for (ev, d) in [(e0, de[0]), (e1, de[1]), (e2, de[2])] {
+            let a = ev * sgn;
+            if d.abs() < 1e-12 {
+                if a < 0.0 { empty = true; }
+            } else {
+                let t = -a / d;
+                if d > 0.0 {
+                    lo = lo.max((t.floor() as i32).saturating_sub(1));
+                } else {
+                    hi = hi.min((t.ceil() as i32).saturating_add(1));
+                }
+            }
+        }
+        if empty || lo > hi {
+            continue;
+        }
+        let lof = lo as f32;
+        e0 += de0 * lof;
+        e1 += de1 * lof;
+        e2 += de2 * lof;
         let row = py as usize * width;
         let mut in_span = false;
-        for px in min_x..=max_x {
+        for px in (min_x + lo)..=(min_x + hi) {
             let inside = (e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0) || (e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0);
             if inside {
                 in_span = true;
@@ -2318,10 +2408,12 @@ pub fn fill_triangle_tex_shaded(
                     let w0 = e1 * inv_tot;
                     let w1 = e2 * inv_tot;
                     let iw = if affine { v[0].iw } else { v[0].iw * w0 + v[1].iw * w1 + v[2].iw * w2 };
+                    // one reciprocal serves both the depth and the perspective-correct uv
+                    let rcp = if iw > 1e-12 { 1.0 / iw } else { 0.0 };
                     let z = if affine {
                         v[0].z
                     } else if persp_ok && iw > 1e-12 {
-                        1.0 / iw - zd
+                        rcp - zd
                     } else {
                         v[0].z * w0 + v[1].z * w1 + v[2].z * w2
                     };
@@ -2332,7 +2424,7 @@ pub fn fill_triangle_tex_shaded(
                     };
                     if pass {
                         if iw > 1e-12 {
-                            let inv = if affine { 1.0 / v[0].iw } else { 1.0 / iw };
+                            let inv = rcp;
                             let mut u = (v[0].uw * w0 + v[1].uw * w1 + v[2].uw * w2) * inv;
                             let mut vv = (v[0].vw * w0 + v[1].vw * w1 + v[2].vw * w2) * inv;
                             // shockwave rings: the wave height h = env * sin(phase) is never
@@ -2340,7 +2432,8 @@ pub fn fill_triangle_tex_shaded(
                             // light through a rippling surface, lights one flank and darkens the
                             // other, and the crests catch a soft highlight
                             let (mut bump, mut glint) = (1.0f32, 0.0f32);
-                            if let Some(rp) = shade.map(|s| &s.ripples).filter(|r| !r.is_empty()) {
+                            if ripples_on {
+                                let rp = &shade.unwrap().ripples;
                                 let wx = (v[0].wx * w0 + v[1].wx * w1 + v[2].wx * w2) * inv;
                                 let wz = (v[0].wz * w0 + v[1].wz * w1 + v[2].wz * w2) * inv;
                                 let (mut gu, mut gv, mut sl) = (0.0f32, 0.0f32, 0.0f32);

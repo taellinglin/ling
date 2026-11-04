@@ -236,11 +236,33 @@ impl JitBackend {
     where
         F: FnOnce(&mut JITBuilder),
     {
+        Self::new_tuned(false, register_symbols_fn)
+    }
+
+    /// `fast` trades code quality for compile time: no Cranelift optimisation and
+    /// the linear-time single-pass register allocator. The default allocator is
+    /// superlinear in block count, so one multi-thousand-block frame closure can
+    /// take minutes (and GBs) to compile; single-pass makes it near-instant.
+    /// `LING_JIT_FAST=0/1` overrides the caller's choice.
+    pub fn new_tuned<F>(fast: bool, register_symbols_fn: F) -> Self
+    where
+        F: FnOnce(&mut JITBuilder),
+    {
+        let fast = match std::env::var("LING_JIT_FAST").as_deref() {
+            Ok("0") => false,
+            Ok(v) if !v.is_empty() => true,
+            _ => fast,
+        };
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
-        flag_builder.set("opt_level", "speed").unwrap();
-        flag_builder.set("enable_alias_analysis", "true").unwrap();
+        if fast {
+            flag_builder.set("opt_level", "none").unwrap();
+            flag_builder.set("regalloc_algorithm", "single_pass").unwrap();
+        } else {
+            flag_builder.set("opt_level", "speed").unwrap();
+            flag_builder.set("enable_alias_analysis", "true").unwrap();
+        }
         flag_builder.set("enable_verifier", "false").unwrap();
         // Stack probes: a function whose frame is larger than a page (a UI's frame function with hundreds of locals) must touch
         // its stack a page at a time, or it jumps past the guard page Windows grows the stack with and faults on memory that was
@@ -255,6 +277,12 @@ impl JitBackend {
             .unwrap_or_else(|msg| panic!("host architecture not supported: {msg}"));
 
         let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        // One contiguous reservation for code + data: the default allocator maps
+        // them separately, and with a GPU stack loaded they can land >2 GB apart,
+        // overflowing the 32-bit PC-relative relocations (TryFromIntError panic).
+        if let Ok(arena) = cranelift_jit::ArenaMemoryProvider::new_with_size(1 << 30) {
+            builder.memory_provider(Box::new(arena));
+        }
         register_symbols_fn(&mut builder);
         let module = JITModule::new(builder);
 
@@ -341,6 +369,11 @@ impl JitBackend {
     }
 
     fn translate_function(&mut self, func: &MirFunction, nt: &NumberTypes) {
+        // LING_MIR_DUMP=<name|*>: print the optimized MIR the JIT receives for one
+        // function (or all), for debugging mis-lowered shapes.
+        if std::env::var("LING_MIR_DUMP").map_or(false, |v| v == func.name || v == "*") {
+            eprintln!("=== MIR {} ===\n{:#?}", func.name, func);
+        }
         let &fid = self.func_ids.get(&func.name).unwrap();
         let mut ctx = self.module.make_context();
         let mut sig = self.module.make_signature();
@@ -410,14 +443,26 @@ impl JitBackend {
             frees,
             boxed_sweep: &boxed_sweep,
         };
+        let trace = std::env::var("LING_JIT_TRACE").map_or(false, |v| v != "0");
+        let t0 = std::time::Instant::now();
         build_function_body(&mut builder, func, &blocks, &tctx);
         builder.finalize();
+        let t_build = t0.elapsed();
         // LING_JIT_TRACE=1: name each function before cranelift compiles it (release builds abort on a
         // cranelift panic, so the last name printed is the one it failed on).
-        if std::env::var("LING_JIT_TRACE").map_or(false, |v| v != "0") {
-            eprintln!("jit: {}", func.name);
+        if trace {
+            eprintln!("jit: {} ({} blocks)", func.name, func.basic_blocks.len());
         }
+        let t1 = std::time::Instant::now();
         self.module.define_function(fid, &mut ctx).unwrap();
+        if trace && (t_build + t1.elapsed()).as_millis() >= 50 {
+            eprintln!(
+                "jit:   {} lowered in {} ms, cranelift in {} ms",
+                func.name,
+                t_build.as_millis(),
+                t1.elapsed().as_millis()
+            );
+        }
     }
 
     pub fn get_function(&mut self, name: &str) -> Option<*const u8> {

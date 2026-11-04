@@ -164,6 +164,14 @@ COPY . .
 # both bins must exist or every web build fails with "lingc not found".
 RUN cargo build --release --bin ling --bin lingc
 
+# Download-only sweep of EVERY crate in this workspace's Cargo.lock, for all platforms —
+# including the optional deps behind features nothing below compiles (video's mp4/openh264/
+# symphonia/cpal, llm's candle stack, ...). A package manifest's `ling-features` can flip
+# any of them on, and an offline per-package build whose resolution lands on a crate with no
+# cached .crate file dies with "failed to download <crate> ... --offline was specified".
+# The featured warmup below bakes compiled rlibs for the common set; this covers the long tail.
+RUN cargo fetch
+
 ENV PATH="/opt/ling/target/release:${PATH}"
 ENV LING_HOME="/opt/ling"
 
@@ -207,5 +215,24 @@ RUN mkdir -p /opt/warmup && \
             || echo "WARNING: build farm warmup for '$p' failed; its package builds will fail too"; \
     done && \
     cd / && rm -rf /opt/warmup
+
+# A package manifest's `ling-features = [...]` turns optional features of the ling crate on
+# in its generated wrapper project (gen_native_cargo_toml / parse_ling_features in
+# src/main.rs). Crates behind those features are NOT reached by the plain hello above, so
+# they must be warmed through the same wrapper path or every featured package build fails
+# offline on its first registry download. `web` pulls in `video` + `proc`; `emu` adds
+# ling-emu. The heavy GPU/AI features (cuda, llm, vision) stay unwarmed on purpose — their
+# crates are download-cached by `cargo fetch` above but not pre-compiled. The container's
+# own native platform (lin) is fatal like the v1 platforms above; cross targets stay
+# non-fatal, failing per package on the Builds tab instead of blocking the image.
+RUN mkdir -p /opt/warmup-feat && \
+    printf 'ผูก เริ่ม = ทำ {\n    พิมพ์("build farm featured warmup ok")\n}\n' > /opt/warmup-feat/hello.ling && \
+    printf 'name = "warmup-feat"\nversion = "0.1.0"\nentry = "hello.ling"\nkind = "bin"\nling-features = ["web", "emu"]\n' > /opt/warmup-feat/Ling.toml && \
+    ling build /opt/warmup-feat --platform lin --out /opt/warmup-feat/dist && \
+    for p in win pios $(test -x /opt/osxcross/target/bin/o64-clang && echo mac macarm); do \
+        ling build /opt/warmup-feat --platform $p --out /opt/warmup-feat/dist-$p \
+            || echo "WARNING: featured warmup for '$p' failed; featured package builds there will fail too"; \
+    done && \
+    rm -rf /opt/warmup-feat
 
 WORKDIR /work

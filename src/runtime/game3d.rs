@@ -479,6 +479,11 @@ fn load_texture(path: &str, size: u32) -> Result<TexData, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let lower = path.to_lowercase();
     let size = pow2(size.clamp(8, 2048));
+    #[cfg(not(feature = "svg"))]
+    if lower.ends_with(".svg") || lower.ends_with(".svgz") {
+        return Err(format!("{path}: SVG textures need the `game` or `web` profile"));
+    }
+    #[cfg(feature = "svg")]
     if lower.ends_with(".svg") || lower.ends_with(".svgz") {
         let opt = resvg::usvg::Options::default();
         let tree = resvg::usvg::Tree::from_data(&bytes, &opt).map_err(|e| format!("{path}: {e}"))?;
@@ -1035,6 +1040,7 @@ impl Interpreter {
             },
             // tm_voice(voice, vol, pitch): retune / re-level a playing sample voice
             "tm_voice" => {
+                #[cfg(feature = "audio")]
                 if let Some(a) = &self.audio {
                     a.set_sample_voice(num(args, 0, 0.0) as u32, f(args, 1, -1.0), f(args, 2, -1.0));
                 }
@@ -1363,6 +1369,8 @@ impl Interpreter {
             //   span * size / 2 draws the letter at `size` world units per em. -1 when the font or
             //   glyph has no outline (a space).
             #[cfg(not(target_arch = "wasm32"))]
+            // (tiny-skia fill: the `svg` building block, part of `game` and `web`)
+            #[cfg(feature = "svg")]
             "tm_glyph" => {
                 let fid = num(args, 0, -1.0);
                 let ch = text(args, 1).chars().next().unwrap_or(' ');
@@ -2206,7 +2214,7 @@ mod upnp {
 
     /// 100.64.0.0/10 (carrier NAT) and the private ranges: a forward there doesn't reach the internet.
     fn is_shared(ip: &str) -> bool {
-        let o: Vec<u8> = ip.split('.').filter_map(|x| x.parse().ok()).collect();
+        let o: Vec<u8> = ip.split('.').filter_map(|x| x.parse::<u8>().ok()).collect();
         o.len() == 4
             && (o[0] == 10 || (o[0] == 100 && (64..128).contains(&o[1])) || (o[0] == 172 && (16..32).contains(&o[1])) || (o[0] == 192 && o[1] == 168))
     }

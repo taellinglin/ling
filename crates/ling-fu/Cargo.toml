@@ -93,7 +93,7 @@ thiserror = "1.0"
 dialoguer = "0.11"
 colored = "2.0"
 walkdir = "2.4"
-git2 = "0.18"
+git2 = { version = "0.18", default-features = false }   # unused by lingfu today; no https/ssh so no openssl-sys (macOS cross builds have no OpenSSL headers)
 tempfile = "3.8"
 rayon = "1.10"
 unicode-normalization = "0.1"

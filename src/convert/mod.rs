@@ -167,6 +167,12 @@ fn header(kind: &str, src: &str) -> String {
 
 // ── glTF / GLB → mesh data + node hierarchy ───────────────────────────────────
 
+#[cfg(not(feature = "game"))]
+fn conv_gltf(_: &str, _: &str, _: bool) -> Result<String, String> {
+    Err("glTF conversion needs the `game` profile (reinstall with --features game)".into())
+}
+
+#[cfg(feature = "game")]
 fn conv_gltf(input: &str, name: &str, compress: bool) -> Result<String, String> {
     let model = ling_physics::gltf::GltfModel::load(input)?;
     let mut s = header("glTF model (geometry + nodes)", input);
@@ -248,7 +254,7 @@ fn conv_gltf(input: &str, name: &str, compress: bool) -> Result<String, String> 
 
 // ── audio (wav/ogg/flac/mp3) → PCM + a play function ──────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
 fn conv_audio(input: &str, name: &str, compress: bool) -> Result<String, String> {
     let a = ling_music::decode::load(input)?;
     let mut s = header("audio (PCM samples)", input);
@@ -270,14 +276,14 @@ fn conv_audio(input: &str, name: &str, compress: bool) -> Result<String, String>
     Ok(s)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "audio")))]
 fn conv_audio(_: &str, _: &str, _: bool) -> Result<String, String> {
-    Err("audio conversion is unavailable on wasm".into())
+    Err("audio conversion needs the `audio` profile (unavailable on wasm)".into())
 }
 
 // ── MIDI → note events ────────────────────────────────────────────────────────
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "audio"))]
 fn conv_midi(input: &str, name: &str, compress: bool) -> Result<String, String> {
     let song = ling_music::midi::load(input)?;
     let mut s = header("MIDI song (note events)", input);
@@ -305,9 +311,9 @@ fn conv_midi(input: &str, name: &str, compress: bool) -> Result<String, String> 
     Ok(s)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(not(target_arch = "wasm32"), feature = "audio")))]
 fn conv_midi(_: &str, _: &str, _: bool) -> Result<String, String> {
-    Err("MIDI conversion is unavailable on wasm".into())
+    Err("MIDI conversion needs the `audio` profile (unavailable on wasm)".into())
 }
 
 // ── SVG → vector strokes (paths + basic primitives) ──────────────────────────

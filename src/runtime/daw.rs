@@ -3,9 +3,11 @@
 //!   * `st_*`  — a global key/value store so top-level functions can share state
 //!   * `px_*`  — fast alpha-blended, clip-aware pixel primitives
 use super::{EvalErr, EvalResult, Interpreter, Value};
+#[cfg(feature = "audio")]
 use ling_daw::{Daw, Val};
 use std::rc::Rc;
 
+#[cfg(feature = "audio")]
 fn to_val(v: &Value) -> Val {
     match v {
         Value::Number(n) => Val::Num(*n),
@@ -16,6 +18,7 @@ fn to_val(v: &Value) -> Val {
     }
 }
 
+#[cfg(feature = "audio")]
 fn from_val(v: Val) -> Value {
     match v {
         Val::Num(n) => Value::Number(n),
@@ -103,10 +106,18 @@ impl Interpreter {
         if !(name.starts_with("daw_") || name.starts_with("fs_") || name.starts_with("dlg_")) {
             return None;
         }
-        let vals: Vec<Val> = args.iter().map(to_val).collect();
-        let daw = self.daw.get_or_insert_with(Daw::new);
-        let r = daw.call(name, &vals)?;
-        Some(r.map(from_val).map_err(EvalErr::Runtime))
+        // the ling-daw engine (and its fs_*/dlg_* file dialogs) is the `audio` profile
+        #[cfg(not(feature = "audio"))]
+        return Some(Err(EvalErr::Runtime(format!(
+            "'{name}' needs the `audio` profile, which this build of ling leaves out (reinstall with: cargo install ling-lang --features audio, or the default full install)"
+        ))));
+        #[cfg(feature = "audio")]
+        {
+            let vals: Vec<Val> = args.iter().map(to_val).collect();
+            let daw = self.daw.get_or_insert_with(Daw::new);
+            let r = daw.call(name, &vals)?;
+            Some(r.map(from_val).map_err(EvalErr::Runtime))
+        }
     }
 
     fn num(args: &[Value], i: usize, d: f64) -> f64 {

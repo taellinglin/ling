@@ -22,9 +22,17 @@ impl Transform for CopyPropagation {
 
         let mut safe_copies: HashMap<Local, Local> = HashMap::new();
         for (dest, src) in copy_assignments {
-            if assign_counts.get(&dest) == Some(&1)
-                && (*assign_counts.get(&src).unwrap_or(&0) <= 1 || src.0 <= func.arg_count)
-            {
+            // Sound only when the copy is dest's sole definition (so it dominates
+            // every use) and src can never hold a different value at any of those
+            // uses. Parameters carry an implicit definition at function entry:
+            // as dest, the explicit copy is a *second* definition that does not
+            // dominate entry-reachable uses (TailCallOpt's loop-back `param =
+            // Copy(tmp)` is exactly this shape); as src, one body assignment
+            // already makes two definitions.
+            let is_param = |l: Local| l.0 >= 1 && l.0 <= func.arg_count;
+            let src_defs =
+                *assign_counts.get(&src).unwrap_or(&0) + usize::from(is_param(src));
+            if !is_param(dest) && assign_counts.get(&dest) == Some(&1) && src_defs <= 1 {
                 safe_copies.insert(dest, src);
             }
         }

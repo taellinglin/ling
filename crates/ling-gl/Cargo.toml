@@ -1,0 +1,30 @@
+[package]
+name = "ling-gl"
+version = "2030.0.10"
+edition = "2021"
+authors = ["Ling Lin <taellinglin@gmail.com>"]
+description = "GPU rasteriser for Ling's projected scenes (wgpu: Vulkan/Metal/DX12 natively, WebGL2 on wasm)"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/taellinglin/ling"
+
+[lib]
+name = "ling_gl"
+path = "src/lib.rs"
+
+[features]
+default = ["gpu"]
+# The wgpu renderer. Without it the crate is just the backend-neutral `Scene`
+# types, which the engine's own WebGL2 backend (wasm) draws directly.
+gpu = ["dep:wgpu", "dep:pollster"]
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { version = "22", optional = true }
+pollster = { version = "0.3", optional = true }
+
+# On the web wgpu targets WebGL2 through its GL backend, so the same renderer
+# and WGSL shader run on the browser's graphics card.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "22", default-features = false, features = ["webgl", "wgsl"], optional = true }

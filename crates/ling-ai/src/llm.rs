@@ -9,7 +9,9 @@
 //! glue, exactly mirroring how `src/runtime/ai.rs` wraps `Net`/`DialogLM`.
 //!
 //! Supported architectures (selected by the GGUF's `general.architecture`
-//! metadata, so `llm_load` needs no extra argument): `glm4` and `qwen3`.
+//! metadata, so `llm_load` needs no extra argument): `glm4`, `qwen3` and
+//! `qwen2` (the Qwen2.5 family, e.g. Qwen2.5-Coder — plain ChatML, no
+//! think-block soft switch).
 //! Callers always pass history in the same GLM-tag wire format
 //! (`<|user|>\n...\n<|assistant|>\n...\n` blocks — see `history_prompt()` in
 //! each site's controllers); for Qwen3 models `build_prompt` re-renders that
@@ -23,6 +25,7 @@ use candle_core::quantized::gguf_file;
 use candle_core::{DType, Device, Tensor};
 use candle_transformers::generation::{LogitsProcessor, Sampling};
 use candle_transformers::models::quantized_glm4;
+use candle_transformers::models::quantized_qwen2;
 use candle_transformers::models::quantized_qwen3;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
@@ -31,11 +34,13 @@ use tokenizers::Tokenizer;
 enum Arch {
     Glm4,
     Qwen3,
+    Qwen2,
 }
 
 enum ArchWeights {
     Glm4(quantized_glm4::ModelWeights),
     Qwen3(quantized_qwen3::ModelWeights),
+    Qwen2(quantized_qwen2::ModelWeights),
 }
 
 impl ArchWeights {
@@ -43,6 +48,7 @@ impl ArchWeights {
         match self {
             ArchWeights::Glm4(w) => w.forward(input, offset),
             ArchWeights::Qwen3(w) => w.forward(input, offset),
+            ArchWeights::Qwen2(w) => w.forward(input, offset),
         }
     }
 
@@ -55,6 +61,7 @@ impl ArchWeights {
         match self {
             ArchWeights::Glm4(_) => {}
             ArchWeights::Qwen3(w) => w.clear_kv_cache(),
+            ArchWeights::Qwen2(w) => w.clear_kv_cache(),
         }
     }
 }
@@ -152,6 +159,11 @@ impl LoadedModel {
                     .map_err(|e| e.to_string())?;
                 (Arch::Qwen3, ArchWeights::Qwen3(w))
             }
+            "qwen2" => {
+                let w = quantized_qwen2::ModelWeights::from_gguf(content, &mut file, &device)
+                    .map_err(|e| e.to_string())?;
+                (Arch::Qwen2, ArchWeights::Qwen2(w))
+            }
             "glm4" => {
                 let w = quantized_glm4::ModelWeights::from_gguf(content, &mut file, &device, DType::F32)
                     .map_err(|e| e.to_string())?;
@@ -159,7 +171,7 @@ impl LoadedModel {
             }
             other => {
                 return Err(format!(
-                    "unsupported GGUF architecture '{other}' (supported: glm4, qwen3)"
+                    "unsupported GGUF architecture '{other}' (supported: glm4, qwen3, qwen2)"
                 ))
             }
         };
@@ -170,7 +182,7 @@ impl LoadedModel {
         // vocab actually defines become the stop set.
         let eos_names: &[&str] = match arch {
             Arch::Glm4 => &["<|user|>", "<|endoftext|>", "<|observation|>"],
-            Arch::Qwen3 => &["<|im_end|>", "<|endoftext|>"],
+            Arch::Qwen3 | Arch::Qwen2 => &["<|im_end|>", "<|endoftext|>"],
         };
         let eos_tokens: Vec<u32> = eos_names
             .iter()
@@ -249,10 +261,31 @@ impl LoadedModel {
         out
     }
 
+    /// Same wire format in, plain ChatML out — Qwen2.5 has no thinking mode,
+    /// so no `<think>` block (its tokenizer would render one as literal text).
+    fn build_prompt_qwen2(system_prompt: &str, history: &str) -> String {
+        let mut out = String::new();
+        if !system_prompt.is_empty() {
+            out.push_str("<|im_start|>system\n");
+            out.push_str(system_prompt);
+            out.push_str("<|im_end|>\n");
+        }
+        for (role, content) in Self::parse_history(history) {
+            out.push_str("<|im_start|>");
+            out.push_str(role);
+            out.push('\n');
+            out.push_str(content);
+            out.push_str("<|im_end|>\n");
+        }
+        out.push_str("<|im_start|>assistant\n");
+        out
+    }
+
     fn build_prompt(&self, system_prompt: &str, history: &str) -> String {
         match self.arch {
             Arch::Glm4 => Self::build_prompt_glm4(system_prompt, history),
             Arch::Qwen3 => Self::build_prompt_qwen3(system_prompt, history),
+            Arch::Qwen2 => Self::build_prompt_qwen2(system_prompt, history),
         }
     }
 

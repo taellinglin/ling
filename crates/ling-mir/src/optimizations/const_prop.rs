@@ -48,7 +48,11 @@ impl Transform for ConstantPropagation {
 
         let mut safe_constants: HashMap<Local, Constant> = HashMap::new();
         for (local, count) in &assign_counts {
-            if *count == 1 {
+            // Parameters carry an implicit definition at function entry, so a
+            // single body assignment is still two definitions: uses reachable
+            // from entry must keep reading the incoming argument.
+            let is_param = local.0 >= 1 && local.0 <= func.arg_count;
+            if *count == 1 && !is_param {
                 if let Some(c) = constant_assignments.get(local) {
                     safe_constants.insert(*local, c.clone());
                 }

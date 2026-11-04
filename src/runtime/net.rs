@@ -5,7 +5,10 @@
 // loop never blocks: `send`/`send_to` enqueue lines, `recv`/`recv_from`
 // dequeue them in arrival order. Intended for LAN-latency state sync.
 //
-//   net_host(port)          → listen, accept up to MAX_CLIENTS peers
+//   net_host(port)          → listen on 0.0.0.0, accept up to MAX_CLIENTS peers
+//   net_host(port, "ip")    → same, bound to one address (e.g. "127.0.0.1" for
+//                             loopback only); an invalid address is an error
+//   net_host_addr()         → "ip:port" the listener really bound ("" if none yet)
 //   net_join(ip, port)      → connect to a host
 //   net_send(str)           → host: broadcast to all clients. client: send to host.
 //   net_send_to(id, str)    → host only: unicast to one client
@@ -22,7 +25,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -61,6 +64,7 @@ struct Hub {
 }
 
 static NET: Mutex<Option<Hub>> = Mutex::new(None);
+static BOUND: Mutex<Option<SocketAddr>> = Mutex::new(None);
 
 fn push_bounded<T>(q: &mut VecDeque<T>, cap: usize, item: T) {
     if q.len() >= cap {
@@ -143,6 +147,29 @@ fn install(role: Role) -> (Arc<AtomicU8>, Inbound, Events) {
 
 // ── multi-client host (net_host / net_recv_from / net_send_to) ─────────────
 pub fn host(port: u16) {
+    host_on(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+}
+
+/// Parses `net_host`'s optional bind address: "" keeps the default (0.0.0.0),
+/// anything else must be a literal IPv4/IPv6 address.
+pub fn parse_bind(addr: &str) -> Result<IpAddr, String> {
+    let a = addr.trim();
+    if a.is_empty() {
+        return Ok(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    }
+    a.parse::<IpAddr>()
+        .map_err(|_| format!("net_host: invalid bind address '{addr}' (expected an IP literal such as \"127.0.0.1\")"))
+}
+
+/// Address the current host listener is actually bound to ("" if none).
+pub fn host_addr() -> String {
+    BOUND.lock().ok().and_then(|g| *g).map(|a| a.to_string()).unwrap_or_default()
+}
+
+pub fn host_on(ip: IpAddr, port: u16) {
+    if let Ok(mut b) = BOUND.lock() {
+        *b = None;
+    }
     let accept_stop = Arc::new(AtomicBool::new(false));
     let (status, inbound, events) = install(Role::Host {
         next_id: AtomicU64::new(1),
@@ -150,13 +177,16 @@ pub fn host(port: u16) {
         accept_stop: accept_stop.clone(),
     });
     std::thread::spawn(move || {
-        let listener = match TcpListener::bind(("0.0.0.0", port)) {
+        let listener = match TcpListener::bind((ip, port)) {
             Ok(l) => l,
             Err(_) => {
                 status.store(0, Ordering::SeqCst);
                 return;
             },
         };
+        if let (Ok(mut b), Ok(a)) = (BOUND.lock(), listener.local_addr()) {
+            *b = Some(a);
+        }
         let _ = listener.set_nonblocking(true);
         loop {
             if accept_stop.load(Ordering::SeqCst) {
@@ -546,6 +576,32 @@ mod tests {
                 "could not connect to {addr}"
             );
             std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn host_on_loopback_binds_that_address_only() {
+        let _g = TEST_LOCK.lock().unwrap();
+        host_on(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        assert!(deadline_poll(|| !host_addr().is_empty()), "listener never bound");
+        let addr = host_addr();
+        assert!(addr.starts_with("127.0.0.1:"), "bound {addr}");
+        let _peer = wait_connect(&addr);
+        assert!(deadline_poll(|| client_count() == 1));
+        close();
+        host(0);
+        assert!(deadline_poll(|| !host_addr().is_empty()));
+        assert!(host_addr().starts_with("0.0.0.0:"), "default bound {}", host_addr());
+        close();
+    }
+
+    #[test]
+    fn parse_bind_defaults_and_rejects_invalid() {
+        assert_eq!(parse_bind("").unwrap(), IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        assert_eq!(parse_bind(" 127.0.0.1 ").unwrap(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert!(parse_bind("::1").unwrap().is_loopback());
+        for bad in ["localhost", "999.1.1.1", "127.0.0.1:80", "abc"] {
+            assert!(parse_bind(bad).is_err(), "{bad} should be rejected");
         }
     }
 

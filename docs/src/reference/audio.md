@@ -23,19 +23,26 @@ by the interpreter and produced by `lingfu normalize`.
 ## Tone synthesis
 
 ```ling
-# audio_tone(slot, x, y, z, w,  freq_hz, amplitude, lfo_rate, lfo_depth)
+# audio_tone(slot, x, y, z, w,  freq_hz, amplitude, lfo_rate, lfo_depth
+#            [, wave, duty])
 audio_tone(0,  0.0, 0.0, 8.0,  1.5,   261.63, 0.08, 0.10, 0.008)
+
+# chiptune voices: square with a 25% pulse width, and pitched noise
+audio_tone(1, 0, 0, 0, 0,  440.0, 0.15, 0, 0, "square", 0.25)
+audio_tone(2, 0, 0, 0, 0, 1200.0, 0.10, 0, 0, "noise", 0.5)
 ```
 
 | Param | Description |
 |-------|-------------|
 | `slot` | Tone slot index (0–15) |
 | `x, y, z` | 3D world position of the sound source |
-| `w` | Spatial spread / falloff width |
+| `w` | Spatial spread / falloff width (0 disables the 4D cross-mod) |
 | `freq_hz` | Oscillator frequency in Hz |
 | `amplitude` | Base amplitude (0..1) |
 | `lfo_rate` | LFO modulation rate in Hz |
 | `lfo_depth` | LFO depth (0..1) |
+| `wave` | optional: `"sine"` (default) · `"square"` · `"saw"` · `"triangle"` · `"noise"` (sample-and-hold stepped at `freq_hz` — chip-style pitched noise) |
+| `duty` | optional square pulse width (0..1); chip pulse widths are 0.125 / 0.25 / 0.5 / 0.75 |
 
 ## Volume
 

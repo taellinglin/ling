@@ -25,4 +25,5 @@ pub use cranelift::aot::CraneliftBackend;
 #[cfg(not(target_arch = "wasm32"))]
 pub use cranelift::jit::JitBackend;
 pub use cranelift::runtime;
+pub use cranelift::translate::consumes_list_arg0;
 pub use wasm::WasmBackend;

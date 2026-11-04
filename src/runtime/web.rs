@@ -586,6 +586,33 @@ impl AsyncJobs {
         id
     }
 
+    /// Starts a GET request in the background; returns a job id immediately.
+    /// The `http_get_async` twin of `start_post` — a page fetch that must not
+    /// block the caller's loop (Horizon polls while it keeps rendering).
+    pub fn start_get(&self, url: String) -> String {
+        let id = {
+            use rand::RngCore;
+            let mut buf = [0u8; 16];
+            rand::rngs::OsRng.fill_bytes(&mut buf);
+            buf.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        };
+        self.0.lock().unwrap().insert(id.clone(), None);
+        let jobs = self.0.clone();
+        let job_id = id.clone();
+        async_runtime_handle().spawn(async move {
+            let client = reqwest::Client::new();
+            let text = match client.get(&url).send().await {
+                Ok(resp) => resp
+                    .text()
+                    .await
+                    .unwrap_or_else(|e| format!("ERROR: body read failed: {e}")),
+                Err(e) => format!("ERROR: {}", e.to_string().replace('"', "'")),
+            };
+            jobs.lock().unwrap().insert(job_id, Some(text));
+        });
+        id
+    }
+
     /// Non-blocking: `None` while the job is still running, `Some(body)` once done.
     /// A never-registered id also reads as still-running (`None`) rather than erroring.
     pub fn poll(&self, id: &str) -> Option<String> {

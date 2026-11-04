@@ -469,6 +469,41 @@ fn lower_stmt(stmt: &parser::ast::Stmt, ctx: &mut LowerCtx) -> Option<Operand> {
                     return None;
                 }
             }
+            // `bind x = list_push(x, …)` / `bind x = list_set(x, …)` — the linear
+            // accumulator pattern. Lower the call straight into x's own local
+            // (dest == arg0) so codegen's recycle path keeps the mutation in
+            // place. The generic path below routes the result through a temp,
+            // which leaves a second live handle across the call and forces the
+            // shim's `Rc::make_mut` into a full copy-on-write EVERY iteration —
+            // ~14 µs per `list_set` on a 2k list instead of ~10 ns. Mirrors the
+            // tree-walker's own in-place fast path for exactly this shape.
+            if let parser::ast::Expr::Call(callee, cargs) = expr {
+                if let parser::ast::Expr::Ident(fname) = callee.as_ref() {
+                    if ling_codegen::consumes_list_arg0(fname, cargs.len())
+                        && matches!(cargs.first(), Some(parser::ast::Expr::Ident(a0)) if a0 == name)
+                        && ctx.scope_names.last().is_some_and(|s| s.contains(name))
+                        && !ctx.locals.contains_key(fname)
+                        && !ctx.globals.contains(fname)
+                        && !ctx.closure_vars.contains_key(fname)
+                    {
+                        // Same-scope re-bind → bind_local would return this same
+                        // local; using it directly keeps arg0 and dest identical.
+                        let dest = ctx.locals[name];
+                        let mut mir_args = vec![Operand::Copy(dest)];
+                        for a in cargs.iter().skip(1) {
+                            mir_args.push(lower_expr(a, ctx));
+                        }
+                        ctx.emit(StatementKind::Assign(
+                            dest,
+                            Rvalue::Call {
+                                func: Operand::Constant(Constant::Function(fname.clone())),
+                                args: mir_args,
+                            },
+                        ));
+                        return None;
+                    }
+                }
+            }
             let val = lower_expr(expr, ctx);
             // Re-binding within the same scope mutates the same local (so loop
             // bodies feed accumulators across the back-edge); binding a name owned

@@ -12,6 +12,8 @@ and in 2D or 3D/4D.
 | `font_text_fill(handle, x, y, px, "text")` | Anti-aliased **filled** glyphs (solid letterforms). |
 | `font_text_3d(handle, cx,cy,cz, ux,uy,uz, vx,vy,vz, size, "text")` | Stroked text on a 3-D plane (basis `u`,`v`), depth-sorted — rotates with the camera and projects through the 4-D pipeline. |
 | `font_width(handle, px, "text")` | Pixel width of a string. |
+| `font_text_px(handle, x, y, px, "text")` | **Bitmap** text: fontdue coverage bitmaps cached per (glyph, size), alpha-blended in the pen colour. Orders of magnitude faster than the vector fillers — use it for per-frame UI text that doesn't scale or rotate. |
+| `font_width_px(handle, px, "text")` | Pixel width via the bitmap twin. |
 
 Any script is covered: Latin, 中文, 日本語, 한국어, ไทย all render from the right font
 (e.g. Noto Sans SC covers Latin + CJK + Thai).

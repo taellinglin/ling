@@ -27,11 +27,13 @@ pub mod toon;
 pub mod vtex;
 #[cfg(target_arch = "wasm32")]
 pub mod webgl;
+#[cfg(all(target_arch = "wasm32", feature = "gl-web"))]
+pub mod webgl_scene;
 #[cfg(feature = "gpu")]
 pub mod wgpu_raster;
 
 pub use camera::Camera3D;
-pub use depth::DepthQueue;
+pub use depth::{gpu_shutdown, DepthQueue};
 pub use light::Light;
 pub use material::LingMaterial;
 pub use toon::ToonConfig;
@@ -139,6 +141,12 @@ pub struct GfxState {
     /// (`เติม`) so it persists across a frame's multiple flushes (like
     /// `glClear(DEPTH)`), then accumulates correct occlusion across all layers.
     pub depth_buf: Vec<f32>,
+    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy)
+    pub ui_layer: Option<(Vec<u32>, usize, usize, Vec<u32>)>,
+    /// Native scaled render: UI layers kept at their own (display) resolution and
+    /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
+    /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
+    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
     /// True ⇒ the next depth flush clears the z-buffer first (set by `เติม` /
     /// `clear_depth`). Lets the z-buffer span a frame's many `flush_3d` calls.
     pub zbuf_needs_clear: bool,
@@ -267,6 +275,8 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            ui_layer: None,
+            ui_overlays: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
             lens_guard: 0.0,
@@ -343,7 +353,15 @@ impl GfxState {
         if self.buffer.len() < w * h {
             return;
         }
-        toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        static HALF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let half = *HALF.get_or_init(|| {
+            std::env::var("LING_POST_HALF").map_or(false, |v| !v.is_empty() && v != "0")
+        });
+        if half {
+            toon::apply_half(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        } else {
+            toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        }
     }
 }
 
@@ -355,6 +373,127 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashSet::new());
     static WASM_KEYS_DOWN: std::cell::RefCell<std::collections::HashSet<String>> =
         std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+
+// ─── WASM host display state: detached UI layer, display size, live resize ────
+// The browser shows the 3-D frame (low-res, for speed) and the UI as TWO stacked
+// canvases: with ui_detach(1) a ui_begin/ui_end layer is not composited into the
+// frame but kept here at its virtual (screen-sized) resolution and posted to the
+// page separately, so pixel text never gets shrunk with the scene.
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static UI_DETACH: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static UI_OVERLAY: std::cell::RefCell<(Vec<u32>, usize, usize, bool)> = std::cell::RefCell::new((Vec::new(), 0, 0, false));
+    static DISPLAY: std::cell::Cell<(f64, f64)> = std::cell::Cell::new((0.0, 0.0));
+    static PENDING_RESIZE: std::cell::Cell<Option<(usize, usize)>> = std::cell::Cell::new(None);
+}
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_set_display(w: f64, h: f64) { DISPLAY.with(|d| d.set((w, h))); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_display() -> (f64, f64) { DISPLAY.with(|d| d.get()) }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_request_resize(w: usize, h: usize) { PENDING_RESIZE.with(|p| p.set(Some((w.max(64), h.max(64))))); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_take_resize() -> Option<(usize, usize)> { PENDING_RESIZE.with(|p| p.take()) }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_detach(on: bool) { UI_DETACH.with(|d| d.set(on)); }
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_detached() -> bool { UI_DETACH.with(|d| d.get()) }
+/// ui_end in detached mode: copy the pixels this layer changed into the overlay.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_overlay_put(off: &[u32], base: &[u32], vw: usize, vh: usize) {
+    UI_OVERLAY.with(|o| {
+        let mut o = o.borrow_mut();
+        if o.1 != vw || o.2 != vh || o.0.len() != vw * vh {
+            *o = (vec![0u32; vw * vh], vw, vh, false);
+        }
+        for i in 0..(vw * vh).min(off.len()).min(base.len()) {
+            if off[i] != base[i] {
+                o.0[i] = 0xFF00_0000 | (off[i] & 0x00FF_FFFF);
+            }
+        }
+        o.3 = true;
+    });
+}
+/// present: hand the frame's overlay to the page (None when no UI was drawn) and reset it.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_ui_overlay_take() -> Option<(Vec<u8>, usize, usize)> {
+    UI_OVERLAY.with(|o| {
+        let mut o = o.borrow_mut();
+        if !o.3 {
+            return None;
+        }
+        let (w, h) = (o.1, o.2);
+        let mut px = vec![0u8; w * h * 4];
+        for (i, c) in o.0.iter_mut().enumerate() {
+            let v = *c;
+            if v >> 24 != 0 {
+                px[i * 4] = ((v >> 16) & 255) as u8;
+                px[i * 4 + 1] = ((v >> 8) & 255) as u8;
+                px[i * 4 + 2] = (v & 255) as u8;
+                px[i * 4 + 3] = 255;
+                *c = 0;
+            }
+        }
+        o.3 = false;
+        Some((px, w, h))
+    })
+}
+
+// ─── native Unicode text input (IME / non-ASCII keyboards) ──────────────────
+// minifb reports WM_CHAR code points through an InputCallback. ASCII keeps going
+// through the VK polling path, so only code points >= 0x80 are queued here.
+#[cfg(not(target_arch = "wasm32"))]
+static NATIVE_TEXT: std::sync::Mutex<Vec<char>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(not(target_arch = "wasm32"))]
+pub struct UnicodeInput;
+
+#[cfg(not(target_arch = "wasm32"))]
+impl minifb::InputCallback for UnicodeInput {
+    fn add_char(&mut self, uni_char: u32) {
+        if uni_char >= 0x80 {
+            if let Some(c) = char::from_u32(uni_char) {
+                if !c.is_control() {
+                    if let Ok(mut q) = NATIVE_TEXT.lock() {
+                        if q.len() < 256 {
+                            q.push(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Take the non-ASCII characters typed since the last call.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn native_text_drain() -> Vec<char> {
+    NATIVE_TEXT.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+}
+
+// ─── WASM text input (typed characters for text_poll) ────────────────────────
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WASM_TEXT: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+}
+
+/// Called from JavaScript with typed / pasted / IME-composed text. "\u{8}" means Backspace.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_text_input(s: &str) {
+    WASM_TEXT.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.len() < 512 {
+            q.push(s.to_string());
+        }
+    });
+}
+
+/// Take everything typed since the last call.
+#[cfg(target_arch = "wasm32")]
+pub fn wasm_text_drain() -> Vec<String> {
+    WASM_TEXT.with(|q| std::mem::take(&mut *q.borrow_mut()))
 }
 
 /// Called from JavaScript when a key is pressed down
@@ -393,6 +532,10 @@ pub fn wasm_clear_frame_keys() {
     WASM_KEYS_PRESSED.with(|keys| {
         keys.borrow_mut().clear();
     });
+    // mouse_dx()/mouse_dy() are per-frame deltas: without this reset they
+    // accumulated forever (a right-drag orbit pinned the pitch at its clamp
+    // and kept spinning the yaw)
+    wasm_clear_frame_mouse_delta();
 }
 
 /// Check if a key was pressed this frame
@@ -516,9 +659,13 @@ fn normalize_key(key: &str) -> String {
         "ArrowRight" => "right".to_string(),
         "Enter" => "enter".to_string(),
         "Escape" => "escape".to_string(),
-        "Shift" | "ShiftLeft" | "ShiftRight" => "shift".to_string(),
-        "Control" | "ControlLeft" | "ControlRight" => "ctrl".to_string(),
-        "Alt" | "AltLeft" | "AltRight" => "alt".to_string(),
+        // the browser reports one "Shift" for either side; desktop scripts ask for
+        // a side ("lshift") — on the web both sides answer as the one key
+        "Shift" | "ShiftLeft" | "ShiftRight" | "lshift" | "rshift" | "leftshift" | "rightshift"
+        | "left_shift" | "right_shift" | "LShift" | "RShift" => "shift".to_string(),
+        "Control" | "ControlLeft" | "ControlRight" | "lctrl" | "rctrl" | "leftctrl" | "rightctrl"
+        | "lcontrol" | "rcontrol" => "ctrl".to_string(),
+        "Alt" | "AltLeft" | "AltRight" | "lalt" | "ralt" | "leftalt" | "rightalt" => "alt".to_string(),
         "Tab" => "tab".to_string(),
         "Backspace" => "backspace".to_string(),
         _ => key.to_lowercase(),
@@ -574,6 +721,12 @@ pub struct GfxState {
     pub depth_test: bool,
     /// Z-buffer (camera-space depth per pixel).
     pub depth_buf: Vec<f32>,
+    /// open UI layer (ui_begin): (real buffer, real w, real h, untouched virtual copy)
+    pub ui_layer: Option<(Vec<u32>, usize, usize, Vec<u32>)>,
+    /// Native scaled render: UI layers kept at their own (display) resolution and
+    /// composited AFTER the 3-D frame is upscaled, at present time — pixel text stays
+    /// crisp instead of being averaged down into the low-res frame. (off, base, w, h)
+    pub ui_overlays: Vec<(Vec<u32>, Vec<u32>, usize, usize)>,
     /// Mirrors native: next depth flush clears the z-buffer first.
     pub zbuf_needs_clear: bool,
     /// Mirrors native: `flush_post` ran the post-chain; `present` skips it.
@@ -642,6 +795,8 @@ impl GfxState {
             grad_oklab: true,
             depth_test: false,
             depth_buf: Vec::new(),
+            ui_layer: None,
+            ui_overlays: Vec::new(),
             zbuf_needs_clear: true,
             post_done: false,
             lens_guard: 0.0,
@@ -716,7 +871,11 @@ impl GfxState {
         if self.buffer.len() < w * h {
             return;
         }
+        let t0 = std::time::Instant::now();
         toon::apply(&self.toon, &mut self.buffer, &self.depth_buf, w, h);
+        if std::env::var_os("LING_GPU_LOG").is_some() {
+            eprintln!("[post] toon::apply {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+        }
     }
 }
 
@@ -739,6 +898,14 @@ impl GfxState {
         cy: f32,
         cz: f32,
     ) {
+        let near = -self.camera.zdist + 0.05;
+        let da = self.camera.depth(ax, ay, az);
+        let db = self.camera.depth(bx, by, bz);
+        let dc = self.camera.depth(cx, cy, cz);
+        // wholly behind the near plane: nothing to light, clip or push
+        if da <= near && db <= near && dc <= near {
+            return;
+        }
         let ux = bx - ax;
         let uy = by - ay;
         let uz = bz - az;
@@ -799,17 +966,16 @@ impl GfxState {
             )
         };
 
-        let near = -self.camera.zdist + 0.05;
         if self.lens_guard > 0.0 {
             let g = near + self.lens_guard;
-            if self.camera.depth(ax, ay, az) < g || self.camera.depth(bx, by, bz) < g || self.camera.depth(cx, cy, cz) < g {
+            if da < g || db < g || dc < g {
                 return;
             }
         }
         let vw = [
-            (ax, ay, az, self.camera.depth(ax, ay, az), c0),
-            (bx, by, bz, self.camera.depth(bx, by, bz), c1),
-            (cx, cy, cz, self.camera.depth(cx, cy, cz), c2),
+            (ax, ay, az, da, c0),
+            (bx, by, bz, db, c1),
+            (cx, cy, cz, dc, c2),
         ];
         let mut poly: [(f32, f32, f32, u32); 4] = [(0.0, 0.0, 0.0, 0); 4];
         let mut pn = 0usize;

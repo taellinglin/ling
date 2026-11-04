@@ -76,6 +76,17 @@ All math args and results are `f64`. Angles are in radians.
 | `num_to_str(n)` | Number to string |
 | `str_contains(s, sub)` | Substring test |
 
+## Files
+
+| Function | Description |
+|----------|-------------|
+| `read_file(path)` | Read a UTF-8 text file into a string |
+| `read_file_bytes(path)` | **Binary-safe**: read any file into a list of byte values 0-255 (`[]` on error) — ROMs, images, save data |
+| `write_file_bytes(path, list)` | Binary-safe write: list of byte values → file, returns bool |
+| `list_dir(path)` | List a directory's entries (full paths, sorted) |
+| `is_dir(p)` / `is_file(p)` | Path tests |
+| `path_name(p)` | Final component of a path |
+
 ## Type checks
 
 | Function | Returns |

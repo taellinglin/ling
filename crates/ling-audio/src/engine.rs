@@ -35,6 +35,13 @@ pub struct ToneParams {
     pub lfo_rate: f32,
     /// LFO depth as a fraction of freq (0.03 = ±3 % pitch wobble).
     pub lfo_depth: f32,
+    /// Carrier waveform (default sine). Square honours `duty`; noise is a
+    /// sample-and-hold LCG stepped at `freq` Hz, so pitch works like a chip's
+    /// noise channel.
+    pub wave: Wave,
+    /// Square-wave duty cycle in (0,1); 0.5 = classic square. Chip pulse
+    /// channels use 0.125 / 0.25 / 0.5 / 0.75.
+    pub duty: f32,
 }
 
 impl Default for ToneParams {
@@ -48,6 +55,8 @@ impl Default for ToneParams {
             amp: 0.15,
             lfo_rate: 0.5,
             lfo_depth: 0.02,
+            wave: Wave::Sine,
+            duty: 0.5,
         }
     }
 }
@@ -61,6 +70,8 @@ struct Tone {
     w_phase: f32,   // 4D sub-oscillator phase [0, 1)
     cur_amp: f32,   // smoothed amplitude (glides to params.amp — de-click)
     cur_freq: f32,  // smoothed frequency (glides to params.freq — de-zipper)
+    seed: u32,      // LCG state for Wave::Noise
+    held: f32,      // current sample-and-hold noise value
 }
 
 impl Tone {
@@ -73,6 +84,8 @@ impl Tone {
             w_phase: 0.0,
             cur_amp: a,
             cur_freq: f,
+            seed: 0x1234_5678,
+            held: 1.0,
         }
     }
 }
@@ -258,6 +271,9 @@ struct SampleVoice {
     pitch: f32,
     looping: bool,
     active: bool,
+    /// one-shot trim: stop (with a ~4 ms fade) once `pos` reaches this source
+    /// sample index (f64::INFINITY = play to the end). Set by play_sample_flat_ex.
+    end: f64,
     /// false ⇒ skip `spatial_gains` entirely and mix at flat `vol` (both
     /// channels) regardless of listener distance/orientation — for VO/
     /// narration, which should read at a consistent level no matter where
@@ -580,6 +596,10 @@ impl LowPass {
 }
 
 struct AudioState {
+    /// One-pole smoothing coefficients for tone amplitude / frequency
+    /// (per output sample). Defaults ≈ 5.7 ms / 1.9 ms at 44.1 kHz.
+    amp_coef: f32,
+    freq_coef: f32,
     tones: Vec<Option<Tone>>,
     blips: Vec<Blip>,
     sfx: Vec<SfxVoice>,
@@ -609,6 +629,8 @@ struct AudioState {
 impl AudioState {
     fn new(sample_rate: u32) -> Self {
         Self {
+            amp_coef: 0.004,
+            freq_coef: 0.012,
             tones: (0..16).map(|_| None).collect(),
             blips: Vec::new(),
             sfx: Vec::new(),
@@ -646,6 +668,8 @@ impl AudioState {
         let ly = self.ly;
         let lz = self.lz;
         let dt = 1.0 / self.sample_rate as f32;
+        let amp_coef = self.amp_coef;
+        let freq_coef = self.freq_coef;
 
         let mut l = 0.0f32;
         let mut r = 0.0f32;
@@ -663,8 +687,8 @@ impl AudioState {
             // ── De-click / de-zipper: glide amp & freq toward their targets ──
             // The game re-sets tone params every frame; jumping amp/freq makes the
             // waveform discontinuous → audible snaps/pops. One-pole smoothing fixes it.
-            tone.cur_amp += (pamp - tone.cur_amp) * 0.004;
-            tone.cur_freq += (pfreq - tone.cur_freq) * 0.012;
+            tone.cur_amp += (pamp - tone.cur_amp) * amp_coef;
+            tone.cur_freq += (pfreq - tone.cur_freq) * freq_coef;
 
             // ── World → camera-space ─────────────────────────────────────────
             // Apply Y-rotation (yaw) then X-rotation (pitch) — same as Camera3D.
@@ -698,8 +722,26 @@ impl AudioState {
 
             // ── Carrier oscillator (smoothed amp & freq) ──────────────────────
             let inst_freq = tone.cur_freq * (1.0 + lfo_mod) * (1.0 + w_mod * 0.08);
-            let sample = (tone.phase * TAU).sin() * tone.cur_amp;
-            tone.phase = (tone.phase + inst_freq * dt).fract();
+            let raw = match tone.params.wave {
+                Wave::Noise => tone.held,
+                Wave::Square => {
+                    let duty = tone.params.duty.clamp(0.01, 0.99);
+                    if tone.phase < duty {
+                        1.0
+                    } else {
+                        -1.0
+                    }
+                },
+                w => w.sample(tone.phase),
+            };
+            let sample = raw * tone.cur_amp;
+            let next_phase = tone.phase + inst_freq * dt;
+            if next_phase >= 1.0 {
+                // noise steps its sample-and-hold LCG once per period → pitched noise
+                tone.seed = tone.seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                tone.held = ((tone.seed >> 8) as f32 / 8_388_608.0) - 1.0;
+            }
+            tone.phase = next_phase.fract();
 
             l += sample * l_gain;
             r += sample * r_gain;
@@ -769,10 +811,19 @@ impl AudioState {
                 } else {
                     (1.0, 1.0)
                 };
-                l += s * v.vol * lg;
-                r += s * v.vol * rg;
+                // trimmed one-shot: ~4 ms linear fade into the cut (no click)
+                let fade = if v.end.is_finite() {
+                    let left = (v.end - v.pos) / (*src_rate as f64 * 0.004);
+                    left.clamp(0.0, 1.0) as f32
+                } else {
+                    1.0
+                };
+                l += s * v.vol * lg * fade;
+                r += s * v.vol * rg * fade;
                 v.pos += (*src_rate as f64 / out_rate) * v.pitch as f64;
-                if v.pos as usize >= n - 1 {
+                if v.pos >= v.end {
+                    v.active = false;
+                } else if v.pos as usize >= n - 1 {
                     if v.looping {
                         v.pos = 0.0;
                     } else {
@@ -992,6 +1043,7 @@ impl AudioEngine {
                 pitch: if pitch > 0.0 { pitch } else { 1.0 },
                 looping,
                 active: true,
+                end: f64::INFINITY,
                 positional: true,
             });
             vid
@@ -1006,10 +1058,20 @@ impl AudioEngine {
     /// is, unlike `play_sample`'s world-space sound effects. `pitch` is a
     /// playback-rate multiplier (1.0 = unchanged). Returns a voice id.
     pub fn play_sample_flat(&self, id: usize, vol: f32, looping: bool, pitch: f32) -> u32 {
+        self.play_sample_flat_ex(id, vol, looping, pitch, 0.0, 0.0)
+    }
+
+    /// `play_sample_flat` starting `offset_s` seconds into the sample and (when
+    /// `dur_s` > 0, one-shots only) cut after `dur_s` seconds of SOURCE audio
+    /// (pitch speeds that up, like the rest of the clip), with a short fade.
+    pub fn play_sample_flat_ex(&self, id: usize, vol: f32, looping: bool, pitch: f32, offset_s: f32, dur_s: f32) -> u32 {
         if let Ok(mut s) = self.state.lock() {
             if id >= s.samples.len() {
                 return 0;
             }
+            let src_rate = s.samples[id].1 as f64;
+            let start = (offset_s.max(0.0) as f64) * src_rate;
+            let end = if dur_s > 0.0 && !looping { start + dur_s as f64 * src_rate } else { f64::INFINITY };
             let vid = s.next_voice_id;
             s.next_voice_id += 1;
             if s.sample_voices.len() >= 64 {
@@ -1018,7 +1080,7 @@ impl AudioEngine {
             s.sample_voices.push(SampleVoice {
                 id: vid,
                 sample: id,
-                pos: 0.0,
+                pos: start,
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
@@ -1027,6 +1089,7 @@ impl AudioEngine {
                 pitch: if pitch > 0.0 { pitch } else { 1.0 },
                 looping,
                 active: true,
+                end,
                 positional: false,
             });
             vid
@@ -1158,6 +1221,26 @@ impl AudioEngine {
     pub fn set_master_volume(&self, vol: f32) {
         if let Ok(mut s) = self.state.lock() {
             s.master_volume = vol;
+        }
+    }
+
+    /// Set the amplitude / frequency smoothing time constants of the
+    /// positional tones, in milliseconds (≤0 restores the default). Programs
+    /// that re-set tone parameters once per video frame (chip-style players)
+    /// want an amplitude glide near half a frame (≈ 8-10 ms) so a decaying
+    /// envelope ramps instead of stepping 60 times a second.
+    pub fn set_glide(&self, amp_ms: f32, freq_ms: f32) {
+        if let Ok(mut s) = self.state.lock() {
+            let sr = s.sample_rate as f32;
+            let coef = |ms: f32, default: f32| {
+                if ms <= 0.0 {
+                    default
+                } else {
+                    1.0 - (-1.0 / (ms * 0.001 * sr)).exp()
+                }
+            };
+            s.amp_coef = coef(amp_ms, 0.004);
+            s.freq_coef = coef(freq_ms, 0.012);
         }
     }
 }
@@ -1335,6 +1418,7 @@ mod tests {
             pitch: 1.0,
             looping: true,
             active: true,
+            end: f64::INFINITY,
             positional: true,
         });
         for _ in 0..500 {
@@ -1358,6 +1442,7 @@ mod tests {
             pitch: 1.0,
             looping: false,
             active: true,
+            end: f64::INFINITY,
             positional: true,
         });
         for _ in 0..500 {
@@ -1452,6 +1537,7 @@ mod tests {
             pitch: 1.0,
             looping: true,
             active: true,
+            end: f64::INFINITY,
             positional: true,
         });
         let mut energy = 0.0f64;

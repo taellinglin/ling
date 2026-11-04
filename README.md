@@ -55,6 +55,32 @@ cd ling
 cargo run --bin ling -- run examples/basics/thai_hello_world.ling
 ```
 
+### Install profiles
+
+`cargo install ling-lang` installs everything (the `full` profile). To build less,
+turn the default off and pick the profiles you want:
+
+```bash
+cargo install ling-lang --no-default-features --features core        # compiler + interpreter only
+cargo install ling-lang --no-default-features --features web         # + HTTP/SQLite servers, video, processes
+cargo install ling-lang --no-default-features --features game,audio  # a game kit with sound
+```
+
+| Profile   | What it adds |
+|-----------|--------------|
+| `core`    | Lexer, parser, MIR, Cranelift JIT/AOT, the interpreter, the software framebuffer and window (`draw_*`, fonts, images, `tm_*` meshes). Every profile includes it. |
+| `web`     | `http_*` server and client (ling-http), `db_*` SQLite, static files, TOTP, zip/tar, `video_*` playback, `proc_*`/`run_process`, web images and SVG, hashes and `password_hash`, `code_normalize`. |
+| `privacy` | Post-quantum identities (ling-crypto), `lingtp://`, LWP-1 `p2p_*` (ling-net), Ling Wallet `lw_*` (BIP-39), `ssh_*` (russh), plus `web` and the `ui_*` widgets, which is everything the Horizon browser needs. |
+| `game`    | Physics (soft/rigid/liquid, glTF), GPU raster (ling-gpu), animation, dialogs, gamepads (ling-input/gilrs), acoustic bodies (ling-body), `ui_*` widgets. |
+| `ai`      | ling-ai (`nn_*`, `bt_*`, learned `dialog_*`) and speech-to-text (`stt_*`). `llm` and `vision` are still separate opt-ins. |
+| `audio`   | Sound engine (ling-audio), music decode/synth/MIDI/lyrics (ling-music), microphone (ling-mic), the LingStationX DAW (`daw_*`, `fs_*`, `dlg_*`). |
+| `os`      | `ling build --platform kernel\|rpi\|lingos\|lingos-rpi` (LingOS kernel and userland images). |
+| `full`    | All of the above (the default). |
+
+A program that calls a builtin from a profile your build leaves out stops with an error
+that names the profile to reinstall with. The heavy extras stay opt-in on top of any
+profile: `llm`, `llm-cuda`, `vision`, `cuda`, `gpu-cuda`, `gpu`, `llvm`, `emu`.
+
 ---
 
 ## Hello World · 五種語言

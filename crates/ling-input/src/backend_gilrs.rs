@@ -24,6 +24,11 @@ pub struct GilrsBackend {
     gilrs: Gilrs,
     /// gilrs gamepad handle -> our device id.
     ids: HashMap<GamepadId, DeviceId>,
+    /// Pads already plugged in at start-up get registered on the first poll
+    /// (gilrs only sends `Connected` for later hot-plugs on some platforms).
+    scanned: bool,
+    /// Last D-pad direction synthesized from hat/axis D-pads, per pad.
+    dpad_axes: HashMap<GamepadId, (i8, i8)>,
 }
 
 impl GilrsBackend {
@@ -33,7 +38,7 @@ impl GilrsBackend {
     /// Returns the gilrs initialization error if no input subsystem is available.
     #[allow(clippy::result_large_err)]
     pub fn new() -> Result<Self, gilrs::Error> {
-        Ok(Self { gilrs: Gilrs::new()?, ids: HashMap::new() })
+        Ok(Self { gilrs: Gilrs::new()?, ids: HashMap::new(), scanned: false, dpad_axes: HashMap::new() })
     }
 
     fn ensure_registered(&mut self, gid: GamepadId, registry: &mut DeviceRegistry) -> DeviceId {
@@ -75,6 +80,17 @@ fn map_button(b: GButton) -> Option<GamepadButton> {
 
 impl InputBackend for GilrsBackend {
     fn poll(&mut self, registry: &mut DeviceRegistry, out: &mut Vec<InputEvent>) {
+        if !self.scanned {
+            self.scanned = true;
+            let present: Vec<GamepadId> =
+                self.gilrs.gamepads().filter(|(_, g)| g.is_connected()).map(|(id, _)| id).collect();
+            for gid in present {
+                let device = self.ensure_registered(gid, registry);
+                if let Some(info) = registry.get(device).cloned() {
+                    out.push(InputEvent::DeviceConnected(info));
+                }
+            }
+        }
         while let Some(ev) = self.gilrs.next_event() {
             let device = self.ensure_registered(ev.id, registry);
             match ev.event {
@@ -106,6 +122,28 @@ impl InputBackend for GilrsBackend {
                     };
                     if let Some(axis) = axis {
                         out.push(InputEvent::Axis { device, axis, value });
+                    }
+                },
+                EventType::AxisChanged(a @ (GAxis::DPadX | GAxis::DPadY), value, _) => {
+                    // hat / axis D-pads (many DInput and generic pads): turn
+                    // them into the same D-pad buttons XInput pads report
+                    let v: i8 = if value > 0.5 { 1 } else if value < -0.5 { -1 } else { 0 };
+                    let st = self.dpad_axes.entry(ev.id).or_insert((0, 0));
+                    let (old, buttons) = if a == GAxis::DPadX {
+                        (std::mem::replace(&mut st.0, v), [GamepadButton::DpadLeft, GamepadButton::DpadRight])
+                    } else {
+                        // gilrs: +y is up
+                        (std::mem::replace(&mut st.1, v), [GamepadButton::DpadDown, GamepadButton::DpadUp])
+                    };
+                    if old != v {
+                        if old != 0 {
+                            let b = buttons[usize::from(old > 0)];
+                            out.push(InputEvent::Button { device, button: b, pressed: false });
+                        }
+                        if v != 0 {
+                            let b = buttons[usize::from(v > 0)];
+                            out.push(InputEvent::Button { device, button: b, pressed: true });
+                        }
                     }
                 },
                 EventType::AxisChanged(a, value, _) => {

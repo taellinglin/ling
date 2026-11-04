@@ -85,6 +85,11 @@ impl Camera3D {
             return (wx, wy, wz);
         }
         let tan_h = (self.cx / self.focal.max(1.0)).max(0.05);
+        // outside the 1.8x view cone the blend factor is exactly 0: bail before the sqrt/tanh
+        let lim = 1.8 * eye.max(0.1) * tan_h;
+        if qx * qx + qy * qy >= lim * lim {
+            return (wx, wy, wz);
+        }
         let q = (qx * qx + qy * qy).sqrt() / (eye.max(0.1) * tan_h);
         let k = k_front * ((1.8 - q) / 0.6).clamp(0.0, 1.0);
         if k <= 0.0 {

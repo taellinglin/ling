@@ -14,22 +14,34 @@ fn is_ling_source(name: &str) -> bool {
         || name.ends_with(".ลิง")
 }
 
+/// Release the GPU renderer in an orderly way, then exit with `code`. `process::exit` runs
+/// thread-local destructors inside `ExitProcess`, where destroying a Vulkan device crashes.
+fn exit_after_gpu_shutdown(code: i32) -> ! {
+    ling::gfx::gpu_shutdown();
+    std::process::exit(code);
+}
+
 fn main() {
+    real_main();
+    ling::gfx::gpu_shutdown();
+}
+
+fn real_main() {
     let args: Vec<String> = std::env::args().collect();
 
     match args.get(1).map(|s| s.as_str()) {
         Some("visualize") => {
             let file = args.get(2).map(|s| s.as_str()).unwrap_or_else(|| {
                 eprintln!("Usage: ling visualize <file.ling>");
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             });
             let source = std::fs::read_to_string(file).unwrap_or_else(|e| {
                 eprintln!("error reading '{}': {}", file, e);
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             });
             let program = ling::parser::parse(&source).unwrap_or_else(|e| {
                 eprintln!("parse error: {}", e);
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             });
             print!("{}", ling::visualize::render(file, &program));
         },
@@ -58,7 +70,7 @@ fn main() {
                 .find(|a| is_ling_source(a))
                 .unwrap_or_else(|| {
                     eprintln!("Usage: ling run [--wasm|--interp|--O0|--O1|--O2|--O3] <file.ling>");
-                    std::process::exit(1);
+                    exit_after_gpu_shutdown(1);
                 });
             if wasm {
                 run_wasm(file);
@@ -93,12 +105,12 @@ fn main() {
 
         Some("convert") => {
             // ling convert <asset> [-o out.ling] [--no-compression]
-            std::process::exit(ling::convert::run(&args[1..]));
+            exit_after_gpu_shutdown(ling::convert::run(&args[1..]));
         },
 
         Some("ast") => {
             // ling ast [path] [--technical] [--artwork] [--ling] [--all] [--out <dir>]
-            std::process::exit(run_ast(&args[2..]));
+            exit_after_gpu_shutdown(run_ast(&args[2..]));
         },
 
         Some("build") => {
@@ -144,12 +156,12 @@ fn run_file(path: &str) {
     let resolved = std::path::Path::new(path);
     if !resolved.exists() {
         eprintln!("[ling] error: file does not exist: {}", resolved.display());
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 
     let source = std::fs::read_to_string(path).unwrap_or_else(|e| {
         eprintln!("error reading '{}': {}", path, e);
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     });
 
     let lang = ling::detect_language(&source);
@@ -159,7 +171,7 @@ fn run_file(path: &str) {
     let src_dir = resolved.parent().map(|p| p.to_path_buf());
     if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
         eprintln!("{e}");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 }
 
@@ -167,12 +179,12 @@ fn run_file_jit(path: &str, opt_override: Option<ling::core::OptimizationLevel>)
     let resolved = std::path::Path::new(path);
     if !resolved.exists() {
         eprintln!("[ling] error: file does not exist: {}", resolved.display());
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 
     let source = std::fs::read_to_string(path).unwrap_or_else(|e| {
         eprintln!("error reading '{}': {}", path, e);
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     });
 
     let lang = ling::detect_language(&source);
@@ -189,7 +201,7 @@ fn run_file_jit(path: &str, opt_override: Option<ling::core::OptimizationLevel>)
         let src_dir = resolved.parent().map(|p| p.to_path_buf());
         if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
             eprintln!("{e}");
-            std::process::exit(1);
+            exit_after_gpu_shutdown(1);
         }
         return;
     }
@@ -214,12 +226,12 @@ fn run_file_jit(path: &str, opt_override: Option<ling::core::OptimizationLevel>)
                     "{}",
                     ling::diag::render_parse(&m, &source, Some(path), out_lang)
                 );
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             },
             // The JIT executed and failed mid-run; output may already be on screen.
             LingError::Mir(m) => {
                 eprintln!("{m}");
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             },
             // The JIT could not compile this program (an unsupported construct).
             // Nothing ran yet, so fall back to the full-language tree-walker.
@@ -227,7 +239,7 @@ fn run_file_jit(path: &str, opt_override: Option<ling::core::OptimizationLevel>)
                 let src_dir = resolved.parent().map(|p| p.to_path_buf());
                 if let Err(e) = ling::run_named(&source, src_dir, Some(path)) {
                     eprintln!("{e}");
-                    std::process::exit(1);
+                    exit_after_gpu_shutdown(1);
                 }
             },
         }
@@ -543,6 +555,24 @@ struct LingProject {
     /// without which those calls fail at runtime with "unknown function 'db_open'". Merged
     /// with the LING_APP_FEATURES env var. Ignored by LingOS/kernel targets.
     ling_features: Vec<String>,
+    /// `ling-features-<platform> = [...]` (win / lin / mac / macarm / pios): replaces
+    /// `ling-features` for that one platform. `[]` means none. A feature such as `web` drags in
+    /// dozens of extra crates (HTTP, video decode, audio out), which an offline or minimal
+    /// machine may never have downloaded, so a platform that does not use it can opt out.
+    /// Keyed by `NativePlatform::dir_name`.
+    ling_features_per: Vec<(String, Vec<String>)>,
+}
+
+impl LingProject {
+    /// The `ling` crate features to build `p` with: its own override if the manifest has one,
+    /// else the manifest-wide `ling-features`.
+    fn ling_features_for(&self, p: NativePlatform) -> &[String] {
+        self.ling_features_per
+            .iter()
+            .find(|(d, _)| d == p.dir_name())
+            .map(|(_, v)| v.as_slice())
+            .unwrap_or(&self.ling_features)
+    }
 }
 
 fn discover_project(target: &str) -> LingProject {
@@ -574,6 +604,7 @@ fn discover_project(target: &str) -> LingProject {
             pack: false,
             targets: Vec::new(),
             ling_features: Vec::new(),
+            ling_features_per: Vec::new(),
         }
     } else if path.is_dir() {
         // ling-fu project: 灵符.toml or ลิงฟู.toml
@@ -595,7 +626,7 @@ fn discover_project(target: &str) -> LingProject {
         // Bare directory: auto-detect entry
         let entry = auto_entry(&path).unwrap_or_else(|| {
             eprintln!("error: no .ling file found in '{}'", path.display());
-            std::process::exit(1);
+            exit_after_gpu_shutdown(1);
         });
         let name = path
             .file_name()
@@ -622,10 +653,11 @@ fn discover_project(target: &str) -> LingProject {
             pack: false,
             targets: Vec::new(),
             ling_features: Vec::new(),
+            ling_features_per: Vec::new(),
         }
     } else {
         eprintln!("error: '{}' is not a .ling file or directory", target);
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 }
 
@@ -638,7 +670,7 @@ fn discover_project(target: &str) -> LingProject {
 fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
     let text = std::fs::read_to_string(toml).unwrap_or_else(|e| {
         eprintln!("read 灵符.toml: {e}");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     });
 
     let mut name = base
@@ -681,7 +713,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
     .unwrap_or_else(|| {
         auto_entry(base).unwrap_or_else(|| {
             eprintln!("error: cannot find entry point for project '{}'", name);
-            std::process::exit(1);
+            exit_after_gpu_shutdown(1);
         })
     });
 
@@ -709,6 +741,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
         pack: false,
         targets: parse_targets(&text),
         ling_features: parse_ling_features(&text),
+        ling_features_per: parse_ling_features_per(&text),
     }
 }
 
@@ -721,7 +754,7 @@ fn parse_lingfu_toml(toml: &Path, base: &Path) -> LingProject {
 fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let text = std::fs::read_to_string(toml).unwrap_or_else(|e| {
         eprintln!("read Ling.toml: {e}");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     });
 
     let mut name = base
@@ -798,7 +831,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
     let entry = base.join(&entry_name);
     if !entry.exists() {
         eprintln!("error: entry '{}' not found", entry.display());
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
     let build_dir = base.join(".ling-build").join(&name);
     let includes = parse_includes(&text);
@@ -823,6 +856,7 @@ fn parse_ling_toml(toml: &Path, base: &Path) -> LingProject {
         pack,
         targets: parse_targets(&text),
         ling_features: parse_ling_features(&text),
+        ling_features_per: parse_ling_features_per(&text),
     }
 }
 
@@ -919,7 +953,7 @@ fn run_build(
 
     std::fs::create_dir_all(out).unwrap_or_else(|e| {
         eprintln!("create dist dir '{}': {e}", out);
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     });
 
     // An explicit --platform wins. Otherwise build the manifest's `targets`, falling back to
@@ -978,9 +1012,20 @@ fn run_build(
                     build_native(&project, out, NativePlatform::MacArm, icon, pack, aot)
                 }
             },
+            // LingOS targets (kernel images and userland apps) are the `os` profile.
+            #[cfg(not(feature = "os"))]
+            "kernel" | "bare" | "rpi" | "raspberrypi" | "lingos" | "app" | "apps" | "lingos-rpi"
+            | "apps-rpi" | "app-rpi" => {
+                eprintln!(
+                    "platform '{platform}' needs the `os` profile, which this build of ling leaves out (reinstall with: cargo install ling-lang --features os, or the default full install)"
+                );
+                exit_after_gpu_shutdown(1);
+            },
+            #[cfg(feature = "os")]
             "kernel" | "bare" => {
                 build_native(&project, out, NativePlatform::BareMetal, icon, pack, aot)
             },
+            #[cfg(feature = "os")]
             "rpi" | "raspberrypi" => {
                 build_native(&project, out, NativePlatform::Rpi, icon, pack, aot)
             },
@@ -989,9 +1034,11 @@ fn run_build(
                     build_native(&project, out, NativePlatform::PiOs, icon, pack, aot)
                 }
             },
+            #[cfg(feature = "os")]
             "lingos" | "app" | "apps" => {
                 build_native(&project, out, NativePlatform::Lingos, icon, pack, aot)
             },
+            #[cfg(feature = "os")]
             "lingos-rpi" | "apps-rpi" | "app-rpi" => {
                 build_native(&project, out, NativePlatform::LingosRpi, icon, pack, aot)
             },
@@ -1000,7 +1047,7 @@ fn run_build(
                     "unknown platform '{}' — use web|win|lin|mac|macarm|pios|kernel|rpi|lingos|all",
                     other
                 );
-                std::process::exit(1);
+                exit_after_gpu_shutdown(1);
             },
         }
     }
@@ -1026,12 +1073,12 @@ fn build_web(project: &LingProject, out: &str) {
         .status()
         .unwrap_or_else(|e| {
             eprintln!("  lingc not found ({e}). Build lingc first: cargo build --bin lingc");
-            std::process::exit(1);
+            exit_after_gpu_shutdown(1);
         });
 
     if !status.success() {
         eprintln!("  [web] build failed");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
     println!("  [web] → {}/web/", out);
 }
@@ -1041,7 +1088,7 @@ fn build_web(project: &LingProject, out: &str) {
 fn run_wasm(file: &str) {
     if !Path::new(file).exists() {
         eprintln!("[ling] error: file does not exist: {file}");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 
     // 1. Build the WebGL/WASM bundle next to the source (reuses `lingc webgl`).
@@ -1057,11 +1104,11 @@ fn run_wasm(file: &str) {
         .status()
         .unwrap_or_else(|e| {
             eprintln!("[ling] lingc not found ({e}); build it first: cargo build --bin lingc");
-            std::process::exit(1);
+            exit_after_gpu_shutdown(1);
         });
     if !status.success() {
         eprintln!("[ling] wasm build failed");
-        std::process::exit(1);
+        exit_after_gpu_shutdown(1);
     }
 
     // 2. Serve the folder locally and open the browser.
@@ -1161,6 +1208,7 @@ fn open_browser(url: &str) {
 // ── Native build ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy)]
+#[cfg_attr(not(feature = "os"), allow(dead_code))] // LingOS variants: `os` profile
 enum NativePlatform {
     Windows,
     Linux,
@@ -1287,6 +1335,16 @@ fn build_native(
             if let Some(inc) = &project.includes_os {
                 p.includes = inc.clone();
             }
+            os_project = p;
+            &os_project
+        },
+        // `includes_os` alone (same entry on every platform) still picks the
+        // resources a LingOS image embeds -- without this a kernel image
+        // swallowed the desktop build's whole `includes` tree (e.g. 70 MB of
+        // SNES/N64 ROMs the image can't use).
+        (None, true) if project.includes_os.is_some() => {
+            let mut p = project.clone();
+            p.includes = project.includes_os.clone().unwrap_or_default();
             os_project = p;
             &os_project
         },
@@ -1721,7 +1779,7 @@ fn build_native(
         std::fs::write(build_dir.join("build.rs"), gen_aot_build_rs()).expect("write build.rs");
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_native_cargo_toml(&project.name, &project.version, &ling_root, &project.ling_features),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root, project.ling_features_for(platform)),
         )
         .expect("write Cargo.toml");
     } else {
@@ -1739,7 +1797,7 @@ fn build_native(
         std::fs::write(build_dir.join("build.rs"), gen_build_rs()).expect("write build.rs");
         std::fs::write(
             build_dir.join("Cargo.toml"),
-            gen_native_cargo_toml(&project.name, &project.version, &ling_root, &project.ling_features),
+            gen_native_cargo_toml(&project.name, &project.version, &ling_root, project.ling_features_for(platform)),
         )
         .expect("write Cargo.toml");
     }
@@ -1760,9 +1818,19 @@ fn build_native(
         match resolve_icon(icon, project, &ling_root) {
             Some(src) => {
                 let out_ico = build_dir.join("app.ico");
+                // ling-icon (SVG/PNG -> .ico) ships with the `web` and `game` profiles.
+                #[cfg(any(feature = "web", feature = "game"))]
                 match ling_icon::write_ico(&src, &out_ico, ling_icon::DEFAULT_SIZES) {
                     Ok(()) => println!("  [windows] icon: {}", src.display()),
                     Err(e) => eprintln!("  [windows] icon skipped: {e}"),
+                }
+                #[cfg(not(any(feature = "web", feature = "game")))]
+                {
+                    let _ = out_ico;
+                    eprintln!(
+                        "  [windows] icon skipped: {} needs the `web` or `game` profile to convert",
+                        src.display()
+                    );
                 }
             },
             None => println!("  [windows] no icon found; building without one"),
@@ -1872,6 +1940,7 @@ rustflags = ["-C", "relocation-model=static", "-Z", "unstable-options", {extra_f
             });
         if !status.success() {
             eprintln!("  [{}] build failed.", platform.dir_name());
+            offline_tip(build_dir);
             eprintln!("  Tip: ensure nightly Rust is installed: rustup toolchain install nightly");
             eprintln!("  Then install: rustup target add x86_64-unknown-none --toolchain nightly");
             eprintln!("  And: rustup component add rust-src --toolchain nightly");
@@ -1891,6 +1960,7 @@ rustflags = ["-C", "relocation-model=static", "-Z", "unstable-options", {extra_f
             });
         if !status.success() {
             eprintln!("  [{}] build failed.", platform.dir_name());
+            offline_tip(build_dir);
             if !platform.is_current_host() && build_cmd == "cargo" && !has_cross() {
                 eprintln!("  Tip: install `cross` for cross-compilation (needs Docker):");
                 eprintln!("       cargo install cross");
@@ -2819,8 +2889,15 @@ fn resolve_icon(cli: Option<&Path>, project: &LingProject, ling_root: &Path) -> 
             candidate.display()
         );
     }
-    let default = ling_root.join("ling-lang.org/images/logo.svg");
-    default.exists().then_some(default)
+    // Repo-bundled logo first; the website checkout (now a sibling of the repo,
+    // formerly nested inside it) is a fallback for older trees.
+    [
+        ling_root.join("assets/ling-logo.svg"),
+        ling_root.join("../ling-lang.org/images/logo.svg"),
+        ling_root.join("ling-lang.org/images/logo.svg"),
+    ]
+    .into_iter()
+    .find(|p| p.exists())
 }
 
 fn gen_main_rs(entry_file: &str, packed: bool, portable: Option<&str>) -> String {
@@ -3092,6 +3169,46 @@ fn parse_ling_features(text: &str) -> Vec<String> {
         {
             collect_quoted(rest, &mut out);
         }
+    }
+    out
+}
+
+/// The `NativePlatform::dir_name` a platform name or alias stands for (the same aliases
+/// `--platform` and `targets` take), for the OS-native desktop platforms.
+fn native_dir_for_alias(a: &str) -> Option<&'static str> {
+    match a {
+        "win" | "windows" => Some("windows"),
+        "lin" | "linux" => Some("linux"),
+        "mac" | "macos" | "darwin" => Some("macos"),
+        "macarm" | "mac-arm" | "mac-arm64" | "macos-arm64" | "apple-silicon" => Some("macos-arm64"),
+        "pios" | "pi" | "raspios" | "linux-arm64" | "linarm" | "arm64" => Some("linux-arm64"),
+        _ => None,
+    }
+}
+
+/// Parse every top-level `ling-features-<platform> = [...]` line: the per-platform overrides of
+/// `ling-features`. Each is `(dir_name, features)`; an empty list is a real answer (no features
+/// for that platform). Unknown platform names are ignored, as is the whole line for an older
+/// `ling`, which only knows the global key.
+fn parse_ling_features_per(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut in_app = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_app = line.starts_with("[app.");
+            continue;
+        }
+        if in_app || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, rest)) = line.split_once('=') else { continue };
+        let Some(plat) = key.trim().strip_prefix("ling-features-") else { continue };
+        let Some(dir) = native_dir_for_alias(plat.trim()) else { continue };
+        let mut v = Vec::new();
+        collect_quoted(rest, &mut v);
+        out.retain(|(d, _)| d != dir);
+        out.push((dir.to_string(), v));
     }
     out
 }
@@ -3419,6 +3536,64 @@ fn choose_build_tool(platform: NativePlatform) -> &'static str {
 
 fn has_cross() -> bool {
     Command::new("cross").arg("--version").output().is_ok()
+}
+
+/// Is Cargo in offline mode for a build in `dir`? Either `CARGO_NET_OFFLINE` is set, or a
+/// cargo config that applies (`$CARGO_HOME`, or a `.cargo/` in `dir` or any parent) has
+/// `offline = true` under `[net]`. Offline Cargo can still resolve a dependency graph from its
+/// cached index, so a build prints "Locking N packages" and then dies on the first crate it never
+/// downloaded ("attempting to make an HTTP request, but --offline was specified"): the message
+/// names a flag nobody passed, so say where it comes from.
+fn cargo_offline_configured(dir: &Path) -> bool {
+    if let Ok(v) = std::env::var("CARGO_NET_OFFLINE") {
+        if matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes") {
+            return true;
+        }
+    }
+    let mut files: Vec<PathBuf> = Vec::new();
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(|h| PathBuf::from(h).join(".cargo")));
+    if let Some(h) = home {
+        files.push(h.join("config.toml"));
+        files.push(h.join("config"));
+    }
+    let mut d = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    loop {
+        files.push(d.join(".cargo").join("config.toml"));
+        files.push(d.join(".cargo").join("config"));
+        if !d.pop() {
+            break;
+        }
+    }
+    files.iter().any(|f| {
+        let Ok(text) = std::fs::read_to_string(f) else { return false };
+        let mut in_net = false;
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.starts_with('[') {
+                in_net = line == "[net]";
+                continue;
+            }
+            if in_net {
+                if let Some(v) = line.strip_prefix("offline").and_then(|r| r.trim_start().strip_prefix('=')) {
+                    return v.trim().starts_with("true");
+                }
+            }
+        }
+        false
+    })
+}
+
+/// After a failed cargo build: if offline mode is the likely cause, say so and how to fix it.
+fn offline_tip(dir: &Path) {
+    if cargo_offline_configured(dir) {
+        eprintln!("  Tip: Cargo is in OFFLINE mode here (CARGO_NET_OFFLINE, or `net.offline = true` in a cargo config),");
+        eprintln!("       so it cannot download crates it has not cached before; the \"--offline was specified\" in its");
+        eprintln!("       message is that setting, not a flag `ling build` passed. Turn offline mode off for this build");
+        eprintln!("       (unset CARGO_NET_OFFLINE / set net.offline = false), or run it once while online: Cargo caches");
+        eprintln!("       what it downloads, and later offline builds then work.");
+    }
 }
 
 /// Return the path to a sibling binary in the same directory as this executable.

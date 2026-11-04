@@ -105,7 +105,14 @@ impl LingCompiler {
         };
         use crate::runtime::Interpreter;
 
-        let mut jit = ling_codegen::JitBackend::new(|builder| {
+        // A multi-thousand-block function (the client's frame closure) makes the
+        // default register allocator take minutes; compile quickly instead.
+        let huge = mir_prog
+            .mir
+            .functions
+            .iter()
+            .any(|f| f.basic_blocks.len() > 1500);
+        let mut jit = ling_codegen::JitBackend::new_tuned(huge, |builder| {
             macro_rules! reg {
                 ($rust:ident, $jit:literal) => {
                     builder.symbol(concat!("__ling_", $jit), $rust as *const u8);

@@ -177,12 +177,37 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         return;
     }
 
+    // The brightness scale depends only on luma, so tabulate it once (1/8-luma
+    // steps) instead of walking the ramp stops for every pixel.
+    const LUT_RES: f32 = 8.0;
+    let lut: Vec<f32> = (0..=(255 * 8 + 8))
+        .map(|i| {
+            let lum = i as f32 / LUT_RES;
+            if lum < 1.5 {
+                return 1.0;
+            }
+            let t = lum / 255.0;
+            let mut new_val = sample_ramp(ramp, t);
+            // Sheen: blend bright pixels back toward their true luminance so
+            // specular / fresnel-rim gradients stay smooth instead of banding.
+            if ramp.sheen > 0.0 {
+                let k = smoothstep01((t - 0.72) / 0.20) * ramp.sheen;
+                new_val += (t - new_val) * k;
+            }
+            // Cap the brightening: dark pixels get a tight cap so shadow noise
+            // can't blow out into scratches; everything else a moderate one.
+            let maxs = if lum < 14.0 { 2.2 } else { 4.0 };
+            (new_val * 255.0 / lum).clamp(0.0, maxs)
+        })
+        .collect();
+    let empty = ramp.stops.is_empty();
+
     #[inline]
-    fn shade(p: u32, ramp: &ToneRamp) -> u32 {
+    fn shade(p: u32, lut: &[f32], empty: bool) -> u32 {
         if p & crate::gfx::UNLIT != 0 {
             return p & crate::gfx::RGB_MASK;
         }
-        if ramp.stops.is_empty() {
+        if empty {
             return p;
         }
         let r = ((p >> 16) & 0xFF) as f32;
@@ -194,18 +219,7 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         if lum < 1.5 {
             return p;
         }
-        let t = lum / 255.0;
-        let mut new_val = sample_ramp(ramp, t);
-        // Sheen: blend bright pixels back toward their true luminance so
-        // specular / fresnel-rim gradients stay smooth instead of banding.
-        if ramp.sheen > 0.0 {
-            let k = smoothstep01((t - 0.72) / 0.20) * ramp.sheen;
-            new_val += (t - new_val) * k;
-        }
-        // Cap the brightening: dark pixels get a tight cap so shadow noise
-        // can't blow out into scratches; everything else a moderate one.
-        let maxs = if lum < 14.0 { 2.2 } else { 4.0 };
-        let scale = (new_val * 255.0 / lum).clamp(0.0, maxs);
+        let scale = lut[(lum * LUT_RES + 0.5) as usize];
         (((r * scale).min(255.0) as u32) << 16)
             | (((g * scale).min(255.0) as u32) << 8)
             | ((b * scale).min(255.0) as u32)
@@ -216,16 +230,17 @@ pub fn apply_ramp(buf: &mut [u32], width: usize, height: usize, ramp: &ToneRamp)
         use rayon::prelude::*;
         const ROWS: usize = 32;
         let band = ROWS * width;
+        let lut = &lut;
         buf[..n].par_chunks_mut(band).for_each(|bb| {
             for px in bb.iter_mut() {
-                *px = shade(*px, ramp);
+                *px = shade(*px, lut, empty);
             }
         });
     }
 
     #[cfg(target_arch = "wasm32")]
     for px in buf[..n].iter_mut() {
-        *px = shade(*px, ramp);
+        *px = shade(*px, &lut, empty);
     }
 }
 
@@ -764,11 +779,105 @@ pub fn apply(cfg: &ToonConfig, buf: &mut [u32], zbuf: &[f32], width: usize, heig
     }
 }
 
+/// Run `apply` at half resolution and transfer only its *change* back onto the
+/// full-resolution frame: `out = full + up(post(half) - half)`. Flat areas get the
+/// same AO/ramp/bloom shift as the full pass, while raster edges stay sharp. The
+/// price is that outlines/FXAA are softer (2 px detail). ~4x fewer post pixels.
+pub fn apply_half(cfg: &ToonConfig, buf: &mut [u32], zbuf: &[f32], width: usize, height: usize) {
+    let n = width * height;
+    if width < 8 || height < 8 || buf.len() < n || zbuf.len() < n {
+        apply(cfg, buf, zbuf, width, height);
+        return;
+    }
+    let hw = width.div_ceil(2);
+    let hh = height.div_ceil(2);
+    let mut half = vec![0u32; hw * hh];
+    let mut hz = vec![0f32; hw * hh];
+    for hy in 0..hh {
+        let y0 = (hy * 2).min(height - 1);
+        let y1 = (hy * 2 + 1).min(height - 1);
+        for hx in 0..hw {
+            let x0 = (hx * 2).min(width - 1);
+            let x1 = (hx * 2 + 1).min(width - 1);
+            let idx = [y0 * width + x0, y0 * width + x1, y1 * width + x0, y1 * width + x1];
+            let (mut r, mut g, mut b) = (0u32, 0u32, 0u32);
+            for &i in &idx {
+                let p = buf[i];
+                r += (p >> 16) & 0xFF;
+                g += (p >> 8) & 0xFF;
+                b += p & 0xFF;
+            }
+            let tag = buf[idx[0]] & crate::gfx::UNLIT;
+            half[hy * hw + hx] = tag | ((r / 4) << 16) | ((g / 4) << 8) | (b / 4);
+            hz[hy * hw + hx] = zbuf[idx[0]];
+        }
+    }
+    let before = half.clone();
+    let mut hcfg = cfg.clone();
+    hcfg.outline_px *= 0.5;
+    hcfg.ao_radius *= 0.5;
+    apply(&hcfg, &mut half, &hz, hw, hh);
+
+    let sample = |x: usize, y: usize, shift: u32, plane: &[u32]| -> f32 {
+        let fx = ((x as f32 - 0.5) * 0.5).max(0.0);
+        let fy = ((y as f32 - 0.5) * 0.5).max(0.0);
+        let x0 = (fx as usize).min(hw - 1);
+        let y0 = (fy as usize).min(hh - 1);
+        let x1 = (x0 + 1).min(hw - 1);
+        let y1 = (y0 + 1).min(hh - 1);
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let c = |xx: usize, yy: usize| ((plane[yy * hw + xx] >> shift) & 0xFF) as f32;
+        let top = c(x0, y0) * (1.0 - tx) + c(x1, y0) * tx;
+        let bot = c(x0, y1) * (1.0 - tx) + c(x1, y1) * tx;
+        top * (1.0 - ty) + bot * ty
+    };
+    let row = |y: usize, out: &mut [u32]| {
+        for (x, px) in out.iter_mut().enumerate() {
+            let mut v = 0u32;
+            for shift in [16u32, 8, 0] {
+                let d = sample(x, y, shift, &half) - sample(x, y, shift, &before);
+                let c = (((*px >> shift) & 0xFF) as f32 + d).clamp(0.0, 255.0) as u32;
+                v |= c << shift;
+            }
+            *px = v;
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        buf[..n]
+            .par_chunks_mut(width)
+            .enumerate()
+            .for_each(|(y, out)| row(y, out));
+    }
+    #[cfg(target_arch = "wasm32")]
+    for (y, out) in buf[..n].chunks_mut(width).enumerate() {
+        row(y, out);
+    }
+}
+
 // ── Unit tests ─────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_half_matches_full_on_flat_frame() {
+        let cfg = make_toon_default();
+        let (w, h) = (64, 48);
+        let src: Vec<u32> = vec![0x0060_80A0; w * h];
+        let z = vec![10.0f32; w * h];
+        let (mut a, mut b) = (src.clone(), src);
+        apply(&cfg, &mut a, &z, w, h);
+        apply_half(&cfg, &mut b, &z, w, h);
+        for (p, q) in a.iter().zip(&b) {
+            for s in [16u32, 8, 0] {
+                let d = ((p >> s) & 0xFF) as i32 - ((q >> s) & 0xFF) as i32;
+                assert!(d.abs() <= 2, "flat-area mismatch {p:#x} vs {q:#x}");
+            }
+        }
+    }
 
     fn make_toon_default() -> ToonConfig {
         ToonConfig::default()
