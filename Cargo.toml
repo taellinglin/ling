@@ -255,7 +255,7 @@ ling-net = { path = "crates/ling-net", version = "2030.0.9", default-features = 
 ling-ui = { path = "crates/ling-ui", version = "2030.0.9", optional = true }
 ling-diffusion = { path = "crates/ling-diffusion", version = "2030.0.1", optional = true }   # sd_* builtins: in-process Stable Diffusion — non-default features `sd` / `sd-cuda`
 ling-emu = { path = "crates/ling-emu", version = "2030.0.1", optional = true }   # emu_* builtins: native console-emulation host (N64 bring-up) — non-default feature `emu`, never in a default/crates.io build
-gilrs = { version = "0.11", optional = true }   # native gamepad + rumble (XInput/DInput/evdev)
+gilrs = { version = "0.11", optional = true, default-features = false, features = ["xinput"] }   # native gamepad + rumble. Windows: the XInput backend (Xbox pads over USB / Bluetooth report as XInput; it reads them whether or not the window has focus, unlike the default Windows.Gaming.Input). Linux/macOS: evdev / IOKit as usual. Must match ling-input.
 ling-input = { workspace = true, features = ["gilrs"], optional = true }   # gamepad/joystick/VR/touch builtins
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "ico"] }   # PNG screenshots; image_fetch decodes web pictures
 fancy-regex = "0.17"   # re_* builtins: JavaScript-style regular expressions (lookaround, backreferences) for page-script sandboxes
